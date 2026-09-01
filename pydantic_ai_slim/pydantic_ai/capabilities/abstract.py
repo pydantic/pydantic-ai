@@ -1377,17 +1377,31 @@ def combine_duplicate_capabilities(capability: AbstractCapability[AgentDepsT]) -
 
     # The combined capability takes the last occurrence's place, so what survives keeps the position
     # the run's last word on that id had; the earlier occurrences are removed.
-    replacements: dict[int, AbstractCapability[AgentDepsT] | None] = {}
+    #
+    # Keyed by occurrence rather than by object: the same instance may be registered twice (on the
+    # agent and passed again for the run), and a plain `id()` -> replacement map would hand every
+    # occurrence of it the same answer, leaving the survivor in the tree as many times as it went in.
+    # `visit_and_replace` walks the nodes `apply` yields, in that order, so consuming one decision
+    # per visit lines the decisions up with the occurrences they were made for.
+    replacements: dict[int, list[AbstractCapability[AgentDepsT] | None]] = {}
     for capability_id, duplicates in by_id.items():
         if len(duplicates) == 1:
             continue
-        for duplicate in duplicates[:-1]:
-            replacements[id(duplicate)] = None
-        replacements[id(duplicates[-1])] = _combine_duplicates(capability_id, duplicates)
+        combined_duplicate = _combine_duplicates(capability_id, duplicates)
+        for index, duplicate in enumerate(duplicates):
+            is_last = index == len(duplicates) - 1
+            replacements.setdefault(id(duplicate), []).append(combined_duplicate if is_last else None)
 
     if not replacements:
         return capability
-    combined = capability.visit_and_replace(lambda cap: replacements.get(id(cap), cap))
+
+    def replace_occurrence(cap: AbstractCapability[AgentDepsT]) -> AbstractCapability[AgentDepsT] | None:
+        decisions = replacements.get(id(cap))
+        if not decisions:
+            return cap
+        return decisions.pop(0)
+
+    combined = capability.visit_and_replace(replace_occurrence)
     # Every duplicated id keeps one occurrence, so the tree can never be emptied.
     assert combined is not None, 'combining duplicate capabilities cannot empty the tree'
     return combined

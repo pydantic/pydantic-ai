@@ -28,7 +28,12 @@ from pydantic_ai.capabilities import (
     WebSearch,
     XSearch,
 )
-from pydantic_ai.capabilities.abstract import AbstractCapability
+from pydantic_ai.capabilities.abstract import (
+    AbstractCapability,
+    combine_duplicate_capabilities,
+    leaf_capabilities,
+)
+from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.native_tools import WebFetchTool, WebSearchTool, XSearchTool
 
@@ -242,3 +247,31 @@ def test_base_combine_rejects_duplicates() -> None:
 
     with pytest.raises(UserError, match='is used by'):
         Custom.combine([Custom(id='same'), Custom(id='same')])
+
+
+async def test_one_instance_registered_twice_survives_once() -> None:
+    """The same object on the agent and passed again for the run keeps exactly one occurrence.
+
+    Keyed by object rather than occurrence, every occurrence would be handed the same replacement
+    and the survivor would stay in the tree as many times as it went in -- contributing its tools
+    and firing its hooks twice.
+    """
+    shared = Thinking(effort='low')
+    tree = CombinedCapability[Any]([shared, shared])
+    assert len(leaf_capabilities(tree)) == 2
+
+    combined = combine_duplicate_capabilities(tree)
+
+    leaves = leaf_capabilities(combined)
+    assert [(type(leaf).__name__, leaf.id) for leaf in leaves] == [('Thinking', 'thinking')]
+
+
+def test_merging_into_a_contradictory_configuration_is_rejected() -> None:
+    """A merge can reach a combination no constructor would accept, and must fail the same way.
+
+    `replace_no_init` skips `__post_init__`, so without re-running it the merged capability
+    contributes neither the native tool (`native=False`) nor a local fallback (suppressed because
+    native-only constraints are set), and does so silently.
+    """
+    with pytest.raises(UserError, match='constraint fields require the native tool'):
+        WebSearch.combine([WebSearch(allowed_domains=['a.com']), WebSearch(native=False, local='duckduckgo')])

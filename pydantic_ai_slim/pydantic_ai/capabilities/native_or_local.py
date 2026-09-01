@@ -209,11 +209,18 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
         A native tool the user passed in is left alone: it states its own configuration, and
         rebuilding would discard it. Two of those take the later, like any other value the merge
         cannot reconcile.
+
+        The merged instance is validated the way a constructed one is. `replace_no_init` skips
+        `__post_init__`, and a merge can reach a combination no constructor would accept -- a
+        `native=False` instance beside one carrying native-only constraints leaves a capability that
+        contributes neither the native tool nor a local fallback. Re-running the check turns that
+        into the same `UserError` writing it by hand would raise.
         """
         merged = merge_capability_fields(capabilities)
         assert isinstance(merged, cls)
         if all(_has_derived_native(capability) for capability in capabilities):
             merged = replace_no_init(merged, native=merged._default_native())
+        merged.__post_init__()
         return merged
 
 
