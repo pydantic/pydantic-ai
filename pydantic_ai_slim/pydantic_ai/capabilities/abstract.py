@@ -1350,7 +1350,10 @@ def leaf_capabilities(capability: AbstractCapability[AgentDepsT]) -> list[Abstra
     return leaves
 
 
-def combine_duplicate_capabilities(capability: AbstractCapability[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
+def combine_duplicate_capabilities(
+    capability: AbstractCapability[AgentDepsT],
+    applied: Sequence[AbstractCapability[AgentDepsT]] | None = None,
+) -> AbstractCapability[AgentDepsT]:
     """Resolve capabilities sharing an `id` in a tree down to one each, via `AbstractCapability.combine`.
 
     Runs once over the whole composed tree rather than per layer, so wherever two capabilities meet
@@ -1369,11 +1372,27 @@ def combine_duplicate_capabilities(capability: AbstractCapability[AgentDepsT]) -
     children beside the wrapper that already contributes them.
 
     Capabilities with `id=None` are left alone: the run tells those apart itself.
+
+    `applied` is the layers in the order they were supplied, and it decides which of two duplicates
+    counts as later. The composed tree cannot answer that: `CombinedCapability` sorts its leaves
+    into ordering tiers, so a capability supplied later but positioned `'outermost'` moves ahead of
+    one supplied earlier, and reading "last" off the tree would hand `combine` the two in the wrong
+    order -- turning a run-level override into the agent-level capability winning. Omit it only
+    where there is no meaningful application order to state.
     """
+    order: dict[int, int] = {}
+    for index, leaf in enumerate(
+        leaf for layer in (applied if applied is not None else [capability]) for leaf in leaf_capabilities(layer)
+    ):
+        order.setdefault(id(leaf), index)
+
     by_id: dict[str, list[AbstractCapability[AgentDepsT]]] = {}
     for leaf in leaf_capabilities(capability):
         if leaf.id is not None:
             by_id.setdefault(leaf.id, []).append(leaf)
+    for duplicates in by_id.values():
+        # Stable, so duplicates the application order does not distinguish keep their tree order.
+        duplicates.sort(key=lambda leaf: order.get(id(leaf), 0))
 
     # The combined capability takes the last occurrence's place, so what survives keeps the position
     # the run's last word on that id had; the earlier occurrences are removed.

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import Any, cast
 
 from pydantic_ai._utils import replace_no_init
@@ -12,7 +12,11 @@ from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.toolsets.prepared import PreparedToolset
 
-from .abstract import AbstractCapability, merge_capability_fields
+from .abstract import (
+    AbstractCapability,
+    _merge_field_values,  # pyright: ignore[reportPrivateUsage]
+    merge_capability_fields,
+)
 
 
 @dataclass(init=False)
@@ -74,7 +78,30 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
         self.local = local
         self.__post_init__()
 
+    _declared: dict[str, Any] | None = field(init=False, repr=False, compare=False, default=None)
+    """What the caller passed as `native`/`local`, before `__post_init__` resolved it.
+
+    Resolution is destructive: `native=True` becomes a tool instance and `local=None` becomes the
+    subclass default, so afterwards there is no way to tell configuration the caller stated from
+    configuration this class derived. `combine` needs that distinction to rebuild the derived halves
+    from merged configuration, so the declarations are kept here. Excluded from `compare` because it
+    restates fields that are already compared.
+    """
+
+    def declared(self, name: str) -> Any:
+        """What the caller passed as `native` or `local`, before `__post_init__` resolved it."""
+        declared: dict[str, Any] | None = getattr(self, '_declared', None)
+        return (declared or {}).get(name)
+
     def __post_init__(self) -> None:
+        # Set on the instance rather than relying on the field default: the subclasses declare their
+        # own `__init__`, which never runs the dataclass field initializers.
+        declared: dict[str, Any] | None = getattr(self, '_declared', None)
+        if declared is None:
+            declared = {}
+            object.__setattr__(self, '_declared', declared)
+        declared.setdefault('native', self.native)
+        declared.setdefault('local', self.local)
         if self.native is False and self.local is False:
             raise UserError(f'{type(self).__name__}: both `native` and `local` cannot be False')
 
@@ -216,16 +243,14 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
         contributes neither the native tool nor a local fallback. Re-running the check turns that
         into the same `UserError` writing it by hand would raise.
         """
+        nol_capabilities = [capability for capability in capabilities if isinstance(capability, NativeOrLocalTool)]
+        assert len(nol_capabilities) == len(capabilities)
         merged = merge_capability_fields(capabilities)
         assert isinstance(merged, cls)
-        if all(_has_derived_native(capability) for capability in capabilities):
-            merged = replace_no_init(merged, native=merged._default_native())
+        declared = {
+            key: _merge_field_values([capability.declared(key) for capability in nol_capabilities])
+            for key in ('native', 'local')
+        }
+        merged = replace_no_init(merged, _declared={}, **declared)
         merged.__post_init__()
         return merged
-
-
-def _has_derived_native(capability: AbstractCapability[Any]) -> bool:
-    """Whether this capability's native tool is one `_default_native` built from its own fields."""
-    assert isinstance(capability, NativeOrLocalTool)
-    default = capability._default_native()  # pyright: ignore[reportPrivateUsage]
-    return default is not None and capability.native == default

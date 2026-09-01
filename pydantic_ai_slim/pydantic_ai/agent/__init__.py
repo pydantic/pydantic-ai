@@ -2971,7 +2971,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # agent-level capability and a run-level one meet under the same rule as two on the agent:
         # `run(capabilities=[Thinking(effort='high')])` overriding an agent-level `Thinking` is
         # `Thinking.combine` choosing the last, not a separate override mechanism.
-        run_capability = combine_duplicate_capabilities(run_capability)
+        run_capability = combine_duplicate_capabilities(run_capability, resolved_layers)
         # Not covered by the construction-time check: a run's capabilities compose with a retained
         # overriding container exactly as a registered sibling does, and `for_run` may hand back a
         # capability whose `id` differs from the one that was validated, so the resolved tree is

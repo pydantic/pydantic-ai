@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import importlib
 import pkgutil
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any, TypeGuard, cast
@@ -18,9 +18,10 @@ from typing import Any, TypeGuard, cast
 import pytest
 
 import pydantic_ai.capabilities as capabilities_package
-from pydantic_ai import FunctionToolset, RunContext
+from pydantic_ai import Agent, FunctionToolset, RunContext, Tool
 from pydantic_ai.capabilities import (
     Capability,
+    CapabilityOrdering,
     ImageGeneration,
     Instrumentation,
     RaiseContentFilterError,
@@ -36,9 +37,11 @@ from pydantic_ai.capabilities.abstract import (
     AbstractCapability,
     combine_duplicate_capabilities,
     leaf_capabilities,
+    merge_capability_fields,
 )
 from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import WebFetchTool, WebSearchTool, XSearchTool
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
@@ -353,3 +356,57 @@ def test_anonymous_capability_leaves_its_toolsets_anonymous() -> None:
     toolset = capability.get_toolset()
     assert isinstance(toolset, DynamicToolset)
     assert toolset.id is None
+
+
+def test_merged_local_fallback_carries_the_merged_configuration() -> None:
+    """The local tool enforces the merged domains too, not only the last capability's.
+
+    On a provider without native fetch the local fallback is what runs, and it carries its own copy
+    of the domain lists. Rebuilding only the native tool left the fallback enforcing whatever the
+    last capability declared -- a merged `blocked_domains` that the fallback never applied.
+    """
+    merged = WebFetch.combine(
+        [WebFetch(local=True, allowed_domains=['a.com']), WebFetch(local=True, allowed_domains=['b.com'])]
+    )
+    assert isinstance(merged, WebFetch)
+    local = merged.local
+    assert isinstance(local, Tool)
+    # The fallback is a bound method of the fetcher, which carries its own copy of the domain lists.
+    fetcher = cast('Any', local).function.__self__
+    assert fetcher.allowed_domains == ['a.com', 'b.com']
+
+
+async def test_a_later_layer_wins_even_when_it_sorts_first() -> None:
+    """Application order decides which duplicate is later, not the ordering-sorted tree.
+
+    `CombinedCapability` sorts leaves into ordering tiers, so a capability supplied for the run but
+    positioned `'outermost'` moves ahead of the agent-level one. Reading "last" off the tree then
+    picks the agent-level capability and the run's override silently loses.
+    """
+    seen: dict[str, AbstractCapability[Any]] = {}
+
+    @dataclass
+    class Probe(AbstractCapability[Any]):
+        async def before_run(self, ctx: RunContext[Any]) -> None:
+            seen.update(ctx.capabilities)
+
+    agent = Agent(TestModel(), capabilities=[_Positioned(id='m', tag='agent'), Probe()])
+    await agent.run('hi', capabilities=[_Positioned(id='m', tag='run', outermost=True)])
+
+    assert isinstance(seen['m'], _Positioned)
+    assert seen['m'].tag == 'run'
+
+
+@dataclass
+class _Positioned(AbstractCapability[Any]):
+    """A capability whose ordering tier can differ per instance, so the two sorts can disagree."""
+
+    tag: str = ''
+    outermost: bool = False
+
+    def get_ordering(self) -> CapabilityOrdering:
+        return CapabilityOrdering(position='outermost') if self.outermost else CapabilityOrdering()
+
+    @classmethod
+    def combine(cls, capabilities: Sequence[AbstractCapability[Any]]) -> AbstractCapability[Any]:
+        return merge_capability_fields(capabilities)
