@@ -12,6 +12,7 @@ import importlib
 import inspect
 import pkgutil
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any
 
@@ -24,6 +25,8 @@ from pydantic_ai.capabilities import (
     RaiseContentFilterError,
     ReinjectSystemPrompt,
     Thinking,
+    ToolSearch,
+    UseThreadExecutor,
     WebFetch,
     WebSearch,
     XSearch,
@@ -106,6 +109,18 @@ def _check_instrumentation(merged: Instrumentation) -> None:
     assert merged.settings is not None
 
 
+_FIRST_EXECUTOR = ThreadPoolExecutor(1, 'first')
+_SECOND_EXECUTOR = ThreadPoolExecutor(1, 'second')
+
+
+def _check_tool_search(merged: ToolSearch) -> None:
+    assert merged.max_results == 20, 'a scalar takes the later value'
+
+
+def _check_thread_executor(merged: UseThreadExecutor) -> None:
+    assert merged.executor is _SECOND_EXECUTOR, 'the executor that would have shadowed the other'
+
+
 COMBINE_POLICY: dict[str, Policy] = {
     # -- One per agent: a default `id`, and `combine` says what two of them mean. --
     'Thinking': Combines(
@@ -154,6 +169,16 @@ COMBINE_POLICY: dict[str, Policy] = {
         lambda: (RaiseContentFilterError(), RaiseContentFilterError()),
         _check_content_filter,
     ),
+    'ToolSearch': Combines(
+        'one tool-discovery configuration per agent',
+        lambda: (ToolSearch(max_results=5), ToolSearch(max_results=20)),
+        _check_tool_search,
+    ),
+    'UseThreadExecutor': Combines(
+        'exactly one executor is in effect; nesting already made this last-wins implicitly',
+        lambda: (UseThreadExecutor(_FIRST_EXECUTOR), UseThreadExecutor(_SECOND_EXECUTOR)),
+        _check_thread_executor,
+    ),
     # -- Several of these is the normal case, so they stay anonymous. --
     'Capability': Anonymous('a generic bundle; several per agent is the usual shape'),
     'CombinedCapability': Anonymous('structural container; nesting is the semantic'),
@@ -177,8 +202,6 @@ COMBINE_POLICY: dict[str, Policy] = {
     'PrepareOutputTools': Anonymous('output-tool preparers stack'),
     'SetToolMetadata': Anonymous('one per `ToolSelector`; several selectors compose'),
     'IncludeToolReturnSchemas': Anonymous('one per `ToolSelector`; several selectors compose'),
-    'UseThreadExecutor': Anonymous('parameterized by which executor it names'),
-    'ToolSearch': Anonymous('auto-injected only when absent'),
     'DeferredCapabilityLoader': Anonymous('auto-injected only when absent'),
     'PendingMessageDrainCapability': Anonymous('auto-injected only when absent'),
 }
