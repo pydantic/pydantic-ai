@@ -1079,7 +1079,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # `thinking.block_binding` is a 400 (`Extra inputs are not permitted`) without its beta,
         # so the beta follows the field rather than the profile flag — a user who sets
         # `block_binding` through `anthropic_thinking` gets it too.
-        if not isinstance(thinking, Omit) and thinking.get('block_binding'):
+        # Membership, not truthiness: `block_binding: {}` is a valid request meaning "every binding
+        # default", and it needs the beta exactly as much as a populated one does.
+        if not isinstance(thinking, Omit) and 'block_binding' in thinking:
             betas.add(_ANTHROPIC_THINKING_BINDING_BETA)
 
         if model_settings.get('anthropic_speed') == 'fast' and self._client_supports_fast_speed(anthropic_profile):

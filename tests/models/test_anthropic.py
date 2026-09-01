@@ -4711,6 +4711,27 @@ async def test_anthropic_explicit_block_binding_is_preserved(allow_model_request
     assert _THINKING_BINDING_BETA in sent_betas(mock_client)
 
 
+async def test_anthropic_empty_block_binding_still_gets_the_beta(allow_model_requests: None):
+    """`block_binding: {}` means "every binding default" and needs the beta just as much.
+
+    Live-verified: without `thinking-binding-controls-2026-08-01` the empty mapping is
+    `400 thinking.adaptive.block_binding: Extra inputs are not permitted`, and 200 with it. So the
+    beta is attached on membership, never on truthiness.
+    """
+    mock_client = MockAnthropic.create_mock(
+        completion_message([BetaTextBlock(text='4', type='text')], usage=BetaUsage(input_tokens=10, output_tokens=1))
+    )
+    settings = AnthropicModelSettings(anthropic_thinking={'type': 'adaptive', 'block_binding': {}})
+    m = AnthropicModel('claude-sonnet-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m, model_settings=settings)
+
+    await agent.run('What is 2+2?')
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs['thinking'] == snapshot({'type': 'adaptive', 'block_binding': {}})
+    assert _THINKING_BINDING_BETA in sent_betas(mock_client)
+
+
 async def test_anthropic_thinking_block_binding_skipped_when_thinking_disabled(allow_model_requests: None):
     """`thinking: {'type': 'disabled'}` has no `block_binding` field to carry."""
     mock_client = MockAnthropic.create_mock(
