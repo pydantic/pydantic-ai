@@ -8757,26 +8757,46 @@ function drawGraph() {
 }
 
 function layoutFort(nodes) {
-  const rooms = [];
-  const pad = 24, legendGutter = 184, cellW = 360, cellH = 210;
-  geoRows(nodes).forEach((row, ry) => {
-    row.forEach((top, rx) => {
-      const group = nodes.filter(n => n.top === top).sort((a,b) => b.tokens - a.tokens);
-      if (!group.length) return;
-      const ox = legendGutter + pad + rx * (cellW + 28);
-      const oy = pad + ry * (cellH + 36);
-      let x = ox + 8, y = oy + 22, rowH = 0;
-      group.forEach(n => {
-        const w = Math.max(108, Math.min(168, 48 + Math.sqrt(n.tokens) * 0.65));
-        const h = Math.max(20, Math.min(56, 14 + Math.sqrt(n.tokens) * 0.22));
-        if (x + w > ox + cellW) { x = ox + 8; y += rowH + 6; rowH = 0; }
-        rooms.push({ ...n, x, y, w, h, ox, oy, cellW, cellH });
-        x += w + 6;
-        rowH = Math.max(rowH, h);
+  const pad = 24, legendGutter = 184, cellW = 360, gapX = 28, gapY = 36, headerH = 22;
+
+  function packDistrict(top) {
+    const group = nodes.filter(n => n.top === top).sort((a, b) => b.tokens - a.tokens);
+    const local = [];
+    let x = 8, y = headerH, rowH = 0, maxY = headerH;
+    group.forEach(n => {
+      const w = Math.max(108, Math.min(168, 48 + Math.sqrt(n.tokens) * 0.65));
+      const h = Math.max(20, Math.min(56, 14 + Math.sqrt(n.tokens) * 0.22));
+      if (x + w > cellW) { x = 8; y += rowH + 6; rowH = 0; }
+      local.push({ ...n, lx: x, ly: y, w, h });
+      x += w + 6;
+      rowH = Math.max(rowH, h);
+      maxY = Math.max(maxY, y + h);
+    });
+    return { top, rooms: local, h: maxY + 10 };
+  }
+
+  const placed = [];
+  let oy = pad;
+  geoRows(nodes).forEach(row => {
+    const districts = row.map(packDistrict).filter(d => d.rooms.length);
+    const rowH = districts.reduce((m, d) => Math.max(m, d.h), 0);
+    districts.forEach((d, rx) => {
+      const ox = legendGutter + pad + rx * (cellW + gapX);
+      d.rooms.forEach(r => {
+        placed.push({
+          ...r,
+          x: ox + r.lx,
+          y: oy + r.ly,
+          ox,
+          oy,
+          cellW,
+          cellH: d.h,
+        });
       });
     });
+    oy += rowH + gapY;
   });
-  return rooms;
+  return placed;
 }
 
 function hitRoom(rooms, x, y) {
