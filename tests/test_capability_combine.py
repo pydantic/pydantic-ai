@@ -224,7 +224,7 @@ def _is_capability_class(obj: object) -> TypeGuard[type[AbstractCapability[Any]]
         return False
     try:
         return issubclass(obj, AbstractCapability)
-    except TypeError:  # pragma: no cover
+    except TypeError:
         return False
 
 
