@@ -579,6 +579,10 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         capability, so credentials and clients belong here rather than on the ref. Must fail when
         the sandbox no longer exists instead of silently provisioning a replacement. Inside a
         durable unit, `ctx` is the engine's restricted run context: `ctx.deps` is always available.
+
+        Unlike `acquire_sandbox` and `release_sandbox`, this hook is deliberately *not* a durable
+        operation: a live connection cannot be recorded into or replayed from durable history, so
+        durable engines call it worker-side, inside whatever durable unit needs the sandbox.
         """
         return None
 

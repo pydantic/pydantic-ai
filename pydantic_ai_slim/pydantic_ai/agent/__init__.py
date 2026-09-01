@@ -1444,6 +1444,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             extra_capabilities.append(resolved.capability)
         extra_capabilities.extend(wrap_capability_funcs(capabilities))
         extra_capabilities = self._bind_run_capabilities(extra_capabilities)
+        # Validated here, before `for_run`, because run capabilities now participate in the
+        # preparation phase (bootstrap model selection, `wrap_entire_run`, `acquire_sandbox`):
+        # a durability capability must veto unsafe per-run capabilities before any of those
+        # hooks can perform I/O in workflow code. `_resolve_run_capabilities` validates again
+        # after `for_run` for capabilities that only materialize there; neither call subsumes
+        # the other.
         base_capability._validate_runtime_capabilities(  # pyright: ignore[reportPrivateUsage]
             [capability for extra in extra_capabilities for capability in leaf_capabilities(extra)]
         )

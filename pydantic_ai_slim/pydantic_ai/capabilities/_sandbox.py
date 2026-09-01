@@ -16,7 +16,14 @@ from .abstract import AbstractCapability, leaf_capabilities
 def capabilities_by_id(
     capability: AbstractCapability[AgentDepsT],
 ) -> dict[str, AbstractCapability[AgentDepsT]]:
-    """Return the capability registry, deriving the same stable run-local IDs as Agent."""
+    """Derive the run-local capability registry: explicit `id`s, else snake-cased class names.
+
+    This is the single implementation of ID derivation — `Agent._build_run_capabilities`
+    delegates here — so refs and registries can never disagree on an ID. Derived IDs are
+    positional (`_2`, `_3` suffixes follow tree order), so anything persisted across processes
+    (e.g. `SandboxRef.capability_id` in durable history) should come from a capability with an
+    explicit `id`.
+    """
     capabilities = leaf_capabilities(capability)
     explicit_ids: set[str] = set()
     for cap in capabilities:
