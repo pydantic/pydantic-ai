@@ -3,10 +3,10 @@ from __future__ import annotations
 import threading
 import typing
 import uuid
+import weakref
 from collections import defaultdict
 from contextlib import contextmanager
 from contextvars import ContextVar
-from weakref import ref
 
 from opentelemetry.sdk.trace import ReadableSpan
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor, SpanExporter, SpanExportResult
@@ -133,7 +133,9 @@ class _ContextInMemorySpanExporter(SpanExporter):
 # an exporter only ever receives spans from the provider it was attached to. The provider is held weakly wherever it
 # can be, which is what makes an `id()` key safe -- `id()`s are recycled, so an entry outliving its provider must be
 # rejected rather than handed to whatever was later allocated at the same address.
-_context_in_memory_providers: dict[int, tuple[ref[TracerProvider] | TracerProvider, _ContextInMemorySpanExporter]] = {}
+_context_in_memory_providers: dict[
+    int, tuple[weakref.ref[TracerProvider] | TracerProvider, _ContextInMemorySpanExporter]
+] = {}
 _context_in_memory_providers_lock = threading.Lock()
 
 
@@ -165,7 +167,7 @@ def _add_context_span_exporter() -> _ContextInMemorySpanExporter | SpanTreeRecor
         else:
             # Custom TracerProvider (e.g. ddtrace) without add_span_processor - degrade gracefully.
             return SpanTreeRecordingError(
-                f'The current TracerProvider ({type(tracer_provider).__qualname__}) does not support'
+                f'The current TracerProvider ({type(provider).__qualname__}) does not support'
                 f' `add_span_processor`, so span tree recording is not available.'
                 f' Evaluation will still work, but `span_tree` will not be populated in evaluator results.'
             )
@@ -177,22 +179,30 @@ def _add_context_span_exporter() -> _ContextInMemorySpanExporter | SpanTreeRecor
     # loser's would stay attached to the provider, collecting spans under every context id that nothing ever
     # clears.
     # The consequence is that `add_span_processor` runs under a non-reentrant lock, so a provider that called
-    # back into `context_subtree()` from it would deadlock. That is accepted rather than fixed: an `RLock`
-    # would let the inner call attach a second processor -- the very leak this lock exists to prevent -- and
-    # moving the attach outside the lock reopens the race. No real provider re-enters; the SDK and logfire's
-    # proxy both just append under their own lock.
+    # back into `context_subtree()` from it deadlocks, where the implementation this replaced returned
+    # -- it published its entry before attaching, so the inner call found one. That is accepted rather than
+    # fixed: swapping in an `RLock` alone would let the inner call attach a second processor -- the very leak
+    # this lock exists to prevent -- and moving the attach outside the lock reopens the race. Publishing the
+    # entry provisionally under an `RLock` does hold both, at the cost of a rollback path on a failed attach;
+    # it was implemented and dropped, because no supported provider re-enters: `opentelemetry-sdk`'s
+    # `TracerProvider.add_span_processor` and logfire's `ProxyTracerProvider.add_span_processor` both only
+    # append under their own lock, without calling back into user code.
     with _context_in_memory_providers_lock:
         if (cached := _context_in_memory_providers.get(cache_id)) is not None:
             cached_provider, cached_exporter = cached
-            if isinstance(cached_provider, ref):
+            if isinstance(cached_provider, weakref.ref):
                 cached_provider = cached_provider()
             # A provider keeps its identity across `shutdown()`, which stops the exporter attached to it, and
             # a stopped exporter silently drops every span it is handed. The dead processor stays attached, so
             # a provider shut down repeatedly without being replaced accumulates one per shutdown -- bounded
             # in practice because `logfire.configure()` allocates a new provider each time.
             # Recovering by attaching to an already-shut-down provider relies on `opentelemetry-sdk` letting a
-            # new processor receive spans after `shutdown()`; the OTel specification says an SDK SHOULD hand
-            # out a no-op tracer instead, and nothing here pins the SDK version.
+            # new processor receive spans after `shutdown()`, which two separate OTel `SHOULD`s say it need
+            # not: `TracerProvider.Shutdown` says an SDK SHOULD hand out a no-op tracer afterwards, and
+            # `SpanProcessor.Shutdown` says it SHOULD ignore later `OnEnd` calls. The second one starves the
+            # newly attached processor whichever tracer produced the span -- `shutdown()` stops the composite
+            # processor that `add_span_processor` then appends to -- so it exposes the logfire path just as
+            # much as the plain-SDK one. Nothing here pins the SDK version.
             if cached_provider is provider and not cached_exporter._stopped:  # pyright: ignore[reportPrivateUsage]
                 return cached_exporter
 
@@ -202,7 +212,7 @@ def _add_context_span_exporter() -> _ContextInMemorySpanExporter | SpanTreeRecor
         # recycled `id()`. It deliberately does not take the lock: it can fire on a thread already holding
         # this non-reentrant one, and `dict.pop` needs no lock of its own.
         try:
-            stored: ref[TracerProvider] | TracerProvider = ref(
+            stored: weakref.ref[TracerProvider] | TracerProvider = weakref.ref(
                 provider, lambda _: _context_in_memory_providers.pop(cache_id, None)
             )
         except TypeError:

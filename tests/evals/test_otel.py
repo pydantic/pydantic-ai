@@ -1033,9 +1033,9 @@ class RecordingTracerProvider:
 
 
 # `pydantic_evals/otel` makes no provider HTTP calls, and the exporter cache is not reachable through
-# the public API, so the exporter-cache tests through `test_context_span_exporter_attached_once_under_concurrency`
-# are unit tests rather than VCR tests. They still drive `context_subtree()` itself rather than
-# `_add_context_span_exporter`, and reach into the cache only to assert its state.
+# the public API, so the exporter-cache tests below are unit tests rather than VCR tests. They still
+# drive `context_subtree()` itself rather than `_add_context_span_exporter`; most reach into the cache
+# only to assert its state, and the one that seeds it by hand says so in its own docstring.
 
 
 async def test_context_subtree_records_after_tracer_provider_shutdown():
@@ -1061,14 +1061,15 @@ async def test_context_subtree_records_after_tracer_provider_shutdown():
 
 
 async def test_context_subtree_records_after_plain_sdk_provider_shutdown(mocker: MockerFixture):
-    """The same recovery on a plain `opentelemetry-sdk` provider, which is where it can actually break.
+    """The same recovery on a plain `opentelemetry-sdk` provider, which is the tracer-side twin.
 
-    Its logfire twin above cannot guard this: logfire's `_ProxyTracer` holds the `Tracer` it obtained
-    before `shutdown()` and only refreshes it when the wrapped provider is swapped, so that path never
-    asks the shut-down provider for a tracer. Recovery here depends on `opentelemetry-sdk` letting a
-    newly attached processor receive spans after `shutdown()`, which the OTel specification does not
-    require -- so an SDK that starts handing out no-op tracers would reinstate the empty-tree bug on
-    this path alone.
+    Its logfire counterpart above cannot guard the tracer half: logfire's `_ProxyTracer` holds the
+    `Tracer` it obtained before `shutdown()` and only refreshes it when the wrapped provider is
+    swapped, so that path never asks the shut-down provider for a tracer -- an SDK that started
+    handing out no-op tracers per `TracerProvider.Shutdown` would reinstate the empty-tree bug here
+    alone. The other clause is not path-specific: `SpanProcessor.Shutdown` says an SDK SHOULD ignore
+    `OnEnd` after shutdown, and `add_span_processor` appends to the very composite processor that
+    `shutdown()` stopped, so a conformant SDK would starve both paths. Neither is required today.
     """
     tracer_provider = TracerProvider(shutdown_on_exit=False)
     mocker.patch(
@@ -1194,7 +1195,7 @@ async def test_context_span_exporter_attaches_to_the_logfire_provider_it_caches(
 async def test_context_span_exporter_retries_after_an_attachment_failure(mocker: MockerFixture):
     """A failed processor attachment cannot leave an unattached exporter in the cache."""
 
-    class AttachmentFailed(BaseException):
+    class AttachmentFailed(Exception):
         pass
 
     class RaisingTracerProvider(RecordingTracerProvider):
@@ -1255,7 +1256,7 @@ async def test_context_span_exporter_cache_entry_dies_with_its_provider(mocker: 
     assert provider_id not in _context_in_memory_providers
 
 
-async def test_context_subtree_provider_that_cannot_be_weakly_referenced(mocker: MockerFixture):
+async def test_context_span_exporter_pins_a_provider_that_cannot_be_weakly_referenced(mocker: MockerFixture):
     """A provider `weakref.ref()` rejects is pinned in the cache rather than left uncached.
 
     Its entry can never be invalidated either way, so the choice is between pinning one provider and
@@ -1337,10 +1338,13 @@ async def test_context_span_exporter_attached_once_under_concurrency(mocker: Moc
     here with a slow exporter constructor -- without the lock this attaches one processor per thread.
     """
 
+    constructed: list[_ContextInMemorySpanExporter] = []
+
     class SlowToBuildExporter(_ContextInMemorySpanExporter):
         def __init__(self) -> None:
             time.sleep(0.05)
             super().__init__()
+            constructed.append(self)
 
     tracer_provider = RecordingTracerProvider()
     mocker.patch(
@@ -1364,6 +1368,13 @@ async def test_context_span_exporter_attached_once_under_concurrency(mocker: Moc
             future.result(timeout=10)
 
     assert len(tracer_provider.processors) == 1
+    # The processor count alone stays green if the losing threads each build an exporter and hand it
+    # back unattached, which is the silently-empty-`SpanTree` failure this whole cache exists to stop.
+    assert len(constructed) == 1
+    processor = tracer_provider.processors[0]
+    assert isinstance(processor, SimpleSpanProcessor)
+    assert processor.span_exporter is constructed[0]
+    assert _context_in_memory_providers[id(tracer_provider)][1] is constructed[0]
 
 
 async def test_span_node_status_captured():
