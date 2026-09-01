@@ -51,7 +51,7 @@ requires-python = ">=3.10"
 [project.urls]
 Homepage = "https://github.com/pydantic/pydantic-ai/tree/main/pydantic_ai_slim"
 Source = "https://github.com/pydantic/pydantic-ai/tree/main/pydantic_ai_slim"
-Documentation = "https://ai.pydantic.dev/install/#slim-install"
+Documentation = "https://pydantic.dev/docs/ai/overview/install/#slim-install"
 Changelog = "https://github.com/pydantic/pydantic-ai/releases"
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning]
@@ -66,7 +66,9 @@ dependencies = [
     "exceptiongroup>=1.2.2; python_version < '3.11'",
     "opentelemetry-api>=1.28.0",
     "typing-inspection>=0.4.0",
-    "genai-prices>=0.1.0",
+    # 0.1.5 adds GPT-5.6 price reductions, time-dependent DeepSeek V4 pricing, and fixes
+    # reasoning-token extraction for OpenAI-compatible providers.
+    "genai-prices>=0.1.5",
 ]
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning.optional-dependencies]
@@ -76,7 +78,9 @@ logfire = ["logfire[httpx]>=4.39.0", "opentelemetry-instrumentation-httpx>=0.65b
 openai = ["openai>=3.0.0", "tiktoken>=0.12.0"]
 cohere = ["cohere>=5.20.6; platform_system != 'Emscripten'"]
 google = ["google-genai>=2.18.0"]
-anthropic = ["anthropic>=0.108.0"]
+# `anthropic>=1` is built on `httpx2` and drops legacy HTTPX entirely; it also removes
+# `temperature`/`top_p`/`top_k` from `messages.create()`, which the model sends via `extra_body`.
+anthropic = ["anthropic>=1.0.0"]
 xai = ["xai-sdk>=1.14.0"]
 groq = ["groq>=0.25.0"]
 openrouter = ["openai>=3.0.0"]
@@ -162,7 +166,7 @@ spec = ["pyyaml>=6.0.2", "pydantic-handlebars>=0.1.0"]
 allow-direct-references = true
 
 [project.scripts]
-pai = "pydantic_ai._cli:cli_exit" # TODO remove this when clai has been out for a while
+pai = "pydantic_ai._cli:cli_exit" # TODO(v3): remove this alias; clai has been on PyPI since 2025-05. https://pypi.org/project/clai/#history
 
 [tool.hatch.build.targets.wheel]
 packages = ["pydantic_ai"]

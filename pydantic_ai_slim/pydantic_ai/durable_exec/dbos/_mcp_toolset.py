@@ -49,15 +49,16 @@ def dbosify_mcp_toolset(
         )
 
     async def call_tool_operation(
-        tool_name: str,
+        name: str,
         tool_args: dict[str, Any],
+        *,
         ctx: RunContext[AgentDepsT],
         tool: ToolsetTool[AgentDepsT],
         config: Mapping[str, Any],
     ) -> ToolResult:
         # A recovering workflow may replay outputs this step recorded before it wrapped
         # control-flow exceptions as values; those recordings are the raw tool result.
-        return unwrap_recorded_tool_call_result(await call_tool_step(tool_name, tool_args, ctx, tool))
+        return unwrap_recorded_tool_call_result(await call_tool_step(name, tool_args, ctx, tool))
 
     return DurableMCPToolset(
         wrapped,

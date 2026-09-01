@@ -608,6 +608,10 @@ def _schema_to_type_expr(
             ref_schema = _normalize_schema_node(defs[ref_name])
             if ref_schema.get('type') == 'object' and 'properties' in ref_schema:
                 _build_and_register_type(ref_name, ref_schema, defs, referenced_types, tool_name, path)
+            elif 'enum' in ref_schema and ref_schema.keys().isdisjoint(('$ref', 'allOf', 'anyOf', 'oneOf')):
+                # Pydantic emits enum classes as non-object defs. Resolve terminal enum defs
+                # inline as `Literal[...]`; a bare class name would never be defined.
+                return _schema_to_type_expr(ref_schema, defs, referenced_types, tool_name, path)
         # Return the TypeSignature object if available, otherwise the name
         if ref_name in referenced_types:
             return referenced_types[ref_name]

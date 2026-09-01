@@ -401,7 +401,8 @@ class Tool(Generic[ToolAgentDepsT]):
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
                 Defaults to None (no timeout).
-            defer_loading: Whether to hide this tool until it's discovered via tool search. Defaults to False.
+            defer_loading: Whether to hide this tool until it's revealed by tool search, `load_capability`,
+                or another tool's `ToolReturn.tools`. Defaults to False.
                 See [Tool Search](../tools-advanced.md#tool-search) for more info.
             include_return_schema: Whether to include the return schema in the tool definition sent to the model.
                 If `None`, defaults to `False` unless the [`IncludeToolReturnSchemas`][pydantic_ai.capabilities.IncludeToolReturnSchemas] capability is used.
@@ -421,7 +422,7 @@ class Tool(Generic[ToolAgentDepsT]):
         )
         self.takes_ctx = self.function_schema.takes_ctx
         self.max_retries = max_retries
-        self.description = description or self.function_schema.description
+        self.description = description if description is not None else self.function_schema.description
         self.prepare = prepare
         self.args_validator = args_validator
         self.docstring_format = docstring_format
@@ -577,7 +578,7 @@ class ToolDefinition:
     (Gemini 2.5+); Anthropic and Bedrock leave it off unless you explicitly set `strict=True`.
 
     Note: this is currently supported by OpenAI, Anthropic, Google, and Bedrock models. See
-    [Strict Mode](https://ai.pydantic.dev/tools-advanced/#strict-mode) for the full per-provider table.
+    [Strict Mode](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#strict-mode) for the full per-provider table.
     """
 
     sequential: bool = False

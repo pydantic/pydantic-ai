@@ -190,7 +190,7 @@ async def test_model_name_suggestion(case: Case, request: pytest.FixtureRequest,
         elif case.provider == 'anthropic':
             api_key: str = request.getfixturevalue('anthropic_api_key')
             http_client = await stack.enter_async_context(
-                httpx.AsyncClient(event_hooks={'request': [capture_model_request]})
+                httpx2.AsyncClient(event_hooks={'request': [capture_model_request]})
             )
             model = AnthropicModel(
                 case.model_name,

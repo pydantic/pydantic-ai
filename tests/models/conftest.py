@@ -5,15 +5,25 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
-import httpx
+import httpx2
 import pytest
 from pydantic import TypeAdapter
+
+from ..conftest import try_import
 
 if TYPE_CHECKING:
     from vcr.cassette import Cassette
 
     from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.providers.google import GoogleProvider
+    from pydantic_ai.providers.google_cloud import GoogleCloudProvider
     from tests.cassette_utils import CassetteContext
+
+with try_import() as google_imports:
+    from google.genai import Client
+
+    from pydantic_ai.providers.google import GoogleProvider
+    from pydantic_ai.providers.google_cloud import GoogleCloudProvider
 
 # `validate_json` parses through pydantic-core rather than the stdlib, and types the result without a cast.
 _REQUEST_BODY_ADAPTER = TypeAdapter(dict[str, Any])
@@ -32,13 +42,13 @@ class RequestCapture:
 
     paths: list[str] = field(default_factory=list[str])
     raw_bodies: list[bytes] = field(default_factory=list[bytes])
-    headers: list[httpx.Headers] = field(default_factory=list[httpx.Headers])
-    client: httpx.AsyncClient = field(init=False)
+    headers: list[httpx2.Headers] = field(default_factory=list[httpx2.Headers])
+    client: httpx2.AsyncClient = field(init=False)
 
     def __post_init__(self) -> None:
-        self.client = httpx.AsyncClient(event_hooks={'request': [self._record]})
+        self.client = httpx2.AsyncClient(event_hooks={'request': [self._record]})
 
-    async def _record(self, request: httpx.Request) -> None:
+    async def _record(self, request: httpx2.Request) -> None:
         # Only the raw bytes are kept here: the hook runs on every request of every test that asks
         # for a capture, while a test typically inspects one of them. Parsing happens in `body`.
         self.paths.append(request.url.path)
@@ -66,7 +76,7 @@ class RequestCapture:
 async def request_capture(anyio_backend: str) -> AsyncIterator[RequestCapture]:
     capture = RequestCapture()
     yield capture
-    # Built directly rather than through `create_async_http_client`, so the autouse
+    # Built directly rather than through `create_async_httpx2_client`, so the autouse
     # `close_httpx_clients` tracker never sees it and its pool would otherwise leak per test.
     await capture.client.aclose()
 
@@ -174,3 +184,30 @@ def cassette_ctx(request: pytest.FixtureRequest, vcr: Cassette) -> CassetteConte
         test_module=test_module,  # pyright: ignore[reportUnknownArgumentType]
         test_dir=test_dir,
     )
+
+
+@pytest.fixture
+def vertex_client_google_provider() -> GoogleProvider:
+    """A Vertex-backed `genai.Client` wrapped in `GoogleProvider`, the construction from #6792.
+
+    `system` stays `'google'` while the transport is Google Cloud (Vertex), so transport
+    (not the provider name) must drive Vertex-vs-Gemini-API behavior.
+    """
+    if not google_imports():  # pragma: lax no cover
+        pytest.skip('google is not installed')
+
+    return GoogleProvider(client=Client(vertexai=True, project='test-project', location='us-central1'))
+
+
+@pytest.fixture
+def gla_client_google_cloud_provider() -> GoogleCloudProvider:
+    """A Gemini-Developer-API `genai.Client` wrapped in `GoogleCloudProvider`, the mirror of #6792.
+
+    `system` stays `'google-cloud'` while the transport is the Gemini Developer API. `__init__`
+    short-circuits on `client=` before it would force `vertexai=True`, so the two disagree in this
+    direction too and every transport branch has to follow the client rather than the name.
+    """
+    if not google_imports():  # pragma: lax no cover
+        pytest.skip('google is not installed')
+
+    return GoogleCloudProvider(client=Client(vertexai=False, api_key='mock-api-key'))

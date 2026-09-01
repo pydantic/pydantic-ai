@@ -266,10 +266,21 @@ async def test_non_openai_gateway_provider_rejects_httpx2_client():
     async with httpx2.AsyncClient() as http_client:
         with pytest.raises(
             UserError,
-            match=re.escape('`httpx2.AsyncClient` is only supported for OpenAI and Google Gateway routes.'),
+            match=re.escape('`httpx2.AsyncClient` is only supported for OpenAI, Google and Anthropic Gateway routes.'),
         ):
             gateway_provider(  # pyright: ignore[reportCallIssue]
                 'groq',
+                http_client=http_client,  # pyright: ignore[reportArgumentType]
+                api_key='foobar',
+                base_url=GATEWAY_BASE_URL,
+            )
+
+
+async def test_anthropic_gateway_provider_rejects_legacy_httpx_client():
+    async with httpx.AsyncClient() as http_client:
+        with pytest.raises(UserError, match=re.escape('The Anthropic Gateway route requires an `httpx2.AsyncClient`.')):
+            gateway_provider(  # pyright: ignore[reportCallIssue]
+                'anthropic',
                 http_client=http_client,  # pyright: ignore[reportArgumentType]
                 api_key='foobar',
                 base_url=GATEWAY_BASE_URL,
@@ -405,7 +416,7 @@ async def test_model_provider_argument():
     assert urlparse(model._provider.base_url).hostname == urlparse(GATEWAY_BASE_URL).hostname  # pyright: ignore[reportPrivateUsage]
 
 
-async def test_gateway_provider_routing_group(gateway_api_key: str):
+async def test_gateway_provider_endpoint(gateway_api_key: str):
     provider = gateway_provider('openai', route='potato', api_key=gateway_api_key, base_url=GATEWAY_BASE_URL)
     assert provider.client.base_url.path.endswith('/potato/')
 

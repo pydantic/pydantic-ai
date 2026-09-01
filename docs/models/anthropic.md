@@ -65,10 +65,10 @@ agent = Agent(model)
 
 ## Custom HTTP Client
 
-You can customize the `AnthropicProvider` with a custom `httpx.AsyncClient`:
+You can customize the `AnthropicProvider` with a custom `httpx2.AsyncClient`:
 
 ```python
-from httpx import AsyncClient
+from httpx2 import AsyncClient
 
 from pydantic_ai import Agent
 from pydantic_ai.models.anthropic import AnthropicModel
@@ -82,6 +82,9 @@ model = AnthropicModel(
 agent = Agent(model)
 ...
 ```
+
+A legacy `httpx.AsyncClient` is not accepted: `anthropic` 1.0 is built on `httpx2` and rejects one at
+client construction.
 
 ## Model settings
 
@@ -323,7 +326,7 @@ print(result.output)
 
 ### Smart Instruction Caching
 
-When you use `anthropic_cache_instructions` with both static and dynamic [instructions](../agent.md#instructions), Pydantic AI automatically places the cache boundary at the optimal point. Static instructions (from `Agent(instructions=...)`) are sorted before dynamic instructions (from `@agent.instructions` functions or [toolsets](../toolsets.md)), and the cache point is placed after the last static instruction block.
+When you use `anthropic_cache_instructions` with both static and dynamic [instructions](../agent.md#instructions), Pydantic AI automatically places the cache boundary at the optimal point. Static instructions (from `Agent(instructions=...)`) are sorted before dynamic instructions (from `@agent.instructions` functions or [toolsets](../toolsets.md)), and the cache point is placed after the last static instruction part.
 
 This means your stable, static instructions are cached efficiently, while dynamic instructions (which may change between requests) remain outside the cache boundary and don't cause cache invalidation.
 
