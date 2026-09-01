@@ -63,6 +63,7 @@ from pydantic_ai import (
 )
 from pydantic_ai._parts_manager import ModelResponsePartsManager
 from pydantic_ai.messages import (
+    _FILE_URL_KINDS,  # pyright: ignore[reportPrivateUsage]
     INVALID_JSON_KEY,
     MULTI_MODAL_CONTENT_TYPES,
     CompactionPart,
@@ -1789,10 +1790,12 @@ def test_multi_modal_content_types_matches_union():
     }
     assert set(MULTI_MODAL_CONTENT_TYPES) == union_members
 
-    # `_FILE_URL_KINDS` is built from exactly these four, and drives both the tool-return gate and the
-    # Vercel adapter's media-type completion, so a fifth `FileUrl` added to the union would escape both
-    # silently and reopen issue #4190.
-    assert {m for m in union_members if issubclass(m, FileUrl)} == {ImageUrl, AudioUrl, DocumentUrl, VideoUrl}
+    # `_FILE_URL_KINDS` drives both the tool-return gate and the Vercel adapter's media-type completion,
+    # so a `FileUrl` added to the union or dropped from the tuple would escape both silently and reopen
+    # issue #4190 for that kind.
+    file_url_types = {ImageUrl, AudioUrl, DocumentUrl, VideoUrl}
+    assert {m for m in union_members if issubclass(m, FileUrl)} == file_url_types
+    assert set(_FILE_URL_KINDS) == {content_type.kind for content_type in file_url_types}
 
     # Positive cases: each multimodal type is recognized
     assert is_multi_modal_content(ImageUrl(url='https://example.com/image.png'))

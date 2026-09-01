@@ -1138,8 +1138,8 @@ def _validate_tool_output(output: Any) -> Any:
 
 
 _multi_modal_content_ta: TypeAdapter[MultiModalContent] = TypeAdapter(MultiModalContent)
-"""Builds a URL item from its `kind` and `url` alone, so `_normalize_client_file_shapes` can read back
-the media type the type itself infers rather than repeating that inference here."""
+"""Builds a URL item from the client's own mapping, so `_normalize_client_file_shapes` can read back the
+media type the type itself infers rather than repeating that inference here."""
 
 
 def _normalize_client_file_shapes(value: Any) -> Any:
@@ -1162,8 +1162,8 @@ def _normalize_client_file_shapes(value: Any) -> Any:
 
     Everything else is passed through, and a plain user mapping that merely reuses one of our `kind`
     values keeps the values its tool put in it: the binary branch is gated on the `media_type` a real
-    `BinaryContent` carries, and the URL branch only ever adds a media type it read off a `url` the
-    mapping already had.
+    `BinaryContent` carries, and the URL branch validates the mapping as it stands, so it writes a
+    media type only into a mapping that is already the file it claims to be.
     """
     if isinstance(value, list):
         return [_normalize_client_file_shapes(v) for v in value]  # pyright: ignore[reportUnknownVariableType]
@@ -1177,15 +1177,13 @@ def _normalize_client_file_shapes(value: Any) -> Any:
     # `''` whenever the browser cannot tell — and are what `FileUrl` itself treats as "infer one". A
     # `media_type` of any other shape is the client's own value and is left for validation to judge.
     elif kind in _FILE_URL_KINDS and normalized.get('media_type') in (None, ''):
-        url = normalized.get('url')
-        if isinstance(url, str):
-            try:
-                normalized['media_type'] = _multi_modal_content_ta.validate_python(
-                    {'kind': kind, 'url': url}
-                ).media_type
-            except ValueError:
-                # `Could not infer media type`, or a URL shape the type rejects outright.
-                pass
+        try:
+            normalized['media_type'] = _multi_modal_content_ta.validate_python(normalized).media_type
+        except ValueError:
+            # `Could not infer media type`, or a mapping the type rejects — a missing `url` included:
+            # leave it as the client sent it, rather than adding a key to something that stays a plain
+            # mapping anyway.
+            pass
     return normalized
 
 
