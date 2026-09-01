@@ -3007,6 +3007,38 @@ async def test_prefect_durability_allows_hook_only_per_run_capabilities(blockbus
     assert await run_with_instrumentation() == snapshot('success (no tool calls)')
 
 
+@pytest.mark.parametrize('blockbuster_enabled', [False])
+async def test_prefect_durability_runs_per_run_capability_operation_in_task(blockbuster_enabled: bool) -> None:
+    """A per-run capability's `@durable_operation` must run inside a Prefect task.
+
+    Prefect accepts per-run capabilities because it creates tasks per call. Durable operations
+    still have to be bound for that run-level instance; otherwise dispatch falls through to the
+    undecorated method and the call is not a task.
+    """
+    assert blockbuster_enabled is False
+    ran_in_task: list[bool] = []
+
+    class Audit(AbstractCapability[Any]):
+        id = 'audit'
+
+        async def before_run(self, ctx: RunContext[Any]) -> None:
+            await self.record(ctx, 'hello')
+
+        @durable_operation(name='record')
+        async def record(self, ctx: RunContext[Any], message: str) -> str:
+            ran_in_task.append(TaskRunContext.get() is not None)
+            return message
+
+    agent = Agent(TestModel(), name='durability_per_run_durable_op', capabilities=[PrefectDurability()])
+
+    @flow
+    async def run_with_audit() -> str:
+        return (await agent.run('Hello', capabilities=[Audit()])).output
+
+    assert await run_with_audit() == snapshot('success (no tool calls)')
+    assert ran_in_task == [True]
+
+
 async def test_prefect_durability_rejects_executing_toolset_from_per_run_capability() -> None:
     """A per-run capability contributing an executing toolset is still rejected on Prefect.
 

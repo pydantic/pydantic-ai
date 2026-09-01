@@ -152,7 +152,7 @@ Toolsets that implement their own tool listing and calling (i.e. [`FunctionTools
 
 ### Capabilities at Runtime
 
-Unlike Temporal and DBOS, Prefect creates a task per call rather than registering its durable units up front, so [capabilities](../capabilities/overview.md) passed to `agent.run(capabilities=[...])` inside a flow are accepted. A capability that contributes an executing toolset is still rejected, by the same guard that rejects `run(toolsets=...)`: the toolset arrives after the agent's toolsets were wrapped. Attach those at agent construction time.
+Unlike Temporal and DBOS, Prefect creates a task per call rather than registering its durable units up front, so [capabilities](../capabilities/overview.md) passed to `agent.run(capabilities=[...])` inside a flow are accepted. That includes [`@durable_operation`][pydantic_ai.capabilities.durable_operation] methods on those capabilities, which Prefect wraps as tasks at call time. A capability that contributes an executing toolset is still rejected, by the same guard that rejects `run(toolsets=...)`: the toolset arrives after the agent's toolsets were wrapped. Attach those at agent construction time.
 
 ### Model Selection at Runtime
 

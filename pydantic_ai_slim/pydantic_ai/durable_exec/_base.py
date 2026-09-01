@@ -304,108 +304,135 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         self._bound_capability_operations = {}
         self._capability_declarations = {}
         backend = self.get_durable_operation_backend()
-        durability_ref = ref(self)
         for capability in leaf_capabilities(agent.root_capability):
-            declarations = collect_capability_operations(capability)
-            if not declarations:
+            self._bind_capability_instance_operations(agent, capability, backend)
+
+    def _bind_capability_instance_operations(
+        self,
+        agent: AbstractAgent[AgentDepsT, Any],
+        capability: AbstractCapability[Any],
+        backend: DurableOperationBackend[Any],
+    ) -> None:
+        declarations = collect_capability_operations(capability)
+        if not declarations:
+            return
+        capability_id = capability.id
+        if capability_id is None:
+            raise UserError(
+                f'Capability {type(capability).__name__!r} contributes durable operations and needs an explicit '
+                '`id` because persisted operation identity and worker-side recovery must remain stable. '
+                f"Construct it as `{type(capability).__name__}(id='...')`."
+            )
+        durability_ref = ref(self)
+        for operation_name, declaration in declarations.items():
+            key = (capability_id, operation_name)
+            if key in self._bound_capability_operations:
                 continue
-            capability_id = capability.id
-            if capability_id is None:
-                raise UserError(
-                    f'Capability {type(capability).__name__!r} contributes durable operations and needs an explicit '
-                    '`id` because persisted operation identity and worker-side recovery must remain stable. '
-                    f"Construct it as `{type(capability).__name__}(id='...')`."
-                )
-            for operation_name, declaration in declarations.items():
-                key = (capability_id, operation_name)
 
-                async def handler(
-                    params: CapabilityOperationParams,
-                    *,
-                    declaration: CapabilityMethodDeclaration = declaration,
-                    capability_id: str = capability_id,
-                ) -> Any:
-                    arguments = self.engine_spec.codec.load(
-                        dict[str, Any], self.engine_spec.codec.dump(dict[str, Any], params.arguments)
+            async def handler(
+                params: CapabilityOperationParams,
+                *,
+                declaration: CapabilityMethodDeclaration = declaration,
+                capability_id: str = capability_id,
+            ) -> Any:
+                arguments = self.engine_spec.codec.load(
+                    dict[str, Any], self.engine_spec.codec.dump(dict[str, Any], params.arguments)
+                )
+                validated = cast(dict[str, Any], declaration.schema.validator.validate_python(arguments))
+                semantic_params = CapabilityOperationParams(
+                    run_context=params.run_context, arguments=validated, model_id=params.model_id
+                )
+                recovered = await recover_capability(params.run_context, capability_id=capability_id)
+                if declaration.model_request_parameter is not None:
+                    projection = cast(
+                        ModelRequestContextProjection,
+                        semantic_params.arguments[declaration.model_request_parameter],
                     )
-                    validated = cast(dict[str, Any], declaration.schema.validator.validate_python(arguments))
-                    semantic_params = CapabilityOperationParams(
-                        run_context=params.run_context, arguments=validated, model_id=params.model_id
-                    )
-                    recovered = await recover_capability(params.run_context, capability_id=capability_id)
-                    if declaration.model_request_parameter is not None:
-                        projection = cast(
-                            ModelRequestContextProjection,
-                            semantic_params.arguments[declaration.model_request_parameter],
-                        )
-                        async with self._durable_model_scope(projection.model_id, params.run_context) as (
-                            model,
-                            durable_ctx,
-                        ):
-                            request_context = projection.build_context(model)
-                            usage_before = copy.copy(durable_ctx.usage)
-                            result = await call_declaration(
-                                declaration,
-                                recovered,
-                                params=semantic_params,
-                                model_request_context=request_context,
-                            )
-                            operation_result = ModelRequestContextProjection.from_context(result)
-                            if result.model is not model:
-                                operation_result.model_id = self._find_registered_model_id_for_hook(result.model)
-                        return CapabilityOperationResult(
-                            value=operation_result, usage_delta=durable_ctx.usage - usage_before
-                        )
-                    async with self._durable_model_scope(params.model_id, params.run_context) as (_, durable_ctx):
-                        semantic_params = CapabilityOperationParams(
-                            run_context=durable_ctx,
-                            arguments=semantic_params.arguments,
-                            model_id=params.model_id,
-                        )
+                    async with self._durable_model_scope(projection.model_id, params.run_context) as (
+                        model,
+                        durable_ctx,
+                    ):
+                        request_context = projection.build_context(model)
                         usage_before = copy.copy(durable_ctx.usage)
-                        result = await call_declaration(declaration, recovered, params=semantic_params)
-                    return CapabilityOperationResult(value=result, usage_delta=durable_ctx.usage - usage_before)
-
-                operation = DurableOperation(
-                    operation_id=CapabilityOperationId(capability_id, operation=operation_name),
-                    handler=handler,
-                    parameter_transport=self._capability_operation_parameter_transport(declaration),
-                    cache_identity=CapabilityCacheIdentity(),
-                    result_codec=TypedResultCodec(
-                        capability_operation_result_type(declaration.result_type),
-                        mode='identity' if self.engine_spec.codec is IDENTITY_CODEC else 'json',
-                    ),
-                    config_role='capability',
-                )
-                self._bound_capability_operations[key] = backend.bind(operation)
-                self._capability_declarations[key] = declaration
-
-                async def dispatch_for_run_context(
-                    ctx: RunContext[object],
-                    args: tuple[object, ...],
-                    kwargs: dict[str, object],
-                    _capability: AbstractCapability[Any] = capability,
-                    _operation_name: str = operation_name,
-                ) -> Any:
-                    durability = durability_ref()
-                    if durability is None:  # pragma: no cover
-                        raise RuntimeError('The durability capability bound to this agent is no longer available.')
-                    return await durability._invoke_capability_operation(
-                        _capability,
-                        _operation_name,
-                        ctx=ctx,
-                        args=args,
-                        kwargs=kwargs,
+                        result = await call_declaration(
+                            declaration,
+                            recovered,
+                            params=semantic_params,
+                            model_request_context=request_context,
+                        )
+                        operation_result = ModelRequestContextProjection.from_context(result)
+                        if result.model is not model:
+                            operation_result.model_id = self._find_registered_model_id_for_hook(result.model)
+                    return CapabilityOperationResult(
+                        value=operation_result, usage_delta=durable_ctx.usage - usage_before
                     )
+                async with self._durable_model_scope(params.model_id, params.run_context) as (_, durable_ctx):
+                    semantic_params = CapabilityOperationParams(
+                        run_context=durable_ctx,
+                        arguments=semantic_params.arguments,
+                        model_id=params.model_id,
+                    )
+                    usage_before = copy.copy(durable_ctx.usage)
+                    result = await call_declaration(declaration, recovered, params=semantic_params)
+                return CapabilityOperationResult(value=result, usage_delta=durable_ctx.usage - usage_before)
 
-                bindings = capability._get_durable_operation_bindings()
-                bindings.setdefault(agent)[operation_name] = dispatch_for_run_context
+            operation = DurableOperation(
+                operation_id=CapabilityOperationId(capability_id, operation=operation_name),
+                handler=handler,
+                parameter_transport=self._capability_operation_parameter_transport(declaration),
+                cache_identity=CapabilityCacheIdentity(),
+                result_codec=TypedResultCodec(
+                    capability_operation_result_type(declaration.result_type),
+                    mode='identity' if self.engine_spec.codec is IDENTITY_CODEC else 'json',
+                ),
+                config_role='capability',
+            )
+            self._bound_capability_operations[key] = backend.bind(operation)
+            self._capability_declarations[key] = declaration
+
+            async def dispatch_for_run_context(
+                ctx: RunContext[object],
+                args: tuple[object, ...],
+                kwargs: dict[str, object],
+                _capability: AbstractCapability[Any] = capability,
+                _operation_name: str = operation_name,
+            ) -> Any:
+                durability = durability_ref()
+                if durability is None:  # pragma: no cover
+                    raise RuntimeError('The durability capability bound to this agent is no longer available.')
+                return await durability._invoke_capability_operation(
+                    _capability,
+                    _operation_name,
+                    ctx=ctx,
+                    args=args,
+                    kwargs=kwargs,
+                )
+
+            bindings = capability._get_durable_operation_bindings()
+            bindings.setdefault(agent)[operation_name] = dispatch_for_run_context
+
+    def _bind_run_capability_operations(self, ctx: RunContext[AgentDepsT]) -> None:
+        """Bind `@durable_operation` methods on capabilities added at run time.
+
+        Callable backends create durable units per call, so a capability passed to
+        `agent.run(capabilities=[...])` can still be wrapped. Registered backends reject
+        per-run capabilities before this runs and need the complete set at `for_agent` time.
+        """
+        backend = self.get_durable_operation_backend()
+        if isinstance(backend, RegisteredOperationBackend):
+            return
+        agent = ctx.agent
+        if agent is None:  # pragma: no cover
+            return
+        for capability in (ctx._run_capabilities_by_id or {}).values():  # pyright: ignore[reportPrivateUsage]
+            self._bind_capability_instance_operations(agent, capability, backend)
 
     def _prepare_run_context(self, ctx: RunContext[AgentDepsT]) -> None:
         """Register dispatchers on `RunContext` for worker-side and per-run capability recovery."""
         ctx._durable_operations = {}  # pyright: ignore[reportPrivateUsage]
         if ctx.agent is None:
             return
+        self._bind_run_capability_operations(ctx)
         operations: dict[tuple[str, str], Callable[..., Awaitable[object]]] = {}
         run_capabilities = ctx._run_capabilities_by_id or {}  # pyright: ignore[reportPrivateUsage]
         for capability_id, capability in run_capabilities.items():

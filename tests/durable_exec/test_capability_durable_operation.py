@@ -667,6 +667,24 @@ async def test_for_run_replacement_dispatches_on_run_instance() -> None:
     assert any(name == 'for_run_operation__capability__per_run_operation.operation' for name, _ in durability.calls)
 
 
+async def test_per_run_capability_durable_operation_dispatches() -> None:
+    """A capability passed to `agent.run(capabilities=[...])` must still dispatch `@durable_operation`.
+
+    Construction-time binding walks `agent.root_capability`, so a run-level instance is never bound.
+    Callable backends create durable units per call and can bind that instance on demand; without
+    that, dispatch falls through to the undecorated method and the operation is not durable.
+    """
+    capability = Operations()
+    agent = Agent(TestModel(), name='per_run_ops', capabilities=[RecordingDurability()])
+
+    await agent.run('test', capabilities=[capability])
+
+    assert capability.result == 2
+    durability = RecordingDurability.from_agent(agent)
+    assert durability is not None
+    assert any(name == 'per_run_ops__capability__operations.calculate' for name, _ in durability.calls)
+
+
 async def test_shared_capability_dispatch_is_scoped_to_each_agent() -> None:
     capability = Operations()
     first_agent = Agent(TestModel(), name='first_agent', capabilities=[capability, RecordingDurability()])
