@@ -156,11 +156,14 @@ if the head changes, capture the new SHA and restart the loop.
    [`.github/workflows/pydantic-ai-pr-review.md`](../../../.github/workflows/pydantic-ai-pr-review.md)
    is the source of truth for eligibility and accepted verdicts or no-ops.
    - **Same-repository PR:** require the `CI Review` terminal outcome to identify the captured SHA.
-   - **Fork PR:** `CI Review` deliberately skips without leaving a head check. Apply the `douwebot`
-     label, then follow `.github/workflows/bots.yml`: do not push or touch review threads while the
-     label is present; require the triggered `douwebot` run to succeed; and verify that the PR head
-     still equals the captured SHA after the label is removed. A failure comment or guard refusal
-     leaves the gate unsatisfied.
+   - **Fork PR:** `CI Review` deliberately skips without leaving a head check. First apply the
+     agent-config guard from `.github/workflows/bots.yml` to the captured base-to-head diff. If the
+     PR changes `AGENTS.md`, `CLAUDE.md`, `CLAUDE.local.md`, `.mcp.json`, `.claude/`, `.agents/`, or
+     `agent_docs/`, do not apply `douwebot`: its security guard will refuse the review. Escalate for
+     explicit maintainer review; the gate remains unsatisfied until that lands. Otherwise apply the
+     `douwebot` label, do not push or touch review threads while it is present, require the triggered
+     run to succeed, and verify that the PR head still equals the captured SHA after the label is
+     removed. A failure comment leaves the gate unsatisfied.
    Recheck that the live head is unchanged. Do not substitute another named reviewer. Any valid
    finding and push restarts the lifecycle. A human request remains blocking until that human
    re-reviews or a maintainer dismisses it; do not dismiss a human request. Missing, stale, or failed

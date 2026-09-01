@@ -75,6 +75,7 @@ mkdir -p "$HAND_DIR"
 # Serialize the complete transition so concurrent first writers cannot split it.
 LOCK_DIR="$HAND_DIR/.append.lock"
 lock_acquired=false
+TMP_INDEX=''
 for ((attempt = 0; attempt < 200; attempt++)); do
     if mkdir "$LOCK_DIR" 2>/dev/null; then
         lock_acquired=true
@@ -86,10 +87,16 @@ if [ "$lock_acquired" != true ]; then
     echo "error: timed out waiting for branch-context handoff lock: $LOCK_DIR" >&2
     exit 1
 fi
-release_lock() {
+cleanup() {
+    if [ -n "$TMP_INDEX" ]; then
+        rm -f "$TMP_INDEX"
+    fi
     rmdir "$LOCK_DIR" 2>/dev/null || true
 }
-trap release_lock EXIT HUP INT TERM
+trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 if [ ! -f "$INDEX" ]; then
     if [ -f "$DIR/handoffs-index.template.md" ]; then
@@ -138,7 +145,11 @@ if [ -z "$LANE_LABEL" ]; then
     done
     echo "$LANE_ID $LANE_LABEL" >> "$LANES"
 fi
-validate_state_id 'lane label' "$LANE_LABEL"
+validate_index_text 'lane label' "$LANE_LABEL"
+if [[ "$LANE_LABEL" == *']'* || "$LANE_LABEL" == *' · '* ]]; then
+    echo "error: lane label must not contain ']' or the index field separator" >&2
+    exit 1
+fi
 
 # Same session already handed off → amend that entry instead of competing with it.
 if [ -n "$SESSION_ID" ] && [ -f "$LEDGER" ]; then
@@ -153,10 +164,11 @@ if [ -n "$SESSION_ID" ] && [ -f "$LEDGER" ]; then
             cp "$BODY_SRC" "$DEST"
         fi
         PRIOR_TS="$(printf '%s' "$PRIOR" | sed -E 's/^([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]+Z)-.*/\1/')"
-        TMP_INDEX="$(mktemp)"
-        awk -v f="handoffs/$PRIOR" -v line="## $PRIOR_TS · handoffs/$PRIOR · [$WRITER · lane:$LANE_LABEL] $SUMMARY" \
+        TMP_INDEX="$(mktemp "$DIR/.handoffs-index.tmp.XXXXXX")"
+        awk -v f="handoffs/$PRIOR" -v line="## $PRIOR_TS · handoffs/$PRIOR · [$WRITER · lane-id:$LANE_ID · lane:$LANE_LABEL] $SUMMARY" \
             'index($0, f) { print line; next } { print }' "$INDEX" > "$TMP_INDEX"
         mv "$TMP_INDEX" "$INDEX"
+        TMP_INDEX=''
         echo "Amended this session's existing handoff (one handoff per session) → $INDEX" >&2
         echo "Handoff file: $DEST" >&2
         echo "$DEST"
@@ -227,7 +239,7 @@ fi
 
 {
     echo ""
-    echo "## $TS · handoffs/$FNAME · [$WRITER · lane:$LANE_LABEL] $SUMMARY"
+    echo "## $TS · handoffs/$FNAME · [$WRITER · lane-id:$LANE_ID · lane:$LANE_LABEL] $SUMMARY"
 } >> "$INDEX"
 
 if [ -n "$SESSION_ID" ]; then

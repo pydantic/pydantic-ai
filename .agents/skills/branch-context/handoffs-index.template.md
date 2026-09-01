@@ -7,7 +7,7 @@ Several agents/managers share this file. Each entry belongs to the **lane** that
 ## Entry format
 
 ```
-## YYYY-MM-DDTHHMMZ · handoffs/<filename>.md · [<writer> · lane:<label>] <one-line summary>
+## YYYY-MM-DDTHHMMZ · handoffs/<filename>.md · [<writer> · lane-id:<id> · lane:<label>] <one-line summary>
 ```
 
 ---

@@ -81,7 +81,13 @@ Never overwrite another session's handoff. One handoff per session:
 
 Pass `--writer` when a skill owns the handoff (`--writer manager-handoff`); it tags the index line so a reader can see which writer produced it. Call it again in the same session and it **amends** your existing handoff — same file, same index line — rather than appending a rival entry the next agent would have to choose between.
 
-**Lanes.** Every entry is stamped `lane:<label>` from the host conversation/thread when available (`$CLAUDE_CODE_HOST_SESSION_ID` or `$CODEX_THREAD_ID`), then tmux, with `$HANDOFF_LANE` as the explicit override. Several managers share this worktree and this index; `latest-handoff.sh` enforces separation on read. Lane labels default to a short id and live in `handoffs/.lanes` (`<id> <label>`) — rename a lane there to something human (`Manager 2 - daily`) and every future entry uses it. Start the handoff body with your lane label and the board it covers, so a successor whose live board disagrees can catch the mismatch instead of acting on it.
+**Lanes.** Every entry stores an immutable `lane-id:<id>` from the host conversation/thread when
+available (`$CLAUDE_CODE_HOST_SESSION_ID` or `$CODEX_THREAD_ID`), then tmux, with `$HANDOFF_LANE` as
+the explicit override. It also carries `lane:<label>` for display. Several managers share this
+worktree and index; `latest-handoff.sh` matches only the exact lane ID. Labels default to a short id
+and live in `handoffs/.lanes` (`<id> <label>`) — rename one there to something human
+(`Manager 2 - daily`) without changing handoff ownership. Start the handoff body with the label and
+the board it covers, so a successor whose live board disagrees can catch the mismatch.
 
 If you omit the body path, the script opens a stub you (the agent) must fill via Write/Edit before stopping. Prefer writing the full body first, then calling the script with that path — or write the body to the path the script prints.
 

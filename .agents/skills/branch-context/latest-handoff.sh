@@ -16,7 +16,8 @@ set -e
 
 DIR=".claude/skills/branch-context"
 INDEX="$DIR/handoffs-index.md"
-LANES="$DIR/handoffs/.lanes"
+HAND_DIR="$DIR/handoffs"
+LANES="$HAND_DIR/.lanes"
 
 LANE_ID="${HANDOFF_LANE:-${CLAUDE_CODE_HOST_SESSION_ID:-${CODEX_THREAD_ID:-}}}"
 if [ -z "$LANE_ID" ] && [ -n "${TMUX:-}" ]; then
@@ -31,6 +32,30 @@ if [ -z "$LANE_ID" ]; then
     fi
     exit 0
 fi
+
+# Readers participate in the writer's lock, so the index, lane map, ledger, and
+# handoff file are observed before or after a complete transition, never midway.
+mkdir -p "$HAND_DIR"
+LOCK_DIR="$HAND_DIR/.append.lock"
+lock_acquired=false
+for ((attempt = 0; attempt < 200; attempt++)); do
+    if mkdir "$LOCK_DIR" 2>/dev/null; then
+        lock_acquired=true
+        break
+    fi
+    sleep 0.05
+done
+if [ "$lock_acquired" != true ]; then
+    echo "error: timed out waiting for branch-context handoff lock: $LOCK_DIR" >&2
+    exit 1
+fi
+release_lock() {
+    rmdir "$LOCK_DIR" 2>/dev/null || true
+}
+trap release_lock EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 LANE_LABEL=""
 if [ -f "$LANES" ]; then
@@ -55,9 +80,15 @@ if [ ! -f "$INDEX" ]; then
     exit 0
 fi
 
-LINE="$(awk -F ' · ' -v wanted="lane:$LANE_LABEL]" '
+legacy_label=''
+label_count="$(awk -v label="$LANE_LABEL" '$1 != "" { $1 = ""; sub(/^ /, ""); if ($0 == label) count++ } END { print count+0 }' "$LANES")"
+if [ "$label_count" -eq 1 ]; then
+    legacy_label="lane:$LANE_LABEL]"
+fi
+
+LINE="$(awk -F ' · ' -v wanted="lane-id:$LANE_ID" -v legacy="$legacy_label" '
     /^## / && $2 ~ /^handoffs\/[^ ]+\.md$/ && $3 ~ /^\[/ {
-        if (substr($4, 1, length(wanted)) == wanted) line = $0
+        if ($4 == wanted || (legacy != "" && substr($4, 1, length(legacy)) == legacy)) line = $0
     }
     END { print line }
 ' "$INDEX")"
