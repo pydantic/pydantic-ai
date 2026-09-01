@@ -143,6 +143,18 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         return any(c._has_wrap_node_run for c in self.capabilities)
 
     @property
+    def _has_on_node_run_error(self) -> bool:
+        return any(c._has_on_node_run_error for c in self.capabilities)
+
+    @property
+    def _has_wrap_model_request(self) -> bool:
+        return any(c._has_wrap_model_request for c in self.capabilities)
+
+    @property
+    def _has_on_model_request_error(self) -> bool:
+        return any(c._has_on_model_request_error for c in self.capabilities)
+
+    @property
     def has_wrap_run_event_stream(self) -> bool:
         return any(c.has_wrap_run_event_stream for c in self.capabilities)
 
@@ -470,7 +482,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
         chain = handler
         for capability in reversed(self.capabilities):
-            if _ctx_for_active_cap(capability, ctx) is not None:
+            if capability._has_wrap_node_run and _ctx_for_active_cap(capability, ctx) is not None:
                 chain = _make_node_run_wrap(capability, ctx, chain)
         return await chain(node)
 
@@ -482,6 +494,8 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         error: Exception,
     ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
         for capability in reversed(self.capabilities):
+            if not capability._has_on_node_run_error:
+                continue
             cap_ctx = _ctx_for_active_cap(capability, ctx)
             if cap_ctx is None:
                 continue
@@ -545,7 +559,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     ) -> ModelResponse:
         chain = handler
         for capability in reversed(self.capabilities):
-            if _ctx_for_active_cap(capability, ctx) is not None:
+            if capability._has_wrap_model_request and _ctx_for_active_cap(capability, ctx) is not None:
                 chain = _make_model_request_wrap(capability, ctx, chain)
         return await chain(request_context)
 
@@ -557,6 +571,8 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         error: Exception,
     ) -> ModelResponse:
         for capability in reversed(self.capabilities):
+            if not capability._has_on_model_request_error:
+                continue
             cap_ctx = _ctx_for_active_cap(capability, ctx)
             if cap_ctx is None:
                 continue
