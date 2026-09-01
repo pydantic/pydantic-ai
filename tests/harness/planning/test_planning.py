@@ -46,6 +46,7 @@ from pydantic_ai_harness.planning._toolset import (
     status_icon,
     validate_hierarchy,
 )
+from tests._recording_durability import RecordingDurability  # pyright: ignore[reportMissingTypeStubs]
 
 pytestmark = pytest.mark.anyio
 
@@ -62,6 +63,25 @@ def _ctx() -> RunContext[None]:
 def _toolset(*, subtasks: bool = False, store: InMemoryPlanStore | None = None) -> PlanningToolset[None]:
     cap = Planning[None](store=store or InMemoryPlanStore(), enable_subtasks=subtasks)
     return PlanningToolset[None](cap)
+
+
+async def test_plan_read_dispatches_as_durable_operation() -> None:
+    store = InMemoryPlanStore()
+    await store.set_items([PlanItem(id='1', content='journal the plan')])
+    durability = RecordingDurability()
+    planning = Planning(store=store)
+    assert planning.id == 'planning'
+    agent = Agent(
+        TestModel(),
+        name='planning',
+        capabilities=[planning, durability],
+    )
+
+    await agent.run('continue')
+
+    bound = RecordingDurability.from_agent(agent)
+    assert bound is not None
+    assert 'planning__capability__planning.read_plan' in {name for name, _ in bound.calls}
 
 
 # --- Types ------------------------------------------------------------------

@@ -110,7 +110,21 @@ async def every_tenth(ctx):
 SystemReminders(dynamic_reminders=[every_tenth])
 ```
 
-`LLMReminder` generates inside `wrap_model_request`, so under durable execution (Temporal, DBOS, Prefect) its model call runs in orchestration context rather than a durable step -- non-deterministic on replay and not checkpointed, with errors falling back silently to `GoalReanchor`. For durable runs prefer `GoalReanchor` (no model call) or gate `LLMReminder` off.
+Under a durability engine, a `LLMReminder` listed directly in `dynamic_reminders` is a journaled
+capability operation: replay restores the recorded reminder instead of repeating the model call,
+and a generation error is recorded as the `GoalReanchor` fallback rather than inheriting the
+engine's retry policy, so a best-effort reminder cannot stall the run. `SystemReminders` carries the
+stable default `id='system_reminders'`, so durable recovery works without configuration.
+
+Only a direct entry takes that route. Two shapes do not:
+
+- A wrapper like `every_tenth` above calls `LLMReminder` from orchestration context, where engines
+  that forbid I/O can fail the call outright.
+- An `LLMReminder` subclass that overrides `__call__` runs that override directly, so it cannot be
+  journaled either.
+
+Without a durability engine, generation runs directly in all three cases, with the same fallback to
+`GoalReanchor` on error.
 
 ## Configuration
 

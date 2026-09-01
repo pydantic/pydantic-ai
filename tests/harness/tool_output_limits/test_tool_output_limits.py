@@ -11,7 +11,7 @@ from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from pydantic_ai import Agent
+from pydantic_ai import Agent, FunctionToolset
 from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import (
     BinaryContent,
@@ -61,6 +61,7 @@ from pydantic_ai_harness.tool_output_limits._payload import (
     truncate_text,
 )
 from pydantic_ai_harness.tool_output_limits._store import _safe_segment
+from tests._recording_durability import RecordingDurability  # pyright: ignore[reportMissingTypeStubs]
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -629,6 +630,60 @@ class TestContentReduction:
 
 
 class TestSummarize:
+    async def test_mutating_source_bands_does_not_desync_summarizer_resolution(self):
+        bands = [Band(over=5, action=Summarize(model=_fixed_model('THE SUMMARY')))]
+        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=bands)
+        bands.clear()
+
+        out = await _run(cap, 'x' * 100)
+
+        assert out == 'THE SUMMARY'
+
+    async def test_model_summarizer_dispatches_as_durable_operation(self):
+        def large_output() -> str:
+            return 'x' * 100
+
+        durability = RecordingDurability()
+        cap: ToolOutputLimits[Any] = ToolOutputLimits(
+            bands=[Band(over=5, action=Summarize(model=_fixed_model('THE SUMMARY')))]
+        )
+        assert cap.id == 'tool_output_limits'
+
+        agent = Agent(
+            TestModel(call_tools='all'),
+            name='tool_output_limits',
+            capabilities=[cap, durability],
+            toolsets=[FunctionToolset(tools=[large_output], id='large-output')],
+        )
+        await agent.run('call the tool')
+
+        bound = RecordingDurability.from_agent(agent)
+        assert bound is not None
+        assert 'tool_output_limits__capability__tool_output_limits.summarize' in {name for name, _ in bound.calls}
+
+    async def test_custom_summarizer_bypasses_durable_operation(self):
+        def large_output() -> str:
+            return 'x' * 100
+
+        durability = RecordingDurability()
+        cap: ToolOutputLimits[Any] = ToolOutputLimits(
+            id='tool_output_limits', bands=[Band(over=5, action=Summarize(summarize=lambda _name, _text: 'summary'))]
+        )
+
+        agent = Agent(
+            TestModel(call_tools='all'),
+            name='custom_tool_output_limits',
+            capabilities=[cap, durability],
+            toolsets=[FunctionToolset(tools=[large_output], id='custom-large-output')],
+        )
+        await agent.run('call the tool')
+
+        bound = RecordingDurability.from_agent(agent)
+        assert bound is not None
+        assert 'custom_tool_output_limits__capability__tool_output_limits.summarize' not in {
+            name for name, _ in bound.calls
+        }
+
     async def test_custom_sync_summarizer(self):
         cap: ToolOutputLimits[object] = ToolOutputLimits(
             bands=[Band(over=5, action=Summarize(summarize=lambda name, text: f'{name}:{len(text)}'))]
@@ -677,6 +732,18 @@ class TestSummarize:
         assert out == 'FROM EXPLICIT MODEL'
         assert ctx.usage.requests == 1
 
+    async def test_explicit_model_name_overrides_ctx(self):
+        ctx = _make_ctx(model=_fixed_model('FROM CTX MODEL'))
+        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=5, action=Summarize(model='test:summary'))])
+        mock_result = AsyncMock(output='FROM NAMED MODEL')
+        mock_agent = AsyncMock()
+        mock_agent.run.return_value = mock_result
+
+        with patch('pydantic_ai.Agent', return_value=mock_agent) as agent_type:
+            assert await _run(cap, 'x' * 100, ctx=ctx) == 'FROM NAMED MODEL'
+
+        agent_type.assert_called_once_with('test:summary', instructions='You summarize oversized tool output.')
+
     async def test_realtime_run_without_a_model_raises(self):
         """A realtime run has no request-response model to summarize with; ask for one (#585)."""
 
@@ -712,6 +779,16 @@ class TestSummarize:
         )
         out = await _run(cap, 'a' * 100)
         assert isinstance(out, str) and 'truncated' in out
+
+    async def test_nested_per_tool_model_summarizer(self):
+        summarize = Summarize(model=_fixed_model('NESTED SUMMARY'))
+        cap: ToolOutputLimits[object] = ToolOutputLimits(
+            bands=[Band(over=5, action=Passthrough())],
+            per_tool={'big_tool': [Band(over=5, action=Spill(then=summarize))]},
+            store=_BrokenStore(),
+        )
+
+        assert await _run(cap, 'x' * 100) == 'NESTED SUMMARY'
 
 
 # ---------------------------------------------------------------------------

@@ -4,17 +4,18 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Callable
-from dataclasses import dataclass, field, replace
+from copy import copy
+from dataclasses import KW_ONLY, dataclass, field, replace
 from typing import Literal
 
 from pydantic_ai.agent.abstract import AgentInstructions
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelRequestPart, TextContent, UserPromptPart
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AgentToolset
 
-from pydantic_ai_harness.memory._store import InMemoryStore, MemoryStore, validate_store_path
+from pydantic_ai_harness.memory._store import InMemoryStore, MemoryFile, MemoryStore, validate_store_path
 from pydantic_ai_harness.memory._toolset import (
     MAIN_FILENAME,
     MemoryToolset,
@@ -46,12 +47,9 @@ class Memory(AbstractCapability[AgentDepsT]):
     """Persistent agent memory across sessions.
 
     `MEMORY.md` is injected as user-role context and longer topic files are
-    available through `read_memory` and `search_memory`. Store access performed
-    by automatic injection is not workflow-safe durable I/O. With Temporal or
-    Prefect, use `inject_memory=False`; the static, idempotent `memory` toolset
-    can then be wrapped by those integrations. DBOS does not currently wrap an
-    ordinary `FunctionToolset` as a durable step, so this capability's tools are
-    not DBOS-durable without an application-provided DBOS step wrapper.
+    available through `read_memory` and `search_memory`. Automatic snapshot
+    loading is journaled by durability engines that support capability
+    operations.
     """
 
     store: MemoryStore = field(default_factory=InMemoryStore)
@@ -101,6 +99,10 @@ class Memory(AbstractCapability[AgentDepsT]):
     injection_errors: Literal['ignore', 'raise'] = 'ignore'
     """Whether store failures during automatic injection are ignored or raised."""
 
+    # Override the inherited default ID because durable-operation recovery needs a stable identity.
+    _: KW_ONLY
+    id: str | None = 'memory'
+
     _resolved_scope: tuple[MemoryStore, str] | None = field(default=None, init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
@@ -115,7 +117,7 @@ class Memory(AbstractCapability[AgentDepsT]):
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> Memory[AgentDepsT]:
         """Return a clone with scope resolution isolated to this run."""
-        clone = replace(self)
+        clone = copy(self)
         clone._resolved_scope = None
         clone._resolved_scope = clone._resolve_scope(ctx)
         return clone
@@ -184,13 +186,7 @@ class Memory(AbstractCapability[AgentDepsT]):
                     }
                 )
             try:
-                main_path = f'{scope}/{MAIN_FILENAME}'
-                main = await store.read(main_path, max_chars=self.max_memory_size)
-                subfiles, files_truncated = await list_subfiles(
-                    store,
-                    scope,
-                    limit=injection_listing_limit(self.max_tokens),
-                )
+                main, subfiles, files_truncated, error_type = await self._load_snapshot(ctx)
             except Exception as exc:
                 if span.is_recording():
                     span.set_attributes(
@@ -201,6 +197,11 @@ class Memory(AbstractCapability[AgentDepsT]):
                     )
                 if self.injection_errors == 'raise':
                     raise
+                return request_context
+
+            if error_type is not None:
+                if span.is_recording():
+                    span.set_attributes({'memory.outcome': 'error', 'memory.exception_type': error_type})
                 return request_context
 
             main_content = '' if main is None else main.content
@@ -238,6 +239,26 @@ class Memory(AbstractCapability[AgentDepsT]):
                     }
                 )
         return request_context
+
+    @durable_operation('load_snapshot')
+    async def _load_snapshot(
+        self, ctx: RunContext[AgentDepsT]
+    ) -> tuple[MemoryFile | None, list[str], bool, str | None]:
+        store, scope = self.resolve_scope(ctx)
+        try:
+            main = await store.read(f'{scope}/{MAIN_FILENAME}', max_chars=self.max_memory_size)
+            subfiles, files_truncated = await list_subfiles(
+                store,
+                scope,
+                limit=injection_listing_limit(self.max_tokens),
+            )
+        except Exception as exc:
+            if self.injection_errors == 'raise':
+                raise
+            # Best-effort injection must not inherit an engine's retry policy and stall a
+            # workflow. Return content-safe failure metadata as the durable result instead.
+            return None, [], False, type(exc).__name__
+        return main, subfiles, files_truncated, None
 
     def _remove_previous_injection(self, messages: list[ModelMessage], marker: str) -> None:
         for index, message in enumerate(messages):

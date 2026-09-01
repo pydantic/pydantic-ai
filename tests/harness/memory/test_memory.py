@@ -46,6 +46,7 @@ from pydantic_ai_harness.memory import (
     MemoryToolset,
     SqliteMemoryStore,
 )
+from tests._recording_durability import RecordingDurability  # pyright: ignore[reportMissingTypeStubs]
 
 pytestmark = pytest.mark.anyio
 
@@ -128,6 +129,49 @@ async def _seed(store: MemoryStore, path: str, content: str) -> MemoryMutation:
         content,
         expected_version=None if current is None else current.version,
     )
+
+
+async def test_snapshot_load_dispatches_as_durable_operation() -> None:
+    store = InMemoryStore()
+    await _seed(store, 'main/MEMORY.md', '- durable fact')
+    durability = RecordingDurability()
+    memory = Memory(store=store)
+    assert memory.id == 'memory'
+    agent = Agent(TestModel(call_tools=[]), name='memory', capabilities=[memory, durability])
+
+    await agent.run('continue')
+
+    bound = RecordingDurability.from_agent(agent)
+    assert bound is not None
+    assert 'memory__capability__memory.load_snapshot' in {name for name, _ in bound.calls}
+
+
+def test_default_id_allows_disabled_injection_with_durability() -> None:
+    memory = Memory(inject_memory=False)
+    assert memory.id == 'memory'
+    Agent(TestModel(), name='memory', capabilities=[memory, RecordingDurability()])
+
+
+async def test_snapshot_dispatch_failure_is_ignored_and_recorded() -> None:
+    operation = 'memory__capability__memory.load_snapshot'
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    durability = RecordingDurability(fail_operations=frozenset({operation}))
+    agent = Agent(
+        TestModel(call_tools=[]),
+        name='memory',
+        capabilities=[Memory[object](id='memory'), durability],
+    )
+    agent.instrument = InstrumentationSettings(tracer_provider=provider, include_content=False)
+
+    result = await agent.run('continue')
+
+    assert not _memory_contexts(result.all_messages())
+    span = next(span for span in exporter.get_finished_spans() if span.name == 'memory.inject')
+    assert span.attributes is not None
+    assert span.attributes['memory.exception_type'] == 'RuntimeError'
+    assert operation in {name for name, _ in durability.calls}
 
 
 @dataclass
@@ -725,7 +769,9 @@ class TestInjection:
             FunctionModel(model),
             capabilities=[
                 Memory(store=store, agent_name='you', guidance='', heading='Your notes'),
-                Memory(store=store, agent_name='team', guidance='', heading='Team notes').prefix_tools('team'),
+                Memory(
+                    store=store, agent_name='team', guidance='', heading='Team notes', id='team_memory'
+                ).prefix_tools('team'),
             ],
         ).run('go')
         blocks = captured[0]
@@ -1128,7 +1174,7 @@ class TestInjection:
             FunctionModel(capture),
             capabilities=[
                 Memory(store=store),
-                Memory(store=store, agent_name='org').prefix_tools('org'),
+                Memory(store=store, agent_name='org', id='org_memory').prefix_tools('org'),
             ],
         )
         first = await agent.run('first')
@@ -1386,5 +1432,5 @@ class TestTelemetryAndComposition:
         Agent(
             TestModel(),
             name='memory-agent',
-            capabilities=[Memory[object](inject_memory=False), TemporalDurability()],
+            capabilities=[Memory[object](id='memory', inject_memory=False), TemporalDurability()],
         )

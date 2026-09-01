@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field, replace
+from copy import copy
+from dataclasses import KW_ONLY, dataclass, field, replace
 from typing import TYPE_CHECKING, Literal
 
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.messages import CachePoint, ModelRequest, ModelResponse, UserPromptPart
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AgentToolset
@@ -18,6 +19,7 @@ from pydantic_ai_harness.planning._toolset import (
     available_tool_names,
     render_plan,
 )
+from pydantic_ai_harness.planning._types import PlanItem
 
 if TYPE_CHECKING:
     from pydantic_ai._instructions import AgentInstructions
@@ -115,11 +117,15 @@ class Planning(AbstractCapability[AgentDepsT]):
     descriptions: dict[str, str] | None = None
     """Optional per-tool description overrides, keyed by tool name. Unknown names raise `ValueError`."""
 
+    # Override the inherited default ID because durable-operation recovery needs a stable identity.
+    _: KW_ONLY
+    id: str | None = 'planning'
+
     _resolved_store: PlanStore | None = field(default=None, init=False, repr=False, compare=False)
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> Planning[AgentDepsT]:
         """Return a clone with this run's store resolved and cached (per-run isolation)."""
-        clone = replace(self)
+        clone = copy(self)
         clone._resolved_store = clone._resolve_store(ctx)
         return clone
 
@@ -171,7 +177,7 @@ class Planning(AbstractCapability[AgentDepsT]):
         """Append the current plan as an ephemeral tail reminder with a cache breakpoint."""
         if not self.inject:
             return await handler(request_context)
-        items = await self.resolve_store(ctx).get_items()
+        items = await self._read_plan(ctx)
         if not items:
             return await handler(request_context)
         messages = request_context.messages
@@ -182,6 +188,10 @@ class Planning(AbstractCapability[AgentDepsT]):
             )
             messages[-1] = replace(last, parts=[*last.parts, reminder])
         return await handler(request_context)
+
+    @durable_operation('read_plan')
+    async def _read_plan(self, ctx: RunContext[AgentDepsT]) -> list[PlanItem]:
+        return await self.resolve_store(ctx).get_items()
 
     @classmethod
     def from_spec(
