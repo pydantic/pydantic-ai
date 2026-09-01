@@ -1154,7 +1154,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         return await self._make_request(ctx)
 
     @asynccontextmanager
-    async def stream(
+    async def stream(  # noqa: C901
         self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, T]],
     ) -> AsyncGenerator[result.AgentStream[DepsT, T]]:
@@ -1241,13 +1241,16 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         wrap_request_context.model_id = ctx.deps.model_id
         # Signal to hooks that the agent loop expects a real event stream.
         wrap_request_context.streaming = True
-        wrap_task = asyncio.create_task(
-            ctx.deps.root_capability.wrap_model_request(
+        root_capability = ctx.deps.root_capability
+        if root_capability._has_wrap_model_request:  # pyright: ignore[reportPrivateUsage]
+            wrap_awaitable = root_capability.wrap_model_request(
                 run_context,
                 request_context=wrap_request_context,
                 handler=_streaming_handler,
             )
-        )
+        else:
+            wrap_awaitable = _streaming_handler(wrap_request_context)
+        wrap_task = asyncio.create_task(wrap_awaitable)
 
         # Wait for handler to start or wrap to complete (short-circuit).
         # If outer cancellation arrives during this wait, drain both tasks before re-raising
@@ -1350,7 +1353,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                         except exceptions.ModelRetry:
                             raise  # Propagate to outer handler
                         except Exception as e:
-                            model_response = await ctx.deps.root_capability.on_model_request_error(
+                            if not root_capability._has_on_model_request_error:  # pyright: ignore[reportPrivateUsage]
+                                raise
+                            model_response = await root_capability.on_model_request_error(
                                 run_context, request_context=wrap_request_context, error=e
                             )
                     except exceptions.ModelRetry as e:
@@ -1437,19 +1442,25 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             model_request_parameters=model_request_parameters,
         )
         request_context.model_id = ctx.deps.model_id
+        root_capability = ctx.deps.root_capability
         try:
             try:
-                model_response = await ctx.deps.root_capability.wrap_model_request(
-                    run_context,
-                    request_context=request_context,
-                    handler=model_handler,
-                )
+                if root_capability._has_wrap_model_request:  # pyright: ignore[reportPrivateUsage]
+                    model_response = await root_capability.wrap_model_request(
+                        run_context,
+                        request_context=request_context,
+                        handler=model_handler,
+                    )
+                else:
+                    model_response = await model_handler(request_context)
             except exceptions.SkipModelRequest as e:
                 model_response = e.response
             except exceptions.ModelRetry:
                 raise  # Propagate to outer handler
             except Exception as e:
-                model_response = await ctx.deps.root_capability.on_model_request_error(
+                if not root_capability._has_on_model_request_error:  # pyright: ignore[reportPrivateUsage]
+                    raise
+                model_response = await root_capability.on_model_request_error(
                     run_context, request_context=request_context, error=e
                 )
         except exceptions.ModelRetry as e:
@@ -1802,9 +1813,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 return exc.response
             if isinstance(exc, exceptions.ModelRetry):
                 raise exc
-            return await ctx.deps.root_capability.on_model_request_error(
-                run_context, request_context=request_context, error=exc
-            )
+            root_capability = ctx.deps.root_capability
+            if not root_capability._has_on_model_request_error:  # pyright: ignore[reportPrivateUsage]
+                raise exc
+            return await root_capability.on_model_request_error(run_context, request_context=request_context, error=exc)
         return result_or_exc
 
     @staticmethod

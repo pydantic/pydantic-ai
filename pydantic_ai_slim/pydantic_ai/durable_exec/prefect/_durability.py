@@ -39,13 +39,14 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
     engine_spec = DurabilityEngineSpec(
         engine_name='Prefect',
         durable_unit_noun='task',
+        durable_unit_plural='tasks',
         durable_container_noun='flow',
         codec=IDENTITY_CODEC,  # object-passing: Prefect serializes/caches internally
         unsupported_runtime_toolset_kinds=frozenset({'function', 'mcp', 'dynamic'}),
         wrapped_toolset_kinds=frozenset({'function', 'mcp', 'dynamic'}),
         toolset_lifecycles={'function': 'enter-always', 'mcp': 'enter-always', 'dynamic': 'enter-never'},
         tool_call_result_upgrade_lenient=True,  # cached payloads may predate value-wrapping
-        journal_discovery=False,  # resolve MCP/dynamic toolsets in flow code, journal only calls
+        journal_discovery=True,
         sequential_tools_in_durable_context=False,
         tool_config_key='prefect',
     )
