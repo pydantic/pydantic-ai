@@ -207,7 +207,7 @@ and line-window reads. Filesystem operations use the backend's
 
 Implement `SupportsStart` when the backend can return a real process handle.
 
-Three protocol contracts matter to callers:
+The protocol contracts that matter to callers:
 
 - Optional operations raise `NotImplementedError`; use the documented fallback.
 - `timeout=` guarantees the command is terminated before
@@ -215,7 +215,13 @@ Three protocol contracts matter to callers:
   `stderr` attributes contain output produced before termination when the backend can recover it.
 - Backends raise [`SandboxUnavailableError`][pydantic_ai.sandboxes.SandboxUnavailableError] when
   the environment is permanently unusable and consumers should stop retrying it.
+- A filesystem reports a missing path with the builtin `FileNotFoundError`, and its `stat()` and
+  `list_dir()` entries can reuse the concrete [`FileEntry`][pydantic_ai.sandboxes.FileEntry]
+  carrier instead of declaring their own.
 - A non-zero `exit_code` is a normal result, not an exception.
+
+These translations are a backend's whole error-handling duty; wrapping other SDK failures in
+provider-specific exceptions is optional polish.
 
 [`SandboxBackend.run()`][pydantic_ai.sandboxes.SandboxBackend.run] returns complete captured
 output. Truncating its result in a tool bounds model context, but does not bound the backend's
