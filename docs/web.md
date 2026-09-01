@@ -102,9 +102,11 @@ When serving `agent.to_web()` standalone (e.g. with `uvicorn`), the application 
 
 If you mount `agent.to_web()` as a sub-application inside another ASGI app (like FastAPI or a parent Starlette application), ASGI servers only dispatch lifespan events to the root application. You can manage the toolset connections across the parent application's lifetime by entering them in the parent's lifespan:
 
-```python {test="skip"}
+```python {test="skip" lint="skip"}
 from contextlib import AsyncExitStack, asynccontextmanager
+
 from fastapi import FastAPI
+
 from pydantic_ai import Agent
 from pydantic_ai.mcp import load_mcp_toolsets
 
