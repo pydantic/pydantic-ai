@@ -64,13 +64,22 @@ def content_blocks(body: dict[str, JsonValue], block_type: str) -> list[dict[str
     for message in messages:
         assert isinstance(message, dict)
         content = message.get('content')
-        if not isinstance(content, list):
+        if isinstance(content, str):
             continue
-        for block in content:
-            assert isinstance(block, dict)
+        for block in json_objects(content):
             if block.get('type') == block_type:
                 blocks.append(block)
     return blocks
+
+
+def json_objects(value: JsonValue) -> list[dict[str, JsonValue]]:
+    """Narrow a JSON array to objects, failing if the wire shape differs."""
+    assert isinstance(value, list)
+    objects: list[dict[str, JsonValue]] = []
+    for item in value:
+        assert isinstance(item, dict)
+        objects.append(item)
+    return objects
 
 
 def message_shape(body: dict[str, JsonValue]) -> list[tuple[str, list[str]]]:
@@ -88,13 +97,12 @@ def message_shape(body: dict[str, JsonValue]) -> list[tuple[str, list[str]]]:
         role = message.get('role')
         assert isinstance(role, str)
         content = message.get('content')
-        if not isinstance(content, list):
+        if isinstance(content, str):
             shape.append((role, ['<str>']))
             continue
 
         block_types: list[str] = []
-        for block in content:
-            assert isinstance(block, dict)
+        for block in json_objects(content):
             block_type = block.get('type')
             assert isinstance(block_type, str)
             block_types.append(block_type)
@@ -114,10 +122,9 @@ def cache_breakpoints(body: dict[str, JsonValue]) -> tuple[dict[str, JsonValue] 
     blocks: list[str] = []
     for section in ('system', 'tools'):
         section_blocks = body.get(section)
-        if not isinstance(section_blocks, list):
+        if section_blocks is None:
             continue
-        for index, block in enumerate(section_blocks):
-            assert isinstance(block, dict)
+        for index, block in enumerate(json_objects(section_blocks)):
             if block.get('cache_control'):
                 blocks.append(f'{section}[{index}]')
 
@@ -126,10 +133,9 @@ def cache_breakpoints(body: dict[str, JsonValue]) -> tuple[dict[str, JsonValue] 
     for message_index, message in enumerate(messages):
         assert isinstance(message, dict)
         content = message.get('content')
-        if not isinstance(content, list):
+        if isinstance(content, str):
             continue
-        for block_index, block in enumerate(content):
-            assert isinstance(block, dict)
+        for block_index, block in enumerate(json_objects(content)):
             if block.get('cache_control'):
                 blocks.append(f'messages[{message_index}].content[{block_index}]')
     return cache_control, blocks
