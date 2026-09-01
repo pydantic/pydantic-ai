@@ -166,6 +166,7 @@ __all__ = (
     'ToolsPrepareFunc',
     'ToolDenied',
     'RealtimeEvent',
+    'find_capability',
 )
 
 
@@ -3296,11 +3297,22 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # will actually win: an explicit `Instrumentation` capability's (agent- or call-level) over the
         # `instrument=`-derived ones, matching the precedence `_resolve_run_capabilities` applies to the
         # tool spans.
-        # Search the run-level layer first, and its last entry first, because a run-level
-        # `Instrumentation` supersedes an agent-level one (see `combine_duplicate_capabilities`). Taking the
-        # first match over `[agent, *extras]` would pick the instance the run is about to drop.
-        explicit_instrumentation = find_capability(
-            [*reversed(extra_capabilities), self._effective_root_capability()], InstrumentationCap
+        # Search in application order and keep the *last* match, because that is the one
+        # `combine_duplicate_capabilities` keeps: an `Instrumentation` supplied for the run supersedes
+        # an agent-level one, and so does a second one inside the agent's own tree. Taking the first
+        # match would pick an instance the run is about to merge away, so a session could export
+        # prompts and responses under settings the effective configuration had already turned off.
+        instrumentation_layers = [self._effective_root_capability(), *extra_capabilities]
+        explicit_instrumentations = [
+            leaf
+            for layer in instrumentation_layers
+            for leaf in leaf_capabilities(layer)
+            if isinstance(leaf, InstrumentationCap)
+        ]
+        explicit_instrumentation = (
+            cast(InstrumentationCap, InstrumentationCap.combine(explicit_instrumentations))
+            if len(explicit_instrumentations) > 1
+            else next(iter(explicit_instrumentations), None)
         )
         session_instrumentation_settings = (
             explicit_instrumentation.settings if explicit_instrumentation is not None else instrumentation_settings
