@@ -35,6 +35,7 @@ from pydantic_ai import (
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     FunctionToolset,
+    InstructionPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -161,6 +162,7 @@ except ImportError:  # pragma: lax no cover
 from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsSameStr, IsStr
 from ..continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
+from ..model_lifecycle_utils import LifecycleTrackingModel
 
 
 def test_durability_codecs() -> None:
@@ -190,10 +192,12 @@ def test_durability_engine_spec_rejects_empty_nouns() -> None:
         UserError,
         match=(
             r'Invalid Test durability engine spec: `durable_unit_noun` must not be empty; '
-            r'`durable_container_noun` must not be empty\.'
+            r'`durable_unit_plural` must not be empty; `durable_container_noun` must not be empty\.'
         ),
     ):
-        DurabilityEngineSpec(engine_name='Test', durable_unit_noun='', durable_container_noun='')
+        DurabilityEngineSpec(
+            engine_name='Test', durable_unit_noun='', durable_unit_plural='', durable_container_noun=''
+        )
 
 
 def test_durability_bound_agent_and_default_model_id_accessors() -> None:
@@ -2990,21 +2994,60 @@ async def test_prefect_durability_rejects_runtime_toolset_in_iter() -> None:
         await run_agent()
 
 
-async def test_prefect_durability_rejects_per_run_capability_toolset() -> None:
-    """A toolset contributed by a per-run capability is rejected like `run(toolsets=...)`.
+@pytest.mark.parametrize('blockbuster_enabled', [False])
+async def test_prefect_durability_allows_hook_only_per_run_capabilities(blockbuster_enabled: bool) -> None:
+    """Prefect creates a task per call, so a per-run capability needs no pre-registration.
 
-    Construction-time capability toolsets are wrapped by `for_agent` (see the
-    capability-contributed test above); a per-run capability's toolset arrives after that
-    wrapping has happened, so its tools would run un-tasked inside the flow.
+    Unlike Temporal and DBOS, whose backends register their durable units while binding, Prefect's
+    `CallableOperationBackend` builds the task inside `execute()`. There is no registration boundary
+    for a per-run capability to fall outside of, so hook-only capabilities are accepted here. One
+    that contributes an *executing* toolset is still rejected, by the toolset guard below.
     """
-    agent = Agent(TestModel(), name='durability_reject_per_run_cap', capabilities=[PrefectDurability()])
+    assert blockbuster_enabled is False
+    events: list[str] = []
+
+    class RecordingCapability(AbstractCapability[object]):
+        # `AbstractCapability`, not `Capability`: the latter always contributes a `FunctionToolset`
+        # (empty or not), which the runtime-toolset guard rejects on its own.
+        async def before_run(self, ctx: RunContext[object]) -> None:
+            events.append('before_run')
+
+    agent = Agent(TestModel(), name='durability_per_run_hook_cap', capabilities=[PrefectDurability()])
 
     @flow
-    async def run_agent() -> None:
+    async def run_with_hook_capability() -> str:
+        return (await agent.run('Hello', capabilities=[RecordingCapability()])).output
+
+    @flow
+    async def run_with_instrumentation() -> str:
+        return (await agent.run('Hello', capabilities=[Instrumentation(InstrumentationSettings())])).output
+
+    assert await run_with_hook_capability() == snapshot('success (no tool calls)')
+    assert events == ['before_run']
+    assert await run_with_instrumentation() == snapshot('success (no tool calls)')
+
+
+async def test_prefect_durability_rejects_executing_toolset_from_per_run_capability() -> None:
+    """A per-run capability contributing an executing toolset is still rejected on Prefect.
+
+    The capability itself is fine (see above), but the toolset it contributes arrives after
+    `for_agent` wrapped the agent's toolsets, so `_reject_runtime_toolsets` catches the leaf.
+    """
+    agent = Agent(TestModel(), name='durability_per_run_cap_toolset', capabilities=[PrefectDurability()])
+
+    @flow
+    async def run_with_toolset_capability() -> None:
         await agent.run('Hello', capabilities=[Toolset(FunctionToolset(id='per_run_fn'))])
 
-    with pytest.raises(UserError, match=r'FunctionToolset .*cannot be passed to '):
-        await run_agent()
+    with pytest.raises(UserError, match=r'FunctionToolset .*cannot be passed'):
+        await run_with_toolset_capability()
+
+
+async def test_prefect_durability_allows_per_run_capabilities_outside_flow() -> None:
+    """Outside a flow the capability is transparent, so per-run capabilities are fine."""
+    agent = Agent(TestModel(), name='durability_per_run_cap_outside_flow', capabilities=[PrefectDurability()])
+    result = await agent.run('Hello', capabilities=[Toolset(FunctionToolset(id='per_run_fn'))])
+    assert result.output == snapshot('success (no tool calls)')
 
 
 def test_prefect_durability_rejects_duplicate_toolset_id() -> None:
@@ -3113,6 +3156,115 @@ async def test_prefect_durability_task_name_assembly_sequence() -> None:
         'Call Tool: function_tool',
         'Model Request: test',
     ]
+
+
+@pytest.mark.parametrize('blockbuster_enabled', [False])
+async def test_prefect_durability_journals_mcp_discovery(blockbuster_enabled: bool) -> None:
+    assert blockbuster_enabled is False
+    task_names: list[str] = []
+
+    class RecordingMCPToolset(MCPToolset[object]):
+        async def get_tools(self, ctx: RunContext[object]) -> dict[str, ToolsetTool[object]]:
+            task_run_context = TaskRunContext.get()
+            assert task_run_context is not None
+            task_names.append(task_run_context.task.name)
+            tool_def = ToolDefinition(name='recorded')
+            return {'recorded': self.tool_for_tool_def(tool_def, ctx=ctx)}
+
+        async def get_instructions(self, ctx: RunContext[object]) -> InstructionPart:
+            task_run_context = TaskRunContext.get()
+            assert task_run_context is not None
+            task_names.append(task_run_context.task.name)
+            return InstructionPart(content='Server instructions', dynamic=False)
+
+    toolset = RecordingMCPToolset(
+        StdioTransport(command='python', args=['-m', 'tests.mcp_server']),
+        id='recording_mcp',
+        include_instructions=True,
+    )
+    agent = Agent(TestModel(), name='mcp_discovery', toolsets=[toolset], capabilities=[PrefectDurability()])
+    durability = PrefectDurability.from_agent(agent)
+    assert durability is not None
+    wrapped = durability._toolsets_by_id['recording_mcp']  # pyright: ignore[reportPrivateUsage]
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+
+    @flow
+    async def discover() -> tuple[list[str], InstructionPart | None]:
+        tools = list(await wrapped.get_tools(ctx))
+        instructions = await wrapped.get_instructions(ctx)
+        assert isinstance(instructions, InstructionPart)
+        return tools, instructions
+
+    assert await discover() == (['recorded'], InstructionPart(content='Server instructions', dynamic=False))
+    assert task_names == ['Get MCP Tools: recording_mcp', 'Get MCP Instructions: recording_mcp']
+    assert ctx._mcp_tool_defs_cache == {  # pyright: ignore[reportPrivateUsage]
+        'recording_mcp': {'recorded': ToolDefinition(name='recorded')}
+    }
+
+
+@pytest.mark.parametrize('blockbuster_enabled', [False])
+async def test_prefect_durability_journals_dynamic_discovery(blockbuster_enabled: bool) -> None:
+    assert blockbuster_enabled is False
+    task_names: list[str] = []
+
+    def resolve(ctx: RunContext[object]) -> FunctionToolset[object]:
+        task_run_context = TaskRunContext.get()
+        assert task_run_context is not None
+        task_names.append(task_run_context.task.name)
+        return FunctionToolset(id='resolved')
+
+    agent = Agent(
+        TestModel(),
+        name='dynamic_discovery',
+        toolsets=[DynamicToolset(resolve, id='recording_dynamic')],
+        capabilities=[PrefectDurability()],
+    )
+    durability = PrefectDurability.from_agent(agent)
+    assert durability is not None
+    wrapped = durability._toolsets_by_id['recording_dynamic']  # pyright: ignore[reportPrivateUsage]
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+
+    @flow
+    async def discover() -> dict[str, ToolsetTool[object]]:
+        return await wrapped.get_tools(ctx)
+
+    assert await discover() == {}
+    assert task_names == ['Discover Tools: recording_dynamic']
+
+
+@pytest.mark.parametrize('blockbuster_enabled', [False])
+async def test_flow_retry_replays_dynamic_toolset_discovery(blockbuster_enabled: bool) -> None:
+    assert blockbuster_enabled is False
+    discovery_runs = 0
+
+    def resolve(ctx: RunContext[object]) -> FunctionToolset[object]:
+        nonlocal discovery_runs
+        discovery_runs += 1
+        return FunctionToolset(id='resolved')
+
+    agent = Agent(
+        TestModel(),
+        name='retry_discovery',
+        toolsets=[DynamicToolset(resolve, id='retry_discovery')],
+        capabilities=[PrefectDurability()],
+    )
+    durability = PrefectDurability.from_agent(agent)
+    assert durability is not None
+    wrapped = durability._toolsets_by_id['retry_discovery']  # pyright: ignore[reportPrivateUsage]
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+    attempts = 0
+
+    @flow(retries=1)
+    async def flaky() -> None:
+        nonlocal attempts
+        attempts += 1
+        await wrapped.get_tools(ctx)
+        if attempts == 1:
+            raise RuntimeError('boom')
+
+    await flaky()
+    assert attempts == 2
+    assert discovery_runs == 1
 
 
 def test_prefect_durability_dynamic_capability_requires_id() -> None:
@@ -3365,6 +3517,39 @@ async def test_prefect_durability_resolve_model_id_capability_is_deps_aware() ->
         return first.output, second.output, fallback.output
 
     assert await run_agent() == ('tenant:acme', 'tenant:globex', 'success (no tool calls)')
+
+
+@pytest.mark.parametrize('blockbuster_enabled', [False])
+async def test_prefect_durability_manages_resolver_built_model_lifecycle(blockbuster_enabled: bool) -> None:
+    assert blockbuster_enabled is False
+    events: list[str] = []
+
+    class TrackingModel(LifecycleTrackingModel):
+        @asynccontextmanager
+        async def request_stream(self, *args: Any, **kwargs: Any) -> AsyncGenerator[Any]:
+            events.append('stream')
+            async with super().request_stream(*args, **kwargs) as stream:
+                yield stream
+            events.append('stream_consumed')
+
+    agent = Agent(
+        'rebuilt',
+        name='durability_resolved_model_lifecycle',
+        capabilities=[
+            ResolveModelId(lambda ctx, model_id: TrackingModel(events, include_exit_exception=False)),
+            PrefectDurability(),
+        ],
+    )
+
+    @flow
+    async def run_agent() -> tuple[str, str]:
+        ordinary = (await agent.run('ordinary')).output
+        async with agent.run_stream('streamed') as result:
+            streamed = await result.get_output()
+        return ordinary, streamed
+
+    assert await run_agent() == ('ok', 'ok')
+    assert events == ['enter', 'request', 'exit', 'enter', 'stream', 'stream_consumed', 'exit']
 
 
 async def test_prefect_durability_alias_default_model() -> None:

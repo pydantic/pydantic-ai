@@ -2234,6 +2234,74 @@ class TestModelRequestErrorHooks:
             async with agent.run_stream('hello') as stream:
                 await stream.get_output()
 
+    async def test_on_model_request_error_recovers_post_stream_wrap_error(self):
+        @dataclass
+        class RecoverPostStreamErrorCap(AbstractCapability[Any]):
+            errors: list[Exception] = field(default_factory=lambda: [])
+
+            async def wrap_model_request(
+                self,
+                ctx: RunContext[Any],
+                *,
+                request_context: ModelRequestContext,
+                handler: Any,
+            ) -> ModelResponse:
+                await handler(request_context)
+                raise RuntimeError('post-stream error')
+
+            async def on_model_request_error(
+                self, ctx: RunContext[Any], *, request_context: ModelRequestContext, error: Exception
+            ) -> ModelResponse:
+                self.errors.append(error)
+                return ModelResponse(parts=[TextPart(content='recovered after stream')])
+
+        cap = RecoverPostStreamErrorCap()
+        agent = Agent(
+            FunctionModel(simple_model_function, stream_function=simple_stream_function),
+            capabilities=[cap],
+        )
+
+        async def handler(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+            async for _ in stream:
+                pass
+
+        output = (await agent.run('hello', event_stream_handler=handler)).output
+
+        assert output == 'recovered after stream'
+        assert [str(error) for error in cap.errors] == ['post-stream error']
+
+    async def test_on_model_request_error_recovers_streaming_wrap_short_circuit_error(self):
+        @dataclass
+        class RecoverShortCircuitErrorCap(AbstractCapability[Any]):
+            errors: list[Exception] = field(default_factory=lambda: [])
+
+            async def wrap_model_request(
+                self,
+                ctx: RunContext[Any],
+                *,
+                request_context: ModelRequestContext,
+                handler: Any,
+            ) -> ModelResponse:
+                raise RuntimeError('short-circuit error')
+
+            async def on_model_request_error(
+                self, ctx: RunContext[Any], *, request_context: ModelRequestContext, error: Exception
+            ) -> ModelResponse:
+                self.errors.append(error)
+                return ModelResponse(parts=[TextPart(content='recovered short circuit')])
+
+        cap = RecoverShortCircuitErrorCap()
+        agent = Agent(
+            FunctionModel(simple_model_function, stream_function=simple_stream_function),
+            capabilities=[cap],
+        )
+
+        async with agent.run_stream('hello') as stream:
+            output = await stream.get_output()
+
+        assert output == 'recovered short circuit'
+        assert [str(error) for error in cap.errors] == ['short-circuit error']
+
 
 # --- Tool validate error hook tests ---
 
