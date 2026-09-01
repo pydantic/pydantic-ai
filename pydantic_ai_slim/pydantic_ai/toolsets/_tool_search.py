@@ -269,7 +269,15 @@ class _SearchTool(ToolsetTool[AgentDepsT]):
     """
 
     corpus: list[ToolDefinition]
-    revealed_tool_names: set[str]
+
+    discovered_tool_names: set[str]
+    """Snapshot of `RunContext.discovered_tool_names` taken when the search tool was built.
+
+    Discovered, not revealed: it is raw history evidence, and no per-request wire state is
+    consulted. Inside the corpus the two coincide anyway — capability-gated tools are excluded
+    from it, so a corpus tool named by history is also available — but the search only needs the
+    weaker fact, that the model has seen this tool before, to sort it behind fresh matches.
+    """
 
 
 @dataclass
@@ -418,7 +426,7 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
             max_retries=self.max_retries if self.max_retries is not None else ctx.max_retries,
             args_validator=args_validator,
             corpus=corpus,
-            revealed_tool_names=set(ctx.discovered_tool_names),
+            discovered_tool_names=set(ctx.discovered_tool_names),
         )
 
     async def call_tool(
@@ -469,13 +477,13 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
             if score == 0:
                 continue
             scored_matches.append(
-                (tool_def.name not in search_tool.revealed_tool_names, score, {'name': tool_def.name})
+                (tool_def.name not in search_tool.discovered_tool_names, score, {'name': tool_def.name})
             )
 
         if not scored_matches:
             return self._empty_return()
 
-        # Undiscovered-first is the PRIMARY key, relevance the tiebreak: an already-available
+        # Undiscovered-first is the PRIMARY key, relevance the tiebreak: an already-discovered
         # tool must never displace an undiscovered match when `max_results` trims — it only
         # fills whatever slots are left over.
         scored_matches.sort(key=lambda item: (item[0], item[1]), reverse=True)

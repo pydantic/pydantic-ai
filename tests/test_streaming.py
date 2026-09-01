@@ -951,6 +951,9 @@ def test_sync_stream_bridge_init_propagates_base_exception(error_type: type[Base
     try:
         with pytest.raises(error_type) as exc_info:
             SyncStreamBridge(FailingContextManager(), async_alternative='`async_method`')
+        # The watchdog only guards against a hung constructor; cancel it before the liveness
+        # check so a slow worker can't have it fire mid-`run_until_complete`.
+        stop_handle.cancel()
         assert exc_info.value is error
         assert not forced_stop
         assert loop.run_until_complete(asyncio.sleep(0)) is None

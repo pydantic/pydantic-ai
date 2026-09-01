@@ -898,7 +898,9 @@ class BedrockConverseModel(Model[BaseClient]):
         u = _map_usage(response['usage'], self._provider.name, self.base_url, self.model_name)
         response_id = response.get('ResponseMetadata', {}).get('RequestId', None)
         raw_finish_reason = response['stopReason']
-        provider_details = {'finish_reason': raw_finish_reason}
+        provider_details: dict[str, Any] = {'finish_reason': raw_finish_reason}
+        if 'trace' in response:
+            provider_details['trace'] = response['trace']
         finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
 
         return ModelResponse(
@@ -1735,13 +1737,17 @@ class BedrockStreamedResponse(StreamedResponse):
                         continue
                     case {'messageStop': message_stop}:
                         raw_finish_reason = message_stop['stopReason']
-                        self.provider_details = {'finish_reason': raw_finish_reason}
+                        self.provider_details = {**(self.provider_details or {}), 'finish_reason': raw_finish_reason}
                         self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
                     case {'metadata': metadata}:
                         if 'usage' in metadata:  # pragma: no branch
                             self._usage += _map_usage(
                                 metadata['usage'], self._provider_name, self._provider_url, self._model_name
                             )
+                        if 'trace' in metadata:
+                            # `messageStop` usually precedes `metadata`, but AWS documents no strict event
+                            # ordering, so merge rather than overwrite the finish reason.
+                            self.provider_details = {**(self.provider_details or {}), 'trace': metadata['trace']}
                     case {'contentBlockStart': content_block_start}:
                         index = content_block_start['contentBlockIndex']
                         start = content_block_start['start']

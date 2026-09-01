@@ -1,6 +1,6 @@
 <!-- Thank you for contributing to Pydantic AI! -->
 
-<!-- Please read the contributing guide: https://ai.pydantic.dev/contributing/ -->
+<!-- Please read the contributing guide: https://pydantic.dev/docs/ai/project/contributing/ -->
 
 <!-- For non-trivial changes, link an issue that a maintainer has agreed on -->
 <!-- and assigned to you. Unassigned PRs may be auto-closed. -->
@@ -16,7 +16,7 @@
 <!-- > **Migration:** ... -->
 
 <!-- Adding a capability? Most capabilities belong in Pydantic AI Harness, not here. -->
-<!-- See: https://pydantic.dev/docs/ai/harness/#what-goes-where -->
+<!-- See: https://pydantic.dev/docs/ai/harness/#when-do-you-need-the-harness -->
 
 - Closes #<issue>
 

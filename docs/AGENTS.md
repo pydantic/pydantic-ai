@@ -6,6 +6,7 @@
 
 <!-- rule:232 -->
 - Link all concepts, features, and API elements to their docs/reference pages using anchor fragments (`#section-name`) for specific sections — Improves discoverability and reduces user friction by providing direct navigation to relevant documentation context
+- Pin an explicit `{#custom-id}` on a heading as soon as anything links to it and its generated id would surprise the person writing that link — unpinned, `github-slugger` drops punctuation and turns every space into its own dash, so `## Tools & native abilities` would generate `#tools--native-abilities` (doubled, the `&` vanishing between two spaces) and `## SIP/telephony bridge` generates `#siptelephony-bridge` (glued, the `/` vanishing inside a word); a literal `-` is kept rather than dropped and compounds it, so `## Agentic Chat - Code` would generate `#agentic-chat---code` — An explicit id is stable across slugifier changes and reads better than the generated one, but it also *replaces* the generated id, so pin before a link exists rather than after: `SIP/telephony bridge` is left unpinned precisely because nothing links to it yet. `.github/workflows/ci.yml` fails the build on an unresolvable anchor in `docs/`, `examples/`, or a root `*.md`, though not on one inside a docstring
 <!-- rule:66 -->
 - Use reference-style links for API elements: `[ElementName][module.path.ElementName]` — enables hover docs and navigation on the published documentation site — Provides interactive documentation features like tooltips and jump-to-definition that plain backticks cannot support
 <!-- rule:714 -->
@@ -66,7 +67,7 @@ Use "shape" only for concrete structure or wire representation. Otherwise name t
 
 The docs index and the repository README are one story on two surfaces. Whenever one changes, mirror the other in the same PR (enforced by `tests/test_docs_parity.py`):
 
-- `docs/index.md` uses relative links, tabs (`=== "..."`), numbered annotations (`(1)!`), and MkDocs-only markup. `README.md` uses absolute links (`https://ai.pydantic.dev/...` for core, `https://pydantic.dev/docs/ai/harness/...` for Harness), `###` sections instead of tabs, and plain one-line `#` comments instead of annotations (GitHub renders annotation markers literally).
+- `docs/index.md` uses relative links, tabs (`=== "..."`), numbered annotations (`(1)!`), and MkDocs-only markup. `README.md` uses absolute links (`https://pydantic.dev/docs/ai/...`), `###` sections instead of tabs, and plain one-line `#` comments instead of annotations (GitHub renders annotation markers literally).
 - The mirrored code examples (coding agent, data extraction, realtime voice, image generation, embeddings, `bank_support.py`) must stay code-identical across both surfaces; only comments/annotations and fence attributes may differ.
 - `README.md` is included in `tests/test_examples.py`'s `find_examples`, so its snippets are tested and linted. Snippets that cannot run here (`pydantic_ai_harness` imports, interactive realtime sessions) are excluded by content match in `find_filter_examples`, not by fence attributes, so README fences stay bare for GitHub rendering.
 - Wording that appears on both surfaces (paragraph one, the whatever-you-came-to-build line, the Why bullets, section intros) must match word for word modulo link form.

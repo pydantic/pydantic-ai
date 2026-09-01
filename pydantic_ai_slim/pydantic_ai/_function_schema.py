@@ -9,7 +9,7 @@ import warnings
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from functools import partial
-from inspect import Parameter, signature
+from inspect import Parameter, Signature, signature
 from typing import TYPE_CHECKING, Any, Concatenate, Literal, cast, get_args, get_origin
 
 from pydantic import ConfigDict, TypeAdapter, ValidationError
@@ -160,7 +160,7 @@ def function_schema(  # noqa: C901
 
     for index, (name, p) in enumerate(sig.parameters.items()):
         if index == 0 and takes_ctx is None:
-            takes_ctx = p.annotation is not sig.empty and _is_call_ctx(type_hints[name])
+            takes_ctx = p.annotation is not sig.empty and is_call_ctx(type_hints[name])
 
         if p.annotation is sig.empty:
             if takes_ctx and index == 0:
@@ -172,13 +172,13 @@ def function_schema(  # noqa: C901
             annotation = type_hints[name]
 
             if index == 0 and takes_ctx:
-                if not _is_call_ctx(annotation):
+                if not is_call_ctx(annotation):
                     errors.append('First parameter of tools that take context must be annotated with RunContext[...]')
                 continue
-            elif not takes_ctx and _is_call_ctx(annotation):
+            elif not takes_ctx and is_call_ctx(annotation):
                 errors.append('RunContext annotations can only be used with tools that take context')
                 continue
-            elif index != 0 and _is_call_ctx(annotation):
+            elif index != 0 and is_call_ctx(annotation):
                 errors.append('RunContext annotations can only be used as the first argument')
                 continue
 
@@ -266,7 +266,7 @@ def function_schema(  # noqa: C901
 
     # Compute return schema eagerly (before Temporal sandbox where TypeAdapter is too slow)
     return_annotation = type_hints.get('return')
-    return_schema_type = _extract_return_schema_type(return_annotation, function)
+    return_schema_type = extract_return_schema_type(return_annotation, function)
     try:
         return_schema: ObjectJsonSchema = TypeAdapter(return_schema_type).json_schema(
             schema_generator=schema_generator, mode='serialization'
@@ -304,7 +304,7 @@ WithoutCtx = Callable[P, R]
 TargetCallable = WithCtx[P, R] | WithoutCtx[P, R]
 
 
-def _takes_ctx(callable_obj: TargetCallable[P, R]) -> TypeIs[WithCtx[P, R]]:  # pyright: ignore[reportUnusedFunction]
+def takes_ctx(callable_obj: TargetCallable[P, R]) -> TypeIs[WithCtx[P, R]]:
     """Check if a callable takes a `RunContext` first argument.
 
     Args:
@@ -395,7 +395,7 @@ def _validate_single_arg(
         return {name: handler(value[name])}
 
 
-def _extract_return_schema_type(return_annotation: Any, function: Callable[..., Any]) -> Any:
+def extract_return_schema_type(return_annotation: Any, function: Callable[..., Any]) -> Any:
     """Extract the type to generate a return schema for.
 
     Always returns a type — every function has a return schema:
@@ -432,6 +432,43 @@ def _extract_return_schema_type(return_annotation: Any, function: Callable[..., 
     return return_annotation
 
 
-def _is_call_ctx(annotation: Any) -> bool:
+def is_call_ctx(annotation: Any) -> bool:
     """Return whether the annotation is the `RunContext` class, parameterized or not."""
     return annotation is RunContext or get_origin(annotation) is RunContext
+
+
+def find_typed_parameter(
+    function: Callable[..., Any],
+    type_hints: dict[str, Any],
+    predicate: Callable[[Any], bool],
+    type_name: str,
+    callable_kind: str = 'Callable',
+) -> str | None:
+    """Find the sole parameter matching an annotation predicate, rejecting ambiguous signatures."""
+    parameters = [name for name, annotation in type_hints.items() if name != 'return' and predicate(annotation)]
+    if len(parameters) > 1:
+        from .exceptions import UserError
+
+        raise UserError(f'{callable_kind} {function.__qualname__!r} cannot take more than one `{type_name}` parameter.')
+    return parameters[0] if parameters else None
+
+
+def validate_schema_signature(
+    function: Callable[..., Any],
+    sig: Signature,
+    type_hints: dict[str, Any],
+    ctx_parameter: str | None,
+) -> None:
+    """Validate annotations needed to build a schema around an optional `RunContext` parameter."""
+    if ctx_parameter is not None and sig.parameters[ctx_parameter].kind is Parameter.VAR_POSITIONAL:
+        from .exceptions import UserError
+
+        raise UserError('RunContext cannot be used as a variadic positional parameter (`*args`)')
+    for parameter in sig.parameters.values():
+        if parameter.name != ctx_parameter and parameter.name not in type_hints:
+            from .exceptions import UserError
+
+            raise UserError(
+                f'Error generating schema for {function.__qualname__}:\n'
+                f'  Parameter {parameter.name!r} must have a type annotation'
+            )

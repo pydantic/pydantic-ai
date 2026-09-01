@@ -373,29 +373,33 @@ def extract_host_and_port(url: str) -> tuple[str, str, int, bool]:
     return hostname, path, port, is_https
 
 
-def build_url_with_ip(resolved: ResolvedUrl) -> str:
-    """Build a URL using a resolved IP address instead of the hostname.
-
-    For IPv6 addresses, wraps them in brackets as required by URL syntax.
-    """
+def _build_url(resolved: ResolvedUrl, host: str) -> str:
     scheme = 'https' if resolved.is_https else 'http'
     default_port = 443 if resolved.is_https else 80
 
     # IPv6 addresses need brackets in URLs
     try:
-        ip_obj = ipaddress.ip_address(resolved.resolved_ip)
+        ip_obj = ipaddress.ip_address(host)
         if isinstance(ip_obj, ipaddress.IPv6Address):
-            host_part = f'[{resolved.resolved_ip}]'
+            host_part = f'[{host}]'
         else:
-            host_part = resolved.resolved_ip
+            host_part = host
     except ValueError:
-        host_part = resolved.resolved_ip
+        host_part = host
 
     # Only include port if non-default
     if resolved.port != default_port:
         host_part = f'{host_part}:{resolved.port}'
 
     return urlunparse((scheme, host_part, resolved.path, '', '', ''))
+
+
+def build_url_with_ip(resolved: ResolvedUrl) -> str:
+    """Build a URL using a resolved IP address instead of the hostname.
+
+    For IPv6 addresses, wraps them in brackets as required by URL syntax.
+    """
+    return _build_url(resolved, resolved.resolved_ip)
 
 
 async def validate_and_resolve_url(url: str, allow_local: bool) -> ResolvedUrl:
@@ -534,6 +538,26 @@ def _keeps_credentials(from_url: str, to_url: str) -> bool:
     )
 
 
+def _apply_cookie_header(
+    cookies: httpx2.Cookies, cookie_scope_request: httpx2.Request, headers: dict[str, str]
+) -> None:
+    cookies.set_cookie_header(cookie_scope_request)
+    if not any(name.lower() == 'cookie' for name in headers):
+        if cookie_header := cookie_scope_request.headers.get('cookie'):
+            headers['Cookie'] = cookie_header
+
+
+def _update_cookie_jar(
+    cookies: httpx2.Cookies, response: httpx2.Response, cookie_scope_request: httpx2.Request
+) -> None:
+    if not response.headers.get('set-cookie'):
+        return
+
+    cookies.extract_cookies(
+        httpx2.Response(response.status_code, headers=response.headers, request=cookie_scope_request)
+    )
+
+
 async def safe_download(
     url: str,
     allow_local: bool = False,
@@ -554,6 +578,8 @@ async def safe_download(
     5. Validates the hostname against allowed/blocked domain lists
     6. Makes the request to the resolved IP with the Host header set
     7. Manually follows redirects, validating each hop
+    8. Keeps server-set cookies isolated by original hostname rather than the
+       resolved-IP URL used for the network request
 
     Args:
         url: The URL to download from.
@@ -597,6 +623,7 @@ async def safe_download(
     current_url = url
     redirects_followed = 0
     effective_headers: dict[str, str] = dict(headers) if headers else {}
+    cookie_jars: dict[str, httpx2.Cookies] = {}
 
     async with create_async_httpx2_client(timeout=timeout) as client:
         while True:
@@ -634,8 +661,19 @@ async def safe_download(
 
             # Stream the raw response so gzip members can be decoded and validated before
             # httpx2's automatic content decoder discards member boundaries.
+            # Each original hostname gets its own jar while the network request uses
+            # the verified IP. The jar still applies ordinary Path and Secure rules.
+            cookie_scope_request = httpx2.Request('GET', _build_url(resolved, resolved.hostname))
+            cookies = cookie_jars.setdefault(cookie_scope_request.url.host, httpx2.Cookies())
+            _apply_cookie_header(cookies, cookie_scope_request, request_headers)
+
             request = client.build_request('GET', request_url, headers=request_headers, extensions=extensions)
             response = await _send_request(client, request)
+
+            # Store response cookies using the original hostname, then remove the
+            # unsafe copies HTTPX automatically stored against the resolved IP.
+            _update_cookie_jar(cookies, response, cookie_scope_request)
+            client.cookies.clear()
 
             # Check if we need to follow a redirect
             if response.is_redirect:
