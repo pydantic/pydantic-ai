@@ -7,7 +7,6 @@ it **isolates nothing** — and doubles as the reference implementation of the p
 from __future__ import annotations as _annotations
 
 import asyncio
-import functools
 import os
 import shutil
 import signal
@@ -15,7 +14,6 @@ import tempfile
 import uuid
 from collections.abc import Mapping, Sequence
 from contextlib import suppress
-from dataclasses import dataclass
 from pathlib import Path
 from types import TracebackType
 from typing import TYPE_CHECKING
@@ -25,19 +23,12 @@ from typing_extensions import Self
 
 from pydantic_ai._utils import run_in_executor
 
-from .protocol import FileEntry, SandboxCommand, SandboxTimeoutError
+from .protocol import CommandResult, FileEntry, SandboxCommand, SandboxTimeoutError
 
 if TYPE_CHECKING:
     from .protocol import SandboxBackend, SupportsFilesystem
 
 __all__ = ('LocalSandbox',)
-
-
-@dataclass(frozen=True)
-class _LocalResult:
-    exit_code: int
-    stdout: str
-    stderr: str
 
 
 class _LocalFilesystem:
@@ -147,17 +138,13 @@ class LocalSandbox:
         # it as text, so a non-canonical root would point `run()` and `fs` at different
         # directories, breaking the protocol's one-environment contract.
         self._root: Path | None = None
+        self._root_lock = anyio.Lock()
         self._id = f'local-{uuid.uuid4().hex}'
         self.fs = _LocalFilesystem()
 
     @property
     def sandbox_id(self) -> str:
         return self._id
-
-    @functools.cached_property
-    def _root_lock(self) -> anyio.Lock:
-        # `anyio.Lock` binds to the event loop on which it is first used.
-        return anyio.Lock()
 
     async def _root_path(self) -> Path:
         # The default temp root is created lazily, so a constructed-but-unused sandbox doesn't
@@ -206,7 +193,7 @@ class LocalSandbox:
         cwd: str | None = None,
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
-    ) -> _LocalResult:
+    ) -> CommandResult:
         if cwd is not None and not os.path.isabs(cwd):
             raise ValueError(
                 f'cwd must be an absolute path, got {cwd!r}: a relative cwd would resolve against '
@@ -284,7 +271,7 @@ class LocalSandbox:
             await self._kill_and_reap(process)
             raise
         assert process.returncode is not None
-        return _LocalResult(
+        return CommandResult(
             exit_code=process.returncode,
             stdout=stdout.decode('utf-8', errors='replace'),
             stderr=stderr.decode('utf-8', errors='replace'),

@@ -31,6 +31,7 @@ from typing import Literal, Protocol, TypeAlias, runtime_checkable
 # optional `Supports*` protocols. Data carriers declare read-only properties so that plain
 # attributes, frozen dataclass fields, and properties all conform.
 __all__ = (
+    'CommandResult',
     'FileEntry',
     'SandboxBackend',
     'SandboxCommand',
@@ -106,6 +107,18 @@ class SandboxResult(Protocol):
     def stderr(self) -> str:
         """Captured standard error."""
         ...
+
+
+@dataclass(frozen=True, kw_only=True)
+class CommandResult:
+    """Concrete [`SandboxResult`][pydantic_ai.sandboxes.SandboxResult] carrier used by the built-in backends.
+
+    Third-party backends may reuse it instead of declaring their own carrier.
+    """
+
+    exit_code: int
+    stdout: str
+    stderr: str
 
 
 class SandboxOutputChunk(Protocol):

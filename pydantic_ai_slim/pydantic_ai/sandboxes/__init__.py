@@ -2,6 +2,7 @@
 
 from .local import LocalSandbox
 from .protocol import (
+    CommandResult,
     FileEntry,
     SandboxBackend,
     SandboxCommand,
@@ -22,6 +23,7 @@ from .sandbox import FileWindow, Sandbox
 from .unavailable import UnavailableSandbox
 
 __all__ = (
+    'CommandResult',
     'FileEntry',
     'FileWindow',
     'LocalSandbox',

@@ -218,7 +218,9 @@ The protocol contracts that matter to callers:
 - A filesystem reports a missing path with the builtin `FileNotFoundError`, and its `stat()` and
   `list_dir()` entries can reuse the concrete [`FileEntry`][pydantic_ai.sandboxes.FileEntry]
   carrier instead of declaring their own.
-- A non-zero `exit_code` is a normal result, not an exception.
+- A non-zero `exit_code` is a normal result, not an exception. `run()` results can reuse the
+  concrete [`CommandResult`][pydantic_ai.sandboxes.CommandResult] carrier instead of declaring
+  their own.
 
 These translations are a backend's whole error-handling duty; wrapping other SDK failures in
 provider-specific exceptions is optional polish.
