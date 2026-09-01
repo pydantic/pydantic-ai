@@ -54,6 +54,7 @@ from pydantic_ai import (
     ToolReturn,
     ToolReturnPart,
     UploadedFile,
+    UserContent,
     UserError,
     UserPromptPart,
     VideoUrl,
@@ -1462,7 +1463,7 @@ def test_tool_return_content_with_url_field_not_coerced_to_image_url():
 
 
 def test_tool_return_content_with_explicit_image_url():
-    """Test that ImageUrl with explicit 'kind' discriminator is correctly deserialized."""
+    """A tool return carrying the mapping we dump for an `ImageUrl` is deserialized back into one."""
     from pydantic_ai.messages import ToolReturnPart
 
     serialized_history = r"""[
@@ -1476,6 +1477,7 @@ def test_tool_return_content_with_explicit_image_url():
             "tool_name": "image_tool",
             "content": {
               "url": "https://example.com/image.png",
+              "media_type": "image/png",
               "kind": "image-url"
             },
             "tool_call_id": "call_1",
@@ -1498,7 +1500,7 @@ def test_tool_return_content_with_explicit_image_url():
 
 
 def test_tool_return_content_nested_multimodal():
-    """Test that nested MultiModalContent types with explicit discriminators work."""
+    """Mappings carrying our dumped multimodal shape are deserialized wherever they sit in a tool return."""
     from pydantic_ai.messages import ToolReturnPart
 
     serialized_history = r"""[
@@ -1508,11 +1510,11 @@ def test_tool_return_content_nested_multimodal():
             "tool_name": "mixed_tool",
             "content": {
               "images": [
-                {"url": "https://example.com/img1.jpg", "kind": "image-url"},
-                {"url": "https://example.com/img2.png", "kind": "image-url"}
+                {"url": "https://example.com/img1.jpg", "media_type": "image/jpeg", "kind": "image-url"},
+                {"url": "https://example.com/img2.png", "media_type": "image/png", "kind": "image-url"}
               ],
               "documents": [
-                {"url": "https://example.com/doc.pdf", "kind": "document-url"}
+                {"url": "https://example.com/doc.pdf", "media_type": "application/pdf", "kind": "document-url"}
               ],
               "regular_data": [
                 {"url": "/api/path", "id": 123, "name": "test"}
@@ -1556,6 +1558,124 @@ def test_tool_return_content_nested_multimodal():
     assert isinstance(reloaded_content['images'][0], ImageUrl)
     assert isinstance(reloaded_content['documents'][0], DocumentUrl)
     assert reloaded_content['regular_data'] == [{'url': '/api/path', 'id': 123, 'name': 'test'}]
+
+
+@pytest.mark.parametrize(
+    'content,expected,expected_dump',
+    [
+        pytest.param(
+            {'kind': 'image-url', 'url': 'https://example.com/report'},
+            snapshot({'kind': 'image-url', 'url': 'https://example.com/report'}),
+            snapshot({'kind': 'image-url', 'url': 'https://example.com/report'}),
+            id='no-media-type',
+        ),
+        pytest.param(
+            {'kind': 'image-url', 'url': 'https://example.com/report.png'},
+            snapshot({'kind': 'image-url', 'url': 'https://example.com/report.png'}),
+            snapshot({'kind': 'image-url', 'url': 'https://example.com/report.png'}),
+            id='no-media-type-but-inferable-url',
+        ),
+        pytest.param(
+            {
+                'kind': 'binary',
+                'media_type': 'text/plain',
+                'attachment': {'kind': 'image-url', 'url': 'https://example.com/report'},
+            },
+            snapshot(
+                {
+                    'kind': 'binary',
+                    'media_type': 'text/plain',
+                    'attachment': {'kind': 'image-url', 'url': 'https://example.com/report'},
+                }
+            ),
+            snapshot(
+                {
+                    'kind': 'binary',
+                    'media_type': 'text/plain',
+                    'attachment': {'kind': 'image-url', 'url': 'https://example.com/report'},
+                }
+            ),
+            id='under-kind-colliding-parent',
+        ),
+        pytest.param(
+            {'result': {'kind': 'image-url', 'url': 'https://example.com/report'}},
+            snapshot({'result': {'kind': 'image-url', 'url': 'https://example.com/report'}}),
+            snapshot({'result': {'kind': 'image-url', 'url': 'https://example.com/report'}}),
+            id='under-plain-parent',
+        ),
+        pytest.param(
+            {'kind': 'image-url', 'label': 'x'},
+            snapshot({'kind': 'image-url', 'label': 'x'}),
+            snapshot({'kind': 'image-url', 'label': 'x'}),
+            id='kind-without-url',
+        ),
+        pytest.param(
+            {'kind': 'image-url', 'url': 'https://example.com/report', 'media_type': 'image/png'},
+            snapshot(ImageUrl(url='https://example.com/report', media_type='image/png')),
+            snapshot(
+                {
+                    'url': 'https://example.com/report',
+                    'force_download': False,
+                    'vendor_metadata': None,
+                    'kind': 'image-url',
+                    'media_type': 'image/png',
+                    'identifier': '43ecae',
+                }
+            ),
+            id='shape-we-dump',
+        ),
+    ],
+)
+def test_tool_return_multimodal_rehydrates_only_with_media_type(
+    content: dict[str, Any], expected: Any, expected_dump: Any
+):
+    """A tool return reconstructs a multimodal item only from the mapping shape our serializer dumps.
+
+    That shape always carries `media_type` — a `computed_field` on `FileUrl` and `UploadedFile`, a
+    required field on `BinaryContent` — so requiring it lets a tool return any dictionary of its own,
+    at any depth, and get the keys it put there back.
+
+    The dump is asserted for every case because that is the leg the requirement buys. `FileUrl` infers
+    its media type from the URL when none was given, and a URL with no usable extension raises
+    `Could not infer media type` on the *dump*, long after the load that built the object (#4190).
+    Nothing reconstructed here can reach that inference.
+    """
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[ToolReturnPart(tool_name='t', content=content, tool_call_id='c')])
+    ]
+
+    loaded = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(messages))
+
+    assert message_part(loaded, ToolReturnPart).content == expected
+    assert json.loads(ModelMessagesTypeAdapter.dump_json(loaded))[0]['parts'][0]['content'] == expected_dump
+    assert ModelMessagesTypeAdapter.dump_python(loaded)[0]['parts'][0]['content'] == expected_dump
+
+
+def test_user_prompt_multimodal_rehydrates_without_media_type():
+    """The `media_type` requirement is scoped to the tool-return arm.
+
+    `UserContent` shares the `MultiModalContent` definition, so gating it in place would change what a
+    user prompt accepts. A prompt's content is the caller's own attachment rather than whatever a tool
+    chose to return, and it keeps rehydrating from `kind` and `url` alone.
+    """
+    user_content_ta: TypeAdapter[UserContent] = TypeAdapter(UserContent)
+
+    loaded = user_content_ta.validate_python({'kind': 'image-url', 'url': 'https://example.com/report'})
+
+    assert loaded == snapshot(ImageUrl(url='https://example.com/report'))
+
+
+def test_message_json_schema_keeps_the_shared_multimodal_definition_names():
+    """The gated copies are named apart from the definitions they were copied from.
+
+    Two definitions competing for one `$defs` name make pydantic rename *both*, so leaving the copy to
+    claim `ImageUrl` would move a key that `UserPromptPart` references and that any OpenAPI document
+    generated from `ModelMessage` publishes — for users who never return a file from a tool.
+    """
+    defs = ModelMessagesTypeAdapter.json_schema()['$defs']
+
+    assert {content_type.__name__ for content_type in MULTI_MODAL_CONTENT_TYPES} <= defs.keys()
+    assert sorted(name for name in defs if 'ImageUrl' in name) == snapshot(['DumpedImageUrl', 'ImageUrl'])
 
 
 def test_multi_modal_content_types_matches_union():
@@ -1824,10 +1944,11 @@ def test_tool_return_content_json_paths_make_no_per_node_python_calls():
 def test_multimodal_nested_in_kind_colliding_mapping_rehydrates():
     """A multimodal leaf must rehydrate even when its parent dict reuses one of our `kind` values.
 
-    Such a parent fails the `MultiModalContent` arm and lands on `Mapping`, whose values are still
-    resolved through the union — so reordering the arms, or reintroducing a fallback that returns a
-    failed multimodal candidate's subtree unvalidated, silently downgrades the leaf to a plain dict
-    and loses it on the next round-trip.
+    The parent here carries `media_type` as well, so it is not the media-type requirement that rejects
+    it — it is `BinaryContent`'s missing `data`. It lands on `Mapping`, whose values are still resolved
+    through the union — so reordering the arms, or reintroducing a fallback that returns a failed
+    multimodal candidate's subtree unvalidated, silently downgrades the leaf to a plain dict and loses
+    it on the next round-trip.
 
     `files` is not asserted: `_split_content` only walks top-level content and top-level list items,
     so a leaf nested under a mapping never reaches it — before or after this change.

@@ -7,6 +7,7 @@ import os
 import warnings
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Collection, Mapping, Sequence
+from copy import deepcopy
 from dataclasses import KW_ONLY, dataclass, field, replace
 from datetime import datetime
 from mimetypes import MimeTypes
@@ -1190,6 +1191,82 @@ class _StrPassthrough:
         )
 
 
+class _DumpedMultiModalContent:
+    """The `MultiModalContent` arm of `ToolReturnContent`, narrowed to the shape our own serializer dumps.
+
+    A tool return is arbitrary user data, so this arm has to separate a multimodal item we serialized
+    from a mapping a tool happened to build. Requiring `media_type` draws that line exactly: it is a
+    `computed_field` on `FileUrl` and `UploadedFile` and a required field on `BinaryContent`, so every
+    mapping we dump for a multimodal item carries one. A mapping without it was never dumped by us, so
+    it stays a plain `Mapping` and reaches the caller with the keys its tool put in it.
+
+    Requiring it is also what stops a load from building something that cannot be dumped again.
+    `FileUrl.media_type` falls back to inferring from the URL, and a URL carrying no usable extension
+    raises `Could not infer media type` — on the dump, not on the load that built the object, so a
+    history that had loaded cleanly could no longer be saved (#4190). An item reconstructed here brings
+    its own `media_type`, so it never reaches that inference. Any `str` counts, `''` included: an empty
+    one is falsy and does infer after all, but excluding it would stop an `UploadedFile` whose caller
+    set one from surviving its own dump, and matching what we dump is the rule the arm is built on.
+
+    The gate is schema surgery rather than a validator because any Python callable on this union is
+    called once per node of the decoded payload, which is the cost #7472 was about; a required field is
+    checked in Rust like every other field.
+
+    `handler` hands back the tagged union `UserContent` also uses, so its members are deep-copied and the
+    copies given fresh refs — a user prompt goes on accepting a file whose media type is inferred.
+
+    The asserts pin the schema shape this walks, a tagged union of dataclasses with `BinaryContent`
+    behind its `narrow_type` after-validator. They run once, when the union's schema is built, so a
+    pydantic-core restructure fails immediately instead of leaving an arm that silently stops gating.
+    """
+
+    @classmethod
+    def __get_pydantic_core_schema__(
+        cls, source_type: Any, handler: pydantic.GetCoreSchemaHandler
+    ) -> pydantic_core.CoreSchema:
+        schema = deepcopy(handler(source_type))
+        assert schema['type'] == 'tagged-union', schema['type']
+        for tag, choice in schema['choices'].items():
+            assert isinstance(choice, dict), choice  # a tag may alias another tag instead of carrying a schema
+            schema['choices'][tag] = cls._gate_choice(choice, handler)
+        return schema
+
+    @classmethod
+    def _gate_choice(
+        cls, choice: pydantic_core.CoreSchema, handler: pydantic.GetCoreSchemaHandler
+    ) -> pydantic_core.CoreSchema:
+        if choice['type'] == 'definition-ref':
+            return cls._gate_choice(deepcopy(handler.resolve_ref_schema(choice)), handler)
+        if choice['type'] == 'function-after':  # `BinaryContent.narrow_type`
+            choice['schema'] = cls._gate_choice(choice['schema'], handler)
+            return choice
+        assert choice['type'] == 'dataclass', choice['type']
+        ref = choice.get('ref')
+        assert ref is not None
+        # The definition is shared with `UserContent`, so the copy needs a ref of its own — and a name
+        # of its own with it. A JSON schema names a definition after the ref minus its trailing id, so
+        # a ref that only appends leaves both copies claiming `ImageUrl`, which pydantic then resolves
+        # by renaming *both* — moving a `$defs` key that has nothing to do with tool returns.
+        module, _, qualname = ref.rsplit(':', 1)[0].rpartition('.')
+        choice['ref'] = f'{module}.Dumped{qualname}:dumped-multi-modal-content'
+        cls._require_media_type(choice['schema'])
+        return choice
+
+    @staticmethod
+    def _require_media_type(args_schema: pydantic_core.CoreSchema) -> None:
+        assert args_schema['type'] == 'dataclass-args', args_schema['type']
+        for field_schema in args_schema['fields']:
+            if field_schema['name'] == '_media_type':
+                field_schema['schema'] = pydantic_core.core_schema.str_schema()
+                return
+        # `BinaryContent` reaches the same requirement with a `media_type` field of its own. A member
+        # arriving with neither would otherwise be gated by nothing, and still pass every test.
+        assert any(
+            field_schema['name'] == 'media_type' and field_schema['schema']['type'] != 'default'
+            for field_schema in args_schema['fields']
+        ), args_schema['fields']
+
+
 if TYPE_CHECKING:
     # Simpler type for static analysis - recursive TypeAliasType with Any produces spurious Unknown types
     ToolReturnContent: TypeAlias = MultiModalContent | Sequence[Any] | Mapping[str, Any] | Any
@@ -1203,14 +1280,14 @@ else:
     # is invoked once per node of the decoded payload, making validation O(JSON nodes) Python calls.
     #
     # Falling through arm by arm is what keeps a user dict a plain mapping: `{'kind': 'binary',
-    # 'label': 'foo'}` merely reuses one of our `kind` values, fails `MultiModalContent`, and lands
-    # on `Mapping`. The `Any` arm catches everything else — scalars, `bytes`, non-str mapping keys —
-    # unchanged.
+    # 'label': 'foo'}` merely reuses one of our `kind` values, fails `MultiModalContent` — which here
+    # also requires the `media_type` every dump of ours carries — and lands on `Mapping`. The `Any` arm
+    # catches everything else — scalars, `bytes`, non-str mapping keys — unchanged.
     ToolReturnContent = TypeAliasType(
         'ToolReturnContent',
         Annotated[
             Annotated[str, _StrPassthrough]
-            | MultiModalContent
+            | Annotated[MultiModalContent, _DumpedMultiModalContent]
             | Mapping[str, 'ToolReturnContent']
             | Sequence['ToolReturnContent']
             | Any,

@@ -5140,6 +5140,66 @@ async def test_adapter_load_tool_return_non_multimodal_binary_kind_dict_preserve
     assert tool_returns[0].content == snapshot({'kind': 'binary', 'data': {'0': 104, '1': 105}, 'label': 'foo'})
 
 
+@pytest.mark.parametrize(
+    'output,expected',
+    [
+        pytest.param(
+            {'kind': 'image-url', 'url': 'https://example.com/x.png', 'media_type': 'image/png'},
+            snapshot(ImageUrl(url='https://example.com/x.png', media_type='image/png')),
+            id='file-url',
+        ),
+        pytest.param(
+            {'kind': 'image-url', 'url': 'https://example.com/x.png'},
+            snapshot({'kind': 'image-url', 'url': 'https://example.com/x.png'}),
+            id='file-url-without-media-type',
+        ),
+        pytest.param(
+            {
+                'kind': 'uploaded-file',
+                'file_id': 'file-123',
+                'provider_name': 'openai',
+                'media_type': 'application/pdf',
+            },
+            snapshot(UploadedFile(file_id='file-123', provider_name='openai', media_type='application/pdf')),
+            id='uploaded-file',
+        ),
+        pytest.param(
+            {'kind': 'uploaded-file', 'file_id': 'file-123', 'provider_name': 'openai'},
+            snapshot({'kind': 'uploaded-file', 'file_id': 'file-123', 'provider_name': 'openai'}),
+            id='uploaded-file-without-media-type',
+        ),
+    ],
+)
+async def test_adapter_load_tool_return_file_shapes_need_media_type(output: Any, expected: Any):
+    """A client-side tool's file shape is reconstructed only when it carries `media_type`.
+
+    These are the shapes `docs/ui/vercel-ai.md` documents a browser tool may put in its output. The
+    `ToolReturnContent` union reconstructs the ones matching what we dump, which always names a media
+    type; anything else is an ordinary mapping the tool returned, and reaches the agent as it is.
+    """
+    ui_messages: list[UIMessage] = [
+        UIMessage(id='m1', role='user', parts=[TextUIPart(text='give me a file')]),
+        UIMessage(
+            id='m2',
+            role='assistant',
+            parts=[
+                ToolOutputAvailablePart(
+                    type='tool-get_file',
+                    tool_call_id='tc-1',
+                    state='output-available',
+                    input={},
+                    output=output,
+                )
+            ],
+        ),
+    ]
+
+    reloaded = VercelAIAdapter.load_messages(ui_messages)
+
+    tool_returns = list(iter_message_parts(reloaded, ModelRequest, ToolReturnPart))
+    assert tool_returns[0].content == expected
+
+
 async def test_adapter_tool_return_text_only_unchanged():
     """Text-only tool returns serialize as the literal string and round-trip unchanged."""
     messages = [

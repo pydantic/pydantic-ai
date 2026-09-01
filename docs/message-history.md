@@ -376,15 +376,17 @@ _(This example is complete, it can be run "as is")_
 
     A [multi-modal item][pydantic_ai.messages.MultiModalContent] in a tool return is reconstructed
     as its own type wherever it sits — on its own, in a list, or nested at any depth inside a
-    mapping, including one whose own keys happen to look like ours. An item that *can't* be
-    reconstructed — a [`FileUrl`][pydantic_ai.messages.FileUrl] whose URL has no inferable media
-    type, say — raises when the history is dumped, rather than being quietly kept as a plain dict.
+    mapping, including one whose own keys happen to look like ours — as long as the mapping carries
+    the shape Pydantic AI dumps for it, which always includes `media_type`. A mapping that merely
+    reuses one of our `kind` values, or that leaves `media_type` out, stays the plain mapping your
+    tool returned. So a tool can return any dictionary at all without colliding with ours, and every
+    item that *is* reconstructed brings its own media type rather than guessing one from the URL.
 
-    A tool return keyed by something other than a string runs the opposite way. Its keys have no
-    JSON form, so only a `dump_python` round-trip preserves them — and because such a mapping is
-    carried through as-is, a multi-modal item nested underneath one comes back as a plain dict
-    there, while the JSON round-trip stringifies the key and restores the item. Use string keys in
-    a tool return if you need both.
+    A tool return keyed by something other than a string is the one place that reconstruction
+    doesn't reach. Such a mapping's keys have no JSON form, so only a `dump_python` round-trip
+    preserves them — and because the mapping is carried through as-is, a multi-modal item nested
+    underneath one comes back as a plain dict there, while the JSON round-trip stringifies the key
+    and restores the item. Use string keys in a tool return if you need both.
 
     The [UI adapters](ui/overview.md) are different: they convert messages to a foreign wire
     protocol (Vercel AI, AG-UI) whose message shape has no place for application-only fields, so
