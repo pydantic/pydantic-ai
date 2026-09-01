@@ -1593,8 +1593,8 @@ class TestSkipModelRequestInteraction:
                 request_context: ModelRequestContext,
                 response: ModelResponse,
             ) -> ModelResponse:
-                log.append('after_model_request')
-                return response
+                log.append('after_model_request')  # pragma: no cover
+                return response  # pragma: no cover
 
         agent = Agent(FunctionModel(simple_model_function), capabilities=[SkipAndLogCap()])
         result = await agent.run('hello')
@@ -2277,11 +2277,11 @@ class TestNodeRunErrorHooks:
 
         @agent.tool_plain
         def tool() -> str:
-            return 'done'
+            return 'done'  # pragma: no cover
 
         with pytest.raises(RuntimeError, match='post-stream error'):
             async with agent.run_stream('hello') as stream:
-                await stream.get_output()
+                await stream.get_output()  # pragma: no cover
 
     async def test_on_node_run_error_fires(self):
         cap = LoggingCapability()
