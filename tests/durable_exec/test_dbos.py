@@ -4276,8 +4276,10 @@ async def test_dbos_durability_rejects_runtime_toolset_reusing_registered_id(dbo
 
     with pytest.raises(UserError, match=message):
         await run_with_override()
-    with pytest.raises(UserError, match=message):
-        await agent.run('Hello', toolsets=[colliding])
+
+    # Outside a workflow the capability is transparent: there is no durable unit to dispatch to, so
+    # the toolset that actually arrived is used as-is rather than the run being rejected.
+    assert await agent.run('Hello', toolsets=[colliding]) is not None
 
 
 async def test_dbos_durability_rejects_duplicate_toolset_id(dbos: DBOS) -> None:

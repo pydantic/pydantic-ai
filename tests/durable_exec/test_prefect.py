@@ -3072,11 +3072,12 @@ async def test_prefect_durability_rejects_runtime_toolset_reusing_registered_id(
 
     with pytest.raises(UserError, match=message):
         await run_with_override()
-    with pytest.raises(UserError, match=message):
-        await agent.run('Hello', toolsets=[colliding])
-    with pytest.raises(UserError, match=message):
-        with agent.override(toolsets=[colliding]):
-            await agent.run('Hello')
+
+    # Outside a flow the capability is transparent: there is no durable unit to dispatch to, so the
+    # toolset that actually arrived is used as-is rather than the run being rejected.
+    assert await agent.run('Hello', toolsets=[colliding]) is not None
+    with agent.override(toolsets=[colliding]):
+        assert await agent.run('Hello') is not None
 
 
 def test_prefect_durability_rejects_duplicate_toolset_id() -> None:

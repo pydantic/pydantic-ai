@@ -1486,6 +1486,15 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                 # registered would be replaced here by the wrapper around the *construction-time*
                 # toolset, silently running that toolset's tools instead of its own. The
                 # construction-time counterpart of this is caught in `_wrap_and_register_leaf`.
+                #
+                # Only inside a workflow, flow, or step. `get_wrapper_toolset` runs on every run,
+                # and core toolsets carry no global uniqueness requirement, so raising outside a
+                # durable context would stop a durability capability being transparent for ordinary
+                # runs -- moving behavior on the plain-`Agent` surface to fix a durable-only defect.
+                # Outside one there is no durable unit to dispatch to, so the toolset that actually
+                # arrived is simply used as-is.
+                if not self.in_durable_context:
+                    return ts
                 raise UserError(
                     f'A toolset added at run time has the same `id` {ts_id!r} as one the agent was '
                     f'constructed with. Toolset `id`s must be unique: the `id` identifies which registered '
