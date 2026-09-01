@@ -1,0 +1,81 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '719'
+      content-type:
+      - application/json
+      host:
+      - bedrock-runtime.us-east-1.amazonaws.com
+    method: POST
+    parsed_body:
+      anthropic_version: bedrock-2023-05-31
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: What is the modified duration of the 10-year Treasury?
+          type: text
+        role: user
+      - content:
+        - text: |-
+            <assistant_thinking>
+            Duration measures price sensitivity to rates, and the lookup came back with 8.1 for the 10-year, so a 1% move in yields is worth roughly 8% of price.
+            </assistant_thinking>
+          type: text
+        role: user
+      - content:
+        - text: About 8.1 years, so a 1% rate move is worth roughly 8% of its price.
+          type: text
+        role: assistant
+      - content:
+        - text: 'In one sentence: does a longer duration mean more or less interest-rate risk?'
+          type: text
+        role: user
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1:0/invoke
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '549'
+      content-type:
+      - application/json
+      x-amzn-bedrock-cache-read-input-token-count:
+      - '0'
+      x-amzn-bedrock-cache-write-input-token-count:
+      - '0'
+      x-amzn-bedrock-input-token-count:
+      - '123'
+      x-amzn-bedrock-invocation-latency:
+      - '2745'
+      x-amzn-bedrock-output-token-count:
+      - '28'
+    parsed_body:
+      content:
+      - text: Longer duration means more interest-rate risk, as the bond's price will move more for a given change in yields.
+        type: text
+      id: msg_bdrk_01EiKV6WQQogNSnKpuccNBMk
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_details: null
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 123
+        output_tokens: 28
+    status:
+      code: 200
+      message: OK
+version: 1

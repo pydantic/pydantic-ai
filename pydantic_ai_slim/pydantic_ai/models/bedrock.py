@@ -61,6 +61,7 @@ from pydantic_ai import (
 )
 from pydantic_ai._output import DEFAULT_OUTPUT_TOOL_NAME
 from pydantic_ai._run_context import RunContext
+from pydantic_ai._thinking_part import render_replayed_thinking
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
 from pydantic_ai.messages import is_multi_modal_content
 from pydantic_ai.models import (
@@ -75,7 +76,6 @@ from pydantic_ai.models import (
 )
 from pydantic_ai.models._tool_choice import ResolvedToolChoice, resolve_tool_choice
 from pydantic_ai.native_tools import AbstractNativeTool, CodeExecutionTool
-from pydantic_ai.profiles import DEFAULT_THINKING_TAGS
 from pydantic_ai.profiles.anthropic import ANTHROPIC_THINKING_BUDGET_MAP, resolve_anthropic_effort
 from pydantic_ai.profiles.openai import OPENAI_REASONING_EFFORT_MAP
 from pydantic_ai.providers import Provider, infer_provider
@@ -1300,6 +1300,7 @@ class BedrockConverseModel(Model[BaseClient]):
             elif isinstance(message, ModelResponse):
                 flush_deferred_media()
                 content: list[ContentBlockOutputTypeDef] = []
+                carried_thinking: list[ContentBlockUnionTypeDef] = []
                 for item in message.parts:
                     if isinstance(item, TextPart):
                         content.append({'text': item.content})
@@ -1323,8 +1324,16 @@ class BedrockConverseModel(Model[BaseClient]):
                                 }
                             content.append({'reasoningContent': reasoning_content})
                         else:
-                            start_tag, end_tag = self.profile.get('thinking_tags', DEFAULT_THINKING_TAGS)
-                            content.append({'text': '\n'.join([start_tag, item.content, end_tag])})
+                            thinking_text, carry_in_user_turn = render_replayed_thinking(
+                                item.content, profile, message.provider_name
+                            )
+                            if not carry_in_user_turn:
+                                content.append({'text': thinking_text})
+                            elif item.content:
+                                # A redacted block arrives with its reasoning stripped (`content=''`), and
+                                # an empty wrapper in the user turn tells the model the assistant thought
+                                # nothing. Dropping it matches `AnthropicModel`, which guards the same arm.
+                                carried_thinking.append({'text': thinking_text})
                     elif isinstance(item, NativeToolCallPart):
                         if item.provider_name == self.system:
                             if item.tool_name == CodeExecutionTool.kind:
@@ -1355,6 +1364,33 @@ class BedrockConverseModel(Model[BaseClient]):
                     else:
                         assert isinstance(item, ToolCallPart)
                         content.append(self._map_tool_call(item))
+                if carried_thinking:
+                    # See `ModelProfile.mimics_assistant_message_formatting`: reasoning replayed in an
+                    # assistant turn teaches the model to write `<thinking>` tags into its visible
+                    # answers. Appended as a plain user turn rather than merged here, so the pass below
+                    # applies `bedrock_tool_result_colocatable_content` to it like any other user
+                    # content — for Claude that set contains `text`, so it does end up sharing the turn
+                    # with preceding tool results.
+                    #
+                    # The exception that pass can't handle is a `CachePoint` the user put at the end of
+                    # that turn. Merged behind the marker, the carried text becomes the turn's last
+                    # block, and `bedrock_cache_messages` then appends an automatic cache point that
+                    # `_get_last_user_message_content` had been suppressing. The extra point costs the
+                    # user their *oldest* explicit one, since `_limit_cache_points` keeps the newest
+                    # four. Slotting the carried text in ahead of the marker leaves both the point
+                    # count and the marker's position exactly as authored.
+                    previous_content: Sequence[ContentBlockUnionTypeDef] = (
+                        bedrock_messages[-1]['content']
+                        if bedrock_messages and bedrock_messages[-1]['role'] == 'user'
+                        else []
+                    )
+                    if previous_content and 'cachePoint' in previous_content[-1]:
+                        bedrock_messages[-1] = {
+                            'role': 'user',
+                            'content': [*previous_content[:-1], *carried_thinking, previous_content[-1]],
+                        }
+                    else:
+                        bedrock_messages.append({'role': 'user', 'content': carried_thinking})
                 if content:
                     bedrock_messages.append({'role': 'assistant', 'content': content})
             else:

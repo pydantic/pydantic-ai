@@ -142,6 +142,29 @@ class ModelProfile(TypedDict, total=False):
     thinking_tags: tuple[str, str]
     """The tags used to indicate thinking parts in the model's output. Default: [`DEFAULT_THINKING_TAGS`][pydantic_ai.profiles.DEFAULT_THINKING_TAGS]."""
 
+    mimics_assistant_message_formatting: bool
+    """Whether the model reproduces markup it finds in prior assistant messages in its own visible output. Default: `False`.
+
+    A model with this quirk reads the assistant turns of the history as examples of how it is supposed to
+    write, so replaying another model's reasoning as assistant text teaches it to emit those tags in the
+    answers the user reads — and once that answer is persisted, the next turn reinforces it.
+
+    When `True`, a `ThinkingPart` that can't be sent through the model's native reasoning channel is
+    rendered into a *user* message ahead of the assistant turn instead of into the turn itself, which
+    stops the imitation. Attributed to the user, that reasoning would read as something the user thought,
+    so it is wrapped in an `assistant_thinking` tag naming the provider that produced it rather than in
+    the model's own thinking tags. The cost is that the model still reports the reasoning's authorship
+    inaccurately when asked about it: naming the source in the tag does not change the answer it gives.
+
+    This is currently only used by `AnthropicModel` and `BedrockConverseModel`. Claude served through an
+    OpenAI-compatible provider goes through `OpenAIChatModel`, which does not read this key — tracked in
+    https://github.com/pydantic/pydantic-ai/issues/7419.
+
+    Where the carried reasoning goes is each adapter's own decision rather than a shared rewrite ahead of
+    them: it has to land in front of whatever that provider renders next out of the same request — an
+    Anthropic `system` entry, for one — which has no message-level existence to insert before.
+    """
+
     ignore_streamed_leading_whitespace: bool
     """Whether to ignore leading whitespace when streaming a response. Default: `False`.
 
@@ -228,6 +251,7 @@ DEFAULT_PROFILE: ModelProfile = {
     'supports_thinking': False,
     'thinking_always_enabled': False,
     'thinking_tags': DEFAULT_THINKING_TAGS,
+    'mimics_assistant_message_formatting': False,
     'ignore_streamed_leading_whitespace': False,
     'supported_native_tools': SUPPORTED_NATIVE_TOOLS,
     'tool_deferral_mode': None,

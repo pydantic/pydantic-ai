@@ -3555,7 +3555,9 @@ I should provide practical advice for different methods of crossing a river.\
 async def test_anthropic_model_empty_thinking_signature_sent_as_text(allow_model_requests: None):
     """A thinking part with an empty signature (e.g. left behind by an interrupted stream)
     must not be replayed as a `thinking` block: the API rejects empty signatures with a 400.
-    It falls back to tagged text instead, like thinking parts from other providers.
+    It goes back as tagged text instead, carried in a user message ahead of the turn it was
+    produced in like any other reasoning that can't ride the native channel — see
+    `ModelProfile.mimics_assistant_message_formatting`.
     """
     c = completion_message([BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
     mock_client = MockAnthropic.create_mock(c)
@@ -3577,13 +3579,13 @@ async def test_anthropic_model_empty_thinking_signature_sent_as_text(allow_model
         [
             {'role': 'user', 'content': [{'text': 'Think about crossing the street.', 'type': 'text'}]},
             {
-                'role': 'assistant',
+                'role': 'user',
                 'content': [
                     {
                         'text': """\
-<thinking>
+<assistant_thinking by="anthropic">
 I was interrupted mid-thought
-</thinking>\
+</assistant_thinking>\
 """,
                         'type': 'text',
                     }
