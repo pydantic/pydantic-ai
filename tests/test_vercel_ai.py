@@ -5257,7 +5257,7 @@ async def test_adapter_load_tool_return_non_multimodal_binary_kind_dict_preserve
 async def test_adapter_load_tool_return_completes_documented_file_shapes(
     output: Any, expected: Any, expected_dump: Any
 ):
-    """The file shapes `docs/ui/vercel-ai.md` documents a browser tool may return all reach the agent as files.
+    """A client-side tool's documented file shapes reach the agent as files, `media_type` and all.
 
     A URL shape is documented without a `media_type`, so the adapter completes it from the URL the way
     the type itself would — including when the client left the key `null` or empty, which is what
