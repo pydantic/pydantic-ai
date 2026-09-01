@@ -114,6 +114,7 @@ reject_import_syntax 'title' "$TITLE"
 reject_import_syntax 'decision' "$DECISION"
 reject_import_syntax 'why' "$WHY"
 reject_import_syntax 'source' "$SOURCE"
+reject_import_syntax 'iteration' "$ITER"
 reject_import_syntax 'supersedes' "$SUPERSEDES"
 if [[ "$TITLE" == *' · '* || "$ITER" == *' · '* ]]; then
     echo "error: title and iteration must not contain the decision-header separator" >&2
