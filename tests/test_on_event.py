@@ -798,7 +798,7 @@ async def test_hooks_on_event_legacy_replacements_compose_across_capabilities() 
     with pytest.warns(PydanticAIDeprecationWarning, match='returning a replacement event'):
         async with agent.run_stream_events('hello') as stream:
             events = [event async for event in stream]
-    assert 'first' in seen_by_second, 'the second capability should see the first capability’s replacement'
+    assert 'first' in seen_by_second, "the second capability should see the first capability's replacement"
     assert any(isinstance(event, ReplacementEvent) and event.payload == 'first+second' for event in events), (
         'both replacements should survive to the stream'
     )
