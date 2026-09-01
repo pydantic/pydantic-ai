@@ -169,8 +169,8 @@ if [ -n "$SESSION_ID" ] && [ -f "$LEDGER" ]; then
         fi
         PRIOR_TS="$(printf '%s' "$PRIOR" | sed -E 's/^([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]+Z)-.*/\1/')"
         TMP_INDEX="$(mktemp "$DIR/.handoffs-index.tmp.XXXXXX")"
-        awk -v f="handoffs/$PRIOR" -v line="## $PRIOR_TS · handoffs/$PRIOR · [$WRITER · lane-id:$LANE_ID · lane:$LANE_LABEL] $SUMMARY" \
-            'index($0, f) { print line; next } { print }' "$INDEX" > "$TMP_INDEX"
+        awk -F ' · ' -v f="handoffs/$PRIOR" -v line="## $PRIOR_TS · handoffs/$PRIOR · [$WRITER · lane-id:$LANE_ID · lane:$LANE_LABEL] $SUMMARY" \
+            '$1 ~ /^## / && $2 == f { print line; next } { print }' "$INDEX" > "$TMP_INDEX"
         mv "$TMP_INDEX" "$INDEX"
         TMP_INDEX=''
         echo "Amended this session's existing handoff (one handoff per session) → $INDEX" >&2

@@ -86,9 +86,16 @@ elif [ -d "$HAND_DIR" ]; then
     fi
 fi
 
-# JSON-escape latest_handoff (minimal: quotes/backslashes)
-latest_handoff_esc=$(printf '%s' "$latest_handoff" | sed 's/\\/\\\\/g; s/"/\\"/g')
+json_string() {
+    jq -Rn --arg value "$1" '$value'
+}
 
-printf '{"initialized":%s,"brief_size":%d,"decisions_count":%d,"handoffs_count":%d,"latest_handoff":"%s","last_brief_update":"%s","last_decision_at":"%s","last_handoff_at":"%s","worktree":"%s"}\n' \
-    "$initialized" "$brief_size" "$decisions_count" "$handoffs_count" "$latest_handoff_esc" \
-    "$last_brief_update" "$last_decision_at" "$last_handoff_at" "$WT"
+latest_handoff_json="$(json_string "$latest_handoff")"
+last_brief_update_json="$(json_string "$last_brief_update")"
+last_decision_at_json="$(json_string "$last_decision_at")"
+last_handoff_at_json="$(json_string "$last_handoff_at")"
+worktree_json="$(json_string "$WT")"
+
+printf '{"initialized":%s,"brief_size":%d,"decisions_count":%d,"handoffs_count":%d,"latest_handoff":%s,"last_brief_update":%s,"last_decision_at":%s,"last_handoff_at":%s,"worktree":%s}\n' \
+    "$initialized" "$brief_size" "$decisions_count" "$handoffs_count" "$latest_handoff_json" \
+    "$last_brief_update_json" "$last_decision_at_json" "$last_handoff_at_json" "$worktree_json"

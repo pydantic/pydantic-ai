@@ -120,6 +120,14 @@ if [ -z "$LINE" ]; then
 fi
 
 FNAME="$(printf '%s' "$LINE" | awk -F ' · ' '{ print $2 }')"
+if [[ ! "$FNAME" =~ ^handoffs/[A-Za-z0-9][A-Za-z0-9_-]*\.md$ ]]; then
+    echo "index contains an unsafe handoff path: $FNAME" >&2
+    exit 1
+fi
+if [ -L "$DIR/$FNAME" ]; then
+    echo "index points at a symlink, not a branch-local handoff file: $FNAME" >&2
+    exit 1
+fi
 if [ ! -f "$DIR/$FNAME" ]; then
     echo "index points at a missing file: $FNAME" >&2
     exit 1
