@@ -91,3 +91,5 @@ def test_html_viewer_inlines_graph(tmp_path: Path):
     assert 'd3js.org' in html
     assert "raw !== '" not in html
     assert 'raw.startsWith' in html
+    assert 'id="legend-body"' in html
+    assert '<details id="legend"' in html

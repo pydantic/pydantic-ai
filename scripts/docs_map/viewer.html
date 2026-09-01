@@ -72,28 +72,41 @@
   aside .row { margin: 4px 0; }
   #legend {
     position: absolute; left: 10px; bottom: 72px; z-index: 5;
-    background: #0e0f0ce8; border: 1px solid var(--line);
-    padding: 8px 10px; max-width: 280px; pointer-events: none;
-    font-size: 10px; color: var(--muted); line-height: 1.35;
+    width: 168px; max-height: calc(100% - 96px); overflow: auto;
+    background: #0e0f0cf2; border: 1px solid var(--line);
+    padding: 6px 8px; pointer-events: auto;
+    font-size: 11px; color: var(--muted); line-height: 1.35;
   }
+  #legend summary {
+    cursor: pointer; font-size: 10px; letter-spacing: .12em;
+    text-transform: uppercase; color: #cfc9b4; list-style: none;
+  }
+  #legend summary::-webkit-details-marker { display: none; }
+  #legend summary::before { content: '▸ '; }
+  #legend[open] summary::before { content: '▾ '; }
   #legend .lg-k {
     font-size: 9px; letter-spacing: .14em; text-transform: uppercase;
-    color: #5a574c; margin: 7px 0 3px;
+    color: #5a574c; margin: 8px 0 3px;
   }
-  #legend .lg-k:first-child { margin-top: 0; }
-  #legend .swatches { display: flex; flex-wrap: wrap; gap: 3px 8px; }
-  #legend .sw { display: inline-flex; align-items: center; gap: 4px; color: #cfc9b4; }
-  #legend .sw i { width: 8px; height: 8px; display: inline-block; flex: 0 0 8px; }
-  #legend .sizes { display: flex; align-items: center; gap: 10px; color: #cfc9b4; }
-  #legend .dot { display: inline-block; border-radius: 50%; background: #cfc9b4; vertical-align: middle; }
-  #legend .d1 { width: 6px; height: 6px; }
-  #legend .d2 { width: 11px; height: 11px; }
-  #legend .d3 { width: 16px; height: 16px; }
-  #legend .trace { display: flex; flex-wrap: wrap; gap: 10px 14px; color: #cfc9b4; }
-  #legend .ln { display: inline-block; width: 16px; height: 2px; vertical-align: middle; margin-right: 5px; }
+  #legend .lg-k:first-child { margin-top: 6px; }
+  #legend ul { list-style: none; margin: 0; padding: 0; }
+  #legend li {
+    display: flex; align-items: center; gap: 6px;
+    color: #cfc9b4; padding: 1px 0;
+  }
+  #legend li i, #legend .dot {
+    flex: 0 0 8px; width: 8px; height: 8px; display: inline-block;
+  }
+  #legend .dot { border-radius: 50%; background: #cfc9b4; }
+  #legend .d1 { width: 6px; height: 6px; flex-basis: 6px; }
+  #legend .d2 { width: 10px; height: 10px; flex-basis: 10px; }
+  #legend .d3 { width: 14px; height: 14px; flex-basis: 14px; }
+  #legend .ln { width: 12px; height: 2px; flex: 0 0 12px; display: inline-block; }
   #legend .out .ln { background: var(--accent); }
   #legend .in .ln { background: var(--magenta); }
-  #legend .note { margin-top: 4px; }
+  #legend .tok {
+    margin-left: auto; font-variant-numeric: tabular-nums; color: #8a8676;
+  }
   #switcher {
     position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
     display: flex; gap: 8px; align-items: center;
@@ -119,7 +132,10 @@
     <svg id="graph"></svg>
     <canvas id="fort"></canvas>
     <div id="atlas"></div>
-    <div id="legend"></div>
+    <details id="legend" open>
+      <summary>Legend</summary>
+      <div id="legend-body"></div>
+    </details>
     <aside id="panel"></aside>
   </main>
 </div>
@@ -190,7 +206,7 @@ $('prev').onclick = () => cycle(-1);
 $('next').onclick = () => cycle(1);
 document.addEventListener('keydown', (e) => {
   const t = e.target;
-  if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA')) return;
+  if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SUMMARY')) return;
   if (e.key === 'ArrowLeft') cycle(-1);
   if (e.key === 'ArrowRight') cycle(1);
 });
@@ -302,40 +318,50 @@ function render() {
   if (variant === 'C') drawAtlas();
 }
 
-function paintLegend() {
-  const tops = geoRows(visibleNodes()).flat();
-  const swatches = tops.map(t =>
-    `<span class="sw"><i style="background:${COLORS[t] || '#888'}"></i>${t}</span>`
-  ).join('');
-  let body;
-  if (variant === 'A') {
-    body = `
-      <div class="lg-k">section</div>
-      <div class="swatches">${swatches}</div>
-      <div class="lg-k">node size = tokens</div>
-      <div class="sizes"><span class="dot d1"></span>1k<span class="dot d2"></span>8k<span class="dot d3"></span>20k</div>
-      <div class="lg-k">traces</div>
-      <div class="trace"><span class="out"><i class="ln"></i>outbound</span><span class="in"><i class="ln"></i>inbound</span></div>`;
-  } else if (variant === 'B') {
-    body = `
-      <div class="lg-k">district = section</div>
-      <div class="swatches">${swatches}</div>
-      <div class="lg-k">room size = tokens</div>
-      <div class="trace"><span class="out"><i class="ln"></i>outbound</span><span class="in"><i class="ln"></i>inbound</span></div>
-      <div class="note">hover a room for title · tokens</div>`;
-  } else {
-    body = `
-      <div class="lg-k">region = section</div>
-      <div class="swatches">${swatches}</div>
-      <div class="lg-k">flags</div>
-      <div class="note">orange card = page ≥ 8k tok (do not slurp)</div>
-      <div class="note">gold SUBAGENT = region ≥ 40k tok</div>`;
-  }
-  $('legend').innerHTML = body;
+function tokLabel(n) {
+  if (n >= 10000) return `${Math.round(n / 1000)}k`;
+  if (n >= 1000) return `${(n / 1000).toFixed(1).replace(/\.0$/, '')}k`;
+  return String(n);
 }
 
-function labelText(d, pinned) {
-  return pinned ? `${d.title}  ${d.tokens.toLocaleString()}` : d.title;
+function paintLegend() {
+  const nodes = visibleNodes();
+  const totals = {};
+  nodes.forEach(n => { totals[n.top] = (totals[n.top] || 0) + n.tokens; });
+  const tops = geoRows(nodes).flat();
+  const sections = tops.map(t =>
+    `<li><i style="background:${COLORS[t] || '#888'}"></i><span>${esc(t)} (${tokLabel(totals[t] || 0)})</span></li>`
+  ).join('');
+  let extra = '';
+  if (variant === 'A' || variant === 'B') {
+    extra = `
+      <div class="lg-k">${variant === 'A' ? 'node size' : 'room size'}</div>
+      <ul>
+        <li><span class="dot d1"></span><span>1k tok</span></li>
+        <li><span class="dot d2"></span><span>8k tok</span></li>
+        <li><span class="dot d3"></span><span>20k tok</span></li>
+      </ul>
+      <div class="lg-k">traces</div>
+      <ul>
+        <li class="out"><i class="ln"></i><span>outbound</span></li>
+        <li class="in"><i class="ln"></i><span>inbound</span></li>
+      </ul>`;
+  } else {
+    extra = `
+      <div class="lg-k">flags</div>
+      <ul>
+        <li><span>orange card — page ≥ 8k tok</span></li>
+        <li><span>SUBAGENT — region ≥ 40k tok</span></li>
+      </ul>`;
+  }
+  $('legend-body').innerHTML = `
+    <div class="lg-k">section</div>
+    <ul>${sections}</ul>
+    ${extra}`;
+}
+
+function labelText(d) {
+  return `${d.title} (${tokLabel(d.tokens)})`;
 }
 
 function visibleLabels(nodes) {
@@ -360,7 +386,7 @@ function visibleLabels(nodes) {
   const pinSet = new Set([hovered, selected].filter(Boolean));
   pinSet.forEach(p => {
     const n = nodes.find(x => x.path === p);
-    if (n) tryPlace(n, labelText(n, true), true);
+    if (n) tryPlace(n, labelText(n), true);
   });
   const focus = focusPath();
   const { inbound, outbound } = neighborsOf(focus);
@@ -378,7 +404,7 @@ function updateGraphLabels() {
   if (!G) return;
   const vis = visibleLabels(G.nodes);
   G.label
-    .text(d => vis.has(d.path) ? labelText(d, d.path === hovered || d.path === selected) : '')
+    .text(d => vis.has(d.path) ? labelText(d) : '')
     .attr('fill', d => (d.path === hovered || d.path === selected) ? '#f4efe2' : '#cfc9b4')
     .attr('font-size', d => (d.path === hovered || d.path === selected) ? 11 : 10)
     .attr('opacity', d => vis.has(d.path) ? 1 : 0);
@@ -487,17 +513,17 @@ function drawGraph() {
 
 function layoutFort(nodes) {
   const rooms = [];
-  const pad = 24, cellW = 320, cellH = 210;
+  const pad = 24, legendGutter = 184, cellW = 360, cellH = 210;
   geoRows(nodes).forEach((row, ry) => {
     row.forEach((top, rx) => {
       const group = nodes.filter(n => n.top === top).sort((a,b) => b.tokens - a.tokens);
       if (!group.length) return;
-      const ox = pad + rx * (cellW + 28);
+      const ox = legendGutter + pad + rx * (cellW + 28);
       const oy = pad + ry * (cellH + 36);
       let x = ox + 8, y = oy + 22, rowH = 0;
       group.forEach(n => {
-        const w = Math.max(36, Math.min(110, 18 + Math.sqrt(n.tokens) * 0.55));
-        const h = Math.max(22, Math.min(64, 12 + Math.sqrt(n.tokens) * 0.28));
+        const w = Math.max(108, Math.min(168, 48 + Math.sqrt(n.tokens) * 0.65));
+        const h = Math.max(20, Math.min(56, 14 + Math.sqrt(n.tokens) * 0.22));
         if (x + w > ox + cellW) { x = ox + 8; y += rowH + 6; rowH = 0; }
         rooms.push({ ...n, x, y, w, h, ox, oy, cellW, cellH });
         x += w + 6;
@@ -615,20 +641,23 @@ function drawFort() {
     ctx.beginPath();
     ctx.rect(r.x + 2, r.y + 2, r.w - 4, r.h - 4);
     ctx.clip();
-    ctx.fillStyle = '#0b0c0a';
     ctx.font = '9px ui-monospace, Menlo, monospace';
-    ctx.fillText(r.title, r.x + 3, r.y + 12);
-    if (r.h > 26) {
-      ctx.fillStyle = '#0b0c0acc';
-      ctx.fillText(r.tokens.toLocaleString(), r.x + 3, r.y + 23);
-    }
+    const pad = 4;
+    const full = `${r.title} (${tokLabel(r.tokens)})`;
+    let text = full;
+    const maxW = r.w - pad * 2;
+    while (text.length > 1 && ctx.measureText(text).width > maxW) text = text.slice(0, -1);
+    if (text !== full) text = `${text.slice(0, -1)}…`;
+    ctx.fillStyle = '#0b0c0a';
+    ctx.textAlign = 'left';
+    ctx.fillText(text, r.x + pad, r.y + 12);
     ctx.restore();
   });
 
   const pin = hovered || selected;
   if (pin && byPath[pin]) {
     const r = byPath[pin];
-    const text = `${r.title}  ${r.tokens.toLocaleString()} tok`;
+    const text = `${r.title} (${tokLabel(r.tokens)})`;
     ctx.font = '11px ui-monospace, Menlo, monospace';
     const tw = ctx.measureText(text).width;
     const pad = 6;
