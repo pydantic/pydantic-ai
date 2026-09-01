@@ -489,16 +489,27 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         *,
         handler: WrapRunHandler,
     ) -> AgentRunResult[Any]:
-        """Disable threads inside Temporal workflows, and publish the run's terminal event."""
+        """Disable threads inside Temporal workflows."""
         if not self.in_durable_context:
             return await handler()
 
         with disable_threads(), set_agent_graph_sleep(workflow.sleep):
-            result = await handler()
+            return await handler()
 
-        if (topic := self._event_stream_topic) is not None:
-            # The result only exists workflow-side, so this is the one event the activity-side
-            # publisher can't produce -- and it's what tells a subscriber the run is over.
+    async def after_run(self, ctx: RunContext[AgentDepsT], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
+        """Publish the run's terminal event.
+
+        The result only exists workflow-side, so this is the one event the activity-side publisher
+        can't produce -- and it's what tells a subscriber the run is over. Published from here rather
+        than from `wrap_run` so it carries the result every capability's `wrap_run` has already shaped.
+        A capability that rewrites the result in its own `after_run` still lands after this one, as
+        durable dispatch is the innermost wrapper and `after_run` runs outermost-last; the workflow's
+        return value remains the authoritative output.
+
+        Not called when the run ends without a result, so a failed or cancelled run publishes no
+        terminal event and its subscribers see the stream simply end.
+        """
+        if (topic := self._event_stream_topic) is not None and self.in_durable_context:
             publish_agent_event(topic.name, AgentRunResultEvent(result))
         return result
 
@@ -538,7 +549,9 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         # free (no activity, no signal) and replay-safe, as replay rebuilds the log identically.
         try:
             async for event in events:
-                if not isinstance(event, MODEL_RESPONSE_STREAM_EVENT_TYPES):
+                if not isinstance(event, MODEL_RESPONSE_STREAM_EVENT_TYPES) and (
+                    topic.events is None or topic.events(event)
+                ):
                     publish_agent_event(topic.name, event)
                 yield event
         finally:

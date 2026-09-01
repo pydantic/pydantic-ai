@@ -154,9 +154,11 @@ class AgentEventStream:
         """
         self._stream = stream if stream is not None else WorkflowStream(prior_state)
         self._drain_timeout = drain_timeout
-        # Set when a run's terminal event is published, cleared when a subscriber acknowledges it, so
-        # a workflow that runs the agent more than once waits for the last run's subscriber.
-        self._draining = False
+        # Terminal events published minus acknowledgments received, so a workflow that runs the agent
+        # more than once waits for each run's subscriber. A count rather than a flag because an
+        # acknowledgment carries no payload: a delayed one for an earlier run would otherwise clear
+        # the barrier a later run had just raised.
+        self._undrained = 0
         workflow.set_signal_handler(_DRAINED_SIGNAL, self._on_drained)  # pyright: ignore[reportUnknownMemberType]
         _streams[workflow.info().run_id] = self
 
@@ -166,7 +168,8 @@ class AgentEventStream:
         return self._stream
 
     def _on_drained(self) -> None:
-        self._draining = False
+        # Several subscribers may acknowledge the same terminal event; the barrier only needs one.
+        self._undrained = max(0, self._undrained - 1)
 
     def _publish(self, topic: str, event: NativeEvent) -> None:
         """Append an event to the log from workflow code.
@@ -175,7 +178,7 @@ class AgentEventStream:
         replay rebuilds the log identically, so these events are delivered exactly once.
         """
         if isinstance(event, AgentRunResultEvent):
-            self._draining = True
+            self._undrained += 1
         self._stream.topic(topic).publish(event)
 
     async def __aenter__(self) -> AgentEventStream:
@@ -187,7 +190,7 @@ class AgentEventStream:
     async def close(self) -> None:
         """Wait for a subscriber to drain the stream, then release any that are still polling."""
         try:
-            await workflow.wait_condition(lambda: not self._draining, timeout=self._drain_timeout)
+            await workflow.wait_condition(lambda: self._undrained == 0, timeout=self._drain_timeout)
         except asyncio.TimeoutError:
             pass
         # A subscription is a long-poll update, and a workflow can't return while one is parked.
@@ -394,7 +397,9 @@ def stream_agent_events(
         topic: The topic the agent publishes to.
         output_type: The agent's output type, so the terminal event's result is decoded into it.
         from_offset: The stream offset to start from, inclusive; pass `offset + 1` to resume.
-        poll_cooldown: How long to wait between polls when no new events are ready.
+        poll_cooldown: How long to wait between polls when no new events are ready. Passed through to
+            the SDK, including `timedelta(0)`, which busy-polls: that grows the workflow's history
+            toward its limit, so it belongs in tests rather than in a running application.
     """
     topic = WorkflowStreamTopic.coerce(topic)
     # Pin the subscription to the run the handle refers to, so a reused workflow ID can't redirect us

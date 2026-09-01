@@ -376,7 +376,11 @@ async def test_workflow_side_events_cost_no_activity(client: Client) -> None:
 
 _filtered_durability = TemporalDurability(
     activity_config=BASE_ACTIVITY_CONFIG,
-    event_stream_topic=WorkflowStreamTopic(TOPIC, events=lambda event: not isinstance(event, PartDeltaEvent)),
+    # One event from each publish path: `PartDeltaEvent` goes out from the model-request activity,
+    # `FunctionToolCallEvent` from workflow code. A filter has to reach both.
+    event_stream_topic=WorkflowStreamTopic(
+        TOPIC, events=lambda event: not isinstance(event, (PartDeltaEvent, FunctionToolCallEvent))
+    ),
 )
 _filtered_agent = Agent(_model, name='filtered_stream_agent', tools=[get_answer], capabilities=[_filtered_durability])
 
@@ -414,10 +418,64 @@ async def test_topic_filter_keeps_the_terminal_event(client: Client) -> None:
         )
         await handle.result()
 
-    assert not any(isinstance(event, PartDeltaEvent) for event in received)
+    assert not any(isinstance(event, PartDeltaEvent) for event in received)  # activity-side
+    assert not any(isinstance(event, FunctionToolCallEvent) for event in received)  # workflow-side
     assert any(isinstance(event, PartStartEvent) for event in received)
     assert any(isinstance(event, FunctionToolResultEvent) for event in received)
     assert isinstance(received[-1], AgentRunResultEvent)
+
+
+# --- More than one run on one stream --------------------------------------------------------------
+
+
+@workflow.defn
+class TwoRunWorkflow:
+    @workflow.init
+    def __init__(self, prompt: str) -> None:
+        self.events = AgentEventStream()
+
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        async with self.events:
+            await _topic_only_agent.run(prompt)
+            second = await _topic_only_agent.run(prompt)
+        return second.output
+
+
+async def test_each_run_gets_its_own_terminal_event(client: Client) -> None:
+    """One iterator covers one run; the next run is picked up by reconnecting at the next offset.
+
+    The workflow's drain barrier counts terminal events against acknowledgments rather than holding a
+    single flag, so each run waits for its own subscriber instead of being released by an earlier
+    run's acknowledgment.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[TwoRunWorkflow],
+        plugins=[AgentPlugin(_topic_only_agent)],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ):
+        handle = await client.start_workflow(
+            TwoRunWorkflow.run,
+            args=['Hello'],
+            id=f'{TwoRunWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+        first = _topic_only_durability.stream_agent_events(client, handle, poll_cooldown=timedelta(milliseconds=50))
+        first_events = await _collect(first)
+        second = _topic_only_durability.stream_agent_events(
+            client, handle, from_offset=first.offset + 1, poll_cooldown=timedelta(milliseconds=50)
+        )
+        second_events = await _collect(second)
+        assert await handle.result() == 'Streamed response'
+
+    # Each subscription ends at its own run's terminal event rather than running on into the next.
+    assert sum(1 for event in first_events if isinstance(event, AgentRunResultEvent)) == 1
+    assert isinstance(first_events[-1], AgentRunResultEvent)
+    assert sum(1 for event in second_events if isinstance(event, AgentRunResultEvent)) == 1
+    assert isinstance(second_events[-1], AgentRunResultEvent)
+    assert _kinds(first_events) == _kinds(second_events)
 
 
 # --- Resuming from an offset ----------------------------------------------------------------------

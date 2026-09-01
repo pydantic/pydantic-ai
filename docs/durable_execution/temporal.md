@@ -368,9 +368,30 @@ Leaving the `async with` block is what makes that work. A Workflow Stream is ser
 
 ##### Driving a UI protocol
 
-Because the stream ends in an `AgentRunResultEvent`, it is exactly what a [`UIAdapter`][pydantic_ai.ui.UIAdapter] consumes, so an HTTP handler can start the workflow and serve a [UI event stream protocol](../ui/overview.md) straight off the topic — including `on_complete`, which receives the run result the same way it would for an in-process run:
+Because the stream ends in an `AgentRunResultEvent`, it is exactly what a [`UIAdapter`][pydantic_ai.ui.UIAdapter] consumes, so an HTTP handler can start the workflow and serve a [UI event stream protocol](../ui/overview.md) straight off the topic — including `on_complete`, which receives the run result the same way it would for an in-process run.
 
-```python {title="temporal_workflow_streams_ui.py" test="skip" lint="skip"}
+The two halves of the adapter's job split across the boundary: the HTTP handler turns the request into a protocol stream, and the workflow rebuilds the run arguments from the same request body.
+
+```python {title="temporal_workflow_streams_ui_workflow.py" test="skip" lint="skip"}
+@workflow.defn
+class ChatWorkflow:
+    @workflow.init
+    def __init__(self, body: bytes) -> None:
+        self.events = AgentEventStream()
+
+    @workflow.run
+    async def run(self, body: bytes) -> str:
+        adapter = VercelAIAdapter(agent=agent, run_input=VercelAIAdapter.build_run_input(body))
+        async with self.events:
+            result = await agent.run(
+                message_history=adapter.messages,
+                deferred_tool_results=adapter.deferred_tool_results,
+                conversation_id=adapter.conversation_id,
+            )
+        return result.output
+```
+
+```python {title="temporal_workflow_streams_ui_handler.py" test="skip" lint="skip"}
 from starlette.requests import Request
 from starlette.responses import Response
 
@@ -380,7 +401,7 @@ from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 async def handle_chat(request: Request) -> Response:
     body = await request.body()
     handle = await client.start_workflow(
-        AssistantWorkflow.run, body, id=..., task_queue='my-task-queue'
+        ChatWorkflow.run, body, id=..., task_queue='my-task-queue'
     )
 
     adapter = VercelAIAdapter(agent=agent, run_input=VercelAIAdapter.build_run_input(body))
