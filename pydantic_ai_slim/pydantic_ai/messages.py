@@ -1993,6 +1993,7 @@ class ModelRequest:
 
     Set to `'interrupted'` when the request was being assembled (e.g. collecting tool returns) and
     the run was abnormally terminated by an exception or cancellation before the request was sent to the model.
+    In that case `parts` holds only the tool returns that were collected, and is empty if none were.
     Appears in [`capture_run_messages`][pydantic_ai.capture_run_messages] output so consumers can detect partial state.
     """
 

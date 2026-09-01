@@ -620,7 +620,7 @@ async def main():
     except RunCancelled as exc:
         messages = exc.all_messages()
         print(f'Cancelled after {len(messages)} messages')
-        #> Cancelled after 2 messages
+        #> Cancelled after 3 messages
         await agent.run(message_history=messages)  # (2)!
 ```
 
@@ -676,7 +676,7 @@ async def main():
         assert cancelled is not None
         messages = cancelled.all_messages()
         print(f'Cancelled after {len(messages)} messages')
-        #> Cancelled after 2 messages
+        #> Cancelled after 3 messages
         await agent.run(message_history=messages)  # (3)!
 ```
 
@@ -1693,6 +1693,13 @@ with capture_run_messages() as messages:  # (2)!
                 run_id='...',
                 conversation_id='...',
             ),
+            ModelRequest(
+                parts=[],
+                timestamp=datetime.datetime(...),
+                run_id='...',
+                conversation_id='...',
+                state='interrupted',
+            ),
         ]
         """
     else:
@@ -1706,7 +1713,7 @@ _(This example is complete, it can be run "as is")_
 
 When a run is cut short by an exception while streaming, an exception inside a tool, or external cancellation, Pydantic AI still captures partial state where it can. Partial [`ModelResponse`][pydantic_ai.messages.ModelResponse] and [`ModelRequest`][pydantic_ai.messages.ModelRequest] messages have `state='interrupted'` so persistence layers and UIs can distinguish them from complete messages.
 
-For model responses, interrupted messages contain the response parts streamed before the interruption. For model requests, interrupted messages contain the tool results that completed before tool execution stopped. The captured messages reflect exactly what happened — half-finished tool call parts are not turned into synthetic tool results at capture time. When an interrupted history is passed back into a run, it is [repaired automatically](message-history.md#making-histories-provider-valid) before the next model request.
+For model responses, interrupted messages contain the response parts streamed before the interruption. For model requests, interrupted messages contain the tool results that completed before tool execution stopped — if none did, the request is still recorded, with no parts, marking the point where the response's tool calls were abandoned. The captured messages reflect exactly what happened — half-finished tool call parts are not turned into synthetic tool results at capture time. When an interrupted history is passed back into a run, it is [repaired automatically](message-history.md#making-histories-provider-valid) before the next model request.
 
 In this example, `get_volume` completes before `get_mass` raises, so the interrupted request contains the completed `get_volume` return:
 
