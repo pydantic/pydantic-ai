@@ -169,12 +169,15 @@ class RunContext(Generic[RunContextAgentDepsT]):
     (e.g. inside a Temporal activity).
     """
 
-    _static_instruction_cache: dict[Any, str | None] = field(default_factory=dict[Any, 'str | None'], repr=False)
+    _static_instruction_cache: dict[int, tuple[Any, str | None]] = field(
+        default_factory=dict[int, 'tuple[Any, str | None]'], repr=False
+    )
     """Private implementation detail — not part of the public API; do not read or write.
 
     What each instruction function registered with `static=True` returned, so it is called once for
-    the run rather than once per model request. Shared by reference through the `replace()` copies
-    each step makes, the same way `retries` is, which is what makes "once per run" hold.
+    the run rather than once per model request. Keyed by the function's `id()`, with the function
+    itself kept in the entry so that id stays its own. Shared by reference through the `replace()`
+    copies each step makes, the same way `retries` is, which is what makes "once per run" hold.
     """
 
     _event_stream_buffer: list[_messages.AgentStreamEvent] | None = field(default=None, repr=False)

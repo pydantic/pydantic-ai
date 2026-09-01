@@ -14,6 +14,8 @@ every request would move the prefix under a static label — a cache trap rather
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import pytest
 from inline_snapshot import snapshot
 
@@ -222,3 +224,32 @@ async def test_static_functions_may_read_the_run_context() -> None:
 
     await agent.run('Hello', deps='ACME')
     assert [part.content for part in captured[1]] == ['You serve ACME.']
+
+
+async def test_a_static_callable_object_need_not_be_hashable() -> None:
+    # An instruction may be any callable, and a plain `@dataclass` with `__call__` is unhashable, so
+    # the per-run answers are keyed by identity. Composing the text from an object's own state is
+    # exactly the shape this flag is for, and it would be a poor payoff if declaring it static were
+    # what made the agent fail to run.
+    @dataclass
+    class Composer:
+        rules: list[str]
+        calls: int = 0
+
+        def __call__(self) -> str:
+            self.calls += 1
+            return '\n'.join(self.rules)
+
+    captured: list[list[InstructionPart]] = []
+    agent = Agent(two_step_model(captured))
+
+    @agent.tool_plain
+    def ping() -> str:
+        return 'pong'
+
+    composer = Composer(['Be concise.', 'Cite sources.'])
+    agent.instructions(static=True)(composer)
+
+    await agent.run('Hello')
+    assert composer.calls == 1
+    assert [part.content for part in captured[1]] == ['Be concise.\nCite sources.']

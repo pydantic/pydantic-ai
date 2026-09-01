@@ -2430,6 +2430,7 @@ def test_cache_key_run_context_projection_is_exhaustive():
         'conversation_id',  # per-conversation id; same rationale as run_id
         'capability_active',  # derived from loaded_capability_ids plus the static capability set, which are projected
         '_mcp_tool_defs_cache',  # live per-run memo of MCP tool defs, reconstructed from messages
+        '_static_instruction_cache',  # live per-run memo of static instruction answers, whose text only ever reaches a model request and so cannot change what a tool call does
         '_event_stream_buffer',  # live per-run event buffer drained in flow code, not a task input
         'realtime_session',  # live RealtimeSession, not hashable run state; sessions don't run inside Prefect tasks
         '_cancellation',  # runtime-only cancellation controller; carries no run inputs and must not fork the cache key

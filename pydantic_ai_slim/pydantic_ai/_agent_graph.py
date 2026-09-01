@@ -343,8 +343,10 @@ class GraphAgentState:
     exposed as the private `_mcp_tool_defs_cache` field. Recreated per run and reconstructed
     identically on durable replay/recovery, which is what keeps the Temporal/DBOS MCP wrappers'
     `get_tools` scheduling replay-deterministic."""
-    static_instruction_cache: dict[Any, str | None] = dataclasses.field(default_factory=dict[Any, 'str | None'])
-    """Per-run answers of instruction functions registered with `static=True`, keyed by the function.
+    static_instruction_cache: dict[int, tuple[Any, str | None]] = dataclasses.field(
+        default_factory=dict[int, 'tuple[Any, str | None]']
+    )
+    """Per-run answers of instruction functions registered with `static=True`, keyed by function identity.
 
     Shared by reference into every `RunContext` this run (see `build_run_context`), where it is exposed
     as the private `_static_instruction_cache` field. That reference is what makes "called once per

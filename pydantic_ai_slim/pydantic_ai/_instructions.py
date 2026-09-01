@@ -122,13 +122,18 @@ async def resolve_sourced_instructions(
             # A function the author declared static is called once for the run and its answer reused,
             # because a block that sorts into the cacheable prefix while being recomputed every request
             # is a cache trap rather than a cache win.
+            #
+            # Keyed by identity rather than by the function itself: an instruction is any callable, and
+            # a plain `@dataclass` with `__call__` is unhashable. The entry keeps the callable alive so
+            # its id cannot be handed to a different object while the answer is still cached.
             cache = run_context._static_instruction_cache  # pyright: ignore[reportPrivateUsage]
-            if sourced.dynamic or instruction not in cache:
+            key = id(instruction)
+            if not sourced.dynamic and (cached := cache.get(key)) is not None:
+                _, content = cached
+            else:
                 content = await _system_prompt.SystemPromptRunner[AgentDepsT](instruction).run(run_context)
                 if not sourced.dynamic:
-                    cache[instruction] = content
-            else:
-                content = cache[instruction]
+                    cache[key] = (instruction, content)
             if content:
                 part = InstructionPart(content=content, name=sourced.name, id=sourced.id, dynamic=sourced.dynamic)
                 if group:
