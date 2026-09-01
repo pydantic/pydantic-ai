@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.metadata
 import json
 import warnings
 from collections.abc import Mapping, Sequence
@@ -802,13 +803,15 @@ class TestCompositionWarning:
         """It routes the request into a durable unit rather than rejecting what comes back.
 
         Core also requires its dispatch to be the innermost wrapper, so listing `SpendLimits`
-        after it is the one correction a reader must not make. The durable operations require
-        a workflow runtime, so this assertion stops at the expected Temporal dispatch error.
+        after it is the one correction a reader must not make. On `pydantic-ai-slim` 2.36 the
+        dispatch projects through the workflow runtime and stops at Temporal's dispatch error;
+        from 2.37 the operations run inline outside a durable container, so the run completes
+        and accrues like any other.
         """
         pytest.importorskip('temporalio')
         from pydantic_ai.durable_exec.temporal import TemporalDurability  # noqa: PLC0415  # needs the temporal extra
 
-        guard = SpendLimits[None](budgets=[Budget(window='total')])
+        guard = SpendLimits[None](budgets=[Budget(window='total')], price=lambda r: Decimal('1'))
         agent = Agent(
             _scripted_usage(),
             name='durable',
@@ -816,9 +819,17 @@ class TestCompositionWarning:
             capabilities=[guard, TemporalDurability[None]()],
         )
 
+        dispatches_inline = tuple(
+            int(part) for part in importlib.metadata.version('pydantic-ai-slim').split('.')[:2]
+        ) >= (2, 37)
+
         with warnings.catch_warnings(record=True) as caught:
-            with pytest.raises(Exception, match='Not in workflow event loop'):
+            if dispatches_inline:  # pragma: no cover - latest-version path
                 await agent.run('hi')
+                assert (await guard.status())[0].spent.usd == Decimal('1')
+            else:
+                with pytest.raises(Exception, match='Not in workflow event loop'):
+                    await agent.run('hi')
 
         assert not [warning for warning in caught if isinstance(warning.message, SpendCompositionWarning)]
 
