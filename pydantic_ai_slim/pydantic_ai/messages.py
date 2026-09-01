@@ -1203,14 +1203,14 @@ class _DumpedMultiModalContent:
     Requiring it is also what stops a load from building something that cannot be dumped again.
     `FileUrl.media_type` falls back to inferring from the URL, and a URL carrying no usable extension
     raises `Could not infer media type` — on the dump, not on the load that built the object, so a
-    history that had loaded cleanly could no longer be saved (#4190). An item reconstructed here brings
+    history that had loaded cleanly could no longer be saved ([issue #4190](https://github.com/pydantic/pydantic-ai/issues/4190)). An item reconstructed here brings
     its own `media_type`, so it never reaches that inference. Any `str` counts, `''` included: an empty
     one is falsy and does infer after all, but excluding it would stop an `UploadedFile` whose caller
     set one from surviving its own dump, and matching what we dump is the rule the arm is built on.
 
     The check is chained onto each choice of the tagged union rather than written as a validator,
     because any Python callable on this union is called once per node of the decoded payload — the cost
-    #7472 was about. Inside the union, the discriminator has already read `kind` in Rust, so only a
+    [issue #7472](https://github.com/pydantic/pydantic-ai/issues/7472) was about. Inside the union, the discriminator has already read `kind` in Rust, so only a
     mapping claiming one of our six `kind` values pays for the check at all; the same check chained
     ahead of the union runs on every mapping node instead, measured at 1.29x on a dict-heavy payload.
 

@@ -1639,7 +1639,7 @@ def test_tool_return_multimodal_rehydrates_only_with_media_type(
 
     The dump is asserted for every case because that is the leg the requirement buys. `FileUrl` infers
     its media type from the URL when none was given, and a URL with no usable extension raises
-    `Could not infer media type` on the *dump*, long after the load that built the object (#4190).
+    `Could not infer media type` on the *dump*, long after the load that built the object ([issue #4190](https://github.com/pydantic/pydantic-ai/issues/4190)).
     Nothing reconstructed here can reach that inference.
     """
     messages: list[ModelMessage] = [
@@ -1961,7 +1961,7 @@ def test_tool_return_content_json_paths_make_no_per_node_python_calls():
     """`ToolReturnContent`'s JSON paths must resolve their arms in Rust, never once per node.
 
     A callable `pydantic.Discriminator` on this recursive union is invoked once per JSON value node —
-    951 times for the 37 KB payload in #7472 — so deserializing a large structured tool return costs
+    951 times for the 37 KB payload in [issue #7472](https://github.com/pydantic/pydantic-ai/issues/7472) — so deserializing a large structured tool return costs
     thousands of Rust→Python crossings, paid on every message-history load, UI adapter round-trip, and
     Temporal activity resolution and replay.
 
@@ -2104,7 +2104,7 @@ def test_tool_return_string_like_content_is_not_treated_as_a_sequence(value: Any
     """`str`, `bytes` and `bytearray` must survive python-mode validation as their own type.
 
     All three are `Sequence`s, so the `Sequence[ToolReturnContent]` arm could shred them into
-    per-character/per-byte lists. #6191's approving review named that short-circuit by hand and
+    per-character/per-byte lists. [PR #6191](https://github.com/pydantic/pydantic-ai/pull/6191)'s approving review named that short-circuit by hand and
     nothing pinned it.
 
     The `str` subclass case guards `_StrPassthrough`'s `is_instance_schema` specifically: swapping it
