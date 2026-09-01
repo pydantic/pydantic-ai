@@ -3432,7 +3432,7 @@ def _drop_unpaired_native_tool_calls(anthropic_messages: list[BetaMessageParam])
 
     A result can arrive in a later response, or exist as a `NativeToolReturnPart` but fail to render.
     Anthropic accepts an unpaired native call only while every later message is a user turn containing
-    only concurrent client-tool results. That shape is `is_tool_result_only`, shared with the
+    only concurrent client-tool results. That shape is `_is_tool_result_only`, shared with the
     `container_upload` injection so the two cannot drift.
     """
     returned_native_tool_call_ids: set[str] = set()

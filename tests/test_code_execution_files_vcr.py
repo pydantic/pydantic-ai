@@ -1,19 +1,8 @@
-"""Feature-central tests for `CodeExecutionTool.files` (uploaded-file support).
+"""Feature-central tests for `CodeExecutionTool.files` uploaded-file support.
 
-The round-trip VCR tests — one per provider — upload a real file via the provider's
-Files API and then run an agent with `CodeExecutionTool(files=[...])`, proving the
-upload round-trip end to end: the file reference reaches the provider (Anthropic
-`container_upload` block + `files-api-2025-04-14` beta; OpenAI Responses
-`code_interpreter` container `file_ids`) and the model reads the uploaded file. Each test also passes a
-foreign-provider `UploadedFile` to show it is filtered out on the wire.
-
-The mock-forced error shapes — what the container-drop retry does and does not fire on — live in
-`tests/models/test_anthropic.py` instead, beside the `MockAnthropic` harness they need.
-
-`test_openai_code_execution_files_all_filtered` is the one branch the round-trip
-can't exercise (files set, but none match the provider, so no `file_ids` is sent):
-it stays a unit test on the request-building path, kept here so the whole feature
-lives in one file.
+The Anthropic and OpenAI baseline provider round trips each pass a foreign-provider
+file. Additional Anthropic round-trip regressions cover multi-turn placement, cache
+stability, mixed tools, and rejected-container recovery.
 """
 
 from __future__ import annotations
@@ -183,7 +172,7 @@ async def test_anthropic_code_execution_files_fresh_container_multi_turn(
 ):
     """A multi-turn history with no container to reuse still gets the file into the fresh container.
 
-    Regression test for #7775. `test_anthropic_code_execution_files_multi_turn` can't catch it: its
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/7775. `test_anthropic_code_execution_files_multi_turn` can't catch it: its
     turn 2 reuses turn 1's container by id, so the file is already inside regardless of where the
     `container_upload` block lands. Here turn 1 never runs code, so no `container_id` reaches the
     history and turn 2 allocates a fresh container — and the server only materializes an upload that
@@ -295,7 +284,7 @@ async def test_anthropic_code_execution_files_with_function_tool(
 # at it with a 500 rather than the 404 it gives for an id that never existed. Deliberately not called
 # expired: the docs put the lifetime at 30 days with a restore-on-request inside that window, so an
 # id this age should have been restored rather than refused. What the refusal is, we cannot read back
-# — the body is a generic `api_error`. That gap is tracked upstream in #7833.
+# — the body is a generic `api_error`. That gap is tracked upstream in https://github.com/pydantic/pydantic-ai/issues/7833.
 _DEAD_CONTAINER_ID = 'container_01EG1LKXFPoQJ9tpbsZ1dh74'
 
 
@@ -308,13 +297,13 @@ async def test_anthropic_code_execution_files_rejected_container_is_dropped_and_
     Resuming a `CodeExecutionTool(files=...)` conversation against a days-old id sends an id that is
     worse than no id: the API refuses to materialize the upload and answers 500 — the same generic
     `api_error` body any internal failure produces — rather than the 404 it gives for an id that
-    never existed (#7833). The cause is not readable off the response, so this test pins the shape
+    never existed (https://github.com/pydantic/pydantic-ai/issues/7833). The cause is not readable off the response, so this test pins the shape
     that reproduces. The *remedy* is documented — "Send the request again without the `container`
     parameter to get a new container" — and that is exactly what the two requests here show: the
     first carries the dead id, the second carries no container at all, and the fresh container gets
     the file. What is not documented is the trigger. Anthropic puts the container lifetime at 30 days
     with a restore-on-request inside that window, so this days-old id should have been restored; that
-    it was refused instead, and refused with an untyped 500, is the upstream gap in #7833.
+    it was refused instead, and refused with an untyped 500, is the upstream gap in https://github.com/pydantic/pydantic-ai/issues/7833.
 
     `max_retries=0` keeps the SDK's own retry out of the way, so the two captured requests are ours.
     It also makes playback match live: the real 500 carries `x-should-retry: false` and the SDK stops
