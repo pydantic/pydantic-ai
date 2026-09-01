@@ -1409,10 +1409,7 @@ async def test_dbos_agent_run_in_workflow_rejects_runtime_mcp_toolset(dbos: DBOS
     with workflow_raises(
         UserError,
         snapshot(
-            "MCPToolset 'runtime_mcp' cannot be passed to `run(toolsets=...)` at runtime with DBOS, because toolsets that "
-            'execute their own tools or resolve dynamically must be registered for durable execution when the '
-            'agent is constructed. Pass them to the agent constructor instead. Non-executing toolsets like '
-            '`ExternalToolset` can be passed at runtime.'
+            "MCPToolset 'runtime_mcp' cannot be passed to `run(toolsets=...)` or `override(toolsets=...)` at runtime with DBOS, because toolsets that execute their own tools or resolve dynamically must be registered for durable execution when the agent is constructed. Pass them to the agent constructor instead. Non-executing toolsets like `ExternalToolset` can be passed at runtime."
         ),
     ):
         await simple_dbos_agent.run(
@@ -1425,10 +1422,7 @@ async def test_dbos_agent_run_in_workflow_rejects_runtime_dynamic_toolset(dbos: 
     with workflow_raises(
         UserError,
         snapshot(
-            "DynamicToolset 'runtime_dynamic' cannot be passed to `run(toolsets=...)` at runtime with DBOS, because toolsets that "
-            'execute their own tools or resolve dynamically must be registered for durable execution when the '
-            'agent is constructed. Pass them to the agent constructor instead. Non-executing toolsets like '
-            '`ExternalToolset` can be passed at runtime.'
+            "DynamicToolset 'runtime_dynamic' cannot be passed to `run(toolsets=...)` or `override(toolsets=...)` at runtime with DBOS, because toolsets that execute their own tools or resolve dynamically must be registered for durable execution when the agent is constructed. Pass them to the agent constructor instead. Non-executing toolsets like `ExternalToolset` can be passed at runtime."
         ),
     ):
         await simple_dbos_agent.run(
@@ -4137,7 +4131,7 @@ async def test_dbos_durability_rejects_runtime_mcp_toolset(dbos: DBOS) -> None:
         )
 
     with pytest.raises(
-        UserError, match=r"MCPToolset 'runtime_mcp' cannot be passed to `run\(toolsets=\.\.\.\)` at runtime with DBOS"
+        UserError, match=r"MCPToolset 'runtime_mcp' cannot be passed to `run\(toolsets=\.\.\.\)` or `override"
     ):
         await run_agent()
 
@@ -4152,7 +4146,7 @@ def test_dbos_durability_rejects_runtime_dynamic_toolset_sync(dbos: DBOS) -> Non
 
     with pytest.raises(
         UserError,
-        match=r"DynamicToolset 'runtime_dynamic' cannot be passed to `run\(toolsets=\.\.\.\)` at runtime with DBOS",
+        match=r"DynamicToolset 'runtime_dynamic' cannot be passed to `run\(toolsets=\.\.\.\)` or `override",
     ):
         run_agent()
 
@@ -4175,7 +4169,7 @@ async def test_dbos_durability_rejects_runtime_mcp_toolset_in_iter(dbos: DBOS) -
             pass  # pragma: no cover
 
     with pytest.raises(
-        UserError, match=r"MCPToolset 'iter_mcp' cannot be passed to `run\(toolsets=\.\.\.\)` at runtime with DBOS"
+        UserError, match=r"MCPToolset 'iter_mcp' cannot be passed to `run\(toolsets=\.\.\.\)` or `override"
     ):
         await run_agent()
 
@@ -4223,6 +4217,67 @@ async def test_dbos_durability_allows_per_run_capabilities_outside_workflow(dbos
     agent = Agent(_durability_fn_model, name='durability_per_run_cap_outside', capabilities=[DBOSDurability()])
     result = await agent.run('Hello', capabilities=[Toolset(FunctionToolset(id='per_run_fn'))])
     assert result.output == snapshot('Echo: Hello')
+
+
+@pytest.mark.parametrize('kind', ['mcp', 'dynamic'])
+async def test_dbos_durability_rejects_overridden_executing_toolsets(dbos: DBOS, kind: str) -> None:
+    toolsets = {
+        'mcp': MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='override_mcp'),
+        'dynamic': DynamicToolset(_per_run_dynamic_factory, id='override_dynamic'),
+    }
+    agent = Agent(_durability_fn_model, name=f'durability_override_{kind}', capabilities=[DBOSDurability()])
+
+    @DBOS.workflow()
+    async def run_agent() -> None:
+        with agent.override(toolsets=[toolsets[kind]]):
+            await agent.run('Hello')
+
+    with pytest.raises(UserError, match=r'cannot be passed to .*`override'):
+        await run_agent()
+
+
+async def test_dbos_durability_allows_overridden_function_toolset(dbos: DBOS) -> None:
+    calls: list[str] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+            return ModelResponse(parts=[TextPart('done')])
+        return ModelResponse(parts=[ToolCallPart('override_tool', {}, tool_call_id='call-1')])
+
+    def override_tool() -> str:
+        calls.append('override_tool')
+        return 'ok'
+
+    agent = Agent(FunctionModel(model_fn), name='durability_override_function', capabilities=[DBOSDurability()])
+
+    @DBOS.workflow()
+    async def run_agent() -> str:
+        with agent.override(toolsets=[FunctionToolset([override_tool], id='override_fn')]):
+            return (await agent.run('Hello')).output
+
+    assert await run_agent() == 'done'
+    assert calls == ['override_tool']
+
+
+async def test_dbos_durability_rejects_runtime_toolset_reusing_registered_id(dbos: DBOS) -> None:
+    agent = Agent(
+        _durability_fn_model,
+        name='durability_runtime_id_collision',
+        toolsets=[DynamicToolset(_per_run_dynamic_factory, id='shared')],
+        capabilities=[DBOSDurability()],
+    )
+    colliding = FunctionToolset[Any](id='shared')
+    message = "A toolset added at run time has the same `id` 'shared' as one the agent was constructed with"
+
+    @DBOS.workflow()
+    async def run_with_override() -> None:
+        with agent.override(toolsets=[colliding]):
+            await agent.run('Hello')
+
+    with pytest.raises(UserError, match=message):
+        await run_with_override()
+    with pytest.raises(UserError, match=message):
+        await agent.run('Hello', toolsets=[colliding])
 
 
 async def test_dbos_durability_rejects_duplicate_toolset_id(dbos: DBOS) -> None:
