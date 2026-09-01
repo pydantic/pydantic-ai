@@ -497,7 +497,7 @@ All providers support `'auto'` and `'none'`. Key differences for other options:
 | OpenAI | ✓ | ✓ | Full support |
 | Anthropic | ⚠️ | ⚠️ | Not supported with extended thinking; adaptive thinking is compatible |
 | Google | ✓ | ✓ | |
-| Bedrock | ✓ | Single only | Multiple tools fall back to 'any' mode |
+| Bedrock | ✓ | Single only | Multiple tools fall back to 'any' mode. Extended thinking is incompatible; adaptive thinking is compatible on supported model profiles |
 | Groq/HuggingFace | ✓ | Single only | Multiple tools fall back to 'required' mode |
 | Mistral | ✓ | ✓ | Maps `'required'` to `'any'` mode |
 | Cohere | ✓ | ✓ | Maps `'required'` to `'REQUIRED'`; a named subset is applied by trimming the tools array |
@@ -518,7 +518,7 @@ The table below covers the cases where Pydantic AI must filter client-side and t
 |----------|---------------------|
 | Anthropic | `tool_choice` is a list of multiple tools, OR a single tool with extended thinking or on a model that doesn't support forcing |
 | OpenAI Chat | `tool_choice` is a list of multiple tools, OR a single tool on a model that doesn't support forcing |
-| Bedrock | `tool_choice` is a list of multiple tools, OR a single tool with thinking enabled or on a model that doesn't support forcing |
+| Bedrock | `tool_choice` is a list of multiple tools, OR a single tool with extended thinking or on a model that doesn't support forcing (supported adaptive-thinking profiles send it natively) |
 | Groq / HuggingFace | `tool_choice` is a list of multiple tools |
 | Mistral | `tool_choice` is a list (any size) — the API doesn't accept specific tool names |
 | Cohere | `tool_choice` is a list (any size) — the API doesn't accept specific tool names |

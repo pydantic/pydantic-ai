@@ -601,6 +601,7 @@ def test_bedrock_anthropic_claude_sonnet_4_5():
             'bedrock_supports_leading_assistant_message': True,
             'bedrock_supports_tool_choice': True,
             'bedrock_supports_adaptive_thinking': False,
+            'bedrock_supports_forced_tool_choice_with_adaptive_thinking': False,
             'bedrock_supports_effort': False,
             'bedrock_top_k_variant': 'anthropic',
             'bedrock_send_back_thinking_parts': True,
@@ -619,6 +620,22 @@ def test_bedrock_anthropic_claude_sonnet_4_5():
 
 
 @pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
+@pytest.mark.parametrize(
+    'model_name,expected',
+    [
+        ('us.anthropic.claude-sonnet-4-6', True),
+        ('us.anthropic.claude-sonnet-5', True),
+        ('us.anthropic.claude-opus-4-6-v1', False),
+    ],
+)
+def test_bedrock_anthropic_adaptive_thinking_tool_choice_support(model_name: str, expected: bool):
+    """Only Bedrock models verified to combine adaptive thinking and forced tool choice opt in."""
+    profile = BedrockProvider.model_profile(model_name)
+    assert profile is not None
+    assert profile.get('bedrock_supports_forced_tool_choice_with_adaptive_thinking', False) is expected
+
+
+@pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
 def test_bedrock_anthropic_with_geo_prefix():
     profile = BedrockProvider.model_profile('us.anthropic.claude-haiku-4-5-20251001-v1:0')
     assert _normalize(profile) == snapshot(
@@ -632,6 +649,7 @@ def test_bedrock_anthropic_with_geo_prefix():
             'bedrock_supports_leading_assistant_message': True,
             'bedrock_supports_prompt_caching': True,
             'bedrock_supports_adaptive_thinking': False,
+            'bedrock_supports_forced_tool_choice_with_adaptive_thinking': False,
             'bedrock_supports_effort': False,
             'bedrock_top_k_variant': 'anthropic',
             'bedrock_supports_tool_caching': True,
@@ -662,6 +680,7 @@ def test_bedrock_anthropic_legacy_claude_3():
             'bedrock_supports_leading_assistant_message': True,
             'bedrock_supports_prompt_caching': True,
             'bedrock_supports_adaptive_thinking': False,
+            'bedrock_supports_forced_tool_choice_with_adaptive_thinking': False,
             'bedrock_supports_effort': False,
             'bedrock_top_k_variant': 'anthropic',
             'bedrock_supports_tool_caching': True,
