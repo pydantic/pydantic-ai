@@ -44,6 +44,22 @@ SUMMARY="$1"
 BODY_SRC="${2:-}"
 SESSION_ID="${HANDOFF_SESSION_ID:-${CLAUDE_CODE_SESSION_ID:-${CODEX_SESSION_ID:-}}}"
 
+validate_index_text() {
+    local label="$1" value="$2"
+    if [[ "$value" == *$'\n'* || "$value" == *$'\r'* ]] || \
+        LC_ALL=C grep -q '[[:cntrl:]]' <<< "$value"; then
+        echo "error: $label must not contain control characters" >&2
+        exit 1
+    fi
+}
+
+validate_index_text 'writer' "$WRITER"
+validate_index_text 'summary' "$SUMMARY"
+if [[ "$WRITER" == *']'* || "$WRITER" == *' · '* ]]; then
+    echo "error: writer must not contain ']' or the index field separator" >&2
+    exit 1
+fi
+
 DIR=".claude/skills/branch-context"
 INDEX="$DIR/handoffs-index.md"
 HAND_DIR="$DIR/handoffs"
@@ -77,9 +93,21 @@ if [ -f "$LANES" ]; then
     LANE_LABEL="$(awk -v id="$LANE_ID" '$1 == id { $1 = ""; sub(/^ /, ""); print; exit }' "$LANES")"
 fi
 if [ -z "$LANE_LABEL" ]; then
-    # unnamed lane → short, stable label; David can rename it in .lanes any time
-    LANE_LABEL="$(printf '%s' "${LANE_ID#local_}" | cut -c1-8)"
+    # unnamed lane → short, stable, unique label; David can rename it in .lanes any time
+    base_label="$(printf '%s' "${LANE_ID#local_}" | cut -c1-8)"
+    [ -z "$base_label" ] && base_label='lane'
+    LANE_LABEL="$base_label"
+    suffix=2
+    while awk -v label="$LANE_LABEL" '$1 != "" { $1 = ""; sub(/^ /, ""); if ($0 == label) found = 1 } END { exit !found }' "$LANES" 2>/dev/null; do
+        LANE_LABEL="${base_label}-${suffix}"
+        suffix=$((suffix + 1))
+    done
     echo "$LANE_ID $LANE_LABEL" >> "$LANES"
+fi
+validate_index_text 'lane label' "$LANE_LABEL"
+if [[ "$LANE_LABEL" == *']'* ]]; then
+    echo "error: lane label must not contain ']'" >&2
+    exit 1
 fi
 
 # Same session already handed off → amend that entry instead of competing with it.
@@ -113,13 +141,23 @@ SLUG="$(printf '%s' "$SUMMARY" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9
 FNAME="${TS}-${SLUG}.md"
 DEST="$HAND_DIR/$FNAME"
 
-if [ -e "$DEST" ]; then
-    # collision within the same minute — add seconds
+if [ -n "$BODY_SRC" ] && [ ! -f "$BODY_SRC" ]; then
+    echo "error: body file not found: $BODY_SRC" >&2
+    exit 1
+fi
+
+reserve_dest() {
+    (set -o noclobber; : > "$1") 2>/dev/null
+}
+
+if ! reserve_dest "$DEST"; then
+    # A minute-level name already exists. Retry with seconds and then suffixes;
+    # noclobber reserves each candidate atomically across concurrent sessions.
     TS="$(date -u +%Y-%m-%dT%H%M%SZ)"
     FNAME="${TS}-${SLUG}.md"
     DEST="$HAND_DIR/$FNAME"
     suffix=2
-    while [ -e "$DEST" ]; do
+    while ! reserve_dest "$DEST"; do
         FNAME="${TS}-${SLUG}-${suffix}.md"
         DEST="$HAND_DIR/$FNAME"
         suffix=$((suffix + 1))
@@ -127,10 +165,6 @@ if [ -e "$DEST" ]; then
 fi
 
 if [ -n "$BODY_SRC" ]; then
-    if [ ! -f "$BODY_SRC" ]; then
-        echo "error: body file not found: $BODY_SRC" >&2
-        exit 1
-    fi
     cp "$BODY_SRC" "$DEST"
 else
     cat > "$DEST" <<EOF

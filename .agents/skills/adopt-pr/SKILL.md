@@ -129,7 +129,7 @@ Append one final entry documenting the adoption itself:
 
 This marks the boundary between backfilled decisions (everything above) and live-logged decisions (everything below going forward).
 
-## Step 7 — Takeover comment + pushability pre-check (contributor PRs only)
+## Step 7 — Takeover comment (contributor PRs only)
 
 Skip this for your own PRs. When you're taking over **someone else's** PR, post a short takeover comment so the contributor knows you've got it and to avoid churn. Assume the PR is "ready" in the contributor's eyes when it's **non-draft with green CI** — sometimes the author signals explicitly (requests a review, pings you, leaves a comment). The comment should:
 
@@ -137,17 +137,19 @@ Skip this for your own PRs. When you're taking over **someone else's** PR, post 
 - **Say you're taking it over** from here.
 - **Ask them to hold off on new commits** while you do — every commit they push after this is another diff you have to re-review from scratch, which slows the merge.
 
-**Before posting, check whether you can push to their fork branch** — you'll almost certainly need to, to apply tweaks (tests, conflict resolutions):
+GitHub's maintainer-edits metadata is advisory context, not proof of push access:
 
 ```bash
-gh api repos/pydantic/pydantic-ai/pulls/$PR_NUMBER --jq .maintainer_can_modify   # REST — works even when GraphQL is rate-limited
+gh api repos/pydantic/pydantic-ai/pulls/$PR_NUMBER --jq .maintainer_can_modify
 ```
 
-If it returns `false`, **fold a request into the same comment**: ask them to enable **"Allow edits from maintainers"** on the PR (the checkbox in the PR sidebar). Doing this *preemptively* is the whole point — it avoids discovering mid-work that a `git push` is rejected with a 403 after you've already written the change (the `maintainer_can_modify` flag can also read stale, so still expect the first push to confirm it).
+Do not call the branch unpushable or ask for maintainer edits from that value. When work later needs
+to be pushed, attempt the normal push to the contributor's branch. Only an actual permission error
+establishes the restriction; then ask the contributor to enable **Allow edits from maintainers**.
 
 Draft the comment with the repository's required attribution and **confirm with the user before posting** — it's contributor-visible. Post with `gh pr comment $PR_NUMBER --body-file <file>` only on their go.
 
-> Template — "Thanks for this. I'm going to take it over from here to get it across the line. Could you hold off on pushing new commits while we work on it? Each new commit is another change we'd have to re-review, so it's smoother to keep the branch put. _[only if not pushable:]_ Could you also tick 'Allow edits from maintainers' on the PR so we can push small fixes directly? Thanks again!"
+> Template — "Thanks for this. I'm going to take it over from here to get it across the line. Could you hold off on pushing new commits while we work on it? Each new commit is another change we'd have to re-review, so it's smoother to keep the branch put. Thanks again!"
 
 ## Step 8 — Report
 
@@ -170,4 +172,4 @@ Next:
 - Don't log every resolved thread — only decision-bearing ones. The decisions log is meant to reward reading; diluting it with noise defeats the point.
 - Every backfilled decision entry must have a thread URL in `Source:`. If you can't find one, you're over-inferring — skip it.
 - If the existing `issue-brief.md` / `pr-decisions.md` is already populated (not template), the user's confirmation in Startup step 3 governs whether to overwrite.
-- **Fork PRs — push access**: Step 7 already checks `maintainer_can_modify` up front and (if `false`) asks the contributor to enable maintainer edits in the takeover comment, so later pushes don't get surprised by a 403. The "pushing to a contributor's fork branch" note under `## PR flow` in `CLAUDE.local.md` still applies to those follow-on pushes (a plain `git push` goes to the contributor's branch); if a push is still rejected despite the request, flag it to the user rather than working around it.
+- **Fork PRs — push access**: The "pushing to a contributor's fork branch" note under `## PR flow` in `CLAUDE.local.md` applies. Attempt the normal push; if it returns a permission error, flag the exact failure and ask the contributor to enable maintainer edits rather than working around it.

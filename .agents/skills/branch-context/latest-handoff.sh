@@ -36,7 +36,14 @@ LANE_LABEL=""
 if [ -f "$LANES" ]; then
     LANE_LABEL="$(awk -v id="$LANE_ID" '$1 == id { $1 = ""; sub(/^ /, ""); print; exit }' "$LANES")"
 fi
-[ -z "$LANE_LABEL" ] && LANE_LABEL="$(printf '%s' "${LANE_ID#local_}" | cut -c1-8)"
+if [ -z "$LANE_LABEL" ]; then
+    if [ "${1:-}" = "--lane" ]; then
+        echo "lane_id=$LANE_ID label="
+    else
+        echo "lane '$LANE_ID' has no registered handoff identity — nothing to read" >&2
+    fi
+    exit 0
+fi
 
 if [ "${1:-}" = "--lane" ]; then
     echo "lane_id=$LANE_ID label=$LANE_LABEL"
@@ -48,7 +55,12 @@ if [ ! -f "$INDEX" ]; then
     exit 0
 fi
 
-LINE="$(grep -F "lane:$LANE_LABEL]" "$INDEX" | tail -1 || true)"
+LINE="$(awk -F ' · ' -v wanted="lane:$LANE_LABEL]" '
+    /^## / && $2 ~ /^handoffs\/[^ ]+\.md$/ && $3 ~ /^\[/ {
+        if (substr($4, 1, length(wanted)) == wanted) line = $0
+    }
+    END { print line }
+' "$INDEX")"
 
 if [ -z "$LINE" ]; then
     echo "no handoff for lane '$LANE_LABEL' ($LANE_ID)." >&2
@@ -56,7 +68,7 @@ if [ -z "$LINE" ]; then
     exit 0
 fi
 
-FNAME="$(printf '%s' "$LINE" | sed -E 's|.*(handoffs/[^ ]+\.md).*|\1|')"
+FNAME="$(printf '%s' "$LINE" | awk -F ' · ' '{ print $2 }')"
 if [ ! -f "$DIR/$FNAME" ]; then
     echo "index points at a missing file: $FNAME" >&2
     exit 1
