@@ -1760,7 +1760,11 @@ class VercelPassthroughEvent(CustomEvent, name='vercel_passthrough'):
 
 
 async def test_custom_event_maps_to_data_chunk():
-    """A `CustomEvent` maps to a `data-{name}` chunk, nesting `tool_call_id` alongside the payload when set."""
+    """A `CustomEvent` maps to a `data-{name}` chunk carrying the bare payload, tool-scoped or not.
+
+    A frontend written against one shape must not break when the same event class is later emitted
+    from inside a tool, so attribution is omitted unless the event's `to_payload` includes it.
+    """
 
     async def event_generator():
         yield VercelProgressEvent(payload={'pct': 50})

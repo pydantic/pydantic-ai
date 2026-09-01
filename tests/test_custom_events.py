@@ -687,12 +687,19 @@ def test_unknown_event_name_with_payload_degrades():
 
 
 def test_unknown_event_name_with_nested_data_preserved():
-    """A wire event with an unregistered name keeps a nested `data` payload through the unknown envelope."""
+    """A wire event whose only payload field is named `data` round-trips with that nesting intact.
+
+    The envelope's `data` slot holds the gathered payload, so the event's own `data` field nests
+    inside it rather than becoming the envelope's — otherwise re-serialization would promote the
+    nested mapping's entries to top-level fields.
+    """
     adapter = pydantic.TypeAdapter[AgentStreamEvent](AgentStreamEvent)
     wire = {'event_kind': 'custom', 'name': 'quick_status', 'data': {'stage': 'fetching'}}
     with pytest.warns(UserWarning, match="Unknown event name 'quick_status'"):
         event = adapter.validate_python(wire)
-    assert event == snapshot(UnknownCustomEvent(name='quick_status', data={'stage': 'fetching'}))
+    assert event == snapshot(UnknownCustomEvent(name='quick_status', data={'data': {'stage': 'fetching'}}))
+    redumped = adapter.dump_python(event)
+    assert {k: v for k, v in redumped.items() if k in wire} == wire
 
 
 def test_unknown_event_data_key_collision_round_trips():
@@ -718,13 +725,20 @@ def test_unknown_event_instance_revalidates():
 
 
 def test_unknown_event_non_mapping_data_round_trips():
-    """A non-mapping `data` payload is kept under `data` on serialization instead of being flattened."""
+    """A non-mapping `data` payload is kept under `data` on serialization instead of being flattened.
+
+    The envelope's `data` always holds the payload *fields*, so reading that wire dict back gathers
+    the scalar under its `data` field name rather than restoring it bare. The wire shape — the thing
+    a downstream consumer with the defining module imported reads — is unchanged either way.
+    """
     adapter = pydantic.TypeAdapter[AgentStreamEvent](AgentStreamEvent)
     event = UnknownCustomEvent(name='unseen_scalar', data=5)
     dumped = adapter.dump_python(event)
     assert dumped['data'] == 5
     with pytest.warns(UserWarning, match="Unknown event name 'unseen_scalar'"):
-        assert adapter.validate_python(dumped) == event
+        revalidated = adapter.validate_python(dumped)
+    assert revalidated == UnknownCustomEvent(name='unseen_scalar', data={'data': 5})
+    assert adapter.dump_python(revalidated) == dumped
 
 
 def test_registration_after_adapter_not_seen():

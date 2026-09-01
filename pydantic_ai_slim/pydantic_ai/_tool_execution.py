@@ -56,6 +56,10 @@ async def _iter_completed_or_buffered(
         while pending:
             while event_stream_buffer:
                 yield event_stream_buffer.pop(0)
+            # Clearing after the drain rather than before it can't lose a wake-up: `emit` is async,
+            # so appends land on this event loop, and no `await` separates the empty-buffer check
+            # from the clear. An event appended while an earlier one is being yielded above is seen
+            # by the next iteration of that same loop.
             signal.clear()
             # Typed `Task[Any]` so the mixed `asyncio.wait` set unifies with the task set; the
             # sentinel is discarded from both result sets before tasks are yielded.
