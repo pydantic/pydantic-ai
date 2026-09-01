@@ -672,10 +672,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         about the transport as much as about the model.
         """
         _profile = super().profile
-        provider = self.provider
-        if provider is None:
-            return cast(AnthropicModelProfile, _profile)
-        client = provider.client
+        client = self._provider.client
         supported_native_tools = _profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
         if isinstance(client, _WEB_SEARCH_UNSUPPORTED_CLIENTS):
             supported_native_tools = supported_native_tools - {WebSearchTool}

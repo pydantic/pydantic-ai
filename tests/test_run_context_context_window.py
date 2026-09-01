@@ -8,6 +8,7 @@ the property reads the most recent `ModelResponse`'s `total_tokens` against the 
 from __future__ import annotations
 
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -123,16 +124,6 @@ def test_context_window_used_none_for_fallback_model():
 
 def test_context_window_used_none_for_non_request_response_model():
     """`None` for a model that isn't a request-response `Model` (e.g. a realtime model): no profile to read."""
-
-    class AbstractOnlyModel(AbstractModel):
-        @property
-        def model_name(self) -> str:
-            return 'abstract-only'
-
-        @property
-        def system(self) -> str:
-            return 'test'
-
-    model = AbstractOnlyModel()
+    model = MagicMock(spec=AbstractModel)
     ctx = RunContext(deps=None, model=model, usage=RunUsage())
     assert ctx.context_window_used is None
