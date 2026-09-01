@@ -516,11 +516,12 @@ async def delegate(task: str) -> str:
     ...
 ```
 
-The child workflow ID is deterministic when omitted. An explicit `id`, `task_queue`, timeout,
-retry policy, cancellation type, parent close policy, memo, search attributes, versioning intent,
-summary, details, and priority are passed through to Temporal. The tool body runs as deterministic
-workflow code, so it must delegate I/O to durable operations. Child workflows are not supported for
-sync, dynamic, or MCP tools.
+The child workflow ID is deterministic when omitted. The `id`, `task_queue`, `execution_timeout`,
+`run_timeout`, `task_timeout`, `id_reuse_policy`, `retry_policy`, `cron_schedule`,
+`cancellation_type`, `parent_close_policy`, `memo`, `search_attributes`, `versioning_intent`,
+`static_summary`, `static_details`, and `priority` options are passed through to Temporal. The tool
+body runs as deterministic workflow code, so it must delegate I/O to durable operations. Child
+workflows are not supported for sync, dynamic, or MCP tools.
 
 ## Activity Retries
 

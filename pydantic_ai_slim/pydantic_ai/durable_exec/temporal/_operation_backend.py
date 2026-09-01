@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import re
 from abc import abstractmethod
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Any, Generic, Literal, Protocol, TypeVar, cast
 
 from temporalio import activity, workflow
+from temporalio.exceptions import ApplicationError
 from temporalio.workflow import ActivityConfig, ChildWorkflowConfig
 from typing_extensions import Required, TypedDict
 
@@ -230,11 +230,16 @@ class TemporalOperationBackend(RegisteredOperationBackend[TemporalOperationConfi
             runtime = self._runtime
 
             async def run(self: object, params: Any, deps: Any = None) -> ResultT:
+                if workflow.info().parent is None:
+                    raise ApplicationError(
+                        'Pydantic AI tool-call workflows must be started as child workflows.', non_retryable=True
+                    )
                 semantic_params = transport.load(cast(WireT, (params, deps)), runtime=runtime)
                 return await operation.handler(semantic_params)
 
-            sanitized_name = re.sub(r'\W', '_', name)
-            class_name = f'_{sanitized_name}__child_workflow'
+            # UTF-8 hex preserves the full operation name while using only Python identifier characters.
+            encoded_name = name.encode().hex()
+            class_name = f'_{encoded_name}__child_workflow'
             run.__qualname__ = f'{class_name}.run'
             run.__annotations__ = activity_handler.__annotations__
             child_workflow_registration = workflow.defn(name=f'{name}__child_workflow')(

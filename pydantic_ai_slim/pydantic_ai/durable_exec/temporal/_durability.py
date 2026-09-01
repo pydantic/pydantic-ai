@@ -404,6 +404,9 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         if isinstance(config, dict) and 'child_workflow' in config:
             if set(config) != {'child_workflow'}:
                 raise UserError(f'Tool {name!r} has invalid Temporal metadata: `child_workflow` must be the only key.')
+            # Argument validation never executes the tool body, so it remains an activity even when the call is a child.
+            if isinstance(operation_id, ToolsetValidateToolArgumentsId) and operation_id.toolset_kind == 'function':
+                return base_config
             if not isinstance(operation_id, ToolsetCallToolId) or operation_id.toolset_kind != 'function':
                 raise UserError('Temporal child workflows are only supported for function tool calls.')
             assert isinstance(tool, FunctionToolsetTool)

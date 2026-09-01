@@ -11,9 +11,13 @@ import pytest
 from temporalio import activity, workflow
 from temporalio.client import Client, WorkflowFailureError, WorkflowHistory
 from temporalio.contrib.pydantic import pydantic_data_converter
-from temporalio.exceptions import CancelledError as TemporalCancelledError, TerminatedError
+from temporalio.exceptions import ApplicationError, CancelledError as TemporalCancelledError, TerminatedError
 from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
-from temporalio.workflow import ChildWorkflowCancellationType, ChildWorkflowConfig
+from temporalio.workflow import (
+    ChildWorkflowCancellationType,
+    ChildWorkflowConfig,
+    _Definition as WorkflowDefinition,  # pyright: ignore[reportPrivateUsage]
+)
 
 from pydantic_ai import Agent, FunctionToolset
 from pydantic_ai.durable_exec._operation import ToolsetCallToolId
@@ -126,14 +130,20 @@ async def nested_child_activity(value: str) -> str:
 
 
 toolset = FunctionToolset(id='child_workflow_tools')
+validated_values: list[str] = []
+
+
+def validate_durable_delegate(ctx: RunContext[None], value: str) -> None:
+    validated_values.append(value)
 
 
 @toolset.tool_plain(
+    args_validator=validate_durable_delegate,
     metadata={
         'temporal': {
             'child_workflow': ChildWorkflowConfig(execution_timeout=timedelta(seconds=30)),
         }
-    }
+    },
 )
 async def durable_delegate(value: str) -> str:
     return await workflow.execute_activity(
@@ -189,6 +199,7 @@ async def _wait_for_child_start(handle: _HistoryHandle) -> tuple[str, str]:
 
 async def test_tool_call_runs_as_child_workflow(client: Client) -> None:
     workflow_id = 'test_tool_call_runs_as_child_workflow'
+    validated_values.clear()
     async with Worker(
         client,
         task_queue=TASK_QUEUE,
@@ -203,6 +214,7 @@ async def test_tool_call_runs_as_child_workflow(client: Client) -> None:
         )
 
     assert 'delegated:' in result
+    assert validated_values == ['a']
     history = await client.get_workflow_handle(workflow_id).fetch_history()
     child_start = _child_start(history)
     assert child_start.workflow_type.name == CHILD_WORKFLOW_TYPE
@@ -225,6 +237,88 @@ async def test_tool_call_runs_as_child_workflow(client: Client) -> None:
         data_converter=pydantic_data_converter,
         workflow_runner=UnsandboxedWorkflowRunner(),
     ).replay_workflow(history)
+
+
+def _child_workflow_registration(agent: Agent[None, str], toolset_id: str) -> type:
+    durability = TemporalDurability.from_agent(agent)
+    assert durability is not None
+    registrations = [
+        registration
+        for registration in durability.temporal_registrations
+        if isinstance(registration, type)
+        and f'__toolset__{toolset_id}__call_tool__child_workflow'
+        in WorkflowDefinition.must_from_class(registration).name
+    ]
+    assert len(registrations) == 1
+    return registrations[0]
+
+
+async def test_child_workflow_rejects_top_level_start(client: Client) -> None:
+    child_workflow = _child_workflow_registration(agent, 'child_workflow_tools')
+    workflow_id = 'test_child_workflow_rejects_top_level_start'
+    async with Worker(client, task_queue=TASK_QUEUE, workflows=[child_workflow]):
+        with pytest.raises(WorkflowFailureError) as exc_info:
+            await client.execute_workflow(child_workflow.run, None, id=workflow_id, task_queue=TASK_QUEUE)
+
+    assert isinstance(exc_info.value.__cause__, ApplicationError)
+    assert exc_info.value.__cause__.non_retryable
+    assert str(exc_info.value.__cause__) == 'Pydantic AI tool-call workflows must be started as child workflows.'
+
+
+def _collision_agent(name: str, result: str) -> Agent[None, str]:
+    collision_toolset = FunctionToolset(id='collision_tools')
+
+    @collision_toolset.tool_plain(metadata={'temporal': {'child_workflow': ChildWorkflowConfig()}})
+    async def collision_tool() -> str:
+        return result
+
+    return Agent(
+        TestModel(call_tools='all'),
+        name=name,
+        toolsets=[collision_toolset],
+        capabilities=[TemporalDurability()],
+    )
+
+
+hyphen_agent = _collision_agent('foo-bar', 'hyphen')
+underscore_agent = _collision_agent('foo_bar', 'underscore')
+
+
+@workflow.defn
+class CollidingAgentNamesWorkflow:
+    @workflow.run
+    async def run(self, use_hyphen: bool) -> str:
+        selected_agent = hyphen_agent if use_hyphen else underscore_agent
+        return (await selected_agent.run('call the tool')).output
+
+
+async def test_child_workflow_classes_do_not_collide(client: Client) -> None:
+    hyphen_child = _child_workflow_registration(hyphen_agent, 'collision_tools')
+    underscore_child = _child_workflow_registration(underscore_agent, 'collision_tools')
+
+    assert hyphen_child is not underscore_child
+    assert hyphen_child.__qualname__ != underscore_child.__qualname__
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[CollidingAgentNamesWorkflow],
+        plugins=[AgentPlugin(hyphen_agent), AgentPlugin(underscore_agent)],
+    ):
+        hyphen_result = await client.execute_workflow(
+            CollidingAgentNamesWorkflow.run,
+            True,
+            id='test_child_workflow_class_hyphen',
+            task_queue=TASK_QUEUE,
+        )
+        underscore_result = await client.execute_workflow(
+            CollidingAgentNamesWorkflow.run,
+            False,
+            id='test_child_workflow_class_underscore',
+            task_queue=TASK_QUEUE,
+        )
+
+    assert 'hyphen' in hyphen_result
+    assert 'underscore' in underscore_result
 
 
 def _cancellation_agent(name: str, cancellation_type: ChildWorkflowCancellationType) -> Agent[None, str]:
