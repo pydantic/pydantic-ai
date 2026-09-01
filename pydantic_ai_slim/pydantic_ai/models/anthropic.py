@@ -1164,7 +1164,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if messages and isinstance(messages[-1], ModelResponse) and messages[-1].state == 'suspended':
             if messages[-1].provider_details:
                 return messages[-1].provider_details.get('container_id'), False
-            return None, False  # pragma: lax no cover
+            return None, False
 
         for m in reversed(messages):
             if isinstance(m, ModelResponse) and m.provider_name == self.system and m.provider_details:

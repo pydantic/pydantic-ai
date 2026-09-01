@@ -145,6 +145,31 @@ async def test_anthropic_code_execution_files_500_keeps_caller_container(
     assert [kwargs['container'] for kwargs in completion_kwargs] == [expected_container]
 
 
+async def test_anthropic_code_execution_files_suspended_history_without_container(allow_model_requests: None):
+    """A suspended response without a container sends no container and does not enable recovery."""
+    error = APIStatusError(
+        'server error',
+        response=httpx2.Response(status_code=500, request=httpx2.Request('POST', 'https://example.com/v1')),
+        body={'error': 'server error'},
+    )
+    mock_client = MockAnthropic.create_mock([error, error])
+    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(
+        model,
+        capabilities=[NativeTool(CodeExecutionTool(files=[UploadedFile(file_id='file_x', provider_name='anthropic')]))],
+    )
+    history: list[ModelMessage] = [
+        ModelResponse(parts=[TextPart(content='Working on it.')], state='suspended', provider_name='anthropic')
+    ]
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        await agent.run(None, message_history=history)
+
+    assert exc_info.value.status_code == 500
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)
+    assert [kwargs['container'] for kwargs in completion_kwargs] == [OMIT]
+
+
 # `expect_retry` rather than the expected container list: the list would have to name `OMIT`, which
 # comes from the anthropic SDK, and a parametrize decorator is evaluated at import — so the module
 # would fail to collect in the CI variants that install pydantic-ai without anthropic.

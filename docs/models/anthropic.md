@@ -624,6 +624,6 @@ Pydantic AI raises a [`UserError`][pydantic_ai.exceptions.UserError] if you expl
 
 When you continue a run from message history, Pydantic AI automatically reuses the Anthropic code execution container recorded in that history. Anthropic containers expire after 30 days, and a request that refers to an expired container returns an error.
 
-If a request uploads files through [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool] and Anthropic rejects a history-derived container, Pydantic AI retries once without the rejected container ID so Anthropic can create a fresh container and receive the uploads. The fresh container does not contain state or files from the expired container.
+If a request uploads files through [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool] and Anthropic returns HTTP 500 for a history-derived container, Pydantic AI retries once without the rejected container ID so Anthropic can create a fresh container and receive the uploads. Other errors are raised without this retry. The fresh container does not contain state or files from the expired container.
 
 Set [`anthropic_container`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_container] explicitly when container continuity is required. An explicitly configured container is never replaced automatically; Anthropic's original error is raised instead.
