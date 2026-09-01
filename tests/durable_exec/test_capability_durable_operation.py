@@ -1607,30 +1607,9 @@ async def test_dbos_capability_usage_delta_is_stable_on_replay(dbos: DBOS) -> No
     assert capability.calls == 1
 
 
-@pytest.fixture(scope='module')
-def prefect_test_server() -> Generator[None, None, None]:
-    """Run the module's Prefect flow tests against an isolated test server.
-
-    The implicit ephemeral server uses the shared default PREFECT_HOME and a short
-    connect timeout that flakes on slow CI runners; the test harness gives an isolated
-    database and a 60s startup budget, mirroring tests/durable_exec/test_prefect.py.
-
-    Ordering constraint: these tests share the 'prefect' xdist group with
-    tests/durable_exec/test_prefect.py, whose harness fixture is session-scoped and
-    autouse, so once entered it stays entered for the rest of the worker. Today this
-    module collects first purely because it sorts alphabetically ahead of test_prefect.py,
-    so this module-scoped harness enters and exits before that one starts. Renaming either
-    module so this one sorts after test_prefect.py would nest two Prefect harnesses.
-    """
-    from prefect.testing.utilities import prefect_test_harness
-
-    with prefect_test_harness(server_startup_timeout=60):
-        yield
-
-
 @requires_prefect
 @pytest.mark.xdist_group(name='prefect')
-async def test_prefect_capability_operation_end_to_end(prefect_test_server: None) -> None:
+async def test_prefect_capability_operation_end_to_end(prefect_test_harness: None) -> None:
     capability = Operations()
     agent = Agent(TestModel(), name='prefect_operations', capabilities=[capability, PrefectDurability()])
 
@@ -1646,7 +1625,7 @@ async def test_prefect_capability_operation_end_to_end(prefect_test_server: None
 @requires_prefect
 @pytest.mark.xdist_group(name='prefect')
 async def test_prefect_capability_operation_cache_identity_includes_context_and_model(
-    prefect_test_server: None,
+    prefect_test_harness: None,
 ) -> None:
     class CacheIdentityOperation(AbstractCapability[str]):
         id = 'cache_identity'

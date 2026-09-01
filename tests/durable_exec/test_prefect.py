@@ -117,8 +117,6 @@ from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 try:
     from prefect import flow, task
     from prefect.context import FlowRunContext, TaskRunContext
-    from prefect.settings import PREFECT_SERVER_SERVICES_TASK_RUN_RECORDER_ENABLED, temporary_settings
-    from prefect.testing.utilities import prefect_test_harness
 
     from pydantic_ai.durable_exec.prefect import (
         DEFAULT_PYDANTIC_AI_CACHE_POLICY,
@@ -371,6 +369,7 @@ pytestmark = [
     pytest.mark.anyio,
     pytest.mark.vcr,
     pytest.mark.xdist_group(name='prefect'),
+    pytest.mark.usefixtures('prefect_test_harness'),
     pytest.mark.filterwarnings(
         'ignore:`PrefectAgent` is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning'
     ),
@@ -396,18 +395,6 @@ def setup_logfire_instrumentation() -> Iterator[None]:
     logfire.configure(metrics=False, distributed_tracing=False)
 
     yield
-
-
-@pytest.fixture(autouse=True, scope='session')
-def setup_prefect_test_harness() -> Iterator[None]:
-    """Set up Prefect test harness for all tests."""
-    # The task-run recorder is a background writer against the same sqlite file the flows write to.
-    # Prefect PRAGMAs a 60s `busy_timeout` onto every connection, and under CI contention the
-    # recorder's bulk inserts exhaust it, failing the flow whose state it was recording. Nothing
-    # here reads what it records: task run states reach the API through the task engine.
-    with temporary_settings({PREFECT_SERVER_SERVICES_TASK_RUN_RECORDER_ENABLED: False}):
-        with prefect_test_harness(server_startup_timeout=60):
-            yield
 
 
 @pytest.fixture(autouse=True)
@@ -4597,28 +4584,36 @@ async def test_prefect_agent_run_sync_from_sync_tool_is_rejected():
 
 @pytest.mark.parametrize('blockbuster_enabled', [False])
 async def test_prefect_durability_runs_sandbox_lifecycle_in_tasks(blockbuster_enabled: bool) -> None:
-    """Inherited sandbox lifecycle operations execute as Prefect tasks."""
+    """Sandbox lifecycle operations execute as distinct Prefect tasks for each agent run."""
     assert blockbuster_enabled is False
 
     class SandboxCapability(AbstractCapability[Any]):
         id = 'sandbox'
 
         def __init__(self) -> None:
-            self.in_task: list[bool] = []
+            self.events: list[tuple[str, str, bool]] = []
 
         async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
-            self.in_task.append(TaskRunContext.get() is not None)
-            return SandboxRef(provider='test', sandbox_id=ctx.run_id or 'run')
+            sandbox_id = f'sandbox-{len(self.events)}'
+            self.events.append(('acquire', sandbox_id, TaskRunContext.get() is not None))
+            return SandboxRef(provider='test', sandbox_id=sandbox_id)
 
         async def release_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
-            self.in_task.append(TaskRunContext.get() is not None)
+            self.events.append(('release', ref.sandbox_id, TaskRunContext.get() is not None))
 
     sandbox = SandboxCapability()
     agent = Agent(TestModel(), name='prefect_sandbox_lifecycle', capabilities=[PrefectDurability(), sandbox])
 
     @flow
-    async def run_agent() -> str:
-        return (await agent.run('Hello')).output
+    async def run_agent_twice() -> tuple[str, str]:
+        first = await agent.run('Hello')
+        second = await agent.run('Hello')
+        return first.output, second.output
 
-    assert await run_agent() == 'success (no tool calls)'
-    assert sandbox.in_task == [True, True]
+    assert await run_agent_twice() == ('success (no tool calls)', 'success (no tool calls)')
+    assert sandbox.events == [
+        ('acquire', 'sandbox-0', True),
+        ('release', 'sandbox-0', True),
+        ('acquire', 'sandbox-2', True),
+        ('release', 'sandbox-2', True),
+    ]
