@@ -206,6 +206,8 @@ If you prefer strict ordering, you can configure the agent to run tools sequenti
 
 Additional toolsets can be passed per run via `agent.run(toolsets=...)`. Non-executing toolsets like [`ExternalToolset`][pydantic_ai.toolsets.ExternalToolset], and [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset]s whose tools DBOS runs inline, are supported. [`MCPToolset`][pydantic_ai.mcp.MCPToolset]s and dynamic toolsets must be set when constructing the agent so their steps are registered before the workflow runs; passing them at runtime raises a `UserError`.
 
+The agent's own tools can be replaced for a run with [`agent.override(tools=...)`][pydantic_ai.agent.AbstractAgent.override], as DBOS runs function tools inline and has nothing to register ahead of the run.
+
 
 ## Step Configuration
 

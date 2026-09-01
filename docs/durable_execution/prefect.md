@@ -228,6 +228,8 @@ When a provider pauses a model turn mid-flight (Anthropic `pause_turn`) or runs 
 
 Additional toolsets can be passed per run via `agent.run(toolsets=...)`, but only toolsets that don't need durable wrapping are supported: non-executing toolsets like [`ExternalToolset`][pydantic_ai.toolsets.ExternalToolset], whose tools are executed outside the agent run, and [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset]s whose tools all opt out of task wrapping with `metadata={'prefect': False}`. Other executing toolsets ([`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset] and [`MCPToolset`][pydantic_ai.mcp.MCPToolset]) and dynamic toolsets must be set when constructing the agent so their tasks are registered before the flow runs; passing them at runtime raises a `UserError`.
 
+The agent's own tools can be replaced for a run with [`agent.override(tools=...)`][pydantic_ai.agent.AbstractAgent.override]. A tool's task is built when the tool is called, inside the flow, so the replacement tools run in tasks just like the agent's original tools.
+
 ## Task Configuration
 
 You can customize Prefect task behavior, such as retries and timeouts, by passing [`TaskConfig`][pydantic_ai.durable_exec.prefect.TaskConfig] objects to the [`PrefectDurability`][pydantic_ai.durable_exec.prefect.PrefectDurability] constructor:
