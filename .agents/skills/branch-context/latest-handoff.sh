@@ -14,7 +14,11 @@
 
 set -e
 
-DIR=".claude/skills/branch-context"
+WORKTREE="$(git rev-parse --show-toplevel 2>/dev/null)" || {
+    echo 'error: run this helper from inside a git worktree' >&2
+    exit 1
+}
+DIR="$WORKTREE/.claude/skills/branch-context"
 INDEX="$DIR/handoffs-index.md"
 HAND_DIR="$DIR/handoffs"
 LANES="$HAND_DIR/.lanes"

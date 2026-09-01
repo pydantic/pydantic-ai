@@ -64,12 +64,16 @@ if [[ "$WRITER" == *']'* || "$WRITER" == *' · '* ]]; then
     exit 1
 fi
 
-DIR=".claude/skills/branch-context"
+WORKTREE="$(git rev-parse --show-toplevel 2>/dev/null)" || {
+    echo 'error: run this helper from inside a git worktree' >&2
+    exit 1
+}
+DIR="$WORKTREE/.claude/skills/branch-context"
 INDEX="$DIR/handoffs-index.md"
 HAND_DIR="$DIR/handoffs"
 
 if [ ! -d "$DIR" ]; then
-    echo "error: $DIR not found. Are you at the worktree root?" >&2
+    echo "error: branch context not found at $DIR" >&2
     exit 1
 fi
 
