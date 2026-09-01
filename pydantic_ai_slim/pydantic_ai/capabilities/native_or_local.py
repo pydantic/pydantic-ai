@@ -196,19 +196,7 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
             return []
         # After __post_init__, native=True is resolved to an AbstractNativeTool instance
         assert not isinstance(self.native, bool)
-        if callable(self.native) and not isinstance(self.native, AbstractNativeTool):
-            return [self._memoized_native_factory]
         return [self.native]
-
-    async def _memoized_native_factory(self, ctx: RunContext[AgentDepsT]) -> AbstractNativeTool | None:
-        """Resolve `native` once per run so the fallback subagent can reuse the result."""
-        cache = ctx._resolved_native_factories  # pyright: ignore[reportPrivateUsage]
-        key = id(self)
-        if key not in cache:
-            native = self.native
-            assert callable(native) and not isinstance(native, AbstractNativeTool)
-            cache[key] = await await_maybe(native(ctx))
-        return cache[key]
 
     def get_toolset(self) -> AbstractToolset[AgentDepsT] | None:
         local = self.local
@@ -260,13 +248,7 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
             )
 
         async def resolve_native(ctx: RunContext[AgentDepsT]) -> _NativeToolT:
-            cache = ctx._resolved_native_factories  # pyright: ignore[reportPrivateUsage]
-            key = id(self)
-            if key in cache:
-                native_tool = await _resolve_native_tool(cache[key], ctx, tool_cls)
-            else:
-                native_tool = await _resolve_native_tool(native_factory, ctx, tool_cls)
-                cache[key] = native_tool
+            native_tool = await _resolve_native_tool(native_factory, ctx, tool_cls)
             assert isinstance(native_tool, tool_cls)
             if not overrides:
                 return native_tool
