@@ -376,9 +376,9 @@ For more advanced retry configurations, refer to the [tenacity documentation](ht
 
 ### Provider SDK Retries Are Invisible to Your Transport {#provider-sdk-retries}
 
-A retrying transport sits *below* the provider SDK's own HTTP client, and the SDK client retries above it — on the OpenAI SDK, for `x-should-retry: true` responses, 408, 409, 429 and 5xx, plus timeouts and connection errors. The layer is on by default (the OpenAI, Anthropic and Groq clients allow two retries), so it stacks with the transport rather than replacing it; see [Provider SDK retries](../retries.md#provider-sdk-retries) for the per-provider knobs and [Retry multiplication](../retries.md#retry-multiplication) for the arithmetic.
+A retrying transport sits *below* the provider SDK's own HTTP client, so the SDK's retry policy remains in force above it. The two layers stack rather than replacing each other; see [Provider SDK retries](../retries.md#provider-sdk-retries) for the layer map and [Retry multiplication](../retries.md#retry-multiplication) for the arithmetic.
 
-The recipes in this guide configure the transport layer, so pair them with the SDK client's knob where it has one: `max_retries=0` on a [custom OpenAI client](openai.md#custom-openai-client) or a [custom Anthropic client](anthropic.md#custom-http-client), or `groq_client=Groq(max_retries=0)`. Cohere's client takes no `max_retries` — there the transport is the only layer you control.
+The recipes in this guide configure only the transport layer. Configure the SDK layer on the provider-specific pages for [OpenAI](openai.md#custom-openai-client), [Anthropic](anthropic.md#custom-http-client), [Google](google.md#http-retries), [Groq](groq.md#sdk-retries), and [Cohere](cohere.md#sdk-retries).
 
 ### AWS Bedrock
 
