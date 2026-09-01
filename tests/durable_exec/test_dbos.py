@@ -64,6 +64,7 @@ from pydantic_ai.models import (
     ModelRequestContext,
     ModelRequestParameters,
     ModelResolutionContext,
+    StreamedResponse,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
@@ -124,6 +125,7 @@ from pydantic_ai.toolsets._dynamic import DynamicToolset
 
 from .._inline_snapshot import snapshot
 from ..continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
+from ..model_lifecycle_utils import LifecycleTrackingModel
 
 # `DBOSAgent` is deprecated in favor of `capabilities=[DBOSDurability(...)]`.
 # These tests exercise the wrapper-agent path on purpose; suppress the warning here
@@ -3058,6 +3060,67 @@ def _dbos_alt_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelRe
 # makes it part of the DBOS workflow's pickled arguments.
 _dbos_alt_model = FunctionModel(_dbos_alt_model_fn, model_name='alt')
 
+_dbos_model_lifecycle_events: list[str] = []
+
+
+class _DBOSLifecycleModel(LifecycleTrackingModel):
+    def __init__(self) -> None:
+        super().__init__(_dbos_model_lifecycle_events, event_prefix='model-')
+
+    @asynccontextmanager
+    async def request_stream(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
+    ) -> AsyncGenerator[StreamedResponse]:
+        _dbos_model_lifecycle_events.append('stream-enter')
+        try:
+            async with super().request_stream(
+                messages, model_settings, model_request_parameters, run_context
+            ) as streamed:
+                yield streamed
+        finally:
+            _dbos_model_lifecycle_events.append('stream-exit')
+
+
+def _resolve_dbos_lifecycle_model(_ctx: ModelResolutionContext[Any], _model_id: str) -> _DBOSLifecycleModel:
+    return _DBOSLifecycleModel()
+
+
+async def test_dbos_durability_context_manages_resolved_models(dbos: DBOS) -> None:
+    """Resolver-created models stay entered through ordinary and streamed DBOS steps."""
+    agent = Agent(
+        'lifecycle',
+        name='durability_resolved_model_lifecycle',
+        capabilities=[ResolveModelId(_resolve_dbos_lifecycle_model), DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_agent() -> str:
+        return (await agent.run('hello')).output
+
+    @DBOS.workflow()
+    async def stream_agent() -> str:
+        async with agent.run_stream('hello') as result:
+            return await result.get_output()
+
+    _dbos_model_lifecycle_events.clear()
+    with SetWorkflowID(str(uuid.uuid4())):
+        assert await run_agent() == 'ok'
+    assert _dbos_model_lifecycle_events == ['model-enter', 'request', 'model-exit:none']
+
+    _dbos_model_lifecycle_events.clear()
+    with SetWorkflowID(str(uuid.uuid4())):
+        assert await stream_agent() == 'ok'
+    assert _dbos_model_lifecycle_events == [
+        'model-enter',
+        'stream-enter',
+        'stream-exit',
+        'model-exit:none',
+    ]
+
 
 async def test_dbos_durability_runtime_registered_model(dbos: DBOS) -> None:
     """A model registered in `models=` can be selected at run time, by key or instance.
@@ -4122,8 +4185,8 @@ def _per_run_dynamic_factory(ctx: RunContext[Any]) -> FunctionToolset[Any]:
     return FunctionToolset()  # pragma: no cover
 
 
-async def test_dbos_durability_rejects_per_run_capability_toolset(dbos: DBOS) -> None:
-    """An executing toolset contributed by a per-run capability is rejected like `run(toolsets=...)`.
+async def test_dbos_durability_rejects_per_run_capabilities(dbos: DBOS) -> None:
+    """Capabilities added per-run inside a workflow are rejected; `Instrumentation` is exempt.
 
     Construction-time capability toolsets are wrapped by `for_agent` (see the
     capability-contributed test above); a per-run capability's toolset arrives after that
@@ -4133,11 +4196,33 @@ async def test_dbos_durability_rejects_per_run_capability_toolset(dbos: DBOS) ->
     agent = Agent(_durability_fn_model, name='durability_per_run_cap_toolset', capabilities=[DBOSDurability()])
 
     @DBOS.workflow()
-    async def run_agent() -> None:
+    async def run_with_toolset_capability() -> None:
         await agent.run('Hello', capabilities=[Toolset(DynamicToolset(_per_run_dynamic_factory, id='per_run_dynamic'))])
 
-    with pytest.raises(UserError, match="DynamicToolset 'per_run_dynamic' cannot be passed"):
-        await run_agent()
+    with workflow_raises(
+        UserError,
+        snapshot(
+            'Capabilities added per-run inside a DBOS workflow are not supported: Toolset. DBOS registers '
+            'durable steps when a capability is bound to the agent, before the workflow starts. A capability '
+            'added per-run therefore has no registered durable steps for the toolsets it contributes or its own '
+            '`@durable_operation` methods. Attach all capabilities at agent construction time so '
+            '`DBOSDurability.for_agent()` can register their durable steps.'
+        ),
+    ):
+        await run_with_toolset_capability()
+
+    @DBOS.workflow()
+    async def run_with_instrumentation() -> str:
+        return (await agent.run('Hello', capabilities=[Instrumentation(InstrumentationSettings())])).output
+
+    assert await run_with_instrumentation() == snapshot('Echo: Hello')
+
+
+async def test_dbos_durability_allows_per_run_capabilities_outside_workflow(dbos: DBOS) -> None:
+    """Outside a workflow the capability is transparent, so per-run capabilities are fine."""
+    agent = Agent(_durability_fn_model, name='durability_per_run_cap_outside', capabilities=[DBOSDurability()])
+    result = await agent.run('Hello', capabilities=[Toolset(FunctionToolset(id='per_run_fn'))])
+    assert result.output == snapshot('Echo: Hello')
 
 
 async def test_dbos_durability_rejects_duplicate_toolset_id(dbos: DBOS) -> None:

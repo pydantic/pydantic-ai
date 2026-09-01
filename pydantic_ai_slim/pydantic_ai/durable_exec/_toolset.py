@@ -731,7 +731,7 @@ class DurableMCPToolset(DurableToolsetBase[AgentDepsT]):
     async def get_instructions(self, ctx: RunContext[AgentDepsT]) -> Instructions:
         if not self._mcp_toolset.include_instructions:
             return None
-        if not self._in_durable_context() or self._get_instructions_operation is None:  # pragma: no cover
+        if not self._in_durable_context() or self._get_instructions_operation is None:
             return await self._mcp_toolset.get_instructions(ctx)
         # Always route through the durable unit: deciding based on locally-cached state (e.g.
         # instructions a warm in-process MCP server already holds) would make the durable
