@@ -18,6 +18,10 @@ and re-review → push → full CI and coverage → hosted reviewers → final m
 
 Follow the title and template rules in the root `AGENTS.md`.
 
+Put every closing issue reference at the start of the body, immediately after any required
+attribution line. These references are the first non-attribution content; use one `Closes #<issue>`
+line per issue the PR will close. Put related but non-closing issues in the explanation instead.
+
 Keep visible body content within 40 lines. Exclude template lines and collapsed `<details>`
 contents from the count. For a feature or behavior change, use this order:
 
@@ -32,6 +36,23 @@ contents from the count. For a feature or behavior change, use this order:
 
 Use one collapsed `<details>` section per goal only when the PR has multiple independent goals.
 For a trivial PR, use the issue link, a short summary, and the test plan.
+
+### Publish PR decisions
+
+Include the branch's appended decision entries from
+`.claude/skills/branch-context/pr-decisions.md` near the end of the body, before the checklist:
+
+```markdown
+<details>
+<summary>PR decisions</summary>
+
+<dated decision entries, or "No non-obvious decisions recorded.">
+</details>
+```
+
+Do not copy the decisions template's instructions into the PR body. When the local log is missing,
+copy `.agents/skills/branch-context/pr-decisions.template.md` to
+`.claude/skills/branch-context/pr-decisions.md`.
 
 #### User-visible call-path diff
 
@@ -125,10 +146,13 @@ These gates catch different failures; none replaces another:
 Capture the PR head SHA after the push. Every post-push gate below must prove it covered that SHA;
 if the head changes, capture the new SHA and restart the loop.
 
-1. **Watch CI to a terminal state.** Require the `CI` workflow, including coverage, to succeed for
+1. **Synchronize PR metadata.** Update the title, summary, verification, and collapsed PR-decisions
+   section for the pushed commit. Compare the dated decision entries in the body with the local log;
+   the local log is authoritative.
+2. **Watch CI to a terminal state.** Require the `CI` workflow, including coverage, to succeed for
    the captured SHA. Don't idle. If it fails, diagnose: fix if the failure is yours; if it's a known
    flake or pre-existing on main, say so with evidence.
-2. **Wait for a standards review on the captured SHA.**
+3. **Wait for a standards review on the captured SHA.**
    [`.github/workflows/pydantic-ai-pr-review.md`](../../../.github/workflows/pydantic-ai-pr-review.md)
    is the source of truth for eligibility and accepted verdicts or no-ops. Require its accepted
    terminal outcome to identify the captured SHA, then recheck that the live head is unchanged.
@@ -136,18 +160,18 @@ if the head changes, capture the new SHA and restart the loop.
    valid finding and push restarts the lifecycle. A human request remains blocking until that human
    re-reviews or a maintainer dismisses it; do not dismiss a human request. Missing, stale, or failed
    required reviews are unsatisfied; retry when appropriate, otherwise escalate.
-3. **Triage every comment** (bots and humans alike). For each one:
+4. **Triage every comment** (bots and humans alike). For each one:
    - **Valid** → fix it, run targeted verification, commit, pass the fresh pre-push gate, push, and
      complete the current-HEAD CI and hosted-review gates. Then reply with what changed, react 👍,
      and resolve the thread.
    - **Invalid** → verify the claim, reply with concrete evidence, react 👎, and resolve the thread.
    - Minimize issue-level review dumps when handled. Never silently ignore feedback or close it
      without a reply.
-4. **Escalate real trade-offs, don't guess.** If a comment needs a maintainer decision (a design
+5. **Escalate real trade-offs, don't guess.** If a comment needs a maintainer decision (a design
    choice, an API trade-off, a behavioral default), leave a comment containing: the background,
    your reasoning, the decision that needs making, the trade-offs (pros/cons of each option), and
    your recommendation. Then **poll every 30 minutes for a reply** and continue when it lands.
-5. Wait for every applicable current-HEAD check to reach an accepted terminal state; classify any
+6. Wait for every applicable current-HEAD check to reach an accepted terminal state; classify any
    documented skip explicitly. Repeat until CI is green, the required hosted review covers the
    current HEAD, no applicable check is pending or failing, and no comment is outstanding.
 
@@ -157,7 +181,8 @@ Run this final metadata check after CI, the required hosted review, and comments
 
 1. Capture the exact current title and body before dispatching the reviewer.
 2. Dispatch a fresh subagent under the fresh reviewer context contract that has not worked on the PR.
-3. Give it the PR URL, linked issue, current `base...HEAD` diff, final test status, and captured
+3. Give it the PR URL, linked issue, current `base...HEAD` diff, final test status, local
+   `pr-decisions.md`, and captured
    metadata. Ask it to check only objective title and body rules in this section and root
    `AGENTS.md`.
 4. Require either `current` or an exact, rule-backed correction. The reviewer returns text only.

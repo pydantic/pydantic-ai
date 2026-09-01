@@ -1,3 +1,5 @@
+- Closes #<issue>
+
 <!-- Thank you for contributing to Pydantic AI! -->
 
 <!-- Please read the contributing guide: https://ai.pydantic.dev/contributing/ -->
@@ -17,8 +19,6 @@
 
 <!-- Adding a capability? Most capabilities belong in Pydantic AI Harness, not here. -->
 <!-- See: https://pydantic.dev/docs/ai/harness/#what-goes-where -->
-
-- Closes #<issue>
 
 ### Checklist
 
