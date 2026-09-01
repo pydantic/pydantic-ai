@@ -54,6 +54,15 @@ def _has_tool_return(messages: Sequence[ModelMessage]) -> bool:
     return any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts)
 
 
+_RESOLVES_DUPLICATE_IDS = hasattr(AbstractCapability, 'combine')
+"""Whether the installed `pydantic-ai` resolves two capabilities sharing an `id` rather than raising.
+
+Keyed on the hook itself rather than a version number: the release that introduces
+`AbstractCapability.combine` (pydantic/pydantic-ai#7248) is not cut yet, so there is no number to
+compare against, and asking whether the behaviour is present needs no bookkeeping once there is.
+"""
+
+
 class TestAdvisor:
     async def test_uses_native_advisor_for_matching_provider(self) -> None:
         seen: list[ModelRequestParameters] = []
@@ -389,8 +398,12 @@ class TestAdvisor:
     async def test_rejects_duplicate_capability_or_tool_name(self) -> None:
         model = FunctionModel(lambda _messages, _info: ModelResponse(parts=[TextPart('done')]))
 
-        with pytest.raises(UserError, match="Capability id 'advisor' is used by multiple capabilities"):
-            Agent(model, capabilities=[Advisor(model), Advisor(model)])
+        if _RESOLVES_DUPLICATE_IDS:  # pragma: no cover - depends on the installed core
+            # An agent has one advisor, so the two resolve to one instead of colliding.
+            await Agent(model, capabilities=[Advisor(model), Advisor(model)]).run('Review this.')
+        else:  # pragma: no cover - depends on the installed core
+            with pytest.raises(UserError, match="Capability id 'advisor' is used by multiple capabilities"):
+                Agent(model, capabilities=[Advisor(model), Advisor(model)])
 
         def advisor(prompt: str) -> str:  # pragma: no cover
             return prompt
