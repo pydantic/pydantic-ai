@@ -1566,15 +1566,16 @@ def infer_model_profile(model: str) -> ModelProfile:
         return DEFAULT_PROFILE
 
     try:
-        profile = provider_class.model_profile(model_name) or ModelProfile()
+        provider_profile = provider_class.model_profile(model_name)
     except (ValueError, UserError):
         return DEFAULT_PROFILE
+    profile = provider_profile or DEFAULT_PROFILE
 
-    if 'context_window' not in profile:
+    if 'context_window' not in (provider_profile or {}):
         context_window = lookup_context_window(model_name, provider_name=provider)
         if context_window is not None:
             profile = merge_profile(profile, ModelProfile(context_window=context_window))
-    return profile or DEFAULT_PROFILE
+    return profile
 
 
 def infer_model(  # noqa: C901

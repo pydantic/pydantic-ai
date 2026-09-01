@@ -418,6 +418,17 @@ def test_infer_model_profile_respects_explicit_unknown_context_window():
         assert infer_model_profile('openai:gpt-5').get('context_window') is None
 
 
+def test_infer_model_profile_fills_default_profile_with_context_window():
+    """Metadata inferred for a model without a provider profile preserves the default profile."""
+    with (
+        patch('pydantic_ai.providers.openai.OpenAIProvider.model_profile', return_value=None),
+        patch('pydantic_ai.models.lookup_context_window', return_value=123),
+    ):
+        profile = infer_model_profile('openai:gpt-5')
+
+    assert profile == {**DEFAULT_PROFILE, 'context_window': 123}
+
+
 def test_custom_provider_instance_method_model_profile():
     """Verify that a custom provider using the old instance-method model_profile pattern still works for non-Temporal usage.
 
