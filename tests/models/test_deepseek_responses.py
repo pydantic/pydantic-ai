@@ -836,7 +836,7 @@ CASES = [
                         input_tokens=148,
                         output_reasoning_tokens=26,
                         output_tokens=40,
-                        cost=Decimal('0.00003192'),
+                        cost=Decimal('0.00005896'),
                     ),
                     model_name='deepseek-v4-flash',
                     timestamp=IsDatetime(),
