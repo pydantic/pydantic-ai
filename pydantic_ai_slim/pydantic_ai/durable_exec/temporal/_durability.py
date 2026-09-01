@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Generator, Mapping, Sequence
+from collections.abc import Callable, Generator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import timedelta
@@ -13,10 +13,7 @@ from temporalio.workflow import ActivityConfig
 from pydantic_ai._agent_graph import set_agent_graph_sleep
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
-from pydantic_ai.capabilities.abstract import (
-    AbstractCapability,
-    WrapRunHandler,
-)
+from pydantic_ai.capabilities.abstract import WrapRunHandler
 from pydantic_ai.durable_exec._base import BaseDurabilityCapability
 from pydantic_ai.durable_exec._capability_operation import CapabilityMethodDeclaration
 from pydantic_ai.durable_exec._codec import IDENTITY_CODEC
@@ -29,7 +26,7 @@ from pydantic_ai.durable_exec._operation import (
 )
 from pydantic_ai.durable_exec._spec import DurabilityEngineSpec
 from pydantic_ai.durable_exec._toolset import DurableToolsetBase, validation_context_from_agent
-from pydantic_ai.durable_exec._utils import StreamedActivityResult, disable_threads
+from pydantic_ai.durable_exec._utils import StreamedActivityResult, disable_threads, managed_model_scope
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelResponse
 from pydantic_ai.models import CompletedStreamedResponse, Model, ModelRequestParameters, infer_model
@@ -126,6 +123,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
     engine_spec = DurabilityEngineSpec(
         engine_name='Temporal',
         durable_unit_noun='activity',
+        durable_unit_plural='activities',
         durable_container_noun='workflow',
         codec=IDENTITY_CODEC,
         unsupported_runtime_toolset_kinds=frozenset({'function', 'mcp', 'dynamic'}),
@@ -480,23 +478,6 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             raise serialization_user_error(error) from error
         raise error
 
-    def _validate_runtime_capabilities(
-        self, ctx: RunContext[AgentDepsT], capabilities: Sequence[AbstractCapability[AgentDepsT]]
-    ) -> None:
-        """Reject per-run capabilities whose activities were not registered with the worker."""
-        if self.in_durable_context:
-            unsafe_capabilities = [capability for capability in capabilities if not capability._safe_at_runtime]
-        else:
-            unsafe_capabilities = []
-        if unsafe_capabilities:
-            names = ', '.join(sorted(type(capability).__name__ for capability in unsafe_capabilities))
-            raise UserError(
-                f'Capabilities added per-run inside a Temporal workflow are not supported: {names}. '
-                'Temporal activities must be registered with the worker before the workflow runs. '
-                'Attach all capabilities at agent construction time so `TemporalDurability.for_agent()` '
-                'can register the activities for the toolsets they contribute.'
-            )
-
     def _model_request_parameter_transport(self, result_type: object) -> _ModelRequestTransport:
         if result_type is StreamedActivityResult:
             result_type = _StreamedActivityPayload
@@ -527,10 +508,12 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         self, model_id: str | None, response: ModelResponse
     ) -> None:
         model = self._models_by_id.get(model_id or 'default')
-        if model is None:
+        owned = model is None
+        if owned:
             assert model_id is not None
             model = infer_model(model_id)
-        await model.cancel_suspended_response(response)
+        async with managed_model_scope(model, owned=owned) as active_model:
+            await active_model.cancel_suspended_response(response)
 
     def _validate_model_request_parameters(self, model_request_parameters: ModelRequestParameters) -> None:
         if model_request_parameters.allow_image_output:
