@@ -55,6 +55,21 @@ def _default_sandbox() -> Sandbox:
     )
 
 
+@dataclasses.dataclass
+class RunScope:
+    """Mutable state owned by a single agent run.
+
+    Created once per run and carried by reference on `RunPreparationContext`, `RunContext`
+    (per-step rebuilds copy the reference), and the graph deps, so hooks that fire on the shared
+    agent-level capability instances before `for_run()` copies exist and hooks that fire on the
+    per-run copies observe the same object. Run-scoped capability state belongs here — it dies
+    with the run — rather than in capability-instance side tables that outlive it.
+    """
+
+    capability_state: dict[object, Any] = field(default_factory=dict[object, Any])
+    """Per-run capability state, keyed by an opaque token private to the owning capability."""
+
+
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class RunPreparationContext(Generic[AgentDepsT]):
     """Information available while an agent run is being prepared."""
@@ -94,8 +109,8 @@ class RunPreparationContext(Generic[AgentDepsT]):
     conversation_id: str
     """Unique identifier for the conversation this run belongs to."""
 
-    _run_state_key: object = field(default_factory=object, repr=False, compare=False)
-    """Private identity shared by all contexts belonging to one run execution."""
+    _run_scope: RunScope = field(default_factory=RunScope, repr=False, compare=False)
+    """Private per-run scope shared by all contexts belonging to one run execution."""
 
 
 @dataclasses.dataclass(frozen=True)
@@ -235,8 +250,8 @@ class RunContext(Generic[RunContextAgentDepsT]):
     to add messages rather than mutating it directly.
     """
 
-    _run_state_key: object = field(default_factory=object, repr=False, compare=False)
-    """Private identity shared by all contexts belonging to one run execution."""
+    _run_scope: RunScope = field(default_factory=RunScope, repr=False, compare=False)
+    """Private per-run scope shared by all contexts belonging to one run execution."""
 
     _cancellation: RunCancellation | None = field(default=None, repr=False)
     """Private implementation detail — not part of the public API; do not read or write.
@@ -657,10 +672,10 @@ class RunContext(Generic[RunContextAgentDepsT]):
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-def get_run_state_key(ctx: RunPreparationContext[Any] | RunContext[Any]) -> object:
-    """Return the framework-owned identity for one run execution."""
+def get_run_scope(ctx: RunPreparationContext[Any] | RunContext[Any]) -> RunScope:
+    """Return the framework-owned per-run scope for the run `ctx` belongs to."""
     # This module owns the private field and exposes only this internal accessor to sibling modules.
-    return ctx._run_state_key  # pyright: ignore[reportPrivateUsage]
+    return ctx._run_scope  # pyright: ignore[reportPrivateUsage]
 
 
 _run_context_init = RunContext.__init__

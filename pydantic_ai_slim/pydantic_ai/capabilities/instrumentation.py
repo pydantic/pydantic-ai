@@ -27,7 +27,7 @@ from pydantic_ai._instrumentation import (
     serialize_any,
     time_to_first_chunk_ctx,
 )
-from pydantic_ai._run_context import get_run_state_key
+from pydantic_ai._run_context import get_run_scope
 from pydantic_ai._utils import UNSET, Unset
 from pydantic_ai.exceptions import (
     ApprovalRequired,
@@ -113,8 +113,11 @@ class Instrumentation(AbstractCapability[Any]):
     """OTel/Logfire instrumentation settings. Defaults to `InstrumentationSettings()`,
     which uses the global `TracerProvider` (typically configured by `logfire.configure()`)."""
 
-    _runs: dict[object, _RunState] = field(default_factory=dict[object, _RunState], repr=False, init=False)
-    """Per-run state shared by the agent-level instance and its `for_run` copies."""
+    _state_token: object = field(default_factory=object, repr=False, init=False)
+    """Opaque key for this capability's slot in the run scope's `capability_state`.
+
+    `wrap_entire_run` fires on the agent-level instance before `for_run` copies exist; copies
+    inherit the token so their hooks read the same per-run state through `get_run_scope`."""
     # Resolved from `self.settings.version` whenever `__post_init__` runs, including on
     # the per-run copy created by `dataclasses.replace`.
     _instrumentation_names: InstrumentationNames = field(
@@ -155,7 +158,7 @@ class Instrumentation(AbstractCapability[Any]):
     async def for_run(self, ctx: RunContext[Any]) -> Instrumentation:
         """Return a fresh copy for per-run state isolation and record the resolved run context."""
         inst = replace(self)
-        inst._runs = self._runs
+        inst._state_token = self._state_token
         inst._record_run_context(ctx)
         return inst
 
@@ -203,12 +206,11 @@ class Instrumentation(AbstractCapability[Any]):
                 run_span=span,
                 baggage_at_span_start=_otel_get_all_baggage(),
             )
-            self._runs[get_run_state_key(ctx)] = run_state
+            get_run_scope(ctx).capability_state[self._state_token] = run_state
             try:
                 yield
             finally:
                 _otel_detach(token)
-                self._runs.pop(get_run_state_key(ctx), None)
                 if span.is_recording():
                     # Best effort: this runs while the exit stack unwinds, where a raised
                     # exception would mask the run's own error. Telemetry must never do that.
@@ -360,7 +362,8 @@ class Instrumentation(AbstractCapability[Any]):
         }
 
     def _run_state(self, ctx: RunContext[Any]) -> _RunState | None:
-        return self._runs.get(get_run_state_key(ctx))
+        state: _RunState | None = get_run_scope(ctx).capability_state.get(self._state_token)
+        return state
 
     def _record_run_context(self, ctx: RunContext[Any]) -> None:
         run_state = self._run_state(ctx)

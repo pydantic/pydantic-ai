@@ -53,7 +53,7 @@ from .._cancel import CancellationToken, RunCancellation, take_run_binding
 from .._deferred_capabilities import registered_loaded_capability_ids
 from .._instructions import AgentInstructions
 from .._output import OutputToolset
-from .._run_context import RunPreparationContext, set_current_run_context
+from .._run_context import RunPreparationContext, RunScope, set_current_run_context
 from .._template import validate_from_spec_args
 from .._warnings import PydanticAIDeprecationWarning
 from ..capabilities import (
@@ -1501,7 +1501,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             run_id=_agent_graph.resolve_run_id(run_id, message_history),
             conversation_id=_agent_graph.resolve_conversation_id(conversation_id, message_history),
         )
-        run_state_key = object()
+        run_scope = RunScope()
         sandbox_facade = (
             None if isinstance(sandbox, SandboxRef) else Sandbox.wrap(sandbox) if sandbox is not None else None
         )
@@ -1514,7 +1514,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             usage=usage,
             run_id=state.run_id,
             conversation_id=state.conversation_id,
-            _run_state_key=run_state_key,
+            _run_scope=run_scope,
         )
         preparation_stack = AsyncExitStack()
         try:
@@ -1704,7 +1704,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 conversation_id=state.conversation_id,
                 _cancellation=cancellation,
                 sandbox=sandbox_facade or Sandbox.wrap(default_sandbox_backend()),
-                _run_state_key=run_state_key,
+                _run_scope=run_scope,
             )
 
             sandbox_supplier: AbstractCapability[AgentDepsT] | None = None
@@ -1950,7 +1950,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 loaded_capability_ids=loaded_capability_ids,
                 discovered_tool_names=discovered_tool_names,
                 sandbox=sandbox_facade,
-                run_state_key=run_state_key,
+                run_scope=run_scope,
                 native_tools=cap_native_tools,
                 tool_manager=tool_manager,
                 tracer=tracer,

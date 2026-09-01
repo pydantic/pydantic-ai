@@ -765,7 +765,7 @@ def test_temporal_run_context_serialization_is_exhaustive():
         '_durable_operations',  # workflow-side callables cannot cross the activity boundary; worker dispatch is pre-registered
         '_run_capabilities_by_id',  # live per-run capability instances are recovered from the worker agent instead
         'sandbox',  # live facade is rebuilt from the separately serialized `_sandbox_state` identity
-        '_run_state_key',  # process-local identity for sharing run setup state; meaningless inside an activity
+        '_run_scope',  # process-local mutable run state shared between hooks; meaningless inside an activity
     }
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
     serialized = set(TemporalRunContext.serialize_run_context(ctx))

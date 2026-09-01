@@ -2438,7 +2438,7 @@ def test_cache_key_run_context_projection_is_exhaustive():
         '_cancellation',  # runtime-only cancellation controller; carries no run inputs and must not fork the cache key
         '_durable_operations',  # runtime callables are derived from the static agent and do not vary cache identity
         '_run_capabilities_by_id',  # live instances are represented by their projected capability state instead
-        '_run_state_key',  # internal resume-state routing; it does not affect a durable operation's result
+        '_run_scope',  # internal per-run state carrier; it does not affect a durable operation's result
     }
     projected_via_derived_key = {
         'sandbox',  # explicit backends project as (provider, sandbox_id); framework defaults are skipped

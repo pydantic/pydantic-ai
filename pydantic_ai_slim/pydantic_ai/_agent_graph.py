@@ -50,7 +50,7 @@ from ._deferred_capabilities import (
     parse_loaded_capabilities,
     registered_loaded_capability_ids,
 )
-from ._run_context import AnchoredEvidence, set_current_run_context
+from ._run_context import AnchoredEvidence, RunScope, set_current_run_context
 from .exceptions import ToolRetryError
 
 # `_ContinuationStreamedResponse` is an intentionally-exported member of the private
@@ -425,7 +425,7 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
 
     # Resolved once before the graph starts; never changes during the run.
     sandbox: Sandbox
-    run_state_key: object = dataclasses.field(repr=False)
+    run_scope: RunScope = dataclasses.field(repr=False)
 
     native_tools: list[AgentNativeTool[DepsT]] = dataclasses.field(repr=False)
     tool_manager: ToolManager[DepsT]
@@ -2416,7 +2416,7 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         _event_stream_buffer=ctx.state.event_stream_buffer,
         _mcp_tool_defs_cache=ctx.state.mcp_tool_defs_cache,
         sandbox=ctx.deps.sandbox,
-        _run_state_key=ctx.deps.run_state_key,
+        _run_scope=ctx.deps.run_scope,
     )
     validation_context = build_validation_context(ctx.deps.validation_context, run_context)
     # Only `validation_context` may be passed to `replace`: it shallow-copies, preserving the shared
