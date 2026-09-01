@@ -2306,7 +2306,7 @@ class TestModelRequestErrorHooks:
             async with agent.run_stream('hello') as stream:
                 await stream.get_output()
 
-    async def test_on_model_request_error_recovers_post_stream_wrap_error(self):
+    async def test_on_model_request_error_does_not_recover_post_stream_wrap_error(self):
         @dataclass
         class RecoverPostStreamErrorCap(AbstractCapability[Any]):
             errors: list[Exception] = field(default_factory=lambda: [])
@@ -2337,12 +2337,12 @@ class TestModelRequestErrorHooks:
             async for _ in stream:
                 pass
 
-        output = (await agent.run('hello', event_stream_handler=handler)).output
+        with pytest.raises(RuntimeError, match='post-stream error'):
+            await agent.run('hello', event_stream_handler=handler)
 
-        assert output == 'recovered after stream'
-        assert [str(error) for error in cap.errors] == ['post-stream error']
+        assert cap.errors == []
 
-    async def test_on_model_request_error_recovers_streaming_wrap_short_circuit_error(self):
+    async def test_on_model_request_error_does_not_recover_streaming_wrap_short_circuit_error(self):
         @dataclass
         class RecoverShortCircuitErrorCap(AbstractCapability[Any]):
             errors: list[Exception] = field(default_factory=lambda: [])
@@ -2368,11 +2368,11 @@ class TestModelRequestErrorHooks:
             capabilities=[cap],
         )
 
-        async with agent.run_stream('hello') as stream:
-            output = await stream.get_output()
+        with pytest.raises(RuntimeError, match='short-circuit error'):
+            async with agent.run_stream('hello'):
+                pass
 
-        assert output == 'recovered short circuit'
-        assert [str(error) for error in cap.errors] == ['short-circuit error']
+        assert cap.errors == []
 
 
 # --- Tool validate error hook tests ---

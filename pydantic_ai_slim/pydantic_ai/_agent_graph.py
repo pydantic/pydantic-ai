@@ -1276,7 +1276,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     result_or_exc = wrap_task.result()
                 except Exception as e:
                     result_or_exc = e
-                model_response = await self._resolve_wrap_result(ctx, run_context, wrap_request_context, result_or_exc)
+                model_response = self._resolve_wrap_result(result_or_exc)
             except exceptions.ModelRetry as e:
                 self._did_stream = True
                 # Don't increment usage.requests — handler was never called (short-circuit)
@@ -1345,13 +1345,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                         ctx.state.message_history.append(partial_response)
                 else:
                     try:
-                        try:
-                            result_or_exc = await wrap_task
-                        except Exception as e:
-                            result_or_exc = e
-                        model_response = await self._resolve_wrap_result(
-                            ctx, run_context, wrap_request_context, result_or_exc
-                        )
+                        model_response = await wrap_task
                     except exceptions.ModelRetry as e:
                         self._enforce_usage_limits(ctx, accounted_responses)
                         # Don't increment usage.requests — _streaming_handler already did.
@@ -1766,21 +1760,14 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         return self._result
 
-    async def _resolve_wrap_result(
-        self,
-        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
-        run_context: RunContext[DepsT],
-        request_context: ModelRequestContext,
-        result_or_exc: _messages.ModelResponse | Exception,
-    ) -> _messages.ModelResponse:
-        """Resolve a `wrap_model_request` result, preserving outer error recovery."""
+    @staticmethod
+    def _resolve_wrap_result(result_or_exc: _messages.ModelResponse | Exception) -> _messages.ModelResponse:
+        """Resolve a `wrap_model_request` result, converting only `SkipModelRequest`."""
         if isinstance(result_or_exc, Exception):
             exc = result_or_exc
             if isinstance(exc, exceptions.SkipModelRequest):
                 return exc.response
-            if isinstance(exc, exceptions.ModelRetry):
-                raise exc
-            return await self._recover_model_request_error(ctx, run_context, request_context, exc)
+            raise exc
         return result_or_exc
 
     @staticmethod
