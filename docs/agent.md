@@ -117,7 +117,7 @@ async def main():
     """
 ```
 
-_(To run this example, add `import asyncio` and `asyncio.run(main())`.)_
+_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
 You can also pass messages from previous runs to continue a conversation or provide context, as described in [Messages and Chat History](message-history.md).
 
