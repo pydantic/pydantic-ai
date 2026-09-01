@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, cast
 
 from typing_extensions import TypeVar, assert_never
 
+from pydantic_ai._run_context import EventStreamBuffer
 from pydantic_ai._utils import cancel_and_drain
 from pydantic_ai.tool_manager import ToolManager, ValidatedToolCall
 from pydantic_graph import GraphRunContext
@@ -42,14 +43,14 @@ async def _iter_completed_or_buffered(
     A buffer that can't signal appends (a plain list revived from graph-state persistence) degrades
     to plain completion-order waiting, with buffered events surfacing at stream position instead.
     """
-    waiters: list[asyncio.Event] | None = getattr(event_stream_buffer, 'waiters', None)
-    if waiters is None:
+    if not isinstance(event_stream_buffer, EventStreamBuffer):
         while pending:
             done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
             for task in done:
                 yield task
         return
 
+    waiters = event_stream_buffer.waiters
     signal = asyncio.Event()
     waiters.append(signal)
     try:

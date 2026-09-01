@@ -586,6 +586,9 @@ class RunContext(Generic[RunContextAgentDepsT]):
 
         This method must be awaited, so it's available from async tools, capability hooks, history
         processors, and async output validators. Sync tools cannot emit events; write async tools instead.
+        It's async rather than sync like [`enqueue`][pydantic_ai.tools.RunContext.enqueue] because
+        inline dispatch (below) awaits listeners before returning, and because widening a sync
+        signature to async later would break every caller.
         The event reaches the run's `event_stream_handler`,
         [`Agent.run_stream_events`][pydantic_ai.agent.AbstractAgent.run_stream_events],
         [`Agent.iter`][pydantic_ai.agent.AbstractAgent.iter] streaming, and the UI adapters.
