@@ -105,7 +105,7 @@ for ((attempt = 0; attempt < 400; attempt++)); do
     fi
     now="$(date +%s)"
     stale=false
-    if [[ "$owner_pid" =~ ^[0-9]+$ ]]; then
+    if [[ "$owner_pid" =~ ^[1-9][0-9]*$ ]]; then
         if ! kill -0 "$owner_pid" 2>/dev/null; then
             stale=true
         fi
