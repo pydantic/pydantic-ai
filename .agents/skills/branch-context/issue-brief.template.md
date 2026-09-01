@@ -4,7 +4,8 @@ last_fetched_comment_count: 0
 branch: TODO
 related_pr: TBD
 issues: []
-# Populated issue entries also store `updated_at` from GitHub so body-only edits are detectable.
+# Populated issue entries store `updated_at` and `comments_fingerprint` from GitHub so body and
+# comment edits are detectable.
 ---
 
 # Issue Brief

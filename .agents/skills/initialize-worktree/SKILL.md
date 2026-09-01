@@ -45,6 +45,7 @@ issues:
     type: <bug|improvement|feature>
     role: <primary|related|follow-up>
     updated_at: <issue updatedAt from GitHub>
+    comments_fingerprint: <git hash-object of canonical comment IDs + updatedAt values>
 ---
 
 # Issue Brief
@@ -108,8 +109,8 @@ Ask: 'Based on my research, I assess this as [simple/complex]. [1-2 sentence rea
 
 ## Step 5a — Complex Path (plan-only PR)
 
-1. Write plan to `.claude/plans/<branch-name>.md`
-2. Commit the plan file only
+1. Write the discussion artifact to repo-root `PLAN.md` so it is tracked in the plan-only PR.
+2. Commit `PLAN.md` only.
 3. Follow the tracked `pushing-commits-to-the-repo` skill through its independent pre-push review,
    then push and create a ready-for-review PR. Use a draft only when David explicitly asks:
    - Title: concise description of the change
@@ -123,7 +124,7 @@ Ask: 'Based on my research, I assess this as [simple/complex]. [1-2 sentence rea
 
 ## Step 5b — Simple Path (implement + PR)
 
-1. Write plan to `.claude/plans/<branch-name>.md`
+1. Write the local implementation plan to `.claude/plans/<branch-name>.md`
 2. Implement changes per plan
 3. Run `make format && make lint` — fix issues until clean
 4. Commit all changes, then follow the tracked `pushing-commits-to-the-repo` skill through its
@@ -141,5 +142,6 @@ Ask: 'Based on my research, I assess this as [simple/complex]. [1-2 sentence rea
 
 - PR feedback is inspected with the `pr-review-feedback` helpers and handled through the tracked
   push lifecycle, or by `/pr-orchestrator` from the manager
-- Always create the plan file regardless of complexity — it documents intent
+- Always create a plan regardless of complexity. Complex plan-only PRs commit repo-root `PLAN.md`;
+  simple implementation work keeps its plan under ignored `.claude/plans/`.
 - For the PR body, follow the tracked `pushing-commits-to-the-repo` skill and root `AGENTS.md`.

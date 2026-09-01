@@ -21,7 +21,7 @@ Never run autonomously. The brief is meant to stay stable across many sessions â
 ### 1. Parse current brief
 
 Read `.claude/skills/branch-context/issue-brief.md` frontmatter:
-- `issues:` list (numbers, URLs, and the last fetched `updated_at` value)
+- `issues:` list (numbers, URLs, the last fetched `updated_at`, and `comments_fingerprint`)
 - `last_fetched_at`
 - `last_fetched_comment_count`
 
@@ -40,18 +40,23 @@ Collect:
 - Current title / state / labels (flag changes)
 - Whether `updatedAt` differs from the issue's stored `updated_at`. Treat a missing stored value as
   stale so briefs created before this field was added get one full comparison.
+- A fresh comment-state fingerprint, computed from the fetched issue JSON with
+  `jq -c '[.comments[] | {id, updatedAt}]' | git hash-object --stdin`. A mismatch detects added,
+  edited, or deleted comments. Treat a missing stored fingerprint as stale.
 
 ### 3. Compare
 
 For each issue, build a short summary of deltas:
 - New comments (count + one-line summary of each)
+- Edited or deleted comments? When the comment fingerprint changes, re-read every current comment
+  and compare its decision-bearing content with the brief; do not inspect only newly created ones.
 - Title changed? state changed (reopened/closed)? labels added/removed?
 - Body edited? A changed `updatedAt` requires comparing the complete current body with the brief's
   scope, criteria, constraints, and references; never use a prefix comparison.
 
 If no semantic deltas remain after comparison: update `last_fetched_at`,
 `last_fetched_comment_count`, and every issue's stored `updated_at` in the brief frontmatter, then
-print "No changes since last fetch." Exit.
+update every `comments_fingerprint` and print "No changes since last fetch." Exit.
 
 ### 4. Classify deltas
 
@@ -74,7 +79,7 @@ Before writing any changes, use the harness's structured question mechanism for 
 For approved deltas, edit `.claude/skills/branch-context/issue-brief.md`:
 - Update the relevant section(s) â€” keep the tight format from the brief template
 - Always update frontmatter: `last_fetched_at` (ISO now), `last_fetched_comment_count` (fresh total),
-  and each issue's `updated_at` (fresh GitHub value)
+  each issue's `updated_at` (fresh GitHub value), and `comments_fingerprint` (fresh canonical hash)
 
 ### 7. Log a decision entry
 

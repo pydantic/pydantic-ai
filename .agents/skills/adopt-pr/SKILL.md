@@ -76,6 +76,8 @@ Use the same schema as `/initialize-worktree` Step 3 (see `.claude/skills/initia
 - `related_pr`: the PR URL (not `TBD` — the PR already exists)
 - `branch`: `git rev-parse --abbrev-ref HEAD`
 - `issues[].updated_at`: the issue's current `updatedAt` value from GitHub
+- `issues[].comments_fingerprint`: hash the canonical comment state from the fetched issue JSON:
+  `jq -c '[.comments[] | {id, updatedAt}]' | git hash-object --stdin`
 - **Success criteria** — derive from:
   1. The issue text (as usual)
   2. Tests already on the branch — each existing test is a *de facto* criterion. Cross-reference them explicitly in the table.
