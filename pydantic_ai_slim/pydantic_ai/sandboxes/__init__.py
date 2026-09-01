@@ -2,6 +2,7 @@
 
 from .local import LocalSandbox
 from .protocol import (
+    FileEntry,
     SandboxBackend,
     SandboxCommand,
     SandboxFileEntry,
@@ -9,6 +10,8 @@ from .protocol import (
     SandboxOutputChunk,
     SandboxProcess,
     SandboxResult,
+    SandboxTimeoutError,
+    SandboxUnavailableError,
     SupportsFilesystem,
     SupportsStart,
     SupportsStream,
@@ -19,6 +22,7 @@ from .sandbox import FileWindow, Sandbox
 from .unavailable import UnavailableSandbox
 
 __all__ = (
+    'FileEntry',
     'FileWindow',
     'LocalSandbox',
     'ReadOnlySandbox',
@@ -31,6 +35,8 @@ __all__ = (
     'SandboxProcess',
     'SandboxRef',
     'SandboxResult',
+    'SandboxTimeoutError',
+    'SandboxUnavailableError',
     'SupportsFilesystem',
     'SupportsStart',
     'SupportsStream',

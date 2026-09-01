@@ -210,8 +210,11 @@ Implement `SupportsStart` when the backend can return a real process handle.
 Three protocol contracts matter to callers:
 
 - Optional operations raise `NotImplementedError`; use the documented fallback.
-- `timeout=` guarantees the command is terminated before an exception deriving from
-  `TimeoutError` is raised.
+- `timeout=` guarantees the command is terminated before
+  [`SandboxTimeoutError`][pydantic_ai.sandboxes.SandboxTimeoutError] is raised; its `stdout` and
+  `stderr` attributes contain output produced before termination when the backend can recover it.
+- Backends raise [`SandboxUnavailableError`][pydantic_ai.sandboxes.SandboxUnavailableError] when
+  the environment is permanently unusable and consumers should stop retrying it.
 - A non-zero `exit_code` is a normal result, not an exception.
 
 [`SandboxBackend.run()`][pydantic_ai.sandboxes.SandboxBackend.run] returns complete captured

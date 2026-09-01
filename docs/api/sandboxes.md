@@ -4,9 +4,12 @@
     options:
         members:
             - Sandbox
+            - FileEntry
             - FileWindow
             - SandboxBackend
             - SandboxRef
+            - SandboxTimeoutError
+            - SandboxUnavailableError
             - SupportsFilesystem
             - SupportsStart
             - SupportsStream

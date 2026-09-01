@@ -31,6 +31,7 @@ from typing import Literal, Protocol, TypeAlias, runtime_checkable
 # optional `Supports*` protocols. Data carriers declare read-only properties so that plain
 # attributes, frozen dataclass fields, and properties all conform.
 __all__ = (
+    'FileEntry',
     'SandboxBackend',
     'SandboxCommand',
     'SandboxFileEntry',
@@ -38,6 +39,8 @@ __all__ = (
     'SandboxOutputChunk',
     'SandboxProcess',
     'SandboxResult',
+    'SandboxTimeoutError',
+    'SandboxUnavailableError',
     'SupportsFilesystem',
     'SupportsStart',
     'SupportsStream',
@@ -51,6 +54,34 @@ string (`'echo $HOME | wc -c'`). Passing a `str` without `shell=True` is invalid
 an argv sequence with `shell=True`: implementations must reject either mismatch with a
 `TypeError`, forcing callers to be explicit about shell interpretation.
 """
+
+
+class SandboxUnavailableError(RuntimeError):
+    """The sandbox environment is gone or permanently unusable from this process.
+
+    Backends raise this (or a subclass) when the environment was terminated, expired at its
+    platform-side lifetime, cannot be found, or rejected the process's credentials — any
+    failure where retrying the same operation cannot succeed. Consumers use it to stop using
+    the sandbox instead of retrying; other exceptions from a backend may be transient.
+    """
+
+
+class SandboxTimeoutError(TimeoutError):
+    """A command exceeded the `timeout=` it was started with and was killed.
+
+    `stdout` and `stderr` carry any output the command produced before the kill (empty when
+    the backend cannot recover it); `timeout` is the deadline that was enforced, which may be
+    coarser than requested (e.g. platforms that take whole seconds).
+    """
+
+    def __init__(self, message: str, *, stdout: str = '', stderr: str = '', timeout: float | None = None) -> None:
+        super().__init__(message)
+        self.stdout = stdout
+        """Standard output produced before the command was killed."""
+        self.stderr = stderr
+        """Standard error produced before the command was killed."""
+        self.timeout = timeout
+        """The deadline that was enforced, in seconds."""
 
 
 class SandboxResult(Protocol):
@@ -125,7 +156,10 @@ class SandboxFileEntry(Protocol):
 
 @dataclass(frozen=True, kw_only=True)
 class FileEntry:
-    """Concrete `SandboxFileEntry` carrier used by the built-in filesystems."""
+    """Concrete `SandboxFileEntry` carrier used by the built-in filesystems.
+
+    Third-party backends may reuse it instead of declaring their own carrier.
+    """
 
     name: str
     path: str
@@ -148,8 +182,8 @@ class SandboxProcess(Protocol):
     async def wait(self) -> SandboxResult:
         """Wait for the process to complete and return its result.
 
-        If the process was started with `timeout=` and the deadline passes, this raises an
-        exception deriving from the builtin `TimeoutError` after the process has been killed.
+        If the process was started with `timeout=` and the deadline passes, the command is killed
+        and a [`SandboxTimeoutError`][pydantic_ai.sandboxes.SandboxTimeoutError] is raised.
         """
         ...
 
@@ -327,7 +361,7 @@ class SandboxBackend(Protocol):
                 directory) would silently escape the sandbox root.
             env: Extra environment variables for the command.
             timeout: Deadline in seconds, measured from this call. On expiry the command is killed
-                and an exception deriving from `TimeoutError` is raised.
+                and a [`SandboxTimeoutError`][pydantic_ai.sandboxes.SandboxTimeoutError] is raised.
         """
         ...
 

@@ -50,6 +50,9 @@ Tools always call the same `ctx.sandbox` methods. `fs` needs a backend with
 `SupportsFilesystem`, while `start()` needs `SupportsStart`; unsupported operations raise
 `NotImplementedError`.
 
+Backends raise `SandboxTimeoutError` when a command exceeds its deadline and
+`SandboxUnavailableError` when retrying against the same environment cannot succeed.
+
 ## Manage sandbox lifecycle with a capability
 
 A capability can create an environment for each run, reconnect an existing one, share a warm

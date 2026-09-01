@@ -25,7 +25,7 @@ from typing_extensions import Self
 
 from pydantic_ai._utils import run_in_executor
 
-from .protocol import FileEntry, SandboxCommand
+from .protocol import FileEntry, SandboxCommand, SandboxTimeoutError
 
 if TYPE_CHECKING:
     from .protocol import SandboxBackend, SupportsFilesystem
@@ -262,16 +262,19 @@ class LocalSandbox:
         try:
             stdout, stderr = await asyncio.wait_for(process.communicate(), timeout)
         except (TimeoutError, asyncio.TimeoutError) as error:  # asyncio's is distinct on 3.10
-            # The contract: a timeout kills the command first, then raises a TimeoutError
-            # subclass — even when a hardened host denies the group kill, in which case the
+            # The contract: a timeout kills the command first, then raises SandboxTimeoutError —
+            # even when a hardened host denies the group kill, in which case the
             # denial rides along as the cause instead of replacing the promised type.
             denial = await self._kill_and_reap(process)
             if denial is not None:
-                raise TimeoutError(
+                raise SandboxTimeoutError(
                     f'command timed out after {timeout} seconds; killing its process group was '
-                    'denied, so only the direct child was killed and grandchildren may survive'
+                    'denied, so only the direct child was killed and grandchildren may survive',
+                    timeout=timeout,
                 ) from denial
-            raise TimeoutError(f'command timed out after {timeout} seconds and was killed') from error
+            raise SandboxTimeoutError(
+                f'command timed out after {timeout} seconds and was killed', timeout=timeout
+            ) from error
         except BaseException:
             # Cancellation or any other failure while the pipes were open: kill the group,
             # but let the in-flight exception keep propagating — replacing a cancellation

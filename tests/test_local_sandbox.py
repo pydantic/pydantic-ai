@@ -18,6 +18,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.sandboxes import (
     Sandbox,
     SandboxBackend,
+    SandboxTimeoutError,
     SupportsFilesystem,
     SupportsStart,
 )
@@ -150,11 +151,17 @@ async def test_nonzero_exit_is_a_result(tmp_path: Path):
 async def test_timeout_kills_the_whole_process_group_and_raises(tmp_path: Path):
     sandbox = LocalSandbox(tmp_path)
     pid_file = tmp_path / 'pid'
-    with pytest.raises(TimeoutError, match='was killed'):
+    timeout = 0.2
+    with pytest.raises(SandboxTimeoutError, match='was killed') as exc_info:
         # The shell exits immediately, but its background child inherits the output pipes,
         # so `communicate()` remains pending. Cleanup must key off communication completing,
         # not the already-populated return code of the group leader.
-        await sandbox.run(_background_sleep_command(pid_file), shell=True, timeout=0.2)
+        await sandbox.run(_background_sleep_command(pid_file), shell=True, timeout=timeout)
+
+    error = exc_info.value
+    assert isinstance(error, TimeoutError)
+    assert error.timeout == timeout
+    assert error.stdout == ''
 
     await _assert_process_gone(int(pid_file.read_text()))
 
@@ -367,7 +374,7 @@ def test_relative_root_is_rejected():
 
 
 async def test_timeout_with_denied_group_kill_still_raises_timeout(monkeypatch: pytest.MonkeyPatch):
-    """The timeout contract promises a `TimeoutError` even when a hardened host denies the
+    """The timeout contract promises a `SandboxTimeoutError` even when a hardened host denies the
     group kill: the denial rides along as the cause instead of replacing the promised type."""
     async with LocalSandbox() as sandbox:
 
@@ -375,7 +382,7 @@ async def test_timeout_with_denied_group_kill_still_raises_timeout(monkeypatch: 
             raise PermissionError('signal denied')
 
         monkeypatch.setattr(os, 'killpg', deny_killpg)
-        with pytest.raises(TimeoutError, match='denied') as exc_info:
+        with pytest.raises(SandboxTimeoutError, match='denied') as exc_info:
             await sandbox.run(['sleep', '30'], timeout=0.1)
         assert isinstance(exc_info.value.__cause__, PermissionError)
 

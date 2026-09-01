@@ -29,6 +29,8 @@ from pydantic_ai.sandboxes import (
     SandboxProcess,
     SandboxRef,
     SandboxResult,
+    SandboxTimeoutError,
+    SandboxUnavailableError,
     SupportsFilesystem,
     SupportsStart,
     SupportsStream,
@@ -113,6 +115,12 @@ async def test_stream_support_is_separate_from_process_protocol():
     streaming: SupportsStream = _StreamingProcess()
     assert not isinstance(wait_only, SupportsStream)
     assert isinstance(streaming, SupportsStream)
+
+
+def test_sandbox_error_taxonomy():
+    timeout = SandboxTimeoutError('timed out', stdout='partial out', stderr='partial err', timeout=1.5)
+    assert (timeout.stdout, timeout.stderr, timeout.timeout) == ('partial out', 'partial err', 1.5)
+    assert isinstance(SandboxUnavailableError('gone'), RuntimeError)
 
 
 async def test_local_filesystem_rejects_relative_paths(tmp_path: Path):
@@ -1507,4 +1515,4 @@ def test_managed_and_provider_concepts_are_gone():
 
     assert not hasattr(sandboxes, 'ManagedSandbox')
     assert not hasattr(sandboxes, 'SandboxProvider')
-    assert 'SandboxRef' in sandboxes.__all__
+    assert {'FileEntry', 'SandboxRef', 'SandboxTimeoutError', 'SandboxUnavailableError'} <= set(sandboxes.__all__)
