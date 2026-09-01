@@ -120,6 +120,16 @@ class AnthropicModelProfile(ModelProfile, total=False):
     (or an explicit list of tools) raises a `UserError`.
     """
 
+    anthropic_binds_thinking_blocks: bool
+    """Whether the model binds each thinking block to the conversation prefix that produced it. Default: `False`.
+
+    Claude Fable 5.1 rejects a replayed thinking block once the `system` prompt text changes or a
+    non-deferred tool joins the `tools` array — both of which Pydantic AI causes by design, through
+    dynamic `@agent.instructions` and conditional toolsets. When True, requests default
+    `thinking.block_binding.prefix_mismatch_behavior` to `'drop_block'`, so a stale block is dropped
+    and the request proceeds instead of failing with a 400.
+    """
+
 
 ANTHROPIC_THINKING_BUDGET_MAP: dict[ThinkingLevel, int] = {
     True: 10000,
@@ -246,6 +256,11 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         ('claude-fable-5', 'claude-fable-5-1', 'claude-mythos-5', 'claude-mythos-5-1', 'claude-mythos-preview')
     )
 
+    # Only the 5.1 generation binds thinking blocks to the conversation prefix: Claude Fable 5,
+    # Opus 5, and Sonnet 5 all return 200 for a replayed block under an explicit
+    # `prefix_mismatch_behavior` of `'error'`.
+    binds_thinking_blocks = model_name.startswith(('claude-fable-5-1', 'claude-mythos-5-1'))
+
     supports_dynamic_filtering = model_name.startswith(
         (
             'claude-fable-5',
@@ -314,6 +329,7 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         anthropic_supported_code_execution_tool_versions=supported_code_execution_tool_versions,
         anthropic_supports_task_budgets=supports_task_budgets,
         anthropic_supports_forced_tool_choice=supports_forced_tool_choice,
+        anthropic_binds_thinking_blocks=binds_thinking_blocks,
         supported_native_tools=supported_native_tools,
     )
     if supports_tool_search:

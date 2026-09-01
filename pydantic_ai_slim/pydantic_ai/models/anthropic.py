@@ -216,6 +216,7 @@ try:
         BetaTextEditorCodeExecutionToolResultBlock,
         BetaTextEditorCodeExecutionToolResultBlockParam,
         BetaThinkingBlock,
+        BetaThinkingBlockBindingParam,
         BetaThinkingBlockParam,
         BetaThinkingConfigParam,
         BetaThinkingDelta,
@@ -315,6 +316,8 @@ _INLINE_SYSTEM_PROMPT_UNSUPPORTED_CLIENTS = (AsyncAnthropicFoundry,)
 
 _ANTHROPIC_SAMPLING_PARAMS = ('temperature', 'top_p', 'top_k')
 _ANTHROPIC_TASK_BUDGETS_BETA = 'task-budgets-2026-03-13'
+_ANTHROPIC_THINKING_BINDING_BETA = 'thinking-binding-controls-2026-08-01'
+_ANTHROPIC_DROP_STALE_THINKING_BLOCKS: BetaThinkingBlockBindingParam = {'prefix_mismatch_behavior': 'drop_block'}
 _ANTHROPIC_FILES_API_BETA = 'files-api-2025-04-14'
 _ANTHROPIC_COMPACT_EDIT_TYPE = 'compact_20260112'
 
@@ -538,8 +541,10 @@ class AnthropicModelSettings(ModelSettings, total=False):
     """
 
 
-def _build_extra_body(model_settings: AnthropicModelSettings) -> object | None:
-    """Merge the sampling settings into `extra_body`, which is how they reach the API now.
+def _build_extra_body(
+    model_settings: AnthropicModelSettings, thinking_binding: BetaThinkingBlockBindingParam | None = None
+) -> object | None:
+    """Merge the sampling settings, and any type-less `thinking.block_binding`, into `extra_body`.
 
     `anthropic>=1` dropped `temperature`/`top_p`/`top_k` from the `messages.create()` signature, and
     passing one is a `TypeError`. The API still takes them, so they ride in `extra_body` — the route
@@ -549,15 +554,17 @@ def _build_extra_body(model_settings: AnthropicModelSettings) -> object | None:
     An explicit `extra_body` entry wins over the setting of the same name, preserving the precedence
     the SDK gave it while the parameters were still named arguments.
     """
-    sampling = {
+    fields: dict[str, Any] = {
         setting: value for setting in _ANTHROPIC_SAMPLING_PARAMS if (value := model_settings.get(setting)) is not None
     }
+    if thinking_binding is not None:
+        fields['thinking'] = {'block_binding': thinking_binding}
     extra_body = model_settings.get('extra_body')
-    if not sampling:
+    if not fields:
         return extra_body
     if is_str_dict(extra_body):
-        return {**sampling, **extra_body}
-    return sampling
+        return {**fields, **extra_body}
+    return fields
 
 
 def _resolve_anthropic_service_tier(
@@ -887,14 +894,46 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     ) -> BetaThinkingConfigParam:
         """Get the thinking parameter, falling back to unified thinking."""
         if anthropic_thinking := model_settings.get('anthropic_thinking'):
-            return anthropic_thinking
+            return self._bind_thinking_blocks(anthropic_thinking)
         thinking = model_request_parameters.thinking
         if thinking is None or thinking is False:
             return OMIT  # type: ignore[return-value]
         profile = self.profile
         if profile.get('anthropic_supports_adaptive_thinking', False):
-            return {'type': 'adaptive'}
-        return {'type': 'enabled', 'budget_tokens': ANTHROPIC_THINKING_BUDGET_MAP[thinking]}
+            return self._bind_thinking_blocks({'type': 'adaptive'})
+        return self._bind_thinking_blocks({'type': 'enabled', 'budget_tokens': ANTHROPIC_THINKING_BUDGET_MAP[thinking]})
+
+    def _unset_thinking_block_binding(
+        self, thinking: BetaThinkingConfigParam | Omit
+    ) -> BetaThinkingBlockBindingParam | None:
+        """The `block_binding` a request with no `thinking` config still has to carry, if any.
+
+        A binding model emits thinking blocks whether or not the request configured thinking, so
+        replaying them fails even when `thinking` is absent — and `block_binding` then has nowhere
+        typed to ride. The API accepts a `thinking` object holding `block_binding` alone, which the
+        SDK's discriminated union cannot express, so that shape travels through `extra_body`.
+        """
+        if not isinstance(thinking, Omit):
+            return None
+        if not self.profile.get('anthropic_binds_thinking_blocks', False):
+            return None
+        return _ANTHROPIC_DROP_STALE_THINKING_BLOCKS
+
+    def _bind_thinking_blocks(self, thinking: BetaThinkingConfigParam) -> BetaThinkingConfigParam:
+        """Default `prefix_mismatch_behavior` to `drop_block` on models that bind thinking blocks.
+
+        Claude Fable 5.1 binds each thinking block to the conversation prefix that produced it, so
+        replaying history after a dynamic `@agent.instructions` string changes, or after a
+        conditional toolset advertises a new non-deferred tool, fails with a 400. Dropping the stale
+        block costs the model that turn's reasoning; failing the request costs the run.
+        """
+        if thinking['type'] == 'disabled' or 'block_binding' in thinking:
+            return thinking
+        if not self.profile.get('anthropic_binds_thinking_blocks', False):
+            return thinking
+        bound = thinking.copy()
+        bound['block_binding'] = _ANTHROPIC_DROP_STALE_THINKING_BLOCKS
+        return bound
 
     @overload
     async def _messages_create(
@@ -949,13 +988,18 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         )
         output_config = self._build_output_config(model_request_parameters, model_settings)
         anthropic_profile = self.profile
+        thinking = self._translate_thinking(model_settings, model_request_parameters)
         betas, extra_headers = self._get_betas_and_extra_headers(
-            model_settings, anthropic_profile, messages, model_request_parameters
+            model_settings, anthropic_profile, messages, model_request_parameters, thinking
         )
         betas.update(native_tool_betas)
         context_management = self._add_compaction_params(messages, betas, model_settings)
         self._validate_task_budget_vs_context_management(model_settings, context_management)
         container = self._get_container(messages, model_settings)
+
+        unset_thinking_binding = self._unset_thinking_block_binding(thinking)
+        if unset_thinking_binding is not None:
+            betas.add(_ANTHROPIC_THINKING_BINDING_BETA)
 
         with _map_api_errors(self.model_name, self._provider.model_id_namespace):
             return await self.client.beta.messages.create(
@@ -970,7 +1014,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 betas=sorted(betas) or OMIT,
                 stream=stream,
                 cache_control=auto_cache_control or OMIT,
-                thinking=self._translate_thinking(model_settings, model_request_parameters),
+                thinking=thinking,
                 stop_sequences=model_settings.get('stop_sequences', OMIT),
                 timeout=to_httpx2_timeout(model_settings.get('timeout', NOT_GIVEN)),
                 metadata=model_settings.get('anthropic_metadata', OMIT),
@@ -979,7 +1023,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 service_tier=_resolve_anthropic_service_tier(model_settings),
                 speed=self._effective_speed(model_settings, anthropic_profile),
                 extra_headers=extra_headers,
-                extra_body=_build_extra_body(model_settings),
+                extra_body=_build_extra_body(model_settings, unset_thinking_binding),
             )
 
     @staticmethod
@@ -1010,6 +1054,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         anthropic_profile: AnthropicModelProfile,
         messages: list[ModelMessage],
         model_request_parameters: ModelRequestParameters,
+        thinking: BetaThinkingConfigParam | Omit,
     ) -> tuple[set[str], dict[str, str]]:
         """Prepare beta features list and extra headers for API request.
 
@@ -1026,6 +1071,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             betas.add('compact-2026-01-12')
         if self._get_task_budget(model_settings) is not None:
             betas.add(_ANTHROPIC_TASK_BUDGETS_BETA)
+
+        # `thinking.block_binding` is a 400 (`Extra inputs are not permitted`) without its beta,
+        # so the beta follows the field rather than the profile flag — a user who sets
+        # `block_binding` through `anthropic_thinking` gets it too.
+        if not isinstance(thinking, Omit) and thinking.get('block_binding'):
+            betas.add(_ANTHROPIC_THINKING_BINDING_BETA)
 
         if model_settings.get('anthropic_speed') == 'fast' and self._client_supports_fast_speed(anthropic_profile):
             betas.add('fast-mode-2026-02-01')
@@ -1194,8 +1245,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         )
         output_config = self._build_output_config(model_request_parameters, model_settings)
         anthropic_profile = self.profile
+        thinking = self._translate_thinking(model_settings, model_request_parameters)
         betas, extra_headers = self._get_betas_and_extra_headers(
-            model_settings, anthropic_profile, messages, model_request_parameters
+            model_settings, anthropic_profile, messages, model_request_parameters, thinking
         )
         betas.update(native_tool_betas)
         context_management = self._add_compaction_params(messages, betas, model_settings)
@@ -1216,7 +1268,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     betas=sorted(betas) or OMIT,
                     output_config=output_config or OMIT,
                     cache_control=auto_cache_control or OMIT,
-                    thinking=self._translate_thinking(model_settings, model_request_parameters),
+                    thinking=thinking,
                     context_management=context_management or OMIT,
                     timeout=to_httpx2_timeout(model_settings.get('timeout', NOT_GIVEN)),
                     speed=self._effective_speed(model_settings, anthropic_profile),
@@ -1235,7 +1287,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 betas=sorted(betas) or OMIT,
                 output_config=output_config or OMIT,
                 cache_control=auto_cache_control or OMIT,
-                thinking=self._translate_thinking(model_settings, model_request_parameters),
+                thinking=thinking,
                 context_management=context_management or OMIT,
                 timeout=to_httpx2_timeout(model_settings.get('timeout', NOT_GIVEN)),
                 speed=self._effective_speed(model_settings, anthropic_profile),
@@ -1335,6 +1387,13 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if response.container:
             provider_details = provider_details or {}
             provider_details['container_id'] = response.container.id
+        # A dropped thinking block is otherwise silent: the model answered without the reasoning we
+        # replayed. Surface Anthropic's own report so a run can be inspected after the fact.
+        if response.input_transformations:
+            provider_details = provider_details or {}
+            provider_details['input_transformations'] = [
+                transformation.model_dump() for transformation in response.input_transformations
+            ]
 
         return ModelResponse(
             parts=items,
@@ -3074,6 +3133,11 @@ class AnthropicStreamedResponse(StreamedResponse):
                     if event.delta.container:
                         self.provider_details = self.provider_details or {}
                         self.provider_details['container_id'] = event.delta.container.id
+                    if event.input_transformations:
+                        self.provider_details = self.provider_details or {}
+                        self.provider_details['input_transformations'] = [
+                            transformation.model_dump() for transformation in event.input_transformations
+                        ]
 
                 elif isinstance(event, BetaRawContentBlockStopEvent):  # pragma: no branch
                     if event.index in ignored_server_tool_use_indices:

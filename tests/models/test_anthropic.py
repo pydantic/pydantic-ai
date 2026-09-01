@@ -111,6 +111,7 @@ with try_import() as imports_successful:
         AsyncAnthropicFoundry,
         AsyncAnthropicVertex,
         AsyncStream,
+        Omit,
         omit as OMIT,
     )
     from anthropic.lib.tools import BetaAbstractMemoryTool
@@ -150,6 +151,7 @@ with try_import() as imports_successful:
         BetaServerToolUseBlock,
         BetaTextBlock,
         BetaTextDelta,
+        BetaThinkingDroppedInputTransformation,
         BetaToolUseBlock,
         BetaUsage,
         BetaWebSearchResultBlock,
@@ -4610,6 +4612,229 @@ async def test_anthropic_unified_thinking_false_omits_param(allow_model_requests
     kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
     # thinking=False on always-thinking model is silently ignored — thinking param is OMIT
     assert kwargs.get('thinking') is OMIT
+
+
+_THINKING_BINDING_BETA = 'thinking-binding-controls-2026-08-01'
+_DROP_BLOCK = {'prefix_mismatch_behavior': 'drop_block'}
+
+
+def sent_betas(mock_client: AsyncAnthropic) -> list[str]:
+    """The `betas` the model sent, as a list — an empty set reaches the SDK as `OMIT`, not `[]`."""
+    betas: list[str] | Omit = get_mock_chat_completion_kwargs(mock_client)[0].get('betas', OMIT)
+    return [] if isinstance(betas, Omit) else betas
+
+
+@pytest.mark.parametrize(
+    'model_name,expected_binding',
+    [('claude-fable-5-1', _DROP_BLOCK), ('claude-fable-5', None)],
+)
+async def test_anthropic_thinking_block_binding_on_configured_thinking(
+    allow_model_requests: None, model_name: str, expected_binding: dict[str, str] | None
+):
+    """A binding model defaults `prefix_mismatch_behavior` to `drop_block`; others are untouched.
+
+    Claude Fable 5.1 rejects a replayed thinking block once the conversation prefix it was created
+    against changes. Claude Fable 5 does not bind at all — verified live: it answers 200 for the
+    same replay under an explicit `'error'` — so its request must not grow a `block_binding` or the
+    beta that field requires.
+    """
+    mock_client = MockAnthropic.create_mock(
+        completion_message([BetaTextBlock(text='4', type='text')], usage=BetaUsage(input_tokens=10, output_tokens=1))
+    )
+    m = AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m, model_settings=ModelSettings(thinking='high'))
+
+    await agent.run('What is 2+2?')
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs['thinking'].get('block_binding') == expected_binding
+    assert (_THINKING_BINDING_BETA in sent_betas(mock_client)) is (expected_binding is not None)
+
+
+async def test_anthropic_thinking_block_binding_without_a_thinking_config(allow_model_requests: None):
+    """A binding model emits thinking blocks even when the request configures no thinking at all.
+
+    Replaying those is exactly what fails, so the binding still has to be sent — but the SDK's
+    `thinking` union always requires a `type`, and choosing one would change how the model thinks.
+    The API accepts a `thinking` object carrying `block_binding` alone (verified live: `'error'`
+    still 400s and `'drop_block'` still reports `thinking_dropped`), so it rides in `extra_body`.
+    """
+    mock_client = MockAnthropic.create_mock(
+        completion_message([BetaTextBlock(text='4', type='text')], usage=BetaUsage(input_tokens=10, output_tokens=1))
+    )
+    m = AnthropicModel('claude-fable-5-1', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    await agent.run('What is 2+2?')
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs['thinking'] is OMIT
+    assert kwargs['extra_body'] == snapshot({'thinking': {'block_binding': {'prefix_mismatch_behavior': 'drop_block'}}})
+    assert _THINKING_BINDING_BETA in sent_betas(mock_client)
+
+
+async def test_anthropic_thinking_block_binding_skipped_without_the_profile_flag(allow_model_requests: None):
+    """A model that does not bind sends no `extra_body` of its own when thinking is unconfigured."""
+    mock_client = MockAnthropic.create_mock(
+        completion_message([BetaTextBlock(text='4', type='text')], usage=BetaUsage(input_tokens=10, output_tokens=1))
+    )
+    m = AnthropicModel('claude-fable-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    await agent.run('What is 2+2?')
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs.get('extra_body') is None
+    assert _THINKING_BINDING_BETA not in sent_betas(mock_client)
+
+
+@pytest.mark.parametrize('model_name', ['claude-fable-5-1', 'claude-fable-5'])
+async def test_anthropic_explicit_block_binding_is_preserved(allow_model_requests: None, model_name: str):
+    """An explicit `block_binding` wins on every model, and still gets the beta the field needs.
+
+    Without the beta the field is a 400 (`Extra inputs are not permitted`), so the beta follows the
+    field rather than the profile flag — otherwise the documented opt-in would not work.
+    """
+    mock_client = MockAnthropic.create_mock(
+        completion_message([BetaTextBlock(text='4', type='text')], usage=BetaUsage(input_tokens=10, output_tokens=1))
+    )
+    settings = AnthropicModelSettings(
+        anthropic_thinking={'type': 'adaptive', 'block_binding': {'prefix_mismatch_behavior': 'error'}}
+    )
+    m = AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m, model_settings=settings)
+
+    await agent.run('What is 2+2?')
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs['thinking']['block_binding'] == snapshot({'prefix_mismatch_behavior': 'error'})
+    assert _THINKING_BINDING_BETA in sent_betas(mock_client)
+
+
+async def test_anthropic_thinking_block_binding_skipped_when_thinking_disabled(allow_model_requests: None):
+    """`thinking: {'type': 'disabled'}` has no `block_binding` field to carry."""
+    mock_client = MockAnthropic.create_mock(
+        completion_message([BetaTextBlock(text='4', type='text')], usage=BetaUsage(input_tokens=10, output_tokens=1))
+    )
+    settings = AnthropicModelSettings(anthropic_thinking={'type': 'disabled'})
+    m = AnthropicModel('claude-fable-5-1', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m, model_settings=settings)
+
+    await agent.run('What is 2+2?')
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs['thinking'] == snapshot({'type': 'disabled'})
+    assert _THINKING_BINDING_BETA not in sent_betas(mock_client)
+
+
+def dropped_thinking_transformation() -> BetaThinkingDroppedInputTransformation:
+    return BetaThinkingDroppedInputTransformation(
+        path='messages.1.content.0', reason='prefix_binding_mismatch', type='thinking_dropped'
+    )
+
+
+async def test_anthropic_records_dropped_thinking_blocks(allow_model_requests: None):
+    """A dropped block is otherwise invisible: the model just answered without the reasoning we sent."""
+    response = BetaMessage(
+        id='123',
+        content=[BetaTextBlock(text='4', type='text')],
+        model='claude-fable-5-1',
+        role='assistant',
+        stop_reason='end_turn',
+        type='message',
+        usage=BetaUsage(input_tokens=5, output_tokens=10),
+        input_transformations=[dropped_thinking_transformation()],
+    )
+    mock_client = MockAnthropic.create_mock(response)
+    m = AnthropicModel('claude-fable-5-1', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    result = await agent.run('What is 2+2?')
+
+    response = message(result.all_messages(), ModelResponse, index=-1)
+    assert response.provider_details == snapshot(
+        {
+            'finish_reason': 'end_turn',
+            'input_transformations': [
+                {'path': 'messages.1.content.0', 'reason': 'prefix_binding_mismatch', 'type': 'thinking_dropped'}
+            ],
+        }
+    )
+
+
+async def test_anthropic_records_dropped_thinking_blocks_streamed(allow_model_requests: None):
+    """The same report arrives on the streaming `message_delta` event."""
+    stream = [
+        BetaRawMessageStartEvent(
+            type='message_start',
+            message=BetaMessage(
+                id='msg_123',
+                model='claude-fable-5-1',
+                role='assistant',
+                type='message',
+                content=[],
+                stop_reason=None,
+                usage=BetaUsage(input_tokens=5, output_tokens=0),
+            ),
+        ),
+        BetaRawContentBlockStartEvent(
+            type='content_block_start', index=0, content_block=BetaTextBlock(type='text', text='4')
+        ),
+        BetaRawContentBlockStopEvent(type='content_block_stop', index=0),
+        BetaRawMessageDeltaEvent(
+            type='message_delta',
+            delta=Delta(stop_reason='end_turn'),
+            usage=BetaMessageDeltaUsage(input_tokens=5, output_tokens=1),
+            input_transformations=[dropped_thinking_transformation()],
+        ),
+        BetaRawMessageStopEvent(type='message_stop'),
+    ]
+    mock_client = MockAnthropic.create_stream_mock(stream)
+    m = AnthropicModel('claude-fable-5-1', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    async with agent.run_stream('What is 2+2?') as result:
+        await result.get_output()
+
+    response = message(result.all_messages(), ModelResponse, index=-1)
+    assert response.provider_details == snapshot(
+        {
+            'finish_reason': 'end_turn',
+            'input_transformations': [
+                {'path': 'messages.1.content.0', 'reason': 'prefix_binding_mismatch', 'type': 'thinking_dropped'}
+            ],
+        }
+    )
+
+
+@pytest.mark.moves_cache_prefix(reason='the changed instructions string is what invalidates the thinking block')
+@pytest.mark.vcr()
+async def test_anthropic_fable_5_1_drops_a_stale_thinking_block(allow_model_requests: None, anthropic_api_key: str):
+    """End to end: a changed instructions string invalidates the thinking block Fable 5.1 sent back.
+
+    Under Anthropic's `'error'` default the replay is a 400 (`The block is bound to a different
+    conversation`) for any account created on or after 2026-08-31. Recorded against the `drop_block`
+    default this PR sends, where the stale block is dropped and the run completes instead.
+    """
+    m = AnthropicModel('claude-fable-5-1', provider=AnthropicProvider(api_key=anthropic_api_key))
+
+    first = Agent(m, instructions='You are a helpful assistant. Answer briefly.')
+    result = await first.run('Think about it, then say what 17*23 is.')
+    thought = message(result.all_messages(), ModelResponse, index=-1)
+    assert any(isinstance(part, ThinkingPart) for part in thought.parts), 'no thinking block to invalidate'
+
+    second = Agent(m, instructions='You are a helpful assistant. Answer briefly. Today is 2026-09-01.')
+    replayed = await second.run('And times two?', message_history=result.all_messages())
+
+    response = message(replayed.all_messages(), ModelResponse, index=-1)
+    assert response.provider_details == snapshot(
+        {
+            'finish_reason': 'end_turn',
+            'input_transformations': [
+                {'path': 'messages.1.content.0', 'reason': 'prefix_binding_mismatch', 'type': 'thinking_dropped'}
+            ],
+        }
+    )
 
 
 @pytest.mark.parametrize('model_name', ['claude-opus-4-7', 'claude-opus-4-8'])

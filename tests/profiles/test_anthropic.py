@@ -422,6 +422,7 @@ def test_model_profile_fable_5_1():
             'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
             'anthropic_supports_task_budgets': True,
             'anthropic_supports_forced_tool_choice': False,
+            'anthropic_binds_thinking_blocks': True,
             'tool_deferral_mode': 'standalone',
             'supported_native_tools': frozenset(
                 {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
@@ -493,6 +494,7 @@ def test_model_profile_opus_5():
             'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
             'anthropic_supports_task_budgets': True,
             'anthropic_supports_forced_tool_choice': True,
+            'anthropic_binds_thinking_blocks': False,
             'tool_deferral_mode': 'standalone',
             'supported_native_tools': frozenset(
                 {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}

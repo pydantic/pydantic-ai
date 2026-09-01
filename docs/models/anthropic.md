@@ -558,6 +558,43 @@ On a model that doesn't support forcing:
 
 Because [Tool Output](../output.md#tool-output) resolves to a forced tool choice, extended thinking is also incompatible with it: a bare structured `output_type` switches to [Native Output](../output.md#native-output) (or [Prompted Output](../output.md#prompted-output) on models without JSON schema support), and an explicit `ToolOutput(...)` raises a [`UserError`][pydantic_ai.exceptions.UserError]. Adaptive thinking keeps Tool Output, except on the models above that reject forcing outright — whenever a thinking setting is configured, those behave as they always have: a bare structured `output_type` switches away from Tool Output, and an explicit `ToolOutput(...)` raises a [`UserError`][pydantic_ai.exceptions.UserError].
 
+## Thinking block binding
+
+**Claude Fable 5.1** and **Claude Mythos 5.1** bind each thinking block to the conversation prefix that produced it. Replaying message history after that prefix changes fails with a 400 (`The block is bound to a different conversation`), and two ordinary Pydantic AI features change it:
+
+- a [dynamic instructions](../agent.md#instructions) function whose text differs between runs, and
+- a [filtered toolset](../toolsets.md#filtering-tools) that advertises a new tool mid-conversation, unless the tool uses [deferred loading](../toolsets.md#deferred-loading).
+
+On those models Pydantic AI defaults Anthropic's `thinking.block_binding.prefix_mismatch_behavior` to `'drop_block'`, marked by [`anthropic_binds_thinking_blocks=True`][pydantic_ai.profiles.anthropic.AnthropicModelProfile.anthropic_binds_thinking_blocks]. The stale block is dropped and the request proceeds instead of failing. **The model no longer sees that turn's reasoning** — the trade is one turn's thinking against a failed run. Anthropic reports every drop, and Pydantic AI records it on the response:
+
+```python {title="dropped_thinking_blocks.py" test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.messages import ModelResponse
+
+agent = Agent('anthropic:claude-fable-5-1')
+result = agent.run_sync('What is the capital of France?')
+
+for message in result.new_messages():
+    if isinstance(message, ModelResponse) and message.provider_details:
+        for transformation in message.provider_details.get('input_transformations', []):
+            print(transformation['path'], transformation['reason'])
+```
+
+To fail loudly instead, set the behavior yourself — Pydantic AI leaves an explicit `block_binding` untouched and still sends the beta the field requires:
+
+```python {title="strict_block_binding.py"}
+from pydantic_ai import Agent
+from pydantic_ai.models.anthropic import AnthropicModelSettings
+
+settings: AnthropicModelSettings = {
+    'anthropic_thinking': {'type': 'adaptive', 'block_binding': {'prefix_mismatch_behavior': 'error'}}
+}
+agent = Agent('anthropic:claude-fable-5-1', model_settings=settings)
+...
+```
+
+Models that don't bind thinking blocks are unaffected: their requests carry no `block_binding` and no binding beta.
+
 ## Message Compaction
 
 Anthropic supports [automatic context compaction](https://docs.anthropic.com/en/docs/build-with-claude/compaction) to manage long conversations. When input tokens exceed a configured threshold, the API automatically generates a summary that replaces older messages while preserving context.
