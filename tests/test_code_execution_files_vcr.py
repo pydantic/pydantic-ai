@@ -291,7 +291,7 @@ _DEAD_CONTAINER_ID = 'container_01EG1LKXFPoQJ9tpbsZ1dh74'
 
 @pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
 async def test_anthropic_code_execution_files_rejected_container_is_dropped_and_retried(
-    allow_model_requests: None, anthropic_api_key: str, request_capture: RequestCapture
+    allow_model_requests: None, anthropic_api_key: str, request_capture: RequestCapture, vcr: Any
 ):
     """A rejected container id resolved from history is dropped and the request resent once.
 
@@ -339,6 +339,10 @@ async def test_anthropic_code_execution_files_rejected_container_is_dropped_and_
         await client.close()
 
     assert '100' in result.output
+
+    recorded_error = vcr.responses[1]
+    recorded_error_body = json.loads(recorded_error['body']['string'])
+    assert (recorded_error['status']['code'], recorded_error_body['error']['type']) == snapshot((500, 'api_error'))
 
     # Both attempts are on the wire, and only the first carries the dead id.
     bodies = request_capture.bodies('/v1/messages')
