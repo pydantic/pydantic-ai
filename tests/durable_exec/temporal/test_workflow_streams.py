@@ -281,10 +281,11 @@ class FailingWorkflow:
         self.events = AgentEventStream()
 
     @workflow.run
-    async def run(self, prompt: str) -> str:
+    async def run(self, prompt: str) -> None:
+        # The run always raises, so this never returns a value; leaving the `async with` on the
+        # exception path is the behaviour under test.
         async with self.events:
-            result = await _failing_agent.run(prompt)
-        return result.output
+            await _failing_agent.run(prompt)
 
 
 async def test_a_failed_run_ends_the_stream_without_a_result(client: Client) -> None:
