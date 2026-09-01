@@ -185,6 +185,12 @@ def stream_agent_events(
     gaps wherever the workflow published to another topic: they can't be reconstructed by counting events, which
     is why they have to be read off the stream.
 
+    The subscription is pinned to the run `handle` refers to, and follows that run through
+    continue-as-new. Once it has followed a rollover it tracks the workflow ID rather than a specific
+    run, so reusing a workflow ID after its chain has finished can deliver the new execution's events
+    to a consumer still subscribed to the old one. Use workflow IDs that aren't recycled across runs
+    if that matters to you.
+
     Args:
         client: A Temporal `Client` configured with the Pydantic AI plugin (so events decode into typed
             `AgentStreamEvent`s).
@@ -198,6 +204,14 @@ def stream_agent_events(
     # us to a different execution. `WorkflowStreamClient.create` resolves `handle.id` to the *latest*
     # execution; building the client from a run-pinned handle instead targets the caller's run, while
     # `subscribe` still follows continue-as-new (which it does whenever a `client` is supplied).
+    #
+    # The pin holds until the first rollover and no further: the SDK's `_follow_continue_as_new`
+    # re-targets to `client.get_workflow_handle(workflow_id)` with no run id, treating the successor
+    # as "whatever is latest" rather than resolving its run id (temporalio 1.30.0). So a chain that
+    # rolls over, completes, and then has its workflow ID reused can deliver the new execution's
+    # events to a consumer still following the old one. Closing that would mean dropping `client=`
+    # and with it continue-as-new following, which would silently truncate the stream of every
+    # long-running agent, so the narrower exposure is the one worth keeping.
     run_id = handle.run_id or handle.first_execution_run_id
     pinned_handle = client.get_workflow_handle(handle.id, run_id=run_id) if run_id else handle
     stream_client = WorkflowStreamClient(pinned_handle, client=client)
