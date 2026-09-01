@@ -310,6 +310,18 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         return type(self).wrap_node_run is not AbstractCapability.wrap_node_run
 
     @property
+    def _has_on_node_run_error(self) -> bool:
+        return type(self).on_node_run_error is not AbstractCapability.on_node_run_error
+
+    @property
+    def _has_wrap_model_request(self) -> bool:
+        return type(self).wrap_model_request is not AbstractCapability.wrap_model_request
+
+    @property
+    def _has_on_model_request_error(self) -> bool:
+        return type(self).on_model_request_error is not AbstractCapability.on_model_request_error
+
+    @property
     def has_wrap_run_event_stream(self) -> bool:
         """Whether this capability (or any sub-capability) overrides wrap_run_event_stream."""
         return type(self).wrap_run_event_stream is not AbstractCapability.wrap_run_event_stream

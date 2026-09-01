@@ -342,8 +342,13 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         self.ctx.deps.cancellation.bind()
         cap = self.ctx.deps.root_capability
         try:
-            result = await cap.wrap_node_run(run_context, node=node, handler=step_fn)
+            if cap._has_wrap_node_run:  # pyright: ignore[reportPrivateUsage]
+                result = await cap.wrap_node_run(run_context, node=node, handler=step_fn)
+            else:
+                result = await step_fn(node)
         except Exception as e:
+            if not cap._has_on_node_run_error:  # pyright: ignore[reportPrivateUsage]
+                raise
             result = await cap.on_node_run_error(run_context, node=node, error=e)
             # on_node_run_error recovered by returning a result.
             # The graph runner is in ErrorMarker state; update it to match.
@@ -400,6 +405,8 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             try:
                 result = await step_fn(lifecycle_node)
             except Exception as e:
+                if not cap._has_on_node_run_error:  # pyright: ignore[reportPrivateUsage]
+                    raise
                 result = await cap.on_node_run_error(run_context, node=lifecycle_node, error=e)
                 # The graph runner is in `ErrorMarker` state; update it to match the recovery.
                 self._sync_graph_state(result)
@@ -413,7 +420,10 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             _utils.raise_if_cancelling()
             return result
 
-        result = await cap.wrap_node_run(run_context, node=node, handler=lifecycle)
+        if cap._has_wrap_node_run:  # pyright: ignore[reportPrivateUsage]
+            result = await cap.wrap_node_run(run_context, node=node, handler=lifecycle)
+        else:
+            result = await lifecycle(node)
         if not self._graph_reflects(result):
             self._sync_graph_state(result)
         return result

@@ -1155,7 +1155,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         return await self._make_request(ctx)
 
     @asynccontextmanager
-    async def stream(
+    async def stream(  # noqa: C901
         self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, T]],
     ) -> AsyncGenerator[result.AgentStream[DepsT, T]]:
@@ -1234,13 +1234,16 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             )
 
         wrap_request_context = request_context
-        wrap_task = asyncio.create_task(
-            ctx.deps.root_capability.wrap_model_request(
+        root_capability = ctx.deps.root_capability
+        if root_capability._has_wrap_model_request:  # pyright: ignore[reportPrivateUsage]
+            wrap_awaitable = root_capability.wrap_model_request(
                 run_context,
                 request_context=wrap_request_context,
                 handler=_streaming_handler,
             )
-        )
+        else:
+            wrap_awaitable = _streaming_handler(wrap_request_context)
+        wrap_task = asyncio.create_task(wrap_awaitable)
 
         # Wait for handler to start or wrap to complete (short-circuit).
         # If outer cancellation arrives during this wait, drain both tasks before re-raising
@@ -1273,7 +1276,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     result_or_exc = wrap_task.result()
                 except Exception as e:
                     result_or_exc = e
-                model_response = self._resolve_wrap_result(result_or_exc)
+                model_response = await self._resolve_wrap_result(ctx, run_context, wrap_request_context, result_or_exc)
             except exceptions.ModelRetry as e:
                 self._did_stream = True
                 # Don't increment usage.requests — handler was never called (short-circuit)
@@ -1342,7 +1345,13 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                         ctx.state.message_history.append(partial_response)
                 else:
                     try:
-                        model_response = await wrap_task
+                        try:
+                            result_or_exc = await wrap_task
+                        except Exception as e:
+                            result_or_exc = e
+                        model_response = await self._resolve_wrap_result(
+                            ctx, run_context, wrap_request_context, result_or_exc
+                        )
                     except exceptions.ModelRetry as e:
                         self._enforce_usage_limits(ctx, accounted_responses)
                         # Don't increment usage.requests — _streaming_handler already did.
@@ -1420,6 +1429,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 response = await model_request(
                     req_ctx.model, request_context=req_ctx, run_context=run_context, on_progress=on_progress
                 )
+                _handler_response = response
+                _handler_usage_recorded = True
+                if self._record_response_usage(ctx, response, request_context=req_ctx):
+                    accounted_responses.append(response)
             except exceptions.ModelRetry:
                 raise
             except Exception as e:
@@ -1427,25 +1440,24 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     _handler_usage_recorded = True
                     if self._record_response_usage(ctx, _handler_response, request_context=req_ctx):
                         accounted_responses.append(_handler_response)
-                response = await ctx.deps.root_capability.on_model_request_error(
-                    run_context, request_context=req_ctx, error=e
-                )
+                response = await self._recover_model_request_error(ctx, run_context, req_ctx, e)
             _handler_response = response
-            _handler_usage_recorded = True
-            if self._record_response_usage(ctx, response, request_context=req_ctx):
-                accounted_responses.append(response)
             capture_model_response_span_context(req_ctx, response)
             return await ctx.deps.root_capability.after_model_request(
                 run_context, request_context=req_ctx, response=response
             )
 
+        root_capability = ctx.deps.root_capability
         try:
             try:
-                model_response = await ctx.deps.root_capability.wrap_model_request(
-                    run_context,
-                    request_context=request_context,
-                    handler=model_handler,
-                )
+                if root_capability._has_wrap_model_request:  # pyright: ignore[reportPrivateUsage]
+                    model_response = await root_capability.wrap_model_request(
+                        run_context,
+                        request_context=request_context,
+                        handler=model_handler,
+                    )
+                else:
+                    model_response = await model_handler(request_context)
             except exceptions.SkipModelRequest as e:
                 model_response = e.response
             except exceptions.ModelRetry:
@@ -1634,6 +1646,14 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
             # Fill in framework metadata the history processors may have left unset on a new `ModelRequest`.
             fill_run_metadata(messages[-1], run_id=ctx.state.run_id, conversation_id=ctx.state.conversation_id)
+            if ctx.state.message_history and isinstance(
+                persistent_request := ctx.state.message_history[-1], _messages.ModelRequest
+            ):
+                fill_run_metadata(
+                    persistent_request,
+                    run_id=ctx.state.run_id,
+                    conversation_id=ctx.state.conversation_id,
+                )
 
             # Instruction parts are request configuration, but the message recording the
             # current step must still reflect what was actually sent.
@@ -1746,15 +1766,34 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         return self._result
 
-    @staticmethod
-    def _resolve_wrap_result(result_or_exc: _messages.ModelResponse | Exception) -> _messages.ModelResponse:
-        """Resolve a `wrap_model_request` result, converting only `SkipModelRequest`."""
+    async def _resolve_wrap_result(
+        self,
+        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
+        run_context: RunContext[DepsT],
+        request_context: ModelRequestContext,
+        result_or_exc: _messages.ModelResponse | Exception,
+    ) -> _messages.ModelResponse:
+        """Resolve a `wrap_model_request` result, preserving outer error recovery."""
         if isinstance(result_or_exc, Exception):
             exc = result_or_exc
             if isinstance(exc, exceptions.SkipModelRequest):
                 return exc.response
-            raise exc
+            if isinstance(exc, exceptions.ModelRetry):
+                raise exc
+            return await self._recover_model_request_error(ctx, run_context, request_context, exc)
         return result_or_exc
+
+    @staticmethod
+    async def _recover_model_request_error(
+        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
+        run_context: RunContext[DepsT],
+        request_context: ModelRequestContext,
+        error: Exception,
+    ) -> _messages.ModelResponse:
+        root_capability = ctx.deps.root_capability
+        if not root_capability._has_on_model_request_error:  # pyright: ignore[reportPrivateUsage]
+            raise error
+        return await root_capability.on_model_request_error(run_context, request_context=request_context, error=error)
 
     @staticmethod
     def _append_response(
