@@ -112,7 +112,8 @@ except ImportError:  # pragma: lax no cover
     pytest.skip('temporal not installed', allow_module_level=True)
 
 
-# The 3.14 durable-exec CI leg imports this module and takes the skip; every other leg falls through.
+# The 3.14 durable-exec CI leg takes this skip; every other leg falls through. `lax` rather than
+# plain because which of the two arms a run measures depends on its Python version.
 if sys.version_info >= (3, 14):  # pragma: lax no cover
     pytest.skip(
         'temporalio sandbox is incompatible with Python 3.14: '
