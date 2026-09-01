@@ -727,7 +727,7 @@ function loadData(d) {
 }
 const inlined = $('graph-data');
 const raw = inlined && inlined.textContent.trim();
-if (raw && raw !== '__GRAPH_JSON__') {
+if (raw && raw.startsWith('{')) {
   loadData(JSON.parse(raw));
 } else {
   fetch('graph.json').then(r => r.json()).then(loadData);

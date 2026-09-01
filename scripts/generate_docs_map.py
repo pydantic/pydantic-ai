@@ -479,7 +479,7 @@ def _render_html(docs_map: _DocsMap) -> str:
         raise SystemExit(f'{_VIEWER_TEMPLATE} is missing {GRAPH_PLACEHOLDER}')
     payload = json.dumps(_graph_payload(docs_map), indent=2, sort_keys=True)
     payload = payload.replace('<', '\\u003c')
-    html = template.replace(GRAPH_PLACEHOLDER, payload)
+    html = template.replace(GRAPH_PLACEHOLDER, payload, 1)
     if not _D3_PATH.is_file():
         raise SystemExit(f'D3 bundle is missing: {_D3_PATH}')
     if _D3_TEMPLATE_TAG not in html:

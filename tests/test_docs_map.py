@@ -89,3 +89,5 @@ def test_html_viewer_inlines_graph(tmp_path: Path):
     assert 'cdn.jsdelivr.net' not in html
     assert 'src="./d3.min.js"' not in html
     assert 'd3js.org' in html
+    assert "raw !== '" not in html
+    assert 'raw.startsWith' in html
