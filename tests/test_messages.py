@@ -1,6 +1,8 @@
 import cProfile
 import json
+import os
 import re
+import subprocess
 import sys
 import warnings
 from collections.abc import Sequence
@@ -1704,6 +1706,48 @@ def test_message_json_schema_keeps_the_multimodal_definitions_intact():
 
     assert {content_type.__name__ for content_type in MULTI_MODAL_CONTENT_TYPES} <= defs.keys()
     assert sorted(name for name in defs if 'ImageUrl' in name) == snapshot(['ImageUrl'])
+
+
+# Run out-of-process because `PYDANTIC_DISABLE_PLUGINS` is read once, when pydantic is imported.
+_GATE_WITHOUT_PYDANTIC_PLUGINS = """
+from pydantic_ai.messages import ModelMessagesTypeAdapter
+
+loaded = ModelMessagesTypeAdapter.validate_python(
+    [
+        {
+            'kind': 'request',
+            'parts': [
+                {
+                    'part_kind': 'tool-return',
+                    'tool_name': 't',
+                    'tool_call_id': 'c',
+                    'content': {'kind': 'image-url', 'url': 'https://example.com/report'},
+                }
+            ],
+        }
+    ]
+)
+content = loaded[0].parts[0].content
+assert type(content) is dict, content
+"""
+
+
+def test_tool_return_gate_holds_without_a_pydantic_plugin():
+    """The gate must not depend on whether anything registered a pydantic plugin.
+
+    `logfire` registers one, and it is installed wherever this suite normally runs, so a gate that
+    quietly needs a plugin passes here and fails for a user who installed `pydantic-ai-slim` on its
+    own. Rewriting `_media_type` to a required field on a copy of each dataclass schema did exactly
+    that: the requirement reached the built core schema and never reached the validator.
+    """
+    result = subprocess.run(
+        [sys.executable, '-c', _GATE_WITHOUT_PYDANTIC_PLUGINS],
+        capture_output=True,
+        text=True,
+        env={**os.environ, 'PYDANTIC_DISABLE_PLUGINS': '1'},
+    )
+
+    assert result.returncode == 0, result.stderr
 
 
 def test_multi_modal_content_types_matches_union():
