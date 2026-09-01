@@ -165,6 +165,40 @@ async def _get_cached_or_fetch(cache_name: str, url: str) -> bytes:
     return content
 
 
+@asynccontextmanager
+async def web_toolset_lifespan(
+    toolsets: Sequence[AbstractToolset[Any]] | None,
+) -> AsyncGenerator[None, None]:
+    """Enter the given toolsets for the lifetime of the context.
+
+    When `Agent.to_web()`'s app is mounted into a parent ASGI application via `Mount`, the
+    sub-app's own lifespan is never invoked by the ASGI server — only the root application
+    receives startup/shutdown events. To keep MCP toolset connections persistent in that case,
+    call this context manager from the parent application's lifespan with the same toolset
+    instances passed to `to_web(toolsets=...)`:
+
+    ```python
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        async with web_toolset_lifespan(toolsets):
+            yield
+
+    parent_app = FastAPI(lifespan=lifespan)
+    parent_app.mount('/chat', agent.to_web(toolsets=toolsets))
+    ```
+
+    Toolsets are ref-counted, so entering them here and again per-request inside the mounted app is
+    safe and maintains the open connection without reconnecting.
+
+    Args:
+        toolsets: Sequence of toolsets to enter and keep active.
+    """
+    async with AsyncExitStack() as stack:
+        for toolset in toolsets or ():
+            await stack.enter_async_context(toolset)
+        yield
+
+
 def create_web_app(
     agent: Agent[AgentDepsT, OutputDataT],
     models: ModelsParam = None,
@@ -229,8 +263,7 @@ def create_web_app(
     @asynccontextmanager
     async def app_lifespan(app: Starlette) -> AsyncGenerator[Mapping[str, Any] | None, None]:
         async with AsyncExitStack() as stack:
-            for toolset in toolsets or ():
-                await stack.enter_async_context(toolset)
+            await stack.enter_async_context(web_toolset_lifespan(toolsets))
             state: Mapping[str, Any] | None = None
             if lifespan is not None:
                 state = await stack.enter_async_context(lifespan(app))

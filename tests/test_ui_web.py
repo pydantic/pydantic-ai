@@ -1461,3 +1461,18 @@ def test_create_web_app_custom_lifespan():
         assert stateless_events == ['stateless_startup']
 
     assert stateless_events == ['stateless_startup', 'stateless_shutdown']
+
+
+async def test_web_toolset_lifespan(mocker: MockerFixture):
+    """Test web_toolset_lifespan enters and exits toolsets."""
+    from pydantic_ai.ui._web import web_toolset_lifespan
+
+    mock_toolset = mocker.MagicMock()
+    mock_toolset.__aenter__ = mocker.AsyncMock(return_value=mock_toolset)
+    mock_toolset.__aexit__ = mocker.AsyncMock(return_value=None)
+
+    async with web_toolset_lifespan([mock_toolset]):
+        mock_toolset.__aenter__.assert_awaited_once()
+        mock_toolset.__aexit__.assert_not_awaited()
+
+    mock_toolset.__aexit__.assert_awaited_once()

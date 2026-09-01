@@ -3916,7 +3916,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                   (e.g., `{'GPT 5': 'openai:gpt-5', 'Claude': 'anthropic:claude-sonnet-4-6'}`)
                 The agent's model is always included. Native tool support is automatically
                 determined from each model's profile.
-            toolsets: Optional sequence of toolsets to make available to the agent.
+            toolsets: Optional sequence of toolsets to make available to the agent. When
+                mounting in a parent ASGI app, manage toolsets with `web_toolset_lifespan` in the
+                parent lifespan to keep connections persistent across requests.
             native_tools: Optional list of additional native tools to make available in the UI.
                 Tools already configured on the agent are always included but won't appear as options.
             deps: Optional dependencies to use for all requests.
