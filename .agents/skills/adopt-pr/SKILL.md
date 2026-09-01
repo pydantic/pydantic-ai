@@ -111,7 +111,7 @@ For each decision-bearing thread, append an entry:
   "thread <N>: <short title>" \
   "<one-line summary of what was decided>" \
   "<one-line reason, quoting reviewer or author if concise>" \
-  "<thread URL — use the root comment's html_url>" \
+  "<thread URL — use the root comment's url>" \
   "-"
 ```
 

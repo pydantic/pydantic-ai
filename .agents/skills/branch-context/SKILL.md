@@ -89,6 +89,12 @@ and live in `handoffs/.lanes` (`<id> <label>`) — rename one there to something
 (`Manager 2 - daily`) without changing handoff ownership. Start the handoff body with the label and
 the board it covers, so a successor whose live board disagrees can catch the mismatch.
 
+A new session or fork gets a new host conversation ID. After writing the handoff, copy the
+`Successor lane: HANDOFF_LANE=<id>` line printed by `append-handoff.sh` into the continuation prompt.
+The successor must pass that exact value when resolving the handoff, for example
+`HANDOFF_LANE=<id> .agents/skills/branch-context/latest-handoff.sh`. It must keep using the same
+override for any later handoff in that lane. Never tell a successor merely to read the newest entry.
+
 If you omit the body path, the script opens a stub you (the agent) must fill via Write/Edit before stopping. Prefer writing the full body first, then calling the script with that path — or write the body to the path the script prints.
 
 Handoff body sections (required):
@@ -132,14 +138,15 @@ Use when the **user** asks to hand off, clear and continue, or otherwise turn th
 2. **Persist before exit:**
    - any unlogged decisions → `append-pr-decision.sh`
    - write handoff body under `handoffs/` → `append-handoff.sh` (index updated)
+   - preserve the printed `HANDOFF_LANE=<id>` value in the successor's continuation prompt
    - optional: point the plan at the latest handoff path
 3. **Exit plan / turn over** — harness-specific:
 
 | Harness | What to do |
 |---------|------------|
-| **Claude Code** | `ExitPlanMode` → choose **clear context and continue** with the plan. Fresh session inherits autoloaded branch-context + should read latest handoff. |
-| **Grok Build** | Plan mode has **no** clear-context-on-approve. After writing handoff + plan: stop and tell the user to start a **new** `grok` session in this worktree. First action for the new agent: read handoffs-index + latest handoff. (`/compact` / `/flush` are not a full handoff.) |
-| **Codex** | Write handoff + plan; use new session / fork if available. Do not assume clear-context-on-plan-exit. Next session: same first-read as Grok. |
+| **Claude Code** | `ExitPlanMode` → choose **clear context and continue** with the plan. Put the preserved `HANDOFF_LANE` in the continuation plan; the fresh session uses it for its first handoff read. |
+| **Grok Build** | Plan mode has **no** clear-context-on-approve. After writing handoff + plan: stop and tell the user to start a **new** `grok` session in this worktree. Put the preserved `HANDOFF_LANE` in the continuation prompt; the new agent uses it to resolve and read the handoff. (`/compact` / `/flush` are not a full handoff.) |
+| **Codex** | Write handoff + plan; use new session / fork if available. Do not assume clear-context-on-plan-exit. Put the preserved `HANDOFF_LANE` in the follow-up prompt; the successor uses it for its first handoff read. |
 | **Pi** | Prefer a plan-mode **extension** that writes the handoff then seeds a new session. If no extension: same file out as Grok, and propose (or install) an extension that automates EPEH. |
 | **OpenCode** | Write the handoff + plan, then start a new session/thread with the harness's supported command or UI. Re-read the lane handoff before acting; do not assume plan exit clears context. |
 

@@ -84,10 +84,44 @@ mkdir -p "$HAND_DIR"
 LOCK_DIR="$HAND_DIR/.append.lock"
 lock_acquired=false
 TMP_INDEX=''
-for ((attempt = 0; attempt < 200; attempt++)); do
+LOCK_OWNER="$LOCK_DIR/owner"
+for ((attempt = 0; attempt < 400; attempt++)); do
     if mkdir "$LOCK_DIR" 2>/dev/null; then
+        printf '%s %s\n' "$$" "$(date +%s)" > "$LOCK_OWNER"
         lock_acquired=true
         break
+    fi
+
+    # SIGKILL and machine loss bypass traps. Reclaim a dead owner's lock
+    # immediately, or any lock older than one minute (including the tiny
+    # mkdir-before-owner-file crash window). A normal transition takes seconds.
+    owner_record=''
+    owner_pid=''
+    owner_started=''
+    if [ -f "$LOCK_OWNER" ]; then
+        owner_record="$(cat "$LOCK_OWNER" 2>/dev/null || true)"
+        IFS=' ' read -r owner_pid owner_started <<< "$owner_record" || true
+    fi
+    now="$(date +%s)"
+    stale=false
+    if [[ "$owner_pid" =~ ^[0-9]+$ ]] && ! kill -0 "$owner_pid" 2>/dev/null; then
+        stale=true
+    elif [[ "$owner_started" =~ ^[0-9]+$ ]] && ((now - owner_started >= 60)); then
+        stale=true
+    elif { [ -z "$owner_record" ] || ! [[ "$owner_started" =~ ^[0-9]+$ ]]; } && \
+        [ -n "$(find "$LOCK_DIR" -prune -mmin +0 -print 2>/dev/null)" ]; then
+        stale=true
+    fi
+    if [ "$stale" = true ]; then
+        if [ -n "$owner_record" ]; then
+            current_owner="$(cat "$LOCK_OWNER" 2>/dev/null || true)"
+            if [ "$current_owner" = "$owner_record" ]; then
+                rm -f "$LOCK_OWNER"
+                rmdir "$LOCK_DIR" 2>/dev/null || true
+            fi
+        else
+            rmdir "$LOCK_DIR" 2>/dev/null || true
+        fi
     fi
     sleep 0.05
 done
@@ -99,7 +133,11 @@ cleanup() {
     if [ -n "$TMP_INDEX" ]; then
         rm -f "$TMP_INDEX"
     fi
-    rmdir "$LOCK_DIR" 2>/dev/null || true
+    current_owner="$(cat "$LOCK_OWNER" 2>/dev/null || true)"
+    if [[ "$current_owner" == "$$ "* ]]; then
+        rm -f "$LOCK_OWNER"
+        rmdir "$LOCK_DIR" 2>/dev/null || true
+    fi
 }
 trap cleanup EXIT
 trap 'exit 129' HUP
@@ -181,6 +219,7 @@ if [ -n "$SESSION_ID" ] && [ -f "$LEDGER" ]; then
         TMP_INDEX=''
         echo "Amended this session's existing handoff (one handoff per session) → $INDEX" >&2
         echo "Handoff file: $DEST" >&2
+        echo "Successor lane: HANDOFF_LANE=$LANE_ID" >&2
         echo "$DEST"
         exit 0
     fi
@@ -258,5 +297,6 @@ fi
 
 echo "Appended handoff index entry → $INDEX" >&2
 echo "Handoff file: $DEST" >&2
+echo "Successor lane: HANDOFF_LANE=$LANE_ID" >&2
 # stdout: path only (for scripting)
 echo "$DEST"
