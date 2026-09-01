@@ -5,6 +5,7 @@ from __future__ import annotations
 import warnings
 from collections.abc import Iterator
 from datetime import datetime
+from functools import cache
 from typing import TYPE_CHECKING
 
 from genai_prices import calc_price
@@ -45,6 +46,7 @@ def iter_provider_references(
             yield candidate_id, candidate_url
 
 
+@cache
 def lookup_context_window(
     model_name: str,
     *,
@@ -56,12 +58,11 @@ def lookup_context_window(
     Returns the context window recorded for the model under the first provider reference that knows the
     model, or `None` if none does or no context window is recorded.
     """
-    snapshot = get_snapshot()
     for candidate_id, candidate_url in iter_provider_references(
         provider_api_url=provider_api_url, provider_id=provider_name
     ):
         try:
-            _, model_info = snapshot.find_provider_model(
+            _, model_info = get_snapshot().find_provider_model(
                 model_name, provider=None, provider_id=candidate_id, provider_api_url=candidate_url
             )
         except LookupError:
