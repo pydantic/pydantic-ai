@@ -33,6 +33,7 @@ from pydantic_ai.messages import (
     LoadCapabilityCallPart,
     LoadCapabilityReturnPart,
     ModelMessage,
+    ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
     NativeToolCallPart,
@@ -5141,41 +5142,76 @@ async def test_adapter_load_tool_return_non_multimodal_binary_kind_dict_preserve
 
 
 @pytest.mark.parametrize(
-    'output,expected',
+    'output,expected,expected_dump',
     [
         pytest.param(
             {'kind': 'image-url', 'url': 'https://example.com/x.png', 'media_type': 'image/png'},
             snapshot(ImageUrl(url='https://example.com/x.png', media_type='image/png')),
-            id='file-url',
+            snapshot(
+                {
+                    'url': 'https://example.com/x.png',
+                    'force_download': False,
+                    'vendor_metadata': None,
+                    'kind': 'image-url',
+                    'media_type': 'image/png',
+                    'identifier': 'f27cce',
+                }
+            ),
+            id='file-url-naming-its-media-type',
         ),
         pytest.param(
             {'kind': 'image-url', 'url': 'https://example.com/x.png'},
-            snapshot({'kind': 'image-url', 'url': 'https://example.com/x.png'}),
-            id='file-url-without-media-type',
+            snapshot(ImageUrl(url='https://example.com/x.png', media_type='image/png')),
+            snapshot(
+                {
+                    'url': 'https://example.com/x.png',
+                    'force_download': False,
+                    'vendor_metadata': None,
+                    'kind': 'image-url',
+                    'media_type': 'image/png',
+                    'identifier': 'f27cce',
+                }
+            ),
+            id='file-url-media-type-inferred-from-url',
         ),
         pytest.param(
-            {
-                'kind': 'uploaded-file',
-                'file_id': 'file-123',
-                'provider_name': 'openai',
-                'media_type': 'application/pdf',
-            },
-            snapshot(UploadedFile(file_id='file-123', provider_name='openai', media_type='application/pdf')),
-            id='uploaded-file',
+            {'kind': 'image-url', 'url': 'https://e.com/report'},
+            snapshot({'kind': 'image-url', 'url': 'https://e.com/report'}),
+            snapshot({'kind': 'image-url', 'url': 'https://e.com/report'}),
+            id='file-url-media-type-not-inferable',
+        ),
+        pytest.param(
+            {'kind': 'image-url', 'label': 'x'},
+            snapshot({'kind': 'image-url', 'label': 'x'}),
+            snapshot({'kind': 'image-url', 'label': 'x'}),
+            id='file-url-kind-without-a-url',
         ),
         pytest.param(
             {'kind': 'uploaded-file', 'file_id': 'file-123', 'provider_name': 'openai'},
-            snapshot({'kind': 'uploaded-file', 'file_id': 'file-123', 'provider_name': 'openai'}),
-            id='uploaded-file-without-media-type',
+            snapshot(UploadedFile(file_id='file-123', provider_name='openai')),
+            snapshot(
+                {
+                    'file_id': 'file-123',
+                    'provider_name': 'openai',
+                    'vendor_metadata': None,
+                    'kind': 'uploaded-file',
+                    'media_type': 'application/octet-stream',
+                    'identifier': '314ca6',
+                }
+            ),
+            id='uploaded-file',
         ),
     ],
 )
-async def test_adapter_load_tool_return_file_shapes_need_media_type(output: Any, expected: Any):
-    """A client-side tool's file shape is reconstructed only when it carries `media_type`.
+async def test_adapter_load_tool_return_completes_documented_file_shapes(
+    output: Any, expected: Any, expected_dump: Any
+):
+    """The file shapes `docs/ui/vercel-ai.md` documents a browser tool may return all reach the agent as files.
 
-    These are the shapes `docs/ui/vercel-ai.md` documents a browser tool may put in its output. The
-    `ToolReturnContent` union reconstructs the ones matching what we dump, which always names a media
-    type; anything else is an ordinary mapping the tool returned, and reaches the agent as it is.
+    A URL shape is documented without a `media_type`, so the adapter completes it from the URL the way
+    the type itself would, and an `uploaded-file` shape needs nothing completed. The dump is asserted
+    for every case because it is the leg the completion protects: a URL with no readable media type is
+    left as the mapping it is, where reconstructing it would raise `Could not infer media type` here.
     """
     ui_messages: list[UIMessage] = [
         UIMessage(id='m1', role='user', parts=[TextUIPart(text='give me a file')]),
@@ -5198,6 +5234,7 @@ async def test_adapter_load_tool_return_file_shapes_need_media_type(output: Any,
 
     tool_returns = list(iter_message_parts(reloaded, ModelRequest, ToolReturnPart))
     assert tool_returns[0].content == expected
+    assert json.loads(ModelMessagesTypeAdapter.dump_json(reloaded))[-1]['parts'][0]['content'] == expected_dump
 
 
 async def test_adapter_tool_return_text_only_unchanged():

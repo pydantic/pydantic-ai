@@ -1612,6 +1612,27 @@ def test_tool_return_content_nested_multimodal():
             id='kind-without-url',
         ),
         pytest.param(
+            {'kind': 'image-url', 'url': 'https://example.com/report.png', 'media_type': ''},
+            snapshot({'kind': 'image-url', 'url': 'https://example.com/report.png', 'media_type': ''}),
+            snapshot({'kind': 'image-url', 'url': 'https://example.com/report.png', 'media_type': ''}),
+            id='empty-media-type',
+        ),
+        pytest.param(
+            {'kind': 'uploaded-file', 'file_id': 'file-1', 'provider_name': 'openai'},
+            snapshot(UploadedFile(file_id='file-1', provider_name='openai')),
+            snapshot(
+                {
+                    'file_id': 'file-1',
+                    'provider_name': 'openai',
+                    'vendor_metadata': None,
+                    'kind': 'uploaded-file',
+                    'media_type': 'application/octet-stream',
+                    'identifier': 'c86d26',
+                }
+            ),
+            id='uploaded-file-without-media-type',
+        ),
+        pytest.param(
             {'kind': 'image-url', 'url': 'https://example.com/report', 'media_type': 'image/png'},
             snapshot(ImageUrl(url='https://example.com/report', media_type='image/png')),
             snapshot(
@@ -1628,19 +1649,20 @@ def test_tool_return_content_nested_multimodal():
         ),
     ],
 )
-def test_tool_return_multimodal_rehydrates_only_with_media_type(
+def test_tool_return_url_items_rehydrate_only_with_media_type(
     content: dict[str, Any], expected: Any, expected_dump: Any
 ):
-    """A tool return reconstructs a multimodal item only from the mapping shape our serializer dumps.
+    """A tool return reconstructs a URL item only from a mapping naming a media type, and it always dumps.
 
-    That shape always carries `media_type` — a `computed_field` on `FileUrl` and `UploadedFile`, a
-    required field on `BinaryContent` — so requiring it lets a tool return any dictionary of its own,
-    at any depth, and get the keys it put there back.
+    `FileUrl` infers its media type from the URL when it was given none, and a URL with no usable
+    extension raises `Could not infer media type` on the *dump*, long after the load that built the
+    object ([issue #4190](https://github.com/pydantic/pydantic-ai/issues/4190)) — so the dump is
+    asserted for every case, because that is the leg the requirement buys. An empty `media_type` is
+    not one: `FileUrl` infers whenever it is falsy.
 
-    The dump is asserted for every case because that is the leg the requirement buys. `FileUrl` infers
-    its media type from the URL when none was given, and a URL with no usable extension raises
-    `Could not infer media type` on the *dump*, long after the load that built the object ([issue #4190](https://github.com/pydantic/pydantic-ai/issues/4190)).
-    Nothing reconstructed here can reach that inference.
+    The requirement stops at the URL kinds. `UploadedFile` falls back to `application/octet-stream`
+    instead of raising and `BinaryContent.media_type` is a required field, so both keep rehydrating
+    from the fields they declare.
     """
     messages: list[ModelMessage] = [
         ModelRequest(parts=[ToolReturnPart(tool_name='t', content=content, tool_call_id='c')])

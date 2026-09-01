@@ -950,6 +950,11 @@ MultiModalContent = Annotated[
 # Explicit tuple for readability; validated against MultiModalContent in tests
 MULTI_MODAL_CONTENT_TYPES: tuple[type, ...] = (ImageUrl, AudioUrl, DocumentUrl, VideoUrl, BinaryContent, UploadedFile)
 
+_FILE_URL_KINDS: tuple[str, ...] = (ImageUrl.kind, AudioUrl.kind, DocumentUrl.kind, VideoUrl.kind)
+"""The `kind` values of the `FileUrl` subclasses: the multi-modal items whose media type is inferred
+from the URL when they were given none, and so the only ones a tool return has to spell a `media_type`
+out for (see `_RequireUrlMediaType`)."""
+
 
 def is_multi_modal_content(obj: Any) -> TypeGuard[MultiModalContent]:
     """Check if obj is a MultiModalContent type, enabling type narrowing."""
@@ -1191,39 +1196,45 @@ class _StrPassthrough:
         )
 
 
-class _DumpedMultiModalContent:
-    """The `MultiModalContent` arm of `ToolReturnContent`, narrowed to the shape our own serializer dumps.
+class _RequireUrlMediaType:
+    """The `MultiModalContent` arm of `ToolReturnContent`, with an explicit `media_type` required of its URL items.
 
     A tool return is arbitrary user data, so this arm has to separate a multimodal item we serialized
-    from a mapping a tool happened to build. Requiring `media_type` draws that line exactly: it is a
-    `computed_field` on `FileUrl` and `UploadedFile` and a required field on `BinaryContent`, so every
-    mapping we dump for a multimodal item carries one. A mapping without it was never dumped by us, so
-    it stays a plain `Mapping` and reaches the caller with the keys its tool put in it.
+    from a mapping a tool happened to build. For the four [`FileUrl`][pydantic_ai.messages.FileUrl]
+    kinds, `media_type` draws that line, because those are the items whose media type the URL alone
+    cannot always supply: `FileUrl.media_type` infers one from the URL when it was given none, and a
+    URL with no usable extension raises `Could not infer media type` — on the *dump*, not on the load
+    that built the object, so a history that had loaded cleanly could no longer be saved
+    ([issue #4190](https://github.com/pydantic/pydantic-ai/issues/4190)). An item reconstructed here
+    brings its own media type and never reaches that inference, and a URL mapping without one was
+    never dumped by us: it stays a plain `Mapping` and reaches the caller with the keys its tool put
+    in it.
 
-    Requiring it is also what stops a load from building something that cannot be dumped again.
-    `FileUrl.media_type` falls back to inferring from the URL, and a URL carrying no usable extension
-    raises `Could not infer media type` — on the dump, not on the load that built the object, so a
-    history that had loaded cleanly could no longer be saved ([issue #4190](https://github.com/pydantic/pydantic-ai/issues/4190)). An item reconstructed here brings
-    its own `media_type`, so it never reaches that inference. Any `str` counts, `''` included: an empty
-    one is falsy and does infer after all, but excluding it would stop an `UploadedFile` whose caller
-    set one from surviving its own dump, and matching what we dump is the rule the arm is built on.
+    Nothing is required of the other two kinds, which cannot fail that way and so keep rehydrating
+    from the fields they declare: `media_type` is a required field on `BinaryContent`, and
+    `UploadedFile.media_type` falls back to `application/octet-stream` instead of raising.
 
-    The check is chained onto each choice of the tagged union rather than written as a validator,
+    The requirement is a *non-empty* string. `FileUrl` infers whenever `_media_type` is falsy, so `''`
+    would reconstruct an item that raises on dump after all, and no dump of ours writes one.
+
+    The check is chained onto each URL choice of the tagged union rather than written as a validator,
     because any Python callable on this union is called once per node of the decoded payload — the cost
-    [issue #7472](https://github.com/pydantic/pydantic-ai/issues/7472) was about. Inside the union, the discriminator has already read `kind` in Rust, so only a
-    mapping claiming one of our six `kind` values pays for the check at all; the same check chained
-    ahead of the union runs on every mapping node instead, measured at 1.29x on a dict-heavy payload.
+    [issue #7472](https://github.com/pydantic/pydantic-ai/issues/7472) was about. Chained inside the
+    union it costs nothing measurable: the discriminator has already read `kind` in Rust, so only a
+    mapping claiming one of the four URL kinds pays for it. The same check chained ahead of the union
+    runs on every mapping node instead, measured at 1.29x on a dict-heavy payload.
 
     In python mode the check also admits an instance of ours, which reaches the choice as itself rather
-    than as a mapping and still has to go through the arm — that is where a `BinaryContent` carrying an
-    image media type is narrowed to `BinaryImage`.
+    than as a mapping, carrying whatever media type it was built with.
 
     Making `_media_type` a required field on a copy of each dataclass schema would say the same thing
     with no wrapper at all, and does not work: two core schemas for one dataclass do not reliably build
     two validators, and the copy's requirement is dropped outright when no pydantic plugin is installed.
 
-    `handler` hands back the tagged union `UserContent` also uses, so the copy is what keeps a user
-    prompt accepting a file whose media type is inferred.
+    `handler` hands back the tagged union `UserContent` also uses, so the copy is what keeps the
+    requirement off a user prompt, which still accepts a file whose media type is inferred. The asserts
+    guard the two shapes the surgery reads: that the union is still discriminated on a literal tag, and
+    that each URL tag carries a schema of its own rather than a string aliasing another tag's.
     """
 
     @classmethod
@@ -1232,15 +1243,20 @@ class _DumpedMultiModalContent:
     ) -> pydantic_core.CoreSchema:
         schema = deepcopy(handler(source_type))
         assert schema['type'] == 'tagged-union', schema['type']
-        for tag, choice in schema['choices'].items():
-            assert isinstance(choice, dict), choice  # a tag may alias another tag instead of carrying a schema
-            schema['choices'][tag] = pydantic_core.core_schema.chain_schema([cls._carries_media_type(), choice])
+        for kind in _FILE_URL_KINDS:
+            choice = schema['choices'][kind]
+            assert isinstance(choice, dict), choice
+            schema['choices'][kind] = pydantic_core.core_schema.chain_schema([cls._names_a_media_type(), choice])
         return schema
 
     @staticmethod
-    def _carries_media_type() -> pydantic_core.CoreSchema:
+    def _names_a_media_type() -> pydantic_core.CoreSchema:
         mapping_naming_its_media_type = pydantic_core.core_schema.typed_dict_schema(
-            {'media_type': pydantic_core.core_schema.typed_dict_field(pydantic_core.core_schema.str_schema())},
+            {
+                'media_type': pydantic_core.core_schema.typed_dict_field(
+                    pydantic_core.core_schema.str_schema(min_length=1)
+                )
+            },
             extra_behavior='allow',
         )
         return pydantic_core.core_schema.json_or_python_schema(
@@ -1249,7 +1265,7 @@ class _DumpedMultiModalContent:
             python_schema=pydantic_core.core_schema.union_schema(
                 [
                     mapping_naming_its_media_type,
-                    pydantic_core.core_schema.is_instance_schema(MULTI_MODAL_CONTENT_TYPES),
+                    pydantic_core.core_schema.is_instance_schema(FileUrl),
                 ],
                 mode='left_to_right',
             ),
@@ -1269,14 +1285,15 @@ else:
     # is invoked once per node of the decoded payload, making validation O(JSON nodes) Python calls.
     #
     # Falling through arm by arm is what keeps a user dict a plain mapping: `{'kind': 'binary',
-    # 'label': 'foo'}` merely reuses one of our `kind` values, fails `MultiModalContent` — which here
-    # also requires the `media_type` every dump of ours carries — and lands on `Mapping`. The `Any` arm
-    # catches everything else — scalars, `bytes`, non-str mapping keys — unchanged.
+    # 'label': 'foo'}` merely reuses one of our `kind` values, fails `MultiModalContent` — whose members
+    # each require the fields they declare, and whose URL members additionally require a `media_type`
+    # here — and lands on `Mapping`. The `Any` arm catches everything else — scalars, `bytes`, non-str
+    # mapping keys — unchanged.
     ToolReturnContent = TypeAliasType(
         'ToolReturnContent',
         Annotated[
             Annotated[str, _StrPassthrough]
-            | Annotated[MultiModalContent, _DumpedMultiModalContent]
+            | Annotated[MultiModalContent, _RequireUrlMediaType]
             | Mapping[str, 'ToolReturnContent']
             | Sequence['ToolReturnContent']
             | Any,

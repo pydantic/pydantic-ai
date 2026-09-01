@@ -376,13 +376,16 @@ _(This example is complete, it can be run "as is")_
 
     A [multi-modal item][pydantic_ai.messages.MultiModalContent] in a tool return is reconstructed
     as its own type wherever it sits — on its own, in a list, or nested at any depth inside a
-    mapping, including one whose own keys happen to look like ours — as long as the mapping carries
-    the shape Pydantic AI dumps for it, which always includes `media_type`. A mapping that merely
-    reuses one of our `kind` values, or that leaves `media_type` out, stays the plain mapping your
-    tool returned. Spelling one of our items out in full — its `kind`, its `media_type` and the
-    fields that type requires — does reconstruct it, and the keys that type doesn't declare are
-    dropped along the way, so keep `kind` off any dictionary you want handed back verbatim. Every
-    item that *is* reconstructed brings its own media type rather than guessing one from the URL.
+    mapping, including one whose own keys happen to look like ours. A URL-based item is
+    reconstructed only when its mapping carries `media_type`, which every history Pydantic AI dumps
+    does; without one it stays the plain mapping your tool returned, so a URL Pydantic AI cannot
+    read a media type out of never becomes a file that then fails to dump. A
+    [`BinaryContent`][pydantic_ai.messages.BinaryContent] or
+    [`UploadedFile`][pydantic_ai.messages.UploadedFile] item is recognized by the fields its own type
+    requires. A mapping that merely reuses one of our `kind` values stays a plain mapping, and
+    dumping it back never raises. Spelling one of our items out in full does reconstruct it, and the
+    keys that type doesn't declare are dropped along the way, so keep `kind` off any dictionary you
+    want handed back verbatim.
 
     A tool return keyed by something other than a string is the one place that reconstruction
     doesn't reach. Such a mapping's keys have no JSON form, so only a `dump_python` round-trip
