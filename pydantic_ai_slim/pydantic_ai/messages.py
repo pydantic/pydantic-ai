@@ -1212,12 +1212,14 @@ class _DumpedMultiModalContent:
     called once per node of the decoded payload, which is the cost #7472 was about; a required field is
     checked in Rust like every other field.
 
-    `handler` hands back the tagged union `UserContent` also uses, so its members are deep-copied and the
-    copies given fresh refs — a user prompt goes on accepting a file whose media type is inferred.
+    `handler` hands back the tagged union `UserContent` also uses, so its members are deep-copied and
+    the copies given a ref, and a name, of their own — a user prompt goes on accepting a file whose
+    media type is inferred.
 
-    The asserts pin the schema shape this walks, a tagged union of dataclasses with `BinaryContent`
-    behind its `narrow_type` after-validator. They run once, when the union's schema is built, so a
-    pydantic-core restructure fails immediately instead of leaving an arm that silently stops gating.
+    The asserts pin what this walks: a tagged union of dataclasses, `BinaryContent` behind its
+    `narrow_type` after-validator, and every member carrying `media_type` in one of the two forms.
+    They run once, when the union's schema is built, so a pydantic-core restructure or a new member
+    with neither form fails immediately instead of leaving an arm that silently stops gating.
     """
 
     @classmethod
