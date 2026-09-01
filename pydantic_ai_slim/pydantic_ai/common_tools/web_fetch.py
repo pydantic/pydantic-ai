@@ -14,13 +14,14 @@ import httpx2
 from typing_extensions import Any, TypedDict
 
 from pydantic_ai._ssrf import safe_download
-from pydantic_ai._utils import is_text_like_media_type
+from pydantic_ai._utils import is_text_like_media_type, run_in_executor
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import BinaryContent
 from pydantic_ai.tools import Tool
 
 try:
-    from markdownify import markdownify as md
+    from bs4 import BeautifulSoup
+    from markdownify import MarkdownConverter
 except ImportError as _import_error:
     raise ImportError(
         'Please install `markdownify` to use the web fetch tool, '
@@ -117,8 +118,14 @@ class WebFetchLocalTool:
             if media_type in ('text/markdown', 'text/x-markdown'):
                 content = text
             elif not media_type or media_type in ('text/html', 'application/xhtml+xml'):
-                title = _extract_title(text)
-                content = md(text, strip=['img', 'script', 'style'])
+                # Parsing and converting is CPU-bound and scales with the (server-controlled) body
+                # size, so run it in a worker thread rather than on the event loop.
+                try:
+                    title, content = await run_in_executor(_convert_html, text)
+                except RecursionError as e:
+                    # `markdownify` walks the document recursively, so a page nested deeper than the
+                    # interpreter's recursion limit can't be converted; let the model try elsewhere.
+                    raise ModelRetry(f'Failed to convert {url}: the HTML is nested too deeply') from e
             elif media_type == 'application/json':
                 try:
                     parsed = json.loads(text)
@@ -138,13 +145,16 @@ class WebFetchLocalTool:
         return WebFetchResult(url=url, title=title, content=content)
 
 
-_TITLE_RE = re.compile(r'<title[^>]*>(.*?)</title>', re.IGNORECASE | re.DOTALL)
+def _convert_html(html: str) -> tuple[str, str]:
+    """Return the `<title>` text (empty if there is none) and the markdown conversion of the HTML.
 
-
-def _extract_title(html: str) -> str:
-    """Extract the <title> from HTML."""
-    match = _TITLE_RE.search(html)
-    return match.group(1).strip() if match else ''
+    The document is parsed once and the tree is shared between both, using the same `html.parser`
+    backend `markdownify` uses when handed a string.
+    """
+    soup = BeautifulSoup(html, 'html.parser')
+    title = soup.title.get_text().strip() if soup.title is not None else ''
+    content = MarkdownConverter(strip=['img', 'script', 'style']).convert_soup(soup)
+    return title, content
 
 
 def _clean_whitespace(text: str) -> str:
