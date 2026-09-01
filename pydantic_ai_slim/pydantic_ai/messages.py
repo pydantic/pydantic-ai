@@ -1208,18 +1208,22 @@ class _DumpedMultiModalContent:
     one is falsy and does infer after all, but excluding it would stop an `UploadedFile` whose caller
     set one from surviving its own dump, and matching what we dump is the rule the arm is built on.
 
-    The gate is schema surgery rather than a validator because any Python callable on this union is
-    called once per node of the decoded payload, which is the cost #7472 was about; a required field is
-    checked in Rust like every other field.
+    The check is chained onto each choice of the tagged union rather than written as a validator,
+    because any Python callable on this union is called once per node of the decoded payload — the cost
+    #7472 was about. Inside the union, the discriminator has already read `kind` in Rust, so only a
+    mapping claiming one of our six `kind` values pays for the check at all; the same check chained
+    ahead of the union runs on every mapping node instead, measured at 1.29x on a dict-heavy payload.
 
-    `handler` hands back the tagged union `UserContent` also uses, so its members are deep-copied and
-    the copies given a ref, and a name, of their own — a user prompt goes on accepting a file whose
-    media type is inferred.
+    In python mode the check also admits an instance of ours, which reaches the choice as itself rather
+    than as a mapping and still has to go through the arm — that is where a `BinaryContent` carrying an
+    image media type is narrowed to `BinaryImage`.
 
-    The asserts pin what this walks: a tagged union of dataclasses, `BinaryContent` behind its
-    `narrow_type` after-validator, and every member carrying `media_type` in one of the two forms.
-    They run once, when the union's schema is built, so a pydantic-core restructure or a new member
-    with neither form fails immediately instead of leaving an arm that silently stops gating.
+    Making `_media_type` a required field on a copy of each dataclass schema would say the same thing
+    with no wrapper at all, and does not work: two core schemas for one dataclass do not reliably build
+    two validators, and the copy's requirement is dropped outright when no pydantic plugin is installed.
+
+    `handler` hands back the tagged union `UserContent` also uses, so the copy is what keeps a user
+    prompt accepting a file whose media type is inferred.
     """
 
     @classmethod
@@ -1230,43 +1234,26 @@ class _DumpedMultiModalContent:
         assert schema['type'] == 'tagged-union', schema['type']
         for tag, choice in schema['choices'].items():
             assert isinstance(choice, dict), choice  # a tag may alias another tag instead of carrying a schema
-            schema['choices'][tag] = cls._gate_choice(choice, handler)
+            schema['choices'][tag] = pydantic_core.core_schema.chain_schema([cls._carries_media_type(), choice])
         return schema
 
-    @classmethod
-    def _gate_choice(
-        cls, choice: pydantic_core.CoreSchema, handler: pydantic.GetCoreSchemaHandler
-    ) -> pydantic_core.CoreSchema:
-        if choice['type'] == 'definition-ref':
-            return cls._gate_choice(deepcopy(handler.resolve_ref_schema(choice)), handler)
-        if choice['type'] == 'function-after':  # `BinaryContent.narrow_type`
-            choice['schema'] = cls._gate_choice(choice['schema'], handler)
-            return choice
-        assert choice['type'] == 'dataclass', choice['type']
-        ref = choice.get('ref')
-        assert ref is not None
-        # The definition is shared with `UserContent`, so the copy needs a ref of its own — and a name
-        # of its own with it. A JSON schema names a definition after the ref minus its trailing id, so
-        # a ref that only appends leaves both copies claiming `ImageUrl`, which pydantic then resolves
-        # by renaming *both* — moving a `$defs` key that has nothing to do with tool returns.
-        module, _, qualname = ref.rsplit(':', 1)[0].rpartition('.')
-        choice['ref'] = f'{module}.Dumped{qualname}:dumped-multi-modal-content'
-        cls._require_media_type(choice['schema'])
-        return choice
-
     @staticmethod
-    def _require_media_type(args_schema: pydantic_core.CoreSchema) -> None:
-        assert args_schema['type'] == 'dataclass-args', args_schema['type']
-        for field_schema in args_schema['fields']:
-            if field_schema['name'] == '_media_type':
-                field_schema['schema'] = pydantic_core.core_schema.str_schema()
-                return
-        # `BinaryContent` reaches the same requirement with a `media_type` field of its own. A member
-        # arriving with neither would otherwise be gated by nothing, and still pass every test.
-        assert any(
-            field_schema['name'] == 'media_type' and field_schema['schema']['type'] != 'default'
-            for field_schema in args_schema['fields']
-        ), args_schema['fields']
+    def _carries_media_type() -> pydantic_core.CoreSchema:
+        mapping_naming_its_media_type = pydantic_core.core_schema.typed_dict_schema(
+            {'media_type': pydantic_core.core_schema.typed_dict_field(pydantic_core.core_schema.str_schema())},
+            extra_behavior='allow',
+        )
+        return pydantic_core.core_schema.json_or_python_schema(
+            json_schema=mapping_naming_its_media_type,
+            # An instance is already one of ours and reaches the arm as itself, not as a mapping.
+            python_schema=pydantic_core.core_schema.union_schema(
+                [
+                    mapping_naming_its_media_type,
+                    pydantic_core.core_schema.is_instance_schema(MULTI_MODAL_CONTENT_TYPES),
+                ],
+                mode='left_to_right',
+            ),
+        )
 
 
 if TYPE_CHECKING:

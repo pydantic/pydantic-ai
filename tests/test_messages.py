@@ -1692,17 +1692,18 @@ def test_user_prompt_multimodal_rehydrates_without_media_type():
     assert loaded == snapshot(ImageUrl(url='https://example.com/report'))
 
 
-def test_message_json_schema_keeps_the_shared_multimodal_definition_names():
-    """The gated copies are named apart from the definitions they were copied from.
+def test_message_json_schema_keeps_the_multimodal_definitions_intact():
+    """The tool-return gate adds no definition of its own to a generated JSON schema.
 
-    Two definitions competing for one `$defs` name make pydantic rename *both*, so leaving the copy to
-    claim `ImageUrl` would move a key that `UserPromptPart` references and that any OpenAPI document
-    generated from `ModelMessage` publishes — for users who never return a file from a tool.
+    It wraps each choice of the `MultiModalContent` union where it stands. Copying the members instead
+    would duplicate them under `$defs`, and two definitions competing for one name make pydantic rename
+    *both* — moving keys that `UserPromptPart` references and that any OpenAPI document generated from
+    `ModelMessage` publishes, for users who never return a file from a tool.
     """
     defs = ModelMessagesTypeAdapter.json_schema()['$defs']
 
     assert {content_type.__name__ for content_type in MULTI_MODAL_CONTENT_TYPES} <= defs.keys()
-    assert sorted(name for name in defs if 'ImageUrl' in name) == snapshot(['DumpedImageUrl', 'ImageUrl'])
+    assert sorted(name for name in defs if 'ImageUrl' in name) == snapshot(['ImageUrl'])
 
 
 def test_multi_modal_content_types_matches_union():
