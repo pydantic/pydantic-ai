@@ -22,7 +22,15 @@ LANE_ID="${HANDOFF_LANE:-${CLAUDE_CODE_HOST_SESSION_ID:-${CODEX_THREAD_ID:-}}}"
 if [ -z "$LANE_ID" ] && [ -n "${TMUX:-}" ]; then
     LANE_ID="tmux-$(tmux display-message -p '#S' 2>/dev/null || echo unknown)"
 fi
-[ -z "$LANE_ID" ] && LANE_ID="unlaned"
+if [ -z "$LANE_ID" ]; then
+    if [ "${1:-}" = "--lane" ]; then
+        echo 'lane_id=unavailable label='
+    else
+        echo 'no lane identity is available — nothing to read' >&2
+        echo 'Set HANDOFF_LANE explicitly before reading a handoff in this environment.' >&2
+    fi
+    exit 0
+fi
 
 LANE_LABEL=""
 if [ -f "$LANES" ]; then

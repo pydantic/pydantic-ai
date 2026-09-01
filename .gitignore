@@ -53,6 +53,7 @@ AGENTS.override.md
 !.agents/skills/adopt-pr/
 .agents/skills/adopt-pr/*
 !.agents/skills/adopt-pr/SKILL.md
+!.agents/skills/adopt-pr/fetch-resolved-threads
 !.agents/skills/branch-context/
 .agents/skills/branch-context/*
 !.agents/skills/branch-context/SKILL.md

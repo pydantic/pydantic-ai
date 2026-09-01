@@ -118,6 +118,12 @@ if [ -e "$DEST" ]; then
     TS="$(date -u +%Y-%m-%dT%H%M%SZ)"
     FNAME="${TS}-${SLUG}.md"
     DEST="$HAND_DIR/$FNAME"
+    suffix=2
+    while [ -e "$DEST" ]; do
+        FNAME="${TS}-${SLUG}-${suffix}.md"
+        DEST="$HAND_DIR/$FNAME"
+        suffix=$((suffix + 1))
+    done
 fi
 
 if [ -n "$BODY_SRC" ]; then

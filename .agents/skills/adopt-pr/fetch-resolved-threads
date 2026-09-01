@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+    echo 'Usage: fetch-resolved-threads <pr-number> [owner/repo]' >&2
+    exit 1
+}
+
+[[ $# -ge 1 && $# -le 2 ]] || usage
+
+PR_NUMBER="$1"
+REPO="${2:-$(gh repo view --json nameWithOwner --jq .nameWithOwner)}"
+OWNER="${REPO%%/*}"
+NAME="${REPO##*/}"
+
+if [[ -z "$OWNER" || -z "$NAME" || "$OWNER" == "$NAME" ]]; then
+    echo "error: expected repository as owner/name, got: $REPO" >&2
+    exit 1
+fi
+
+QUERY='query($owner: String!, $name: String!, $number: Int!, $cursor: String) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      reviewThreads(first: 100, after: $cursor) {
+        pageInfo { hasNextPage endCursor }
+        nodes {
+          id
+          isResolved
+          comments(first: 100) {
+            nodes {
+              databaseId
+              body
+              url
+              createdAt
+              author { login }
+              replyTo { databaseId }
+            }
+          }
+        }
+      }
+    }
+  }
+}'
+
+TMP_DIR="$(mktemp -d)"
+trap 'rm -rf "$TMP_DIR"' EXIT
+
+cursor=''
+page=0
+while true; do
+    page=$((page + 1))
+    output="$TMP_DIR/page-$page.json"
+
+    args=(graphql -f "query=$QUERY" -f "owner=$OWNER" -f "name=$NAME" -F "number=$PR_NUMBER")
+    if [[ -n "$cursor" ]]; then
+        args+=(-f "cursor=$cursor")
+    fi
+    gh api "${args[@]}" > "$output"
+
+    has_next="$(jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage' "$output")"
+    [[ "$has_next" == 'true' ]] || break
+    cursor="$(jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.endCursor' "$output")"
+done
+
+jq -s '[
+  .[].data.repository.pullRequest.reviewThreads.nodes[]
+  | select(.isResolved)
+  | {
+      id,
+      comments: [.comments.nodes[] | {
+        id: .databaseId,
+        author: .author.login,
+        body,
+        url,
+        created_at: .createdAt,
+        in_reply_to_id: .replyTo.databaseId
+      }]
+    }
+]' "$TMP_DIR"/page-*.json

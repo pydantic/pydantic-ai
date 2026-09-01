@@ -97,9 +97,13 @@ case "$SOURCE" in
         ;;
 esac
 
-# Static helpers can be reached through any harness skill root. Live state stays
-# beside the invoked helper, so resolve the directory rather than assuming cwd.
-DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+# Static helpers can be reached through any harness skill root. All harnesses
+# share the Claude compatibility directory as the branch-local live-state home.
+WORKTREE="$(git rev-parse --show-toplevel 2>/dev/null)" || {
+    echo 'error: run this helper from inside a git worktree' >&2
+    exit 1
+}
+DIR="$WORKTREE/.claude/skills/branch-context"
 FILE="$DIR/pr-decisions.md"
 if [ ! -f "$FILE" ]; then
     echo "error: $FILE not found. Initialize branch context before appending a decision." >&2

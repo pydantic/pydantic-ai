@@ -26,8 +26,6 @@ Inspect the codebase to understand the problem:
 - Identify key files, affected areas, related tests
 - Search for prior attempts or related PRs if relevant
 
-Before scoping, skim `.claude/skills/pyai-knowledge/feature-map.md` to locate the affected feature group, and `.claude/skills/pyai-knowledge/internals-model.md` to see which layer your change will need to touch. The *Maintainer Layering Heuristics* table at the bottom of `internals-model.md` is the fastest way to decide where the change belongs.
-
 Be thorough — this research informs everything downstream.
 
 ## Step 3 — Write the branch-context files

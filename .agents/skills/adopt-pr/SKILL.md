@@ -87,15 +87,16 @@ Write to `.claude/skills/branch-context/issue-brief.md`, overwriting the templat
 
 Fetch all review threads:
 ```bash
-~/.claude/skills/github-workflows/fetch-pr-comments $PR_NUMBER --max-body 0 > /tmp/adopt-pr-comments.json
+.agents/skills/adopt-pr/fetch-resolved-threads $PR_NUMBER > /tmp/adopt-pr-threads.json
 ```
 
-Filter to resolved threads:
+The helper returns every resolved thread with its complete comment conversation. Inspect each
+thread directly:
 ```bash
-jq '.threads | to_entries | map(select(.value.is_resolved == true))' /tmp/adopt-pr-comments.json
+jq '.[] | {id, comments}' /tmp/adopt-pr-threads.json
 ```
 
-For each resolved thread, group all comments by `in_reply_to_id` (use `inline_comments` from the same file) and read the full conversation. Then classify:
+For each resolved thread, read the full conversation. Then classify:
 
 - **Decision-bearing** — the thread debated two or more options, or the reviewer flagged a concern and the author adjusted the code. Examples: "use kwargs over positional", "renamed the public method", "moved the helper to a different module".
 - **Noise** — typo fixes, "nit: missing docstring", "good catch thanks", resolved without code change. **Skip these**.
