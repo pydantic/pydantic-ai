@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Literal
 
 import pytest
@@ -10,7 +10,7 @@ from pydantic_ai import Agent
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.capabilities import ReinjectSystemPrompt
 from pydantic_ai.capabilities.abstract import AbstractCapability
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, UserPromptPart
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, SystemPromptPart, TextPart, UserPromptPart
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
@@ -127,3 +127,54 @@ async def test_model_request_messages_allow_request_only_list_mutation(hook: Lit
     # The in-place list edit reached the wire but not persistent history.
     assert _contains_marker(model_messages[0])
     assert not _contains_marker(result.all_messages())
+
+
+async def test_reinject_system_prompt_preserves_the_persistent_existing_prompt_after_request_only_filtering() -> None:
+    class FilterRequestPrompt(AbstractCapability[Any]):
+        async def before_model_request(
+            self, ctx: RunContext[Any], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            request_context.messages = [
+                replace(message, parts=[part for part in message.parts if not isinstance(part, SystemPromptPart)])
+                if isinstance(message, ModelRequest)
+                else message
+                for message in request_context.messages
+            ]
+            return request_context
+
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[SystemPromptPart('existing'), UserPromptPart('old')]),
+        ModelResponse(parts=[TextPart('old response')]),
+    ]
+    result = await Agent(
+        FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('done')])),
+        system_prompt='new',
+        capabilities=[FilterRequestPrompt(), ReinjectSystemPrompt()],
+    ).run('hello', message_history=history)
+
+    persistent_system_prompts = [
+        part.content
+        for message in result.all_messages()
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, SystemPromptPart)
+    ]
+    assert persistent_system_prompts == ['existing']
+
+
+async def test_request_hook_can_clear_persistent_history() -> None:
+    class ClearPersistentHistory(AbstractCapability[Any]):
+        async def before_model_request(
+            self, ctx: RunContext[Any], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            ctx.messages.clear()
+            return request_context
+
+    result = await Agent(
+        FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('done')])),
+        capabilities=[ClearPersistentHistory()],
+    ).run('hello')
+
+    assert result.output == 'done'
+    assert len(result.all_messages()) == 1
+    assert isinstance(result.all_messages()[0], ModelResponse)

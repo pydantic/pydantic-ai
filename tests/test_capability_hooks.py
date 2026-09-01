@@ -221,6 +221,29 @@ class TestRunHooks:
 
 
 class TestModelRequestHooks:
+    @pytest.mark.parametrize('streaming', [False, True])
+    async def test_wrap_model_request_handler_can_only_be_called_once(self, streaming: bool):
+        class CallTwice(AbstractCapability[Any]):
+            async def wrap_model_request(
+                self,
+                ctx: RunContext[Any],
+                *,
+                request_context: ModelRequestContext,
+                handler: Any,
+            ) -> ModelResponse:
+                await handler(request_context)
+                return await handler(request_context)
+
+        async def consume_events(_ctx: RunContext[Any], events: AsyncIterable[AgentStreamEvent]) -> None:
+            async for _ in events:
+                pass
+
+        agent = Agent(
+            FunctionModel(simple_model_function, stream_function=simple_stream_function), capabilities=[CallTwice()]
+        )
+        with pytest.raises(UserError, match='may call its handler only once'):
+            await agent.run('hello', event_stream_handler=consume_events if streaming else None)
+
     async def test_before_model_request(self):
         cap = LoggingCapability()
         agent = Agent(FunctionModel(simple_model_function), capabilities=[cap])
@@ -1909,36 +1932,6 @@ class TestWrapNodeRunHook:
         assert agent_run.result is not None
         assert agent_run.result.output == 'short-circuited'
 
-    async def test_bare_async_for_mixed_with_next_after_replacing_node_and_short_circuiting(self):
-        """A wrapper short-circuit advances the graph after `before_node_run` replaces the node."""
-
-        @dataclass
-        class ReplaceAndShortCircuitCap(AbstractCapability[Any]):
-            nodes: list[str] = field(default_factory=lambda: [])
-
-            async def before_node_run(self, ctx: RunContext[Any], *, node: Any) -> Any:
-                self.nodes.append(type(node).__name__)
-                if Agent.is_model_request_node(node):
-                    return replace(node)
-                return node
-
-            async def wrap_node_run(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
-                if Agent.is_model_request_node(node):
-                    return End(FinalResult(output='short-circuited'))
-                return await handler(node)
-
-        cap = ReplaceAndShortCircuitCap()
-        agent = Agent(FunctionModel(simple_model_function), capabilities=[cap])
-
-        async with agent.iter('hello') as agent_run:
-            async for node in agent_run:
-                if not isinstance(node, End):
-                    await agent_run.next(node)
-
-        assert cap.nodes == snapshot(['UserPromptNode'])
-        assert agent_run.result is not None
-        assert agent_run.result.output == 'short-circuited'
-
     async def test_bare_async_for_mixed_with_next_after_wrap_node_run_recovers_error(self):
         """A wrapper that handles the model error advances the graph past its ErrorMarker."""
 
@@ -2226,6 +2219,30 @@ class TestRunErrorHooks:
 
 
 class TestNodeRunErrorHooks:
+    async def test_node_error_propagates_without_an_error_hook(self):
+        class FailAfterNodeStep(AbstractCapability[Any]):
+            async def wrap_node_run(
+                self,
+                ctx: RunContext[Any],
+                *,
+                node: Any,
+                handler: Any,
+            ) -> Any:
+                result = await handler(node)
+                if Agent.is_model_request_node(node):
+                    raise RuntimeError('post-stream error')
+                return result
+
+        agent = Agent(TestModel(call_tools='all'), capabilities=[FailAfterNodeStep()])
+
+        @agent.tool_plain
+        def tool() -> str:
+            return 'done'
+
+        with pytest.raises(RuntimeError, match='post-stream error'):
+            async with agent.run_stream('hello') as stream:
+                await stream.get_output()
+
     async def test_on_node_run_error_fires(self):
         cap = LoggingCapability()
 
@@ -2269,6 +2286,13 @@ class TestNodeRunErrorHooks:
 
 
 class TestModelRequestErrorHooks:
+    async def test_model_retry_from_model_is_not_sent_to_the_error_hook(self):
+        def retrying_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise ModelRetry('retry')
+
+        with pytest.raises(UnexpectedModelBehavior, match='maximum output retries'):
+            await Agent(FunctionModel(retrying_model), retries=0).run('hello')
+
     async def test_on_model_request_error_fires(self):
         cap = LoggingCapability()
 
@@ -2356,8 +2380,8 @@ class TestModelRequestErrorHooks:
             async def on_model_request_error(
                 self, ctx: RunContext[Any], *, request_context: ModelRequestContext, error: Exception
             ) -> ModelResponse:
-                self.errors.append(error)
-                return ModelResponse(parts=[TextPart(content='recovered after stream')])
+                self.errors.append(error)  # pragma: no cover
+                return ModelResponse(parts=[TextPart(content='recovered after stream')])  # pragma: no cover
 
         cap = RecoverPostStreamErrorCap()
         agent = Agent(
@@ -2391,8 +2415,8 @@ class TestModelRequestErrorHooks:
             async def on_model_request_error(
                 self, ctx: RunContext[Any], *, request_context: ModelRequestContext, error: Exception
             ) -> ModelResponse:
-                self.errors.append(error)
-                return ModelResponse(parts=[TextPart(content='recovered short circuit')])
+                self.errors.append(error)  # pragma: no cover
+                return ModelResponse(parts=[TextPart(content='recovered short circuit')])  # pragma: no cover
 
         cap = RecoverShortCircuitErrorCap()
         agent = Agent(

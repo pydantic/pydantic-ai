@@ -1155,7 +1155,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         return await self._make_request(ctx)
 
     @asynccontextmanager
-    async def stream(  # noqa: C901
+    async def stream(
         self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, T]],
     ) -> AsyncGenerator[result.AgentStream[DepsT, T]]:
@@ -1226,8 +1226,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             response = sr.get()
             _handler_response = response
             _handler_usage_recorded = True
-            if self._record_response_usage(ctx, response, request_context=req_ctx):
-                accounted_responses.append(response)
+            self._record_response_usage(ctx, response, request_context=req_ctx)
+            accounted_responses.append(response)
             capture_model_response_span_context(req_ctx, response, time_to_first_chunk)
             return await ctx.deps.root_capability.after_model_request(
                 run_context, request_context=req_ctx, response=response
@@ -1425,15 +1425,15 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 )
                 _handler_response = response
                 _handler_usage_recorded = True
-                if self._record_response_usage(ctx, response, request_context=req_ctx):
-                    accounted_responses.append(response)
+                self._record_response_usage(ctx, response, request_context=req_ctx)
+                accounted_responses.append(response)
             except exceptions.ModelRetry:
                 raise
             except Exception as e:
                 if _handler_response is not None:
                     _handler_usage_recorded = True
-                    if self._record_response_usage(ctx, _handler_response, request_context=req_ctx):
-                        accounted_responses.append(_handler_response)
+                    self._record_response_usage(ctx, _handler_response, request_context=req_ctx)
+                    accounted_responses.append(_handler_response)
                 response = await self._recover_model_request_error(ctx, run_context, req_ctx, e)
             _handler_response = response
             capture_model_response_span_context(req_ctx, response)
@@ -1802,15 +1802,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         response: _messages.ModelResponse,
         *,
         request_context: ModelRequestContext | None = None,
-    ) -> bool:
+    ) -> None:
         """Commit billed usage at the provider-response boundary."""
         if request_context is not None:
-            if any(recorded is response for recorded in request_context.usage_responses):
-                return False
             request_context._usage_response_ledger.responses.append(response)  # pyright: ignore[reportPrivateUsage]
         fill_response_cost(response)
         ctx.state.usage.incr(response.usage)
-        return True
 
     @staticmethod
     def _enforce_usage_limits(

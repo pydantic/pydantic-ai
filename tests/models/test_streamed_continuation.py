@@ -27,7 +27,7 @@ import pytest
 from pydantic_ai import Agent, capture_run_messages
 from pydantic_ai._agent_graph import _resolve_interrupted_stream_state  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai._run_context import RunContext
-from pydantic_ai.capabilities import Hooks
+from pydantic_ai.capabilities import AbstractCapability, Hooks
 from pydantic_ai.exceptions import SkipModelRequest, UnexpectedModelBehavior, UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
@@ -578,6 +578,31 @@ async def test_resume_from_trailing_suspended_history(stream: bool) -> None:
     assert merged.state == 'complete'
     # Hooks fire once around the resumed chain.
     assert calls == snapshot(['before', 'after'])
+
+
+async def test_resume_hook_rewriting_persistent_history_trims_the_suspended_seed() -> None:
+    class PersistRequestView(AbstractCapability[Any]):
+        async def before_model_request(
+            self, ctx: RunContext[Any], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            ctx.messages[:] = request_context.messages
+            return request_context
+
+    suspended = _suspended(texts=['partial '], provider_response_id='r1', input_tokens=5, output_tokens=2)
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='go')]),
+        suspended,
+    ]
+    result = await Agent(
+        FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('done')], provider_response_id='r2')),
+        capabilities=[PersistRequestView()],
+    ).run(message_history=history)
+
+    assert result.output == 'done'
+    assert (
+        sum(isinstance(message, ModelResponse) and message.state == 'suspended' for message in result.all_messages())
+        == 0
+    )
 
 
 @pytest.mark.parametrize('stream', [False, True])
