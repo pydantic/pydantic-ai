@@ -9,12 +9,11 @@ quietly to whatever `AbstractCapability` happens to do.
 from __future__ import annotations
 
 import importlib
-import inspect
 import pkgutil
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any, TypeGuard, cast
 
 import pytest
 
@@ -211,6 +210,20 @@ COMBINE_POLICY: dict[str, Policy] = {
 }
 
 
+def _is_capability_class(obj: object) -> TypeGuard[type[AbstractCapability[Any]]]:
+    """Whether `obj` is a capability class, and not something that merely looks like one.
+
+    A module's namespace holds type aliases and parameterized generics beside its classes, and on
+    Python 3.10 some of those satisfy `inspect.isclass` while `issubclass` then raises on them.
+    """
+    if not isinstance(obj, type):
+        return False
+    try:
+        return issubclass(obj, AbstractCapability)
+    except TypeError:  # pragma: no cover
+        return False
+
+
 def _shipped_capability_types() -> dict[str, type[AbstractCapability[Any]]]:
     """Every capability class in `pydantic_ai.capabilities`, public or not."""
     found: dict[str, type[AbstractCapability[Any]]] = {}
@@ -218,8 +231,7 @@ def _shipped_capability_types() -> dict[str, type[AbstractCapability[Any]]]:
         module = importlib.import_module(module_info.name)
         for obj in vars(module).values():
             if (
-                inspect.isclass(obj)
-                and issubclass(obj, AbstractCapability)
+                _is_capability_class(obj)
                 and obj is not AbstractCapability
                 and obj.__module__.startswith('pydantic_ai.')
             ):
