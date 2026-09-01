@@ -54,6 +54,7 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
     engine_spec = DurabilityEngineSpec(
         engine_name='DBOS',
         durable_unit_noun='step',
+        durable_unit_plural='steps',
         durable_container_noun='workflow',
         codec=IDENTITY_CODEC,
         unsupported_runtime_toolset_kinds=frozenset({'mcp', 'dynamic'}),

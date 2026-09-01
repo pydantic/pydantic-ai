@@ -102,6 +102,27 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         return type(self).wrap_node_run is not WrapperCapability.wrap_node_run or self.wrapped._has_wrap_node_run
 
     @property
+    def _has_on_node_run_error(self) -> bool:
+        return (
+            type(self).on_node_run_error is not WrapperCapability.on_node_run_error
+            or self.wrapped._has_on_node_run_error
+        )
+
+    @property
+    def _has_wrap_model_request(self) -> bool:
+        return (
+            type(self).wrap_model_request is not WrapperCapability.wrap_model_request
+            or self.wrapped._has_wrap_model_request
+        )
+
+    @property
+    def _has_on_model_request_error(self) -> bool:
+        return (
+            type(self).on_model_request_error is not WrapperCapability.on_model_request_error
+            or self.wrapped._has_on_model_request_error
+        )
+
+    @property
     def has_wrap_run_event_stream(self) -> bool:
         return (
             type(self).wrap_run_event_stream is not WrapperCapability.wrap_run_event_stream

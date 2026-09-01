@@ -104,7 +104,7 @@ from ..profiles.openai import (
     validate_openai_profile,
 )
 from ..providers import Provider, infer_provider
-from ..settings import ModelSettings, ThinkingLevel, merge_model_settings
+from ..settings import ModelSettings, ThinkingLevel, ToolOrOutput, merge_model_settings
 from ..tools import AgentDepsT, ToolDefinition
 from . import (
     Model,
@@ -514,6 +514,24 @@ def _resolve_openai_thinking_effort(thinking: ThinkingLevel, profile: OpenAIMode
     return OPENAI_REASONING_EFFORT_MAP[thinking]  # type: ignore[return-value]
 
 
+def _reasoning_active(
+    profile: OpenAIModelProfile,
+    model_settings: OpenAIChatModelSettings | OpenAIResponsesModelSettings,
+    model_request_parameters: ModelRequestParameters,
+) -> bool:
+    """Whether reasoning is effectively on for this request.
+
+    Explicit effort wins; then the unified `thinking` setting; otherwise the model's default.
+    """
+    reasoning_effort = model_settings.get('openai_reasoning_effort')
+    if reasoning_effort is not None:
+        return reasoning_effort != 'none'
+    thinking = model_request_parameters.thinking
+    if thinking is not None:
+        return thinking is not False
+    return profile.get('openai_reasoning_enabled_by_default', False)
+
+
 def _drop_sampling_params_for_reasoning(
     profile: OpenAIModelProfile,
     model_settings: OpenAIChatModelSettings,
@@ -532,18 +550,10 @@ def _drop_sampling_params_for_reasoning(
     if not profile.get('openai_supports_reasoning', False):
         return
 
-    reasoning_effort = model_settings.get('openai_reasoning_effort')
-    thinking = model_request_parameters.thinking
-    # Determine if reasoning is effectively active. Explicit effort wins; then the unified `thinking`
-    # setting; otherwise fall back to the model's default.
-    if reasoning_effort is not None:
-        reasoning_active = reasoning_effort != 'none'
-    elif thinking is not None:
-        reasoning_active = thinking is not False
-    else:
-        reasoning_active = profile.get('openai_reasoning_enabled_by_default', False)
     # When the model can turn reasoning off, sampling params are allowed while reasoning is inactive.
-    if profile.get('openai_supports_reasoning_effort_none', False) and not reasoning_active:
+    if profile.get('openai_supports_reasoning_effort_none', False) and not _reasoning_active(
+        profile, model_settings, model_request_parameters
+    ):
         return
 
     if dropped := [k for k in SAMPLING_PARAMS if k in model_settings]:
@@ -1424,7 +1434,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
 
         Overrides should raise `UserError` when the user explicitly requested forcing.
         """
-        return _support_tool_forcing(self.model_name, self.profile, model_settings)
+        return _support_tool_forcing(self.model_name, self.profile, model_settings, model_request_parameters)
 
     def _get_stream_options(self, model_settings: OpenAIChatModelSettings) -> chat.ChatCompletionStreamOptionsParam:
         """Build stream_options for the API request.
@@ -2043,7 +2053,13 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
     @cached_property
     def profile(self) -> OpenAIModelProfile:
-        return cast(OpenAIModelProfile, super().profile)
+        profile = cast(OpenAIModelProfile, super().profile)
+        # A model can be more capable on the Responses API than on Chat Completions, and the two
+        # share one profile: DeepSeek honors `text.format` of type `json_schema` here while its
+        # Chat Completions endpoint rejects it, so the generic flag can only be raised per model class.
+        if profile.get('openai_responses_supports_json_schema_output', False):
+            return cast(OpenAIModelProfile, merge_profile(profile, ModelProfile(supports_json_schema_output=True)))
+        return profile
 
     @classmethod
     def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
@@ -2137,6 +2153,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             messages,
             model_settings,
             model_request_parameters,
+            previous_response_id=previous_response_id,
             standing_prompt_retained=False,
         )
         if instructions_override is not None:
@@ -2614,7 +2631,12 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
         previous_response_id, conversation_id, messages = self._resolve_server_side_state(model_settings, messages)
 
-        instructions, openai_messages = await self._map_messages(messages, model_settings, wire_request_parameters)
+        instructions, openai_messages = await self._map_messages(
+            messages,
+            model_settings,
+            wire_request_parameters,
+            previous_response_id=previous_response_id,
+        )
         reasoning = self._translate_thinking(model_settings, model_request_parameters)
 
         text: responses.ResponseTextConfigParam | Omit = OMIT
@@ -2920,11 +2942,11 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         if resolved_tool_choice in ('auto', 'none'):
             tool_choice = resolved_tool_choice
         elif resolved_tool_choice == 'required':
-            supports = _support_tool_forcing(self.model_name, openai_profile, model_settings)
+            supports = _support_tool_forcing(self.model_name, openai_profile, model_settings, model_request_parameters)
             tool_choice = 'required' if supports else 'auto'
         elif isinstance(resolved_tool_choice, tuple):
             tool_choice_mode, tool_names = resolved_tool_choice
-            supports = _support_tool_forcing(self.model_name, openai_profile, model_settings)
+            supports = _support_tool_forcing(self.model_name, openai_profile, model_settings, model_request_parameters)
             if tool_choice_mode == 'required' and len(tool_names) == 1 and supports:
                 tool_choice = ToolChoiceFunctionParam(type='function', name=next(iter(tool_names)))
             else:
@@ -3215,6 +3237,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         model_request_parameters: ModelRequestParameters,
         *,
         standing_prompt_retained: bool = True,
+        previous_response_id: str | None = None,
     ) -> tuple[str | Omit, list[responses.ResponseInputItemParam]]:
         """Maps a `pydantic_ai.Message` to a `openai.types.responses.ResponseInputParam` i.e. the OpenAI Responses API input format.
 
@@ -3232,6 +3255,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # across a second compaction in probing, so each freshly built window plants it explicitly.
         messages = self._trim_before_compaction(messages, standing_prompt_retained=standing_prompt_retained)
         profile = self.profile
+        response_scoped_tool_call_ids = profile.get('openai_responses_tool_call_ids_are_response_scoped', False)
+        response_id = previous_response_id if response_scoped_tool_call_ids else None
         send_item_ids = model_settings.get(
             'openai_send_reasoning_ids', profile.get('openai_supports_encrypted_reasoning_content', False)
         )
@@ -3280,6 +3305,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     elif isinstance(part, ToolReturnPart):
                         call_id = _guard_tool_call_id(t=part)
                         call_id, _ = _split_combined_tool_call_id(call_id)
+                        call_id = _provider_response_tool_call_id(call_id, response_id)
                         if call_id in client_replay_call_ids and isinstance(part, ToolSearchReturnPart):
                             # Replay the local `search_tools` result as a
                             # `tool_search_output` so the provider rehydrates the
@@ -3322,6 +3348,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                         else:
                             call_id = _guard_tool_call_id(t=part)
                             call_id, _ = _split_combined_tool_call_id(call_id)
+                            call_id = _provider_response_tool_call_id(call_id, response_id)
                             item = FunctionCallOutput(
                                 type='function_call_output',
                                 call_id=call_id,
@@ -3334,6 +3361,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     else:
                         assert_never(part)
             elif isinstance(message, ModelResponse):
+                response_from_same_provider = message.provider_name == self.system
                 message_item: responses.ResponseOutputMessageParam | None = None
                 reasoning_item: responses.ResponseReasoningItemParam | None = None
                 web_search_item: responses.ResponseFunctionWebSearchParam | None = None
@@ -3351,6 +3379,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     from_same_provider = item.provider_name == self.system or (
                         item.provider_name is None and message.provider_name == self.system
                     )
+                    response_id_from_same_provider = message.provider_name == self.system or (
+                        message.provider_name is None and item.provider_name == self.system
+                    )
+                    response_from_same_provider |= response_id_from_same_provider
                     # Two distinct gates. For native tool items whose state lives server-side
                     # (web search, code interpreter, image generation, MCP), the item ID *is*
                     # the replay payload, so `should_send_item_id` decides whether those items
@@ -3393,6 +3425,12 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     elif isinstance(item, ToolCallPart):
                         call_id = _guard_tool_call_id(t=item)
                         call_id, id = _split_combined_tool_call_id(call_id)
+                        call_id = _provider_response_tool_call_id(
+                            call_id,
+                            message.provider_response_id
+                            if response_scoped_tool_call_ids and response_id_from_same_provider
+                            else None,
+                        )
                         id = id or item.id
 
                         if client_tool_search_active and item.tool_name == TOOL_SEARCH_FUNCTION_TOOL_NAME:
@@ -3645,6 +3683,11 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                         raise _unconverted_speech_part_error()
                     else:
                         assert_never(item)
+                response_id = (
+                    message.provider_response_id
+                    if response_scoped_tool_call_ids and response_from_same_provider
+                    else None
+                )
             else:
                 assert_never(message)
         instructions = get_instructions(messages, model_request_parameters) or OMIT
@@ -4955,20 +4998,52 @@ def _map_logprobs(
 def _support_tool_forcing(
     model_name: str,
     openai_profile: OpenAIModelProfile,
-    model_settings: ModelSettings | None,
+    model_settings: OpenAIChatModelSettings | OpenAIResponsesModelSettings,
+    model_request_parameters: ModelRequestParameters,
 ) -> bool:
     """Check if the model supports forced tool use, raising UserError if explicitly requested but unsupported."""
     if not openai_profile.get('openai_supports_tool_choice_required', True):
-        explicit_choice = (model_settings or {}).get('tool_choice')
-        if explicit_choice == 'required' or isinstance(explicit_choice, list):
-            raise UserError(
-                f'tool_choice={explicit_choice!r} is not supported by model {model_name!r}. '
-                f'This model does not support forcing tool use.'
-            )
-        else:
-            return False
-    else:
-        return True
+        return _reject_tool_forcing(
+            model_name,
+            model_settings,
+            model_request_parameters,
+            'This model does not support forcing tool use.',
+        )
+    if not openai_profile.get('openai_supports_forced_tool_choice_with_thinking', True) and _reasoning_active(
+        openai_profile, model_settings, model_request_parameters
+    ):
+        return _reject_tool_forcing(
+            model_name,
+            model_settings,
+            model_request_parameters,
+            'This model does not support forcing tool use while thinking is enabled. '
+            "Disable thinking with `thinking=False` or `openai_reasoning_effort='none'`, "
+            "or use `tool_choice='auto'`.",
+        )
+    return True
+
+
+def _reject_tool_forcing(
+    model_name: str,
+    model_settings: OpenAIChatModelSettings | OpenAIResponsesModelSettings,
+    model_request_parameters: ModelRequestParameters,
+    reason: str,
+) -> bool:
+    """Fall back to unforced tool choice, unless the user asked for forcing explicitly."""
+    explicit_choice = model_settings.get('tool_choice')
+    # `resolve_tool_choice` maps `ToolOrOutput` to required mode when direct output isn't allowed,
+    # so that shape requests forcing just as explicitly as `'required'` or a tool list.
+    explicit_forcing = (
+        explicit_choice == 'required'
+        or isinstance(explicit_choice, list)
+        or (
+            isinstance(explicit_choice, ToolOrOutput)
+            and not (model_request_parameters.allow_text_output or model_request_parameters.allow_image_output)
+        )
+    )
+    if explicit_forcing:
+        raise UserError(f'tool_choice={explicit_choice!r} is not supported by model {model_name!r}. {reason}')
+    return False
 
 
 def _map_compaction_item(
@@ -5012,7 +5087,6 @@ def _map_usage(
         if isinstance(v, int)
     }
     response_data = dict(model=model, usage=usage_data)
-    reasoning_tokens: int | None = None
     if isinstance(response_usage, responses.ResponseUsage):
         api_flavor = 'responses'
         input_tokens_details = usage_data.get('input_tokens_details')
@@ -5027,7 +5101,6 @@ def _map_usage(
 
         if response_usage.completion_tokens_details is not None:
             details.update(response_usage.completion_tokens_details.model_dump(exclude_none=True))
-            reasoning_tokens = response_usage.completion_tokens_details.reasoning_tokens
 
     request_usage = usage.RequestUsage.extract(
         response_data,
@@ -5045,18 +5118,6 @@ def _map_usage(
         cache_write_tokens = input_tokens_details.get('cache_write_tokens')
         if isinstance(cache_write_tokens, int):
             request_usage.cache_write_tokens = cache_write_tokens
-    # genai-prices' `openai` entry maps `completion_tokens_details.reasoning_tokens` to
-    # `output_reasoning_tokens`, but an OpenAI-compatible provider it knows by its own id resolves to that
-    # provider's extractor instead of to the `openai` fallback, and not all of those map it — `zai`'s,
-    # added in genai-prices 0.1.2, doesn't, which silently dropped Z.AI's reasoning-token count. Lift it
-    # for whichever provider matched, from what the SDK reported rather than from `details`, which the
-    # `responses` branch above fills with a synthetic zero. Left unset — not zeroed — when the SDK reports
-    # nothing, so a model that doesn't reason stays distinguishable from one that reasoned for free.
-    # TODO: Remove this block once genai-prices maps reasoning tokens for every OpenAI-compatible provider.
-    # https://github.com/pydantic/genai-prices/pull/580 (merged; not in 0.1.4 — drop once the floor is past the release that includes it).
-    if isinstance(reasoning_tokens, int) and 'output_reasoning_tokens' not in request_usage.__dict__:
-        # Extra field, not a declared `RequestUsage` attribute — `setattr` is how `__init__` sets extras.
-        setattr(request_usage, 'output_reasoning_tokens', reasoning_tokens)
     return request_usage
 
 
@@ -5173,6 +5234,13 @@ def _response_tool_call_id(tool_call_id: str, response_id: str | None) -> str:
     ID must be made history-wide unique), or `None` to leave the call ID as-is.
     """
     return f'{response_id}:{tool_call_id}' if response_id is not None else tool_call_id
+
+
+def _provider_response_tool_call_id(tool_call_id: str, response_id: str | None) -> str:
+    """Restore a response-scoped provider tool-call ID from its normalized form."""
+    if response_id is None:
+        return tool_call_id
+    return tool_call_id.removeprefix(f'{response_id}:')
 
 
 def _map_code_interpreter_tool_call(
