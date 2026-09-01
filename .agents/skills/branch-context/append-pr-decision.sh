@@ -100,6 +100,20 @@ validate_field 'why' "$WHY"
 validate_field 'source' "$SOURCE"
 validate_field 'iteration' "$ITER"
 validate_field 'supersedes' "$SUPERSEDES"
+
+reject_import_syntax() {
+    local label="$1" value="$2"
+    if [[ "$value" =~ @(~|/|\.{1,2}/|[[:alnum:]_]) ]]; then
+        echo "error: $label must not contain active @-import syntax" >&2
+        echo "       Paraphrase the text without @ before writing autoloaded branch context." >&2
+        exit 1
+    fi
+}
+
+reject_import_syntax 'title' "$TITLE"
+reject_import_syntax 'decision' "$DECISION"
+reject_import_syntax 'why' "$WHY"
+reject_import_syntax 'supersedes' "$SUPERSEDES"
 if [[ "$TITLE" == *' · '* || "$ITER" == *' · '* ]]; then
     echo "error: title and iteration must not contain the decision-header separator" >&2
     exit 1
