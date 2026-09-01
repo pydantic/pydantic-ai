@@ -144,12 +144,29 @@ class Capability(AbstractCapability[AgentDepsT]):
             # registered after construction via `@tool`/`@tool_plain` still surface: the agent
             # wires in this reference once, and `None` would drop it and hide late additions.
             return self._function_toolset
-        if len(toolsets) == 1:
-            return toolsets[0]
         materialized: list[AbstractToolset[AgentDepsT]] = [
-            ts if isinstance(ts, AbstractToolset) else DynamicToolset[AgentDepsT](toolset_func=ts) for ts in toolsets
+            ts
+            if isinstance(ts, AbstractToolset)
+            else DynamicToolset[AgentDepsT](toolset_func=ts, id=self._toolset_id(index))
+            for index, ts in enumerate(toolsets)
         ]
+        if len(materialized) == 1:
+            return materialized[0]
         return CombinedToolset[AgentDepsT](materialized)
+
+    def _toolset_id(self, index: int) -> str | None:
+        """The `id` for the leaf toolset this capability builds around the callable at `index`.
+
+        Durable execution identifies a leaf toolset by `id`, so a capability the user named has to
+        pass that name down or the toolset it contributes stays anonymous and unusable there
+        (#7274). One capability can contribute several leaves, though -- `tools=` builds a
+        `FunctionToolset` that already took the bare `id` -- so the position within this
+        capability's own arguments distinguishes them. That position is stable because it is the
+        order the user wrote, not an order the run happened to compose.
+
+        Pass a `DynamicToolset` with its own `id` instead of a bare callable to name one yourself.
+        """
+        return None if self.id is None else f'{self.id}_{index}'
 
     @overload
     def tool_plain(self, func: ToolFuncPlain[ToolParams], /) -> ToolFuncPlain[ToolParams]: ...

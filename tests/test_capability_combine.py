@@ -14,12 +14,14 @@ import pkgutil
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
 import pydantic_ai.capabilities as capabilities_package
+from pydantic_ai import FunctionToolset, RunContext
 from pydantic_ai.capabilities import (
+    Capability,
     ImageGeneration,
     Instrumentation,
     RaiseContentFilterError,
@@ -39,6 +41,8 @@ from pydantic_ai.capabilities.abstract import (
 from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.native_tools import WebFetchTool, WebSearchTool, XSearchTool
+from pydantic_ai.toolsets import AbstractToolset
+from pydantic_ai.toolsets._dynamic import DynamicToolset
 
 pytestmark = pytest.mark.anyio
 
@@ -298,3 +302,42 @@ def test_merging_into_a_contradictory_configuration_is_rejected() -> None:
     """
     with pytest.raises(UserError, match='constraint fields require the native tool'):
         WebSearch.combine([WebSearch(allowed_domains=['a.com']), WebSearch(native=False, local='duckduckgo')])
+
+
+def _dyn_toolset(ctx: RunContext[Any]) -> FunctionToolset[Any]:
+    """A `toolsets=` callable, resolved per run."""
+    return FunctionToolset([_a_tool])
+
+
+def _a_tool() -> str:
+    """A tool."""
+    return 'x'  # pragma: no cover
+
+
+def test_capability_id_reaches_a_callable_toolset() -> None:
+    """An explicit `Capability(id=...)` names every leaf it contributes, not just the function one.
+
+    Durable execution identifies a leaf toolset by `id`, so a `toolsets=` callable left anonymous
+    made a capability the user *had* named unusable there (#7274). One capability can contribute
+    several leaves, so the position within its own arguments keeps them apart.
+    """
+    capability = Capability[Any](id='mycap', tools=[_a_tool], toolsets=[_dyn_toolset])
+    toolset = cast('AbstractToolset[Any]', capability.get_toolset())
+    leaves: list[tuple[str, str | None]] = []
+
+    def record(ts: AbstractToolset[Any]) -> None:
+        leaves.append((type(ts).__name__, ts.id))
+
+    toolset.apply(record)
+    assert leaves == [
+        ('FunctionToolset', 'mycap'),
+        ('DynamicToolset', 'mycap_1'),
+    ]
+
+
+def test_anonymous_capability_leaves_its_toolsets_anonymous() -> None:
+    """`id=None` states nothing to pass down, so the contributed toolsets stay unnamed."""
+    capability = Capability[Any](toolsets=[_dyn_toolset])
+    toolset = capability.get_toolset()
+    assert isinstance(toolset, DynamicToolset)
+    assert toolset.id is None
