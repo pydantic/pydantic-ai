@@ -393,7 +393,8 @@ async def test_app_tool_cannot_emit_capability_event():
     @agent.tool
     async def read_file(ctx: RunContext[Any]) -> str:
         await ctx.emit(FileReadEvent(path='tool.txt'))
-        return 'ok'  # pragma: no cover - the emit above raises
+        # The emit above raises.
+        return 'ok'  # pragma: no cover
 
     with pytest.raises(UserError, match='Capability events belong to capabilities'):
         await _collect(agent)
@@ -421,7 +422,8 @@ async def test_capability_cannot_emit_custom_event():
             self, ctx: RunContext[Any], request_context: ModelRequestContext
         ) -> ModelRequestContext:
             await ctx.emit(BridgeEvent())
-            return request_context  # pragma: no cover - the emit above raises
+            # The emit above raises.
+            return request_context  # pragma: no cover
 
     agent = Agent(FunctionModel(stream_function=_only_text), capabilities=[BadCapability()])
     with pytest.raises(UserError, match='Capabilities should define and emit `CapabilityEvent`'):
@@ -435,7 +437,8 @@ async def test_capability_tool_cannot_emit_custom_event():
     @capability.tool
     async def read_file(ctx: RunContext[Any]) -> str:
         await ctx.emit(BridgeEvent())
-        return 'ok'  # pragma: no cover - the emit above raises
+        # The emit above raises.
+        return 'ok'  # pragma: no cover
 
     agent = Agent(FunctionModel(stream_function=_tool_then_text), capabilities=[capability])
     with pytest.raises(UserError, match='Capabilities should define and emit `CapabilityEvent`'):

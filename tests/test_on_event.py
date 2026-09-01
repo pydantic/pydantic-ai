@@ -513,9 +513,8 @@ async def test_zero_listeners_does_not_enable_streaming() -> None:
         calls.append('function')
         return ModelResponse(parts=[TextPart(content='done')])
 
-    async def stream(
-        messages: list[ModelMessage], info: AgentInfo
-    ) -> AsyncIterator[str]:  # pragma: no cover - asserted never called
+    # Asserted never called.
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:  # pragma: no cover
         calls.append('stream')
         yield 'done'
 
@@ -572,9 +571,8 @@ def test_combined_capability_subclass_listeners_alone_enable_dispatch() -> None:
 
     class Harness(CombinedCapability[Any]):
         @on_event(FileReadEvent)
-        async def _on_read(
-            self, ctx: RunContext[Any], event: FileReadEvent
-        ) -> None: ...  # pragma: no cover - never dispatched
+        # Never dispatched.
+        async def _on_read(self, ctx: RunContext[Any], event: FileReadEvent) -> None: ...  # pragma: no cover
 
     assert Harness(capabilities=[AbstractCapability()]).has_on_event
     assert not CombinedCapability[Any](capabilities=[AbstractCapability()]).has_on_event
