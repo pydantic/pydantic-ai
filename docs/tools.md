@@ -264,7 +264,7 @@ Even better, Pydantic AI extracts the docstring from functions and (thanks to [g
 Three parts of the docstring reach the model: the leading description, the parameter descriptions, and the
 first entry of the returns section. Other sections Griffe can parse, such as `Raises`, `Examples`, `Notes`,
 `Warnings` and `Yields`, are dropped rather than sent, so anything the model needs to act on belongs in the
-leading description or a parameter description.
+leading description, a parameter description, or the first returns entry.
 
 To demonstrate a tool's schema, here we use [`FunctionModel`][pydantic_ai.models.function.FunctionModel] to print the schema a model would receive:
 
