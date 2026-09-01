@@ -93,8 +93,9 @@ for ((attempt = 0; attempt < 400; attempt++)); do
     fi
 
     # SIGKILL and machine loss bypass traps. Reclaim a dead owner's lock
-    # immediately, or any lock older than one minute (including the tiny
-    # mkdir-before-owner-file crash window). A normal transition takes seconds.
+    # immediately. Use age only when ownership is missing or malformed,
+    # including the tiny mkdir-before-owner-file crash window; a live owner
+    # keeps the lock however long its transition takes.
     owner_record=''
     owner_pid=''
     owner_started=''
@@ -104,22 +105,25 @@ for ((attempt = 0; attempt < 400; attempt++)); do
     fi
     now="$(date +%s)"
     stale=false
-    if [[ "$owner_pid" =~ ^[0-9]+$ ]] && ! kill -0 "$owner_pid" 2>/dev/null; then
-        stale=true
+    if [[ "$owner_pid" =~ ^[0-9]+$ ]]; then
+        if ! kill -0 "$owner_pid" 2>/dev/null; then
+            stale=true
+        fi
     elif [[ "$owner_started" =~ ^[0-9]+$ ]] && ((now - owner_started >= 60)); then
         stale=true
-    elif { [ -z "$owner_record" ] || ! [[ "$owner_started" =~ ^[0-9]+$ ]]; } && \
-        [ -n "$(find "$LOCK_DIR" -prune -mmin +0 -print 2>/dev/null)" ]; then
+    elif [ -n "$(find "$LOCK_DIR" -prune -mmin +0 -print 2>/dev/null)" ]; then
         stale=true
     fi
     if [ "$stale" = true ]; then
+        # Compare the complete owner record before removal. Another contender
+        # may already have reclaimed the directory and installed a new owner.
         if [ -n "$owner_record" ]; then
             current_owner="$(cat "$LOCK_OWNER" 2>/dev/null || true)"
             if [ "$current_owner" = "$owner_record" ]; then
                 rm -f "$LOCK_OWNER"
                 rmdir "$LOCK_DIR" 2>/dev/null || true
             fi
-        else
+        elif [ -n "$(find "$LOCK_DIR" -prune -mmin +0 -print 2>/dev/null)" ]; then
             rmdir "$LOCK_DIR" 2>/dev/null || true
         fi
     fi

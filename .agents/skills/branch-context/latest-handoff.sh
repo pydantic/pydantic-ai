@@ -70,12 +70,13 @@ for ((attempt = 0; attempt < 400; attempt++)); do
     fi
     now="$(date +%s)"
     stale=false
-    if [[ "$owner_pid" =~ ^[0-9]+$ ]] && ! kill -0 "$owner_pid" 2>/dev/null; then
-        stale=true
+    if [[ "$owner_pid" =~ ^[0-9]+$ ]]; then
+        if ! kill -0 "$owner_pid" 2>/dev/null; then
+            stale=true
+        fi
     elif [[ "$owner_started" =~ ^[0-9]+$ ]] && ((now - owner_started >= 60)); then
         stale=true
-    elif { [ -z "$owner_record" ] || ! [[ "$owner_started" =~ ^[0-9]+$ ]]; } && \
-        [ -n "$(find "$LOCK_DIR" -prune -mmin +0 -print 2>/dev/null)" ]; then
+    elif [ -n "$(find "$LOCK_DIR" -prune -mmin +0 -print 2>/dev/null)" ]; then
         stale=true
     fi
     if [ "$stale" = true ]; then
@@ -85,7 +86,7 @@ for ((attempt = 0; attempt < 400; attempt++)); do
                 rm -f "$LOCK_OWNER"
                 rmdir "$LOCK_DIR" 2>/dev/null || true
             fi
-        else
+        elif [ -n "$(find "$LOCK_DIR" -prune -mmin +0 -print 2>/dev/null)" ]; then
             rmdir "$LOCK_DIR" 2>/dev/null || true
         fi
     fi
