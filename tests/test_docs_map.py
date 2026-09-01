@@ -86,3 +86,5 @@ def test_html_viewer_inlines_graph(tmp_path: Path):
     assert 'Agent atlas' in html
     assert "searchParams.set('variant'" in html or 'searchParams.set("variant"' in html
     assert 'https://pydantic.dev/docs/ai/' in html
+    assert 'cdn.jsdelivr.net' not in html
+    assert '../scripts/docs_map/d3.min.js' in html

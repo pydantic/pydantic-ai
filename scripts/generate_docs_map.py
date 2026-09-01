@@ -33,6 +33,9 @@ HTML_RELATIVE_PATH = Path('docs/map.html')
 GRAPH_PLACEHOLDER = '__GRAPH_JSON__'
 _SKIP_SCHEMES = ('http://', 'https://', 'mailto:', 'ftp://', 'javascript:')
 _VIEWER_TEMPLATE = Path(__file__).resolve().parent / 'docs_map' / 'viewer.html'
+_D3_PATH = Path(__file__).resolve().parent / 'docs_map' / 'd3.min.js'
+_D3_TEMPLATE_TAG = '<script src="./d3.min.js"></script>'
+_D3_DOCS_TAG = '<script src="../scripts/docs_map/d3.min.js"></script>'
 
 _INLINE_LINK = re.compile(r'(?<!!)\[(?:[^\]]+)\]\(([^)\s]+)(?:\s+(?:"[^"]*"|\'[^\']*\'))?\)')
 _REF_DEF = re.compile(r'^ {0,3}\[([^\]]+)\]:\s+<?([^\s>]+)>?', re.MULTILINE)
@@ -477,7 +480,12 @@ def _render_html(docs_map: _DocsMap) -> str:
         raise SystemExit(f'{_VIEWER_TEMPLATE} is missing {GRAPH_PLACEHOLDER}')
     payload = json.dumps(_graph_payload(docs_map), indent=2, sort_keys=True)
     payload = payload.replace('<', '\\u003c')
-    return template.replace(GRAPH_PLACEHOLDER, payload)
+    html = template.replace(GRAPH_PLACEHOLDER, payload)
+    if not _D3_PATH.is_file():
+        raise SystemExit(f'D3 bundle is missing: {_D3_PATH}')
+    if _D3_TEMPLATE_TAG not in html:
+        raise SystemExit(f'{_VIEWER_TEMPLATE} is missing {_D3_TEMPLATE_TAG}')
+    return html.replace(_D3_TEMPLATE_TAG, _D3_DOCS_TAG)
 
 
 if __name__ == '__main__':

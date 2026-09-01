@@ -42,7 +42,7 @@
     border: 1px solid var(--line); padding: 6px 10px; width: 240px;
     flex: 0 0 240px; font-size: 13px;
   }
-  main { position: relative; overflow: hidden; }
+  main { position: relative; overflow: auto; }
   canvas, svg { position: absolute; inset: 0; width: 100%; height: 100%; }
   #atlas { position: absolute; inset: 0; overflow: auto; padding: 20px 28px 300px; }
   .region { margin-bottom: 28px; }
@@ -8372,8 +8372,11 @@
   }
 }
 </script>
-<script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
+<script src="../scripts/docs_map/d3.min.js"></script>
 <script>
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
 const VARIANTS = [
   { id: 'A', name: 'Force graph' },
   { id: 'B', name: 'Fortress rooms' },
@@ -8436,7 +8439,13 @@ function cycle(d) {
   const i = VARIANTS.findIndex(v => v.id === variant);
   setVariant(VARIANTS[(i + d + VARIANTS.length) % VARIANTS.length].id);
 }
-$('api').onchange = render;
+$('api').onchange = () => {
+  if (selected && !visibleNodes().some(n => n.path === selected)) {
+    selected = null;
+    $('panel').style.display = 'none';
+  }
+  render();
+};
 $('q').oninput = () => {
   const q = $('q').value.toLowerCase();
   if (!q) return;
@@ -8493,15 +8502,15 @@ function select(path) {
   const slug = n.slug || n.path.replace(/\.md$/, '');
   panel.style.display = 'block';
   panel.innerHTML = `
-    <h3>${n.title}</h3>
-    <div class="row">${n.path}</div>
-    <div class="row">${n.top} · ${n.tokens.toLocaleString()} tokens · in ${n.in} · out ${n.out_unique}</div>
+    <h3>${esc(n.title)}</h3>
+    <div class="row">${esc(n.path)}</div>
+    <div class="row">${esc(n.top)} · ${n.tokens.toLocaleString()} tokens · in ${n.in} · out ${n.out_unique}</div>
     <div class="row">${n.tokens >= PAGE_SLURP ? '⚠ over ' + PAGE_SLURP.toLocaleString() + ' — grep/read sections, do not slurp' : 'fits in one read'}</div>
-    <div class="row"><a href="https://pydantic.dev/docs/ai/${slug}" target="_blank">open on site</a></div>
+    <div class="row"><a href="https://pydantic.dev/docs/ai/${encodeURI(slug)}" target="_blank">open on site</a></div>
     <h4>outbound</h4>
-    ${outs.slice(0,12).map(e => `<div class="row">→ ${e.dst} ×${e.n}</div>`).join('') || '<div class="row muted">none</div>'}
+    ${outs.slice(0,12).map(e => `<div class="row">→ ${esc(e.dst)} ×${e.n}</div>`).join('') || '<div class="row muted">none</div>'}
     <h4>inbound</h4>
-    ${ins.slice(0,12).map(e => `<div class="row">← ${e.src} ×${e.n}</div>`).join('') || '<div class="row muted">none</div>'}
+    ${ins.slice(0,12).map(e => `<div class="row">← ${esc(e.src)} ×${e.n}</div>`).join('') || '<div class="row muted">none</div>'}
   `;
   paintFocus();
 }
@@ -8778,17 +8787,19 @@ function drawFort() {
   const ctx = c.getContext('2d');
   const dpr = devicePixelRatio || 1;
   const box = c.parentElement.getBoundingClientRect();
-  const w = Math.round(box.width * dpr), h = Math.round(box.height * dpr);
+  const rooms = layoutFort(visibleNodes());
+  const layoutW = rooms.reduce((m, r) => Math.max(m, r.ox + r.cellW + 24), box.width);
+  const layoutH = rooms.reduce((m, r) => Math.max(m, r.oy + r.cellH + 24), box.height);
+  const w = Math.round(layoutW * dpr), h = Math.round(layoutH * dpr);
   if (c.width !== w || c.height !== h) {
     c.width = w;
     c.height = h;
-    c.style.width = box.width + 'px';
-    c.style.height = box.height + 'px';
+    c.style.width = layoutW + 'px';
+    c.style.height = layoutH + 'px';
   }
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.fillStyle = '#0b0c0a';
-  ctx.fillRect(0, 0, box.width, box.height);
-  const rooms = layoutFort(visibleNodes());
+  ctx.fillRect(0, 0, layoutW, layoutH);
   fortRooms = rooms;
   const byPath = Object.fromEntries(rooms.map(r => [r.path, r]));
   const focus = focusPath();
@@ -8924,19 +8935,19 @@ function drawAtlas() {
     <p class="hint">Generated atlas for agents. Regions over ${REGION_SUBAGENT.toLocaleString()} tokens spawn a subagent. Pages over ${PAGE_SLURP.toLocaleString()} are grep/read, not slurped. Click a page.</p>
     <div class="region">
       <h2>Cross-region highways</h2>
-      <p>${highways.map(e => `${e.src} → ${e.dst} ×${e.n}`).join(' · ')}</p>
+      <p>${highways.map(e => `${esc(e.src)} → ${esc(e.dst)} ×${e.n}`).join(' · ')}</p>
     </div>
     ${order.filter(t => stats[t]).map(top => {
       const s = stats[top];
       const flag = s.tokens >= REGION_SUBAGENT ? 'SUBAGENT' : 'INLINE';
       const pages = s.hubs.map(n => `
-        <div class="${atlasPageClass(n, inbound, outbound)}" data-path="${n.path}">
-          <div class="t">${n.title}</div>
+        <div class="${atlasPageClass(n, inbound, outbound)}" data-path="${esc(n.path)}">
+          <div class="t">${esc(n.title)}</div>
           <div class="s">${n.tokens.toLocaleString()} tok · in ${n.in} · out ${n.out_unique}${n.tokens>=PAGE_SLURP?' · DO NOT SLURP':''}</div>
         </div>`).join('');
       return `<div class="region">
-        <h2>${top} <span class="tok">${s.tokens.toLocaleString()} tok · ${s.pages} pages</span> <span class="flag">${flag}</span></h2>
-        <p>Start at <b>${s.hubs[0].title}</b> (${s.hubs[0].path}). ${s.hubs.filter(h=>h.tokens>=PAGE_SLURP).length} oversized pages.</p>
+        <h2>${esc(top)} <span class="tok">${s.tokens.toLocaleString()} tok · ${s.pages} pages</span> <span class="flag">${flag}</span></h2>
+        <p>Start at <b>${esc(s.hubs[0].title)}</b> (${esc(s.hubs[0].path)}). ${s.hubs.filter(h=>h.tokens>=PAGE_SLURP).length} oversized pages.</p>
         <div class="pages">${pages}</div>
       </div>`;
     }).join('')}
