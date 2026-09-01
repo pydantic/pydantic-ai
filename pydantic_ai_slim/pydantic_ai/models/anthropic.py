@@ -68,7 +68,7 @@ from ..native_tools._tool_search import (
     ToolSearchMatch,
     ToolSearchTool,
 )
-from ..profiles import DEFAULT_THINKING_TAGS, ModelProfileSpec, merge_profile
+from ..profiles import DEFAULT_THINKING_TAGS, ModelProfile, ModelProfileSpec, merge_profile
 from ..profiles.anthropic import (
     ANTHROPIC_THINKING_BUDGET_MAP,
     AnthropicCodeExecutionToolVersion,
@@ -567,6 +567,40 @@ def _build_extra_body(
     return fields
 
 
+def _bind_thinking_blocks(profile: ModelProfile, thinking: BetaThinkingConfigParam) -> BetaThinkingConfigParam:
+    """Default `prefix_mismatch_behavior` to `drop_block` on models that bind thinking blocks.
+
+    Claude Fable 5.1 binds each thinking block to the conversation prefix that produced it, so
+    replaying history after a dynamic `@agent.instructions` string changes, or after a conditional
+    toolset advertises a new non-deferred tool, fails with a 400. Dropping the stale block costs the
+    model that turn's reasoning; failing the request costs the run.
+    """
+    if thinking['type'] == 'disabled' or 'block_binding' in thinking:
+        return thinking
+    if not profile.get('anthropic_binds_thinking_blocks', False):
+        return thinking
+    bound = thinking.copy()
+    bound['block_binding'] = _ANTHROPIC_DROP_STALE_THINKING_BLOCKS
+    return bound
+
+
+def _unset_thinking_block_binding(
+    profile: ModelProfile, thinking: BetaThinkingConfigParam | Omit
+) -> BetaThinkingBlockBindingParam | None:
+    """The `block_binding` a request with no `thinking` config still has to carry, if any.
+
+    A binding model emits thinking blocks whether or not the request configured thinking, so
+    replaying them fails even when `thinking` is absent — and `block_binding` then has nowhere typed
+    to ride. The API accepts a `thinking` object holding `block_binding` alone, which the SDK's
+    discriminated union cannot express, so that shape travels through `extra_body`.
+    """
+    if not isinstance(thinking, Omit):
+        return None
+    if not profile.get('anthropic_binds_thinking_blocks', False):
+        return None
+    return _ANTHROPIC_DROP_STALE_THINKING_BLOCKS
+
+
 def _resolve_anthropic_service_tier(
     model_settings: AnthropicModelSettings,
 ) -> Literal['auto', 'standard_only'] | Omit:
@@ -893,47 +927,17 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         model_request_parameters: ModelRequestParameters,
     ) -> BetaThinkingConfigParam:
         """Get the thinking parameter, falling back to unified thinking."""
+        profile = self.profile
         if anthropic_thinking := model_settings.get('anthropic_thinking'):
-            return self._bind_thinking_blocks(anthropic_thinking)
+            return _bind_thinking_blocks(profile, anthropic_thinking)
         thinking = model_request_parameters.thinking
         if thinking is None or thinking is False:
             return OMIT  # type: ignore[return-value]
-        profile = self.profile
         if profile.get('anthropic_supports_adaptive_thinking', False):
-            return self._bind_thinking_blocks({'type': 'adaptive'})
-        return self._bind_thinking_blocks({'type': 'enabled', 'budget_tokens': ANTHROPIC_THINKING_BUDGET_MAP[thinking]})
-
-    def _unset_thinking_block_binding(
-        self, thinking: BetaThinkingConfigParam | Omit
-    ) -> BetaThinkingBlockBindingParam | None:
-        """The `block_binding` a request with no `thinking` config still has to carry, if any.
-
-        A binding model emits thinking blocks whether or not the request configured thinking, so
-        replaying them fails even when `thinking` is absent — and `block_binding` then has nowhere
-        typed to ride. The API accepts a `thinking` object holding `block_binding` alone, which the
-        SDK's discriminated union cannot express, so that shape travels through `extra_body`.
-        """
-        if not isinstance(thinking, Omit):
-            return None
-        if not self.profile.get('anthropic_binds_thinking_blocks', False):
-            return None
-        return _ANTHROPIC_DROP_STALE_THINKING_BLOCKS
-
-    def _bind_thinking_blocks(self, thinking: BetaThinkingConfigParam) -> BetaThinkingConfigParam:
-        """Default `prefix_mismatch_behavior` to `drop_block` on models that bind thinking blocks.
-
-        Claude Fable 5.1 binds each thinking block to the conversation prefix that produced it, so
-        replaying history after a dynamic `@agent.instructions` string changes, or after a
-        conditional toolset advertises a new non-deferred tool, fails with a 400. Dropping the stale
-        block costs the model that turn's reasoning; failing the request costs the run.
-        """
-        if thinking['type'] == 'disabled' or 'block_binding' in thinking:
-            return thinking
-        if not self.profile.get('anthropic_binds_thinking_blocks', False):
-            return thinking
-        bound = thinking.copy()
-        bound['block_binding'] = _ANTHROPIC_DROP_STALE_THINKING_BLOCKS
-        return bound
+            return _bind_thinking_blocks(profile, {'type': 'adaptive'})
+        return _bind_thinking_blocks(
+            profile, {'type': 'enabled', 'budget_tokens': ANTHROPIC_THINKING_BUDGET_MAP[thinking]}
+        )
 
     @overload
     async def _messages_create(
@@ -997,7 +1001,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         self._validate_task_budget_vs_context_management(model_settings, context_management)
         container = self._get_container(messages, model_settings)
 
-        unset_thinking_binding = self._unset_thinking_block_binding(thinking)
+        unset_thinking_binding = _unset_thinking_block_binding(anthropic_profile, thinking)
         if unset_thinking_binding is not None:
             betas.add(_ANTHROPIC_THINKING_BINDING_BETA)
 
