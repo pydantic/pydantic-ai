@@ -3962,6 +3962,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             self,
             models=models,
             toolsets=toolsets,
+            native_tools=native_tools,
             deps=deps,
             model_settings=model_settings,
             instructions=instructions,

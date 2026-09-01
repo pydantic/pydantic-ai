@@ -4,10 +4,10 @@ import hashlib
 import os
 import tempfile
 import threading
-from collections.abc import Sequence
+from collections.abc import AsyncGenerator, Mapping, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
-from typing import Literal, TypeVar
+from typing import Any, Literal, TypeVar
 
 import anyio
 import anyio.to_thread
@@ -227,13 +227,17 @@ def create_web_app(
     allowed_hosts = [normalized_pattern(pattern) for pattern in allowed_hosts or ()]
 
     @asynccontextmanager
-    async def app_lifespan(app: Starlette):
+    async def app_lifespan(app: Starlette) -> AsyncGenerator[Mapping[str, Any] | None, None]:
         async with AsyncExitStack() as stack:
             for toolset in toolsets or ():
                 await stack.enter_async_context(toolset)
+            state: Mapping[str, Any] | None = None
             if lifespan is not None:
-                await stack.enter_async_context(lifespan(app))
-            yield
+                state = await stack.enter_async_context(lifespan(app))
+                if isinstance(state, Mapping):
+                    for k, v in state.items():
+                        setattr(app.state, str(k), v)
+            yield state
 
     api_app = create_api_app(
         agent=agent,
@@ -251,7 +255,7 @@ def create_web_app(
     # hostname we don't answer to is misdirected whatever it asks for, and guarding every route
     # means a route added later is covered without anyone having to remember to opt it in.
     middleware = [Middleware(HostValidationMiddleware, allowed_hosts=allowed_hosts)]
-    app = Starlette(routes=routes, middleware=middleware, lifespan=app_lifespan)
+    app = Starlette(routes=routes, middleware=middleware, lifespan=app_lifespan)  # pyright: ignore[reportArgumentType]
 
     async def index(request: Request) -> Response:
         """Serve the chat UI from filesystem cache or CDN."""
