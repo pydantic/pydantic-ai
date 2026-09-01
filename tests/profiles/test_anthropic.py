@@ -390,6 +390,50 @@ def test_model_profile_mythos_5():
     assert profile.get('anthropic_supports_forced_tool_choice') is False
 
 
+def test_model_profile_fable_5_1():
+    """Claude Fable 5.1 carries Claude Fable 5's capability surface unchanged.
+
+    Verified live against the Anthropic API by probing `claude-fable-5-1` side by side with
+    `claude-fable-5`: both reject sampling settings, budget-based thinking, `thinking:
+    {'type': 'disabled'}` and `anthropic_speed='fast'`, and both accept adaptive thinking,
+    `low`/`high`/`xhigh`/`max` effort, task budgets, json-schema output, strict tools, tool
+    search, the advisor tool, code execution `20260120`, web search/fetch `20260209`, a
+    mid-conversation `system` entry, and `tool_addition` by reference.
+
+    The pair diverges on forced `tool_choice`, but only in the API's live behavior, not in this
+    profile: `claude-fable-5-1` returns a 400 while `claude-fable-5` now accepts forcing. Both
+    resolve to `anthropic_supports_forced_tool_choice=False` — see `anthropic_model_profile`.
+    """
+    profile = anthropic_model_profile('claude-fable-5-1')
+    assert profile == snapshot(
+        {
+            'thinking_tags': ('<thinking>', '</thinking>'),
+            'supports_json_schema_output': True,
+            'anthropic_supports_fast_speed': False,
+            'supports_thinking': True,
+            'anthropic_supports_adaptive_thinking': True,
+            'anthropic_supports_effort': True,
+            'anthropic_supports_dynamic_filtering': True,
+            'anthropic_supports_xhigh_effort': True,
+            'anthropic_disallows_budget_thinking': True,
+            'anthropic_disallows_sampling_settings': True,
+            'anthropic_disallows_top_effort_when_thinking_disabled': False,
+            'anthropic_default_code_execution_tool_version': '20260120',
+            'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
+            'anthropic_supports_task_budgets': True,
+            'anthropic_supports_forced_tool_choice': False,
+            'tool_deferral_mode': 'standalone',
+            'supported_native_tools': frozenset(
+                {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
+            ),
+        }
+    )
+
+    # Anthropic documents Mythos 5.1 as offering "the same capabilities" as Fable 5.1. It is
+    # Project Glasswing-only and not reachable with our credentials, so the profile is the mirror.
+    assert anthropic_model_profile('claude-mythos-5-1') == profile
+
+
 def test_model_profile_sonnet_5():
     """Claude Sonnet 5 carries Sonnet 4.6's tool/schema/adaptive surface plus the Opus 4.7 / 4.8
     frontier flags (xhigh effort, task budgets, no budget-based thinking, no sampling settings).

@@ -1993,6 +1993,7 @@ def test_huggingface_unknown_provider_returns_none():
         ('claude-opus-5', True),
         ('claude-opus-4-8', True),
         ('claude-fable-5', True),
+        ('claude-fable-5-1', True),
         # Serves the `system` role but rejects tool deltas — the two capabilities are independent.
         ('claude-sonnet-5', False),
         ('claude-sonnet-4-6', False),

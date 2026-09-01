@@ -236,12 +236,14 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         ('claude-fable-5', 'claude-mythos-5', 'claude-opus-4-7', 'claude-opus-4-8', 'claude-opus-5', 'claude-sonnet-5')
     )
 
-    # Claude Fable 5, Claude Mythos 5, and Claude Mythos Preview reject a forced `tool_choice`
-    # (`any`/`tool`) outright, unlike other Anthropic models which only reject forcing with extended
-    # thinking. The forcing-tool-use docs name Mythos Preview explicitly; Mythos 5 is its successor
-    # and the safety-classifier-free twin of Fable 5, both of which reject forcing.
+    # These models reject a forced `tool_choice` (`any`/`tool`) outright, unlike other Anthropic
+    # models which only reject forcing alongside extended thinking. Anthropic's forcing-tool-use
+    # docs name Fable 5.1 and Mythos 5.1; this list is deliberately wider, and `claude-fable-5`
+    # accepts forcing live, so Fable 5, Mythos 5, and Mythos Preview are candidates for removal.
+    # The 5.1 ids are spelled out rather than left to the shorter prefixes, which already match
+    # them, so that removing the three wider entries cannot silently take the 5.1 models along.
     supports_forced_tool_choice = not model_name.startswith(
-        ('claude-fable-5', 'claude-mythos-5', 'claude-mythos-preview')
+        ('claude-fable-5', 'claude-fable-5-1', 'claude-mythos-5', 'claude-mythos-5-1', 'claude-mythos-preview')
     )
 
     supports_dynamic_filtering = model_name.startswith(
