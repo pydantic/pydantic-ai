@@ -422,7 +422,7 @@ Additional toolsets can be passed per run via `agent.run(toolsets=...)`, but onl
 Temporal activity configuration, like timeouts and retry policies, can be customized by passing [`temporalio.workflow.ActivityConfig`](https://python.temporal.io/temporalio.workflow._activities.ActivityConfig.html) objects to the [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability] constructor:
 
 - `activity_config`: The base Temporal activity config to use for all activities. If no config is provided, a `start_to_close_timeout` of 60 seconds is used.
-- `model_activity_config`: The Temporal activity config to use for model request activities. This is merged with the base activity config.
+- `model_activity_config`: The Temporal activity config to use for model request activities. This is merged with the base activity config. Model request activities carry the [durable-execution retry layer](../retries.md#the-layers): Temporal's default `RetryPolicy.maximum_attempts` of `0` means unbounded re-execution of the model request — see [Retry multiplication](../retries.md#retry-multiplication) for how it stacks with the SDK client's and transport's retries.
 - `event_stream_handler_activity_config`: The Temporal activity config to use for event stream handler activities. This is merged with the base activity config.
 - `toolset_activity_config`: The Temporal activity config to use for get-tools and call-tool activities for specific toolsets identified by ID. This is merged with the base activity config.
 
