@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import KW_ONLY, dataclass
 from typing import TYPE_CHECKING
 
@@ -29,8 +30,8 @@ class RaiseContentFilterError(AbstractCapability[AgentDepsT]):
     id: str | None = 'raise_content_filter_error'
     """One-off: the capability takes no configuration, so a second instance can only duplicate the first, so the id is fixed by default.
 
-    Two instances in the same layer collide rather than being auto-disambiguated. Pass an explicit
-    `id` (or `id=None`) to opt out.
+    Two of them resolve to one via [`combine`][pydantic_ai.capabilities.AbstractCapability.combine],
+    which keeps the last. Pass a distinct `id` to keep both, or `id=None` for derived ids.
     """
 
     async def after_model_request(
@@ -56,3 +57,12 @@ class RaiseContentFilterError(AbstractCapability[AgentDepsT]):
             raise ContentFilterError(message, body=body)
 
         return response
+
+    @classmethod
+    def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
+        """Raising on a content filter is on or off: the last one supplied is the one in effect.
+
+        Two of these under one `id` are one configuration stated twice, so the run keeps the
+        last. That is what lets `agent.run(capabilities=[...])` override an agent-level one.
+        """
+        return capabilities[-1]

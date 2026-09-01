@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from functools import cached_property
 from typing import TYPE_CHECKING, Any
@@ -11,6 +11,7 @@ from pydantic_ai.native_tools import MCPServerTool
 from pydantic_ai.tools import AgentDepsT, RunContext, Tool
 from pydantic_ai.toolsets import AbstractToolset
 
+from .abstract import AbstractCapability
 from .native_or_local import NativeOrLocalTool
 
 if TYPE_CHECKING:
@@ -246,6 +247,15 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
             description=description,
             defer_loading=defer_loading,
         )
+
+    @classmethod
+    def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
+        """Two `MCP` capabilities under one id are the same server: the last one supplied wins.
+
+        Two of these under one `id` are one configuration stated twice, so the run keeps the
+        last. That is what lets `agent.run(capabilities=[...])` override an agent-level one.
+        """
+        return capabilities[-1]
 
 
 def _require_url(value: str) -> None:

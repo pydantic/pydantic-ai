@@ -46,7 +46,6 @@ __all__ = (
     'ContentFilterError',
     'IncompleteToolCall',
     'MessageHistoryMutatedWarning',
-    'CapabilityOverriddenWarning',
     'CostCalculationFailedWarning',
     'CostNotFoundWarning',
     'PydanticAIDeprecationWarning',
@@ -664,21 +663,6 @@ class ToolFailedError(Exception):
 
 class IncompleteToolCall(UnexpectedModelBehavior):
     """Error raised when a model stops due to token limit while emitting a tool call."""
-
-
-class CapabilityOverriddenWarning(Warning):
-    """Warning raised when a capability supplied for a run supersedes an agent-level one.
-
-    Capabilities that cover a single fixed concern carry a stable default `id` (e.g. `'thinking'`),
-    so passing one to [`run`][pydantic_ai.agent.AbstractAgent.run] replaces the agent's rather than
-    adding a second copy. That is usually what you want, but it silently drops the agent-level
-    configuration, so it is worth surfacing.
-
-    Pass a distinct `id` to keep both, or `id=None` to have the run derive separate ids for them.
-
-    Only a capability *you* supplied can trigger this: capabilities Pydantic AI injects itself are
-    only added when one of the same type isn't already present.
-    """
 
 
 class MessageHistoryMutatedWarning(Warning):

@@ -59,7 +59,7 @@ def test_visit_and_replace_combined_capability():
     )
 
     assert isinstance(rewritten, CombinedCapability)
-    assert _visited(rewritten) == snapshot([('Thinking', 'thinking'), ('WebSearch', None)])
+    assert _visited(rewritten) == snapshot([('Thinking', 'thinking'), ('WebSearch', 'web_search')])
     assert rewritten.capabilities[1] is web_search
     # The original is left alone: rewriting builds a new tree.
     assert _visited(combined)[0] == ('Thinking', 'thinking')
@@ -86,7 +86,7 @@ def test_visit_and_replace_removes_combined_child():
     rewritten = combined.visit_and_replace(lambda cap: None if isinstance(cap, Thinking) else cap)
 
     assert isinstance(rewritten, CombinedCapability)
-    assert _visited(rewritten) == snapshot([('WebSearch', None)])
+    assert _visited(rewritten) == snapshot([('WebSearch', 'web_search')])
     assert rewritten.capabilities[0] is web_search
 
 
@@ -111,7 +111,7 @@ def test_visit_and_replace_splats_a_combined_replacement():
 
     assert isinstance(rewritten, CombinedCapability)
     assert [type(cap).__name__ for cap in rewritten.capabilities] == snapshot(['Capability', 'Capability', 'WebSearch'])
-    assert _visited(rewritten) == snapshot([('Capability', 'a'), ('Capability', 'b'), ('WebSearch', None)])
+    assert _visited(rewritten) == snapshot([('Capability', 'a'), ('Capability', 'b'), ('WebSearch', 'web_search')])
 
 
 def test_visit_and_replace_wrapper_over_capability():

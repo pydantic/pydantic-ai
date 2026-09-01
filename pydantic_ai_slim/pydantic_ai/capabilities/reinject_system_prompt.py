@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import KW_ONLY, dataclass, replace
 from typing import TYPE_CHECKING, Any, cast
 
@@ -48,8 +49,8 @@ class ReinjectSystemPrompt(AbstractCapability[AgentDepsT]):
     id: str | None = 'reinject_system_prompt'
     """One-off: an agent reinjects the system prompt one way, so the id is fixed by default.
 
-    Two instances in the same layer collide rather than being auto-disambiguated. Pass an explicit
-    `id` (or `id=None`) to opt out.
+    Two of them resolve to one via [`combine`][pydantic_ai.capabilities.AbstractCapability.combine],
+    which keeps the last. Pass a distinct `id` to keep both, or `id=None` for derived ids.
     """
 
     async def before_model_request(
@@ -84,6 +85,15 @@ class ReinjectSystemPrompt(AbstractCapability[AgentDepsT]):
         if sys_parts:
             _prepend_to_first_request(messages, sys_parts)
         return request_context
+
+    @classmethod
+    def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
+        """One reinjection policy per agent: the last one supplied is the one in effect.
+
+        Two of these under one `id` are one configuration stated twice, so the run keeps the
+        last. That is what lets `agent.run(capabilities=[...])` override an agent-level one.
+        """
+        return capabilities[-1]
 
 
 def _has_system_prompt(messages: list[ModelMessage]) -> bool:

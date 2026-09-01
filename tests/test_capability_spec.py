@@ -3262,3 +3262,94 @@ async def test_anonymous_non_deferred_capabilities_get_run_local_ids() -> None:
     assert first.id is None
     assert second.id is None
     assert {'plain_cap', 'plain_cap_2'} <= available_ids
+
+
+def _bare_local(query: str) -> str:
+    """Local search fallback."""
+    return 'result'  # pragma: no cover
+
+
+async def test_one_off_capabilities_carry_a_stable_default_id() -> None:
+    """Capabilities covering a single fixed concern name themselves, so durable execution can key on
+    them without the user naming something they never constructed."""
+    assert WebSearch(local=_bare_local).id == 'web_search'
+    assert WebFetch(local=_bare_local).id == 'web_fetch'
+    assert ImageGeneration(fallback_model='openai-responses:gpt-5.4').id == 'image_generation'
+    assert XSearch(fallback_model='xai:grok-4.3').id == 'x_search'
+    assert Thinking().id == 'thinking'
+    assert Instrumentation().id == 'instrumentation'
+    assert ReinjectSystemPrompt().id == 'reinject_system_prompt'
+    assert RaiseContentFilterError().id == 'raise_content_filter_error'
+    # The user's own id always wins, and `id=None` opts back into the derived, disambiguated ids.
+    assert Thinking(id='mine').id == 'mine'
+    assert Thinking(id=None).id is None
+
+
+async def test_two_one_off_capabilities_in_one_layer_combine() -> None:
+    """A fixed id means two of them are one configuration stated twice, so `combine` keeps the last."""
+    capability_map, _ = await _registered_capability_context(Thinking(effort='low'), Thinking(effort='high'))
+    thinking = capability_map['thinking']
+    assert isinstance(thinking, Thinking)
+    assert thinking.effort == 'high'
+
+
+async def test_one_off_capability_with_id_none_is_still_disambiguated() -> None:
+    """`id=None` is the documented escape hatch back to per-occurrence ids."""
+    first = Thinking(effort='low', id=None)
+    second = Thinking(effort='high', id=None)
+    capability_map, _ = await _registered_capability_context(first, second)
+    assert list(capability_map) == ['thinking', 'thinking_2']
+
+
+async def test_run_level_one_off_capability_supersedes_the_agent_level_one() -> None:
+    """A shared id across layers is `combine` choosing the last, not a separate override mechanism:
+    the registry and the composed tree agree on a single owner."""
+    offered: list[list[str]] = []
+
+    def capture(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        offered.append(sorted(tool.name for tool in (info.function_tools or [])))
+        return make_text_response('done')
+
+    def agent_level(query: str) -> str:
+        """Agent-level search."""
+        return 'agent'  # pragma: no cover
+
+    def run_level(topic: str) -> str:
+        """Run-level search."""
+        return 'run'  # pragma: no cover
+
+    agent = Agent(FunctionModel(capture), capabilities=[WebSearch(native=False, local=agent_level)])
+    await agent.run('hi', capabilities=[WebSearch(native=False, local=run_level)])
+
+    assert offered == [['run_level']]
+
+
+async def test_capability_reused_across_layers_keeps_one_occurrence() -> None:
+    """The same instance may appear on the agent and be passed again for the run. Combining leaves
+    exactly one occurrence rather than dropping every one of them."""
+    shared = Thinking(effort='low')
+    agent = Agent(FunctionModel(lambda _messages, _info: make_text_response('done')), capabilities=[shared])
+    result = await agent.run('hi', capabilities=[shared])
+    assert result.output == 'done'
+
+
+async def test_distinct_ids_keep_both_one_off_capabilities() -> None:
+    """Naming them apart is the documented way to run two, and `combine` is never consulted."""
+    offered: list[list[str]] = []
+
+    def capture(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        offered.append(sorted(tool.name for tool in (info.function_tools or [])))
+        return make_text_response('done')
+
+    def agent_level(query: str) -> str:
+        """Agent-level search."""
+        return 'agent'  # pragma: no cover
+
+    def run_level(topic: str) -> str:
+        """Run-level search."""
+        return 'run'  # pragma: no cover
+
+    agent = Agent(FunctionModel(capture), capabilities=[WebSearch(native=False, local=agent_level, id='agent')])
+    await agent.run('hi', capabilities=[WebSearch(native=False, local=run_level, id='run')])
+
+    assert offered == [['agent_level', 'run_level']]

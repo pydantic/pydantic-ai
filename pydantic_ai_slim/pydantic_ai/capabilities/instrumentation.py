@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import warnings
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
 from typing import TYPE_CHECKING, Any, ClassVar
 
@@ -104,8 +104,8 @@ class Instrumentation(AbstractCapability[Any]):
     id: str | None = 'instrumentation'
     """One-off: an agent has a single instrumentation configuration, so the id is fixed by default.
 
-    Two instances in the same layer collide rather than being auto-disambiguated. Pass an explicit
-    `id` (or `id=None`) to opt out.
+    Two of them resolve to one via [`combine`][pydantic_ai.capabilities.AbstractCapability.combine],
+    which keeps the last. Pass a distinct `id` to keep both, or `id=None` for derived ids.
     """
     _message_json_cache: MessageJsonCache = field(default_factory=MessageJsonCache, repr=False, init=False)
     """Per-run cache of input messages' serialized OTel JSON fragments (see `MessageJsonCache`).
@@ -598,3 +598,12 @@ class Instrumentation(AbstractCapability[Any]):
                 serialize_any(redact_binary_content(value, self.settings))
             ).decode(),
         )
+
+    @classmethod
+    def combine(cls, capabilities: Sequence[AbstractCapability[Any]]) -> AbstractCapability[Any]:
+        """An agent is instrumented one way: the last settings supplied are the ones in effect.
+
+        Two of these under one `id` are one configuration stated twice, so the run keeps the
+        last. That is what lets `agent.run(capabilities=[...])` override an agent-level one.
+        """
+        return capabilities[-1]

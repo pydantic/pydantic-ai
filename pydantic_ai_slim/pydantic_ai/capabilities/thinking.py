@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import KW_ONLY, dataclass
 from typing import Any
 
@@ -31,9 +32,18 @@ class Thinking(AbstractCapability[Any]):
     id: str | None = 'thinking'
     """One-off: an agent has a single thinking configuration, so the id is fixed by default.
 
-    Two instances in the same layer collide rather than being auto-disambiguated. Pass an explicit
-    `id` (or `id=None`) to opt out.
+    Two of them resolve to one via [`combine`][pydantic_ai.capabilities.AbstractCapability.combine],
+    which keeps the last. Pass a distinct `id` to keep both, or `id=None` for derived ids.
     """
 
     def get_model_settings(self) -> ModelSettings | None:
         return ModelSettings(thinking=self.effort)
+
+    @classmethod
+    def combine(cls, capabilities: Sequence[AbstractCapability[Any]]) -> AbstractCapability[Any]:
+        """An agent has one thinking configuration: the last one supplied is the one in effect.
+
+        Two of these under one `id` are one configuration stated twice, so the run keeps the
+        last. That is what lets `agent.run(capabilities=[...])` override an agent-level one.
+        """
+        return capabilities[-1]

@@ -4169,10 +4169,11 @@ def _build_run_capabilities(capability: AbstractCapability[AgentDepsT]) -> dict[
     capabilities: list[AbstractCapability[AgentDepsT]] = []
     capability.apply(capabilities.append)
 
-    # Ids are validated per layer (see `_validate_capability_ids`), not over the composed tree, so a
-    # run-level capability may deliberately reuse an agent-level id to override it. Collect the
-    # explicit ones here only so a derived id can't shadow one.
-    explicit_ids = {cap.id for cap in capabilities if cap.id is not None}
+    # Runs on the tree `combine_duplicate_capabilities` has already resolved, so a shared id that
+    # survives to here is one no `combine` accepted. Still needed at run time, not just at
+    # construction: `defer_loading` and `id` can be set after the agent was built, and `for_run` may
+    # hand back a capability carrying neither of the values construction saw.
+    explicit_ids = _validate_capability_ids(capabilities)
 
     by_id: dict[str, AbstractCapability[AgentDepsT]] = {}
     for cap in capabilities:
