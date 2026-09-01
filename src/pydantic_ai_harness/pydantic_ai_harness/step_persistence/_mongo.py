@@ -11,13 +11,13 @@ parts.
 
 Collections (created lazily on first write):
 
-- `runs` -- `_id = run_id`; `insert_one` enforces the single-shot `run_id`
-  contract (duplicate `run_id` raises `pymongo.errors.DuplicateKeyError`,
-  which `StepPersistence.before_run` forestalls with a friendlier check).
+- `runs` -- `_id = run_id`; `insert_one` atomically enforces the single-shot
+  `run_id` contract (duplicates surface as `ValueError`).
 - `events` -- one document per event, ordered by a monotonic `seq`.
 - `snapshots` -- one document per snapshot; latest-per-run is the highest
   `seq`, matching `SqliteStepStore`'s `AUTOINCREMENT seq` so a reused
   `run_id` whose `step_index` reset to 0 cannot clobber an earlier snapshot.
+- `snapshot_idempotency_keys` -- replay suppression retained after pruning.
 - `tool_effects` -- upsert per `(run_id, tool_call_id)`.
 - `counters` -- one document per sequence name, incremented atomically with
   `$inc` to allocate `seq` values.
@@ -32,6 +32,7 @@ from datetime import datetime
 from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter
 from pymongo import AsyncMongoClient, ReturnDocument
 from pymongo.asynchronous.database import AsyncDatabase
+from pymongo.errors import DuplicateKeyError
 
 from pydantic_ai_harness.media import MediaStore, externalize_media, restore_media
 from pydantic_ai_harness.media._mongo import MongoMediaStore  # pyright: ignore[reportPrivateUsage]
@@ -129,7 +130,17 @@ class MongoStepStore:
         await self._db['runs'].create_index('parent_run_id', sparse=True)
         await self._db['runs'].create_index('started_at')
         await self._db['events'].create_index([('run_id', 1), ('seq', 1)])
+        await self._db['events'].create_index(
+            [('run_id', 1), ('idempotency_key', 1)],
+            unique=True,
+            partialFilterExpression={'idempotency_key': {'$type': 'string'}},
+        )
         await self._db['snapshots'].create_index([('run_id', 1), ('seq', -1)])
+        await self._db['snapshots'].create_index(
+            [('run_id', 1), ('idempotency_key', 1)],
+            unique=True,
+            partialFilterExpression={'idempotency_key': {'$type': 'string'}},
+        )
         await self._db['snapshots'].create_index([('run_id', 1), ('state', 1), ('seq', -1)])
         await self._db['tool_effects'].create_index([('run_id', 1), ('tool_call_id', 1)], unique=True)
         await self._db['tool_effects'].create_index([('run_id', 1), ('status', 1)])
@@ -149,7 +160,10 @@ class MongoStepStore:
 
     async def register_run(self, record: RunRecord) -> None:
         await self._ensure_indexes()
-        await self._db['runs'].insert_one({'_id': record.run_id, **_run_to_dict(record)})
+        try:
+            await self._db['runs'].insert_one({'_id': record.run_id, **_run_to_dict(record)})
+        except DuplicateKeyError as exc:
+            raise ValueError(f'run_id {record.run_id!r} is already in the store') from exc
 
     async def get_run(self, *, run_id: str) -> RunRecord | None:
         doc = await self._db['runs'].find_one({'_id': run_id})
@@ -177,8 +191,16 @@ class MongoStepStore:
     async def append_event(self, event: StepEvent) -> None:
         await self._ensure_indexes()
         doc = _event_to_dict(event)
-        doc['seq'] = await self._next_seq('events')
-        await self._db['events'].insert_one(doc)
+        if event.idempotency_key is None:
+            del doc['idempotency_key']
+            doc['seq'] = await self._next_seq('events')
+            await self._db['events'].insert_one(doc)
+            return
+        await self._db['events'].update_one(
+            {'run_id': event.run_id, 'idempotency_key': event.idempotency_key},
+            {'$setOnInsert': {**doc, 'seq': await self._next_seq('events')}},
+            upsert=True,
+        )
 
     async def list_events(self, *, run_id: str) -> list[StepEvent]:
         cursor = self._db['events'].find({'run_id': run_id}).sort('seq', 1)
@@ -193,19 +215,38 @@ class MongoStepStore:
                 media_store=self._media_store,
                 threshold_bytes=self._media_threshold_bytes,
             )
-        await self._db['snapshots'].insert_one(
-            {
-                'seq': await self._next_seq('snapshots'),
-                'run_id': snapshot.run_id,
-                'step_index': snapshot.step_index,
-                'conversation_id': snapshot.conversation_id,
-                'parent_run_id': snapshot.parent_run_id,
-                'agent_name': snapshot.agent_name,
-                'timestamp': snapshot.timestamp.isoformat(),
-                'state': snapshot.state,
-                'messages': json.dumps(messages_json),
-            }
-        )
+        doc: _MongoDocument = {
+            'run_id': snapshot.run_id,
+            'step_index': snapshot.step_index,
+            'conversation_id': snapshot.conversation_id,
+            'parent_run_id': snapshot.parent_run_id,
+            'agent_name': snapshot.agent_name,
+            'timestamp': snapshot.timestamp.isoformat(),
+            'state': snapshot.state,
+            'messages': json.dumps(messages_json),
+            'idempotency_key': snapshot.idempotency_key,
+        }
+        if snapshot.idempotency_key is None:
+            del doc['idempotency_key']
+            doc['seq'] = await self._next_seq('snapshots')
+            await self._db['snapshots'].insert_one(doc)
+        else:
+            key_id: _MongoDocument = {'run_id': snapshot.run_id, 'key': snapshot.idempotency_key}
+            if await self._db['snapshot_idempotency_keys'].find_one({'_id': key_id}) is not None:
+                return
+            doc['seq'] = await self._next_seq('snapshots')
+            try:
+                await self._db['snapshots'].insert_one(doc)
+            except DuplicateKeyError:
+                await self._db['snapshot_idempotency_keys'].update_one(
+                    {'_id': key_id}, {'$setOnInsert': {'_id': key_id}}, upsert=True
+                )
+                return
+            # This ledger is independent of retained snapshot documents, so pruning cannot
+            # make a previously applied key eligible again. Its size is bounded by keyed saves.
+            await self._db['snapshot_idempotency_keys'].update_one(
+                {'_id': key_id}, {'$setOnInsert': {'_id': key_id}}, upsert=True
+            )
         await self._prune_snapshots(snapshot.run_id)
 
     async def _prune_snapshots(self, run_id: str) -> None:
@@ -251,6 +292,7 @@ class MongoStepStore:
             agent_name=_opt_str(doc.get('agent_name')),
             timestamp=datetime.fromisoformat(timestamp_raw),
             state=_snapshot_state(doc.get('state')),
+            idempotency_key=_opt_str(doc.get('idempotency_key')),
         )
 
     async def latest_snapshot(self, *, run_id: str, include_interrupted: bool = False) -> ContinuableSnapshot | None:

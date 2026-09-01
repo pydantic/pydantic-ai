@@ -69,6 +69,21 @@ def _sample_messages_with_media(payload_size: int) -> list[ModelMessage]:
 
 
 class TestSqliteStepStoreProtocol:
+    async def test_keyed_writes_are_idempotent_after_snapshot_pruning(self, tmp_path: Path) -> None:
+        store = SqliteStepStore(database=tmp_path / 'runs.db', media_store=None, max_snapshots_per_run=1)
+        event = StepEvent(run_id='r1', kind='run_started', step_index=0, idempotency_key='event:0')
+        older = ContinuableSnapshot(run_id='r1', step_index=1, messages=[], idempotency_key='0:1:complete')
+        newer = ContinuableSnapshot(run_id='r1', step_index=2, messages=[], idempotency_key='1:2:complete')
+
+        await store.append_event(event)
+        await store.append_event(event)
+        await store.save_snapshot(older)
+        await store.save_snapshot(newer)
+        await store.save_snapshot(older)
+
+        assert await store.list_events(run_id='r1') == [event]
+        assert await store.latest_snapshot(run_id='r1') == newer
+
     async def test_register_and_get_run(self, tmp_path: Path) -> None:
         store = SqliteStepStore(database=tmp_path / 'runs.db')
         record = RunRecord(run_id='r1', conversation_id='c1', agent_name='agent', metadata={'k': 'v'})

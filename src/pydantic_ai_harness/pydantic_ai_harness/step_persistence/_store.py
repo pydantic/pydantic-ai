@@ -107,6 +107,18 @@ def _validate_max_snapshots(value: object) -> None:
         raise ValueError(f'max_snapshots_per_run must be >= 1 or None, got {value!r}')
 
 
+def _snapshot_key_sequence(key: str) -> int | None:
+    """Return the monotonic prefix used by `StepPersistence` snapshot keys."""
+    prefix, separator, _ = key.partition(':')
+    if not separator:
+        return None
+    try:
+        value = int(prefix)
+    except ValueError:
+        return None
+    return value if value >= 0 else None
+
+
 def _retained_seqs(entries: list[tuple[int, SnapshotState]], keep: int) -> set[int]:
     """Return the `seq` values to keep when bounding a run to `keep` snapshots.
 
@@ -191,6 +203,7 @@ class InMemoryStepStore:
         self._runs: dict[str, RunRecord] = {}
         self._events: dict[str, list[StepEvent]] = defaultdict(list)
         self._snapshots: dict[str, list[ContinuableSnapshot]] = defaultdict(list)
+        self._snapshot_key_high_water: dict[str, tuple[int, set[str]]] = {}
         self._tool_effects: dict[tuple[str, str], ToolEffectRecord] = {}
 
     async def register_run(self, record: RunRecord) -> None:
@@ -214,13 +227,36 @@ class InMemoryStepStore:
         return sorted(records, key=lambda r: r.started_at)
 
     async def append_event(self, event: StepEvent) -> None:
-        self._events[event.run_id].append(event)
+        events = self._events[event.run_id]
+        if event.idempotency_key is not None:
+            for prior in events:
+                if prior.idempotency_key == event.idempotency_key:
+                    return
+        events.append(event)
 
     async def list_events(self, *, run_id: str) -> list[StepEvent]:
         return list(self._events.get(run_id, ()))
 
     async def save_snapshot(self, snapshot: ContinuableSnapshot) -> None:
         snaps = self._snapshots[snapshot.run_id]
+        if snapshot.idempotency_key is not None:
+            sequence = _snapshot_key_sequence(snapshot.idempotency_key)
+            high_water = self._snapshot_key_high_water.get(snapshot.run_id)
+            if sequence is not None and high_water is not None:
+                prior_sequence, keys_at_high_water = high_water
+                if sequence < prior_sequence or (
+                    sequence == prior_sequence and snapshot.idempotency_key in keys_at_high_water
+                ):
+                    return
+            if any(prior.idempotency_key == snapshot.idempotency_key for prior in snaps):
+                return
+            if sequence is not None:
+                # Only keys at the highest sequence are retained, bounding replay suppression
+                # independently of snapshot retention while rejecting every older operation.
+                if high_water is None or sequence > high_water[0]:
+                    self._snapshot_key_high_water[snapshot.run_id] = (sequence, {snapshot.idempotency_key})
+                else:
+                    high_water[1].add(snapshot.idempotency_key)
         snaps.append(snapshot)
         if self._max_snapshots_per_run is None or len(snaps) <= self._max_snapshots_per_run:
             return
@@ -295,6 +331,7 @@ def _snapshot_fields_ok(data: dict[str, object]) -> bool:
 
 _STR_STR_DICT_ADAPTER: TypeAdapter[dict[str, str]] = TypeAdapter(dict[str, str])
 _OBJECT_DICT_ADAPTER: TypeAdapter[dict[str, object]] = TypeAdapter(dict[str, object])
+_STRING_ADAPTER: TypeAdapter[str] = TypeAdapter(str)
 
 
 def _str_str_dict(value: object) -> dict[str, str]:
@@ -320,6 +357,7 @@ def _event_to_dict(event: StepEvent) -> dict[str, object]:
         'tool_name': event.tool_name,
         'error': event.error,
         'metadata': dict(event.metadata),
+        'idempotency_key': event.idempotency_key,
     }
 
 
@@ -350,6 +388,7 @@ def _event_from_dict(data: dict[str, object]) -> StepEvent:
         tool_name=_opt_str(data.get('tool_name')),
         error=_opt_str(data.get('error')),
         metadata=_str_str_dict(data.get('metadata')),
+        idempotency_key=_opt_str(data.get('idempotency_key')),
     )
 
 
@@ -361,6 +400,7 @@ def _run_to_dict(record: RunRecord) -> dict[str, object]:
         'agent_name': record.agent_name,
         'metadata': dict(record.metadata),
         'started_at': record.started_at.isoformat(),
+        'registration_id': record.registration_id,
     }
 
 
@@ -376,6 +416,7 @@ def _run_from_dict(data: dict[str, object]) -> RunRecord:
         agent_name=_opt_str(data.get('agent_name')),
         metadata=_str_str_dict(data.get('metadata')),
         started_at=datetime.fromisoformat(started_at_raw),
+        registration_id=_opt_str(data.get('registration_id')),
     )
 
 
@@ -535,6 +576,10 @@ class FileStepStore:
     def _sync_append_event(self, event: StepEvent) -> None:
         run_dir = self._run_dir(event.run_id)
         run_dir.mkdir(parents=True, exist_ok=True)
+        if event.idempotency_key is not None:
+            for prior in self._sync_list_events(event.run_id):
+                if prior.idempotency_key == event.idempotency_key:
+                    return
         line = json.dumps(_event_to_dict(event))
         with (run_dir / 'events.jsonl').open('a', encoding='utf-8') as fp:
             fp.write(line + '\n')
@@ -566,6 +611,23 @@ class FileStepStore:
         run_dir = self._run_dir(snapshot.run_id)
         snap_dir = run_dir / 'snapshots'
         snap_dir.mkdir(parents=True, exist_ok=True)
+        key_path = run_dir / 'snapshot-keys.jsonl'
+        if snapshot.idempotency_key is not None and key_path.exists():
+            recorded_keys = {
+                _STRING_ADAPTER.validate_json(raw)
+                for raw in key_path.read_text(encoding='utf-8').splitlines()
+                if raw.strip()
+            }
+            if snapshot.idempotency_key in recorded_keys:
+                return
+        if snapshot.idempotency_key is not None:
+            for path in snap_dir.glob('*.json'):
+                try:
+                    prior = _load_json_object(path.read_text(encoding='utf-8'))
+                except (FileNotFoundError, ValueError, ValidationError):
+                    continue
+                if prior.get('idempotency_key') == snapshot.idempotency_key:
+                    return
         payload: dict[str, object] = {
             'run_id': snapshot.run_id,
             'step_index': snapshot.step_index,
@@ -575,9 +637,13 @@ class FileStepStore:
             'timestamp': snapshot.timestamp.isoformat(),
             'state': snapshot.state,
             'messages': messages_json,
+            'idempotency_key': snapshot.idempotency_key,
         }
         seq = self._next_snapshot_seq(snap_dir)
         _atomic_write_text(snap_dir / f'{seq}.json', json.dumps(payload))
+        if snapshot.idempotency_key is not None:
+            with key_path.open('a', encoding='utf-8') as fp:
+                fp.write(json.dumps(snapshot.idempotency_key) + '\n')
         self._sync_prune_snapshots(snap_dir)
 
     def _sync_prune_snapshots(self, snap_dir: Path) -> None:
@@ -669,6 +735,7 @@ class FileStepStore:
             agent_name=_opt_str(data.get('agent_name')),
             timestamp=datetime.fromisoformat(timestamp_raw),
             state=_snapshot_state(data.get('state')),
+            idempotency_key=_opt_str(data.get('idempotency_key')),
         )
 
     def _sync_load_latest_snapshot(
@@ -737,6 +804,7 @@ class FileStepStore:
                         agent_name=_opt_str(data.get('agent_name')),
                         timestamp=datetime.fromisoformat(timestamp_raw),
                         state=state,
+                        idempotency_key=_opt_str(data.get('idempotency_key')),
                     )
                 )
             except Exception:
@@ -810,7 +878,8 @@ CREATE TABLE IF NOT EXISTS runs (
     parent_run_id TEXT,
     agent_name TEXT,
     metadata TEXT NOT NULL,
-    started_at TEXT NOT NULL
+    started_at TEXT NOT NULL,
+    registration_id TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_runs_conv ON runs(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_runs_parent ON runs(parent_run_id);
@@ -828,7 +897,8 @@ CREATE TABLE IF NOT EXISTS events (
     tool_call_id TEXT,
     tool_name TEXT,
     error TEXT,
-    metadata TEXT NOT NULL
+    metadata TEXT NOT NULL,
+    idempotency_key TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_events_run ON events(run_id, seq);
 
@@ -841,10 +911,16 @@ CREATE TABLE IF NOT EXISTS snapshots (
     agent_name TEXT,
     timestamp TEXT NOT NULL,
     state TEXT NOT NULL DEFAULT 'complete',
-    messages TEXT NOT NULL
+    messages TEXT NOT NULL,
+    idempotency_key TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_snapshots_run ON snapshots(run_id, seq);
 
+CREATE TABLE IF NOT EXISTS snapshot_idempotency_keys (
+    run_id TEXT NOT NULL,
+    idempotency_key TEXT NOT NULL,
+    PRIMARY KEY (run_id, idempotency_key)
+);
 CREATE TABLE IF NOT EXISTS tool_effects (
     run_id TEXT NOT NULL,
     tool_call_id TEXT NOT NULL,
@@ -887,11 +963,12 @@ class SqliteStepStore:
 
     Schema:
 
-    - `runs(run_id PK, conversation_id, parent_run_id, agent_name, metadata, started_at)`
-    - `events(seq PK AUTOINCREMENT, run_id, kind, step_index, timestamp, ...)`
+    - `runs(run_id PK, conversation_id, parent_run_id, agent_name, metadata, started_at, registration_id)`
+    - `events(seq PK AUTOINCREMENT, run_id, kind, step_index, timestamp, ..., idempotency_key)`
     - `snapshots(seq PK AUTOINCREMENT, run_id, step_index, ..., messages)` --
       the `AUTOINCREMENT` `seq` mirrors `FileStepStore._next_snapshot_seq`
       so `ctx.run_step` resets across `Agent.run` cannot collide.
+    - `snapshot_idempotency_keys(run_id, idempotency_key PK)` -- survives pruning.
     - `tool_effects(run_id, tool_call_id PK)` -- upsert per
       `(run_id, tool_call_id)`, matching `InMemoryStepStore` semantics.
     - `media(sha256 PK, media_type, bytes, size_bytes)` -- `INSERT OR IGNORE`
@@ -969,12 +1046,51 @@ class SqliteStepStore:
         except sqlite3.OperationalError:
             if 'state' not in self._snapshot_columns(conn):
                 raise
+        for table in ('events', 'snapshots'):
+            try:
+                conn.execute(f'ALTER TABLE {table} ADD COLUMN idempotency_key TEXT')
+            except sqlite3.OperationalError:
+                if 'idempotency_key' not in self._table_columns(conn, table):
+                    raise  # pragma: no cover
+        try:
+            conn.execute('ALTER TABLE runs ADD COLUMN registration_id TEXT')
+        except sqlite3.OperationalError:
+            if 'registration_id' not in self._table_columns(conn, 'runs'):
+                raise  # pragma: no cover
+        conn.execute(
+            'CREATE UNIQUE INDEX IF NOT EXISTS idx_events_idempotency '
+            'ON events(run_id, idempotency_key) WHERE idempotency_key IS NOT NULL'
+        )
+        conn.executescript(
+            """
+            CREATE TRIGGER IF NOT EXISTS snapshots_idempotency_ignore
+            BEFORE INSERT ON snapshots
+            WHEN NEW.idempotency_key IS NOT NULL AND EXISTS (
+                SELECT 1 FROM snapshot_idempotency_keys
+                WHERE run_id = NEW.run_id AND idempotency_key = NEW.idempotency_key
+            )
+            BEGIN
+                SELECT RAISE(IGNORE);
+            END;
+            CREATE TRIGGER IF NOT EXISTS snapshots_idempotency_record
+            AFTER INSERT ON snapshots
+            WHEN NEW.idempotency_key IS NOT NULL
+            BEGIN
+                INSERT OR IGNORE INTO snapshot_idempotency_keys (run_id, idempotency_key)
+                VALUES (NEW.run_id, NEW.idempotency_key);
+            END;
+            """
+        )
         conn.commit()
         self._schema_ready = True
 
     @staticmethod
     def _snapshot_columns(conn: sqlite3.Connection) -> set[str]:
         return {row[1] for row in conn.execute('PRAGMA table_info(snapshots)')}
+
+    @staticmethod
+    def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
+        return {row[1] for row in conn.execute(f'PRAGMA table_info({table})')}
 
     async def register_run(self, record: RunRecord) -> None:
         await anyio.to_thread.run_sync(self._sync_register_run, record)
@@ -984,8 +1100,9 @@ class SqliteStepStore:
         try:
             self._ensure_schema(conn)
             conn.execute(
-                'INSERT INTO runs (run_id, conversation_id, parent_run_id, agent_name, metadata, started_at) '
-                'VALUES (?, ?, ?, ?, ?, ?)',
+                'INSERT INTO runs ('
+                'run_id, conversation_id, parent_run_id, agent_name, metadata, started_at, registration_id'
+                ') VALUES (?, ?, ?, ?, ?, ?, ?)',
                 (
                     record.run_id,
                     record.conversation_id,
@@ -993,6 +1110,7 @@ class SqliteStepStore:
                     record.agent_name,
                     json.dumps(dict(record.metadata)),
                     record.started_at.isoformat(),
+                    record.registration_id,
                 ),
             )
         finally:
@@ -1006,7 +1124,7 @@ class SqliteStepStore:
         try:
             self._ensure_schema(conn)
             row = conn.execute(
-                'SELECT run_id, conversation_id, parent_run_id, agent_name, metadata, started_at '
+                'SELECT run_id, conversation_id, parent_run_id, agent_name, metadata, started_at, registration_id '
                 'FROM runs WHERE run_id = ?',
                 (run_id,),
             ).fetchone()
@@ -1040,7 +1158,10 @@ class SqliteStepStore:
             if conversation_id is not None:
                 clauses.append('conversation_id = ?')
                 params.append(conversation_id)
-            sql = 'SELECT run_id, conversation_id, parent_run_id, agent_name, metadata, started_at FROM runs'
+            sql = (
+                'SELECT run_id, conversation_id, parent_run_id, agent_name, metadata, started_at, registration_id '
+                'FROM runs'
+            )
             if clauses:
                 sql += ' WHERE ' + ' AND '.join(clauses)
             sql += ' ORDER BY started_at ASC'
@@ -1059,8 +1180,9 @@ class SqliteStepStore:
             conn.execute(
                 'INSERT INTO events ('
                 'run_id, kind, step_index, timestamp, conversation_id, parent_run_id, '
-                'agent_name, tool_call_id, tool_name, error, metadata'
-                ') VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                'agent_name, tool_call_id, tool_name, error, metadata, idempotency_key'
+                ') VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) '
+                'ON CONFLICT(run_id, idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING',
                 (
                     event.run_id,
                     event.kind,
@@ -1073,6 +1195,7 @@ class SqliteStepStore:
                     event.tool_name,
                     event.error,
                     json.dumps(dict(event.metadata)),
+                    event.idempotency_key,
                 ),
             )
         finally:
@@ -1087,7 +1210,7 @@ class SqliteStepStore:
             self._ensure_schema(conn)
             rows = conn.execute(
                 'SELECT run_id, kind, step_index, timestamp, conversation_id, parent_run_id, '
-                'agent_name, tool_call_id, tool_name, error, metadata '
+                'agent_name, tool_call_id, tool_name, error, metadata, idempotency_key '
                 'FROM events WHERE run_id = ? ORDER BY seq ASC',
                 (run_id,),
             ).fetchall()
@@ -1111,8 +1234,8 @@ class SqliteStepStore:
             self._ensure_schema(conn)
             conn.execute(
                 'INSERT INTO snapshots ('
-                'run_id, step_index, conversation_id, parent_run_id, agent_name, timestamp, state, messages'
-                ') VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+                'run_id, step_index, conversation_id, parent_run_id, agent_name, timestamp, state, messages, '
+                'idempotency_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
                 (
                     snapshot.run_id,
                     snapshot.step_index,
@@ -1122,6 +1245,7 @@ class SqliteStepStore:
                     snapshot.timestamp.isoformat(),
                     snapshot.state,
                     json.dumps(messages_json),
+                    snapshot.idempotency_key,
                 ),
             )
             self._sync_prune_snapshots(conn, snapshot.run_id)
@@ -1158,7 +1282,7 @@ class SqliteStepStore:
         row = await anyio.to_thread.run_sync(self._sync_load_latest_snapshot, run_id, include_interrupted)
         if row is None:
             return None
-        step_index, conv_id, parent_id, agent_name, timestamp_iso, state, messages_json_text = row
+        step_index, conv_id, parent_id, agent_name, timestamp_iso, state, messages_json_text, idempotency_key = row
         messages_json: object = json.loads(messages_json_text)
         if self._media_store is not None:
             messages_json = await restore_media(messages_json, media_store=self._media_store)
@@ -1172,16 +1296,18 @@ class SqliteStepStore:
             agent_name=agent_name,
             timestamp=datetime.fromisoformat(timestamp_iso),
             state=state,
+            idempotency_key=idempotency_key,
         )
 
     def _sync_load_latest_snapshot(
         self, run_id: str, include_interrupted: bool
-    ) -> tuple[int, str | None, str | None, str | None, str, SnapshotState, str] | None:
+    ) -> tuple[int, str | None, str | None, str | None, str, SnapshotState, str, str | None] | None:
         conn = self._open()
         try:
             self._ensure_schema(conn)
             sql = (
-                'SELECT step_index, conversation_id, parent_run_id, agent_name, timestamp, state, messages '
+                'SELECT step_index, conversation_id, parent_run_id, agent_name, timestamp, state, messages, '
+                'idempotency_key '
                 'FROM snapshots WHERE run_id = ?'
             )
             if not include_interrupted:
@@ -1191,7 +1317,7 @@ class SqliteStepStore:
             self._maybe_close(conn)
         if row is None:
             return None
-        step_index, conv_id, parent_id, agent_name, timestamp_iso, state_raw, messages_json_text = row
+        step_index, conv_id, parent_id, agent_name, timestamp_iso, state_raw, messages_json_text, key = row
         if not (isinstance(step_index, int) and isinstance(timestamp_iso, str) and isinstance(messages_json_text, str)):
             raise ValueError('snapshot row has wrong types')
         return (
@@ -1202,6 +1328,7 @@ class SqliteStepStore:
             timestamp_iso,
             _snapshot_state(state_raw),
             messages_json_text,
+            _opt_str(key),
         )
 
     async def list_snapshots(self, *, run_id: str, include_interrupted: bool = False) -> list[ContinuableSnapshot]:
@@ -1217,7 +1344,7 @@ class SqliteStepStore:
         snapshots: list[ContinuableSnapshot] = []
         for row in rows:
             try:
-                step_index, conv_id, parent_id, agent_name, timestamp_iso, state_raw, messages_json_text = row
+                step_index, conv_id, parent_id, agent_name, timestamp_iso, state_raw, messages_json_text, key = row
                 if not (
                     isinstance(step_index, int)
                     and isinstance(timestamp_iso, str)
@@ -1238,6 +1365,7 @@ class SqliteStepStore:
                         agent_name=_opt_str(agent_name),
                         timestamp=datetime.fromisoformat(timestamp_iso),
                         state=_snapshot_state(state_raw),
+                        idempotency_key=_opt_str(key),
                     )
                 )
             except Exception:
@@ -1249,7 +1377,8 @@ class SqliteStepStore:
         try:
             self._ensure_schema(conn)
             sql = (
-                'SELECT step_index, conversation_id, parent_run_id, agent_name, timestamp, state, messages '
+                'SELECT step_index, conversation_id, parent_run_id, agent_name, timestamp, state, messages, '
+                'idempotency_key '
                 'FROM snapshots WHERE run_id = ?'
             )
             if not include_interrupted:
@@ -1326,7 +1455,7 @@ class SqliteStepStore:
 
 
 def _run_from_row(row: tuple[object, ...]) -> RunRecord:
-    run_id, conv_id, parent_id, agent_name, metadata_text, started_at_iso = row
+    run_id, conv_id, parent_id, agent_name, metadata_text, started_at_iso, registration_id = row
     if not (isinstance(run_id, str) and isinstance(metadata_text, str) and isinstance(started_at_iso, str)):
         raise ValueError('run row has wrong types')
     return RunRecord(
@@ -1336,6 +1465,7 @@ def _run_from_row(row: tuple[object, ...]) -> RunRecord:
         agent_name=_opt_str(agent_name),
         metadata=_str_str_dict(json.loads(metadata_text)),
         started_at=datetime.fromisoformat(started_at_iso),
+        registration_id=_opt_str(registration_id),
     )
 
 
@@ -1352,6 +1482,7 @@ def _event_from_row(row: tuple[object, ...]) -> StepEvent:
         tool_name,
         error,
         metadata_text,
+        idempotency_key,
     ) = row
     if not (
         isinstance(run_id, str)
@@ -1376,6 +1507,7 @@ def _event_from_row(row: tuple[object, ...]) -> StepEvent:
         tool_name=_opt_str(tool_name),
         error=_opt_str(error),
         metadata=_str_str_dict(json.loads(metadata_text)),
+        idempotency_key=_opt_str(idempotency_key),
     )
 
 

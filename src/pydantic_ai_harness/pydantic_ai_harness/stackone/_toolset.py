@@ -40,6 +40,11 @@ except ImportError as _import_error:  # pragma: no cover
     ) from _import_error
 
 __all__ = (
+    # Re-exported so `_capability` can take it from here instead of repeating the optional-import
+    # guard above. Naming it makes the re-export explicit, which is what `reportPrivateImportUsage`
+    # asks for; without it the import only type-checks when Pyright happens to analyze this module
+    # in the same invocation as the one importing from it.
+    'MCPToolsetClient',
     'STACKONE_API_KEY_ENV',
     'STACKONE_BASE_URL',
     'StackOneToolset',

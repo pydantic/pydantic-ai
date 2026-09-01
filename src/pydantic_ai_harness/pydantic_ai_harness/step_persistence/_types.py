@@ -81,6 +81,8 @@ class StepEvent:
     tool_name: str | None = None
     error: str | None = None
     metadata: dict[str, str] = field(default_factory=_empty_str_dict)
+    idempotency_key: str | None = None
+    """Stable boundary identity used by stores to suppress a retried append."""
 
 
 @dataclass(kw_only=True)
@@ -101,6 +103,8 @@ class ContinuableSnapshot:
     agent_name: str | None = None
     timestamp: datetime = field(default_factory=_utcnow)
     state: SnapshotState = 'complete'
+    idempotency_key: str | None = None
+    """Stable boundary identity used by stores to suppress a retried save."""
 
 
 @dataclass(kw_only=True)
@@ -141,3 +145,5 @@ class RunRecord:
     agent_name: str | None = None
     metadata: dict[str, str] = field(default_factory=_empty_str_dict)
     started_at: datetime = field(default_factory=_utcnow)
+    registration_id: str | None = None
+    """Durable registration invocation that claimed this run id."""
