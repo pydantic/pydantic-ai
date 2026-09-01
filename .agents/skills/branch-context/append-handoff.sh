@@ -162,7 +162,8 @@ fi
 
 # Same session already handed off → amend that entry instead of competing with it.
 if [ -n "$SESSION_ID" ] && [ -f "$LEDGER" ]; then
-    PRIOR="$(awk -v s="$SESSION_ID" '$1 == s { $1 = ""; sub(/^ /, ""); print }' "$LEDGER" | tail -1)"
+    PRIOR="$(awk -v lane="$LANE_ID" -v session="$SESSION_ID" \
+        '$1 == lane && $2 == session { print $3 }' "$LEDGER" | tail -1)"
     if [ -n "$PRIOR" ] && [ -f "$HAND_DIR/$PRIOR" ]; then
         DEST="$HAND_DIR/$PRIOR"
         if [ -n "$BODY_SRC" ]; then
@@ -252,7 +253,7 @@ fi
 } >> "$INDEX"
 
 if [ -n "$SESSION_ID" ]; then
-    echo "$SESSION_ID $FNAME" >> "$LEDGER"
+    echo "$LANE_ID $SESSION_ID $FNAME" >> "$LEDGER"
 fi
 
 echo "Appended handoff index entry → $INDEX" >&2
