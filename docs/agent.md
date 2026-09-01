@@ -1403,7 +1403,79 @@ _(This example is complete, it can be run "as is")_
 
 Note that returning an empty string will result in no instruction message added.
 
-Instructions can also come from [capabilities](capabilities/overview.md) via [`get_instructions()`][pydantic_ai.capabilities.AbstractCapability.get_instructions], or from [template strings](agent-spec.md#template-strings) rendered against the agent's dependencies.
+Instructions can also come from [capabilities](capabilities/overview.md) via [`get_instructions()`][pydantic_ai.capabilities.AbstractCapability.get_instructions], [toolsets](toolsets.md#building-a-custom-toolset) via [`get_instructions()`][pydantic_ai.toolsets.AbstractToolset.get_instructions], or from [template strings](agent-spec.md#template-strings) rendered against the agent's dependencies.
+
+### Instruction parts {#instruction-parts}
+
+Each source contributes its own instruction part. Parts are sent to the model as one string, separated by a blank line, and are also available individually as [`InstructionPart`][pydantic_ai.messages.InstructionPart]s on [`ModelRequestParameters.instruction_parts`][pydantic_ai.models.ModelRequestParameters.instruction_parts].
+
+You declare a [`name`][pydantic_ai.messages.InstructionPart.name]; the framework issues an [`id`][pydantic_ai.messages.InstructionPart.id]. Name a part relative to what you own — `'limits'`, not `'toolset:weather:limits'` — and the source contributing it supplies the rest, so you never repeat your own identity and can never claim another source's key. The [`InstructionId`][pydantic_ai.messages.InstructionId] you get back pairs the [`source`][pydantic_ai.messages.InstructionId.source] that contributed the part with the [`name`][pydantic_ai.messages.InstructionId.name], if there is one, and renders as its segments joined by `:`:
+
+| `str(part.id)` | Addresses |
+|---|---|
+| `'agent'` | The agent's own `instructions` |
+| `'toolset:<toolset id>'` | Everything a [toolset](toolsets.md) with an [`id`][pydantic_ai.toolsets.AbstractToolset.id] contributes |
+| `'capability:<capability id>'` | Everything a [capability](capabilities/overview.md) with an [`id`][pydantic_ai.capabilities.AbstractCapability.id] contributes |
+| `'agent:<name>'` | One part the agent named |
+| `'toolset:<toolset id>:<name>'` | One part that toolset named |
+| `'capability:<capability id>:<name>'` | One part that capability named |
+
+There are two ways to declare a name, depending on what the part is:
+
+- **A function** is named where it is registered: [`@agent.instructions(name=...)`][pydantic_ai.agent.Agent.instructions], [`@capability.instructions(name=...)`][pydantic_ai.capabilities.Capability.instructions].
+- **Literal text** carries its name on the text itself, by passing an [`InstructionPart`][pydantic_ai.messages.InstructionPart] anywhere instructions are accepted — `Agent(instructions=...)`, `Capability(instructions=...)`, `FunctionToolset(instructions=...)`, or a `get_instructions()` implementation on a [capability](capabilities/custom.md) or [toolset](toolsets.md#building-a-custom-toolset). The part also decides whether it counts as [`dynamic`][pydantic_ai.messages.InstructionPart.dynamic], which is what keeps it outside the cacheable prefix (see [prompt caching](models/anthropic.md#prompt-caching)), and a part is always kept whole rather than merged with its neighbours.
+
+Because a part's id is stable across runs, an application that stores instruction configuration elsewhere (say, a UI where a user edits the instructions an MCP server contributes) can key that configuration on the id instead of on the part's position or wording, both of which change as the agent evolves.
+
+A source key is what everything else is built from, so it keeps its meaning permanently: giving more sources ids later can only add keys, never change what an existing key addresses.
+
+Capability ids, toolset ids, and instruction names cannot contain `:`, because the character is reserved as the delimiter between these segments. The name `'agent'` is also reserved, because on its own it is the key of the agent's own instructions.
+
+```python {title="instruction_parts.py"}
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import Capability
+from pydantic_ai.models.test import TestModel
+
+model = TestModel()
+agent = Agent(
+    model,
+    instructions='Be concise.',
+    capabilities=[Capability(instructions='Cite your sources.', id='research')],
+)
+
+
+@agent.instructions(name='local_time')
+def local_time() -> str:
+    return 'The time is 10:00.'
+
+
+@agent.instructions
+def user_name(ctx: RunContext[None]) -> str:
+    return 'The user is Frank.'
+
+
+agent.run_sync('What is the capital of Italy?')
+
+parts = model.last_model_request_parameters.instruction_parts or []
+print([(part.name, str(part.id) if part.id is not None else None, part.content) for part in parts])
+"""
+[
+    (None, 'agent', 'Be concise.'),
+    (None, 'capability:research', 'Cite your sources.'),
+    ('local_time', 'agent:local_time', 'The time is 10:00.'),
+    (None, None, 'The user is Frank.'),
+]
+"""
+```
+
+_(This example is complete, it can be run "as is")_
+
+Two consequences worth knowing before you key configuration on an id:
+
+- **A key covers everything under it.** Where a source contributes several parts and none of them are named, they all carry the source key, so replacing that key's text replaces all of them — computed parts included. That is the honest meaning of "I control what this capability tells the model", but it means parts a source didn't name can't be addressed one by one. `'agent'` is the deliberate exception: it covers only the literal instructions the agent was built with, so taking over the base prompt doesn't silently swallow an `@agent.instructions` function that injects the date or the user's name.
+- **Some parts can't be addressed at all.** They take part in the prompt like any other, but nothing keys them: an instructions function with no `name` (a function's own name isn't unique, and a lambda or [template string](agent-spec.md#template-strings) has none), a callable passed to `Agent(instructions=...)`, anything passed as runtime instructions to a specific run, and anything from a toolset or capability without an `id`. If you need one of your own callables to be overridable, register it with `@agent.instructions(name=...)` or [`@capability.instructions(name=...)`][pydantic_ai.capabilities.Capability.instructions] instead of passing it to the constructor.
+
+    Naming a part whose source has no `id` leaves its `id` as `None`, because there is no source key to qualify the name against. The name still travels with the part, so you can see what its author called it, but nothing addresses it.
 
 ## Reflection and self-correction
 
