@@ -177,11 +177,23 @@ async def web_toolset_lifespan(
     call this context manager from the parent application's lifespan with the same toolset
     instances passed to `to_web(toolsets=...)`:
 
-    ```python
+    ```python {test="skip" lint="skip"}
+    from contextlib import asynccontextmanager
+
+    from fastapi import FastAPI
+
+    from pydantic_ai import Agent
+    from pydantic_ai.ui._web import web_toolset_lifespan
+
+    agent = Agent('openai:gpt-5.2')
+    toolsets = []
+
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         async with web_toolset_lifespan(toolsets):
             yield
+
 
     parent_app = FastAPI(lifespan=lifespan)
     parent_app.mount('/chat', agent.to_web(toolsets=toolsets))
