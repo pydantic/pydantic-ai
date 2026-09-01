@@ -1278,6 +1278,7 @@ def test_agent_to_web_with_toolsets(mocker: MockerFixture):
         instructions=None,
         html_source=None,
         allowed_hosts=None,
+        lifespan=None,
     )
 
 
@@ -1419,3 +1420,24 @@ async def test_web_app_mcp_composition_with_agent_tools(tmp_path: Path):
         assert 'prefixed_hello' in res.text
         assert 'test_server_celsius_to_fahrenheit' in res.text
         assert '32.0' in res.text
+
+
+def test_create_web_app_custom_lifespan():
+    """Test create_web_app composes custom lifespan with toolsets lifespan."""
+    from contextlib import asynccontextmanager
+
+    agent = Agent(TestModel())
+    lifespan_events: list[str] = []
+
+    @asynccontextmanager
+    async def custom_lifespan(app: Starlette):
+        lifespan_events.append('startup')
+        yield
+        lifespan_events.append('shutdown')
+
+    app = create_web_app(agent, lifespan=custom_lifespan)
+
+    with TestClient(app, base_url=LOCAL_BASE_URL):
+        assert lifespan_events == ['startup']
+
+    assert lifespan_events == ['startup', 'shutdown']

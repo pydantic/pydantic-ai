@@ -27,6 +27,7 @@ try:
     from starlette.requests import Request
     from starlette.responses import HTMLResponse, Response
     from starlette.routing import Mount
+    from starlette.types import Lifespan
 except ImportError as _import_error:  # pragma: no cover
     raise ImportError(
         'Please install the `starlette` package to use `Agent.web()` method, '
@@ -175,6 +176,7 @@ def create_web_app(
     html_source: str | Path | None = None,
     sdk_version: Literal[5, 6, 7] = BUNDLED_UI_SDK_VERSION,
     allowed_hosts: Sequence[str] | None = None,
+    lifespan: Lifespan[Starlette] | None = None,
 ) -> Starlette:
     """Create a Starlette app that serves a web chat UI for the given agent.
 
@@ -210,6 +212,8 @@ def create_web_app(
             with a `421`, so that a website cannot reach the UI on your machine by pointing a
             hostname it controls at you (DNS rebinding). Pass `['*']` to answer to any host, only
             if something in front of the app already authenticates requests.
+        lifespan: Optional custom Starlette lifespan context manager to run alongside the
+            internal toolset lifespan.
 
     Returns:
         A configured Starlette application ready to be served
@@ -223,10 +227,12 @@ def create_web_app(
     allowed_hosts = [normalized_pattern(pattern) for pattern in allowed_hosts or ()]
 
     @asynccontextmanager
-    async def lifespan(app: Starlette):
+    async def app_lifespan(app: Starlette):
         async with AsyncExitStack() as stack:
             for toolset in toolsets or ():
                 await stack.enter_async_context(toolset)
+            if lifespan is not None:
+                await stack.enter_async_context(lifespan(app))
             yield
 
     api_app = create_api_app(
@@ -245,7 +251,7 @@ def create_web_app(
     # hostname we don't answer to is misdirected whatever it asks for, and guarding every route
     # means a route added later is covered without anyone having to remember to opt it in.
     middleware = [Middleware(HostValidationMiddleware, allowed_hosts=allowed_hosts)]
-    app = Starlette(routes=routes, middleware=middleware, lifespan=lifespan)
+    app = Starlette(routes=routes, middleware=middleware, lifespan=app_lifespan)
 
     async def index(request: Request) -> Response:
         """Serve the chat UI from filesystem cache or CDN."""
