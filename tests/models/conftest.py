@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol, cast
+from typing import TYPE_CHECKING, Protocol, cast
 
 import pytest
+from pydantic import JsonValue
 
 from ..conftest import RequestCapture, try_import
 
@@ -49,55 +50,89 @@ def anthropic_model(anthropic_api_key: str, request_capture: RequestCapture) -> 
     return _create_model
 
 
-def content_blocks(body: dict[str, Any], block_type: str) -> list[dict[str, Any]]:
+def content_blocks(body: dict[str, JsonValue], block_type: str) -> list[dict[str, JsonValue]]:
     """Every content block of `block_type` a request's messages carry, in order.
 
     A block list is a flatter and more stable projection than the messages themselves: it survives a
     message being split or merged, so it pins how a block renders without churning on unrelated
     conversation-shape changes.
     """
-    return [
-        block
-        for message in body['messages']
-        if isinstance(message['content'], list)
-        for block in message['content']
-        if block.get('type') == block_type
-    ]
+    messages = body.get('messages')
+    assert isinstance(messages, list)
+
+    blocks: list[dict[str, JsonValue]] = []
+    for message in messages:
+        assert isinstance(message, dict)
+        content = message.get('content')
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            assert isinstance(block, dict)
+            if block.get('type') == block_type:
+                blocks.append(block)
+    return blocks
 
 
-def message_shape(body: dict[str, Any]) -> list[tuple[str, list[str]]]:
+def message_shape(body: dict[str, JsonValue]) -> list[tuple[str, list[str]]]:
     """Each message's role and the types of its content blocks, dropping the payloads.
 
     The digest a history-rewriting test wants: it moves when compaction drops, reorders or re-wraps a
     turn, and stays put when only wording changes.
     """
-    return [
-        (
-            message['role'],
-            [block['type'] for block in message['content']] if isinstance(message['content'], list) else ['<str>'],
-        )
-        for message in body['messages']
-    ]
+    messages = body.get('messages')
+    assert isinstance(messages, list)
+
+    shape: list[tuple[str, list[str]]] = []
+    for message in messages:
+        assert isinstance(message, dict)
+        role = message.get('role')
+        assert isinstance(role, str)
+        content = message.get('content')
+        if not isinstance(content, list):
+            shape.append((role, ['<str>']))
+            continue
+
+        block_types: list[str] = []
+        for block in content:
+            assert isinstance(block, dict)
+            block_type = block.get('type')
+            assert isinstance(block_type, str)
+            block_types.append(block_type)
+        shape.append((role, block_types))
+    return shape
 
 
-def cache_breakpoints(body: dict[str, Any]) -> tuple[dict[str, Any] | None, list[str]]:
+def cache_breakpoints(body: dict[str, JsonValue]) -> tuple[dict[str, JsonValue] | None, list[str]]:
     """The request-level `cache_control`, plus a path for every block carrying its own breakpoint.
 
     Where the breakpoints sit is the thing a caching test actually depends on: a breakpoint that
     moves silently re-processes the tail instead of reading from cache, with no error to notice.
     """
+    cache_control = body.get('cache_control')
+    assert cache_control is None or isinstance(cache_control, dict)
+
     blocks: list[str] = []
     for section in ('system', 'tools'):
-        section_blocks: list[dict[str, Any]] = body[section] if isinstance(body.get(section), list) else []
-        blocks += [f'{section}[{i}]' for i, block in enumerate(section_blocks) if block.get('cache_control')]
-    blocks += [
-        f'messages[{m}].content[{b}]'
-        for m, message in enumerate(body['messages'])
-        if isinstance(message['content'], list)
-        for b, block in enumerate(message['content'])
-        if block.get('cache_control')
-    ]
-    return body.get('cache_control'), blocks
+        section_blocks = body.get(section)
+        if not isinstance(section_blocks, list):
+            continue
+        for index, block in enumerate(section_blocks):
+            assert isinstance(block, dict)
+            if block.get('cache_control'):
+                blocks.append(f'{section}[{index}]')
+
+    messages = body.get('messages')
+    assert isinstance(messages, list)
+    for message_index, message in enumerate(messages):
+        assert isinstance(message, dict)
+        content = message.get('content')
+        if not isinstance(content, list):
+            continue
+        for block_index, block in enumerate(content):
+            assert isinstance(block, dict)
+            if block.get('cache_control'):
+                blocks.append(f'messages[{message_index}].content[{block_index}]')
+    return cache_control, blocks
 
 
 @pytest.fixture(scope='function')

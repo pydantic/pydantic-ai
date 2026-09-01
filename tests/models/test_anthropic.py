@@ -12190,20 +12190,27 @@ async def test_anthropic_lazy_advertisement_live(
     request_bodies = request_capture.bodies()
     assert len(request_bodies) >= 3
     before, reveal, *later = request_bodies
-    before_tools = before['tools']
-    reveal_tools = reveal['tools']
+    before_tools_value = before['tools']
+    reveal_tools_value = reveal['tools']
+    assert isinstance(before_tools_value, list)
+    assert isinstance(reveal_tools_value, list)
+    before_tools = [tool for tool in before_tools_value if isinstance(tool, dict)]
+    reveal_tools = [tool for tool in reveal_tools_value if isinstance(tool, dict)]
+    assert len(before_tools) == len(before_tools_value)
+    assert len(reveal_tools) == len(reveal_tools_value)
     before_names = [tool.get('name') for tool in before_tools]
     reveal_names = [tool.get('name') for tool in reveal_tools]
     assert 'lookup_refund_policy' not in before_names
     assert reveal_tools[:-1] == before_tools
     assert reveal_names == [*before_names, 'lookup_refund_policy']
     assert reveal_tools[-1]['defer_loading'] is True
-    addition_names = [
-        block['tool']['name']
-        for message in reveal['messages']
-        for block in message['content']
-        if block.get('type') == 'tool_addition'
-    ]
+    addition_names: list[str] = []
+    for block in content_blocks(reveal, 'tool_addition'):
+        tool = block['tool']
+        assert isinstance(tool, dict)
+        name = tool['name']
+        assert isinstance(name, str)
+        addition_names.append(name)
     # List equality: a same-request duplicate `tool_addition` must fail here, not only in the
     # dedupe unit test.
     assert addition_names == ['lookup_refund_policy']
@@ -12258,20 +12265,27 @@ async def test_anthropic_fable_5_lazy_advertisement_live(
     request_bodies = request_capture.bodies()
     assert len(request_bodies) >= 3
     before, reveal, *later = request_bodies
-    before_tools = before['tools']
-    reveal_tools = reveal['tools']
+    before_tools_value = before['tools']
+    reveal_tools_value = reveal['tools']
+    assert isinstance(before_tools_value, list)
+    assert isinstance(reveal_tools_value, list)
+    before_tools = [tool for tool in before_tools_value if isinstance(tool, dict)]
+    reveal_tools = [tool for tool in reveal_tools_value if isinstance(tool, dict)]
+    assert len(before_tools) == len(before_tools_value)
+    assert len(reveal_tools) == len(reveal_tools_value)
     before_names = [tool.get('name') for tool in before_tools]
     reveal_names = [tool.get('name') for tool in reveal_tools]
     assert 'lookup_refund_policy' not in before_names
     assert reveal_tools[:-1] == before_tools
     assert reveal_names == [*before_names, 'lookup_refund_policy']
     assert reveal_tools[-1]['defer_loading'] is True
-    addition_names = [
-        block['tool']['name']
-        for message in reveal['messages']
-        for block in message['content']
-        if block.get('type') == 'tool_addition'
-    ]
+    addition_names: list[str] = []
+    for block in content_blocks(reveal, 'tool_addition'):
+        tool = block['tool']
+        assert isinstance(tool, dict)
+        name = tool['name']
+        assert isinstance(name, str)
+        addition_names.append(name)
     # List equality: a same-request duplicate `tool_addition` must fail here, not only in the
     # dedupe unit test.
     assert addition_names == ['lookup_refund_policy']
@@ -12456,9 +12470,11 @@ async def test_anthropic_explicit_tool_search_keeps_search_surface(
     result = await agent.run(
         'Use tool search to find search_only_tool, call it with query "recorded", then return only its result.'
     )
-    advertised = [
-        (tool['name'], tool.get('defer_loading'), tool.get('description')) for tool in request_capture.body()['tools']
-    ]
+    tools_value = request_capture.body()['tools']
+    assert isinstance(tools_value, list)
+    tools = [tool for tool in tools_value if isinstance(tool, dict)]
+    assert len(tools) == len(tools_value)
+    advertised = [(tool['name'], tool.get('defer_loading'), tool.get('description')) for tool in tools]
     assert advertised == snapshot(
         [
             (
@@ -12543,9 +12559,11 @@ async def test_anthropic_deferred_capability_tool_callable_without_tool_search(
     result = await agent.run(
         'First load the refunds capability. Then call lookup_refund_policy for order-123. Return only the tool result.'
     )
-    advertised = [
-        (tool['name'], tool.get('defer_loading'), tool.get('description')) for tool in request_capture.body()['tools']
-    ]
+    tools_value = request_capture.body()['tools']
+    assert isinstance(tools_value, list)
+    tools = [tool for tool in tools_value if isinstance(tool, dict)]
+    assert len(tools) == len(tools_value)
+    advertised = [(tool['name'], tool.get('defer_loading'), tool.get('description')) for tool in tools]
     assert advertised == snapshot(
         [
             (
@@ -12573,16 +12591,25 @@ The following capabilities are deferred and can be loaded using the `load_capabi
     request_bodies = request_capture.bodies()
     assert len(request_bodies) >= 3
     for request_body in request_bodies:
+        tools_value = request_body['tools']
+        assert isinstance(tools_value, list)
+        tools = [tool for tool in tools_value if isinstance(tool, dict)]
+        assert len(tools) == len(tools_value)
         assert not any(
-            tool.get('name') in {'search_tools', 'tool_search_tool_bm25', 'tool_search_tool_regex'}
-            for tool in request_body['tools']
+            tool.get('name') in {'search_tools', 'tool_search_tool_bm25', 'tool_search_tool_regex'} for tool in tools
         )
-    [initial_lookup] = [tool for tool in request_bodies[0]['tools'] if tool.get('name') == 'lookup_refund_policy']
+    initial_tools_value = request_bodies[0]['tools']
+    assert isinstance(initial_tools_value, list)
+    initial_tools = [tool for tool in initial_tools_value if isinstance(tool, dict)]
+    assert len(initial_tools) == len(initial_tools_value)
+    [initial_lookup] = [tool for tool in initial_tools if tool.get('name') == 'lookup_refund_policy']
     assert initial_lookup['defer_loading'] is True
-    assert all(
-        [tool for tool in request_body['tools'] if tool.get('name') == 'lookup_refund_policy'] == [initial_lookup]
-        for request_body in request_bodies[1:]
-    )
+    for request_body in request_bodies[1:]:
+        tools_value = request_body['tools']
+        assert isinstance(tools_value, list)
+        tools = [tool for tool in tools_value if isinstance(tool, dict)]
+        assert len(tools) == len(tools_value)
+        assert [tool for tool in tools if tool.get('name') == 'lookup_refund_policy'] == [initial_lookup]
     assert any(
         part.tool_name == 'lookup_refund_policy'
         for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
@@ -12623,9 +12650,11 @@ async def test_anthropic_deferred_capability_without_tool_search_across_models(
     result = await agent.run(
         'First load the refunds capability. Then call lookup_refund_policy for order-123. Return only the tool result.'
     )
-    advertised = [
-        (tool['name'], tool.get('defer_loading'), tool.get('description')) for tool in request_capture.body()['tools']
-    ]
+    tools_value = request_capture.body()['tools']
+    assert isinstance(tools_value, list)
+    tools = [tool for tool in tools_value if isinstance(tool, dict)]
+    assert len(tools) == len(tools_value)
+    advertised = [(tool['name'], tool.get('defer_loading'), tool.get('description')) for tool in tools]
     assert advertised == snapshot(
         [
             (

@@ -13,6 +13,7 @@ from typing import Any, Literal
 
 import pytest
 from inline_snapshot import snapshot
+from pydantic import JsonValue
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import NativeTool
@@ -429,27 +430,43 @@ async def test_anthropic_code_execution_files_cache_prefix_stable(
     #     The `cache_control` breakpoint marker is stripped before comparing — in `messages` mode it
     #     lands on the first user message in turn 1 (when it is also the last) but not in turn 2,
     #     which is orthogonal to stability: the cached *content* (text + upload) is what must not move.
-    first_user_contents: list[Any] = []
+    first_user_contents: list[list[dict[str, JsonValue]]] = []
+    messages_by_body: list[list[tuple[dict[str, JsonValue], list[dict[str, JsonValue]]]]] = []
     for body in bodies:
-        user_indices = [i for i, m in enumerate(body['messages']) if m['role'] == 'user']
-        upload_message_indices = [
-            i for i in user_indices if any(b['type'] == 'container_upload' for b in body['messages'][i]['content'])
+        messages = body.get('messages')
+        assert isinstance(messages, list)
+        typed_messages: list[tuple[dict[str, JsonValue], list[dict[str, JsonValue]]]] = []
+        for message in messages:
+            assert isinstance(message, dict)
+            content = message.get('content')
+            assert isinstance(content, list)
+            typed_content: list[dict[str, JsonValue]] = []
+            for block in content:
+                assert isinstance(block, dict)
+                typed_content.append(block)
+            typed_messages.append((message, typed_content))
+        messages_by_body.append(typed_messages)
+
+        user_contents = [content for message, content in typed_messages if message.get('role') == 'user']
+        upload_contents = [
+            content for content in user_contents if any(block.get('type') == 'container_upload' for block in content)
         ]
-        assert upload_message_indices == user_indices
-        content = body['messages'][user_indices[0]]['content']
-        first_user_contents.append([{k: v for k, v in block.items() if k != 'cache_control'} for block in content])
+        assert len(upload_contents) == len(user_contents)
+        first_user_contents.append(
+            [{key: value for key, value in block.items() if key != 'cache_control'} for block in user_contents[0]]
+        )
     assert first_user_contents[0] == first_user_contents[1]
 
     # (b) Cache-control placement differs by mode, but `container_upload` is never the breakpoint.
     if case.mode == 'messages':
-        for body in bodies:
-            cached_blocks = [b for m in body['messages'] for b in m['content'] if 'cache_control' in b]
-            assert cached_blocks and all(b['type'] != 'container_upload' for b in cached_blocks)
+        for body, typed_messages in zip(bodies, messages_by_body):
+            cached_blocks = [block for _, content in typed_messages for block in content if 'cache_control' in block]
+            assert cached_blocks and all(block.get('type') != 'container_upload' for block in cached_blocks)
             assert 'cache_control' not in body
     else:
-        for body in bodies:
+        for body, typed_messages in zip(bodies, messages_by_body):
             assert body['cache_control'] == {'type': 'ephemeral', 'ttl': '5m'}
-            assert all('cache_control' not in b for m in body['messages'] for b in m['content'])
+            assert all('cache_control' not in block for _, content in typed_messages for block in content)
 
     # (c) The prefix is genuinely reused: turn 2 reads back at least everything turn 1 wrote.
     assert first.usage.cache_write_tokens > 0

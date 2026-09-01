@@ -21,7 +21,7 @@ import httpx
 import httpx2
 import pytest
 from _pytest.assertion.rewrite import AssertionRewritingHook
-from pydantic import TypeAdapter
+from pydantic import JsonValue, TypeAdapter
 from pytest_mock import MockerFixture
 from vcr import VCR, request as vcr_request
 from vcr.record_mode import RecordMode
@@ -798,7 +798,7 @@ def fail_cache_prefix_violations(request: pytest.FixtureRequest, vcr: Cassette |
 
 
 # `validate_json` parses through pydantic-core rather than the stdlib, and types the result without a cast.
-_REQUEST_BODY_ADAPTER = TypeAdapter(dict[str, Any])
+_REQUEST_BODY_ADAPTER = TypeAdapter(dict[str, JsonValue])
 
 
 @dataclass
@@ -829,7 +829,7 @@ class RequestCapture:
         # can see beta gating.
         self.headers.append(request.headers)
 
-    def bodies(self, path_suffix: str = '') -> list[dict[str, Any]]:
+    def bodies(self, path_suffix: str = '') -> list[dict[str, JsonValue]]:
         """Every captured body whose URL path ends with `path_suffix`, parsed on demand."""
         return [
             _REQUEST_BODY_ADAPTER.validate_json(raw)
@@ -837,7 +837,7 @@ class RequestCapture:
             if path.endswith(path_suffix)
         ]
 
-    def body(self, path_suffix: str = '', index: int = 0) -> dict[str, Any]:
+    def body(self, path_suffix: str = '', index: int = 0) -> dict[str, JsonValue]:
         """The `index`th captured body whose URL path ends with `path_suffix`, parsed on demand."""
         matches = self.bodies(path_suffix)
         assert matches, f'no captured request matching {path_suffix!r}; saw {self.paths}'
