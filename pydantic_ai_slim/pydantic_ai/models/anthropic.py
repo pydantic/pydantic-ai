@@ -94,7 +94,7 @@ from . import (
     download_item,
     get_user_agent,
 )
-from ._anthropic_containers import append_container_uploads, is_tool_result_only, should_retry_rejected_container
+from ._anthropic_containers import is_tool_result_only as _is_tool_result_only
 from ._tool_choice import ResolvedToolChoice, resolve_tool_choice
 
 _FINISH_REASON_MAP: dict[BetaStopReason, FinishReason | None] = {
@@ -172,6 +172,7 @@ try:
         BetaCompactionBlockParam,
         BetaCompactionContentBlockDelta,
         BetaContainerParams,
+        BetaContainerUploadBlockParam,
         BetaContentBlock,
         BetaContentBlockParam,
         BetaContextManagementConfigParam,
@@ -993,10 +994,14 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             try:
                 return await create(container)
             except APIStatusError as e:
-                if not should_retry_rejected_container(
-                    status_code=e.status_code,
-                    container_from_history=container_from_history,
-                    messages=anthropic_messages,
+                if (
+                    e.status_code != 500
+                    or not container_from_history
+                    or not any(
+                        is_str_dict(block) and block['type'] == 'container_upload'
+                        for message in anthropic_messages
+                        for block in message['content']
+                    )
                 ):
                     raise
                 return await create(None)
@@ -2218,7 +2223,16 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         _anchor_system_messages(anthropic_messages)
 
         if pending_container_uploads:
-            append_container_uploads(anthropic_messages, pending_container_uploads)
+            for message in anthropic_messages:
+                if message['role'] == 'user':
+                    existing = message['content']
+                    assert isinstance(existing, list)
+                    if _is_tool_result_only(existing):
+                        continue
+                    extra: list[BetaContainerUploadBlockParam] = [
+                        {'type': 'container_upload', 'file_id': file_id} for file_id in pending_container_uploads
+                    ]
+                    message['content'] = [*existing, *extra]
 
         instruction_parts = self._get_instruction_parts(messages, model_request_parameters)
         system_prompt = '\n\n'.join(system_prompt_parts)
@@ -3480,7 +3494,7 @@ def _drop_unpaired_native_tool_calls(anthropic_messages: list[BetaMessageParam])
             message['content'] = kept
 
         suffix_is_tool_result_only = (
-            suffix_is_tool_result_only and message['role'] == 'user' and is_tool_result_only(kept)
+            suffix_is_tool_result_only and message['role'] == 'user' and _is_tool_result_only(kept)
         )
 
 

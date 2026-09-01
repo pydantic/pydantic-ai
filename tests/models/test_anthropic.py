@@ -60,6 +60,7 @@ from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
     CompactionPart,
     InstructionPart,
+    ModelMessagesTypeAdapter,
     ToolAvailabilityDeltaPart,
     ToolSearchCallPart,
     ToolSearchReturnPart,
@@ -985,9 +986,18 @@ async def test_anthropic_code_execution_files_500_keeps_caller_container(
         capabilities=[NativeTool(CodeExecutionTool(files=[UploadedFile(file_id='file_x', provider_name='anthropic')]))],
         model_settings=settings,
     )
+    if message_history is not None:
+        reloaded_message_history = ModelMessagesTypeAdapter.validate_python(
+            ModelMessagesTypeAdapter.dump_python(message_history, mode='json')
+        )
+        assert reloaded_message_history == message_history
+    else:
+        reloaded_message_history = None
 
     with pytest.raises(ModelHTTPError) as exc_info:
-        await agent.run(None if message_history else 'Use the attached file.', message_history=message_history)
+        await agent.run(
+            None if reloaded_message_history else 'Use the attached file.', message_history=reloaded_message_history
+        )
 
     assert exc_info.value.status_code == 500
     completion_kwargs = get_mock_chat_completion_kwargs(mock_client)

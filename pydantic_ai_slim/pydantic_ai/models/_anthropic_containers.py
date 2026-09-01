@@ -54,42 +54,10 @@ from .._utils import is_str_dict
 
 if TYPE_CHECKING:
     from anthropic.types.beta import (
-        BetaContainerUploadBlockParam,
         BetaContentBlockParam,
-        BetaMessageParam,
     )
 
 
 def is_tool_result_only(content: Sequence[BetaContentBlockParam]) -> bool:
     """True when a user message is only `tool_result` blocks — answers a turn, never opens one."""
     return bool(content) and all(is_str_dict(block) and block['type'] == 'tool_result' for block in content)
-
-
-def append_container_uploads(anthropic_messages: list[BetaMessageParam], file_ids: Sequence[str]) -> None:
-    """Append a fresh `container_upload` block per file onto every user message that can carry one."""
-    for msg in anthropic_messages:
-        if msg['role'] == 'user':
-            existing = msg['content']
-            assert isinstance(existing, list)
-            if is_tool_result_only(existing):
-                continue
-            extra: list[BetaContainerUploadBlockParam] = [
-                {'type': 'container_upload', 'file_id': file_id} for file_id in file_ids
-            ]
-            msg['content'] = [*existing, *extra]
-
-
-def should_retry_rejected_container(
-    *,
-    status_code: int,
-    container_from_history: bool,
-    messages: list[BetaMessageParam],
-) -> bool:
-    """True for the 500 + history-resolved id + `container_upload` shape the retry targets."""
-    if status_code != 500 or not container_from_history:
-        return False
-    return any(
-        is_str_dict(block) and block['type'] == 'container_upload'
-        for message in messages
-        for block in message['content']
-    )
