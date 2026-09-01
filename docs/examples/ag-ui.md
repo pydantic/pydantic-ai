@@ -42,13 +42,15 @@ Next run the AG-UI Dojo example frontend.
     git clone https://github.com/ag-ui-protocol/ag-ui.git
     ```
 
-2. Change to the `ag-ui/sdks/typescript` directory:
+2. Follow the [official instructions](https://github.com/ag-ui-protocol/ag-ui/tree/main/apps/dojo#development-setup) to install dependencies and build the project from the repository root.
+
+3. Change to the `ag-ui/apps/dojo` directory and run the Dojo app:
 
     ```shell
-    cd ag-ui/sdks/typescript
+    cd apps/dojo
+    pnpm dev
     ```
 
-3. Run the Dojo app following the [official instructions](https://github.com/ag-ui-protocol/ag-ui/tree/main/apps/dojo#development-setup)
 4. Visit <http://localhost:3000/pydantic-ai>
 5. Select View `Pydantic AI` from the sidebar
 

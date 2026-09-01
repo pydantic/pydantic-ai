@@ -93,7 +93,8 @@ async def main():
 
 1. [`RunContext`][pydantic_ai.tools.RunContext] may optionally be passed to a [`system_prompt`][pydantic_ai.agent.Agent.system_prompt] function as the only argument.
 2. [`RunContext`][pydantic_ai.tools.RunContext] is parameterized with the type of the dependencies, if this type is incorrect, static type checkers will raise an error.
-3. Access dependencies through the [`.deps`][pydantic_ai.tools.RunContext.deps] attribute.
+3. Access the HTTP client through the [`.deps`][pydantic_ai.tools.RunContext.deps] attribute.
+4. Access the API key through the same attribute.
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
