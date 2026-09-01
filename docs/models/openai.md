@@ -63,6 +63,8 @@ agent = Agent(model)
 
 `OpenAIProvider` also accepts a custom `AsyncOpenAI` client via the `openai_client` parameter, so you can customise the `organization`, `project`, `base_url` etc. as defined in the [OpenAI API docs](https://platform.openai.com/docs/api-reference).
 
+The client retries failed requests on its own, independently of the agent's retry budgets. It defaults to `max_retries=2`, so one model request can reach the network up to three times. It honors the `x-should-retry` response header; without that header, it retries status 408, 409, 429 or 5xx, plus timeouts and connection errors, but not other 4xx responses such as 400 or 401. Set `max_retries=0` to keep the retry policy in your transport alone. See [Retry multiplication](../retries.md#retry-multiplication) for how the layers stack.
+
 ```python {title="custom_openai_client.py"}
 from openai import AsyncOpenAI
 
