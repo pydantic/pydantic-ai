@@ -10,6 +10,7 @@ import threading
 import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Callable
 from concurrent.futures import ThreadPoolExecutor
+from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from types import NoneType
 from typing import Any, cast
@@ -1203,6 +1204,45 @@ class TestRunHooksRunStream:
 
 class TestStreamingHooks:
     """Test that SkipModelRequest and wrap_model_request work in streaming paths."""
+
+    async def test_before_model_request_context_reaches_later_tool_hooks(self):
+        request_state: ContextVar[str | None] = ContextVar('request_state', default=None)
+        tool_states: list[str | None] = []
+
+        @dataclass
+        class ContextCap(AbstractCapability[Any]):
+            async def before_model_request(
+                self,
+                ctx: RunContext[Any],
+                request_context: ModelRequestContext,
+            ) -> ModelRequestContext:
+                request_state.set('prepared')
+                return request_context
+
+            async def before_tool_execute(
+                self,
+                ctx: RunContext[Any],
+                *,
+                call: ToolCallPart,
+                tool_def: ToolDefinition,
+                args: dict[str, Any],
+            ) -> dict[str, Any]:
+                tool_states.append(request_state.get())
+                return args
+
+        agent = Agent(
+            FunctionModel(tool_calling_model, stream_function=tool_calling_stream_function),
+            capabilities=[ContextCap()],
+        )
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            return 'tool result'
+
+        async with agent.run_stream('call tool') as stream:
+            assert await stream.get_output() == 'final response'
+
+        assert tool_states == ['prepared']
 
     async def test_skip_model_request_streaming(self):
         @dataclass

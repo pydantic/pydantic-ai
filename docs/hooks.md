@@ -166,39 +166,8 @@ To skip the model call entirely, raise [`SkipModelRequest(response)`][pydantic_a
 
     When a run resumes a suspended turn from [`message_history`](message-history.md), `before_model_request` and `wrap_model_request` see that suspended [`ModelResponse`][pydantic_ai.messages.ModelResponse] as the last entry in `request_context.messages`: it's the continuation seed that will be echoed back to the provider, mirroring what actually goes over the wire.
 
-!!! note "Context variables don't leave model request hooks in streamed runs"
-    In a [streamed run][pydantic_ai.models.ModelRequestContext.streaming], the model request hooks run in a separate asyncio task. A [`contextvars.ContextVar`][contextvars.ContextVar] set in one of them still works within the request lifecycle (set in `before_model_request`, read in `after_model_request`), but the write is invisible to tools, run-level hooks, and your own code: a task's context variable writes never reach its parent task. To share state beyond the model request hooks, write to a mutable [dependencies](dependencies.md) object instead — attribute writes on a shared object are visible everywhere, tasks or not:
-
-    ```python {title="hook_state_streamed.py"}
-    from dataclasses import dataclass
-
-    from pydantic_ai import Agent, ModelRequestContext, RunContext
-    from pydantic_ai.capabilities import Hooks
-
-
-    @dataclass
-    class Deps:
-        request_message_count: int = 0
-
-
-    async def record_size(
-        ctx: RunContext[Deps],
-        request_context: ModelRequestContext,
-    ) -> ModelRequestContext:
-        ctx.deps.request_message_count = len(request_context.messages)
-        return request_context
-
-
-    agent = Agent('test', deps_type=Deps, capabilities=[Hooks(before_model_request=record_size)])
-
-
-    async def main():
-        deps = Deps()
-        async with agent.run_stream('Hello!', deps=deps) as response:
-            await response.get_output()
-        print(deps.request_message_count)
-        #> 1
-    ```
+!!! note "Context variables in streamed model requests"
+    In a [streamed run][pydantic_ai.models.ModelRequestContext.streaming], the model request lifecycle runs in a separate asyncio task. Context-variable writes made by an async `before_model_request` hook are copied back when the stream opens, so later tool, output, and run hooks observe them just as they do in a non-streamed run. Writes made later in the model request task (for example, after a wrapper's handler returns) remain local to that task. Use mutable [dependencies](dependencies.md) for state that must be shared bidirectionally throughout the lifecycle.
 
 ### Tool validation hooks
 

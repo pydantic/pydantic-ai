@@ -8,7 +8,7 @@ from asyncio import Task
 from collections import deque
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Iterable, Sequence
 from contextlib import asynccontextmanager, contextmanager
-from contextvars import ContextVar
+from contextvars import Context, ContextVar, copy_context
 from copy import deepcopy
 from dataclasses import field, replace
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeGuard, cast
@@ -207,6 +207,17 @@ async def _cancel_task(task: Task[Any]) -> None:
         # Called while another stream error is already propagating; await only
         # to finish cleanup and retrieve the task exception, not replace it.
         pass
+
+
+def _context_changes(before: Context, after: Context) -> list[tuple[ContextVar[Any], Any]]:
+    """Return values newly set or replaced between two task-context snapshots."""
+    return [(var, after[var]) for var in after if var not in before or before[var] is not after[var]]
+
+
+def _apply_context_changes(changes: Sequence[tuple[ContextVar[Any], Any]]) -> None:
+    """Apply captured task-context values to the current task."""
+    for var, value in changes:
+        var.set(value)
 
 
 async def _resolve_interrupted_stream_state(
@@ -1178,6 +1189,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         _handler_usage_recorded = False
         time_to_first_chunk: float | None = None
         accounted_responses: list[_messages.ModelResponse] = []
+        before_model_request_context: list[tuple[ContextVar[Any], Any]] = []
 
         async def _streaming_handler(
             req_ctx: ModelRequestContext,
@@ -1186,13 +1198,14 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             if _handler_called:
                 raise exceptions.UserError('`wrap_model_request` may call its handler only once')
             _handler_called = True
-            # Known limitation: on the streaming path the before-chain runs inside this wrap
-            # task, so `ContextVar` writes made by `before_model_request` hooks are not visible
-            # to later tool or after-run code in the outer task (unlike `agent.run()`, which
-            # awaits the wrap inline).
-            req_ctx = await self._apply_before_model_request(
-                ctx, run_context, req_ctx, original_request_context=request_context
-            )
+            context_before_hooks = copy_context()
+            try:
+                req_ctx = await self._apply_before_model_request(
+                    ctx, run_context, req_ctx, original_request_context=request_context
+                )
+            finally:
+                context_after_hooks = copy_context()
+                before_model_request_context[:] = _context_changes(context_before_hooks, context_after_hooks)
             # After the before-chain, so the check applies to the model actually being called
             # (a `before_model_request` hook may have swapped it).
             _ensure_model_supports_streaming(req_ctx.model)
@@ -1267,6 +1280,11 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # Handoff succeeded: `wrap_task` is owned by the rest of the streaming
             # lifecycle below. Only the throwaway readiness waiter is ours to clean up.
             await cancel_and_drain(ready_waiter)
+
+        # `_prepare_request` ran in this task before wrap hooks were added. Preserve that
+        # behavior by carrying ContextVar writes from its new location in the wrap task back
+        # to the graph task, where later tool, output, and run hooks execute.
+        _apply_context_changes(before_model_request_context)
 
         if wrap_task.done() and not stream_ready.is_set():
             # wrap_model_request completed without calling handler — short-circuited or raised SkipModelRequest
