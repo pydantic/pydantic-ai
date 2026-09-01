@@ -85,6 +85,7 @@ from pydantic_ai.usage import UsageLimits
 
 from ..._inline_snapshot import snapshot
 from ...continuation_utils import ScriptedContinuationModel, scripted_response
+from ...model_lifecycle_utils import LifecycleTrackingModel
 
 try:
     from temporalio import activity, workflow
@@ -120,7 +121,7 @@ except ImportError:  # pragma: lax no cover
     pytest.skip('temporal not installed', allow_module_level=True)
 
 
-# On 3.14 pytest skips at collection before importing this module, so the branch is unmeasured there.
+# The 3.14 durable-exec CI leg imports this module and takes the skip; every other leg falls through.
 if sys.version_info >= (3, 14):  # pragma: lax no cover
     pytest.skip(
         'temporalio sandbox is incompatible with Python 3.14: '
@@ -638,26 +639,28 @@ async def test_temporal_operation_backend_registers_novel_id_generically(
 
 
 async def test_temporal_durability_accepts_legacy_cancel_activity_payload() -> None:
-    """Temporal decodes old cancel payloads and resolves registered and inferred models."""
+    """Temporal decodes old cancel payloads and manages only inferred models."""
     response = ModelResponse(parts=[TextPart(content='cancel')], model_name='test')
     params = TypeAdapter(_CancelParams).validate_python({'response': response, 'model_id': None})
     assert params == _CancelParams(response=response)
     assert params.serialized_run_context is None
 
-    cancelled: list[tuple[str, ModelResponse]] = []
-
-    class RecordingModel(TestModel):
-        def __init__(self, name: str):
-            super().__init__()
+    class RecordingModel(LifecycleTrackingModel):
+        def __init__(self, name: str, events: list[str], *, fail: bool = False):
+            super().__init__(events, fail=fail)
             self.name = name
 
         async def cancel_suspended_response(self, response: ModelResponse) -> None:
-            cancelled.append((self.name, response))
+            self.events.append(f'cancel:{self.name}')
+            if self.fail:
+                raise RuntimeError('cancel failed')
 
-    registered_model = RecordingModel('registered')
-    inferred_model = RecordingModel('inferred')
+    default_events: list[str] = []
+    registered_events: list[str] = []
+    default_model = RecordingModel('default', default_events)
+    registered_model = RecordingModel('registered', registered_events)
     agent = Agent(
-        TestModel(),
+        default_model,
         name='legacy_cancel_payload',
         capabilities=[TemporalDurability(models={'registered': registered_model})],
     )
@@ -667,10 +670,24 @@ async def test_temporal_durability_accepts_legacy_cancel_activity_payload() -> N
     assert signature.parameters['deps'].default is None
 
     await durability.cancel_suspended_response_activity(_CancelParams(response=response, model_id='registered'))
+    await durability.cancel_suspended_response_activity(_CancelParams(response=response))
+    assert registered_events == ['cancel:registered']
+    assert default_events == ['cancel:default']
+
+    inferred_events: list[str] = []
+    inferred_model = RecordingModel('inferred', inferred_events)
     with patch('pydantic_ai.durable_exec.temporal._durability.infer_model', return_value=inferred_model):
         await durability.cancel_suspended_response_activity(_CancelParams(response=response, model_id='unregistered'))
+    assert inferred_events == ['enter', 'cancel:inferred', 'exit:none']
 
-    assert cancelled == [('registered', response), ('inferred', response)]
+    failing_events: list[str] = []
+    failing_model = RecordingModel('failing', failing_events, fail=True)
+    with (
+        patch('pydantic_ai.durable_exec.temporal._durability.infer_model', return_value=failing_model),
+        pytest.raises(RuntimeError, match='cancel failed'),
+    ):
+        await durability.cancel_suspended_response_activity(_CancelParams(response=response, model_id='failing'))
+    assert failing_events == ['enter', 'cancel:failing', 'exit:RuntimeError']
 
 
 async def test_complex_agent_run_in_workflow(

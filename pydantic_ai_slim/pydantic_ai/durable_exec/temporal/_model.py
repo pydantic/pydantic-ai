@@ -30,6 +30,7 @@ from pydantic_ai.providers import Provider
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext
 
+from .._utils import managed_model_scope
 from ._activity_execution import execute_activity
 from ._durability import (
     IMAGE_OUTPUT_UNSUPPORTED_MESSAGE,
@@ -103,12 +104,15 @@ class TemporalModel(WrapperModel):
                 self.run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
             )
             model_for_request = self._resolve_model_id(params.model_id, run_context)
-            messages = self._reprepare_messages(params, model_for_request)
-            return await model_for_request.request(
-                messages,
-                cast(ModelSettings | None, params.model_settings),
-                params.model_request_parameters,
-            )
+            async with managed_model_scope(
+                model_for_request, owned=not self._is_registered_model(model_for_request)
+            ) as active_model:
+                messages = self._reprepare_messages(params, active_model)
+                return await active_model.request(
+                    messages,
+                    cast(ModelSettings | None, params.model_settings),
+                    params.model_request_parameters,
+                )
 
         # Set type hint explicitly so that Temporal can take care of serialization and deserialization
         # Union with None for backward compatibility with activity payloads created before deps was added
@@ -123,17 +127,20 @@ class TemporalModel(WrapperModel):
                 self.run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
             )
             model_for_request = self._resolve_model_id(params.model_id, run_context)
-            messages = self._reprepare_messages(params, model_for_request)
-            async with model_for_request.request_stream(
-                messages,
-                cast(ModelSettings | None, params.model_settings),
-                params.model_request_parameters,
-                run_context,
-            ) as streamed_response:
-                await self.event_stream_handler(run_context, streamed_response)
+            async with managed_model_scope(
+                model_for_request, owned=not self._is_registered_model(model_for_request)
+            ) as active_model:
+                messages = self._reprepare_messages(params, active_model)
+                async with active_model.request_stream(
+                    messages,
+                    cast(ModelSettings | None, params.model_settings),
+                    params.model_request_parameters,
+                    run_context,
+                ) as streamed_response:
+                    await self.event_stream_handler(run_context, streamed_response)
 
-                async for _ in streamed_response:
-                    pass
+                    async for _ in streamed_response:
+                        pass
             return streamed_response.get()
 
         # Set type hint explicitly so that Temporal can take care of serialization and deserialization
@@ -166,7 +173,10 @@ class TemporalModel(WrapperModel):
                     agent=self._agent,
                 )
             model_for_request = self._resolve_model_id(params.model_id, run_context)
-            await model_for_request.cancel_suspended_response(params.response)
+            async with managed_model_scope(
+                model_for_request, owned=not self._is_registered_model(model_for_request)
+            ) as active_model:
+                await active_model.cancel_suspended_response(params.response)
 
         self.cancel_suspended_response_activity = activity.defn(
             name=f'{activity_name_prefix}__model_cancel_suspended_response'
@@ -496,6 +506,9 @@ class TemporalModel(WrapperModel):
             return self._models_by_id[model_id]
 
         return self._infer_model(model_id, run_context)  # pragma: lax no cover
+
+    def _is_registered_model(self, model: Model) -> bool:
+        return any(registered is model for registered in self._models_by_id.values())
 
     def _infer_model(self, model_id: str, run_context: RunContext[Any] | None) -> Model:  # pragma: lax no cover
         provider_factory = self._provider_factory
