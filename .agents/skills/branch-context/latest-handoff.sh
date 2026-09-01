@@ -33,6 +33,17 @@ if [ -z "$LANE_ID" ]; then
     exit 0
 fi
 
+if [[ "$LANE_ID" == *$'\n'* || "$LANE_ID" == *$'\r'* || "$LANE_ID" == *'\'* ]] || \
+    [[ "$LANE_ID" =~ [[:space:]] ]] || \
+    LC_ALL=C grep -q '[[:cntrl:]]' <<< "$LANE_ID"; then
+    echo 'error: lane id must be one line without whitespace, backslashes, or control characters' >&2
+    exit 1
+fi
+if [[ "$LANE_ID" == *']'* || "$LANE_ID" == *' · '* ]]; then
+    echo 'error: lane id must not contain index delimiters' >&2
+    exit 1
+fi
+
 # Readers participate in the writer's lock, so the index, lane map, ledger, and
 # handoff file are observed before or after a complete transition, never midway.
 mkdir -p "$HAND_DIR"
@@ -68,6 +79,15 @@ if [ -z "$LANE_LABEL" ]; then
         echo "lane '$LANE_ID' has no registered handoff identity — nothing to read" >&2
     fi
     exit 0
+fi
+if [[ "$LANE_LABEL" == *$'\n'* || "$LANE_LABEL" == *$'\r'* || "$LANE_LABEL" == *'\'* ]] || \
+    LC_ALL=C grep -q '[[:cntrl:]]' <<< "$LANE_LABEL"; then
+    echo 'error: lane label must not contain backslashes or control characters' >&2
+    exit 1
+fi
+if [[ "$LANE_LABEL" == *']'* || "$LANE_LABEL" == *' · '* ]]; then
+    echo 'error: lane label must not contain index delimiters' >&2
+    exit 1
 fi
 
 if [ "${1:-}" = "--lane" ]; then

@@ -110,13 +110,16 @@ Ask: 'Based on my research, I assess this as [simple/complex]. [1-2 sentence rea
 
 1. Write plan to `.claude/plans/<branch-name>.md`
 2. Commit the plan file only
-3. Push and create a **draft** PR:
+3. Follow the tracked `pushing-commits-to-the-repo` skill through its independent pre-push review,
+   then push and create a ready-for-review PR. Use a draft only when David explicitly asks:
    - Title: concise description of the change
    - Body: follow the tracked `pushing-commits-to-the-repo` skill. Put each closing issue reference
      immediately after the attribution line, then include the plan and note that implementation
      follows after alignment.
 4. Update `.claude/skills/branch-context/issue-brief.md`: set `related_pr` in frontmatter to the new PR URL
-5. Print: 'Draft PR created with plan. Discuss in the PR, then implement after alignment.'
+5. Continue the tracked push lifecycle through current-head CI, hosted review, feedback close-out,
+   and final metadata.
+6. Print: 'Plan PR created. Discuss in the PR, then implement after alignment.'
 
 ## Step 5b — Simple Path (implement + PR)
 

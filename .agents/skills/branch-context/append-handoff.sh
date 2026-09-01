@@ -51,6 +51,10 @@ validate_index_text() {
         echo "error: $label must not contain control characters" >&2
         exit 1
     fi
+    if [[ "$value" == *'\'* ]]; then
+        echo "error: $label must not contain backslashes" >&2
+        exit 1
+    fi
 }
 
 validate_index_text 'writer' "$WRITER"
