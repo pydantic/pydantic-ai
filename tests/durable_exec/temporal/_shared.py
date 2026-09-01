@@ -61,7 +61,8 @@ except ImportError:  # pragma: lax no cover
     pytest.skip('temporal not installed', allow_module_level=True)
 
 
-# On 3.14 pytest skips at collection before importing this module, so the branch is unmeasured there.
+# Nothing imports this module on 3.14: the test modules carry the same gate and skip first, and the
+# conftest fixture that imports it is never requested once nothing is collected.
 if sys.version_info >= (3, 14):  # pragma: lax no cover
     pytest.skip(
         'temporalio sandbox is incompatible with Python 3.14: '

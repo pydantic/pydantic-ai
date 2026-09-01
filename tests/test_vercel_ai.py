@@ -12,7 +12,7 @@ from typing import Any, Literal, cast
 import pytest
 from pydantic import ValidationError
 
-from pydantic_ai import Agent, capture_run_messages
+from pydantic_ai import Agent, CancellationToken, RunCancelled, capture_run_messages
 from pydantic_ai._deferred_capabilities import (
     parse_loaded_capabilities,
 )
@@ -3377,6 +3377,55 @@ async def test_run_stream_cancelled():
     assert not any(isinstance(event, dict) and event['type'] in {'error', 'finish'} for event in events)
 
 
+async def test_run_stream_native_cancellation_token():
+    token = CancellationToken()
+    token.cancel()
+    adapter = VercelAIAdapter(
+        Agent(model=TestModel()),
+        SubmitMessage(
+            id='foo',
+            messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Hello')])],
+        ),
+    )
+
+    with pytest.raises(RunCancelled):
+        async for _ in adapter.run_stream_native(cancellation_token=token):
+            pass
+
+
+async def test_run_stream_cancellation_token():
+    token = CancellationToken()
+    token.cancel()
+    adapter = VercelAIAdapter(
+        Agent(model=TestModel()),
+        SubmitMessage(
+            id='foo',
+            messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Hello')])],
+        ),
+    )
+    cancelled: list[RunCancelled] = []
+
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(
+            adapter.run_stream(cancellation_token=token, on_cancel=cancelled.append)
+        )
+    ]
+
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'abort', 'reason': 'The agent run was cancelled.'},
+            {'type': 'finish-step'},
+            '[DONE]',
+        ]
+    )
+    assert len(cancelled) == 1
+    assert cancelled[0].all_messages() == snapshot(
+        [ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())])]
+    )
+
+
 async def test_adapter_uses_request_id_as_conversation_id():
     """The Vercel AI top-level `id` (chat ID) is wired through to `gen_ai.conversation.id`."""
     agent = Agent(model=TestModel())
@@ -4213,6 +4262,58 @@ async def test_adapter_dispatch_request():
             {'type': 'finish'},
             '[DONE]',
         ]
+    )
+
+
+async def test_adapter_dispatch_request_cancellation_token():
+    token = CancellationToken()
+    token.cancel()
+    run_input = SubmitMessage(
+        id='foo',
+        messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Hello')])],
+    )
+
+    async def receive() -> dict[str, Any]:
+        return {'type': 'http.request', 'body': run_input.model_dump_json().encode('utf-8')}
+
+    request = Request(
+        scope={
+            'type': 'http',
+            'method': 'POST',
+            'headers': [(b'content-type', b'application/json')],
+        },
+        receive=receive,
+    )
+    cancelled: list[RunCancelled] = []
+
+    response = await VercelAIAdapter.dispatch_request(
+        request,
+        agent=Agent(model=TestModel()),
+        cancellation_token=token,
+        on_cancel=cancelled.append,
+    )
+    assert isinstance(response, StreamingResponse)
+
+    chunks: list[str | dict[str, Any]] = []
+
+    async def send(data: MutableMapping[str, Any]) -> None:
+        body = cast(bytes, data.get('body', b'')).decode('utf-8').strip().removeprefix('data: ')
+        if body:
+            chunks.append('[DONE]' if body == '[DONE]' else json.loads(body))
+
+    await response.stream_response(send)
+
+    assert chunks == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'abort', 'reason': 'The agent run was cancelled.'},
+            {'type': 'finish-step'},
+            '[DONE]',
+        ]
+    )
+    assert len(cancelled) == 1
+    assert cancelled[0].all_messages() == snapshot(
+        [ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())])]
     )
 
 

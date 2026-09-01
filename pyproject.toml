@@ -420,8 +420,8 @@ filterwarnings = [
     "ignore: '_UnionGenericAlias' is deprecated and slated for removal:DeprecationWarning:google.genai",
     # DBOS logs through the `LoggingHandler` that OpenTelemetry SDK 1.40 deprecated, reached whenever
     # `enable_otlp` is set as `tests/durable_exec/test_dbos.py` does.
-    # TODO(dsfaccini): Drop this once DBOS moves to the `opentelemetry-instrumentation-logging`
-    # handler. https://github.com/dbos-inc/dbos-transact-py/issues/821
+    # TODO(v3): Require `dbos>=2.31.0` and drop this filter.
+    # https://github.com/dbos-inc/dbos-transact-py/pull/822
     "ignore:`LoggingHandler` in `opentelemetry-sdk` is deprecated:DeprecationWarning:opentelemetry.sdk._logs",
     # TODO(Marcelo): Drop this once voyageai stops using Pydantic V1 functionality.
     # Fixed upstream in 0.4.0: https://github.com/voyage-ai/voyageai-python/pull/60 — drop when we bump past 0.3.7.
