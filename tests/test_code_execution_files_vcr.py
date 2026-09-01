@@ -280,11 +280,11 @@ async def test_anthropic_code_execution_files_with_function_tool(
     )
 
 
-# A real container from an earlier recording, days old. Anthropic answers a `container_upload` aimed
-# at it with a 500 rather than the 404 it gives for an id that never existed. Deliberately not called
-# expired: the docs put the lifetime at 30 days with a restore-on-request inside that window, so an
-# id this age should have been restored rather than refused. What the refusal is, we cannot read back
-# — the body is a generic `api_error`. That gap is tracked upstream in https://github.com/pydantic/pydantic-ai/issues/7833.
+# A real container from an earlier recording, created on 2026-06-30 and retried on 2026-08-28,
+# about 59 days later. It had expired past Anthropic's documented 30-day lifetime. Anthropic answers
+# a `container_upload` aimed at this history-resolved id with a generic `api_error` 500 rather than
+# the 404 it gives for an id that never existed. The missing typed error or discriminator is tracked
+# upstream in https://github.com/pydantic/pydantic-ai/issues/7833.
 _DEAD_CONTAINER_ID = 'container_01EG1LKXFPoQJ9tpbsZ1dh74'
 
 
@@ -294,16 +294,15 @@ async def test_anthropic_code_execution_files_rejected_container_is_dropped_and_
 ):
     """A rejected container id resolved from history is dropped and the request resent once.
 
-    Resuming a `CodeExecutionTool(files=...)` conversation against a days-old id sends an id that is
-    worse than no id: the API refuses to materialize the upload and answers 500 — the same generic
-    `api_error` body any internal failure produces — rather than the 404 it gives for an id that
-    never existed (https://github.com/pydantic/pydantic-ai/issues/7833). The cause is not readable off the response, so this test pins the shape
-    that reproduces. The *remedy* is documented — "Send the request again without the `container`
-    parameter to get a new container" — and that is exactly what the two requests here show: the
-    first carries the dead id, the second carries no container at all, and the fresh container gets
-    the file. What is not documented is the trigger. Anthropic puts the container lifetime at 30 days
-    with a restore-on-request inside that window, so this days-old id should have been restored; that
-    it was refused instead, and refused with an untyped 500, is the upstream gap in https://github.com/pydantic/pydantic-ai/issues/7833.
+    The history-resolved id was created on 2026-06-30 and retried on 2026-08-28, about 59 days later,
+    so it had expired past Anthropic's documented 30-day lifetime. Pairing that expired id with
+    `container_upload` answers 500 — the generic `api_error` body any internal failure produces —
+    rather than the 404 it gives for an id that never existed. The cause is not readable off the
+    response, so this test pins the shape that reproduces. The *remedy* is documented — "Send the
+    request again without the `container` parameter to get a new container" — and that is exactly
+    what the two requests here show: the first carries the expired id, the second carries no
+    container at all, and the fresh container gets the file. The missing typed error or discriminator
+    is tracked upstream in https://github.com/pydantic/pydantic-ai/issues/7833.
 
     `max_retries=0` keeps the SDK's own retry out of the way, so the two captured requests are ours.
     It also makes playback match live: the real 500 carries `x-should-retry: false` and the SDK stops

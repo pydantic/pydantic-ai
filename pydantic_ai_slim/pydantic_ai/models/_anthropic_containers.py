@@ -35,8 +35,10 @@ blocks — not the 404 a never-existed id returns. That body is the same envelop
 other Anthropic 500, so wording cannot distinguish this failure; the guard keys on the
 request shape instead. Containers expire 30 days after creation; after ~5 minutes of
 inactivity they are checkpointed and a request inside that window restores them.
-`expires_at` is a shorter rolling value that does not report the 30-day limit. A days-old
-id should have restored. That gap is https://github.com/pydantic/pydantic-ai/issues/7833.
+`expires_at` is a shorter rolling value that does not report the 30-day limit. The recorded
+history-resolved id was created on 2026-06-30 and retried on 2026-08-28, about 59 days later,
+so it had expired. Its generic 500 with `container_upload` has no typed error or discriminator;
+that gap is https://github.com/pydantic/pydantic-ai/issues/7833.
 
 The guard needs both halves of that shape: an id we resolved from history, and uploads on
 the wire. A caller-set `anthropic_container` and a `pause_turn` reconnect id stay on the
