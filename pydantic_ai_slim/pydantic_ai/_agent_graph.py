@@ -1807,7 +1807,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         if request_context is not None:
             if any(recorded is response for recorded in request_context.usage_responses):
                 return False
-            request_context.usage_responses += (response,)
+            request_context._usage_response_ledger.responses.append(response)  # pyright: ignore[reportPrivateUsage]
         fill_response_cost(response)
         ctx.state.usage.incr(response.usage)
         return True

@@ -291,6 +291,11 @@ class ModelRequestParameters:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
+@dataclass
+class _ModelRequestUsageLedger:
+    responses: list[ModelResponse] = field(default_factory=list[ModelResponse])
+
+
 @dataclass(kw_only=True)
 class ModelRequestContext:
     """Context for model request hooks.
@@ -363,14 +368,21 @@ class ModelRequestContext:
     apart. Read-only from hooks: reassigning it doesn't change how the loop consumes the response.
     """
 
-    usage_responses: tuple[ModelResponse, ...] = field(default=(), init=False, repr=False)
-    """Provider-boundary responses whose usage was committed for this lifecycle.
+    _usage_response_ledger: _ModelRequestUsageLedger = field(
+        default_factory=_ModelRequestUsageLedger, repr=False, compare=False
+    )
 
-    This remains empty until the wrapped handler reaches a provider response. It can contain
-    more than one response when a continuation produced billable partial output before an
-    error hook recovered. Treat this as read-only: it exposes the agent's accounting decisions
-    to capabilities, while only the agent runtime updates the usage ledger.
-    """
+    @property
+    def usage_responses(self) -> tuple[ModelResponse, ...]:
+        """Provider-boundary responses whose usage was committed for this lifecycle.
+
+        This remains empty until the wrapped handler reaches a provider response. It can contain
+        more than one response when a continuation produced billable partial output before an
+        error hook recovered. Contexts produced with `dataclasses.replace()` share this ledger, so
+        outer wrappers still observe usage committed through an inner wrapper's copy. This is
+        read-only: it exposes the agent's accounting decisions while only the agent runtime updates it.
+        """
+        return tuple(self._usage_response_ledger.responses)
 
 
 @dataclass(frozen=True, kw_only=True)

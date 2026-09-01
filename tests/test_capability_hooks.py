@@ -401,6 +401,38 @@ class TestModelRequestHooks:
         assert result.usage.output_tokens == 5
         assert [part.content for part in result.all_messages()[-1].parts if isinstance(part, TextPart)] == ['recovered']
 
+    async def test_usage_ledger_is_shared_with_replaced_request_context(self):
+        observed_responses: list[ModelResponse] = []
+
+        class ObserveUsage(AbstractCapability[Any]):
+            async def wrap_model_request(
+                self,
+                ctx: RunContext[Any],
+                *,
+                request_context: ModelRequestContext,
+                handler: Any,
+            ) -> ModelResponse:
+                response = await handler(request_context)
+                observed_responses.extend(request_context.usage_responses)
+                return response
+
+        class CopyContext(AbstractCapability[Any]):
+            async def wrap_model_request(
+                self,
+                ctx: RunContext[Any],
+                *,
+                request_context: ModelRequestContext,
+                handler: Any,
+            ) -> ModelResponse:
+                return await handler(replace(request_context, messages=list(request_context.messages)))
+
+        result = await Agent(FunctionModel(simple_model_function), capabilities=[ObserveUsage(), CopyContext()]).run(
+            'hello'
+        )
+
+        assert len(observed_responses) == 1
+        assert observed_responses[0] is result.all_messages()[-1]
+
     async def test_wrapper_recovery_keeps_continuation_usage(self):
         class RecoverAfterRejection(AbstractCapability[Any]):
             async def wrap_model_request(self, ctx: RunContext[Any], *, request_context: Any, handler: Any) -> Any:
