@@ -12,13 +12,14 @@ import importlib
 import pkgutil
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import KW_ONLY, dataclass, field
 from typing import Any, TypeGuard, cast
 
 import pytest
 
 import pydantic_ai.capabilities as capabilities_package
 from pydantic_ai import Agent, FunctionToolset, RunContext, Tool
+from pydantic_ai.agent import find_capability
 from pydantic_ai.capabilities import (
     Capability,
     CapabilityOrdering,
@@ -319,14 +320,14 @@ def test_merging_into_a_contradictory_configuration_is_rejected() -> None:
         WebSearch.combine([WebSearch(allowed_domains=['a.com']), WebSearch(native=False, local='duckduckgo')])
 
 
-def _dyn_toolset(ctx: RunContext[Any]) -> FunctionToolset[Any]:
+def _dyn_toolset(ctx: RunContext[Any]) -> FunctionToolset[Any]:  # pragma: no cover
     """A `toolsets=` callable, resolved per run."""
     return FunctionToolset([_a_tool])
 
 
-def _a_tool() -> str:
+def _a_tool() -> str:  # pragma: no cover
     """A tool."""
-    return 'x'  # pragma: no cover
+    return 'x'
 
 
 def test_capability_id_reaches_a_callable_toolset() -> None:
@@ -410,3 +411,45 @@ class _Positioned(AbstractCapability[Any]):
     @classmethod
     def combine(cls, capabilities: Sequence[AbstractCapability[Any]]) -> AbstractCapability[Any]:
         return merge_capability_fields(capabilities)
+
+
+@dataclass
+class _Collections(AbstractCapability[Any]):
+    """A capability whose configuration is collections, to pin how the merge unions them."""
+
+    tags: set[str] = field(default_factory=set[str])
+    labels: dict[str, str] = field(default_factory=dict[str, str])
+
+    _: KW_ONLY
+
+    id: str | None = 'collections'
+
+    @classmethod
+    def combine(cls, capabilities: Sequence[AbstractCapability[Any]]) -> AbstractCapability[Any]:
+        return merge_capability_fields(capabilities)
+
+
+def test_collections_merge_as_unions() -> None:
+    """Sets union and mappings merge, with a key stated on both sides taking the later value."""
+    merged = _Collections.combine(
+        [
+            _Collections(tags={'a'}, labels={'shared': 'first', 'only-first': 'x'}),
+            _Collections(tags={'b'}, labels={'shared': 'second', 'only-second': 'y'}),
+        ]
+    )
+    assert isinstance(merged, _Collections)
+    assert merged.tags == {'a', 'b'}
+    assert merged.labels == {'shared': 'second', 'only-first': 'x', 'only-second': 'y'}
+
+
+def test_find_capability_returns_the_first_match_in_the_tree() -> None:
+    """`find_capability` searches leaves in tree order, which is not the same question `combine` asks.
+
+    It answers "is one of these present", so it stops at the first match. Anything that needs the
+    capability a run will actually use has to read the combined tree instead.
+    """
+    first, second = Thinking(effort='low', id=None), Thinking(effort='high', id=None)
+    tree = CombinedCapability[Any]([Capability[Any](), first, second])
+
+    assert find_capability([tree], Thinking) is first
+    assert find_capability([tree], WebSearch) is None
