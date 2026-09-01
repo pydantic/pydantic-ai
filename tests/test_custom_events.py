@@ -487,6 +487,32 @@ async def test_event_delivered_while_tool_still_running():
     assert received.is_set()
 
 
+async def test_event_delivered_while_tool_still_running_with_ordered_events():
+    """`parallel_ordered_events` defers tool *result* events, not emitted run events.
+
+    DBOS defaults to this mode, so a tool that emits and then waits on delivery — the pattern the
+    test above pins for the default mode — has to work here too. Deferring the whole drain until the
+    segment completes would deadlock this tool against its own event.
+    """
+    received = asyncio.Event()
+    agent = Agent(FunctionModel(stream_function=_tool_then_text))
+
+    @agent.tool
+    async def progress(ctx: RunContext[Any]) -> str:
+        await ctx.emit(ProgressEvent(payload={'done': 1}))
+        await asyncio.wait_for(received.wait(), timeout=5)
+        return 'ok'
+
+    async def handler(ctx: RunContext[Any], events: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in events:
+            if isinstance(event, CustomEvent) and event.name == 'progress':
+                received.set()
+
+    with Agent.parallel_tool_call_execution_mode('parallel_ordered_events'):
+        await agent.run('go', event_stream_handler=handler)
+    assert received.is_set()
+
+
 async def test_typed_subclass_emitted_from_tool():
     """A typed subclass emitted from a tool is stamped like any custom event and keeps its type."""
     agent = Agent(FunctionModel(stream_function=_tool_then_text))

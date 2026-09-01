@@ -120,6 +120,12 @@ def _canonicalize(value: object, event_cls: type) -> Any:
     Only a class the registry considers the same one (see `is_redefinition`) is converted. Such a
     copy comes from re-executing the same module source, so it carries the same fields by
     construction, and reading them off it by name is exact.
+
+    This is the exception to the "no `fields()` + `getattr` copying" rule in `agent_docs/index.md`:
+    that rule protects *our own* statically-known types, where Pyright can check field existence and
+    a rename would silently break the copy. `event_cls` is an application-defined subclass resolved
+    at runtime, so there is no static field set to check against, and a rename lands on both copies
+    at once — they are the same source, executed twice.
     """
     value_type = type(value)
     if value_type is event_cls or not is_redefinition(event_cls, value_type):

@@ -766,6 +766,44 @@ async def test_hooks_on_event_legacy_replacements_compose() -> None:
     )
 
 
+async def test_hooks_on_event_legacy_replacements_compose_across_capabilities() -> None:
+    """The replacement chain spans separate `Hooks` capabilities, not just one capability's callbacks.
+
+    The stream-wrapper implementation this replaced composed capability wrappers by nesting, so a
+    second capability transformed what the first produced. Dispatching through `on_event` hands every
+    capability the same original event, so without picking up the recorded replacement the last
+    capability to run would silently drop the first's. Replacements chain in capability order, the
+    order every other hook and `@on_event` observer already runs in.
+    """
+    first_hooks = Hooks()
+
+    @first_hooks.on.event
+    async def replace_in_first(ctx: RunContext[Any], event: AgentStreamEvent) -> AgentStreamEvent | None:
+        if isinstance(event, PartStartEvent):
+            return ReplacementEvent(payload='first')
+
+    seen_by_second: list[Any] = []
+    second_hooks = Hooks()
+
+    @second_hooks.on.event
+    async def replace_in_second(ctx: RunContext[Any], event: AgentStreamEvent) -> AgentStreamEvent | None:
+        if isinstance(event, ReplacementEvent):
+            seen_by_second.append(event.payload)
+            return ReplacementEvent(payload=f'{event.payload}+second')
+
+    agent = Agent(
+        FunctionModel(simple_model_function, stream_function=simple_stream_function),
+        capabilities=[first_hooks, second_hooks],
+    )
+    with pytest.warns(PydanticAIDeprecationWarning, match='returning a replacement event'):
+        async with agent.run_stream_events('hello') as stream:
+            events = [event async for event in stream]
+    assert 'first' in seen_by_second, 'the second capability should see the first capability’s replacement'
+    assert any(isinstance(event, ReplacementEvent) and event.payload == 'first+second' for event in events), (
+        'both replacements should survive to the stream'
+    )
+
+
 async def test_hooks_on_event_legacy_replacement_of_inline_event_chains_without_stream_rewrite() -> None:
     """Replacing an inline decision event chains to later callbacks but never rewrites the stream."""
 

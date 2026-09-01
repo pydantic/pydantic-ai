@@ -1021,7 +1021,13 @@ class Hooks(AbstractCapability[AgentDepsT]):
     async def on_event(self, ctx: RunContext[AgentDepsT], *, event: AgentStreamEvent) -> None:
         # Replacements chain: each callback sees the previous callback's replacement, while the
         # replacement map stays keyed by the original event, which is what the stream position holds.
+        # The chain spans capabilities, not just the callbacks on one `Hooks`: on the stream-wrapper
+        # implementation this replaced, each capability's wrapper fed the next one's, so picking up
+        # a replacement another capability already recorded is what keeps that composition. Without
+        # it the last capability to run would silently drop every earlier replacement.
         original_event = event
+        if (prior := ctx._event_stream_replacements.get(id(original_event))) is not None:  # pyright: ignore[reportPrivateUsage]
+            event = prior
         for entry in self._get('on_event'):
             if isinstance(entry, _EventHookEntry) and entry.event_types and not isinstance(event, entry.event_types):
                 continue

@@ -856,23 +856,27 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                 }
                 index_by_task = {task: index for index, task in tasks_by_index.items()}
                 try:
+                    # Even a barrier (or sole) call runs as a task, so events it emits
+                    # surface to stream consumers while it is still executing.
+                    async for item in _iter_completed_or_buffered(
+                        set(tasks_by_index.values()), self.ctx.state.event_stream_buffer
+                    ):
+                        if not isinstance(item, asyncio.Task):
+                            # A buffered run event; `parallel_ordered_events` only defers
+                            # function-tool result events, so this streams live in both modes
+                            # (same split as the exhaustive path).
+                            yield item
+                        elif not ordered_events:
+                            if event := await handle_call_or_result(item, index_by_task[item]):
+                                yield event
                     if ordered_events:
-                        # Wait for the whole segment, then yield events in emission order.
-                        await asyncio.wait(tasks_by_index.values(), return_when=asyncio.ALL_COMPLETED)
+                        # Settle the segment in emission order once every task is done. Ordering the
+                        # results here rather than as tasks complete is the whole point of the mode:
+                        # it also pins which sibling's exception propagates, which a durable runtime
+                        # (DBOS defaults to this mode) has to replay identically.
                         for index in segment:
                             if event := await handle_call_or_result(tasks_by_index[index], index):
                                 yield event
-                    else:
-                        # Even a barrier (or sole) call runs as a task, so events it emits
-                        # surface to stream consumers while it is still executing.
-                        async for item in _iter_completed_or_buffered(
-                            set(tasks_by_index.values()), self.ctx.state.event_stream_buffer
-                        ):
-                            if isinstance(item, asyncio.Task):
-                                if event := await handle_call_or_result(item, index_by_task[item]):
-                                    yield event
-                            else:
-                                yield item
                 except asyncio.CancelledError as e:
                     await cancel_and_drain(*tasks_by_index.values(), msg=e.args[0] if len(e.args) != 0 else None)
                     raise
