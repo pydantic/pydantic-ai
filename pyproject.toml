@@ -279,6 +279,7 @@ include = [
     ".github/scripts/test_agent_spend_report.py",
     ".github/scripts/test_docs_navigation_workflow.py",
     ".github/scripts/test_protect_github_dir.py",
+    "scripts/generate_docs_map.py",
 ]
 
 [tool.ruff.lint]
@@ -369,6 +370,7 @@ include = [
     ".github/scripts/community_demand.py",
     ".github/scripts/triage_telemetry.py",
     ".github/scripts/feature_digest.py",
+    "scripts/generate_docs_map.py",
 ]
 # The monitor policy tests deliberately exercise private helpers and loose GitHub
 # webhook dictionaries through monkeypatching; pytest covers them, while the
@@ -521,7 +523,7 @@ snap = ["create"]
 
 [tool.codespell]
 # Ref: https://github.com/codespell-project/codespell#using-a-config-file
-skip = '.git*,*.svg,*.lock,*.css,*.yaml'
+skip = '.git*,*.svg,*.lock,*.css,*.yaml,docs/map.html,scripts/docs_map/d3.min.js'
 check-hidden = true
 # Ignore "formatting" like **L**anguage
 ignore-regex = '\*\*[A-Z]\*\*[a-z]+\b'

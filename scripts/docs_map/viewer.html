@@ -1,0 +1,786 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Pydantic AI docs map</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  :root {
+    --bg: #0b0c0a;
+    --ink: #e8e4d4;
+    --muted: #8a8676;
+    --panel: #161712;
+    --line: #2a2c24;
+    --accent: #7ec8c8;
+    --gold: #c9a227;
+    --magenta: #c084c0;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink);
+    font-family: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif; }
+  #app { display: grid; grid-template-rows: auto 1fr auto; height: 100%; }
+  header {
+    display: flex; gap: 16px; align-items: center; padding: 10px 16px;
+    border-bottom: 1px solid var(--line); background: var(--panel);
+  }
+  header h1 { font-size: 14px; font-weight: 600; margin: 0; letter-spacing: .04em; }
+  header .meta { color: var(--muted); font-size: 12px; flex: 1; min-width: 0; }
+  header .hdr-right {
+    display: flex; align-items: center; gap: 14px; flex: 0 0 auto; margin-left: auto;
+  }
+  header .api {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 12px; color: var(--muted); white-space: nowrap;
+    flex: 0 0 auto; cursor: pointer; user-select: none;
+  }
+  header .api input[type="checkbox"] {
+    margin: 0; width: 13px; height: 13px; flex: 0 0 auto;
+    accent-color: var(--accent);
+  }
+  header #q {
+    background: #0e0f0c; color: var(--ink);
+    border: 1px solid var(--line); padding: 6px 10px; width: 240px;
+    flex: 0 0 240px; font-size: 13px;
+  }
+  main { position: relative; overflow: auto; }
+  canvas, svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+  #atlas { position: absolute; inset: 0; overflow: auto; padding: 20px 28px 300px; }
+  .region { margin-bottom: 28px; }
+  .region h2 { font-size: 15px; margin: 0 0 6px; display: flex; gap: 10px; align-items: baseline; }
+  .region h2 .tok { color: var(--gold); font-variant-numeric: tabular-nums; font-size: 13px; }
+  .region h2 .flag { font-size: 11px; padding: 1px 6px; border: 1px solid var(--gold); color: var(--gold); letter-spacing: .06em; }
+  .region p { color: var(--muted); font-size: 13px; margin: 0 0 10px; max-width: 72ch; }
+  .pages { display: flex; flex-wrap: wrap; gap: 6px; }
+  .page {
+    border: 1px solid var(--line); padding: 6px 8px; font-size: 12px; cursor: pointer;
+    background: #12130f; min-width: 140px;
+  }
+  .page:hover, .page.sel { border-color: var(--accent); }
+  .page.dim { opacity: .28; }
+  .page.hot { border-color: var(--accent); opacity: 1; }
+  .page.inb { border-color: var(--magenta); opacity: 1; }
+  .page .t { font-weight: 600; }
+  .page .s { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .page.big { border-color: #5a3a12; }
+  aside {
+    position: absolute; top: 12px; right: 12px; width: 300px; max-height: calc(100% - 24px);
+    overflow: auto; background: #12130fd9; border: 1px solid var(--line); padding: 12px;
+    font-size: 12px; display: none; z-index: 6;
+  }
+  aside h3 { margin: 0 0 6px; font-size: 14px; }
+  aside a { color: var(--accent); }
+  aside .row { margin: 4px 0; }
+  #legend {
+    position: absolute; left: 10px; bottom: 72px; z-index: 5;
+    width: 168px; max-height: calc(100% - 96px); overflow: auto;
+    background: #0e0f0cf2; border: 1px solid var(--line);
+    padding: 6px 8px; pointer-events: auto;
+    font-size: 11px; color: var(--muted); line-height: 1.35;
+  }
+  #legend summary {
+    cursor: pointer; font-size: 10px; letter-spacing: .12em;
+    text-transform: uppercase; color: #cfc9b4; list-style: none;
+  }
+  #legend summary::-webkit-details-marker { display: none; }
+  #legend summary::before { content: '▸ '; }
+  #legend[open] summary::before { content: '▾ '; }
+  #legend .lg-k {
+    font-size: 9px; letter-spacing: .14em; text-transform: uppercase;
+    color: #5a574c; margin: 8px 0 3px;
+  }
+  #legend .lg-k:first-child { margin-top: 6px; }
+  #legend ul { list-style: none; margin: 0; padding: 0; }
+  #legend li {
+    display: flex; align-items: center; gap: 6px;
+    color: #cfc9b4; padding: 1px 0;
+  }
+  #legend li i, #legend .dot {
+    flex: 0 0 8px; width: 8px; height: 8px; display: inline-block;
+  }
+  #legend .dot { border-radius: 50%; background: #cfc9b4; }
+  #legend .d1 { width: 6px; height: 6px; flex-basis: 6px; }
+  #legend .d2 { width: 10px; height: 10px; flex-basis: 10px; }
+  #legend .d3 { width: 14px; height: 14px; flex-basis: 14px; }
+  #legend .ln { width: 12px; height: 2px; flex: 0 0 12px; display: inline-block; }
+  #legend .out .ln { background: var(--accent); }
+  #legend .in .ln { background: var(--magenta); }
+  #legend .tok {
+    margin-left: auto; font-variant-numeric: tabular-nums; color: #8a8676;
+  }
+  #switcher {
+    position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
+    display: flex; gap: 8px; align-items: center;
+    background: #f4efe2; color: #1a1a14; padding: 8px 12px; border-radius: 999px;
+    box-shadow: 0 8px 24px #0008; z-index: 20; font-size: 13px; font-weight: 600;
+  }
+  #switcher button { background: transparent; border: 0; font-size: 16px; cursor: pointer; }
+  #switcher .key { font-variant-numeric: tabular-nums; min-width: 220px; text-align: center; }
+  .hint { color: var(--muted); font-size: 12px; padding: 8px 16px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>DOCS MAP</h1>
+    <div class="meta" id="meta"></div>
+    <div class="hdr-right">
+      <label class="api"><input type="checkbox" id="api" /> include API reference</label>
+      <input id="q" placeholder="find a page…" />
+    </div>
+  </header>
+  <main>
+    <svg id="graph"></svg>
+    <canvas id="fort"></canvas>
+    <div id="atlas"></div>
+    <details id="legend" open>
+      <summary>Legend</summary>
+      <div id="legend-body"></div>
+    </details>
+    <aside id="panel"></aside>
+  </main>
+</div>
+<div id="switcher">
+  <button id="prev" aria-label="previous variant">←</button>
+  <div class="key" id="label"></div>
+  <button id="next" aria-label="next variant">→</button>
+</div>
+<script type="application/json" id="graph-data">
+__GRAPH_JSON__
+</script>
+<script src="./d3.min.js"></script>
+<script>
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+const VARIANTS = [
+  { id: 'A', name: 'Force graph' },
+  { id: 'B', name: 'Fortress rooms' },
+  { id: 'C', name: 'Agent atlas' },
+];
+const COLORS = {
+  'Overview': '#7ec8c8',
+  'Core Concepts': '#e8b86d',
+  'Models & Providers': '#6db3e8',
+  'Tools & Toolsets': '#e87d6d',
+  'Capabilities': '#c084c0',
+  'Realtime (speech-to-speech)': '#6de8b8',
+  'Durable Execution': '#d4a017',
+  'Guides': '#a8a49a',
+  'MCP': '#8ab4f8',
+  'Pydantic Evals': '#9be08a',
+  'Pydantic Graph': '#f0a0c0',
+  'Integrations': '#c9c27a',
+  'Examples': '#7aa2c9',
+  'API Reference': '#55564c',
+  'Project': '#b0aea4',
+};
+const GEO = [
+  ['Overview', 'Core Concepts', 'Tools & Toolsets', 'Models & Providers'],
+  ['Capabilities', 'Durable Execution', 'Realtime (speech-to-speech)', 'Pydantic Graph'],
+  ['MCP', 'Pydantic Evals', 'Guides', 'Integrations'],
+  ['Examples', 'Project', 'API Reference'],
+];
+let PAGE_SLURP = 8000;
+let REGION_SUBAGENT = 40000;
+const OUT_COL = '#7ec8c8';
+const IN_COL = '#c084c0';
+
+let DATA = null;
+let selected = null;
+let hovered = null;
+let variant = new URLSearchParams(location.search).get('variant') || 'A';
+let G = null;
+let fortRooms = [];
+let UNDIR = new Set();
+
+const $ = (id) => document.getElementById(id);
+function setVariant(id) {
+  variant = id;
+  hovered = null;
+  const u = new URL(location);
+  u.searchParams.set('variant', id);
+  history.replaceState(null, '', u);
+  render();
+}
+$('prev').onclick = () => cycle(-1);
+$('next').onclick = () => cycle(1);
+document.addEventListener('keydown', (e) => {
+  const t = e.target;
+  if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SUMMARY')) return;
+  if (e.key === 'ArrowLeft') cycle(-1);
+  if (e.key === 'ArrowRight') cycle(1);
+});
+function cycle(d) {
+  const i = VARIANTS.findIndex(v => v.id === variant);
+  setVariant(VARIANTS[(i + d + VARIANTS.length) % VARIANTS.length].id);
+}
+$('api').onchange = () => {
+  if (selected && !visibleNodes().some(n => n.path === selected)) {
+    selected = null;
+    $('panel').style.display = 'none';
+  }
+  render();
+};
+$('q').oninput = () => {
+  const q = $('q').value.toLowerCase();
+  if (!q) return;
+  const n = visibleNodes().find(n => n.title.toLowerCase().includes(q) || n.path.includes(q));
+  if (n) select(n.path);
+};
+
+function geoRows(nodes) {
+  const have = new Set(nodes.map(n => n.top));
+  const rows = GEO.map(row => row.filter(t => have.has(t))).filter(r => r.length);
+  const used = new Set(rows.flat());
+  const extra = [...have].filter(t => !used.has(t));
+  if (extra.length) rows.push(extra);
+  return rows;
+}
+function visibleNodes() {
+  const api = $('api').checked;
+  return DATA.nodes.filter(n => api || n.top !== 'API Reference');
+}
+function visibleEdges() {
+  const ids = new Set(visibleNodes().map(n => n.path));
+  return DATA.edges.filter(e => ids.has(e.src) && ids.has(e.dst));
+}
+function endId(end) {
+  return typeof end === 'string' ? end : end.path;
+}
+function nodeR(d) {
+  return 3.5 + Math.sqrt(d.tokens) / 11;
+}
+function neighborsOf(path) {
+  const inbound = new Set();
+  const outbound = new Set();
+  if (!path) return { inbound, outbound };
+  DATA.edges.forEach(e => {
+    if (e.src === path) outbound.add(e.dst);
+    if (e.dst === path) inbound.add(e.src);
+  });
+  return { inbound, outbound };
+}
+function connected(a, b) {
+  return UNDIR.has(a + '\t' + b);
+}
+function focusPath() {
+  return hovered || selected;
+}
+
+function select(path) {
+  selected = path;
+  const n = DATA.nodes.find(x => x.path === path);
+  const panel = $('panel');
+  if (!n) { panel.style.display = 'none'; return; }
+  const ins = DATA.edges.filter(e => e.dst === path).sort((a,b)=>b.n-a.n);
+  const outs = DATA.edges.filter(e => e.src === path).sort((a,b)=>b.n-a.n);
+  const slug = n.slug || n.path.replace(/\.md$/, '');
+  panel.style.display = 'block';
+  panel.innerHTML = `
+    <h3>${esc(n.title)}</h3>
+    <div class="row">${esc(n.path)}</div>
+    <div class="row">${esc(n.top)} · ${n.tokens.toLocaleString()} tokens · in ${n.in} · out ${n.out_unique}</div>
+    <div class="row">${n.tokens >= PAGE_SLURP ? '⚠ over ' + PAGE_SLURP.toLocaleString() + ' — grep/read sections, do not slurp' : 'fits in one read'}</div>
+    <div class="row"><a href="https://pydantic.dev/docs/ai/${encodeURI(slug)}" target="_blank">open on site</a></div>
+    <h4>outbound</h4>
+    ${outs.slice(0,12).map(e => `<div class="row">→ ${esc(e.dst)} ×${e.n}</div>`).join('') || '<div class="row muted">none</div>'}
+    <h4>inbound</h4>
+    ${ins.slice(0,12).map(e => `<div class="row">← ${esc(e.src)} ×${e.n}</div>`).join('') || '<div class="row muted">none</div>'}
+  `;
+  paintFocus();
+}
+
+function clearSelect() {
+  selected = null;
+  $('panel').style.display = 'none';
+  paintFocus();
+}
+
+function paintFocus() {
+  if (variant === 'A') applyGraphVisuals();
+  if (variant === 'B') drawFort();
+  if (variant === 'C') paintAtlasFocus();
+}
+
+function render() {
+  hovered = null;
+  const v = VARIANTS.find(x => x.id === variant) || VARIANTS[0];
+  variant = v.id;
+  $('label').textContent = `${v.id} — ${v.name}`;
+  $('graph').style.display = variant === 'A' ? 'block' : 'none';
+  $('fort').style.display = variant === 'B' ? 'block' : 'none';
+  $('atlas').style.display = variant === 'C' ? 'block' : 'none';
+  const t = DATA.totals;
+  $('meta').textContent = `${t.pages} pages · ${t.tokens.toLocaleString()} tokens · ${t.edges} links`;
+  paintLegend();
+  if (variant === 'A') drawGraph();
+  if (variant === 'B') drawFort();
+  if (variant === 'C') drawAtlas();
+}
+
+function tokLabel(n) {
+  if (n >= 10000) return `${Math.round(n / 1000)}k`;
+  if (n >= 1000) return `${(n / 1000).toFixed(1).replace(/\.0$/, '')}k`;
+  return String(n);
+}
+
+function paintLegend() {
+  const nodes = visibleNodes();
+  const totals = {};
+  nodes.forEach(n => { totals[n.top] = (totals[n.top] || 0) + n.tokens; });
+  const tops = geoRows(nodes).flat();
+  const sections = tops.map(t =>
+    `<li><i style="background:${COLORS[t] || '#888'}"></i><span>${esc(t)} (${tokLabel(totals[t] || 0)})</span></li>`
+  ).join('');
+  let extra = '';
+  if (variant === 'A' || variant === 'B') {
+    extra = `
+      <div class="lg-k">${variant === 'A' ? 'node size' : 'room size'}</div>
+      <ul>
+        <li><span class="dot d1"></span><span>1k tok</span></li>
+        <li><span class="dot d2"></span><span>8k tok</span></li>
+        <li><span class="dot d3"></span><span>20k tok</span></li>
+      </ul>
+      <div class="lg-k">traces</div>
+      <ul>
+        <li class="out"><i class="ln"></i><span>outbound</span></li>
+        <li class="in"><i class="ln"></i><span>inbound</span></li>
+      </ul>`;
+  } else {
+    extra = `
+      <div class="lg-k">flags</div>
+      <ul>
+        <li><span>orange card — page ≥ 8k tok</span></li>
+        <li><span>SUBAGENT — region ≥ 40k tok</span></li>
+      </ul>`;
+  }
+  $('legend-body').innerHTML = `
+    <div class="lg-k">section</div>
+    <ul>${sections}</ul>
+    ${extra}`;
+}
+
+function labelText(d) {
+  return `${d.title} (${tokLabel(d.tokens)})`;
+}
+
+function visibleLabels(nodes) {
+  const show = new Set();
+  const placed = [];
+  const CHAR = 6.1;
+  const H = 13;
+  function box(d, text) {
+    const w = text.length * CHAR;
+    return { x: d.x + nodeR(d) + 5, y: d.y - 7, w: w + 8, h: H + 2 };
+  }
+  function hits(b) {
+    return placed.some(p => b.x < p.x + p.w && b.x + b.w > p.x && b.y < p.y + p.h && b.y + b.h > p.y);
+  }
+  function tryPlace(d, text, force) {
+    if (!Number.isFinite(d.x) || !Number.isFinite(d.y)) return;
+    const b = box(d, text);
+    if (!force && hits(b)) return;
+    show.add(d.path);
+    placed.push(b);
+  }
+  const pinSet = new Set([hovered, selected].filter(Boolean));
+  pinSet.forEach(p => {
+    const n = nodes.find(x => x.path === p);
+    if (n) tryPlace(n, labelText(n), true);
+  });
+  const focus = focusPath();
+  const { inbound, outbound } = neighborsOf(focus);
+  const rest = [...nodes]
+    .filter(n => !pinSet.has(n.path))
+    .sort((a, b) => (b.tokens + b.in * 2500) - (a.tokens + a.in * 2500));
+  rest.forEach(n => {
+    if (focus && !(inbound.has(n.path) || outbound.has(n.path))) return;
+    tryPlace(n, n.title, false);
+  });
+  return show;
+}
+
+function updateGraphLabels() {
+  if (!G) return;
+  const vis = visibleLabels(G.nodes);
+  G.label
+    .text(d => vis.has(d.path) ? labelText(d) : '')
+    .attr('fill', d => (d.path === hovered || d.path === selected) ? '#f4efe2' : '#cfc9b4')
+    .attr('font-size', d => (d.path === hovered || d.path === selected) ? 11 : 10)
+    .attr('opacity', d => vis.has(d.path) ? 1 : 0);
+}
+
+function applyGraphVisuals() {
+  if (!G) return;
+  const focus = focusPath();
+  const { inbound, outbound } = neighborsOf(focus);
+  G.node
+    .attr('stroke', d => d.path === selected ? '#fff' : d.path === hovered ? '#e8e4d4' : '#000')
+    .attr('stroke-width', d => (d.path === selected || d.path === hovered) ? 2 : 0.4)
+    .attr('opacity', d => {
+      if (!focus) return 0.92;
+      if (d.path === focus || inbound.has(d.path) || outbound.has(d.path)) return 1;
+      return 0.12;
+    });
+  G.link
+    .attr('stroke', d => {
+      if (!focus) return '#2e3228';
+      const src = endId(d.source), tgt = endId(d.target);
+      if (src === focus) return OUT_COL;
+      if (tgt === focus) return IN_COL;
+      return '#16180f';
+    })
+    .attr('stroke-opacity', d => {
+      if (!focus) return 0.65;
+      const src = endId(d.source), tgt = endId(d.target);
+      if (src === focus || tgt === focus) return 0.95;
+      return 0.06;
+    })
+    .attr('stroke-width', d => {
+      const base = Math.min(4, 0.4 + d.n * 0.3);
+      if (!focus) return base;
+      const src = endId(d.source), tgt = endId(d.target);
+      if (src === focus || tgt === focus) return Math.max(base, 1.4);
+      return base;
+    });
+  updateGraphLabels();
+}
+
+function drawGraph() {
+  const svg = d3.select('#graph');
+  svg.selectAll('*').remove();
+  if (G && G.sim) G.sim.stop();
+  const box = svg.node().getBoundingClientRect();
+  const nodes = visibleNodes().map(n => ({ ...n }));
+  const links = visibleEdges().map(e => ({ source: e.src, target: e.dst, n: e.n }));
+  const rows = geoRows(nodes);
+  const sim = d3.forceSimulation(nodes)
+    .force('link', d3.forceLink(links).id(d => d.path)
+      .distance(d => 100 + 20 * Math.sqrt(d.n))
+      .strength(0.18))
+    .force('charge', d3.forceManyBody().strength(-340).distanceMax(640))
+    .force('collide', d3.forceCollide()
+      .radius(d => nodeR(d) + (d.tokens >= 1800 || d.in >= 5 ? 38 : 16))
+      .iterations(3))
+    .force('x', d3.forceX(d => {
+      const col = rows.findIndex(row => row.includes(d.top));
+      const i = (rows[col] || []).indexOf(d.top);
+      return box.width * (0.16 + 0.23 * (i < 0 ? 0 : i));
+    }).strength(0.07))
+    .force('y', d3.forceY(d => {
+      const row = rows.findIndex(r => r.includes(d.top));
+      return box.height * (0.16 + 0.23 * (row < 0 ? 0 : row));
+    }).strength(0.07))
+    .force('center', d3.forceCenter(box.width / 2, box.height / 2));
+
+  const g = svg.append('g');
+  const zoom = d3.zoom().on('zoom', (ev) => g.attr('transform', ev.transform));
+  svg.call(zoom);
+  const link = g.append('g').selectAll('line').data(links).join('line')
+    .attr('stroke-linecap', 'round');
+  const node = g.append('g').selectAll('circle.node').data(nodes).join('circle')
+    .attr('class', 'node')
+    .attr('r', d => nodeR(d))
+    .attr('fill', d => COLORS[d.top] || '#888')
+    .attr('pointer-events', 'none');
+  const hit = g.append('g').selectAll('circle.hit').data(nodes).join('circle')
+    .attr('class', 'hit')
+    .attr('r', d => Math.max(11, nodeR(d) + 5))
+    .attr('fill', 'transparent')
+    .style('cursor', 'pointer')
+    .on('pointerenter', (ev, d) => { hovered = d.path; applyGraphVisuals(); })
+    .on('pointerleave', () => { hovered = null; applyGraphVisuals(); })
+    .on('click', (ev, d) => { ev.stopPropagation(); select(d.path); });
+  const label = g.append('g').selectAll('text').data(nodes).join('text')
+    .attr('pointer-events', 'none')
+    .attr('stroke', '#0b0c0a')
+    .attr('stroke-width', 3)
+    .attr('paint-order', 'stroke')
+    .attr('dy', 3);
+  svg.on('click', () => clearSelect());
+
+  G = { sim, nodes, links, node, hit, link, label };
+  applyGraphVisuals();
+  sim.on('tick', () => {
+    link.attr('x1', d => d.source.x).attr('y1', d => d.source.y)
+        .attr('x2', d => d.target.x).attr('y2', d => d.target.y);
+    node.attr('cx', d => d.x).attr('cy', d => d.y);
+    hit.attr('cx', d => d.x).attr('cy', d => d.y);
+    label.attr('x', d => d.x + nodeR(d) + 5).attr('y', d => d.y);
+    updateGraphLabels();
+  });
+}
+
+function layoutFort(nodes) {
+  const pad = 24, legendGutter = 184, cellW = 360, gapX = 28, gapY = 36, headerH = 22;
+
+  function packDistrict(top) {
+    const group = nodes.filter(n => n.top === top).sort((a, b) => b.tokens - a.tokens);
+    const local = [];
+    let x = 8, y = headerH, rowH = 0, maxY = headerH;
+    group.forEach(n => {
+      const w = Math.max(108, Math.min(168, 48 + Math.sqrt(n.tokens) * 0.65));
+      const h = Math.max(20, Math.min(56, 14 + Math.sqrt(n.tokens) * 0.22));
+      if (x + w > cellW) { x = 8; y += rowH + 6; rowH = 0; }
+      local.push({ ...n, lx: x, ly: y, w, h });
+      x += w + 6;
+      rowH = Math.max(rowH, h);
+      maxY = Math.max(maxY, y + h);
+    });
+    return { top, rooms: local, h: maxY + 10 };
+  }
+
+  const placed = [];
+  let oy = pad;
+  geoRows(nodes).forEach(row => {
+    const districts = row.map(packDistrict).filter(d => d.rooms.length);
+    const rowH = districts.reduce((m, d) => Math.max(m, d.h), 0);
+    districts.forEach((d, rx) => {
+      const ox = legendGutter + pad + rx * (cellW + gapX);
+      d.rooms.forEach(r => {
+        placed.push({
+          ...r,
+          x: ox + r.lx,
+          y: oy + r.ly,
+          ox,
+          oy,
+          cellW,
+          cellH: d.h,
+        });
+      });
+    });
+    oy += rowH + gapY;
+  });
+  return placed;
+}
+
+function hitRoom(rooms, x, y) {
+  for (let i = rooms.length - 1; i >= 0; i--) {
+    const r = rooms[i];
+    if (x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) return r;
+  }
+  return null;
+}
+
+function bindFort(c) {
+  if (c._bound) return;
+  c._bound = true;
+  c.addEventListener('mousemove', (ev) => {
+    const rect = c.getBoundingClientRect();
+    const hit = hitRoom(fortRooms, ev.clientX - rect.left, ev.clientY - rect.top);
+    const next = hit ? hit.path : null;
+    c.style.cursor = hit ? 'pointer' : 'default';
+    if (next !== hovered) {
+      hovered = next;
+      drawFort();
+    }
+  });
+  c.addEventListener('mouseleave', () => {
+    c.style.cursor = 'default';
+    if (hovered) { hovered = null; drawFort(); }
+  });
+  c.addEventListener('click', (ev) => {
+    const rect = c.getBoundingClientRect();
+    const hit = hitRoom(fortRooms, ev.clientX - rect.left, ev.clientY - rect.top);
+    if (hit) select(hit.path);
+    else clearSelect();
+  });
+}
+
+function drawFort() {
+  const c = $('fort');
+  const ctx = c.getContext('2d');
+  const dpr = devicePixelRatio || 1;
+  const box = c.parentElement.getBoundingClientRect();
+  const rooms = layoutFort(visibleNodes());
+  const layoutW = rooms.reduce((m, r) => Math.max(m, r.ox + r.cellW + 24), box.width);
+  const layoutH = rooms.reduce((m, r) => Math.max(m, r.oy + r.cellH + 24), box.height);
+  const w = Math.round(layoutW * dpr), h = Math.round(layoutH * dpr);
+  if (c.width !== w || c.height !== h) {
+    c.width = w;
+    c.height = h;
+    c.style.width = layoutW + 'px';
+    c.style.height = layoutH + 'px';
+  }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.fillStyle = '#0b0c0a';
+  ctx.fillRect(0, 0, layoutW, layoutH);
+  fortRooms = rooms;
+  const byPath = Object.fromEntries(rooms.map(r => [r.path, r]));
+  const focus = focusPath();
+  const { inbound, outbound } = neighborsOf(focus);
+
+  const seen = new Set();
+  rooms.forEach(r => {
+    if (seen.has(r.top)) return;
+    seen.add(r.top);
+    ctx.fillStyle = '#5a574c';
+    ctx.font = '11px ui-monospace, SFMono-Regular, Menlo, monospace';
+    ctx.fillText(r.top.toUpperCase(), r.ox, r.oy + 12);
+    ctx.strokeStyle = '#1c1e18';
+    ctx.strokeRect(r.ox, r.oy + 14, r.cellW, r.cellH);
+  });
+
+  ctx.lineWidth = 1;
+  rooms.forEach(a => {
+    rooms.forEach(b => {
+      if (a.path >= b.path) return;
+      if (a.top !== b.top) return;
+      if (!connected(a.path, b.path)) return;
+      ctx.strokeStyle = focus ? '#1a1c14' : '#2a2d22';
+      ctx.beginPath();
+      const ax = a.x + a.w/2, ay = a.y + a.h/2, bx = b.x + b.w/2, by = b.y + b.h/2;
+      ctx.moveTo(ax, ay); ctx.lineTo(ax, by); ctx.lineTo(bx, by); ctx.stroke();
+    });
+  });
+
+  if (focus && byPath[focus]) {
+    const s = byPath[focus];
+    DATA.edges.forEach(e => {
+      const other = e.src === focus ? e.dst : e.dst === focus ? e.src : null;
+      if (!other || !byPath[other]) return;
+      const t = byPath[other];
+      ctx.strokeStyle = e.src === focus ? OUT_COL : IN_COL;
+      ctx.lineWidth = Math.min(4, 1 + e.n * 0.4);
+      ctx.beginPath();
+      const ax = s.x + s.w/2, ay = s.y + s.h/2, bx = t.x + t.w/2, by = t.y + t.h/2;
+      ctx.moveTo(ax, ay); ctx.lineTo(bx, ay); ctx.lineTo(bx, by); ctx.stroke();
+    });
+  }
+
+  rooms.forEach(r => {
+    const hot = !focus || r.path === focus || inbound.has(r.path) || outbound.has(r.path);
+    ctx.fillStyle = COLORS[r.top] || '#666';
+    ctx.globalAlpha = hot ? 0.9 : 0.16;
+    ctx.fillRect(r.x, r.y, r.w, r.h);
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = r.path === selected ? '#fff' : r.path === hovered ? '#e8e4d4' : '#0b0c0a';
+    ctx.lineWidth = (r.path === selected || r.path === hovered) ? 2 : 1;
+    ctx.strokeRect(r.x, r.y, r.w, r.h);
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(r.x + 2, r.y + 2, r.w - 4, r.h - 4);
+    ctx.clip();
+    ctx.font = '9px ui-monospace, Menlo, monospace';
+    const pad = 4;
+    const full = `${r.title} (${tokLabel(r.tokens)})`;
+    let text = full;
+    const maxW = r.w - pad * 2;
+    while (text.length > 1 && ctx.measureText(text).width > maxW) text = text.slice(0, -1);
+    if (text !== full) text = `${text.slice(0, -1)}…`;
+    ctx.fillStyle = '#0b0c0a';
+    ctx.textAlign = 'left';
+    ctx.fillText(text, r.x + pad, r.y + 12);
+    ctx.restore();
+  });
+
+  const pin = hovered || selected;
+  if (pin && byPath[pin]) {
+    const r = byPath[pin];
+    const text = `${r.title} (${tokLabel(r.tokens)})`;
+    ctx.font = '11px ui-monospace, Menlo, monospace';
+    const tw = ctx.measureText(text).width;
+    const pad = 6;
+    let x = r.x;
+    let y = r.y - 8;
+    if (y < 18) y = r.y + r.h + 14;
+    if (x + tw + pad * 2 > box.width - 8) x = Math.max(8, box.width - tw - pad * 2 - 8);
+    ctx.fillStyle = '#12130fef';
+    ctx.strokeStyle = r.path === hovered ? OUT_COL : '#fff';
+    ctx.lineWidth = 1;
+    ctx.fillRect(x, y - 12, tw + pad * 2, 18);
+    ctx.strokeRect(x, y - 12, tw + pad * 2, 18);
+    ctx.fillStyle = '#e8e4d4';
+    ctx.fillText(text, x + pad, y + 1);
+  }
+
+  bindFort(c);
+}
+
+function sectionStats(nodes) {
+  const m = {};
+  nodes.forEach(n => {
+    const s = m[n.top] || (m[n.top] = { tokens: 0, pages: 0, hubs: [] });
+    s.tokens += n.tokens; s.pages += 1; s.hubs.push(n);
+  });
+  Object.values(m).forEach(s => s.hubs.sort((a,b) => (b.in + b.tokens/5000) - (a.in + a.tokens/5000)));
+  return m;
+}
+
+function atlasPageClass(n, inbound, outbound) {
+  const bits = ['page'];
+  if (n.tokens >= PAGE_SLURP) bits.push('big');
+  if (selected) {
+    if (n.path === selected) bits.push('sel');
+    else if (outbound.has(n.path)) bits.push('hot');
+    else if (inbound.has(n.path)) bits.push('inb');
+    else bits.push('dim');
+  }
+  return bits.join(' ');
+}
+
+function paintAtlasFocus() {
+  const el = $('atlas');
+  if (!el.querySelector('.page')) { drawAtlas(); return; }
+  const { inbound, outbound } = neighborsOf(selected);
+  el.querySelectorAll('.page').forEach(p => {
+    const n = DATA.nodes.find(x => x.path === p.dataset.path);
+    if (n) p.className = atlasPageClass(n, inbound, outbound);
+  });
+}
+
+function drawAtlas() {
+  const el = $('atlas');
+  const nodes = visibleNodes();
+  const stats = sectionStats(nodes);
+  const highways = DATA.section_edges
+    .filter(e => e.src !== 'API Reference' && e.dst !== 'API Reference')
+    .sort((a,b) => b.n - a.n)
+    .slice(0, 12);
+  const order = geoRows(nodes).flat();
+  const { inbound, outbound } = neighborsOf(selected);
+  el.innerHTML = `
+    <p class="hint">Generated atlas for agents. Regions over ${REGION_SUBAGENT.toLocaleString()} tokens spawn a subagent. Pages over ${PAGE_SLURP.toLocaleString()} are grep/read, not slurped. Click a page.</p>
+    <div class="region">
+      <h2>Cross-region highways</h2>
+      <p>${highways.map(e => `${esc(e.src)} → ${esc(e.dst)} ×${e.n}`).join(' · ')}</p>
+    </div>
+    ${order.filter(t => stats[t]).map(top => {
+      const s = stats[top];
+      const flag = s.tokens >= REGION_SUBAGENT ? 'SUBAGENT' : 'INLINE';
+      const pages = s.hubs.map(n => `
+        <div class="${atlasPageClass(n, inbound, outbound)}" data-path="${esc(n.path)}">
+          <div class="t">${esc(n.title)}</div>
+          <div class="s">${n.tokens.toLocaleString()} tok · in ${n.in} · out ${n.out_unique}${n.tokens>=PAGE_SLURP?' · DO NOT SLURP':''}</div>
+        </div>`).join('');
+      return `<div class="region">
+        <h2>${esc(top)} <span class="tok">${s.tokens.toLocaleString()} tok · ${s.pages} pages</span> <span class="flag">${flag}</span></h2>
+        <p>Start at <b>${esc(s.hubs[0].title)}</b> (${esc(s.hubs[0].path)}). ${s.hubs.filter(h=>h.tokens>=PAGE_SLURP).length} oversized pages.</p>
+        <div class="pages">${pages}</div>
+      </div>`;
+    }).join('')}
+  `;
+  el.querySelectorAll('.page').forEach(p => { p.onclick = () => select(p.dataset.path); });
+}
+
+function loadData(d) {
+  DATA = d;
+  PAGE_SLURP = d.page_slurp_tokens || 8000;
+  REGION_SUBAGENT = d.region_subagent_tokens || 40000;
+  UNDIR = new Set();
+  DATA.edges.forEach(e => {
+    UNDIR.add(e.src + '\t' + e.dst);
+    UNDIR.add(e.dst + '\t' + e.src);
+  });
+  render();
+}
+const inlined = $('graph-data');
+const raw = inlined && inlined.textContent.trim();
+if (raw && raw.startsWith('{')) {
+  loadData(JSON.parse(raw));
+} else {
+  fetch('graph.json').then(r => r.json()).then(loadData);
+}
+</script>
+</body>
+</html>

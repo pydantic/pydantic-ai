@@ -136,4 +136,5 @@ Check these when working in specific areas:
 - **[Documentation](documentation.md)**: When writing or updating documentation, comments, or docstrings
 - **[API Design & Interfaces](api-design.md)**: When designing or modifying public APIs, parameters, or class interfaces
 - **[Pydantic AI Slim Architecture](pydantic-ai-slim.md)**: When changing agents, tools, output, message history, providers, profiles, capabilities, toolsets, UI adapters, or durable execution
+- **[Docs atlas](docs-atlas.md)**: Generated map of published docs (pages, tokens, hubs, dispatch thresholds). Do not hand-edit; regenerate with `make docs-map`. The interactive viewer is `docs/map.html`. Read the atlas when exploring docs or deciding subagent dispatch.
 <!-- /braindump -->
