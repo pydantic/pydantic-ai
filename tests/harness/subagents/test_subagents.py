@@ -751,6 +751,30 @@ class TestContainErrors:
         with pytest.raises(UserError):
             await parent.run('go')
 
+    async def test_first_party_cancellation_bypasses_containment(self) -> None:
+        def call_stop(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[ToolCallPart('stop', {}, tool_call_id='s1')])
+
+        canceller = Agent(FunctionModel(call_stop), name='canceller')
+
+        @canceller.tool
+        def stop(ctx: RunContext[object]) -> str:
+            ctx.cancel()
+            return 'ignored'
+
+        parent: Agent[object, str] = Agent(
+            _delegate_then_finish('canceller'),
+            capabilities=[SubAgents(agents=[SubAgent(canceller, contain_errors=True)])],
+        )
+        result = await parent.run('go')
+        # `RunCancelled` is a plain `Exception`: a deliberate `ctx.cancel()` in the child must
+        # escape containment so pydantic-ai isolates it as a failed delegate return, not become
+        # a `Sub-agent ... crashed` retry that invites the parent to re-delegate.
+        assert result.output == 'all done'
+        assert not _delegate_retries(result)
+        returns = _delegate_returns(result)
+        assert any('The sub-agent run was cancelled' in r for r in returns)
+
     async def test_on_failure_does_not_soften_contained_crash(self) -> None:
         boomer = Agent(_crash(), name='boomer')
         worker = Agent(TestModel(custom_output_text='OK'), name='worker')

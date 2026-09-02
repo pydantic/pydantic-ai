@@ -14,6 +14,7 @@ from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
     ModelRetry,
+    RunCancelled,
     SkipModelRequest,
     SkipToolExecution,
     SkipToolValidation,
@@ -43,8 +44,14 @@ signature and the schema rewrite that shapes it to the configured menu."""
 # `contain_errors` on. Containing the first five would break the agent graph
 # (deferred/approval/skip control-flow); a `UserError` is a setup bug that no
 # retry can fix, so masking it into a retry only delays and obscures it.
-# Cancellation (`asyncio.CancelledError`, a `BaseException`) is out of `except
-# Exception`'s reach already, and a shared `UsageLimitExceeded` has its own clause.
+# First-party cancellation (`RunContext.cancel()` in the child) raises
+# `RunCancelled`, a plain `Exception`, so it must be listed here or containment
+# would mislabel a deliberate stop as a crash and retry it. Once it escapes the
+# delegate tool, pydantic-ai isolates it as a failed tool return in the parent
+# (pydantic/pydantic-ai#7199), the same outcome as the uncontained path.
+# External cancellation (`asyncio.CancelledError`, a `BaseException`) is out of
+# `except Exception`'s reach already, and a shared `UsageLimitExceeded` has its
+# own clause.
 _ALWAYS_PROPAGATE: tuple[type[Exception], ...] = (
     CallDeferred,
     ApprovalRequired,
@@ -52,6 +59,7 @@ _ALWAYS_PROPAGATE: tuple[type[Exception], ...] = (
     SkipToolValidation,
     SkipToolExecution,
     UserError,
+    RunCancelled,
 )
 
 
