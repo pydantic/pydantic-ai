@@ -1249,8 +1249,8 @@ async def test_google_image_generation_accepts_the_gemini_api_provider_name_fami
     Matching on `system` alone rejects two files this transport can serve: `'google-gla'`, the pre-v2
     name still carried by persisted message history, and `'google'` — the name a file uploaded through
     the Gemini Files API carries — on a `GoogleCloudProvider` holding a Gemini API client, whose `name`
-    stays `'google-cloud'` while the bytes go to the only transport with a Files API. Mirrors
-    `GoogleModel`'s `_matching_provider_names`.
+    stays `'google-cloud'` while the bytes go to the only transport with a Files API. Wider than
+    `GoogleModel._matching_provider_names`, which accepts the family only when `system` is in it.
 
     Not a VCR test because a Files API upload expires, so the acceptance path cannot be recorded stably.
     """
