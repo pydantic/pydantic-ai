@@ -22,12 +22,12 @@ from dataclasses import KW_ONLY, dataclass
 from datetime import datetime, timedelta, timezone
 from functools import cached_property
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Annotated, Any, Protocol
 from urllib.parse import urlencode
 
 import anyio
 import httpx2
-from pydantic import BaseModel, Field, StrictFloat, StrictInt, ValidationError
+from pydantic import Field, StrictFloat, StrictInt, TypeAdapter, ValidationError
 from typing_extensions import Self
 
 from pydantic_ai._http import create_async_httpx2_client
@@ -119,7 +119,7 @@ class OpenAICodexCredentials:
     def from_codex_cli_auth(cls, data: Mapping[str, Any]) -> Self:
         """Parse the Codex CLI `~/.codex/auth.json` shape (`{'tokens': {...}}`)."""
         try:
-            tokens = _CodexCliAuth.model_validate(data).tokens
+            tokens = _codex_cli_auth_ta.validate_python(data).tokens
         except ValidationError as e:
             raise UserError(f'Malformed Codex CLI credentials. Run `codex login` to regenerate them.\n\n{e}') from None
         return cls(
@@ -129,11 +129,12 @@ class OpenAICodexCredentials:
         )
 
 
-# Dedicated models for the wire payloads consulted above and below: pydantic ignores extra
-# fields by default, and a `ValidationError` (a `ValueError`) also rejects non-object payloads.
+# Dataclasses for the wire payloads consulted above and below, validated through `TypeAdapter`:
+# extra fields are ignored, and a `ValidationError` (a `ValueError`) also rejects non-object payloads.
 
 
-class _CodexCliTokens(BaseModel):
+@dataclass
+class _CodexCliTokens:
     """The `tokens` entry of the Codex CLI's `auth.json`."""
 
     access_token: str
@@ -141,30 +142,34 @@ class _CodexCliTokens(BaseModel):
     account_id: str
 
 
-class _CodexCliAuth(BaseModel):
+@dataclass
+class _CodexCliAuth:
     """The subset of the Codex CLI's `auth.json` that credentials are built from."""
 
     tokens: _CodexCliTokens
 
 
-class _JwtAuthClaim(BaseModel):
+@dataclass
+class _JwtAuthClaim:
     """The nested OpenAI claim carrying the ChatGPT account id."""
 
     chatgpt_account_id: str | None = None
 
 
-class _JwtPayload(BaseModel):
+@dataclass
+class _JwtPayload:
     """The unverified JWT claims consulted for expiry and account-id hints."""
 
     # Strict, so a numeric string is not coerced into an expiry hint.
     exp: StrictInt | StrictFloat | None = None
     # The Codex id_token nests the account id under this claim.
-    auth: _JwtAuthClaim | None = Field(default=None, validation_alias='https://api.openai.com/auth')
+    auth: Annotated[_JwtAuthClaim | None, Field(validation_alias='https://api.openai.com/auth')] = None
     chatgpt_account_id: str | None = None
     account_id: str | None = None
 
 
-class _TokenResponse(BaseModel):
+@dataclass
+class _TokenResponse:
     """The fields of an OAuth token-endpoint response that credentials are built from.
 
     `refresh_token` is required because the flow always requests the `offline_access` scope, and
@@ -177,11 +182,18 @@ class _TokenResponse(BaseModel):
     account_id: str | None = None
 
 
-class _TokenErrorResponse(BaseModel):
+@dataclass
+class _TokenErrorResponse:
     """An OAuth token-endpoint error body."""
 
     error: str | None = None
     error_description: str | None = None
+
+
+_codex_cli_auth_ta = TypeAdapter(_CodexCliAuth)
+_jwt_payload_ta = TypeAdapter(_JwtPayload)
+_token_response_ta = TypeAdapter(_TokenResponse)
+_token_error_response_ta = TypeAdapter(_TokenErrorResponse)
 
 
 def _jwt_payload(token: str) -> _JwtPayload | None:
@@ -192,7 +204,7 @@ def _jwt_payload(token: str) -> _JwtPayload | None:
         return None
     padded = segment + '=' * (-len(segment) % 4)
     try:
-        return _JwtPayload.model_validate(json.loads(base64.urlsafe_b64decode(padded)))
+        return _jwt_payload_ta.validate_python(json.loads(base64.urlsafe_b64decode(padded)))
     except ValueError:
         return None
 
@@ -246,7 +258,7 @@ async def _post_token_request(
         response = await http_client.post(url, data=dict(form), headers={'Accept': 'application/json'})
     if response.status_code != 200:
         try:
-            body = _TokenErrorResponse.model_validate(response.json())
+            body = _token_error_response_ta.validate_python(response.json())
         except ValueError:
             body = _TokenErrorResponse()
         detail = body.error_description or body.error or response.text[:200]
@@ -255,7 +267,7 @@ async def _post_token_request(
             f'Token request to {url} failed with status {response.status_code}: {detail}{hint}'
         )
     try:
-        return _TokenResponse.model_validate(response.json())
+        return _token_response_ta.validate_python(response.json())
     except ValueError as e:
         raise CredentialsRefreshError(f'Token endpoint {url} returned an unexpected response.\n\n{e}') from None
 

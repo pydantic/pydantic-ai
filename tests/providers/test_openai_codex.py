@@ -46,6 +46,7 @@ with try_import() as imports_successful:
         _OpenAICodexAuth,  # pyright: ignore[reportPrivateUsage]
         _post_token_request,  # pyright: ignore[reportPrivateUsage]
         _refresh_credentials,  # pyright: ignore[reportPrivateUsage]
+        _token_response_ta,  # pyright: ignore[reportPrivateUsage]
         _TokenResponse,  # pyright: ignore[reportPrivateUsage]
     )
 
@@ -88,7 +89,7 @@ class TokenEndpointMock:
         result = self.results[min(len(self.forms), len(self.results)) - 1]
         if isinstance(result, Exception):
             raise result
-        return _TokenResponse.model_validate(result)
+        return _token_response_ta.validate_python(result)
 
 
 TOKEN_RESPONSE: dict[str, Any] = {

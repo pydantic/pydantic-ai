@@ -25,35 +25,13 @@ This resolves to [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIRespon
 
 ## Logging in without the Codex CLI
 
-If you don't want to depend on the Codex CLI, [`OpenAICodexOAuthFlow`][pydantic_ai.providers.openai_codex.OpenAICodexOAuthFlow] runs the same browser login. The Codex client pins its redirect URI to `http://localhost:1455/auth/callback`, so [`exchange_code_from_callback()`][pydantic_ai.providers.openai_codex.OpenAICodexOAuthFlow.exchange_code_from_callback] listens on that port until the browser redirects there, then exchanges the code for credentials:
+If you don't want to depend on the Codex CLI, [`OpenAICodexOAuthFlow`][pydantic_ai.providers.openai_codex.OpenAICodexOAuthFlow] runs the same browser login. The Codex client pins its redirect URI to `http://localhost:1455/auth/callback`, so [`exchange_code_from_callback()`][pydantic_ai.providers.openai_codex.OpenAICodexOAuthFlow.exchange_code_from_callback] listens on that port until the browser redirects there, then exchanges the code for [`OpenAICodexCredentials`][pydantic_ai.providers.openai_codex.OpenAICodexCredentials].
+
+You only want to do that once, and since access tokens expire and refresh tokens are single-use, the credentials change over time. So give the provider an [`OpenAICodexCredentialSource`][pydantic_ai.providers.openai_codex.OpenAICodexCredentialSource] that wraps your storage: the provider calls `load()` on first use and `save()` after every refresh, and the login flow only runs when there is nothing stored yet.
 
 ```python {title="codex_login.py" test="skip - opens a browser and requires user login"}
-import webbrowser
-
-from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIResponsesModel
-from pydantic_ai.providers.openai_codex import OpenAICodexOAuthFlow, OpenAICodexProvider
-
-
-async def main():
-    flow = OpenAICodexOAuthFlow()
-    webbrowser.open(flow.authorization_url())
-    credentials = await flow.exchange_code_from_callback()
-
-    provider = OpenAICodexProvider(credentials=credentials)
-    agent = Agent(OpenAIResponsesModel('gpt-5.6-luna', provider=provider))
-    result = await agent.run('Where does "hello world" come from?')
-    print(result.output)
-```
-
-Passing `credentials` keeps them in memory only, so the next process has to log in again. To log in once and stay logged in, store the credentials yourself as described below.
-
-## Persisting credentials
-
-Access tokens expire and refresh tokens are single-use, so the provider refreshes them automatically and the stored set needs to keep up. Give the provider an [`OpenAICodexCredentialSource`][pydantic_ai.providers.openai_codex.OpenAICodexCredentialSource] and it will call `load()` on first use and `save()` after every refresh:
-
-```python
 import json
+import webbrowser
 from dataclasses import asdict
 from pathlib import Path
 
@@ -62,6 +40,7 @@ from pydantic_ai.models.openai import OpenAIResponsesModel
 from pydantic_ai.providers.openai_codex import (
     OpenAICodexCredentials,
     OpenAICodexCredentialSource,
+    OpenAICodexOAuthFlow,
     OpenAICodexProvider,
 )
 
@@ -77,13 +56,20 @@ class FileCredentialSource(OpenAICodexCredentialSource):
         self.path.write_text(json.dumps(asdict(credentials)))
 
 
-source = FileCredentialSource(Path('codex-credentials.json'))
-provider = OpenAICodexProvider(credential_source=source)
-agent = Agent(OpenAIResponsesModel('gpt-5.6-luna', provider=provider))
-...
+async def main():
+    source = FileCredentialSource(Path('codex-credentials.json'))
+    if not source.path.exists():
+        flow = OpenAICodexOAuthFlow()
+        webbrowser.open(flow.authorization_url())
+        await source.save(await flow.exchange_code_from_callback())
+
+    provider = OpenAICodexProvider(credential_source=source)
+    agent = Agent(OpenAIResponsesModel('gpt-5.6-luna', provider=provider))
+    result = await agent.run('Where does "hello world" come from?')
+    print(result.output)
 ```
 
-Store the file wherever your app keeps secrets, not in `~/.codex`, which belongs to the Codex CLI. Before refreshing, the provider re-reads the source and adopts any newer credentials found there, so another process using the same store (for example, a second instance of your app) doesn't invalidate the tokens by refreshing them first.
+Store the file wherever your app keeps secrets, not in `~/.codex`, which belongs to the Codex CLI. If you'd rather not persist anything, pass `credentials=` to the provider instead of a source: refreshed tokens then live in memory only, and the next process has to log in again.
 
 If `save()` raises, the refreshed credentials stay live in memory and a [`CredentialsPersistenceError`][pydantic_ai.providers.openai_codex.CredentialsPersistenceError] is raised so you know the store is out of date. Both it and [`CredentialsRefreshError`][pydantic_ai.providers.openai_codex.CredentialsRefreshError] subclass [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], so a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] treats an unusable login like any other provider failure and moves on to the next model.
 
