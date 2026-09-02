@@ -312,7 +312,7 @@ async def main():
 4. Call [`generate_dataset`][pydantic_evals.generation.generate_dataset] to create a [`Dataset`][pydantic_evals.dataset.Dataset] with 2 cases confirming to the schema.
 5. Save the dataset to a YAML file, this will also write `questions_cases_schema.json` with the schema JSON schema for `questions_cases.yaml` to make editing easier. The magic `yaml-language-server` comment is supported by at least vscode, jetbrains/pycharm (more details [here](https://github.com/redhat-developer/yaml-language-server#using-inlined-schema)).
 
-_(This example is complete except for the async entry point. To run it, add `import asyncio` and call `asyncio.run(main(answer))`.)_
+_(This example is complete except for the async entry point. To run it, add `import asyncio` and call `asyncio.run(main())`.)_
 
 You can also write datasets as JSON files:
 
@@ -388,7 +388,7 @@ async def main():
 1. Generate the [`Dataset`][pydantic_evals.dataset.Dataset] exactly as above.
 2. Save the dataset to a JSON file. This also writes `questions_cases_schema.json`, the JSON Schema for `questions_cases.json`. The `$schema` key tells editors which schema to use while you edit the file. Although this is not a formal specification, it works in VS Code and PyCharm; see [the discussion](https://github.com/json-schema-org/json-schema-spec/issues/828).
 
-_(This example is complete except for the async entry point. To run it, add `import asyncio` and call `asyncio.run(main(answer))`.)_
+_(This example is complete except for the async entry point. To run it, add `import asyncio` and call `asyncio.run(main())`.)_
 
 ## Type-Safe Datasets
 
