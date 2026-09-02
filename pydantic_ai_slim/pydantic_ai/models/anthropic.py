@@ -94,6 +94,7 @@ from . import (
     download_item,
     get_user_agent,
 )
+from ._anthropic_containers import is_tool_result_only as _is_tool_result_only
 from ._tool_choice import ResolvedToolChoice, resolve_tool_choice
 
 _FINISH_REASON_MAP: dict[BetaStopReason, FinishReason | None] = {
@@ -482,7 +483,12 @@ class AnthropicModelSettings(ModelSettings, total=False):
     """Container configuration for multi-turn conversations.
 
     By default, if previous messages contain a container_id (from a prior response),
-    it will be reused automatically.
+    it will be reused automatically. An id recovered that way is the only container
+    Pydantic AI may replace on its own: if a request carrying both that id and
+    `CodeExecutionTool` uploads comes back `500`, the id is dropped and the request is
+    sent once more so the upload lands in a fresh container. Nothing else is replaced —
+    not a container you set here, and not the id used to reconnect a paused turn — so a
+    request pinning a container the API will not accept raises instead.
 
     Set to `False` to force a fresh container (ignore any `container_id` from history).
     Set to a container id string (e.g. `'container_xxx'`) to explicitly reuse a container,
@@ -955,9 +961,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         betas.update(native_tool_betas)
         context_management = self._add_compaction_params(messages, betas, model_settings)
         self._validate_task_budget_vs_context_management(model_settings, context_management)
-        container = self._get_container(messages, model_settings)
+        container, container_from_history = self._get_container(messages, model_settings)
 
-        with _map_api_errors(self.model_name, self._provider.model_id_namespace):
+        async def create(
+            container_param: BetaContainerParams | str | None,
+        ) -> BetaMessage | AsyncStream[BetaRawMessageStreamEvent]:
             return await self.client.beta.messages.create(
                 max_tokens=model_settings.get('max_tokens', 4096),
                 system=system_prompt or OMIT,
@@ -975,12 +983,28 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 timeout=to_httpx2_timeout(model_settings.get('timeout', NOT_GIVEN)),
                 metadata=model_settings.get('anthropic_metadata', OMIT),
                 context_management=context_management or OMIT,
-                container=container or OMIT,
+                container=container_param or OMIT,
                 service_tier=_resolve_anthropic_service_tier(model_settings),
                 speed=self._effective_speed(model_settings, anthropic_profile),
                 extra_headers=extra_headers,
                 extra_body=_build_extra_body(model_settings),
             )
+
+        with _map_api_errors(self.model_name, self._provider.model_id_namespace):
+            try:
+                return await create(container)
+            except APIStatusError as e:
+                if (
+                    e.status_code != 500
+                    or not container_from_history
+                    or not any(
+                        is_str_dict(block) and block['type'] == 'container_upload'
+                        for message in anthropic_messages
+                        for block in message['content']
+                    )
+                ):
+                    raise
+                return await create(None)
 
     @staticmethod
     def _add_compaction_params(
@@ -1107,8 +1131,13 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
     def _get_container(
         self, messages: list[ModelMessage], model_settings: AnthropicModelSettings
-    ) -> BetaContainerParams | str | None:
-        """Resolve the `container` request parameter.
+    ) -> tuple[BetaContainerParams | str | None, bool]:
+        """Resolve the `container` request parameter, and whether we resolved it from history.
+
+        The second element is `True` only for an id recovered by the history scan below. That is the
+        one container the caller never chose, so it is the only one we may drop and re-resolve when
+        the API rejects it. A user-set `anthropic_container` and a `pause_turn` reconnect id are
+        both deliberate and stay on the wire even when they fail.
 
         The Anthropic SDK types `container` as `BetaContainerParams | str`, and the
         live API accepts both forms *except* for one specific shape: a dict carrying
@@ -1125,23 +1154,23 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         """
         if (container := model_settings.get('anthropic_container')) is not None:
             if container is False:
-                return None
+                return None, False
             if isinstance(container, dict) and set(container) == {'id'} and (cid := container.get('id')):
-                return cid
-            return container
+                return cid, False
+            return container, False
         # On pause_turn continuation, pass just the container ID string to reconnect.
         # Re-passing BetaContainerParams triggers a prefill rejection on some models
         # (e.g. Sonnet 4-6) even though plain string ID works fine.
         if messages and isinstance(messages[-1], ModelResponse) and messages[-1].state == 'suspended':
             if messages[-1].provider_details:
-                return messages[-1].provider_details.get('container_id')
-            return None  # pragma: lax no cover
+                return messages[-1].provider_details.get('container_id'), False
+            return None, False
 
         for m in reversed(messages):
             if isinstance(m, ModelResponse) and m.provider_name == self.system and m.provider_details:
                 if cid := m.provider_details.get('container_id'):
-                    return cid
-        return None
+                    return cid, True
+        return None, False
 
     async def _messages_count_tokens(
         self,
@@ -2194,21 +2223,16 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         _anchor_system_messages(anthropic_messages)
 
         if pending_container_uploads:
-            upload_blocks = [
-                BetaContainerUploadBlockParam(type='container_upload', file_id=file_id)
-                for file_id in pending_container_uploads
-            ]
-            # Inject the uploads into the *first* user message, not the last. The blocks are
-            # recomputed from the static `CodeExecutionTool.files` config on every request, so
-            # pinning them to the first message keeps that message byte-identical as history grows,
-            # which keeps the cacheable prefix stable across steps. Injecting at the tail instead
-            # would move the insertion point every turn and silently bust the prompt cache.
-            for msg in anthropic_messages:
-                if msg['role'] == 'user':
-                    existing = msg['content']
-                    assert not isinstance(existing, str)
-                    msg['content'] = [*existing, *upload_blocks]
-                    break
+            for message in anthropic_messages:
+                if message['role'] == 'user':
+                    existing = message['content']
+                    assert isinstance(existing, list)
+                    if _is_tool_result_only(existing):
+                        continue
+                    extra: list[BetaContainerUploadBlockParam] = [
+                        {'type': 'container_upload', 'file_id': file_id} for file_id in pending_container_uploads
+                    ]
+                    message['content'] = [*existing, *extra]
 
         instruction_parts = self._get_instruction_parts(messages, model_request_parameters)
         system_prompt = '\n\n'.join(system_prompt_parts)
@@ -3408,7 +3432,8 @@ def _drop_unpaired_native_tool_calls(anthropic_messages: list[BetaMessageParam])
 
     A result can arrive in a later response, or exist as a `NativeToolReturnPart` but fail to render.
     Anthropic accepts an unpaired native call only while every later message is a user turn containing
-    only concurrent client-tool results.
+    only concurrent client-tool results. That shape is `_is_tool_result_only`, shared with the
+    `container_upload` injection so the two cannot drift.
     """
     returned_native_tool_call_ids: set[str] = set()
     for message in anthropic_messages:
@@ -3469,9 +3494,7 @@ def _drop_unpaired_native_tool_calls(anthropic_messages: list[BetaMessageParam])
             message['content'] = kept
 
         suffix_is_tool_result_only = (
-            suffix_is_tool_result_only
-            and message['role'] == 'user'
-            and all(is_str_dict(block) and block['type'] == 'tool_result' for block in kept)
+            suffix_is_tool_result_only and message['role'] == 'user' and _is_tool_result_only(kept)
         )
 
 
