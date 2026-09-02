@@ -198,27 +198,39 @@ Reusable capabilities can publish typed [`CapabilityEvent`][pydantic_ai.messages
 
 ```python {title="capability_events.py"}
 from dataclasses import dataclass
+from typing import Any
 
 from pydantic_ai import CapabilityEvent, RunContext
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.models import ModelRequestContext
+from pydantic_ai.toolsets import AgentToolset, FunctionToolset
 
-FILE_SYSTEM_EVENTS = 'file_system'
+FILE_SYSTEM = 'file_system'
 
 
 @dataclass(kw_only=True)
-class FileReadEvent(CapabilityEvent, namespace=FILE_SYSTEM_EVENTS):
+class FileWriteEvent(CapabilityEvent, namespace=FILE_SYSTEM):
     path: str
+    bytes_written: int
+
+
+file_system = FunctionToolset()
+
+
+@file_system.tool
+async def write_file(ctx: RunContext[Any], path: str, content: str) -> str:
+    await ctx.emit(FileWriteEvent(path=path, bytes_written=len(content)))
+    return f'Wrote {path}'
 
 
 @dataclass
-class FileSystemCapability(AbstractCapability[None]):
-    async def before_model_request(
-        self, ctx: RunContext[None], request_context: ModelRequestContext
-    ) -> ModelRequestContext:
-        await ctx.emit(FileReadEvent(path='README.md'))
-        return request_context
+class FileSystem(AbstractCapability[Any]):
+    def get_toolset(self) -> AgentToolset[Any] | None:
+        return file_system
 ```
+
+_(This example is complete, it can be run "as is")_
+
+Keep the namespace in a module-level constant and give it the capability's name or [`id`][pydantic_ai.capabilities.AbstractCapability.id]: every event in the family repeats it, and it's the prefix subscribers match on.
 
 A capability publishes capability events specifically, and emitting an application [`CustomEvent`][pydantic_ai.messages.CustomEvent] from one raises a [`UserError`][pydantic_ai.exceptions.UserError]; see [Which event type do I use?](../agent.md#which-event-type) for the split. The payload cannot use the field names the envelope needs for itself: `data`, `capability_id`, `tool_call_id`, `tool_name`, and `event_kind` are rejected when the class is defined.
 
@@ -230,9 +242,11 @@ from dataclasses import dataclass
 from pydantic_ai import Agent, CapabilityEvent, CustomEvent, RunContext
 from pydantic_ai.capabilities import Hooks
 
+SEARCH_INDEX = 'search_index'
+
 
 @dataclass(kw_only=True)
-class IndexRebuiltEvent(CapabilityEvent, namespace='search_index'):
+class IndexRebuiltEvent(CapabilityEvent, namespace=SEARCH_INDEX):
     documents: int
 
 
@@ -269,33 +283,39 @@ from typing import Any
 from pydantic_ai import CapabilityEvent, RunContext
 from pydantic_ai.capabilities import AbstractCapability, on_event
 
+REPO_CONTEXT = 'repo_context'
+
 
 @dataclass(kw_only=True)
-class FileReadEvent(CapabilityEvent, namespace='repo_context_events'):
+class FileReadEvent(CapabilityEvent, namespace=REPO_CONTEXT):
     path: str
 
 
 @dataclass(kw_only=True)
-class DirectoryListedEvent(CapabilityEvent, namespace='repo_context_events'):
+class DirectoryListedEvent(CapabilityEvent, namespace=REPO_CONTEXT):
     path: str
 
 
 class RepoContext(AbstractCapability[Any]):
     @on_event(FileReadEvent, DirectoryListedEvent)
-    async def _on_traversal(
+    async def _follow_discovered_instructions(
         self,
         ctx: RunContext[Any],
         event: FileReadEvent | DirectoryListedEvent,
     ) -> None:
         if event.path.endswith('AGENTS.md'):
-            ctx.enqueue('Follow the instructions in the discovered AGENTS.md file.')
+            ctx.enqueue(f'Follow the instructions in {event.path}.')
 ```
 
-Filtering is explicit: the decorator uses `isinstance` against the classes passed to it. A bare `@on_event` receives the full [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent] union, including model response deltas, tool call and result events, deferred and enqueued-message events, [`CustomEvent`][pydantic_ai.messages.CustomEvent]s, and capability events.
+Filtering is explicit: the decorator uses `isinstance` against the classes passed to it. A bare `@on_event` receives the full [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent] union, including model response deltas, tool call and result events, deferred and [enqueued-message](../message-history.md#injecting-messages-mid-run) events, [custom events](../agent.md#custom-events), and capability events.
+
+Name the classes when you can. Beyond narrowing the `event` argument for the type checker, the classes are what let dispatch skip a capability without descending into it: a capability is only woken for events one of its listeners accepts. A bare `@on_event` — or an overridden [`on_event()`][pydantic_ai.capabilities.AbstractCapability.on_event], whose dispatch isn't knowable in advance — opts that capability into every event, and a capability that combines others reports the union of its children's. If you override `on_event()` and can describe what it dispatches, override [`listens_to()`][pydantic_ai.capabilities.AbstractCapability.listens_to] alongside it to say so.
 
 Listeners run sequentially in capability order, and marked methods within one capability run in definition order. The emitting capability also receives its own events. By default, listeners run when the event reaches its position in the stream, so listener ordering always matches stream ordering and listener work does not add to the emitter's latency. For events emitted during tool execution, listeners run before the next model request. An event emitted during `before_model_request` may only reach listeners after that request begins, with the same as-soon-as-possible timing as [`ctx.enqueue()`][pydantic_ai.tools.RunContext.enqueue].
 
-Decision events that need listener mutations before the emitter continues declare `dispatch='inline'` on the event class:
+Decision events that need listener mutations before the emitter continues declare `dispatch='immediate'` on the event class:
+
+Building on the file-system capability above, a write can announce itself before it happens and let a listener veto it:
 
 ```python {title="cancellable_capability_event.py"}
 from dataclasses import dataclass
@@ -303,12 +323,16 @@ from typing import Any
 
 from pydantic_ai import CapabilityEvent, RunContext
 from pydantic_ai.capabilities import AbstractCapability, on_event
+from pydantic_ai.toolsets import FunctionToolset
+
+FILE_SYSTEM = 'file_system'
 
 
 @dataclass(kw_only=True)
-class CompactionStartEvent(
-    CapabilityEvent, namespace='compaction', dispatch='inline'
+class FileWriteStartEvent(
+    CapabilityEvent, namespace=FILE_SYSTEM, dispatch='immediate'
 ):
+    path: str
     cancelled: bool = False
     cancel_reason: str | None = None
 
@@ -317,15 +341,32 @@ class CompactionStartEvent(
         self.cancel_reason = reason
 
 
-class KeepFullHistory(AbstractCapability[Any]):
-    @on_event(CompactionStartEvent)
-    async def _cancel(
-        self, ctx: RunContext[Any], event: CompactionStartEvent
+file_system = FunctionToolset()
+
+
+@file_system.tool
+async def write_file(ctx: RunContext[Any], path: str, content: str) -> str:
+    event = await ctx.emit(FileWriteStartEvent(path=path))  # (1)!
+    if event.cancelled:  # (2)!
+        return f'Refused to write {path}: {event.cancel_reason}'
+    return f'Wrote {path}'
+
+
+class ProtectGitDirectory(AbstractCapability[Any]):
+    @on_event(FileWriteStartEvent)
+    async def _veto_writes_to_git(
+        self, ctx: RunContext[Any], event: FileWriteStartEvent
     ) -> None:
-        event.cancel()
+        if event.path.startswith('.git/'):
+            event.cancel('.git/ is managed by the repository, not the agent')
 ```
 
-For inline dispatch, Pydantic AI buffers the event before invoking listeners, but stream consumers only receive it once all listeners have run, so they never observe a decision half-made. Attribution is stamped on the event in place, so after `await ctx.emit(event)` the emitter can read `event.cancelled` off its own reference (the same instance `emit` returns), and an event emitted by a listener appears after the decision event in the stream. Inline events are still delivered exactly once, including when the same event instance is re-emitted. Stream-dispatch listeners run inside user-defined [`wrap_run_event_stream()`][pydantic_ai.capabilities.AbstractCapability.wrap_run_event_stream] wrappers.
+1. `emit` returns only once every listener has run, and returns the same instance it was given.
+2. So the decision is readable immediately after, on either the returned event or the emitter's own reference.
+
+_(This example is complete, it can be run "as is")_
+
+For immediate dispatch, Pydantic AI buffers the event before invoking listeners, but stream consumers only receive it once all listeners have run, so they never observe a decision half-made. Attribution is stamped on the event in place, so after `await ctx.emit(event)` the emitter can read `event.cancelled` off its own reference (the same instance `emit` returns), and an event emitted by a listener appears after the decision event in the stream. Inline events are still delivered exactly once, including when the same event instance is re-emitted. Stream-dispatch listeners run inside user-defined [`wrap_run_event_stream()`][pydantic_ai.capabilities.AbstractCapability.wrap_run_event_stream] wrappers.
 
 !!! note
     Any `on_event` listener automatically enables streaming for an otherwise non-streaming `agent.run()`: model requests are made with the provider's streaming API so events exist to listen to. Providers treat streaming and non-streaming requests the same in almost all respects, but if you need to guarantee non-streamed requests, don't attach listeners.

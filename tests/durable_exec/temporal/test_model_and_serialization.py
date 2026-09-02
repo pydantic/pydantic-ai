@@ -766,7 +766,7 @@ def test_temporal_run_context_serialization_is_exhaustive():
         'model_settings',  # only set for model requests, which receive it as their own typed activity param
         '_mcp_tool_defs_cache',  # run-local cache read/written in workflow code; never needed inside an activity
         '_event_stream_buffer',  # live run event buffer, unreachable from an activity (`emit` raises there)
-        '_pending_inline_dispatches',  # live workflow-side event deduplication state
+        '_pending_immediate_dispatches',  # live workflow-side event deduplication state
         '_event_stream_replacements',  # live workflow-side legacy-replacement state applied at stream position
         '_capability',  # live capability instance used only while dispatching workflow-side hooks
         'realtime_session',  # live RealtimeSession, not serializable; realtime sessions don't run inside Temporal activities

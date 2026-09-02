@@ -29,6 +29,7 @@ from pydantic_ai.toolsets import AbstractToolset, AgentToolset, CombinedToolset
 from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
+from ._on_event import collect_on_event_methods, marked_listens_to
 from ._ordering import collect_leaves, is_innermost, sort_capabilities
 from .abstract import (
     AbstractCapability,
@@ -37,7 +38,6 @@ from .abstract import (
     WrapOutputProcessHandler,
     WrapOutputValidateHandler,
 )
-from .on_event import collect_on_event_methods
 
 if TYPE_CHECKING:
     from pydantic_ai import _agent_graph
@@ -165,6 +165,13 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
             type(self).on_event is not CombinedCapability.on_event
             or bool(collect_on_event_methods(type(self)))
             or any(c.has_on_event for c in self.capabilities)
+        )
+
+    def listens_to(self, event: AgentStreamEvent) -> bool:
+        return (
+            type(self).on_event is not CombinedCapability.on_event
+            or marked_listens_to(type(self), event)
+            or any(c.listens_to(event) for c in self.capabilities)
         )
 
     def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> CombinedCapability[AgentDepsT]:
@@ -518,7 +525,11 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
 
     async def on_event(self, ctx: RunContext[AgentDepsT], *, event: AgentStreamEvent) -> None:
         for capability in self.capabilities:
-            if capability.has_on_event and (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
+            # Ask against the event a capability would actually see: an earlier capability's
+            # (deprecated) replacement is what `Hooks.on_event` picks up and filters on, so testing
+            # the original here would skip a listener registered for the replacement's type.
+            current = ctx._event_stream_replacements.get(id(event), event)  # pyright: ignore[reportPrivateUsage]
+            if capability.listens_to(current) and (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
                 await capability.on_event(cap_ctx, event=event)
         # A `CombinedCapability` subclass can carry marked listeners of its own; dispatch them
         # after the children's, matching the combination order used by the other hooks.

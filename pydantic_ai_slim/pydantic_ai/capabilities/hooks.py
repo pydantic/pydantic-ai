@@ -35,6 +35,7 @@ from pydantic_ai.exceptions import AgentRunError, ModelRetry
 from pydantic_ai.messages import AgentStreamEvent, CapabilityEvent, ModelResponse, ToolCallPart
 from pydantic_ai.tools import AgentDepsT, DeferredToolRequests, DeferredToolResults, RunContext, ToolDefinition
 
+from ._on_event import collect_on_event_methods, marked_listens_to
 from .abstract import (
     AbstractCapability,
     AgentNode,
@@ -51,7 +52,6 @@ from .abstract import (
     WrapToolExecuteHandler,
     WrapToolValidateHandler,
 )
-from .on_event import collect_on_event_methods
 
 if TYPE_CHECKING:
     from pydantic_ai.models import ModelRequestContext
@@ -98,6 +98,15 @@ class _EventHookEntry(_HookEntry[_FuncT]):
     """A registered event observer with optional event-type filters."""
 
     event_types: tuple[type[AgentStreamEvent], ...] = ()
+
+
+def _event_entry_matches(entry: _HookEntry[Any], event: AgentStreamEvent) -> bool:
+    """Whether a registered `on_event` observer accepts `event`.
+
+    Shared by dispatch and by `listens_to`, so the answer to "will this callback run?" is decided in
+    one place: an entry without filters, or one written before filters existed, takes every event.
+    """
+    return not isinstance(entry, _EventHookEntry) or not entry.event_types or isinstance(event, entry.event_types)
 
 
 # fmt: off
@@ -922,6 +931,13 @@ class Hooks(AbstractCapability[AgentDepsT]):
             or bool(collect_on_event_methods(type(self)))
         )
 
+    def listens_to(self, event: AgentStreamEvent) -> bool:
+        return (
+            type(self).on_event is not Hooks.on_event
+            or marked_listens_to(type(self), event)
+            or any(_event_entry_matches(entry, event) for entry in self._get('on_event'))
+        )
+
     def get_ordering(self) -> CapabilityOrdering | None:
         return self._ordering
 
@@ -1029,7 +1045,7 @@ class Hooks(AbstractCapability[AgentDepsT]):
         if (prior := ctx._event_stream_replacements.get(id(original_event))) is not None:  # pyright: ignore[reportPrivateUsage]
             event = prior
         for entry in self._get('on_event'):
-            if isinstance(entry, _EventHookEntry) and entry.event_types and not isinstance(event, entry.event_types):
+            if not _event_entry_matches(entry, event):
                 continue
             replacement = await _call_entry(entry, 'on_event', ctx, event)
             if replacement is None or replacement is event:
@@ -1041,7 +1057,7 @@ class Hooks(AbstractCapability[AgentDepsT]):
                 stacklevel=2,
             )
             event = replacement
-            if not isinstance(original_event, CapabilityEvent) or original_event.event_dispatch != 'inline':
+            if not isinstance(original_event, CapabilityEvent) or original_event.event_dispatch != 'immediate':
                 ctx._event_stream_replacements[id(original_event)] = replacement  # pyright: ignore[reportPrivateUsage]
         # A `Hooks` subclass can carry marked listeners of its own; the base dispatches them.
         await super().on_event(ctx, event=event)

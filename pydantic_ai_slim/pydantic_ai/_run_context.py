@@ -61,9 +61,9 @@ class EventStreamBuffer(list[_messages.AgentStreamEvent]):
             waiter.set()
 
 
-async def dispatch_event_inline(ctx: RunContext[Any], event: _messages.AgentStreamEvent) -> None:
-    """Dispatch an inline capability event and mark it for stream deduplication."""
-    if not isinstance(event, _messages.CapabilityEvent) or event.event_dispatch != 'inline':
+async def dispatch_event_immediate(ctx: RunContext[Any], event: _messages.AgentStreamEvent) -> None:
+    """Dispatch an immediately dispatched capability event and mark it for stream deduplication."""
+    if not isinstance(event, _messages.CapabilityEvent) or event.event_dispatch != 'immediate':
         return
     # Mark before awaiting listeners: awaiting yields the event loop, and a concurrent stream
     # consumer (e.g. the `run_stream_events` reader task) could drain the buffered event in that
@@ -72,10 +72,10 @@ async def dispatch_event_inline(ctx: RunContext[Any], event: _messages.AgentStre
     # observe a decision event whose listeners are still mutating it. A list per id keeps repeated
     # emissions of one object (a capability re-emitting on behalf of another) exactly-once each.
     settled = asyncio.Event()
-    ctx._pending_inline_dispatches.setdefault(id(event), []).append(settled)  # pyright: ignore[reportPrivateUsage]
+    ctx._pending_immediate_dispatches.setdefault(id(event), []).append(settled)  # pyright: ignore[reportPrivateUsage]
     try:
         capability = ctx.root_capability
-        if capability is not None and capability.has_on_event:
+        if capability is not None and capability.listens_to(event):
             await capability.on_event(ctx, event=event)
     finally:
         # Settle even when a listener raises (the exception propagates to the emitter): the
@@ -86,16 +86,16 @@ async def dispatch_event_inline(ctx: RunContext[Any], event: _messages.AgentStre
 async def dispatch_event_stream(
     ctx: RunContext[Any], stream: AsyncIterable[_messages.AgentStreamEvent]
 ) -> AsyncIterator[_messages.AgentStreamEvent]:
-    """Dispatch events at their stream positions and deduplicate inline events."""
+    """Dispatch events at their stream positions and deduplicate immediately dispatched events."""
     capability = ctx.root_capability
     async for event in stream:
         event_id = id(event)
-        if pending := ctx._pending_inline_dispatches.get(event_id):  # pyright: ignore[reportPrivateUsage]
+        if pending := ctx._pending_immediate_dispatches.get(event_id):  # pyright: ignore[reportPrivateUsage]
             settled = pending.pop(0)
             if not pending:
-                del ctx._pending_inline_dispatches[event_id]  # pyright: ignore[reportPrivateUsage]
+                del ctx._pending_immediate_dispatches[event_id]  # pyright: ignore[reportPrivateUsage]
             await settled.wait()
-        elif capability is not None and capability.has_on_event:
+        elif capability is not None and capability.listens_to(event):
             await capability.on_event(ctx, event=event)
         yield ctx._event_stream_replacements.pop(event_id, event)  # pyright: ignore[reportPrivateUsage]
 
@@ -241,10 +241,10 @@ class RunContext(Generic[RunContextAgentDepsT]):
     where [`emit`][pydantic_ai.tools.RunContext.emit] raises.
     """
 
-    _pending_inline_dispatches: dict[int, list[asyncio.Event]] = field(
+    _pending_immediate_dispatches: dict[int, list[asyncio.Event]] = field(
         default_factory=dict[int, list[asyncio.Event]], repr=False
     )
-    """Per-event-id settlement signals for buffered events dispatched inline, shared across the run.
+    """Per-event-id settlement signals for buffered events dispatched immediately, shared across the run.
 
     Keyed by `id(event)` and held only while the event sits in the buffer, so ids can't collide with
     later objects. Kept out of persisted graph state: raw ids are meaningless in a revived process
@@ -619,7 +619,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
         This method must be awaited, so it's available from async tools, capability hooks, history
         processors, and async output validators. Sync tools cannot emit events; write async tools instead.
         It's async rather than sync like [`enqueue`][pydantic_ai.tools.RunContext.enqueue] because
-        inline dispatch (below) awaits listeners before returning, and because widening a sync
+        immediate dispatch (below) awaits listeners before returning, and because widening a sync
         signature to async later would break every caller.
         The event reaches the run's `event_stream_handler`,
         [`Agent.run_stream_events`][pydantic_ai.agent.AbstractAgent.run_stream_events],
@@ -635,17 +635,23 @@ class RunContext(Generic[RunContextAgentDepsT]):
         consumed, and this method returns without awaiting them. For tool-execution emissions this
         happens before the next model request. An event emitted during `before_model_request` may
         reach listeners only after that request begins, with the same as-soon-as-possible timing as
-        [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue]. A
-        [`CapabilityEvent`][pydantic_ai.messages.CapabilityEvent] class declared with
-        `dispatch='inline'` is buffered first, then dispatched before this method returns so the
-        emitter can read decision fields set by listeners.
+        [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue]. That is a statement about *when*
+        listeners run, not about order: every consumer sees events in emission order either way.
+
+        A [`CapabilityEvent`][pydantic_ai.messages.CapabilityEvent] class declared with
+        `dispatch='immediate'` changes one thing — listeners are awaited before this method returns,
+        so the emitter can read decision fields they set (this is what makes a cancelable event
+        possible). Everything else is the same: the event still takes the stream position it would
+        have taken, the same listeners run in the same order, and it is delivered exactly once. What
+        stream consumers gain is that they never observe such an event mid-decision — the stream waits
+        for its listeners to settle before yielding it, so the values they read are final.
 
         Args:
             event: The [`CustomEvent`][pydantic_ai.messages.CustomEvent] or
                 [`CapabilityEvent`][pydantic_ai.messages.CapabilityEvent] to emit.
 
         Returns:
-            The same event instance, with any attribution fields stamped. For an inline-dispatched
+            The same event instance, with any attribution fields stamped. For an immediately dispatched
             decision event, both the return value and the passed reference reflect listener decisions.
 
         Raises:
@@ -691,15 +697,15 @@ class RunContext(Generic[RunContextAgentDepsT]):
         if event.tool_call_id is None and self.tool_call_id is not None:
             event.tool_call_id = self.tool_call_id
             event.tool_name = self.tool_name
-        # Attribution is stamped on the event in place (never on a copy): listeners of an inline
+        # Attribution is stamped on the event in place (never on a copy): listeners of an immediately dispatched
         # decision event mutate the dispatched object, and the emitter must be able to read those
         # decisions off its own reference as well as off the returned one.
         self._emit_event(event)
-        # `dispatch_event_inline` installs its stream-deduplication marker before its first
+        # `dispatch_event_immediate` installs its stream-deduplication marker before its first
         # `await`, so no event-loop yield separates the buffer append above from the marker.
         # An `await` inserted between the two would open a window for a concurrent stream
         # consumer to drain the buffered event and dispatch it a second time.
-        await dispatch_event_inline(self, event)
+        await dispatch_event_immediate(self, event)
         return event
 
     def enqueue(

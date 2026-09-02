@@ -304,7 +304,7 @@ Pydantic AI has two families of user-defined events. They ride the same stream a
 | **Emit from** | an application tool, an [output validator](output.md#output-validator-functions), a [hook](hooks.md), an `event_stream_handler`, or [`AgentRun.emit()`][pydantic_ai.run.AgentRun.emit] | a [capability](capabilities/custom.md) hook or a tool the capability contributes |
 | **Naming** | flat and process-wide, like `progress` | namespaced, like `file_system.file_read` |
 | **Reaches the frontend** | yes, via the [AG-UI](ui/ag-ui.md) and [Vercel AI](ui/vercel-ai.md) adapters | no, it is an internal signal; re-publish it as a `CustomEvent` if the frontend needs it |
-| **Can carry a decision** | no | yes, with `dispatch='inline'` |
+| **Can carry a decision** | no | yes, with `dispatch='immediate'` |
 
 If you are writing a **capability**, define [`CapabilityEvent`][pydantic_ai.messages.CapabilityEvent]s, as described in [Capability events](capabilities/overview.md#capability-events): its events are part of its contract with the rest of the run, and the namespace is what keeps two capabilities from colliding on a name. If you are writing an **application**, define `CustomEvent`s. To surface a capability's event to your frontend, listen for it with an [event hook](hooks.md#event-stream-hooks) and emit your own `CustomEvent` carrying the public payload.
 
@@ -313,10 +313,11 @@ If you are writing a **capability**, define [`CapabilityEvent`][pydantic_ai.mess
 Define an event as a dataclass subclass of `CustomEvent` — its fields are the payload, and consumers can use an `isinstance` check against the class. Await [`ctx.emit()`][pydantic_ai.tools.RunContext.emit] with an event instance from any of your application's async code that receives a [`RunContext`][pydantic_ai.tools.RunContext]; code driving `agent.iter()` uses [`AgentRun.emit()`][pydantic_ai.run.AgentRun.emit] instead. Sync tools cannot emit events; write async tools when they need to emit events. When emitted from within a tool call, the event's [`tool_call_id`][pydantic_ai.messages.CustomEvent.tool_call_id] and [`tool_name`][pydantic_ai.messages.CustomEvent.tool_name] are stamped automatically so consumers can attribute it to the originating call. The event reaches the `event_stream_handler`, `run_stream_events()`, `agent.iter()` streaming, and the [AG-UI](ui/ag-ui.md) and [Vercel AI](ui/vercel-ai.md) UI adapters.
 
 ```python {title="custom_events.py"}
-from collections.abc import AsyncIterable, AsyncIterator
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 
-from pydantic_ai import Agent, AgentStreamEvent, CustomEvent, RunContext
+from pydantic_ai import Agent, CustomEvent, RunContext
+from pydantic_ai.capabilities import Hooks
 from pydantic_ai.messages import ModelMessage, ToolReturnPart
 from pydantic_ai.models.function import (
     AgentInfo,
@@ -349,7 +350,18 @@ async def model_function(
         }
 
 
-agent = Agent(FunctionModel(stream_function=model_function))
+hooks = Hooks()
+progress: list[str] = []
+
+
+@hooks.on.event(SyncProgressEvent)
+async def record_progress(ctx: RunContext, event: SyncProgressEvent) -> None:
+    progress.append(
+        f'{event.done}/{event.total} from {event.tool_name} ({event.tool_call_id})'
+    )
+
+
+agent = Agent(FunctionModel(stream_function=model_function), capabilities=[hooks])
 
 
 @agent.tool
@@ -360,21 +372,8 @@ async def sync_files(ctx: RunContext, count: int) -> str:
     return f'Synchronized {count} files.'
 
 
-progress: list[str] = []
-
-
-async def handle_events(
-    ctx: RunContext, events: AsyncIterable[AgentStreamEvent]
-) -> None:
-    async for event in events:
-        if isinstance(event, SyncProgressEvent):
-            progress.append(
-                f'{event.done}/{event.total} from {event.tool_name} ({event.tool_call_id})'
-            )
-
-
 async def main():
-    await agent.run('Synchronize my files', event_stream_handler=handle_events)
+    await agent.run('Synchronize my files')
     print(progress)
     """
     [
@@ -387,11 +386,13 @@ async def main():
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
-An event is delivered to stream consumers as soon as it is emitted, so a progress event surfaces while the emitting tool is still running. Payload fields can hold any object, but to flow through [durable execution](durable_execution/overview.md) and the UI adapters they need to be serializable by pydantic. Events emitted from tools running concurrently interleave in emission order (best-effort ordering).
+Any consumer of the run's events sees them: an [event hook](hooks.md#event-stream-hooks) as above, an `event_stream_handler=`, [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events], `agent.iter()` streaming, and the [AG-UI](ui/ag-ui.md) and [Vercel AI](ui/vercel-ai.md) adapters. Payload fields can hold any object, but to flow through [durable execution](durable_execution/overview.md) and the UI adapters they need to be serializable by pydantic.
 
 The payload cannot use the field names the envelope needs for itself: `data`, `tool_call_id`, `tool_name`, and `event_kind` are rejected when the class is defined, so pick another name (`payload`, `call_id`) for a field that would collide.
 
 Emitting only works while the run is in progress and only from the family the emitting code owns, so each of these raises a [`UserError`][pydantic_ai.exceptions.UserError]: emitting a `CustomEvent` from a capability, emitting a [`CapabilityEvent`][pydantic_ai.messages.CapabilityEvent] from application code, and calling [`AgentRun.emit()`][pydantic_ai.run.AgentRun.emit] after the run has finished. Events emitted with `AgentRun.emit()` reach consumers that stream the run's nodes with `node.stream(run.ctx)`, as shown in [Streaming All Events and Output](#streaming-all-events-and-output); a bare `async for node in run` does not consume any event stream, so nothing surfaces.
+
+An event is delivered to stream consumers as soon as it is emitted, so a progress event surfaces while the emitting tool is still running rather than at its return. Events emitted from tools running concurrently interleave in emission order (best-effort ordering).
 
 Events that share fields can share a base. Give the base its own `@dataclass` decorator — an undecorated one contributes no fields, which is rejected rather than left to surface as a payload quietly missing them — and mark it `abstract=True` so it stays out of the event registry and can't be emitted itself:
 

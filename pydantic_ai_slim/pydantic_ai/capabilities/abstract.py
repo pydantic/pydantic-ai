@@ -37,7 +37,7 @@ from pydantic_ai.tools import (
 )
 from pydantic_ai.toolsets import AbstractToolset, AgentToolset
 
-from .on_event import collect_on_event_methods
+from ._on_event import collect_on_event_methods, marked_listens_to
 
 if TYPE_CHECKING:
     from pydantic_ai import _agent_graph
@@ -340,6 +340,17 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     def has_on_event(self) -> bool:
         """Whether this capability handles run events dynamically or with marked methods."""
         return type(self).on_event is not AbstractCapability.on_event or bool(collect_on_event_methods(type(self)))
+
+    def listens_to(self, event: AgentStreamEvent) -> bool:
+        """Whether [`on_event`][pydantic_ai.capabilities.AbstractCapability.on_event] would reach a listener for `event`.
+
+        Dispatch asks this before descending, so a capability that listens to a few event classes
+        isn't woken for every event in the run. The default reports `True` for any event a
+        [`@on_event`][pydantic_ai.capabilities.on_event]-marked method accepts, and for every event
+        when `on_event` is overridden directly, since what an override dispatches to isn't knowable
+        here. Override this alongside `on_event` when you can report something narrower.
+        """
+        return type(self).on_event is not AbstractCapability.on_event or marked_listens_to(type(self), event)
 
     @classmethod
     def get_serialization_name(cls) -> str | None:

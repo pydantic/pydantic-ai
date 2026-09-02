@@ -1728,12 +1728,12 @@ class TestHooksCapability:
         ).run('hello')
         assert seen == ['matched']
 
-    async def test_on_event_participates_in_inline_decision(self):
+    async def test_on_event_participates_in_immediate_decision(self):
         hooks = Hooks()
         observed: list[bool] = []
 
         @dataclass(kw_only=True)
-        class DecisionEvent(CapabilityEvent, namespace='hooks_inline_decision', dispatch='inline'):
+        class DecisionEvent(CapabilityEvent, namespace='hooks_immediate_decision', dispatch='immediate'):
             cancelled: bool = False
 
             def cancel(self) -> None:

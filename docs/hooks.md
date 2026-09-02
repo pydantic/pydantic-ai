@@ -265,9 +265,11 @@ For pure application-level handler registration without other hooks, the dedicat
 | `run_event_stream` | `run_event_stream=` | `wrap_run_event_stream` |
 | `event` | `event=` | _(per-event convenience)_ |
 
-`run_event_stream` wraps the full event stream as an async generator. `event` observes individual events at the same dispatch point as capability [`on_event`][pydantic_ai.capabilities.on_event] listeners. Pass event classes to filter the callback with static typing, or use bare `@hooks.on.event` to observe every event. Callbacks can be synchronous or asynchronous and return `None`.
+`run_event_stream` wraps the full event stream as an async generator. `event` observes individual events at the same dispatch point as capability [`on_event`][pydantic_ai.capabilities.on_event] listeners. Callbacks can be synchronous or asynchronous and return `None`.
 
-Tool and model events flow through this stream, along with framework events such as [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] when queued messages enter run history, application [`CustomEvent`][pydantic_ai.messages.CustomEvent]s, and the [`CapabilityEvent`][pydantic_ai.messages.CapabilityEvent]s published by capabilities. Because an `event` callback belongs to the application rather than to a capability, it is also a place to [emit](agent.md#custom-events) a `CustomEvent` of your own, which is how you republish a capability's internal event to a frontend. An `event` callback also participates in inline-dispatched capability decision events, so application code can set decision fields before the emitter continues. During a [realtime session](realtime/capabilities.md), both hooks fire, and realtime-only [`RealtimeEvent`][pydantic_ai.realtime.RealtimeEvent] members flow through the same stream:
+Tool and model events flow through this stream, along with framework events such as [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] when messages [injected mid-run](message-history.md#injecting-messages-mid-run) with [`ctx.enqueue()`][pydantic_ai.tools.RunContext.enqueue] enter run history, application [custom events](agent.md#custom-events), and the [capability events](capabilities/overview.md#capability-events) published by capabilities. Because an `event` callback belongs to the application rather than to a capability, it is also a place to [emit](agent.md#custom-events) a [`CustomEvent`][pydantic_ai.messages.CustomEvent] of your own, which is how you [republish a capability's internal event](capabilities/overview.md#capability-events) to a frontend. An `event` callback also participates in [immediately dispatched](capabilities/overview.md#reacting-to-events) capability decision events, so application code can set decision fields before the emitter continues. During a [realtime session](realtime/capabilities.md), both hooks fire, and realtime-only [`RealtimeEvent`][pydantic_ai.realtime.RealtimeEvent] members flow through the same stream.
+
+Pass event classes to filter the callback:
 
 ```python {title="hooks_event.py"}
 from pydantic_ai import Agent, PartStartEvent, RunContext
@@ -285,6 +287,26 @@ async def count_events(ctx: RunContext, event: PartStartEvent) -> None:
 
 agent = Agent('test', capabilities=[hooks])
 ```
+
+Or use it bare to observe every event, with `event` typed as the full [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent] union:
+
+```python {title="hooks_event_bare.py"}
+from pydantic_ai import Agent, AgentStreamEvent, RunContext
+from pydantic_ai.capabilities import Hooks
+
+hooks = Hooks()
+event_log: list[str] = []
+
+
+@hooks.on.event
+async def log_events(ctx: RunContext, event: AgentStreamEvent) -> None:
+    event_log.append(event.event_kind)
+
+
+agent = Agent('test', capabilities=[hooks])
+```
+
+Prefer naming the classes. Filtering by type isn't only about narrowing the `event` argument for the type checker: the classes are what let dispatch skip a capability entirely for events it doesn't listen to, so in a run with many capabilities a bare callback anywhere in the tree means every event is offered to everything.
 
 Returning a replacement event from `hooks.on.event` is deprecated. Use `hooks.on.run_event_stream` to transform, replace, or filter events.
 

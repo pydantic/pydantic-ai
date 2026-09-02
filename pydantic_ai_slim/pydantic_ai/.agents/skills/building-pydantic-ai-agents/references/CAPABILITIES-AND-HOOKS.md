@@ -114,9 +114,11 @@ Define each event as a dataclass subclass carrying a namespace, and await `ctx.e
 
 React with `@on_event(SomeEvent, OtherEvent)` on an async capability method; a bare `@on_event` sees every `AgentStreamEvent`. Listeners run in capability order, then definition order, and the emitting capability receives its own events. This is the way to coordinate two capabilities without a shared object between them.
 
+Always name the classes when you can. They are what lets dispatch skip a capability without descending into it — a bare `@on_event`, or an overridden `on_event()`, opts that capability into every event in the run. Override `listens_to(event)` alongside a custom `on_event()` if you can report something narrower.
+
 Capability events reach the agent run event stream but UI adapters do not forward them, since they are internal signals. To surface one to a frontend, react to it from an application-level `Hooks.on.event` callback and emit your own `CustomEvent` with the public payload.
 
-An event class can declare `dispatch='inline'` when listeners must act before the emitter continues — a decision event, where a listener mutates a field the emitter then reads. Default dispatch delivers the event at its stream position instead, keeping listener work off the emitter's latency path.
+An event class can declare `dispatch='immediate'` when listeners must act before the emitter continues — a decision event, where a listener mutates a field the emitter then reads. Default dispatch delivers the event at its stream position instead, keeping listener work off the emitter's latency path.
 
 ```python
 from dataclasses import dataclass

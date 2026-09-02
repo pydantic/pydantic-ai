@@ -434,10 +434,10 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     cancellation: RunCancellation = dataclasses.field(default_factory=RunCancellation, repr=False)
     """The run's first-party cancellation controller. Runtime-only: holds a live task reference."""
 
-    pending_inline_dispatches: dict[int, list[asyncio.Event]] = dataclasses.field(
+    pending_immediate_dispatches: dict[int, list[asyncio.Event]] = dataclasses.field(
         default_factory=dict[int, list[asyncio.Event]], repr=False
     )
-    """Settlement signals for buffered events dispatched inline, keyed by `id(event)`.
+    """Settlement signals for buffered events dispatched immediately, keyed by `id(event)`.
 
     Runtime-only, deliberately not on `GraphAgentState`: raw object ids are meaningless in a revived
     process (a stale persisted id could even collide with a new event's address), so a revived run
@@ -448,7 +448,7 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     )
     """Legacy `hooks.on.event` replacements to apply at the consumer-facing stream position.
 
-    Runtime-only and id-keyed like `pending_inline_dispatches`, and excluded from persistence for
+    Runtime-only and id-keyed like `pending_immediate_dispatches`, and excluded from persistence for
     the same reason."""
 
     model_id: str | None = None
@@ -2435,7 +2435,7 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         pending_messages=ctx.state.pending_messages,
         _cancellation=ctx.deps.cancellation,
         _event_stream_buffer=ctx.state.event_stream_buffer,
-        _pending_inline_dispatches=ctx.deps.pending_inline_dispatches,
+        _pending_immediate_dispatches=ctx.deps.pending_immediate_dispatches,
         _event_stream_replacements=ctx.deps.event_stream_replacements,
         _mcp_tool_defs_cache=ctx.state.mcp_tool_defs_cache,
     )

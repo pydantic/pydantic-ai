@@ -64,7 +64,7 @@ def test_event_kind_definition():
 
 
 def test_missing_namespace_rejected():
-    with pytest.raises(TypeError, match='requires a namespace'):
+    with pytest.raises(UserError, match='requires a namespace'):
 
         @dataclass(kw_only=True)
         class MissingEvent(CapabilityEvent):  # pyright: ignore[reportUnusedClass]
@@ -73,7 +73,7 @@ def test_missing_namespace_rejected():
 
 @pytest.mark.parametrize('namespace', ['', '.', 'a..b', '.leading'])
 def test_invalid_namespace_rejected(namespace: str):
-    with pytest.raises(TypeError, match='invalid namespace'):
+    with pytest.raises(UserError, match='invalid namespace'):
 
         @dataclass(kw_only=True)
         class InvalidNamespaceEvent(CapabilityEvent, namespace=namespace):  # pyright: ignore[reportUnusedClass]
@@ -81,14 +81,14 @@ def test_invalid_namespace_rejected(namespace: str):
 
 
 def test_empty_derived_name_rejected():
-    with pytest.raises(TypeError, match='derives an empty name'):
+    with pytest.raises(UserError, match='derives an empty name'):
 
         class Event(CapabilityEvent, namespace='empty_name'):  # pyright: ignore[reportUnusedClass]
             pass
 
 
 def test_duplicate_kind_rejected():
-    with pytest.raises(TypeError, match=r"Duplicate capability event kind 'test_file_system\.file_read'"):
+    with pytest.raises(UserError, match=r"Duplicate capability event kind 'test_file_system\.file_read'"):
 
         @dataclass(kw_only=True)
         class DuplicateEvent(  # pyright: ignore[reportUnusedClass]
@@ -116,7 +116,7 @@ def test_redefined_event_class_replaces_registration():
 
 
 def test_base_instantiation_rejected():
-    with pytest.raises(TypeError, match='`CapabilityEvent` is a base class'):
+    with pytest.raises(UserError, match='`CapabilityEvent` is a base class'):
         CapabilityEvent()
 
 
@@ -136,7 +136,7 @@ def test_slotted_event_class():
 
 def test_instance_kind_override_rejected():
     """A per-instance `kind` override would misroute (de)serialization, so construction rejects it."""
-    with pytest.raises(ValueError, match=r"serializes under its registered kind 'test_file_system\.file_read'"):
+    with pytest.raises(UserError, match=r"serializes under its registered kind 'test_file_system\.file_read'"):
         FileReadEvent(path='a.txt', kind='other.kind')
 
 
@@ -146,13 +146,13 @@ def test_non_dataclass_subclass_rejected_at_construction():
     class PlainEvent(CapabilityEvent, namespace='plain'):
         pass
 
-    with pytest.raises(ValueError, match='must be decorated with `@dataclass`'):
+    with pytest.raises(UserError, match='must be decorated with `@dataclass`'):
         PlainEvent()
 
 
 def test_envelope_field_shadowing_rejected():
     """Payload fields can't shadow envelope fields: `data` is the unknown envelope's payload container."""
-    with pytest.raises(TypeError, match='reserved for the event envelope: capability_id, data'):
+    with pytest.raises(UserError, match='reserved for the event envelope: capability_id, data'):
 
         @dataclass(kw_only=True)
         class ShadowingEvent(CapabilityEvent, namespace='shadowing'):  # pyright: ignore[reportUnusedClass]
@@ -191,7 +191,7 @@ def test_abstract_base_carries_the_namespace_without_registering():
     # The base's field is inherited rather than lost with its registration.
     assert SearchStartedEvent(query='q').query == 'q'
 
-    with pytest.raises(TypeError, match='is declared `abstract=True`'):
+    with pytest.raises(UserError, match='is declared `abstract=True`'):
         SearchEventBase(query='q')
 
 
@@ -517,7 +517,7 @@ def test_subclass_post_init_override_keeps_guards():
         def __post_init__(self) -> None:
             self.value += 1
 
-    with pytest.raises(ValueError, match='serializes under its registered kind'):
+    with pytest.raises(UserError, match='serializes under its registered kind'):
         GuardedOverrideEvent(kind='other.kind')
     assert GuardedOverrideEvent().value == 1
 

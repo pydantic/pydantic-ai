@@ -20,6 +20,7 @@ from pydantic_ai.tools import (
 )
 from pydantic_ai.toolsets import AbstractToolset, AgentToolset
 
+from ._on_event import collect_on_event_methods, marked_listens_to
 from .abstract import (
     AbstractCapability,
     AgentModel,
@@ -37,7 +38,6 @@ from .abstract import (
     WrapToolExecuteHandler,
     WrapToolValidateHandler,
 )
-from .on_event import collect_on_event_methods
 
 if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AbstractAgent, AgentModelSettings
@@ -136,6 +136,13 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
             type(self).on_event is not WrapperCapability.on_event
             or bool(collect_on_event_methods(type(self)))
             or self.wrapped.has_on_event
+        )
+
+    def listens_to(self, event: AgentStreamEvent) -> bool:
+        return (
+            type(self).on_event is not WrapperCapability.on_event
+            or marked_listens_to(type(self), event)
+            or self.wrapped.listens_to(event)
         )
 
     @property
@@ -296,7 +303,7 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
 
     async def on_event(self, ctx: RunContext[AgentDepsT], *, event: AgentStreamEvent) -> None:
         await super().on_event(ctx, event=event)
-        if self.wrapped.has_on_event:
+        if self.wrapped.listens_to(event):
             await self.wrapped.on_event(ctx, event=event)
 
     async def wrap_run_event_stream(

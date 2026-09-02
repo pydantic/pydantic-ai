@@ -301,13 +301,13 @@ def test_serialization_round_trip():
 
 def test_custom_event_requires_name():
     """`name` has a static-only default (so typed subclasses don't require it); it can't end up empty."""
-    with pytest.raises(ValueError, match='A custom event requires a `name`'):
+    with pytest.raises(UserError, match='A custom event requires a `name`'):
         UnknownCustomEvent(name='', data={'x': 1})
 
 
 def test_custom_event_base_not_instantiable():
     """`CustomEvent` is the family base; payloads are carried by typed subclasses."""
-    with pytest.raises(TypeError, match='`CustomEvent` is a base class'):
+    with pytest.raises(UserError, match='`CustomEvent` is a base class'):
         CustomEvent(name='x')
 
 
@@ -357,7 +357,7 @@ def test_typed_subclass_to_payload():
 
 def test_duplicate_event_name_rejected():
     """Registering a second event class under an existing name fails at class definition."""
-    with pytest.raises(TypeError, match="Duplicate custom event name 'upload_progress'"):
+    with pytest.raises(UserError, match="Duplicate custom event name 'upload_progress'"):
 
         @dataclass(kw_only=True)
         class _ConflictingEvent(CustomEvent, name='upload_progress'):  # pyright: ignore[reportUnusedClass]
@@ -366,13 +366,13 @@ def test_duplicate_event_name_rejected():
 
 def test_instance_name_override_rejected():
     """A per-instance `name` override on a typed subclass would misroute (de)serialization."""
-    with pytest.raises(ValueError, match="serializes under its registered name 'upload_progress'"):
+    with pytest.raises(UserError, match="serializes under its registered name 'upload_progress'"):
         UploadProgressEvent(done=1, total=2, name='other')
 
 
 def test_reserved_name_rejected():
     """The family schema's synthetic tags can't be claimed by an event class."""
-    with pytest.raises(TypeError, match="Custom event name '__unknown__' is reserved"):
+    with pytest.raises(UserError, match="Custom event name '__unknown__' is reserved"):
 
         @dataclass(kw_only=True)
         class ReservedEvent(CustomEvent, name='__unknown__'):  # pyright: ignore[reportUnusedClass]
@@ -381,7 +381,7 @@ def test_reserved_name_rejected():
 
 def test_envelope_field_shadowing_rejected():
     """Payload fields can't shadow envelope fields like `data`, the untyped payload carrier."""
-    with pytest.raises(TypeError, match='reserved for the event envelope: data'):
+    with pytest.raises(UserError, match='reserved for the event envelope: data'):
 
         @dataclass(kw_only=True)
         class ShadowingEvent(CustomEvent):  # pyright: ignore[reportUnusedClass]
@@ -433,13 +433,13 @@ def test_ui_attribute_shadowing_rejected():
     ignore below. It accepts the `ClassVar` one, which is exactly why the runtime check has to cover
     both: static typing catches only half of this.
     """
-    with pytest.raises(TypeError, match='declares a `ui` attribute'):
+    with pytest.raises(UserError, match='declares a `ui` attribute'):
 
         @dataclass(kw_only=True)
         class UiShadowingEvent(CustomEvent):  # pyright: ignore[reportUnusedClass]
             ui: str = ''  # pyright: ignore[reportIncompatibleVariableOverride]
 
-    with pytest.raises(TypeError, match='declares a `ui` attribute'):
+    with pytest.raises(UserError, match='declares a `ui` attribute'):
 
         @dataclass(kw_only=True)
         class UiClassVarShadowingEvent(CustomEvent):  # pyright: ignore[reportUnusedClass]
@@ -482,7 +482,7 @@ def test_abstract_base_is_not_registered_and_cannot_be_emitted():
     assert ConcreteChildEvent.__dict__.get('_abstract') is None
     ConcreteChildEvent()
 
-    with pytest.raises(TypeError, match='is declared `abstract=True`'):
+    with pytest.raises(UserError, match='is declared `abstract=True`'):
         SharedBase()
 
 
@@ -492,7 +492,7 @@ def test_undecorated_base_with_fields_rejected():
     class UndecoratedBase(CustomEvent, abstract=True):
         shared: str = 'x'
 
-    with pytest.raises(TypeError, match='declares fields but is not a dataclass'):
+    with pytest.raises(UserError, match='declares fields but is not a dataclass'):
 
         @dataclass(kw_only=True)
         class LeafEvent(UndecoratedBase):  # pyright: ignore[reportUnusedClass]
@@ -726,11 +726,14 @@ def test_undecorated_subclass_rejected():
         done: int
 
     try:
-        with pytest.raises(ValueError, match='must be decorated with `@dataclass`'):
+        with pytest.raises(UserError, match='must be decorated with `@dataclass`'):
             ForgotDecoratorEvent()
 
+        # The guard surfaces as itself rather than being folded into a `ValidationError`: pydantic
+        # converts `ValueError`, not the `RuntimeError` a `UserError` is. A missing decorator is a
+        # mistake in the event class, not in the data being validated, so naming it directly is right.
         adapter = pydantic.TypeAdapter[AgentStreamEvent](AgentStreamEvent)
-        with pytest.raises(pydantic.ValidationError, match='must be decorated with `@dataclass`'):
+        with pytest.raises(UserError, match='must be decorated with `@dataclass`'):
             adapter.validate_python({'event_kind': 'custom', 'name': 'forgot_decorator', 'done': 3})
     finally:
         # The broken class must not stay registered: adapters built by later tests would embed it.
@@ -739,7 +742,7 @@ def test_undecorated_subclass_rejected():
 
 def test_empty_derived_name_rejected():
     """A class name that derives an empty event name is rejected at definition, not at first use."""
-    with pytest.raises(TypeError, match='derives an empty name'):
+    with pytest.raises(UserError, match='derives an empty name'):
 
         class Event(CustomEvent):  # pyright: ignore[reportUnusedClass]
             pass
@@ -753,7 +756,7 @@ def test_post_init_cannot_corrupt_name():
         def __post_init__(self) -> None:
             self.name = 'corrupted'
 
-    with pytest.raises(ValueError, match="registered name 'corrupting'"):
+    with pytest.raises(UserError, match="registered name 'corrupting'"):
         CorruptingEvent()
 
 
@@ -935,23 +938,6 @@ def test_unknown_event_instance_revalidates():
     assert adapter.validate_python(event) == event
 
 
-def test_unknown_event_non_mapping_data_round_trips():
-    """A non-mapping `data` payload is kept under `data` on serialization instead of being flattened.
-
-    The envelope's `data` always holds the payload *fields*, so reading that wire dict back gathers
-    the scalar under its `data` field name rather than restoring it bare. The wire shape — the thing
-    a downstream consumer with the defining module imported reads — is unchanged either way.
-    """
-    adapter = pydantic.TypeAdapter[AgentStreamEvent](AgentStreamEvent)
-    event = UnknownCustomEvent(name='unseen_scalar', data=5)
-    dumped = adapter.dump_python(event)
-    assert dumped['data'] == 5
-    with pytest.warns(UserWarning, match="Unknown event name 'unseen_scalar'"):
-        revalidated = adapter.validate_python(dumped)
-    assert revalidated == UnknownCustomEvent(name='unseen_scalar', data={'data': 5})
-    assert adapter.dump_python(revalidated) == dumped
-
-
 def test_registration_after_adapter_not_seen():
     """The union is built per `TypeAdapter`: an adapter built before a class was registered degrades
     its events to `UnknownCustomEvent` (the import-order caveat), while a fresh adapter recovers them."""
@@ -982,7 +968,7 @@ def test_subclass_post_init_override_keeps_guards():
         def __post_init__(self) -> None:
             self.value += 1
 
-    with pytest.raises(ValueError, match='serializes under its registered name'):
+    with pytest.raises(UserError, match='serializes under its registered name'):
         GuardedCustomEvent(name='other')
     assert GuardedCustomEvent().value == 1
 

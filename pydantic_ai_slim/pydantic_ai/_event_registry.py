@@ -14,17 +14,15 @@ from __future__ import annotations
 
 import dataclasses
 import functools
-import inspect
-import re
 import sys
 import warnings
 from collections.abc import Callable, Mapping
-from typing import Any, get_origin
+from typing import Any, Generic, TypeVar, overload
 
 import pydantic
 import pydantic_core
-from typing_inspection import typing_objects
 
+from . import _utils
 from ._utils import is_str_dict
 from .exceptions import UserError
 
@@ -35,8 +33,11 @@ RESERVED_EVENT_TAGS = frozenset({_UNKNOWN_TAG})
 
 _registry_version = 0
 
+_EventClassT = TypeVar('_EventClassT')
+_DefaultT = TypeVar('_DefaultT')
 
-class EventRegistry(dict[str, Any]):
+
+class EventRegistry(dict[str, _EventClassT], Generic[_EventClassT]):
     """One event family's tag-to-class registry, versioned so schema caches can detect staleness.
 
     `event_family_schema` snapshots the registry it builds from, so a schema built before a class
@@ -52,13 +53,19 @@ class EventRegistry(dict[str, Any]):
     a stale adapter; register through class definition rather than reaching for them.
     """
 
-    def __setitem__(self, tag: str, event_cls: Any) -> None:
+    def __setitem__(self, tag: str, event_cls: _EventClassT) -> None:
         super().__setitem__(tag, event_cls)
         _bump_registry_version()
 
     def __delitem__(self, tag: str) -> None:
         super().__delitem__(tag)
         _bump_registry_version()
+
+    @overload
+    def pop(self, tag: str, /) -> _EventClassT: ...
+
+    @overload
+    def pop(self, tag: str, default: _EventClassT | _DefaultT, /) -> _EventClassT | _DefaultT: ...
 
     def pop(self, tag: str, /, *default: Any) -> Any:
         popped = super().pop(tag, *default)
@@ -168,48 +175,10 @@ def guard_post_init(cls: type, base_post_init: Callable[[Any], None]) -> None:
     cls.__post_init__ = guarded
 
 
-def own_annotation_names(cls: type) -> set[str]:
-    """The names annotated on the class itself, without forcing lazy (PEP 649) annotations.
-
-    On Python 3.14+ annotations are evaluated lazily, so a payload field referencing a class defined
-    later in the module must not be evaluated during `__init_subclass__` — plain dataclasses defer it,
-    and event registration has to as well. `Format.FORWARDREF` never raises `NameError`.
-    """
-    if sys.version_info >= (3, 14):
-        import annotationlib
-
-        return set(annotationlib.get_annotations(cls, format=annotationlib.Format.FORWARDREF))
-    return set(inspect.get_annotations(cls))
-
-
 def shadowed_envelope_fields(cls: type, reserved: frozenset[str]) -> str | None:
     """The class's own field names that shadow the family's envelope fields, or `None`."""
-    shadowed = own_annotation_names(cls) & reserved
+    shadowed = set(_utils.own_annotations(cls)) & reserved
     return ', '.join(sorted(shadowed)) if shadowed else None
-
-
-def _annotates_payload_fields(cls: type) -> bool:
-    """Whether the class annotates names that a `@dataclass` decorator would turn into fields.
-
-    `ClassVar`s are excluded: they are settings rather than payload, so a mixin carrying only those
-    loses nothing by not being a dataclass. The annotation is inspected without being evaluated, so a
-    `ClassVar` that can't be resolved yet is still recognized from its written form.
-    """
-    if sys.version_info >= (3, 14):
-        import annotationlib
-
-        annotations = annotationlib.get_annotations(cls, format=annotationlib.Format.FORWARDREF)
-    else:
-        annotations = inspect.get_annotations(cls)
-    for annotation in annotations.values():
-        if typing_objects.is_classvar(get_origin(annotation)) or typing_objects.is_classvar(annotation):
-            continue
-        # An unevaluated annotation arrives as a string or `ForwardRef`; match how it was written.
-        text = annotation if isinstance(annotation, str) else getattr(annotation, '__forward_arg__', None)
-        if text is not None and re.match(r'^(typing\.)?ClassVar\b', text.strip()):
-            continue
-        return True
-    return False
 
 
 def inherited_namespace(cls: type, family: type) -> str | None:
@@ -242,7 +211,8 @@ def undecorated_field_base(cls: type, family: type) -> type | None:
             break
         if '__dataclass_fields__' in base.__dict__:
             continue
-        if _annotates_payload_fields(base):
+        # A `ClassVar`-only base loses nothing by not being a dataclass: it carries settings, not payload.
+        if _utils.declares_dataclass_fields(base):
             return base
     return None
 

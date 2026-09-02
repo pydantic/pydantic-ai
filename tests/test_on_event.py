@@ -16,11 +16,14 @@ from pydantic_ai.capabilities import (
     Capability,
     CombinedCapability,
     Hooks,
-    OnEventMethod,
     WrapperCapability,
     on_event,
 )
-from pydantic_ai.capabilities.on_event import collect_on_event_methods
+from pydantic_ai.capabilities._on_event import (
+    _OnEventMethod,  # pyright: ignore[reportPrivateUsage]
+    collect_on_event_methods,
+)
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
     FunctionToolCallEvent,
@@ -33,6 +36,7 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolReturnPart,
 )
+from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
@@ -53,7 +57,7 @@ class DirectoryListedEvent(CapabilityEvent, namespace='on_event_files'):
 
 
 @dataclass(kw_only=True)
-class ThingStartEvent(CapabilityEvent, namespace='on_event_decision', dispatch='inline'):
+class ThingStartEvent(CapabilityEvent, namespace='on_event_decision', dispatch='immediate'):
     cancelled: bool = False
 
     def cancel(self) -> None:
@@ -100,26 +104,18 @@ async def test_marker_filtering_order_and_direct_call() -> None:
     assert capability.has_on_event
 
 
-def test_sync_marker_rejected() -> None:
-    with pytest.raises(TypeError, match='only decorate async methods'):
-
-        @on_event(FileReadEvent)  # pyright: ignore[reportArgumentType]
-        def invalid(self: Any, ctx: RunContext[Any], event: FileReadEvent) -> None:
-            pass
-
-
 def test_dispatch_mode_is_inherited_and_validated() -> None:
     @dataclass(kw_only=True)
-    class InlineBaseEvent(CapabilityEvent, namespace='on_event_inherited', dispatch='inline'):
+    class ImmediateBaseEvent(CapabilityEvent, namespace='on_event_inherited', dispatch='immediate'):
         pass
 
     @dataclass(kw_only=True)
-    class InlineChildEvent(InlineBaseEvent):
+    class ImmediateChildEvent(ImmediateBaseEvent):
         pass
 
-    assert InlineChildEvent.event_dispatch == 'inline'
+    assert ImmediateChildEvent.event_dispatch == 'immediate'
 
-    with pytest.raises(TypeError, match="`dispatch` must be either 'stream' or 'inline'"):
+    with pytest.raises(UserError, match="`dispatch` must be either 'stream' or 'immediate'"):
 
         class InvalidDispatchEvent(  # pyright: ignore[reportGeneralTypeIssues, reportUnusedClass]
             CapabilityEvent,
@@ -176,7 +172,7 @@ async def test_listener_enqueue_reaches_next_model_request() -> None:
     assert seen_context
 
 
-async def test_mutable_decision_event_is_inline() -> None:
+async def test_mutable_decision_event_is_immediate() -> None:
     observed: list[tuple[bool, bool]] = []
     emitter = Capability[Any](id='emitter')
 
@@ -239,7 +235,7 @@ async def test_framework_events_auto_enable_streaming() -> None:
     assert any(isinstance(event, PartDeltaEvent) for event in seen)
 
 
-async def test_inline_event_delivered_exactly_once_in_stream_events() -> None:
+async def test_immediate_event_delivered_exactly_once_in_stream_events() -> None:
     seen: list[ThingStartEvent] = []
 
     @dataclass
@@ -264,7 +260,7 @@ async def _text_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIt
     yield 'done'
 
 
-async def test_nested_emit_from_inline_listener_is_cause_first() -> None:
+async def test_nested_emit_from_immediate_listener_is_cause_first() -> None:
     listener_log: list[str] = []
     stream_log: list[str] = []
 
@@ -390,8 +386,8 @@ async def test_combined_subclass_marked_listeners_run_after_children() -> None:
     assert order == ['child', 'team']
 
 
-async def test_emitter_reference_reflects_inline_decisions() -> None:
-    """Attribution stamps in place: the emitter's own reference to an inline event sees listener decisions."""
+async def test_emitter_reference_reflects_immediate_decisions() -> None:
+    """Attribution stamps in place: the emitter's own reference to an immediately dispatched event sees listener decisions."""
     alias_saw: list[bool] = []
     emitter = Capability[Any](id='emitter')
 
@@ -413,7 +409,7 @@ async def test_emitter_reference_reflects_inline_decisions() -> None:
     assert alias_saw == [True]
 
 
-async def test_reemitted_inline_event_dispatched_once_per_emit() -> None:
+async def test_reemitted_immediate_event_dispatched_once_per_emit() -> None:
     """Re-emitting the instance `emit` returned delivers to listeners exactly once per emission."""
     count = 0
     emitter = Capability[Any](id='emitter')
@@ -435,8 +431,8 @@ async def test_reemitted_inline_event_dispatched_once_per_emit() -> None:
     assert count == 2
 
 
-async def test_stream_consumers_observe_settled_inline_events() -> None:
-    """A stream consumer never sees an inline decision event before its listeners have settled it."""
+async def test_stream_consumers_observe_settled_immediate_events() -> None:
+    """A stream consumer never sees an immediately dispatched decision event before its listeners have settled it."""
     emitter = Capability[Any](id='emitter')
 
     @emitter.tool
@@ -482,8 +478,8 @@ async def test_stream_listener_exception_fails_run() -> None:
         await agent.run('go')
 
 
-async def test_inline_listener_exception_propagates_to_emitter() -> None:
-    """An inline listener's exception surfaces from `emit`, where the emitter can recover."""
+async def test_immediate_listener_exception_propagates_to_emitter() -> None:
+    """An immediately dispatched listener's exception surfaces from `emit`, where the emitter can recover."""
     caught: list[str] = []
     emitter = Capability[Any](id='emitter')
 
@@ -499,11 +495,11 @@ async def test_inline_listener_exception_propagates_to_emitter() -> None:
     class Boom(AbstractCapability[Any]):
         @on_event(ThingStartEvent)
         async def boom(self, ctx: RunContext[Any], event: ThingStartEvent) -> None:
-            raise RuntimeError('inline listener failed')
+            raise RuntimeError('immediate listener failed')
 
     result = await Agent(FunctionModel(stream_function=_tool_then_text), capabilities=[emitter, Boom()]).run('go')
     assert result.output == 'done'
-    assert caught == ['inline listener failed']
+    assert caught == ['immediate listener failed']
 
 
 async def test_zero_listeners_does_not_enable_streaming() -> None:
@@ -525,7 +521,7 @@ async def test_zero_listeners_does_not_enable_streaming() -> None:
 def test_marked_method_named_on_event_rejected() -> None:
     """`on_event` is the dispatcher that invokes the marked listeners; a marker can't replace it."""
     # Python < 3.12 wraps exceptions raised by `__set_name__` in a `RuntimeError`.
-    with pytest.raises((TypeError, RuntimeError)) as exc_info:
+    with pytest.raises(RuntimeError) as exc_info:  # `UserError` is a `RuntimeError`
 
         class BadCapability(AbstractCapability[Any]):  # pyright: ignore[reportUnusedClass]
             @on_event(FileReadEvent)
@@ -534,10 +530,10 @@ def test_marked_method_named_on_event_rejected() -> None:
             ) -> None: ...
 
     error: BaseException = exc_info.value
-    if isinstance(error, RuntimeError):
+    if type(error) is RuntimeError:
         assert error.__cause__ is not None
         error = error.__cause__
-    assert isinstance(error, TypeError)
+    assert isinstance(error, UserError)
     assert "cannot decorate a method named 'on_event'" in str(error)
 
 
@@ -608,15 +604,7 @@ async def test_hooks_subclass_marked_listeners_dispatch() -> None:
 
 
 def test_marker_class_access_returns_descriptor() -> None:
-    assert isinstance(MarkerCapability.traversal, OnEventMethod)
-
-
-def test_bare_sync_marker_rejected() -> None:
-    with pytest.raises(TypeError, match='only decorate async methods'):
-
-        @on_event  # pyright: ignore[reportArgumentType, reportCallIssue, reportUntypedFunctionDecorator]
-        def invalid(self: Any, ctx: RunContext[Any], event: AgentStreamEvent) -> None:
-            pass
+    assert isinstance(MarkerCapability.traversal, _OnEventMethod)
 
 
 def test_subclass_override_unmarks_inherited_listener() -> None:
@@ -654,8 +642,8 @@ async def test_wrapper_delegates_on_event() -> None:
     assert [event.path for event in received] == ['wrapped.txt']
 
 
-async def test_inline_event_without_listeners_returns_defaults() -> None:
-    """An inline decision event with no listeners anywhere returns with its fields untouched."""
+async def test_immediate_event_without_listeners_returns_defaults() -> None:
+    """An immediately dispatched decision event with no listeners anywhere returns with its fields untouched."""
     emitter = Capability[Any](id='emitter')
     outcomes: list[bool] = []
 
@@ -804,27 +792,27 @@ async def test_hooks_on_event_legacy_replacements_compose_across_capabilities() 
     )
 
 
-async def test_hooks_on_event_legacy_replacement_of_inline_event_chains_without_stream_rewrite() -> None:
-    """Replacing an inline decision event chains to later callbacks but never rewrites the stream."""
+async def test_hooks_on_event_legacy_replacement_of_immediate_event_chains_without_stream_rewrite() -> None:
+    """Replacing an immediately dispatched decision event chains to later callbacks but never rewrites the stream."""
 
     @dataclass(kw_only=True)
-    class InlineDecisionEvent(CapabilityEvent, namespace='capabilities_inline_replace', dispatch='inline'):
+    class ImmediateDecisionEvent(CapabilityEvent, namespace='capabilities_immediate_replace', dispatch='immediate'):
         cancelled: bool = False
 
     emitter = Capability[Any](id='emitter')
-    emitted: list[InlineDecisionEvent] = []
+    emitted: list[ImmediateDecisionEvent] = []
 
     @emitter.tool
     async def decide(ctx: RunContext[Any]) -> str:
-        emitted.append(await ctx.emit(InlineDecisionEvent()))
+        emitted.append(await ctx.emit(ImmediateDecisionEvent()))
         return 'done'
 
     hooks = Hooks[Any]()
 
     @hooks.on.event
     async def replace(ctx: RunContext[Any], event: AgentStreamEvent) -> AgentStreamEvent | None:
-        if isinstance(event, InlineDecisionEvent):
-            return ReplacementEvent(payload='inline-replaced')
+        if isinstance(event, ImmediateDecisionEvent):
+            return ReplacementEvent(payload='immediate-replaced')
 
     seen_after: list[str] = []
 
@@ -843,6 +831,125 @@ async def test_hooks_on_event_legacy_replacement_of_inline_event_chains_without_
     with pytest.warns(PydanticAIDeprecationWarning, match='returning a replacement event'):
         async with agent.run_stream_events('hello') as stream:
             events = [event async for event in stream]
-    assert seen_after == ['inline-replaced']
-    # The inline event still reaches the stream itself; the replacement is not stored.
-    assert any(isinstance(event, InlineDecisionEvent) for event in events)
+    assert seen_after == ['immediate-replaced']
+    # The immediately dispatched event still reaches the stream itself; the replacement is not stored.
+    assert any(isinstance(event, ImmediateDecisionEvent) for event in events)
+
+
+# --- `listens_to`: the gate that keeps a capability out of dispatch for events it never wanted ---
+
+
+def test_listens_to_reports_marked_types_and_bare_markers() -> None:
+    """Typed markers narrow to their classes; a bare marker widens the capability to everything."""
+
+    @dataclass
+    class Typed(AbstractCapability[Any]):
+        @on_event(FileReadEvent)
+        async def _files(self, ctx: RunContext[Any], event: FileReadEvent) -> None: ...  # pragma: no cover
+
+    @dataclass
+    class Bare(AbstractCapability[Any]):
+        @on_event
+        async def _everything(self, ctx: RunContext[Any], event: AgentStreamEvent) -> None: ...  # pragma: no cover
+
+    typed, bare, silent = Typed(), Bare(), AbstractCapability[Any]()
+    assert typed.listens_to(FileReadEvent(path='a'))
+    assert not typed.listens_to(DirectoryListedEvent(path='a'))
+    assert bare.listens_to(DirectoryListedEvent(path='a'))
+    # Nothing registered at all: `listens_to` agrees with `has_on_event` rather than defaulting to True.
+    assert not silent.listens_to(FileReadEvent(path='a'))
+    assert not silent.has_on_event
+
+
+def test_listens_to_widens_for_an_overridden_on_event() -> None:
+    """An override's dispatch isn't knowable here, so it opts in to everything unless it says otherwise."""
+
+    @dataclass
+    class Dynamic(AbstractCapability[Any]):
+        async def on_event(self, ctx: RunContext[Any], *, event: AgentStreamEvent) -> None: ...  # pragma: no cover
+
+    @dataclass
+    class NarrowedDynamic(Dynamic):
+        def listens_to(self, event: AgentStreamEvent) -> bool:
+            return isinstance(event, FileReadEvent)
+
+    assert Dynamic().listens_to(DirectoryListedEvent(path='a'))
+    assert NarrowedDynamic().listens_to(FileReadEvent(path='a'))
+    assert not NarrowedDynamic().listens_to(DirectoryListedEvent(path='a'))
+
+
+def test_listens_to_composes_through_containers_and_wrappers() -> None:
+    """A container or wrapper reports the union of what it holds, so one broad child widens the whole."""
+
+    @dataclass
+    class Typed(AbstractCapability[Any]):
+        @on_event(FileReadEvent)
+        async def _files(self, ctx: RunContext[Any], event: FileReadEvent) -> None: ...  # pragma: no cover
+
+    combined = CombinedCapability[Any](capabilities=[Typed(), AbstractCapability[Any]()])
+    assert combined.listens_to(FileReadEvent(path='a'))
+    assert not combined.listens_to(DirectoryListedEvent(path='a'))
+
+    wrapper = WrapperCapability[Any](wrapped=Typed())
+    assert wrapper.listens_to(FileReadEvent(path='a'))
+    assert not wrapper.listens_to(DirectoryListedEvent(path='a'))
+
+    hooks = Hooks()
+
+    @hooks.on.event(DirectoryListedEvent)
+    async def _dirs(ctx: RunContext[Any], event: DirectoryListedEvent) -> None: ...  # pragma: no cover
+
+    assert not hooks.listens_to(FileReadEvent(path='a'))
+    assert hooks.listens_to(DirectoryListedEvent(path='a'))
+    # One broad member is enough to widen everything above it.
+    assert CombinedCapability[Any](capabilities=[Typed(), hooks]).listens_to(DirectoryListedEvent(path='a'))
+
+
+def test_bare_hook_callback_widens_hooks() -> None:
+    """A bare `hooks.on.event` takes every event, so `Hooks` can't narrow."""
+    hooks = Hooks()
+
+    @hooks.on.event
+    async def _everything(ctx: RunContext[Any], event: AgentStreamEvent) -> None: ...  # pragma: no cover
+
+    assert hooks.listens_to(FileReadEvent(path='a'))
+
+
+async def test_unlistened_events_never_reach_a_capability() -> None:
+    """The point of the gate: a capability isn't woken for event classes it didn't name."""
+    dispatched: list[str] = []
+
+    @dataclass
+    class Narrow(AbstractCapability[Any]):
+        # Declared before the `on_event` override below: inside a class body that name would
+        # otherwise resolve to the method rather than to the decorator.
+        @on_event(OnEventNoteEvent)
+        async def _notes(self, ctx: RunContext[Any], event: OnEventNoteEvent) -> None:
+            dispatched.append(f'note:{event.name}')
+
+        async def on_event(self, ctx: RunContext[Any], *, event: AgentStreamEvent) -> None:
+            dispatched.append(event.event_kind)
+            await super().on_event(ctx, event=event)
+
+        def listens_to(self, event: AgentStreamEvent) -> bool:
+            return isinstance(event, CustomEvent)
+
+    @dataclass
+    class Emitter(AbstractCapability[Any]):
+        @property
+        def _emits_app_events(self) -> bool:
+            return True
+
+        async def before_model_request(
+            self, ctx: RunContext[Any], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            await ctx.emit(OnEventNoteEvent())
+            return request_context
+
+    agent = Agent(FunctionModel(stream_function=simple_stream_function), capabilities=[Emitter(), Narrow()])
+    async with agent.run_stream_events('hello') as stream:
+        events = [event async for event in stream]
+
+    # Plenty of model events flowed past, but only the custom event was ever handed to `Narrow`.
+    assert len({event.event_kind for event in events}) > 1
+    assert dispatched == ['custom', 'note:on_event_note']
