@@ -922,9 +922,8 @@ class OpenAIRealtimeModel(RealtimeModel):
         settings: RealtimeModelSettings | None = None,
         profile: RealtimeModelProfileSpec | None = None,
     ) -> None:
+        super().__init__(settings=settings, profile=profile)
         self.model = model
-        self.settings = settings
-        self._profile = profile
         self._provider = self._resolve_provider(provider)
 
     @staticmethod

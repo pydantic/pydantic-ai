@@ -35,7 +35,7 @@ from pydantic.alias_generators import to_snake
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 from typing_extensions import TypeAliasType, TypeVar, assert_never
 
-from pydantic_ai._cost import calculate_price_for_usage
+from pydantic_ai._genai_prices import calculate_price_for_usage
 
 from . import _otel_messages, _utils
 from ._event_registry import (
@@ -2017,6 +2017,7 @@ class ModelRequest:
 
     Set to `'interrupted'` when the request was being assembled (e.g. collecting tool returns) and
     the run was abnormally terminated by an exception or cancellation before the request was sent to the model.
+    In that case `parts` holds only the tool returns that were collected, and is empty if none were.
     Appears in [`capture_run_messages`][pydantic_ai.capture_run_messages] output so consumers can detect partial state.
     """
 

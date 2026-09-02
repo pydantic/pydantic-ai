@@ -11,7 +11,7 @@ The [`VercelAIAdapter`][pydantic_ai.ui.vercel_ai.VercelAIAdapter] class is respo
 
 If you're using a Starlette-based web framework like FastAPI, you can use the [`VercelAIAdapter.dispatch_request()`][pydantic_ai.ui.UIAdapter.dispatch_request] class method from an endpoint function to directly handle a request and return a streaming response of Vercel AI events. This is demonstrated in the next section.
 
-If you're using a web framework not based on Starlette (e.g. Django or Flask) or need fine-grained control over the input or output, you can create a `VercelAIAdapter` instance and directly use its methods. This is demonstrated in "Advanced Usage" section below.
+If you're using a web framework not based on Starlette (e.g. Django or Flask) or need fine-grained control over the input or output, you can create a `VercelAIAdapter` instance and directly use its methods. This is demonstrated in the "Advanced Usage" section below.
 
 ### Usage with Starlette/FastAPI
 

@@ -19,7 +19,7 @@ from pydantic_core import PydanticSerializationError, to_json
 
 from pydantic_graph._utils import get_traceparent
 
-from ._cost import best_effort_price
+from ._genai_prices import best_effort_price
 
 if TYPE_CHECKING:
     from genai_prices.types import PriceCalculation

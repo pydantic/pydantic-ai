@@ -1,6 +1,6 @@
 # Native Tools
 
-Native tools are native tools provided by LLM providers that can be used to enhance your agent's capabilities. Unlike [common tools](common-tools.md), which are custom implementations that Pydantic AI executes, native tools are executed directly by the model provider.
+Native tools are provided and executed by LLM providers, while [common tools](common-tools.md) are custom implementations executed by Pydantic AI.
 
 ## Overview
 
