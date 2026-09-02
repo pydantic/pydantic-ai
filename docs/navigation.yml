@@ -255,6 +255,10 @@ navigation:
             path: "modal-sandbox.md"
             source: "harness"
             slug: "harness/modal-sandbox"
+          - page: "Sprite Sandbox"
+            path: "sprite-sandbox.md"
+            source: "harness"
+            slug: "harness/sprite-sandbox"
       - section: "Tools & Native Abilities"
         slug: ""
         contents:
