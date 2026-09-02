@@ -264,11 +264,9 @@ async def main(microphone_chunk: bytes):
                     user_turn_complete = True
                 case RealtimeTurnCompleteEvent():
                     turn_complete = True
-                case RealtimeSessionErrorEvent(message=message, recoverable=recoverable):
-                    if recoverable:
-                        print('realtime warning:', message)
-                    else:
-                        raise RuntimeError(message)
+                case RealtimeSessionErrorEvent(message=message, recoverable=True):
+                    # The connection remains usable, but this turn may not complete.
+                    raise RuntimeError(message)
             if turn_complete and user_turn_complete:
                 break
 
