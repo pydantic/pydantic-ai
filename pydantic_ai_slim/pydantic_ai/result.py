@@ -14,7 +14,7 @@ from pydantic import ValidationError
 from typing_extensions import Self
 
 from . import _utils, exceptions, messages as _messages, models
-from ._cost import best_effort_price
+from ._genai_prices import best_effort_price
 from ._output import (
     OutputDataT_inv,
     OutputSchema,
