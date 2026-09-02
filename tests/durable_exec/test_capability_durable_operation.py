@@ -230,7 +230,7 @@ async def test_durability_forbids_connecting_sandbox_ref_in_durable_context() ->
 
     @agent.tool
     async def probe(ctx: RunContext[Any]) -> str:
-        return (await ctx.sandbox.run(['true'])).stdout  # pragma: no cover
+        return (await ctx.sandbox.run(['true'])).stdout
 
     with pytest.raises(UserError, match=r'`ctx.sandbox` cannot connect inside recording journal code'):
         await agent.run('go', sandbox=SandboxRef(sandbox_id='outside'))
