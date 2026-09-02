@@ -59,9 +59,11 @@ applied automatically — don't set them.
 - Dispatch `pre-push-review` at most three times per PR during one task. Count every dispatch,
   including repeated reviews after findings.
 - Track the count in the current task plan. Use the branch name until a PR number exists.
+- When the PR exists, rename the branch-keyed plan entry to the PR number. Preserve its count.
 - Reserve the next count before dispatch. Include `call N of 3` in the reviewer prompt.
 - Count only `pre-push-review` dispatches. Do not count the final metadata review.
-- Address every finding and commit the fixes. Repeat the review while the three-call budget remains.
+- Address every finding and commit the fixes. Stop after a review returns no findings.
+- Reserve another review only after committing fixes and only while the three-call budget remains.
 - After the third review, fix its findings and run the relevant local checks. Do not dispatch a
   fourth review; continue with the push, CI, and hosted review.
 - Never force-push an open PR branch. Push follow-up commits so previous reviews remain valid;
