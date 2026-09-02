@@ -23,7 +23,9 @@ from pydantic_ai import (
     BinaryContent,
     BinaryImage,
     CachePoint,
+    CapabilityEvent,
     CompactionPart,
+    CustomEvent as PydanticAICustomEvent,
     DocumentUrl,
     FilePart,
     FunctionToolCallEvent,
@@ -281,6 +283,7 @@ def test_emitted_event_surface_is_pinned() -> None:
     """
     assert _constructed_ag_ui_event_names() == snapshot(
         {
+            'AGUICustomEvent',
             'ActivitySnapshotEvent',
             'ReasoningEncryptedValueEvent',
             'ReasoningEndEvent',
@@ -4804,6 +4807,238 @@ async def test_file_part_emits_no_ag_ui_event():
                 'delta': 'Here is the chart',
             },
             {'type': 'TEXT_MESSAGE_END', 'timestamp': IsInt(), 'messageId': message_id},
+            {
+                'type': 'RUN_FINISHED',
+                'timestamp': IsInt(),
+                'threadId': thread_id,
+                'runId': run_id,
+                **run_finished_outcome(),
+            },
+        ]
+    )
+
+
+@dataclass(kw_only=True)
+class AgUiProgressEvent(PydanticAICustomEvent, name='ag_ui_progress'):
+    payload: Any = None
+
+
+@dataclass(kw_only=True)
+class AgUiPassthroughEvent(PydanticAICustomEvent, name='ag_ui_passthrough'):
+    """Overrides `to_payload` so an AG-UI event payload is passed through to the frontend verbatim."""
+
+    event: Any = None
+
+    def to_payload(self) -> Any:
+        return self.event
+
+
+async def test_custom_event_maps_to_ag_ui_custom_event():
+    """A `CustomEvent` maps to an AG-UI `CustomEvent`, nesting `tool_call_id` alongside the payload when set."""
+
+    async def event_generator():
+        yield AgUiProgressEvent(payload={'pct': 50})
+        yield AgUiProgressEvent(payload={'pct': 100}, tool_call_id='call_1')
+
+    run_input = create_input(UserMessage(id='msg_1', content='go'))
+    event_stream = AGUIEventStream(run_input=run_input)
+    events = [
+        json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    assert events == snapshot(
+        [
+            {
+                'type': 'RUN_STARTED',
+                'timestamp': IsInt(),
+                'threadId': (thread_id := IsSameStr()),
+                'runId': (run_id := IsSameStr()),
+            },
+            {'type': 'CUSTOM', 'timestamp': IsInt(), 'name': 'ag_ui_progress', 'value': {'payload': {'pct': 50}}},
+            # Same value shape whether or not the event was emitted from inside a tool call: a
+            # frontend reading `value.<field>` must not fork on the emission site.
+            {'type': 'CUSTOM', 'timestamp': IsInt(), 'name': 'ag_ui_progress', 'value': {'payload': {'pct': 100}}},
+            {
+                'type': 'RUN_FINISHED',
+                'timestamp': IsInt(),
+                'threadId': thread_id,
+                'runId': run_id,
+                **run_finished_outcome(),
+            },
+        ]
+    )
+
+
+async def test_capability_event_is_not_forwarded():
+    """Capability coordination events are dropped by the AG-UI adapter by default."""
+
+    @dataclass(kw_only=True)
+    class AgUiCapabilityEvent(CapabilityEvent, namespace='ag_ui_test'):
+        value: int
+
+    async def event_generator():
+        yield AgUiCapabilityEvent(value=1, capability_id='test')
+
+    run_input = create_input(UserMessage(id='msg_1', content='go'))
+    event_stream = AGUIEventStream(run_input=run_input)
+    events = [
+        json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+    assert events == snapshot(
+        [
+            {
+                'type': 'RUN_STARTED',
+                'timestamp': IsInt(),
+                'threadId': (thread_id := IsSameStr()),
+                'runId': (run_id := IsSameStr()),
+            },
+            {
+                'type': 'RUN_FINISHED',
+                'timestamp': IsInt(),
+                'threadId': thread_id,
+                'runId': run_id,
+                **run_finished_outcome(),
+            },
+        ]
+    )
+
+
+async def test_capability_event_forwarded_by_subclass_override():
+    """A protocol adapter subclass can forward capability events by overriding `handle_capability_event`."""
+
+    @dataclass(kw_only=True)
+    class AgUiForwardedEvent(CapabilityEvent, namespace='ag_ui_forwarded'):
+        value: int
+
+    class ForwardingStream(AGUIEventStream[Any]):
+        async def handle_capability_event(self, event: CapabilityEvent) -> AsyncIterator[BaseEvent]:
+            yield CustomEvent(type=EventType.CUSTOM, name=event.kind, value={'capability_id': event.capability_id})
+
+    async def event_generator():
+        yield AgUiForwardedEvent(value=1, capability_id='test')
+
+    run_input = create_input(UserMessage(id='msg_1', content='go'))
+    event_stream = ForwardingStream(run_input=run_input)
+    events = [
+        json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+    assert [event for event in events if event['type'] == 'CUSTOM'] == snapshot(
+        [
+            {
+                'type': 'CUSTOM',
+                'timestamp': IsInt(),
+                'name': 'ag_ui_forwarded.ag_ui_forwarded',
+                'value': {'capability_id': 'test'},
+            }
+        ]
+    )
+
+
+async def test_typed_custom_event_maps_to_ag_ui_custom_event():
+    """A typed `CustomEvent` subclass maps its own fields as the AG-UI `CustomEvent` value."""
+
+    @dataclass(kw_only=True)
+    class AgUiSyncEvent(PydanticAICustomEvent, name='ag_ui_sync'):
+        done: int
+        total: int
+
+    async def event_generator():
+        yield AgUiSyncEvent(done=3, total=9)
+
+    run_input = create_input(UserMessage(id='msg_1', content='go'))
+    event_stream = AGUIEventStream(run_input=run_input)
+    events = [
+        json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    assert events == snapshot(
+        [
+            {
+                'type': 'RUN_STARTED',
+                'timestamp': IsInt(),
+                'threadId': (thread_id := IsSameStr()),
+                'runId': (run_id := IsSameStr()),
+            },
+            {'type': 'CUSTOM', 'timestamp': IsInt(), 'name': 'ag_ui_sync', 'value': {'done': 3, 'total': 9}},
+            {
+                'type': 'RUN_FINISHED',
+                'timestamp': IsInt(),
+                'threadId': thread_id,
+                'runId': run_id,
+                **run_finished_outcome(),
+            },
+        ]
+    )
+
+
+async def test_custom_event_with_ui_false_is_not_forwarded():
+    """A `CustomEvent` subclass declared `ui=False` never reaches the frontend."""
+
+    @dataclass(kw_only=True)
+    class AgUiInternalEvent(PydanticAICustomEvent, name='ag_ui_internal', ui=False):
+        done: int
+
+    @dataclass(kw_only=True)
+    class AgUiShownEvent(PydanticAICustomEvent, name='ag_ui_shown'):
+        done: int
+
+    async def event_generator():
+        yield AgUiInternalEvent(done=1)
+        yield AgUiShownEvent(done=2)
+
+    run_input = create_input(UserMessage(id='msg_1', content='go'))
+    event_stream = AGUIEventStream(run_input=run_input)
+    events = [
+        json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    assert events == snapshot(
+        [
+            {
+                'type': 'RUN_STARTED',
+                'timestamp': IsInt(),
+                'threadId': (thread_id := IsSameStr()),
+                'runId': (run_id := IsSameStr()),
+            },
+            {'type': 'CUSTOM', 'timestamp': IsInt(), 'name': 'ag_ui_shown', 'value': {'done': 2}},
+            {
+                'type': 'RUN_FINISHED',
+                'timestamp': IsInt(),
+                'threadId': thread_id,
+                'runId': run_id,
+                **run_finished_outcome(),
+            },
+        ]
+    )
+
+
+async def test_custom_event_passes_through_ag_ui_base_event():
+    """A `CustomEvent` whose payload is an AG-UI event is passed through verbatim."""
+
+    async def event_generator():
+        yield AgUiPassthroughEvent(event=StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot={'key': 'value'}))
+
+    run_input = create_input(UserMessage(id='msg_1', content='go'))
+    event_stream = AGUIEventStream(run_input=run_input)
+    events = [
+        json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    assert events == snapshot(
+        [
+            {
+                'type': 'RUN_STARTED',
+                'timestamp': IsInt(),
+                'threadId': (thread_id := IsSameStr()),
+                'runId': (run_id := IsSameStr()),
+            },
+            {'type': 'STATE_SNAPSHOT', 'timestamp': IsInt(), 'snapshot': {'key': 'value'}},
             {
                 'type': 'RUN_FINISHED',
                 'timestamp': IsInt(),

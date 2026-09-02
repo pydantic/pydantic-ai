@@ -53,7 +53,7 @@ from .._cancel import CancellationToken, RunCancellation, take_run_binding
 from .._deferred_capabilities import registered_loaded_capability_ids
 from .._instructions import AgentInstructions
 from .._output import OutputToolset
-from .._run_context import set_current_run_context
+from .._run_context import dispatch_event_stream, set_current_run_context
 from .._template import validate_from_spec_args
 from .._warnings import PydanticAIDeprecationWarning
 from ..capabilities import (
@@ -3567,8 +3567,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 ]
                 | None
             ) = (
-                (lambda stream: run_capability.wrap_run_event_stream(run_context, stream=stream))
-                if run_capability.has_wrap_run_event_stream
+                (
+                    lambda stream: run_capability.wrap_run_event_stream(
+                        run_context, stream=dispatch_event_stream(run_context, stream)
+                    )
+                )
+                if run_capability.has_wrap_run_event_stream or run_capability.has_on_event
                 else None
             )
 
