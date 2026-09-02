@@ -49,7 +49,7 @@ def _sdk_has_media_processing() -> bool:
     """Whether the installed google-genai has the per-Part `media_processing` field (2.21.0+)."""
     try:
         from google.genai.types import PartDict
-    except ImportError:  # pragma: no cover
+    except ImportError:  # the `pydantic-ai-slim` install variant has no google-genai
         return False
     return 'media_processing' in PartDict.__annotations__
 
