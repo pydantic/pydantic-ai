@@ -108,7 +108,7 @@ class ImageGenerator:
 
     async def main():
         result = await generator.generate('A watercolor map of a floating city.')
-        print(result.images[0].content.media_type)
+        print(result.image.media_type)
         #> image/png
     ```
     """

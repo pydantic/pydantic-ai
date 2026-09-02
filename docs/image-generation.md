@@ -19,7 +19,7 @@ generator = ImageGenerator('openai:gpt-image-2')
 
 async def main():
     result = await generator.generate('A watercolor map of a floating city.')
-    image = result.images[0].content
+    image = result.image
     Path('floating-city.png').write_bytes(image.data)
 ```
 
@@ -44,7 +44,7 @@ async def replace_subject(source: BinaryImage) -> BinaryImage:
         'Replace the cat with a dog while preserving the composition.',
         images=[source],
     )
-    return result.images[0].content
+    return result.image
 ```
 
 The order of multiple reference images is preserved. Provider-hosted files are supported by Google and xAI, and the
@@ -114,7 +114,7 @@ async def main():
         'A cinematic desert observatory at dusk.',
         settings=ImageGenerationSettings(dimensions=(1280, 720)),
     )
-    assert result.images[0].content.media_type.startswith('image/')
+    assert result.image.media_type.startswith('image/')
 ```
 
 Settings are applied on a best-effort basis. A provider adapter warns when it cannot apply an explicit setting.
@@ -249,6 +249,10 @@ provider resolution are not portable settings; use the relevant provider-prefixe
 provider-specific response details. Image bytes are always available as a
 [`BinaryImage`][pydantic_ai.messages.BinaryImage] through `result.images[n].content`.
 
+A result always holds at least one image, so [`result.image`][pydantic_ai.images.ImageGenerationResult.image] returns
+the first one's [`BinaryImage`][pydantic_ai.messages.BinaryImage] directly. Use `result.images` when you asked for more
+than one image or need per-image metadata such as `revised_prompt`.
+
 xAI's `provider_details` can contain `cost_usd` reported by xAI. This is provider metadata, not a portable cost
 calculation, and is kept separate from [`cost()`][pydantic_ai.images.ImageGenerationResult.cost].
 
@@ -285,7 +289,7 @@ async def main():
         result = await generator.generate('A watercolor map of a floating city.')
     except ContentFilterError:
         result = await generator.generate('A watercolor map of a quiet harbor.')
-    print(result.images[0].content.media_type)
+    print(result.image.media_type)
     #> image/png
 ```
 

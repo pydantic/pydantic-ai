@@ -134,6 +134,7 @@ async def test_test_image_generation_model_generates_png():
     assert generated_image.content.media_type == 'image/png'
     assert generated_image.content.data.startswith(b'\x89PNG\r\n\x1a\n')
     assert generated_image.output_format == 'png'
+    assert result.image == generated_image.content
 
 
 @pytest.mark.parametrize(

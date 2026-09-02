@@ -56,7 +56,13 @@ class ImageGenerationModel(ABC):
         images: Sequence[ImageGenerationInput] | None = None,
         settings: ImageGenerationSettings | None = None,
     ) -> ImageGenerationResult:
-        """Generate images for the given prompt."""
+        """Generate images for the given prompt.
+
+        The result always holds at least one image. An implementation with no image to return raises
+        [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError] when the provider blocked the output, and
+        [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior] otherwise, rather than returning an
+        empty result.
+        """
         raise NotImplementedError
 
     def _validate_uploaded_file_provider(self, item: UploadedFile) -> None:

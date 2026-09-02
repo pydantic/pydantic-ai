@@ -79,6 +79,11 @@ class ImageGenerationResult:
     provider_url: str | None = None
     """Provider API URL, if available."""
 
+    @property
+    def image(self) -> BinaryImage:
+        """The first generated image. Use `images` when the request asked for more than one."""
+        return self.images[0].content
+
     def cost(self) -> genai_types.PriceCalculation:
         """Calculate the cost of the image generation request.
 
