@@ -5007,9 +5007,6 @@ async def test_anthropic_dropped_thinking_blocks_reach_the_trace_streamed(
 _STALE_THINKING_BLOCK_PREFIX_CHANGE = pytest.mark.moves_cache_prefix(
     reason='the changed instructions string is what invalidates the thinking block'
 )
-_DROP_STALE_THINKING_BLOCKS = AnthropicModelSettings(
-    anthropic_thinking={'type': 'adaptive', 'block_binding': {'prefix_mismatch_behavior': 'drop_block'}}
-)
 
 
 async def stale_thinking_block_history(model: AnthropicModel) -> list[ModelMessage]:
@@ -5057,10 +5054,11 @@ async def test_anthropic_fable_5_1_drops_a_stale_thinking_block(allow_model_requ
     m = AnthropicModel('claude-fable-5-1', provider=AnthropicProvider(api_key=anthropic_api_key))
     history = await stale_thinking_block_history(m)
 
+    settings = AnthropicModelSettings(
+        anthropic_thinking={'type': 'adaptive', 'block_binding': {'prefix_mismatch_behavior': 'drop_block'}}
+    )
     second = Agent(
-        m,
-        instructions='You are a helpful assistant. Answer briefly. Today is 2026-09-01.',
-        model_settings=_DROP_STALE_THINKING_BLOCKS,
+        m, instructions='You are a helpful assistant. Answer briefly. Today is 2026-09-01.', model_settings=settings
     )
     replayed = await second.run('And times two?', message_history=history)
 
@@ -5088,10 +5086,11 @@ async def test_anthropic_fable_5_1_drops_a_stale_thinking_block_streamed(
     m = AnthropicModel('claude-fable-5-1', provider=AnthropicProvider(api_key=anthropic_api_key))
     history = await stale_thinking_block_history(m)
 
+    settings = AnthropicModelSettings(
+        anthropic_thinking={'type': 'adaptive', 'block_binding': {'prefix_mismatch_behavior': 'drop_block'}}
+    )
     second = Agent(
-        m,
-        instructions='You are a helpful assistant. Answer briefly. Today is 2026-09-01.',
-        model_settings=_DROP_STALE_THINKING_BLOCKS,
+        m, instructions='You are a helpful assistant. Answer briefly. Today is 2026-09-01.', model_settings=settings
     )
     async with second.run_stream('And times two?', message_history=history) as streamed:
         await streamed.get_output()
