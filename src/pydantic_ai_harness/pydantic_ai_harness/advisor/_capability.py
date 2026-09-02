@@ -81,6 +81,13 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
     Native execution keeps the provider's transcript behavior unchanged.
     """
 
+    id: str | None = 'advisor'
+    """One-off: an agent has one advisor, and its tool name is fixed.
+
+    Declared here rather than only passed up from `__init__`, so the class states it where a reader
+    -- and Pydantic AI, deciding what two of this capability under one `id` mean -- can see it.
+    """
+
     _local_uses: int = field(init=False, repr=False, default=0)
 
     def __init__(
