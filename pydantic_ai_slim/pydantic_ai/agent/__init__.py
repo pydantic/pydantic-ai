@@ -1618,10 +1618,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 with anyio.CancelScope(shield=True):
                     await facade._close_connected_backend()  # pyright: ignore[reportPrivateUsage]
 
-            # The run's sandbox: an explicit `sandbox=` argument wins, otherwise the one capability that
-            # acquires one, otherwise operations explain how to attach one. Resolved before `for_run` so
-            # every hook sees the final `ctx.sandbox`; release and connection close are pushed on `stack`
-            # first so they run after the run's own teardown.
+            # Resolve the sandbox before `for_run` so every hook sees the final `ctx.sandbox`; its
+            # release and connection close go on `stack` first so they run after the run's own teardown.
             if isinstance(sandbox, SandboxRef):
                 connectors = active_leaves(bootstrap_capability)
                 sandbox_facade = Sandbox._from_ref(  # pyright: ignore[reportPrivateUsage]
@@ -1876,8 +1874,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     # cancel unrelated later work on the task that drove the run.
                     graph_deps.cancellation.release_issued()
 
-            # Enter before everything the run sets up below, so cancellation is classified only after
-            # those contexts have torn down; the sandbox callbacks pushed above run afterwards, shielded.
+            # Entered after the sandbox callbacks so cancellation is classified once the run's own
+            # contexts have torn down; the shielded sandbox callbacks run afterwards.
             await stack.enter_async_context(_translate_cancellation())
 
             # Bind the run's cancellation controller to this task and register the token BEFORE any

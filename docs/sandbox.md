@@ -6,7 +6,8 @@ your tools. For trusted local development, the smallest complete example uses
 [`LocalSandbox`][pydantic_ai.sandboxes.LocalSandbox]:
 
 ```python
-from pydantic_ai import Agent, LocalSandbox, RunContext
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.sandboxes import LocalSandbox
 
 agent = Agent('anthropic:claude-sonnet-5')
 
@@ -76,9 +77,8 @@ Pydantic AI chooses one sandbox for the run, in this order:
 2. The environment supplied by one active capability.
 3. The unavailable default, which explains how to attach one when a tool tries to use it.
 
-If more than one active capability defines sandbox hooks, the run raises an error before calling
-any hook. Deferred capabilities cannot supply the run sandbox because sandbox selection happens
-before deferred capabilities load.
+If more than one capability returns a reference, the run releases them all and raises. Deferred
+capabilities are not asked, because they load after the sandbox is chosen.
 
 ### Directly, per run
 
@@ -127,14 +127,12 @@ class MySandboxCapability(AbstractCapability[Any]):
 
 agent = Agent(
     'anthropic:claude-sonnet-5',
-    capabilities=[MySandboxCapability(SandboxClient.from_environment(), id='my-sandbox')],
+    capabilities=[MySandboxCapability(SandboxClient.from_environment())],
 )
 ```
 
-The stable `id` lets durable workers reconnect through the same capability. Each `get_sandbox`
-call must return a fresh detachable connection. Pydantic AI caches it for the current run or
-durable I/O unit, then closes it with `terminate=False` when supported. A live backend passed
-through `sandbox=` remains open and caller-owned.
+Pydantic AI closes the connection `get_sandbox` returned when the run ends; a live backend passed
+through `sandbox=` stays open and caller-owned.
 
 Choose the lifecycle that matches your application:
 
@@ -143,8 +141,8 @@ Choose the lifecycle that matches your application:
 | Fresh sandbox per run | provision, return its ref | connect by id | destroy |
 | Warm environment shared across runs | return its ref | open a run-scoped connection | inherited no-op |
 | Pooled per conversation | check out or create by `ctx.conversation_id` | connect | return to pool or decrement a reference count |
-| Provider-configured environment | don't override | open a run-scoped connection for `None` | don't override |
-| Connect-only (provisioned elsewhere) | don't override | connect by id | don't override |
+| Environment fixed by configuration | return its ref | connect by id | don't override |
+| Connect-only (the caller passes a `SandboxRef`) | don't override | connect by id | don't override |
 
 If a workspace must survive several runs, use a warm or pooled lifecycle rather than creating a
 fresh sandbox per run. This includes [tool approval](deferred-tools.md), where pausing and resuming
@@ -165,7 +163,8 @@ Wrap a backend in [`ReadOnlySandbox`][pydantic_ai.sandboxes.ReadOnlySandbox] whe
 inspect a workspace without changing it:
 
 ```python
-from pydantic_ai import Agent, LocalSandbox, ReadOnlySandbox, RunContext
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.sandboxes import LocalSandbox, ReadOnlySandbox
 
 agent = Agent('anthropic:claude-sonnet-5')
 
@@ -223,14 +222,12 @@ The protocol contracts that matter to callers:
   concrete [`CommandResult`][pydantic_ai.sandboxes.CommandResult] carrier instead of declaring
   their own.
 
-These translations are a backend's whole error-handling duty; wrapping other SDK failures in
-provider-specific exceptions is optional polish.
+These translations are a backend's whole error-handling duty; wrapping other SDK failures is
+optional.
 
 [`SandboxBackend.run()`][pydantic_ai.sandboxes.SandboxBackend.run] returns complete captured
-output. Truncating its result in a tool bounds model context, but does not bound the backend's
-transfer or memory use. For commands whose output volume is not trusted, use a backend-native
-streaming or bounded-execution facility rather than assuming a tool-side character limit is a
-process resource limit.
+output. Truncating it in a tool bounds model context, not the backend's memory; bound untrusted
+output in the command itself (for example with `tail`).
 
 !!! warning "The sandbox protocol is not a security boundary"
     Isolation comes from the backend environment. In particular,

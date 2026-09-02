@@ -12,15 +12,17 @@ from typing import Any
 
 import pytest
 
-from pydantic_ai import Agent, LocalSandbox, RunContext, UnavailableSandbox, UserError
+from pydantic_ai import Agent, RunContext, UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.sandboxes import (
+    LocalSandbox,
     Sandbox,
     SandboxBackend,
     SandboxTimeoutError,
     SupportsFilesystem,
     SupportsStart,
+    UnavailableSandbox,
 )
 from pydantic_ai.sandboxes._policy import default_sandbox_backend
 

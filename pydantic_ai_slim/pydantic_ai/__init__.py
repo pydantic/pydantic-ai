@@ -152,12 +152,8 @@ from .profiles import (
 )
 from .run import AgentRun, AgentRunResult, AgentRunResultEvent
 from .sandboxes import (
-    LocalSandbox,
-    ReadOnlySandbox,
     Sandbox,
-    SandboxBackend,
     SandboxRef,
-    UnavailableSandbox,
 )
 from .settings import ModelSettings, ToolChoice, ToolOrOutput
 from .template import TemplateStr
@@ -363,12 +359,8 @@ __all__ = (
     'Capability',
     'CapabilityFunc',
     # sandboxes
-    'LocalSandbox',
-    'ReadOnlySandbox',
     'Sandbox',
-    'SandboxBackend',
     'SandboxRef',
-    'UnavailableSandbox',
     # output
     'ToolOutput',
     'NativeOutput',

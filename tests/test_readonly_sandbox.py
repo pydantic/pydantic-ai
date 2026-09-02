@@ -13,10 +13,10 @@ from typing import Any
 
 import pytest
 
-from pydantic_ai import Agent, ReadOnlySandbox, RunContext, UserError
+from pydantic_ai import Agent, RunContext, UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
-from pydantic_ai.sandboxes import LocalSandbox, Sandbox, SandboxRef, SupportsFilesystem, SupportsStart
+from pydantic_ai.sandboxes import LocalSandbox, ReadOnlySandbox, Sandbox, SandboxRef, SupportsFilesystem, SupportsStart
 
 from .sandbox_fakes import FakeSandboxResult, RecordingSandboxBackend
 

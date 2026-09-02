@@ -12,7 +12,7 @@ from typing import Any
 import anyio
 import pytest
 
-from pydantic_ai import Agent, RunContext, UnavailableSandbox, UserError
+from pydantic_ai import Agent, RunContext, UserError
 from pydantic_ai.agent import WrapperAgent
 from pydantic_ai.capabilities import AbstractCapability, CombinedCapability, WrapperCapability
 from pydantic_ai.durable_exec._sandbox import contributes_sandbox, guard_workflow_sandbox
@@ -32,6 +32,7 @@ from pydantic_ai.sandboxes import (
     SupportsFilesystem,
     SupportsStart,
     SupportsStream,
+    UnavailableSandbox,
 )
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, WrapperToolset
 from pydantic_ai.usage import RunUsage

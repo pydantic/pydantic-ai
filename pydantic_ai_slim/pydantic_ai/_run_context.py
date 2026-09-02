@@ -169,17 +169,10 @@ class RunContext(Generic[RunContextAgentDepsT]):
     sandbox: Sandbox = field(default_factory=_default_sandbox)
     """The [`Sandbox`][pydantic_ai.sandboxes.Sandbox] attached to this run.
 
-    This is always the rich Pydantic AI facade; use
-    [`sandbox.backend`][pydantic_ai.sandboxes.Sandbox.backend] to access provider-specific
-    functionality. Set once per run, in order of precedence: the `sandbox=` run argument
-    (caller-owned), a capability's
-    [`acquire_sandbox`][pydantic_ai.capabilities.AbstractCapability.acquire_sandbox] contribution, or
-    an [`UnavailableSandbox`][pydantic_ai.sandboxes.UnavailableSandbox] whose operations explain
-    how to attach one — no run ever gets implicit access to the host machine. Resolution happens
-    before `for_run`, so anything that receives a `RunContext` sees the final sandbox. Treat it
-    as read-only. On a bare/synthetic `RunContext` that isn't backed by a run, this is an
-    `UnavailableSandbox` whose operations explain that sandboxes are attached at run time. See
-    the [sandbox docs](../sandbox.md).
+    Chosen once, before `for_run`: the `sandbox=` run argument, else the one capability whose
+    [`acquire_sandbox`][pydantic_ai.capabilities.AbstractCapability.acquire_sandbox] returned a
+    ref, else a placeholder whose operations explain how to attach one. Never the host by default.
+    See the [sandbox docs](../sandbox.md).
     """
     pending_messages: list[PendingMessage] | None = field(default=None, repr=False)
     """Queue read and mutated by the internal `PendingMessageDrainCapability`.

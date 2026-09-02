@@ -4,7 +4,8 @@ Use a sandbox when an agent needs a workspace for commands and files. Attach an 
 the run, then use `ctx.sandbox` inside tools:
 
 ```python
-from pydantic_ai import Agent, LocalSandbox, RunContext
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.sandboxes import LocalSandbox
 
 agent = Agent('openai:gpt-5.2')
 
@@ -105,12 +106,8 @@ Choose the lifecycle that matches the application:
 Exactly one capability may return a ref from `acquire_sandbox`, and exactly one may connect a given
 ref; more raises `UserError`. Deferred capabilities take no part until loaded.
 
-Each `get_sandbox` call returns a fresh detachable connection. Pydantic AI caches it for the
-current run or durable I/O unit, then closes it with `terminate=False` when supported. A live
-backend passed through `sandbox=` remains open and caller-owned.
-
-`ctx.sandbox` is present on every `RunContext`, including capability and toolset `for_run` hooks
-and initial metadata factories.
+Pydantic AI closes the connection `get_sandbox` returned when the run ends; a live backend passed
+through `sandbox=` stays open and caller-owned.
 
 Pass `UnavailableSandbox(reason='Local execution is disabled by application policy.')` to
 disable sandbox access with a useful error.
