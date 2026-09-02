@@ -21,7 +21,7 @@ from genai_prices import types as genai_types
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 from typing_extensions import TypeAliasType, TypeVar, assert_never
 
-from pydantic_ai._cost import calculate_price_for_usage
+from pydantic_ai._genai_prices import calculate_price_for_usage
 
 from . import _otel_messages, _utils
 from ._instrumentation import redact_binary_content, serialize_any
