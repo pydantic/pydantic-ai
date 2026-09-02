@@ -112,7 +112,7 @@ For Pydantic AI's own deferred tool patterns, see [deferred tools](../deferred-t
 
 ## Streaming
 
-Kitaru supports Pydantic AI streaming with some constraints. For event streaming, prefer the [`event_stream_handler`](../agent.md#streaming-all-events) argument on [`Agent.run`][pydantic_ai.agent.Agent.run]. When a run uses `event_stream_handler`, Kitaru falls back to a turn checkpoint for that call.
+Kitaru supports Pydantic AI streaming with some constraints. For event streaming, prefer the [`event_stream_handler`](../streaming.md#streaming-all-events) argument on [`Agent.run`][pydantic_ai.agent.Agent.run]. When a run uses `event_stream_handler`, Kitaru falls back to a turn checkpoint for that call.
 
 If you use [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] or [`iter()`][pydantic_ai.agent.AbstractAgent.iter], wrap the streaming call in an explicit `@kitaru.checkpoint`. This gives Kitaru one durable operation to replay instead of trying to persist each streamed event separately.
 

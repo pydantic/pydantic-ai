@@ -31,7 +31,7 @@ iterate the session for control flow and leave media to the views.
 
 The first seven rows are [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent] members from
 [`pydantic_ai.messages`][pydantic_ai.messages] — the same events a
-[standard streamed run](../agent.md#streaming-all-events) yields, so event-handling code written for
+[standard streamed run](../streaming.md#streaming-all-events) yields, so event-handling code written for
 a text agent (rendering parts, logging tool calls) works on a session unchanged. The `Realtime*`
 rows are [`RealtimeEvent`][pydantic_ai.realtime.RealtimeEvent] members that only a session emits:
 speech detection, interruption, turn completion, reconnection, and recoverable errors have no

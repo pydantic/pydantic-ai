@@ -1,10 +1,10 @@
 # UI Event Streams
 
-If you're building a chat app or other interactive frontend for an AI agent, your backend will need to receive agent run input (like a chat message or complete [message history](../message-history.md)) from the frontend, and will need to stream the [agent's events](../agent.md#streaming-all-events) (like text, thinking, and tool calls) to the frontend so that the user knows what's happening in real time.
+If you're building a chat app or other interactive frontend for an AI agent, your backend will need to receive agent run input (like a chat message or complete [message history](../message-history.md)) from the frontend, and will need to stream the [agent's events](../streaming.md#streaming-all-events) (like text, thinking, and tool calls) to the frontend so that the user knows what's happening in real time.
 
 While your frontend could use Pydantic AI's [`ModelRequest`][pydantic_ai.messages.ModelRequest] and [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent] directly, you'll typically want to use a UI event stream protocol that's natively supported by your frontend framework.
 
-To push data of your own to the frontend mid-run, like a progress update from a long-running tool, emit a [custom event](../agent.md#custom-events): both protocols below forward it as their own custom-data event.
+To push data of your own to the frontend mid-run, like a progress update from a long-running tool, emit a [custom event](../streaming.md#custom-events): both protocols below forward it as their own custom-data event.
 
 Pydantic AI natively supports two UI event stream protocols:
 
@@ -98,7 +98,7 @@ async def chat(request: Request) -> Response:
 
 ### Encoding events without a request
 
-If the agent doesn't run inside the request that serves the frontend — its events reach your API edge over a transport of their own, like a [durable execution](../durable_execution/overview.md) workflow, a queue, or a websocket fan-out — there's no request body to build a run input from, and no `UIAdapter` to run the agent. Use the protocol-specific [`UIEventStream`][pydantic_ai.ui.UIEventStream] subclass on its own instead: it transforms and encodes [the agent's events](../agent.md#streaming-all-events) and takes no run input.
+If the agent doesn't run inside the request that serves the frontend — its events reach your API edge over a transport of their own, like a [durable execution](../durable_execution/overview.md) workflow, a queue, or a websocket fan-out — there's no request body to build a run input from, and no `UIAdapter` to run the agent. Use the protocol-specific [`UIEventStream`][pydantic_ai.ui.UIEventStream] subclass on its own instead: it transforms and encodes [the agent's events](../streaming.md#streaming-all-events) and takes no run input.
 
 ```py {title="encode_events.py"}
 from collections.abc import AsyncIterator

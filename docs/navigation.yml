@@ -66,6 +66,11 @@ navigation:
         aliases:
           - "output"
           - "results"
+      - page: "Streaming"
+        path: "streaming.md"
+        slug: "core-concepts/streaming"
+        aliases:
+          - "streaming"
       - page: "Multimodal Input"
         path: "input.md"
         slug: "core-concepts/input"
