@@ -83,14 +83,16 @@ class GoogleImageGenerationModel(ImageGenerationModel):
     """Google Gemini image generation model implementation.
 
     This model works with the Gemini image models, such as `gemini-3.1-flash-image` and
-    `gemini-3-pro-image`, through the Gemini Developer API (Google AI Studio). It asks Gemini for an
-    image-only response, as [`ImageGenerator`][pydantic_ai.images.ImageGenerator] returns generated
-    images rather than Gemini's optional conversational text.
+    `gemini-3-pro-image`, through the Gemini Developer API (Google AI Studio) or Google Cloud
+    (Vertex AI). It asks Gemini for an image-only response, as
+    [`ImageGenerator`][pydantic_ai.images.ImageGenerator] returns generated images rather than
+    Gemini's optional conversational text.
 
     Example:
     ```python
     from pydantic_ai.images.google import GoogleImageGenerationModel
     from pydantic_ai.providers.google import GoogleProvider
+    from pydantic_ai.providers.google_cloud import GoogleCloudProvider
 
     # Using the Gemini API (requires GOOGLE_API_KEY env var)
     model = GoogleImageGenerationModel('gemini-3.1-flash-image')
@@ -99,6 +101,12 @@ class GoogleImageGenerationModel(ImageGenerationModel):
     model = GoogleImageGenerationModel(
         'gemini-3.1-flash-image',
         provider=GoogleProvider(api_key='your-api-key'),
+    )
+
+    # Using Google Cloud (Vertex AI)
+    model = GoogleImageGenerationModel(
+        'gemini-3.1-flash-image',
+        provider=GoogleCloudProvider(project='my-project', location='global'),
     )
     ```
     """
@@ -110,7 +118,7 @@ class GoogleImageGenerationModel(ImageGenerationModel):
         self,
         model_name: GoogleImageGenerationModelName,
         *,
-        provider: Literal['google'] | Provider[Client] = 'google',
+        provider: Literal['google', 'google-cloud'] | Provider[Client] = 'google',
         settings: ImageGenerationSettings | None = None,
     ):
         """Initialize a Google image generation model.
@@ -122,8 +130,10 @@ class GoogleImageGenerationModel(ImageGenerationModel):
             provider: The provider to use for authentication and API access. Can be:
 
                 - `'google'` (default): Uses the Gemini Developer API (Google AI Studio)
-                - A [`GoogleProvider`][pydantic_ai.providers.google.GoogleProvider] instance for custom
-                  configuration
+                - `'google-cloud'`: Uses Google Cloud (formerly known as Vertex AI)
+                - A [`GoogleProvider`][pydantic_ai.providers.google.GoogleProvider] or
+                  [`GoogleCloudProvider`][pydantic_ai.providers.google_cloud.GoogleCloudProvider] instance
+                  for custom configuration
             settings: Model-specific
                 [`ImageGenerationSettings`][pydantic_ai.images.ImageGenerationSettings]
                 to use as defaults for this model.

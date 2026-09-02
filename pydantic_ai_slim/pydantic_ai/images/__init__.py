@@ -46,6 +46,10 @@ __all__ = [
 KnownImageGenerationModelName = TypeAliasType(
     'KnownImageGenerationModelName',
     Literal[
+        'google-cloud:gemini-2.5-flash-image',
+        'google-cloud:gemini-3-pro-image',
+        'google-cloud:gemini-3.1-flash-image',
+        'google-cloud:gemini-3.1-flash-lite-image',
         'google:gemini-2.5-flash-image',
         'google:gemini-3-pro-image',
         'google:gemini-3.1-flash-image',
@@ -58,7 +62,12 @@ KnownImageGenerationModelName = TypeAliasType(
         'xai:grok-imagine-image-quality',
     ],
 )
-"""Known model names that can be used with the `model` parameter of `ImageGenerator`."""
+"""Known model names that can be used with the `model` parameter of `ImageGenerator`.
+
+`google:` is the Gemini Developer API (Google AI Studio) and `google-cloud:` is Vertex AI, exactly as
+in [`KnownModelName`][pydantic_ai.models.KnownModelName]. A [Pydantic AI Gateway](../gateway.md) route
+is also accepted for Gemini as `gateway/google:<model>`.
+"""
 
 
 def infer_image_generation_model(
@@ -75,17 +84,33 @@ def infer_image_generation_model(
     except ValueError as e:
         raise ValueError('You must provide a provider prefix when specifying an image generation model name') from e
 
+    model_kind = provider_name
+    if model_kind.startswith('gateway/'):
+        from ..providers.gateway import normalize_gateway_provider
+
+        # Same alias resolution as `infer_model`: the gateway's Google upstream is the Vertex route,
+        # so `gateway/google` collapses onto `google-cloud`. The gateway's OpenAI route reports the
+        # image endpoints as unsupported, and it has no xAI upstream at all, so Gemini is the only
+        # image generation route it can serve.
+        model_kind = normalize_gateway_provider(model_kind)
+        if model_kind != 'google-cloud':
+            raise UserError(
+                f'Image generation provider {provider_name!r} cannot be routed through the Pydantic AI Gateway. '
+                'The supported gateway route is `gateway/google`.'
+            )
+
     provider = provider_factory(provider_name)
 
-    if provider_name == 'openai':
+    if model_kind == 'openai':
         from .openai import OpenAIImageGenerationModel
 
         return OpenAIImageGenerationModel(model_name, provider=provider)
-    elif provider_name == 'google':
+    # `google` is the Gemini Developer API and `google-cloud` is Vertex AI, exactly as in `infer_model`.
+    elif model_kind in ('google', 'google-cloud'):
         from .google import GoogleImageGenerationModel
 
         return GoogleImageGenerationModel(model_name, provider=provider)
-    elif provider_name == 'xai':
+    elif model_kind == 'xai':
         from .xai import XaiImageGenerationModel
 
         return XaiImageGenerationModel(model_name, provider=provider)

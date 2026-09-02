@@ -52,7 +52,7 @@ from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.usage import RequestUsage
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsInt, IsStr, try_import
+from .conftest import IsDatetime, IsInt, IsStr, TestEnv, try_import
 
 pytestmark = [
     pytest.mark.anyio,
@@ -79,7 +79,8 @@ with try_import() as google_imports_successful:
         GoogleImageGenerationModel,
         GoogleImageGenerationSettings,
     )
-    from pydantic_ai.providers.google import GoogleProvider
+    from pydantic_ai.providers.google import GoogleCloudLocation, GoogleProvider
+    from pydantic_ai.providers.google_cloud import GoogleCloudProvider
 
 with try_import() as xai_imports_successful:
     import grpc
@@ -268,12 +269,60 @@ def test_infer_image_generation_model_requires_provider_prefix():
         infer_image_generation_model('gpt-image-1')
 
 
-@pytest.mark.parametrize('model', ['anthropic:claude-sonnet-4-5', 'gateway/openai:gpt-image-2'])
+@pytest.mark.parametrize('model', ['anthropic:claude-sonnet-4-5', 'cohere:embed-v4.0'])
 def test_infer_image_generation_model_rejects_provider_without_image_support(model: str):
     """The provider resolves before dispatch, so the error names it rather than calling the model unknown."""
     provider_name = model.split(':', maxsplit=1)[0]
     with pytest.raises(UserError, match=f"Provider '{provider_name}' does not support direct image generation"):
         infer_image_generation_model(model, provider_factory=lambda name: MagicMock())
+
+
+def test_infer_image_generation_model_rejects_unsupported_openai_gateway_route():
+    """The gateway route is rejected before the provider resolves, so no gateway credentials are needed."""
+    with pytest.raises(UserError) as exc_info:
+        infer_image_generation_model('gateway/openai:gpt-image-2', provider_factory=lambda name: MagicMock())
+
+    assert str(exc_info.value) == snapshot(
+        "Image generation provider 'gateway/openai' cannot be routed through the Pydantic AI Gateway. The supported gateway route is `gateway/google`."
+    )
+
+
+def test_infer_image_generation_model_rejects_unsupported_xai_gateway_route():
+    """`gateway_provider('xai')` raises on its own; the route check runs first so the error names the fix."""
+    with pytest.raises(UserError) as exc_info:
+        infer_image_generation_model('gateway/xai:grok-imagine-image', provider_factory=lambda name: MagicMock())
+
+    assert str(exc_info.value) == snapshot(
+        "Image generation provider 'gateway/xai' cannot be routed through the Pydantic AI Gateway. The supported gateway route is `gateway/google`."
+    )
+
+
+@pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
+def test_infer_image_generation_model_google_cloud(env: TestEnv):
+    """`google-cloud:` is Vertex AI, and `system` reports the provider's own name."""
+    for name in ('GOOGLE_APPLICATION_CREDENTIALS', 'GOOGLE_CLOUD_PROJECT', 'GOOGLE_CLOUD_LOCATION', 'GEMINI_API_KEY'):
+        env.remove(name)
+    env.set('GOOGLE_API_KEY', 'mock-api-key')
+
+    model = infer_image_generation_model('google-cloud:gemini-3.1-flash-image')
+
+    assert isinstance(model, GoogleImageGenerationModel)
+    assert model.model_name == 'gemini-3.1-flash-image'
+    assert model.system == 'google-cloud'
+
+
+@pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
+def test_infer_image_generation_model_gateway_google(env: TestEnv):
+    """The gateway serves Gemini over its Vertex route, so `gateway/google` resolves to `google-cloud`."""
+    env.set('PYDANTIC_AI_GATEWAY_API_KEY', 'test-api-key')
+    env.set('PYDANTIC_AI_GATEWAY_BASE_URL', 'https://gateway.pydantic.dev/proxy')
+
+    model = infer_image_generation_model('gateway/google:gemini-3.1-flash-image')
+
+    assert isinstance(model, GoogleImageGenerationModel)
+    assert model.model_name == 'gemini-3.1-flash-image'
+    assert model.system == 'google-cloud'
+    assert model.base_url == snapshot('https://gateway.pydantic.dev/proxy/google-vertex')
 
 
 async def test_wrapper_image_generation_model_delegates_properties():
@@ -406,6 +455,18 @@ def test_known_google_image_generation_model_names():
         'google:gemini-3-pro-image',
         'google:gemini-3.1-flash-image',
         'google:gemini-3.1-flash-lite-image',
+    }
+
+
+def test_known_google_cloud_image_generation_model_names():
+    """Vertex AI serves the same Gemini image models under the `google-cloud:` prefix."""
+    known_names = get_args(KnownImageGenerationModelName.__value__)
+
+    assert {name for name in known_names if name.startswith('google-cloud:')} == {
+        'google-cloud:gemini-2.5-flash-image',
+        'google-cloud:gemini-3-pro-image',
+        'google-cloud:gemini-3.1-flash-image',
+        'google-cloud:gemini-3.1-flash-lite-image',
     }
 
 
@@ -1539,6 +1600,113 @@ async def test_google_flash_lite_extended_aspect_ratio_vcr():
     height = int.from_bytes(generated_image.data[frame.end() + 3 : frame.end() + 5], 'big')
     width = int.from_bytes(generated_image.data[frame.end() + 5 : frame.end() + 7], 'big')
     assert (width, height) == (352, 2928)
+
+
+@pytest.fixture
+async def google_cloud_body_capture(
+    vertex_provider_auth: None,
+) -> AsyncGenerator[tuple[GoogleCloudProvider, list[dict[str, Any]]]]:
+    """A Vertex AI provider paired with the list of JSON bodies it sends, as `_body_capturing_http_client` is for the Gemini API.
+
+    NOTE: You need to comment out the skip below to rewrite the cassettes locally. `vertex_provider_auth`
+    only stubs credentials when `CI` is set, so recording needs `CI` unset and real application-default
+    credentials, while playback needs `CI` set for the stub.
+    """
+    if not os.getenv('CI', False):  # pragma: lax no cover
+        pytest.skip('Requires properly configured local google vertex config to pass')
+
+    http_client, sent_bodies = _body_capturing_http_client()
+    provider = GoogleCloudProvider(
+        project=os.getenv('GOOGLE_PROJECT', 'pydantic-ai'),
+        location=cast('GoogleCloudLocation', os.getenv('GOOGLE_LOCATION', 'global')),
+        http_client=http_client,
+    )
+    try:
+        yield provider, sent_bodies
+    finally:
+        await http_client.aclose()
+
+
+@pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
+@pytest.mark.vcr
+async def test_google_cloud_image_generation_vcr(
+    google_cloud_body_capture: tuple[GoogleCloudProvider, list[dict[str, Any]]],
+):
+    """Live Vertex AI generation, proving the `google-cloud:` route reaches a different API than `google:`.
+
+    The Gemini API recordings can't stand in for this one: Vertex authenticates differently and serves
+    `generateContent` from its own host, so only a recording made against it shows the adapter working there.
+    """
+    provider, sent_bodies = google_cloud_body_capture
+    model = GoogleImageGenerationModel('gemini-3.1-flash-image', provider=provider)
+
+    result = await model.generate(
+        'A cat with a cowboy hat, dancing in Rome.',
+        settings=GoogleImageGenerationSettings(dimensions=(512, 512)),
+    )
+
+    assert sent_bodies == snapshot(
+        [
+            {
+                'contents': [{'parts': [{'text': 'A cat with a cowboy hat, dancing in Rome.'}], 'role': 'user'}],
+                'generationConfig': {
+                    'responseModalities': ['IMAGE'],
+                    'imageConfig': {'aspectRatio': '1:1', 'imageSize': '512'},
+                },
+            }
+        ]
+    )
+
+    assert len(result.images) == 1
+    generated_image = result.images[0]
+    assert generated_image.content.media_type == snapshot('image/png')
+    assert generated_image.output_format == snapshot('png')
+    assert result.model_name == snapshot('gemini-3.1-flash-image')
+    assert result.provider_name == 'google-cloud'
+    assert result.provider_url == snapshot('https://aiplatform.googleapis.com/')
+    assert result.usage.input_tokens > 0
+    assert result.usage.output_tokens > 0
+    assert result.provider_details == snapshot(
+        {'finish_reason': 'STOP', 'timestamp': IsDatetime(), 'traffic_type': 'ON_DEMAND'}
+    )
+
+
+@pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
+@pytest.mark.vcr
+async def test_google_cloud_image_edit_vcr(
+    google_cloud_body_capture: tuple[GoogleCloudProvider, list[dict[str, Any]]],
+    image_content: BinaryImage,
+):
+    """Live Vertex AI reference edit, with the resolved geometry pinned on the wire.
+
+    Only `generationConfig` is snapshotted: `contents` carries the reference image as a ~130 KB base64
+    blob, which would drown the assertion it belongs to.
+    """
+    provider, sent_bodies = google_cloud_body_capture
+    model = GoogleImageGenerationModel('gemini-3.1-flash-image', provider=provider)
+
+    result = await model.generate(
+        'Transform the subject into a dog with a cowboy hat, dancing in Rome.',
+        images=[image_content],
+        settings=GoogleImageGenerationSettings(dimensions=(512, 512)),
+    )
+
+    assert [body['generationConfig'] for body in sent_bodies] == snapshot(
+        [{'responseModalities': ['IMAGE'], 'imageConfig': {'aspectRatio': '1:1', 'imageSize': '512'}}]
+    )
+
+    assert len(result.images) == 1
+    edited_image = result.images[0]
+    assert edited_image.content.media_type == snapshot('image/png')
+    assert edited_image.output_format == snapshot('png')
+    assert result.model_name == snapshot('gemini-3.1-flash-image')
+    assert result.provider_name == 'google-cloud'
+    assert result.provider_url == snapshot('https://aiplatform.googleapis.com/')
+    assert result.usage.input_tokens > 0
+    assert result.usage.output_tokens > 0
+    assert result.provider_details == snapshot(
+        {'finish_reason': 'STOP', 'timestamp': IsDatetime(), 'traffic_type': 'ON_DEMAND'}
+    )
 
 
 def _xai_image_responses(*data: bytes, respect_moderation: bool = True) -> list[XaiImageResponse]:

@@ -59,11 +59,14 @@ Of the providers below only OpenAI exposes that primitive, so there is nothing p
 | --- | --- | --- | --- | --- | --- |
 | OpenAI | ✅ | ✅ | ❌ | ✅ | Reference images must be PNG, JPEG, or WebP; any other media type raises [`UserError`][pydantic_ai.exceptions.UserError]. |
 | Google Gemini API | ✅ | ✅ | ✅ | ❌ | — |
+| Google Cloud (Vertex AI) | ✅ | ✅ | ❌ | ❌ | Reference images are sent inline, so pass `BinaryImage` or `ImageUrl`; Vertex file URIs (`gs://`) are not accepted as an `UploadedFile.file_id`. |
 | xAI | ✅ | ✅ | ✅ | ✅ | At most three reference images. Every `UploadedFile` must come before any `ImageUrl` or `BinaryImage`, because xAI sends file IDs ahead of URL and binary inputs; another order raises [`UserError`][pydantic_ai.exceptions.UserError] rather than silently resequencing them. `extra_headers` and `extra_body` are ignored with a warning: the transport is gRPC, which has no per-request header or body escape hatch. |
 
-The `google:` shorthand currently covers the Gemini Developer API. Google Cloud is not advertised for the direct API
-until direct generation and reference editing have provider-specific integration recordings. The Google adapter asks
-Gemini for image-only output, matching the `ImageGenerator` result contract and avoiding unused text output.
+`google:` is the Gemini Developer API (Google AI Studio) and `google-cloud:` is Vertex AI, exactly as for
+conversational models. `gateway/google:` routes Gemini through the [Pydantic AI Gateway](gateway.md), which serves it
+over Vertex. `gateway/openai:` and `gateway/xai:` raise [`UserError`][pydantic_ai.exceptions.UserError]: the gateway
+reports OpenAI's image endpoints as unsupported, and it has no xAI upstream. The Google adapter asks Gemini for
+image-only output, matching the `ImageGenerator` result contract and avoiding unused text output.
 
 ## Providers
 
