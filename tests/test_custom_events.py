@@ -535,9 +535,10 @@ def test_undecorated_base_with_evaluated_class_vars_allowed():
             ),
             namespace,
         )
-        event = namespace['EvaluatedMarkedEvent'](done=1)
+        event_cls: type[CustomEvent] = namespace['EvaluatedMarkedEvent']
+        event = event_cls(done=1)  # pyright: ignore[reportCallIssue]
         assert event.to_payload() == snapshot({'done': 1})
-        assert type(event).marker == 'm'
+        assert getattr(event_cls, 'marker') == 'm'
     finally:
         CUSTOM_EVENT_TYPES.pop('evaluated_marked', None)
 
