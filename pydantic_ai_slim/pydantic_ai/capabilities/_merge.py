@@ -76,9 +76,9 @@ def merge_field_values(values: Sequence[Any]) -> Any:
         merged_mapping: dict[Any, Any] = {}
         for value in cast('list[Mapping[Any, Any]]', stated):
             merged_mapping.update(value)
-        return merged_mapping
+        return _as_declared(first, merged_mapping)
     if all(isinstance(value, AbstractSet) for value in stated):
-        return set[Any]().union(*cast('list[AbstractSet[Any]]', stated))
+        return _as_declared(first, set[Any]().union(*cast('list[AbstractSet[Any]]', stated)))
     if all(isinstance(value, Sequence) and not isinstance(value, (str, bytes)) for value in stated):
         # Ordered union: a shared entry keeps the position its first mention gave it.
         merged_sequence: list[Any] = []
@@ -86,8 +86,28 @@ def merge_field_values(values: Sequence[Any]) -> Any:
             merged_sequence.extend(
                 entry for entry in value if not any(_same_value(entry, kept) for kept in merged_sequence)
             )
-        return merged_sequence
+        return _as_declared(first, merged_sequence)
     return stated[-1]
+
+
+def _as_declared(first: Any, merged: Any) -> Any:
+    """Rebuild `merged` as the collection type the field already held, when that is possible.
+
+    The union is computed in a plain `dict`/`set`/`list`, which would hand a field annotated
+    `tuple[str, ...]` or `frozenset[str]` a value of the wrong type -- and `replace_no_init` skips
+    the `__post_init__` that might otherwise have caught it.
+
+    Not every collection can be rebuilt from its contents: a `NamedTuple` takes its fields
+    positionally and a `range` takes integers, so both raise here. Those keep the plain merged value
+    rather than turning a type mismatch into a `TypeError` -- neither is a collection a capability
+    field would be unioning in the first place.
+    """
+    if type(first) is type(merged):
+        return merged
+    try:
+        return type(first)(merged)
+    except (TypeError, ValueError):
+        return merged
 
 
 def _same_value(left: Any, right: Any) -> bool:

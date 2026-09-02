@@ -23,7 +23,7 @@ class Retries(AbstractCapability[Any]):
     id: str | None = 'retries'
 ```
 
-When two instances are two *identities* rather than two statements of one configuration — two accounts, two credentials — a fixed default `id` is the wrong shape, because merging them would silently drop one. Derive the `id` from whatever distinguishes them instead, the way [`MCP`][pydantic_ai.capabilities.MCP] derives one from its server URL: two identities then carry two ids and stay two capabilities, and two under one id are a genuine mistake that is reported.
+When two instances are two *identities* rather than two statements of one configuration — two accounts, two credentials — a fixed default `id` is the wrong shape, because merging them would silently drop one. Derive the `id` from whatever distinguishes them instead: two identities then carry two ids and stay two capabilities, and two under one id are a genuine mistake that is reported. [`MCP`][pydantic_ai.capabilities.MCP] derives one from its server's host and last path segment, so servers that differ only in their port or in an earlier path segment still need distinct explicit `id`s.
 
 Override [`combine`][pydantic_ai.capabilities.AbstractCapability.combine] only when composing takes more than merging fields — a budget that should take the *smaller* of two values, say.
 

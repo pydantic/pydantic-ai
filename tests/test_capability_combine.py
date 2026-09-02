@@ -13,7 +13,7 @@ import pkgutil
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import KW_ONLY, dataclass, field
-from typing import Any, TypeGuard, cast
+from typing import Any, NamedTuple, TypeGuard, cast
 
 import pytest
 from inline_snapshot import snapshot
@@ -642,6 +642,52 @@ def test_a_merge_cannot_reach_a_combination_the_constructor_rejects(
 def _a_local_tool(prompt: str) -> str:  # pragma: no cover
     """A local fallback."""
     return 'x'
+
+
+def test_a_merged_collection_keeps_the_type_the_field_declared() -> None:
+    """A union is computed in a plain `list`/`set`, but the field keeps the type it was annotated.
+
+    `replace_no_init` skips `__post_init__`, so a `tuple[str, ...]` field handed a `list` would
+    survive as one and fail somewhere downstream instead of here.
+    """
+
+    @dataclass
+    class Collections(AbstractCapability[Any]):
+        ordered: tuple[str, ...] = ()
+        unique: frozenset[str] = frozenset()
+        _: KW_ONLY
+        id: str | None = 'collections'
+
+    merged = Collections.combine(
+        [Collections(ordered=('a',), unique=frozenset({'a'})), Collections(ordered=('b',), unique=frozenset({'b'}))]
+    )
+    assert isinstance(merged, Collections)
+    assert merged.ordered == ('a', 'b')
+    assert type(merged.ordered) is tuple
+    assert merged.unique == frozenset({'a', 'b'})
+    assert type(merged.unique) is frozenset
+
+
+def test_a_collection_that_cannot_be_rebuilt_keeps_the_plain_merge() -> None:
+    """A `NamedTuple` takes its fields positionally, so rebuilding it from a list raises.
+
+    Merging keeps the plain value rather than turning a type mismatch into a `TypeError`. Two of
+    these are not really a union anyway -- a `NamedTuple` is a record, not a collection.
+    """
+
+    class Pair(NamedTuple):
+        left: str
+        right: str
+
+    @dataclass
+    class Record(AbstractCapability[Any]):
+        pair: Pair = Pair('a', 'b')
+        _: KW_ONLY
+        id: str | None = 'record'
+
+    merged = Record.combine([Record(pair=Pair('a', 'b')), Record(pair=Pair('c', 'd'))])
+    assert isinstance(merged, Record)
+    assert merged.pair == ['a', 'b', 'c', 'd']
 
 
 async def test_a_second_local_search_tool_replaces_the_first() -> None:
