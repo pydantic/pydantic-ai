@@ -5255,6 +5255,9 @@ dbos = [
 duckduckgo = [
     { name = "pydantic-ai-slim", extra = ["duckduckgo"] },
 ]
+elevenlabs-realtime = [
+    { name = "pydantic-ai-slim", extra = ["elevenlabs-realtime"] },
+]
 exa = [
     { name = "pydantic-ai-slim", extra = ["exa"] },
 ]
@@ -5366,6 +5369,7 @@ requires-dist = [
     { name = "pydantic-ai-slim", extras = ["cohere"], marker = "extra == 'cohere'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["dbos"], marker = "extra == 'dbos'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["duckduckgo"], marker = "extra == 'duckduckgo'", editable = "pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["elevenlabs-realtime"], marker = "extra == 'elevenlabs-realtime'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["exa"], marker = "extra == 'exa'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["google-realtime"], marker = "extra == 'google-realtime'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["groq"], marker = "extra == 'groq'", editable = "pydantic_ai_slim" },
@@ -5387,7 +5391,7 @@ requires-dist = [
     { name = "pydantic-ai-slim", extras = ["xai"], marker = "extra == 'xai'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["xai-realtime"], marker = "extra == 'xai-realtime'", editable = "pydantic_ai_slim" },
 ]
-provides-extras = ["ag-ui", "bedrock", "bedrock-mantle", "cohere", "dbos", "duckduckgo", "exa", "examples", "google-realtime", "groq", "huggingface", "mcp-tasks", "mistral", "openai-realtime", "openrouter", "prefect", "realtime", "retries", "sentence-transformers", "spec", "tavily", "temporal", "ui", "voyageai", "web-fetch", "xai", "xai-realtime"]
+provides-extras = ["ag-ui", "bedrock", "bedrock-mantle", "cohere", "dbos", "duckduckgo", "elevenlabs-realtime", "exa", "examples", "google-realtime", "groq", "huggingface", "mcp-tasks", "mistral", "openai-realtime", "openrouter", "prefect", "realtime", "retries", "sentence-transformers", "spec", "tavily", "temporal", "ui", "voyageai", "web-fetch", "xai", "xai-realtime"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -5526,6 +5530,9 @@ dbos = [
 ]
 duckduckgo = [
     { name = "ddgs" },
+]
+elevenlabs-realtime = [
+    { name = "websockets" },
 ]
 evals = [
     { name = "pydantic-evals" },
@@ -5690,6 +5697,7 @@ requires-dist = [
     { name = "typing-inspection", specifier = ">=0.4.0" },
     { name = "uvicorn", marker = "extra == 'web'", specifier = ">=0.38.0" },
     { name = "voyageai", marker = "python_full_version < '3.14' and extra == 'voyageai'", specifier = ">=0.3.7" },
+    { name = "websockets", marker = "extra == 'elevenlabs-realtime'", specifier = ">=14.0" },
     { name = "websockets", marker = "extra == 'google-realtime'", specifier = ">=14.0" },
     { name = "websockets", marker = "extra == 'openai-realtime'", specifier = ">=14.0" },
     { name = "websockets", marker = "extra == 'realtime'", specifier = ">=14.0" },
@@ -5697,7 +5705,7 @@ requires-dist = [
     { name = "xai-sdk", marker = "extra == 'xai'", specifier = ">=1.14.0" },
     { name = "xai-sdk", marker = "extra == 'xai-realtime'", specifier = ">=1.14.0" },
 ]
-provides-extras = ["ag-ui", "anthropic", "bedrock", "bedrock-mantle", "cerebras", "cli", "cohere", "crusoe", "dbos", "duckduckgo", "evals", "exa", "google", "google-realtime", "groq", "huggingface", "logfire", "mcp", "mcp-tasks", "mistral", "openai", "openai-realtime", "openrouter", "prefect", "realtime", "retries", "sentence-transformers", "snowflake", "spec", "tavily", "temporal", "ui", "voyageai", "web", "web-fetch", "xai", "xai-realtime", "zai"]
+provides-extras = ["ag-ui", "anthropic", "bedrock", "bedrock-mantle", "cerebras", "cli", "cohere", "crusoe", "dbos", "duckduckgo", "elevenlabs-realtime", "evals", "exa", "google", "google-realtime", "groq", "huggingface", "logfire", "mcp", "mcp-tasks", "mistral", "openai", "openai-realtime", "openrouter", "prefect", "realtime", "retries", "sentence-transformers", "snowflake", "spec", "tavily", "temporal", "ui", "voyageai", "web", "web-fetch", "xai", "xai-realtime", "zai"]
 
 [[package]]
 name = "pydantic-core"

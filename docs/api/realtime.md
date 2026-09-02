@@ -123,6 +123,7 @@ session synthesizes rather than reading off the wire. Usage updates are accumula
 The lower-level codec vocabulary is documented in
 [`pydantic_ai.realtime.codec`](realtime/codec.md), and each provider in its own module:
 [`pydantic_ai.realtime.openai`](realtime/openai.md), [`pydantic_ai.realtime.google`](realtime/google.md),
-[`pydantic_ai.realtime.xai`](realtime/xai.md), and [`pydantic_ai.realtime.azure`](realtime/azure.md).
+[`pydantic_ai.realtime.xai`](realtime/xai.md), [`pydantic_ai.realtime.azure`](realtime/azure.md), and
+[`pydantic_ai.realtime.elevenlabs`](realtime/elevenlabs.md).
 
 ::: pydantic_ai.realtime

@@ -134,6 +134,16 @@ def test_infer_realtime_models(env: TestEnv) -> None:
     assert azure_model.model_name == 'gpt-realtime'
 
 
+def test_infer_realtime_model_elevenlabs(env: TestEnv) -> None:
+    # ElevenLabs' "model name" is a hosted agent id: the suffix is carried through as-is.
+    env.set('ELEVENLABS_API_KEY', 'test')
+
+    model = infer_realtime_model('elevenlabs:agent_0101test')
+    assert type(model).__name__ == 'ElevenLabsRealtimeModel'
+    assert model.model_name == 'agent_0101test'
+    assert getattr(model, '_provider').base_url == 'https://api.elevenlabs.io'
+
+
 def test_infer_realtime_model_gateway_openai(env: TestEnv) -> None:
     # `gateway/openai:...` routes the OpenAI realtime protocol through the Pydantic AI Gateway: an
     # `OpenAIRealtimeModel` whose provider derives its base URL and key from `gateway_provider`.
@@ -182,7 +192,7 @@ def test_azure_rejects_non_azure_provider(env: TestEnv) -> None:
 
 def test_infer_realtime_model_unknown_provider() -> None:
     with pytest.raises(
-        UserError, match='Supported providers are `openai`, `azure`, `xai`, `google`, and `google-cloud`'
+        UserError, match='Supported providers are `openai`, `azure`, `xai`, `google`, `google-cloud`, and `elevenlabs`'
     ):
         infer_realtime_model('anthropic:voice')
 

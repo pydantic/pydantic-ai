@@ -21,6 +21,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.cohere import CohereProvider
     from pydantic_ai.providers.crusoe import CrusoeProvider
     from pydantic_ai.providers.deepseek import DeepSeekProvider
+    from pydantic_ai.providers.elevenlabs import ElevenLabsProvider
     from pydantic_ai.providers.fireworks import FireworksProvider
     from pydantic_ai.providers.github import GitHubProvider  # pyright: ignore[reportDeprecated]
     from pydantic_ai.providers.google import GoogleProvider
@@ -44,6 +45,7 @@ with try_import() as imports_successful:
         ('anthropic', AnthropicProvider, 'ANTHROPIC_API_KEY'),
         ('cohere', CohereProvider, 'CO_API_KEY'),
         ('deepseek', DeepSeekProvider, 'DEEPSEEK_API_KEY'),
+        ('elevenlabs', ElevenLabsProvider, 'ELEVENLABS_API_KEY'),
         ('openrouter', OpenRouterProvider, 'OPENROUTER_API_KEY'),
         ('vercel', VercelProvider, 'VERCEL_AI_GATEWAY_API_KEY'),
         ('openai', OpenAIProvider, 'OPENAI_API_KEY'),

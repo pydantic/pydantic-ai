@@ -124,6 +124,9 @@ realtime = ["websockets>=14.0"]
 openai-realtime = ["pydantic-ai-slim[openai,realtime]"]
 google-realtime = ["pydantic-ai-slim[google,realtime]"]
 xai-realtime = ["pydantic-ai-slim[xai,openai,realtime]"]
+# ElevenLabs needs no provider SDK: its REST preflight uses the built-in HTTP client, so the extra
+# is just the realtime transport deps.
+elevenlabs-realtime = ["pydantic-ai-slim[realtime]"]
 # MCP — `fastmcp-slim[client]` is the lightweight client-only distribution (no Starlette /
 # Uvicorn server stack). Pulls the `mcp` SDK transitively. For an in-process FastMCP server,
 # install the full `fastmcp` package directly alongside `[mcp]`. FastMCP 4 (MCP SDK v2) is

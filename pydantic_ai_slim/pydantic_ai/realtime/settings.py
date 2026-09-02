@@ -90,8 +90,12 @@ class RealtimeModelSettings(TypedDict, total=False):
     advertised when the session is created. OpenAI, Azure OpenAI, and xAI additionally support
     declarative `'auto'` and `'required'` choices. Gemini has no declarative tool-choice configuration,
     so `'required'` is ignored and allow-lists restrict availability without requiring a tool call.
+    ElevenLabs tools live on the hosted agent rather than being advertised per session, so `'none'`
+    and allow-lists restrict the set its connect-time tool reconciliation checks or syncs (see the
+    `elevenlabs_tool_sync` setting).
 
-    Supported by: OpenAI, Azure OpenAI, Gemini (`'none'` and function-tool allow-lists only), and xAI.
+    Supported by: OpenAI, Azure OpenAI, Gemini (`'none'` and function-tool allow-lists only), xAI,
+    and ElevenLabs (`'none'` and allow-lists only).
     """
 
     input_transcription_model: KnownRealtimeTranscriptionModelName | str | None
@@ -101,7 +105,9 @@ class RealtimeModelSettings(TypedDict, total=False):
     specific id (e.g. `'gpt-4o-transcribe'`) to pin one, or `None` to disable transcription (see
     `audio_retention` to retain the raw audio instead).
 
-    `None` turns transcription off on every provider. A *pinned* id applies only to the providers that
+    `None` turns transcription off on every provider that can disable it; ElevenLabs cannot (ASR
+    drives its agent pipeline) and rejects `None` with a [`UserError`][pydantic_ai.exceptions.UserError].
+    A *pinned* id applies only to the providers that
     transcribe with a separate model — Gemini transcribes natively, with no model to point at, and
     ignores it (`google_input_transcription` configures Gemini's own transcription).
 
@@ -116,7 +122,8 @@ class RealtimeModelSettings(TypedDict, total=False):
     raises [`UserError`][pydantic_ai.exceptions.UserError] before connecting, because a session that
     quietly spoke instead of writing would be worse than one that didn't start.
 
-    Supported by: OpenAI and Azure OpenAI. Gemini Live and xAI always generate audio — read the spoken
+    Supported by: OpenAI, Azure OpenAI, and ElevenLabs (via the hosted agent's toggle-gated
+    `conversation.text_only` override). Gemini Live and xAI always generate audio — read the spoken
     answer from the transcript on the [`SpeechPart`][pydantic_ai.messages.SpeechPart] instead.
     """
 
@@ -154,7 +161,7 @@ class RealtimeModelSettings(TypedDict, total=False):
     handshake_timeout: float
     """Seconds to wait for a realtime protocol handshake event. Defaults to `30.0`.
 
-    Supported by: OpenAI, Azure OpenAI, and xAI.
+    Supported by: OpenAI, Azure OpenAI, xAI, and ElevenLabs.
     """
 
     reconnect: ReconnectPolicy
