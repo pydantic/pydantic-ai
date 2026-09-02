@@ -320,6 +320,43 @@ async def test_anthropic_code_execution_files_500_then_stale_thinking_block_stil
     )
 
 
+async def test_anthropic_code_execution_files_container_fallback_surfaces_its_error(
+    allow_model_requests: None,
+):
+    """An unrelated error from the no-container fallback replaces the original container 500."""
+    server_error = APIStatusError(
+        'server error',
+        response=httpx2.Response(status_code=500, request=httpx2.Request('POST', 'https://example.com/v1')),
+        body={'error': 'server error'},
+    )
+    rate_limit_error = APIStatusError(
+        'rate limited',
+        response=httpx2.Response(status_code=429, request=httpx2.Request('POST', 'https://example.com/v1')),
+        body={'error': 'rate limited'},
+    )
+    mock_client = MockAnthropic.create_mock([server_error, rate_limit_error])
+    model = AnthropicModel('claude-fable-5-1', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(
+        model,
+        capabilities=[NativeTool(CodeExecutionTool(files=[UploadedFile(file_id='file_x', provider_name='anthropic')]))],
+    )
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Use the attached file.')]),
+        ModelResponse(
+            parts=[TextPart(content='Earlier answer.')],
+            provider_name='anthropic',
+            provider_details={'container_id': 'container_from_history'},
+        ),
+    ]
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        await agent.run('And now summarize it.', message_history=history)
+
+    assert exc_info.value.status_code == 429
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)
+    assert [kwargs['container'] for kwargs in completion_kwargs] == ['container_from_history', OMIT]
+
+
 async def test_anthropic_code_execution_files_append_to_every_user_message(allow_model_requests: None):
     """Pins the internal `_map_message` placement: uploads attach to *every* user message that can carry one (covering all of them reaches the turn being generated while keeping each byte-identical as history grows), and none are added when history has no user message.
 

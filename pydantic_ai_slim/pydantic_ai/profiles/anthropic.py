@@ -125,9 +125,10 @@ class AnthropicModelProfile(ModelProfile, total=False):
 
     Claude Fable 5.1 rejects a replayed thinking block once the `system` prompt text changes or a
     non-deferred tool joins the `tools` array — both of which Pydantic AI causes by design, through
-    dynamic `@agent.instructions` and conditional toolsets. When True, requests default
-    `thinking.block_binding.prefix_mismatch_behavior` to `'drop_block'`, so a stale block is dropped
-    and the request proceeds instead of failing with a 400.
+    dynamic `@agent.instructions` and conditional toolsets. When True, Pydantic AI preserves the
+    account's default behavior on the first request; if Anthropic rejects a stale block, it retries
+    once with `thinking.block_binding.prefix_mismatch_behavior='drop_block'` and warns after the
+    retry succeeds.
     """
 
 

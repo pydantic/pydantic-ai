@@ -3,11 +3,13 @@ from __future__ import annotations as _annotations
 import json
 import os
 import re
+import warnings
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
 from functools import cached_property
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeVar, cast
 from unittest.mock import AsyncMock, MagicMock
 
@@ -4718,6 +4720,87 @@ async def test_anthropic_does_not_retry_a_block_binding_set_through_extra_body(a
         await Agent(m, model_settings=settings).run('What is 2+2?')
 
     assert len(get_mock_chat_completion_kwargs(mock_client)) == 1
+    assert _THINKING_BINDING_BETA in sent_betas(mock_client)
+
+
+async def test_anthropic_respects_block_binding_in_mapping_extra_body(allow_model_requests: None):
+    """The SDK accepts any mapping for `extra_body`, not only a concrete `dict`."""
+    mock_client = MockAnthropic.create_mock(stale_thinking_block_error())
+    extra_body = MappingProxyType({'thinking': {'block_binding': None}, 'custom': 1})
+    settings = AnthropicModelSettings(extra_body=extra_body)
+    m = AnthropicModel('claude-fable-5-1', provider=AnthropicProvider(anthropic_client=mock_client))
+
+    with pytest.raises(ModelHTTPError, match='bound to a different conversation'):
+        await Agent(m, model_settings=settings).run('What is 2+2?')
+
+    assert len(get_mock_chat_completion_kwargs(mock_client)) == 1
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['extra_body'] == extra_body
+    assert _THINKING_BINDING_BETA in sent_betas(mock_client)
+
+
+@pytest.mark.parametrize(
+    'client_cls,binds_thinking_blocks',
+    [
+        pytest.param(AsyncAnthropic, True, id='direct'),
+        pytest.param(AsyncAnthropicBedrock, False, id='bedrock'),
+        pytest.param(AsyncAnthropicBedrockMantle, False, id='bedrock-mantle'),
+        pytest.param(AsyncAnthropicFoundry, False, id='foundry'),
+        pytest.param(AsyncAnthropicVertex, False, id='vertex'),
+    ],
+)
+def test_anthropic_thinking_block_binding_profile_is_direct_only(client_cls: type, binds_thinking_blocks: bool) -> None:
+    """The binding beta and automatic retry are verified only on Anthropic's direct API."""
+    client = _mock_anthropic_client(client_cls, 'https://example.com')
+    model = AnthropicModel('claude-fable-5-1', provider=AnthropicProvider(anthropic_client=client))
+
+    assert model.profile.get('anthropic_binds_thinking_blocks', False) is binds_thinking_blocks
+
+
+async def test_anthropic_extra_body_thinking_overrides_typed_block_binding(allow_model_requests: None):
+    """Retry classification and beta selection follow the final wire object after `extra_body` wins."""
+    mock_client = MockAnthropic.create_mock(
+        [
+            stale_thinking_block_error(),
+            completion_message(
+                [BetaTextBlock(text='4', type='text')], usage=BetaUsage(input_tokens=10, output_tokens=1)
+            ),
+        ]
+    )
+    settings = AnthropicModelSettings(
+        anthropic_thinking={'type': 'adaptive', 'block_binding': {'prefix_mismatch_behavior': 'error'}},
+        extra_body={'thinking': {'display': 'updates'}},
+    )
+    m = AnthropicModel('claude-fable-5-1', provider=AnthropicProvider(anthropic_client=mock_client))
+
+    with pytest.warns(AnthropicStaleThinkingBlockWarning):
+        await Agent(m, model_settings=settings).run('What is 2+2?')
+
+    first, retried = get_mock_chat_completion_kwargs(mock_client)
+    assert _THINKING_BINDING_BETA not in sent_betas(mock_client)
+    assert first['extra_body'] == snapshot({'thinking': {'display': 'updates'}})
+    assert retried['extra_body'] == snapshot(
+        {'thinking': {'display': 'updates', 'block_binding': {'prefix_mismatch_behavior': 'drop_block'}}}
+    )
+    assert _THINKING_BINDING_BETA in retried['betas']
+
+
+async def test_anthropic_failed_stale_thinking_retry_does_not_warn_that_run_continued(allow_model_requests: None):
+    """The recovery warning is emitted only after the retry has succeeded."""
+    retry_error = APIStatusError(
+        'service unavailable',
+        response=httpx2.Response(status_code=503, request=httpx2.Request('POST', 'https://example.com/v1')),
+        body={'type': 'error', 'error': {'type': 'api_error', 'message': 'Service unavailable'}},
+    )
+    mock_client = MockAnthropic.create_mock([stale_thinking_block_error(), retry_error])
+    m = AnthropicModel('claude-fable-5-1', provider=AnthropicProvider(anthropic_client=mock_client))
+
+    with warnings.catch_warnings(record=True) as caught_warnings:
+        warnings.filterwarnings('always', category=AnthropicStaleThinkingBlockWarning)
+        with pytest.raises(ModelHTTPError) as exc_info:
+            await Agent(m).run('What is 2+2?')
+
+    assert exc_info.value.status_code == 503
+    assert not caught_warnings
 
 
 @pytest.mark.parametrize(
