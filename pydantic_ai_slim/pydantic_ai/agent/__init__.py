@@ -66,9 +66,9 @@ from ..capabilities import (
     ToolSearch as ToolSearchCap,
 )
 from ..capabilities._dynamic import wrap_capability_funcs
-from ..capabilities._ordering import find_capability, has_capability_type
+from ..capabilities._ordering import has_capability_type
 from ..capabilities._pending_messages import PendingMessageDrainCapability
-from ..capabilities.abstract import combine_duplicate_capabilities, leaf_capabilities
+from ..capabilities.abstract import combine_duplicate_capabilities, leaf_capabilities, reject_class_crossing_id
 from ..capabilities.combined import bind_capabilities_tier
 from ..capabilities.instrumentation import Instrumentation as InstrumentationCap
 from ..models.instrumented import InstrumentationSettings, InstrumentedModel
@@ -166,7 +166,6 @@ __all__ = (
     'ToolsPrepareFunc',
     'ToolDenied',
     'RealtimeEvent',
-    'find_capability',
 )
 
 
@@ -4064,7 +4063,7 @@ def _validate_capability_ids(capabilities: Sequence[AbstractCapability[Any]]) ->
     assembly, which also covers capabilities supplied per-run or returned by `for_run` and so can't
     be checked at construction.
     """
-    explicit_ids: set[str] = set()
+    owners: dict[str, type[AbstractCapability[Any]]] = {}
     for cap in capabilities:
         if cap.defer_loading is True and cap.id is None:
             raise exceptions.UserError(
@@ -4074,13 +4073,19 @@ def _validate_capability_ids(capabilities: Sequence[AbstractCapability[Any]]) ->
         if cap.id is None:
             continue
         _instructions.validate_instruction_id_segment(cap.id, kind='Capability id')
-        if cap.id in explicit_ids and not _defines_combine(type(cap)):
-            raise exceptions.UserError(
-                f'Capability id {cap.id!r} is used by multiple capabilities. '
-                'Capability ids must be unique within a run.'
-            )
-        explicit_ids.add(cap.id)
-    return explicit_ids
+        # Both classes decide, not just the one that happens to come second: whether an id can
+        # repeat is a property of the pair, so reading it off the later capability alone would let
+        # one order through and reject the other.
+        owner = owners.get(cap.id)
+        if owner is not None:
+            reject_class_crossing_id(cap.id, {owner, type(cap)})
+            if not _defines_combine(type(cap)):
+                raise exceptions.UserError(
+                    f'Capability id {cap.id!r} is used by multiple capabilities. '
+                    'Capability ids must be unique within a run.'
+                )
+        owners.setdefault(cap.id, type(cap))
+    return set(owners)
 
 
 def _defines_combine(capability_type: type[AbstractCapability[Any]]) -> bool:

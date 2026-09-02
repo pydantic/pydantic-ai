@@ -10,17 +10,16 @@ Because the id is fixed, two of them meet under one id. What that means is the c
 
 ```python {title="combine_capability.py"}
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Any
 
 from pydantic_ai.capabilities import AbstractCapability
 
 
+@dataclass
 class Retries(AbstractCapability[Any]):
-    id = 'retries'
-
-    def __init__(self, limit: int = 3, id: str | None = 'retries') -> None:
-        self.limit = limit
-        self.id = id
+    limit: int = 3
+    id: str | None = 'retries'
 
     @classmethod
     def combine(

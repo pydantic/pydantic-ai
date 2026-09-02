@@ -19,7 +19,6 @@ import pytest
 
 import pydantic_ai.capabilities as capabilities_package
 from pydantic_ai import Agent, FunctionToolset, RunContext, Tool
-from pydantic_ai.agent import find_capability
 from pydantic_ai.capabilities import (
     Capability,
     CapabilityOrdering,
@@ -34,6 +33,7 @@ from pydantic_ai.capabilities import (
     WebSearch,
     XSearch,
 )
+from pydantic_ai.capabilities._ordering import find_capability
 from pydantic_ai.capabilities.abstract import (
     AbstractCapability,
     combine_duplicate_capabilities,
@@ -42,6 +42,7 @@ from pydantic_ai.capabilities.abstract import (
 )
 from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.messages import ModelRequest
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import WebFetchTool, WebSearchTool, XSearchTool
 from pydantic_ai.toolsets import AbstractToolset
@@ -231,6 +232,7 @@ def _is_capability_class(obj: object) -> TypeGuard[type[AbstractCapability[Any]]
 def _shipped_capability_types() -> dict[str, type[AbstractCapability[Any]]]:
     """Every capability class in `pydantic_ai.capabilities`, public or not."""
     found: dict[str, type[AbstractCapability[Any]]] = {}
+    classes: set[type[AbstractCapability[Any]]] = set()
     for module_info in pkgutil.walk_packages(capabilities_package.__path__, f'{capabilities_package.__name__}.'):
         module = importlib.import_module(module_info.name)
         for obj in vars(module).values():
@@ -240,6 +242,12 @@ def _shipped_capability_types() -> dict[str, type[AbstractCapability[Any]]]:
                 and obj.__module__.startswith('pydantic_ai.')
             ):
                 found[obj.__name__] = obj
+                classes.add(obj)
+    # `COMBINE_POLICY` is keyed by name, so two classes sharing one would collapse into a single
+    # entry and let whichever lost ship with no policy at all -- the exact gap this guards.
+    assert len(found) == len(classes), (
+        f'two capability classes share a name: {sorted(cls.__module__ + "." + cls.__name__ for cls in classes)}'
+    )
     return found
 
 
@@ -338,6 +346,30 @@ def test_capability_id_reaches_a_callable_toolset() -> None:
     several leaves, so the position within its own arguments keeps them apart.
     """
     capability = Capability[Any](id='mycap', tools=[_a_tool], toolsets=[_dyn_toolset])
+    assert _leaf_ids(capability) == [
+        ('FunctionToolset', 'mycap'),
+        ('DynamicToolset', 'mycap_0'),
+    ]
+
+
+def test_callable_toolset_id_survives_a_late_tool_registration() -> None:
+    """The number is the callable's place in `toolsets=`, not its place in the composed result.
+
+    Durable execution registers what the first call returned, so an id that moved once a `@tool`
+    landed would leave it holding a name nothing answers to any more.
+    """
+    capability = Capability[Any](id='mycap', toolsets=[_dyn_toolset])
+    assert _leaf_ids(capability) == [('DynamicToolset', 'mycap_0')]
+
+    capability.tool_plain(_a_tool)
+
+    assert _leaf_ids(capability) == [
+        ('FunctionToolset', 'mycap'),
+        ('DynamicToolset', 'mycap_0'),
+    ]
+
+
+def _leaf_ids(capability: Capability[Any]) -> list[tuple[str, str | None]]:
     toolset = cast('AbstractToolset[Any]', capability.get_toolset())
     leaves: list[tuple[str, str | None]] = []
 
@@ -345,10 +377,7 @@ def test_capability_id_reaches_a_callable_toolset() -> None:
         leaves.append((type(ts).__name__, ts.id))
 
     toolset.apply(record)
-    assert leaves == [
-        ('FunctionToolset', 'mycap'),
-        ('DynamicToolset', 'mycap_1'),
-    ]
+    return leaves
 
 
 def test_anonymous_capability_leaves_its_toolsets_anonymous() -> None:
@@ -453,3 +482,54 @@ def test_find_capability_returns_the_first_match_in_the_tree() -> None:
 
     assert find_capability([tree], Thinking) is first
     assert find_capability([tree], WebSearch) is None
+
+
+@dataclass
+class _Note(AbstractCapability[Any]):
+    """A capability that contributes instructions, so a repeat shows up in the prompt."""
+
+    text: str = ''
+
+    _: KW_ONLY
+
+    id: str | None = 'note'
+
+    def get_instructions(self) -> str:
+        return self.text
+
+    @classmethod
+    def combine(cls, capabilities: Sequence[AbstractCapability[Any]]) -> AbstractCapability[Any]:
+        return capabilities[-1]
+
+
+async def test_one_object_listed_twice_contributes_its_instructions_once() -> None:
+    """Combining keeps one occurrence, and the composition view has to drop the others with it.
+
+    A replacement decision keyed by object identity alone collapses the occurrences of one object
+    into a single answer, so every one of them takes the surviving decision and says its piece
+    again -- the capability runs once, but its instructions land twice.
+    """
+    note = _Note('Be brief.')
+    agent = Agent(TestModel(call_tools=[]), capabilities=[note, note])
+
+    result = await agent.run('hi')
+
+    request = result.all_messages()[0]
+    assert isinstance(request, ModelRequest)
+    assert request.instructions == 'Be brief.'
+
+
+def test_an_id_two_classes_claim_is_rejected_whichever_one_comes_first() -> None:
+    """Whether an id may repeat is a property of the pair, not of the capability that came second.
+
+    No class can be handed another's instances to combine, so a class-crossing id is unresolvable
+    either way round -- and reading the answer off the later capability alone let one order build
+    an agent that only failed once it ran.
+    """
+    message = r"Capability id 'shared' is used by capabilities of different types \(Thinking, _Note\)"
+
+    with pytest.raises(UserError, match=message):
+        Agent(TestModel(), capabilities=[Thinking(id='shared'), _Note(id='shared')])
+
+    with pytest.raises(UserError, match=message):
+        Agent(TestModel(), capabilities=[_Note(id='shared'), Thinking(id='shared')])

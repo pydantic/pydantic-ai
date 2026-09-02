@@ -3,7 +3,7 @@ from __future__ import annotations
 import dataclasses
 from abc import ABC
 from collections import Counter
-from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence, Set as AbstractSet
+from collections.abc import AsyncIterable, Awaitable, Callable, Collection, Mapping, Sequence, Set as AbstractSet
 from dataclasses import KW_ONLY, dataclass
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypeAlias, cast
 from weakref import WeakValueDictionary
@@ -1430,14 +1430,24 @@ def _combine_duplicates(
     capability_id: str, duplicates: Sequence[AbstractCapability[AgentDepsT]]
 ) -> AbstractCapability[AgentDepsT]:
     """Ask the shared class how its instances compose, or reject a class-crossing `id`."""
-    types = {type(duplicate) for duplicate in duplicates}
+    reject_class_crossing_id(capability_id, {type(duplicate) for duplicate in duplicates})
+    return duplicates[-1].combine(duplicates)
+
+
+def reject_class_crossing_id(capability_id: str, types: Collection[type[AbstractCapability[Any]]]) -> None:
+    """Reject an `id` two different capability classes both claim.
+
+    No class can be asked to combine another's instances, so a shared id across classes is never
+    resolvable however they were ordered. Shared with `Agent(...)` validation so the two report the
+    same thing: construction sees only the capabilities it was handed, and this pass sees the tree
+    a run resolves to, but neither one is a case the other should describe differently.
+    """
     if len(types) > 1:
         names = ', '.join(sorted(cls.__name__ for cls in types))
         raise UserError(
             f'Capability id {capability_id!r} is used by capabilities of different types ({names}). '
             'Ids identify one capability within a run, so give each a distinct `id`.'
         )
-    return duplicates[-1].combine(duplicates)
 
 
 def merge_capability_fields(

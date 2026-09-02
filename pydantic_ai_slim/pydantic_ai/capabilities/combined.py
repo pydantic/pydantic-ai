@@ -91,7 +91,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     def _rebound(
         self,
         new_capabilities: Sequence[AbstractCapability[AgentDepsT]],
-        replacements: Mapping[int, AbstractCapability[AgentDepsT] | None] | None = None,
+        replacements: Mapping[int, Sequence[AbstractCapability[AgentDepsT] | None]] | None = None,
     ) -> CombinedCapability[AgentDepsT]:
         """A shallow copy holding `new_capabilities`, with the composition view carried across.
 
@@ -101,7 +101,11 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         `get_instructions`, so rebuilding is exactly what loses it.
 
         `replacements` maps each old child by `id()` to what replaced it, or to `None` when it was
-        removed. It defaults to pairing the old children with the new ones positionally, which only
+        removed. One decision per *occurrence*, in the order the children were visited: the same
+        object may sit in `capabilities` more than once, and a merge that keeps the first and drops
+        the rest has a different answer for each. Keying by `id()` alone would collapse those into
+        one, so every occurrence would take the surviving decision and contribute its instructions
+        again. It defaults to pairing the old children with the new ones positionally, which only
         holds when every child was replaced one-for-one;
         [`visit_and_replace`][pydantic_ai.capabilities.AbstractCapability.visit_and_replace] can
         drop children, so it passes the mapping explicitly.
@@ -110,11 +114,23 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         # Keep ordinary sources aligned with their bound replacements while retained combined
         # overrides continue to represent the container that owns the public method.
         if replacements is None:
-            replacements = {id(old): new for old, new in zip(self.capabilities, new_capabilities)}
+            positional: dict[int, list[AbstractCapability[AgentDepsT] | None]] = {}
+            for old, new in zip(self.capabilities, new_capabilities):
+                positional.setdefault(id(old), []).append(new)
+            replacements = positional
+        # Consumed as a queue so repeats of one object take their decisions in turn. The i-th
+        # occurrence here is the i-th occurrence there: `_instruction_sources` and `capabilities`
+        # are built from the same list, and `sort_capabilities` is stable, so neither reorders one
+        # occurrence of an object past another.
+        pending = {key: list(decisions) for key, decisions in replacements.items()}
+
+        def take(capability: AbstractCapability[AgentDepsT]) -> AbstractCapability[AgentDepsT] | None:
+            decisions = pending[id(capability)]
+            return decisions.pop(0) if len(decisions) > 1 else decisions[0]
 
         def rebind(source: AbstractCapability[AgentDepsT]) -> AbstractCapability[AgentDepsT] | None:
             if id(source) in replacements:
-                return replacements[id(source)]
+                return take(source)
             # Anything else is a retained container: `_instruction_sources` holds either direct
             # children, replaced above, or the containers flattening splatted out. Those are not in
             # `capabilities` and so not in `replacements`, and left alone one would keep answering
@@ -123,7 +139,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
             # flattened into the very list that was just rebound, so rebuild it from those.
             assert isinstance(source, CombinedCapability)
             rebound_children = [
-                child if id(child) not in replacements else replacements[id(child)] for child in source.capabilities
+                child if id(child) not in replacements else take(child) for child in source.capabilities
             ]
             surviving = [child for child in rebound_children if child is not None]
             # A retained container that lost every child contributes no instructions any more, so
@@ -163,11 +179,11 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         new_caps: list[AbstractCapability[AgentDepsT]] = []
         # `_rebound` needs to know which children were removed, not just which survived, so the
         # composition view can drop them too; a positional pairing can't express a removal.
-        replacements: dict[int, AbstractCapability[AgentDepsT] | None] = {}
+        replacements: dict[int, list[AbstractCapability[AgentDepsT] | None]] = {}
         unchanged = True
         for cap in self.capabilities:
             new_cap = cap.visit_and_replace(visitor)
-            replacements[id(cap)] = new_cap
+            replacements.setdefault(id(cap), []).append(new_cap)
             if new_cap is not cap:
                 unchanged = False
             if new_cap is not None:
