@@ -1,27 +1,13 @@
-import re
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+from pydantic_ai._utils import estimate_string_tokens
 from pydantic_ai.usage import RequestUsage
 
 from .base import EmbeddingModel
 from .result import EmbeddingResult, EmbedInputType
 from .settings import EmbeddingSettings
-
-# Regex for splitting text into approximate tokens (matches FunctionModel approach)
-_TOKEN_SPLIT_RE = re.compile(r'[\s",.:]+')
-
-
-def _estimate_tokens(text: str) -> int:
-    """Estimate the number of tokens in a text string.
-
-    This is a rough approximation that splits on whitespace and punctuation,
-    matching the approach used by FunctionModel.
-    """
-    if not text:
-        return 0  # pragma: no cover
-    return len(_TOKEN_SPLIT_RE.split(text.strip()))
 
 
 @dataclass(init=False)
@@ -106,7 +92,7 @@ class TestEmbeddingModel(EmbeddingModel):
             embeddings=[[1.0] * dimensions] * len(inputs),
             inputs=inputs,
             input_type=input_type,
-            usage=RequestUsage(input_tokens=sum(_estimate_tokens(text) for text in inputs)),
+            usage=RequestUsage(input_tokens=sum(estimate_string_tokens(text) for text in inputs)),
             model_name=self.model_name,
             provider_name=self.system,
             provider_response_id=str(uuid.uuid4()),
@@ -116,4 +102,4 @@ class TestEmbeddingModel(EmbeddingModel):
         return 1024
 
     async def count_tokens(self, text: str) -> int:
-        return _estimate_tokens(text)
+        return estimate_string_tokens(text)

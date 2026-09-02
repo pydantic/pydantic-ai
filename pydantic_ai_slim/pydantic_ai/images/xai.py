@@ -20,6 +20,7 @@ from pydantic_ai.models import check_allow_model_requests, download_item
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.usage import RequestUsage
 
+from ._media_type import output_format_from_media_type
 from ._validation import validate_image_count, warn_image_generation_settings
 from .base import ImageGenerationInput, ImageGenerationModel
 from .result import GeneratedImage, ImageGenerationResult
@@ -31,7 +32,7 @@ try:
     from xai_sdk.aio.image import ImageResponse
     from xai_sdk.proto import usage_pb2
     from xai_sdk.types import (
-        ImageAspectRatio,
+        ImageAspectRatio as XaiImageAspectRatio,
         ImageGenerationModel as LatestXaiImageGenerationModelNames,
         ImageResolution,
     )
@@ -56,7 +57,7 @@ class XaiImageGenerationSettings(ImageGenerationSettings, total=False):
     """Settings used for an xAI image generation request.
 
     All fields from [`ImageGenerationSettings`][pydantic_ai.images.ImageGenerationSettings]
-    are supported on a best-effort basis, plus xAI-specific settings prefixed with `xai_`.
+    are supported, plus xAI-specific settings prefixed with `xai_`.
     """
 
     # ALL FIELDS MUST BE `xai_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
@@ -67,7 +68,7 @@ class XaiImageGenerationSettings(ImageGenerationSettings, total=False):
     xai_user: str
     """A unique identifier representing your end-user."""
 
-    xai_aspect_ratio: ImageAspectRatio
+    xai_aspect_ratio: XaiImageAspectRatio
     """The aspect ratio of the generated image."""
 
     xai_resolution: ImageResolution
@@ -206,9 +207,6 @@ class XaiImageGenerationModel(ImageGenerationModel):
     async def _map_input_images(
         self, images: Sequence[ImageGenerationInput]
     ) -> tuple[str | None, str | None, list[str] | None, list[str] | None]:
-        if len(images) > 3:
-            raise UserError('xAI image editing accepts at most three reference images')
-
         image_references: list[str] = []
         file_ids: list[str] = []
         seen_reference = False
@@ -274,7 +272,7 @@ class XaiImageGenerationModel(ImageGenerationModel):
             images.append(
                 GeneratedImage(
                     content=content,
-                    output_format=content.media_type.removeprefix('image/'),
+                    output_format=output_format_from_media_type(content.media_type),
                     provider_details={'respect_moderation': response.respect_moderation},
                 )
             )
@@ -317,7 +315,7 @@ def _decode_data_url(value: str) -> BinaryImage:
 
 @dataclass
 class _XaiResolvedSettings:
-    aspect_ratio: ImageAspectRatio | None
+    aspect_ratio: XaiImageAspectRatio | None
     resolution: ImageResolution | None
     ignored: list[str]
     conflicts: list[str]
@@ -357,13 +355,12 @@ def _map_usage(
     model: str,
 ) -> RequestUsage:
     details: dict[str, int] = {}
-    for field_name, detail_name in (
-        ('reasoning_tokens', 'reasoning_tokens'),
-        ('prompt_text_tokens', 'input_text_tokens'),
-        ('prompt_image_tokens', 'input_image_tokens'),
-    ):
-        if value := cast(int, getattr(usage, field_name)):
-            details[detail_name] = value
+    if reasoning_tokens := usage.reasoning_tokens:
+        details['reasoning_tokens'] = reasoning_tokens
+    if prompt_text_tokens := usage.prompt_text_tokens:
+        details['input_text_tokens'] = prompt_text_tokens
+    if prompt_image_tokens := usage.prompt_image_tokens:
+        details['input_image_tokens'] = prompt_image_tokens
 
     # `cached_prompt_text_tokens` is fed to `extract` rather than `details` so genai-prices maps it
     # onto the typed `cache_read_tokens` and prices it at the cached rate, matching `models/xai.py`.

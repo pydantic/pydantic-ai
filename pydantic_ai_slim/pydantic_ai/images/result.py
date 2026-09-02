@@ -1,6 +1,7 @@
 from collections.abc import Sequence
 from dataclasses import KW_ONLY, dataclass, field
 from datetime import datetime
+from typing import Any
 
 from genai_prices import types as genai_types
 
@@ -36,11 +37,8 @@ class GeneratedImage:
     background: str | None = None
     """Generated image background mode, if reported by the provider."""
 
-    provider_details: dict[str, object] | None = None
+    provider_details: dict[str, Any] | None = None
     """Provider-specific details for this generated image."""
-
-    provider_image_id: str | None = None
-    """Provider-specific identifier for this image, if available."""
 
 
 @dataclass
@@ -70,7 +68,7 @@ class ImageGenerationResult:
     settings: ImageGenerationSettings | None = None
     """The normalized settings used for this request, if available."""
 
-    provider_details: dict[str, object] | None = None
+    provider_details: dict[str, Any] | None = None
     """Provider-specific details from the response."""
 
     provider_response_id: str | None = None

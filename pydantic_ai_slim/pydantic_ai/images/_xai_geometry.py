@@ -4,6 +4,7 @@ from xai_sdk.types import ImageAspectRatio, ImageResolution
 
 from pydantic_ai.exceptions import UserError
 
+from ._geometry import prefer_provider_value
 from .settings import (
     ImageDimensions,
     ImageGenerationAspectRatio,
@@ -62,17 +63,15 @@ def resolve_xai_geometry(
 
     if dimensions := settings.get('dimensions'):
         mapped_aspect_ratio, mapped_resolution = resolve_xai_dimensions(model_name, dimensions)
-        aspect_ratio = provider_aspect_ratio
-        if aspect_ratio is None:
-            aspect_ratio = mapped_aspect_ratio
-        elif aspect_ratio != mapped_aspect_ratio:
-            conflicts.append('dimensions')
-        resolution = provider_resolution
-        if resolution is None:
-            resolution = mapped_resolution
-        elif resolution != mapped_resolution:
-            conflicts.append('dimensions')
-        return _XaiGeometry(aspect_ratio=aspect_ratio, resolution=resolution, conflicts=conflicts)
+        return _XaiGeometry(
+            aspect_ratio=prefer_provider_value(
+                provider_aspect_ratio, mapped_aspect_ratio, setting_name='dimensions', conflicts=conflicts
+            ),
+            resolution=prefer_provider_value(
+                provider_resolution, mapped_resolution, setting_name='dimensions', conflicts=conflicts
+            ),
+            conflicts=conflicts,
+        )
 
     common_aspect_ratio = settings.get('aspect_ratio')
     if provider_aspect_ratio is not None:

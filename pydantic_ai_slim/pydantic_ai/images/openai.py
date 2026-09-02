@@ -7,13 +7,15 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Literal, cast
 
+from typing_extensions import assert_never
+
 from pydantic_ai.exceptions import ContentFilterError, ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import BinaryImage, ImageUrl, UploadedFile
 from pydantic_ai.models import check_allow_model_requests, download_item
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.usage import RequestUsage
 
-from ._media_type import image_media_type_from_bytes
+from ._media_type import image_media_type_from_bytes, output_format_from_media_type
 from ._openai_geometry import resolve_openai_geometry
 from ._validation import validate_image_count, warn_image_generation_settings
 from .base import ImageGenerationInput, ImageGenerationModel
@@ -45,12 +47,12 @@ actionable while leaving unrecognized future models to fall through to the provi
 """
 
 
-ImageOutputFormat = Literal['png', 'webp', 'jpeg']
+OpenAIImageOutputFormat = Literal['png', 'webp', 'jpeg']
 """The image formats OpenAI's image endpoints accept as a requested output format.
 
 This types the `openai_output_format` request setting. It does not describe
 [`GeneratedImage.output_format`][pydantic_ai.images.GeneratedImage], which is a plain `str | None`
-because Google and xAI report no format field and Pydantic AI derives one from the response media type.
+derived from the media type each adapter resolves for the bytes the provider returned.
 """
 
 
@@ -66,7 +68,7 @@ class OpenAIImageGenerationSettings(ImageGenerationSettings, total=False):
     openai_n: int
     """The number of images to generate."""
 
-    openai_output_format: ImageOutputFormat
+    openai_output_format: OpenAIImageOutputFormat
     """The generated image format."""
 
     openai_size: str
@@ -261,14 +263,15 @@ class OpenAIImageGenerationModel(ImageGenerationModel):
                     'OpenAI image editing requires file content and does not accept `UploadedFile.file_id`; '
                     'use `BinaryImage` or `ImageUrl` instead'
                 )
-
-            if isinstance(image, ImageUrl):
+            elif isinstance(image, ImageUrl):
                 downloaded_image = await download_item(image, data_format='bytes')
                 data = downloaded_image['data']
                 media_type = downloaded_image['data_type']
-            else:
+            elif isinstance(image, BinaryImage):
                 data = image.data
                 media_type = image.media_type
+            else:
+                assert_never(image)
 
             extension = _openai_input_extension(media_type)
             mapped_images.append((f'image-{index}.{extension}', data, media_type))
@@ -305,16 +308,13 @@ class OpenAIImageGenerationModel(ImageGenerationModel):
                     'OpenAI image generation response did not contain a recognized image format',
                     _response_body(response),
                 )
-            media_type = sniffed_media_type
-            output_format = sniffed_media_type.removeprefix('image/')
-
             images.append(
                 GeneratedImage(
-                    content=BinaryImage(data=image_data, media_type=media_type),
+                    content=BinaryImage(data=image_data, media_type=sniffed_media_type),
                     revised_prompt=image.revised_prompt,
                     size=response.size,
                     quality=response.quality,
-                    output_format=output_format,
+                    output_format=output_format_from_media_type(sniffed_media_type),
                     background=response.background,
                 )
             )

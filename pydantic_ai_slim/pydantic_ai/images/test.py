@@ -1,8 +1,8 @@
-import re
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+from pydantic_ai._utils import estimate_string_tokens
 from pydantic_ai.messages import BinaryImage
 from pydantic_ai.usage import RequestUsage
 
@@ -10,18 +10,11 @@ from .base import ImageGenerationInput, ImageGenerationModel
 from .result import GeneratedImage, ImageGenerationResult
 from .settings import ImageGenerationSettings
 
-_TOKEN_SPLIT_RE = re.compile(r'[\s",.:]+')
 _TINY_PNG = (
     b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01'
     b'\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\nIDATx\x9cc\x00\x01'
     b'\x00\x00\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82'
 )
-
-
-def _estimate_tokens(text: str) -> int:
-    if not text:
-        return 0  # pragma: no cover
-    return len(_TOKEN_SPLIT_RE.split(text.strip()))
 
 
 @dataclass(init=False)
@@ -115,7 +108,7 @@ class TestImageGenerationModel(ImageGenerationModel):
                 )
             ],
             prompt=prompt,
-            usage=RequestUsage(input_tokens=_estimate_tokens(prompt)),
+            usage=RequestUsage(input_tokens=estimate_string_tokens(prompt)),
             model_name=self.model_name,
             provider_name=self.system,
             settings=settings,

@@ -4,13 +4,12 @@ import base64
 import json
 import os
 import re
-import warnings
 from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
 from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Literal, cast, get_args
+from typing import Literal, cast, get_args
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx2
@@ -19,6 +18,7 @@ from genai_prices.types import PriceCalculation
 
 import pydantic_ai.images as images_module
 import pydantic_ai.images._google_geometry as google_geometry
+import pydantic_ai.images._media_type as images_media_type
 import pydantic_ai.images._openai_geometry as openai_geometry
 from pydantic_ai import (
     BinaryImage,
@@ -53,7 +53,7 @@ from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.usage import RequestUsage
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsInt, IsStr, TestEnv, try_import
+from .conftest import IsDatetime, IsInt, IsStr, RequestCapture, TestEnv, try_import
 
 pytestmark = [
     pytest.mark.anyio,
@@ -137,6 +137,10 @@ async def test_test_image_generation_model_generates_png():
     assert generated_image.content.data.startswith(b'\x89PNG\r\n\x1a\n')
     assert generated_image.output_format == 'png'
     assert result.image == generated_image.content
+
+
+def test_image_output_format_ignores_non_image_media_type():
+    assert images_media_type.output_format_from_media_type('application/octet-stream') is None
 
 
 @pytest.mark.parametrize(
@@ -324,6 +328,9 @@ def test_infer_image_generation_model_gateway_google(env: TestEnv):
     assert model.model_name == 'gemini-3.1-flash-image'
     assert model.system == 'google-cloud'
     assert model.base_url == snapshot('https://gateway.pydantic.dev/proxy/google-vertex')
+    # `_map_input_image` branches on the client's transport rather than on `system`, so the route is
+    # only proven Vertex-shaped once the flag it actually reads is asserted.
+    assert model._is_google_cloud is True  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_wrapper_image_generation_model_delegates_properties():
@@ -640,6 +647,7 @@ def test_google_geometry_profiles_conflicts_and_unknown_models():
         ('1:8', {'512': (176, 1456), '1K': (352, 2928), '2K': (704, 5856), '4K': (1408, 11712)}),
         ('4:1', {'512': (1024, 256), '1K': (2064, 512), '2K': (4128, 1024), '4K': (8256, 2048)}),
         ('8:1', {'512': (1456, 176), '1K': (2928, 352), '2K': (5856, 704), '4K': (11712, 1408)}),
+        ('21:9', {'512': (784, 336), '1K': (1584, 672), '2K': (3168, 1344), '4K': (6336, 2688)}),
     ],
 )
 def test_google_extended_ratio_dimensions_match_the_live_api(aspect_ratio: str, tiers: dict[str, tuple[int, int]]):
@@ -647,7 +655,8 @@ def test_google_extended_ratio_dimensions_match_the_live_api(aspect_ratio: str, 
 
     Google publishes different pixel sizes for most of these rows — `384x3072` for `1:8` at `1K`, where
     the model returns `352x2928` — and the rows do not scale uniformly from the `512` tier the way the
-    standard ratios do, so every cell was probed against the live API. Flash Lite returns the same `1K`
+    standard ratios do, so every cell was probed against the live API. `21:9` is here for the same
+    reason: its `512` tier is `784x336`, not half of the `1K` shape. Flash Lite returns the same `1K`
     shapes as Flash and serves no other tier: the `512` column Google documents for it is rejected.
     """
     for image_size, dimensions in tiers.items():
@@ -1037,9 +1046,7 @@ async def test_google_image_generation_wires_extra_body():
     async with _mock_google_provider(handle_request) as provider:
         model = GoogleImageGenerationModel('gemini-2.5-flash-image', provider=provider)
 
-        with warnings.catch_warnings():
-            warnings.simplefilter('error')
-            await model.generate('a robot', settings={'extra_body': {'labels': {'team': 'growth'}}})
+        await model.generate('a robot', settings={'extra_body': {'labels': {'team': 'growth'}}})
 
     assert json.loads(requests[0].content)['labels'] == snapshot({'team': 'growth'})
 
@@ -1415,6 +1422,36 @@ async def test_google_image_generation_image_safety_finish_reason():
 
 
 @pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
+@pytest.mark.filterwarnings('ignore:MODEL_ARMOR is not a valid FinishReason')
+async def test_google_image_generation_model_armor_finish_reason():
+    """A `MODEL_ARMOR` finish reason raises `ContentFilterError`, as it does on `GoogleModel`.
+
+    Model Armor is Google Cloud's own screening layer. `google-genai`'s static `FinishReason` enum has
+    no member for it and grows one at parse time (with the warning this test ignores), so both adapters
+    key the reason by string; `models/google.py::_FINISH_REASON_MAP` maps it to `content_filter`, and
+    the image adapter on the same transport must agree rather than raise `UnexpectedModelBehavior`.
+
+    Not a VCR test because provoking a block needs a configured Model Armor template; the live shape is
+    recorded in `tests/models/cassettes/test_google/test_google_model_armor_response_template_real_block.yaml`.
+    """
+
+    def handle_request(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
+            200,
+            json={'candidates': [{'content': {'parts': [], 'role': 'model'}, 'finishReason': 'MODEL_ARMOR'}]},
+        )
+
+    async with _mock_google_provider(handle_request) as provider:
+        model = GoogleImageGenerationModel('gemini-3.1-flash-image', provider=provider)
+
+        with pytest.raises(ContentFilterError, match=r'content moderation \(reason: MODEL_ARMOR\)') as exc_info:
+            await model.generate('tiny robot')
+
+    assert exc_info.value.body is not None
+    assert "'finish_reason': 'MODEL_ARMOR'" in exc_info.value.body
+
+
+@pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
 async def test_google_image_generation_prompt_blocked():
     """A prompt-level block (empty candidates + `promptFeedback.blockReason`) raises `ContentFilterError`.
 
@@ -1492,7 +1529,8 @@ async def test_google_image_generation_supported_settings_emit_no_warning():
 
     Over-warning erodes the signal of the warning channel; warnings are reserved for settings a request
     genuinely ignores or overrides. A `google_image_config` aspect ratio, `extra_headers`, and `extra_body`
-    are all honored by the adapter, so the call must be silent.
+    are all honored by the adapter, so the call must be silent — the suite's `filterwarnings = ["error"]`
+    is what fails this test if it is not.
 
     - `warn_image_generation_settings` channel: `pydantic_ai/images/_validation.py`.
     """
@@ -1522,9 +1560,7 @@ async def test_google_image_generation_supported_settings_emit_no_warning():
     async with _mock_google_provider(handle_request) as provider:
         model = GoogleImageGenerationModel('gemini-3-pro-image', provider=provider)
 
-        with warnings.catch_warnings():
-            warnings.simplefilter('error')
-            await model.generate('a robot', settings=settings)
+        await model.generate('a robot', settings=settings)
 
 
 @pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
@@ -1609,15 +1645,6 @@ async def test_google_image_generation_maps_non_http_api_error():
 
 
 @pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
-def test_google_image_generation_ignores_non_image_output_format():
-    output_format = google_images._output_format_from_media_type(  # pyright: ignore[reportPrivateUsage]
-        'application/octet-stream'
-    )
-
-    assert output_format is None
-
-
-@pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
 async def test_google_image_generation_status_error():
     """A Gemini 4xx surfaces as `ModelHTTPError` keeping the status, body, and `retry-after`.
 
@@ -1646,27 +1673,9 @@ async def test_google_image_generation_status_error():
     assert exc_info.value.retry_after == 12
 
 
-def _body_capturing_http_client() -> tuple[httpx2.AsyncClient, list[dict[str, Any]]]:
-    """An `httpx2.AsyncClient` paired with the list of JSON bodies it sends.
-
-    Request event hooks run inside `AsyncClient.send`, above the transport VCR patches, so the hook fires
-    on replay too and sees the request the live code actually built. A cassette body is frozen and keeps
-    replaying after the code stops sending a field, so it cannot show that drift.
-
-    The Google SDK turns the client's timeout into a server-side deadline, and Gemini rejects anything
-    under 10 seconds, so recording against the live API needs more than httpx's 5-second default.
-    """
-    sent_bodies: list[dict[str, Any]] = []
-
-    async def capture_request(request: httpx2.Request) -> None:
-        sent_bodies.append(json.loads(request.read()))
-
-    return httpx2.AsyncClient(timeout=120, event_hooks={'request': [capture_request]}), sent_bodies
-
-
 @pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
 @pytest.mark.vcr
-async def test_google_image_generation_vcr():
+async def test_google_image_generation_vcr(request_capture: RequestCapture):
     """Live generation with `dimensions=(1024, 1024)`, with the resolved geometry pinned on the wire.
 
     `dimensions` is a common setting that only `_google_geometry` knows how to turn into Gemini's
@@ -1674,21 +1683,18 @@ async def test_google_image_generation_vcr():
     about the requested geometry, and a cassette assertion would keep passing if the config stopped
     being sent at all.
     """
-    http_client, sent_bodies = _body_capturing_http_client()
     provider = GoogleProvider(
-        api_key=os.getenv('GOOGLE_API_KEY', os.getenv('GEMINI_API_KEY', 'mock-api-key')), http_client=http_client
+        api_key=os.getenv('GOOGLE_API_KEY', os.getenv('GEMINI_API_KEY', 'mock-api-key')),
+        http_client=request_capture.http_client(timeout=120),
     )
     model = GoogleImageGenerationModel('gemini-3.1-flash-lite-image', provider=provider)
 
-    try:
-        result = await model.generate(
-            'A cat with a cowboy hat, dancing in Rome.',
-            settings=GoogleImageGenerationSettings(dimensions=(1024, 1024)),
-        )
-    finally:
-        await http_client.aclose()
+    result = await model.generate(
+        'A cat with a cowboy hat, dancing in Rome.',
+        settings=GoogleImageGenerationSettings(dimensions=(1024, 1024)),
+    )
 
-    assert sent_bodies == snapshot(
+    assert request_capture.bodies() == snapshot(
         [
             {
                 'contents': [{'parts': [{'text': 'A cat with a cowboy hat, dancing in Rome.'}], 'role': 'user'}],
@@ -1722,29 +1728,26 @@ async def test_google_image_generation_vcr():
 
 @pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
 @pytest.mark.vcr
-async def test_google_image_edit_binary_image_vcr(image_content: BinaryImage):
+async def test_google_image_edit_binary_image_vcr(image_content: BinaryImage, request_capture: RequestCapture):
     """Live edit with a provider-native `google_image_config`, pinned on the wire.
 
     Only `generationConfig` is snapshotted: `contents` carries the reference image as a ~130 KB base64
     blob, which would drown the assertion it belongs to. The hook is what makes the pin meaningful — it
     captures the request the client sent, so dropping `imageConfig` fails here instead of replaying green.
     """
-    http_client, sent_bodies = _body_capturing_http_client()
     provider = GoogleProvider(
-        api_key=os.getenv('GOOGLE_API_KEY', os.getenv('GEMINI_API_KEY', 'mock-api-key')), http_client=http_client
+        api_key=os.getenv('GOOGLE_API_KEY', os.getenv('GEMINI_API_KEY', 'mock-api-key')),
+        http_client=request_capture.http_client(timeout=120),
     )
     model = GoogleImageGenerationModel('gemini-3.1-flash-lite-image', provider=provider)
 
-    try:
-        result = await model.generate(
-            'Transform the subject into a dog with a cowboy hat, dancing in Rome.',
-            images=[image_content],
-            settings=GoogleImageGenerationSettings(google_image_config={'aspect_ratio': '1:1'}),
-        )
-    finally:
-        await http_client.aclose()
+    result = await model.generate(
+        'Transform the subject into a dog with a cowboy hat, dancing in Rome.',
+        images=[image_content],
+        settings=GoogleImageGenerationSettings(google_image_config={'aspect_ratio': '1:1'}),
+    )
 
-    assert [body['generationConfig'] for body in sent_bodies] == snapshot(
+    assert [body['generationConfig'] for body in request_capture.bodies()] == snapshot(
         [{'responseModalities': ['IMAGE'], 'imageConfig': {'aspectRatio': '1:1'}}]
     )
 
@@ -1763,48 +1766,114 @@ async def test_google_image_edit_binary_image_vcr(image_content: BinaryImage):
     assert result.provider_response_id
 
 
+def _jpeg_dimensions(data: bytes) -> tuple[int, int]:
+    """The `(width, height)` a JPEG's start-of-frame segment declares.
+
+    The segment carries `length`, `precision`, `height`, `width` after its marker.
+    """
+    frame = re.search(rb'\xff[\xc0\xc2]', data)
+    assert frame is not None
+    height = int.from_bytes(data[frame.end() + 3 : frame.end() + 5], 'big')
+    width = int.from_bytes(data[frame.end() + 5 : frame.end() + 7], 'big')
+    return width, height
+
+
 @pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
 @pytest.mark.vcr
-async def test_google_flash_lite_extended_aspect_ratio_vcr():
+async def test_google_flash_lite_extended_aspect_ratio_vcr(request_capture: RequestCapture):
     """Live proof that `1:8` on Flash Lite returns `352x2928`, the shape `_google_geometry` records.
 
     Google publishes `384x3072` for this row and does not list `1:8` for Flash Lite at all, so the
     table contradicts the documentation on purpose. The unit test over that table can only assert it
     against itself; this recording is what makes the contradiction evidence instead of a typo.
     """
-    http_client, sent_bodies = _body_capturing_http_client()
     provider = GoogleProvider(
-        api_key=os.getenv('GOOGLE_API_KEY', os.getenv('GEMINI_API_KEY', 'mock-api-key')), http_client=http_client
+        api_key=os.getenv('GOOGLE_API_KEY', os.getenv('GEMINI_API_KEY', 'mock-api-key')),
+        http_client=request_capture.http_client(timeout=120),
     )
     generator = ImageGenerator(GoogleImageGenerationModel('gemini-3.1-flash-lite-image', provider=provider))
 
-    try:
-        result = await generator.generate(
-            'A single ripe kiwi fruit on a plain white background, product photo.',
-            settings={'aspect_ratio': '1:8'},
-        )
-    finally:
-        await http_client.aclose()
+    result = await generator.generate(
+        'A single ripe kiwi fruit on a plain white background, product photo.',
+        settings={'aspect_ratio': '1:8'},
+    )
 
-    assert [body['generationConfig'] for body in sent_bodies] == snapshot(
+    assert [body['generationConfig'] for body in request_capture.bodies()] == snapshot(
         [{'responseModalities': ['IMAGE'], 'imageConfig': {'aspectRatio': '1:8', 'imageSize': '1K'}}]
     )
 
     generated_image = result.images[0].content
     assert generated_image.media_type == 'image/jpeg'
-    # A JPEG start-of-frame segment carries `length`, `precision`, `height`, `width` after its marker.
-    frame = re.search(rb'\xff[\xc0\xc2]', generated_image.data)
-    assert frame is not None
-    height = int.from_bytes(generated_image.data[frame.end() + 3 : frame.end() + 5], 'big')
-    width = int.from_bytes(generated_image.data[frame.end() + 5 : frame.end() + 7], 'big')
-    assert (width, height) == (352, 2928)
+    assert _jpeg_dimensions(generated_image.data) == (352, 2928)
+
+
+@pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
+@pytest.mark.vcr
+async def test_google_flash_21_9_512_dimensions_vcr(request_capture: RequestCapture):
+    """Live proof that `21:9` at the `512` tier returns `784x336`, the shape `_google_geometry` records.
+
+    `21:9` is the one Gemini 3.1 row whose `512` tier is neither half its `1K` shape nor the size
+    Google publishes, so it is the row the table can least afford to assert only against itself. The
+    request carries the portable `dimensions`, which also pins the mapping back onto `aspectRatio`
+    and `imageSize`.
+    """
+    provider = GoogleProvider(
+        api_key=os.getenv('GOOGLE_API_KEY', os.getenv('GEMINI_API_KEY', 'mock-api-key')),
+        http_client=request_capture.http_client(timeout=120),
+    )
+    generator = ImageGenerator(GoogleImageGenerationModel('gemini-3.1-flash-image', provider=provider))
+
+    result = await generator.generate(
+        'A single ripe kiwi fruit on a plain white background, product photo.',
+        settings={'dimensions': (784, 336)},
+    )
+
+    assert [body['generationConfig'] for body in request_capture.bodies()] == snapshot(
+        [{'responseModalities': ['IMAGE'], 'imageConfig': {'aspectRatio': '21:9', 'imageSize': '512'}}]
+    )
+
+    generated_image = result.images[0].content
+    assert generated_image.media_type == 'image/jpeg'
+    assert _jpeg_dimensions(generated_image.data) == (784, 336)
+
+
+@pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
+@pytest.mark.vcr
+async def test_google_25_flash_image_generation_vcr(request_capture: RequestCapture):
+    """`gemini-2.5-flash-image` accepts the image-only `responseModalities` the adapter always sends.
+
+    It is the oldest family in `KnownImageGenerationModelName` and the only one the other recordings
+    do not reach; the repo's other live 2.5 image requests come from `GoogleModel` and ask for
+    `[TEXT, IMAGE]`, so nothing showed the image-only request working here. It answers in PNG where
+    the 3.1 models answer in JPEG, which is what makes the derived `output_format` worth asserting.
+    """
+    provider = GoogleProvider(
+        api_key=os.getenv('GOOGLE_API_KEY', os.getenv('GEMINI_API_KEY', 'mock-api-key')),
+        http_client=request_capture.http_client(timeout=120),
+    )
+    model = GoogleImageGenerationModel('gemini-2.5-flash-image', provider=provider)
+
+    result = await model.generate('A single ripe kiwi fruit on a plain white background, product photo.')
+
+    assert [body['generationConfig'] for body in request_capture.bodies()] == snapshot(
+        [{'responseModalities': ['IMAGE']}]
+    )
+
+    generated_image = result.images[0]
+    assert generated_image.content.data[:8] == b'\x89PNG\r\n\x1a\n'
+    assert generated_image.content.media_type == 'image/png'
+    assert generated_image.output_format == 'png'
+    assert result.model_name == 'gemini-2.5-flash-image'
+    assert result.provider_name == 'google'
+    assert result.usage.input_tokens > 0
+    assert result.usage.output_tokens > 0
 
 
 @pytest.fixture
-async def google_cloud_body_capture(
-    vertex_provider_auth: None,
-) -> AsyncGenerator[tuple[GoogleCloudProvider, list[dict[str, Any]]]]:
-    """A Vertex AI provider paired with the list of JSON bodies it sends, as `_body_capturing_http_client` is for the Gemini API.
+async def google_cloud_capture_provider(
+    vertex_provider_auth: None, request_capture: RequestCapture
+) -> GoogleCloudProvider:
+    """A Vertex AI provider whose outbound requests land in `request_capture`.
 
     NOTE: You need to comment out the skip below to rewrite the cassettes locally. `vertex_provider_auth`
     only stubs credentials when `CI` is set, so recording needs `CI` unset and real application-default
@@ -1813,37 +1882,31 @@ async def google_cloud_body_capture(
     if not os.getenv('CI', False):  # pragma: lax no cover
         pytest.skip('Requires properly configured local google vertex config to pass')
 
-    http_client, sent_bodies = _body_capturing_http_client()
-    provider = GoogleCloudProvider(
+    return GoogleCloudProvider(
         project=os.getenv('GOOGLE_PROJECT', 'pydantic-ai'),
         location=cast('GoogleCloudLocation', os.getenv('GOOGLE_LOCATION', 'global')),
-        http_client=http_client,
+        http_client=request_capture.http_client(timeout=120),
     )
-    try:
-        yield provider, sent_bodies
-    finally:
-        await http_client.aclose()
 
 
 @pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
 @pytest.mark.vcr
 async def test_google_cloud_image_generation_vcr(
-    google_cloud_body_capture: tuple[GoogleCloudProvider, list[dict[str, Any]]],
+    google_cloud_capture_provider: GoogleCloudProvider, request_capture: RequestCapture
 ):
     """Live Vertex AI generation, proving the `google-cloud:` route reaches a different API than `google:`.
 
     The Gemini API recordings can't stand in for this one: Vertex authenticates differently and serves
     `generateContent` from its own host, so only a recording made against it shows the adapter working there.
     """
-    provider, sent_bodies = google_cloud_body_capture
-    model = GoogleImageGenerationModel('gemini-3.1-flash-image', provider=provider)
+    model = GoogleImageGenerationModel('gemini-3.1-flash-image', provider=google_cloud_capture_provider)
 
     result = await model.generate(
         'A cat with a cowboy hat, dancing in Rome.',
         settings=GoogleImageGenerationSettings(dimensions=(512, 512)),
     )
 
-    assert sent_bodies == snapshot(
+    assert request_capture.bodies() == snapshot(
         [
             {
                 'contents': [{'parts': [{'text': 'A cat with a cowboy hat, dancing in Rome.'}], 'role': 'user'}],
@@ -1876,7 +1939,8 @@ async def test_google_cloud_image_generation_vcr(
 @pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
 @pytest.mark.vcr
 async def test_google_cloud_image_edit_vcr(
-    google_cloud_body_capture: tuple[GoogleCloudProvider, list[dict[str, Any]]],
+    google_cloud_capture_provider: GoogleCloudProvider,
+    request_capture: RequestCapture,
     image_content: BinaryImage,
 ):
     """Live Vertex AI reference edit, with the resolved geometry pinned on the wire.
@@ -1884,8 +1948,7 @@ async def test_google_cloud_image_edit_vcr(
     Only `generationConfig` is snapshotted: `contents` carries the reference image as a ~130 KB base64
     blob, which would drown the assertion it belongs to.
     """
-    provider, sent_bodies = google_cloud_body_capture
-    model = GoogleImageGenerationModel('gemini-3.1-flash-image', provider=provider)
+    model = GoogleImageGenerationModel('gemini-3.1-flash-image', provider=google_cloud_capture_provider)
 
     result = await model.generate(
         'Transform the subject into a dog with a cowboy hat, dancing in Rome.',
@@ -1893,7 +1956,7 @@ async def test_google_cloud_image_edit_vcr(
         settings=GoogleImageGenerationSettings(dimensions=(512, 512)),
     )
 
-    assert [body['generationConfig'] for body in sent_bodies] == snapshot(
+    assert [body['generationConfig'] for body in request_capture.bodies()] == snapshot(
         [{'responseModalities': ['IMAGE'], 'imageConfig': {'aspectRatio': '1:1', 'imageSize': '512'}}]
     )
 
@@ -1963,7 +2026,7 @@ def test_xai_image_generation_model_infers_string_provider(monkeypatch: pytest.M
 
 
 @pytest.mark.skipif(not xai_imports_successful(), reason='xAI SDK not installed')
-async def test_xai_image_generation_wire_payload_and_response_mapping():
+async def test_xai_image_generation_sdk_call_and_response_mapping():
     mock_client = AsyncMock()
     responses = _xai_image_responses(b'first-image', b'second-image')
     mock_client.image.sample_batch.return_value = responses
@@ -2128,18 +2191,27 @@ async def test_xai_image_generation_rejects_invalid_count(xai_n: int):
 
 
 @pytest.mark.skipif(not xai_imports_successful(), reason='xAI SDK not installed')
-async def test_xai_image_generation_rejects_more_than_three_reference_images():
+async def test_xai_image_generation_forwards_every_reference_image():
+    """Reference images are forwarded whatever their count: xAI owns its own limit.
+
+    xAI documents five source images per edit, and `image.sample`'s `image_urls` argument carries no
+    count bound, so a client-side ceiling would refuse edits the provider accepts. An over-limit
+    request comes back as xAI's own `INVALID_ARGUMENT`, which `_map_api_errors` turns into a 400
+    `ModelHTTPError`.
+
+    https://docs.x.ai/developers/model-capabilities/images/multi-image-editing
+    """
     mock_client = AsyncMock()
+    mock_client.image.sample.return_value = _xai_image_responses(b'image')[0]
     model = XaiImageGenerationModel(
         'grok-imagine-image',
         provider=XaiProvider(xai_client=cast(XaiAsyncClient, mock_client)),
     )
-    images = [BinaryImage(data=TINY_PNG, media_type='image/png') for _ in range(4)]
+    images = [BinaryImage(data=f'reference-{index}'.encode(), media_type='image/png') for index in range(5)]
 
-    with pytest.raises(UserError, match='at most three reference images'):
-        await model.generate('edit these images', images=images)
+    await model.generate('edit these images', images=images)
 
-    mock_client.image.sample.assert_not_awaited()
+    assert mock_client.image.sample.await_args.kwargs['image_urls'] == [image.data_uri for image in images]
 
 
 @pytest.mark.skipif(not xai_imports_successful(), reason='xAI SDK not installed')
@@ -3121,31 +3193,27 @@ async def test_openai_forwards_unvalidated_transparent_background_with_jpeg_edit
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
 @pytest.mark.vcr
-async def test_openai_gpt_image_2_generation_vcr(openai_api_key: str):
+async def test_openai_gpt_image_2_generation_vcr(openai_api_key: str, request_capture: RequestCapture):
     """Live generation whose settings are pinned as the client actually sent them.
 
     The response echoes `size`, `output_format` and `quality` back, so asserting the result alone would
     still pass if those settings stopped reaching the wire — and so would a cassette-body assertion,
     since the recording is frozen. The request hook captures the live outbound body instead.
     """
-    http_client, sent_bodies = _body_capturing_http_client()
-    provider = OpenAIProvider(api_key=openai_api_key, http_client=http_client)
+    provider = OpenAIProvider(api_key=openai_api_key, http_client=request_capture.client)
     model = OpenAIImageGenerationModel('gpt-image-2', provider=provider)
 
-    try:
-        result = await model.generate(
-            'A cat with a cowboy hat, dancing in Rome.',
-            settings=OpenAIImageGenerationSettings(
-                dimensions=(1280, 720),
-                openai_output_format='jpeg',
-                openai_output_compression=10,
-                openai_quality='low',
-            ),
-        )
-    finally:
-        await http_client.aclose()
+    result = await model.generate(
+        'A cat with a cowboy hat, dancing in Rome.',
+        settings=OpenAIImageGenerationSettings(
+            dimensions=(1280, 720),
+            openai_output_format='jpeg',
+            openai_output_compression=10,
+            openai_quality='low',
+        ),
+    )
 
-    assert sent_bodies == snapshot(
+    assert request_capture.bodies() == snapshot(
         [
             {
                 'model': 'gpt-image-2',
@@ -3173,7 +3241,7 @@ async def test_openai_gpt_image_2_generation_vcr(openai_api_key: str):
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
 @pytest.mark.vcr
-async def test_openai_gpt_image_2_webp_generation_vcr(openai_api_key: str):
+async def test_openai_gpt_image_2_webp_generation_vcr(openai_api_key: str, request_capture: RequestCapture):
     """gpt-image-2 honors `output_format='webp'` and the media type is sniffed from the real bytes.
 
     A live regression guard for the sniff success path against a real provider response: the returned
@@ -3186,21 +3254,17 @@ async def test_openai_gpt_image_2_webp_generation_vcr(openai_api_key: str):
 
     https://github.com/openai/openai-node/issues/1850
     """
-    http_client, sent_bodies = _body_capturing_http_client()
-    provider = OpenAIProvider(api_key=openai_api_key, http_client=http_client)
+    provider = OpenAIProvider(api_key=openai_api_key, http_client=request_capture.client)
     model = OpenAIImageGenerationModel('gpt-image-2', provider=provider)
 
-    try:
-        result = await model.generate(
-            'A small red circle centered on a plain white background.',
-            settings=OpenAIImageGenerationSettings(
-                dimensions=(1024, 1024), openai_output_format='webp', openai_quality='low'
-            ),
-        )
-    finally:
-        await http_client.aclose()
+    result = await model.generate(
+        'A small red circle centered on a plain white background.',
+        settings=OpenAIImageGenerationSettings(
+            dimensions=(1024, 1024), openai_output_format='webp', openai_quality='low'
+        ),
+    )
 
-    assert sent_bodies == snapshot(
+    assert request_capture.bodies() == snapshot(
         [
             {
                 'model': 'gpt-image-2',
@@ -3662,7 +3726,7 @@ async def test_openai_image_generation_supported_settings_emit_no_warning(openai
 
     Over-warning erodes the signal of the warning channel; warnings are reserved for settings a request
     genuinely ignores or overrides. Every setting here is supported by `gpt-image-1` generation, so the call
-    must be silent.
+    must be silent — the suite's `filterwarnings = ["error"]` is what fails this test if it is not.
     """
     openai_mock_client.images.generate.return_value = _openai_png_response()
     model = OpenAIImageGenerationModel(
@@ -3677,9 +3741,7 @@ async def test_openai_image_generation_supported_settings_emit_no_warning(openai
         openai_output_format='png',
     )
 
-    with warnings.catch_warnings():
-        warnings.simplefilter('error')
-        await model.generate('a robot', settings=settings)
+    await model.generate('a robot', settings=settings)
 
 
 @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')

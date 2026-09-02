@@ -807,6 +807,9 @@ def fail_cache_prefix_violations(request: pytest.FixtureRequest, vcr: Cassette |
 # `validate_json` parses through pydantic-core rather than the stdlib, and types the result without a cast.
 _REQUEST_BODY_ADAPTER = TypeAdapter(dict[str, JsonValue])
 
+# What `httpx2.AsyncClient()` uses when no timeout is passed.
+_HTTPX_DEFAULT_TIMEOUT = 5.0
+
 
 @dataclass
 class RequestCapture:
@@ -817,6 +820,7 @@ class RequestCapture:
     hooks run inside `AsyncClient.send`, above the transport VCR patches, so they fire on replay too
     and see what is actually going out. Pass `capture.client` as a provider's `http_client` and
     snapshot a projection of `capture.body(...)` to pin the fields a test's claim rests on.
+    A provider that needs a longer deadline than httpx's default takes `capture.http_client(...)`.
     """
 
     paths: list[str] = field(default_factory=list[str])
@@ -826,6 +830,18 @@ class RequestCapture:
 
     def __post_init__(self) -> None:
         self.client = httpx2.AsyncClient(event_hooks={'request': [self._record]})
+
+    def http_client(self, *, timeout: float = _HTTPX_DEFAULT_TIMEOUT) -> httpx2.AsyncClient:
+        """`client`, with `timeout` as the read timeout, for a provider that reads it back out.
+
+        `GoogleProvider` reads the injected client's read timeout into google-genai's
+        `HttpOptions.timeout`, which becomes both the per-request httpx timeout and the
+        `X-Server-Timeout` deadline the API enforces. Gemini rejects a deadline under 10 seconds, and
+        httpx defaults to 5. The default here is httpx's own, so it leaves the client as `client` has
+        it; only a caller that needs a longer deadline passes a `timeout`.
+        """
+        self.client.timeout = timeout
+        return self.client
 
     async def _record(self, request: httpx2.Request) -> None:
         # Only the raw bytes are kept here: the hook runs on every request of every test that asks

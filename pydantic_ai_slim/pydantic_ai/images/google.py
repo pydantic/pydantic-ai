@@ -19,7 +19,7 @@ from pydantic_ai.models import check_allow_model_requests, download_item
 from pydantic_ai.providers import Provider, infer_provider
 
 from ._google_geometry import resolve_google_geometry
-from ._media_type import image_media_type_from_bytes
+from ._media_type import image_media_type_from_bytes, output_format_from_media_type
 from ._validation import warn_image_generation_settings
 from .base import ImageGenerationInput, ImageGenerationModel
 from .result import GeneratedImage, ImageGenerationResult
@@ -63,6 +63,9 @@ _CONTENT_FILTER_FINISH_REASONS = frozenset(
         'IMAGE_SAFETY',
         'IMAGE_PROHIBITED_CONTENT',
         'IMAGE_RECITATION',
+        # Model Armor is a Google Cloud screening layer; the SDK's `FinishReason` enum has no member
+        # for it, so `models/google.py::_FINISH_REASON_MAP` keys it by string here too.
+        'MODEL_ARMOR',
     }
 )
 """`FinishReason` values that indicate the model refused for content-policy reasons rather than a benign no-output."""
@@ -72,7 +75,7 @@ class GoogleImageGenerationSettings(ImageGenerationSettings, total=False):
     """Settings used for a Google image generation request.
 
     All fields from [`ImageGenerationSettings`][pydantic_ai.images.ImageGenerationSettings]
-    are supported on a best-effort basis, plus Google-specific settings prefixed with `google_`.
+    are supported, plus Google-specific settings prefixed with `google_`.
     """
 
     # ALL FIELDS MUST BE `google_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
@@ -312,14 +315,14 @@ class GoogleImageGenerationModel(ImageGenerationModel):
                 media_type = (
                     part.inline_data.mime_type or image_media_type_from_bytes(part.inline_data.data) or 'image/png'
                 )
-                provider_details: dict[str, object] | None = (
+                image_provider_details: dict[str, object] | None = (
                     {'has_thought_signature': True} if part.thought_signature else None
                 )
                 images.append(
                     GeneratedImage(
                         content=BinaryImage(data=part.inline_data.data, media_type=media_type),
-                        output_format=_output_format_from_media_type(media_type),
-                        provider_details=provider_details,
+                        output_format=output_format_from_media_type(media_type),
+                        provider_details=image_provider_details,
                     )
                 )
 
@@ -387,12 +390,6 @@ def _resolve_google_settings(settings: GoogleImageGenerationSettings, *, model_n
         ),
         conflicts=geometry.conflicts,
     )
-
-
-def _output_format_from_media_type(media_type: str) -> str | None:
-    if media_type.startswith('image/'):
-        return media_type.removeprefix('image/')
-    return None
 
 
 def _response_provider_details(response: GenerateContentResponse) -> dict[str, object]:

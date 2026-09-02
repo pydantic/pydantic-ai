@@ -2,6 +2,7 @@ from dataclasses import dataclass
 
 from pydantic_ai.exceptions import UserError
 
+from ._geometry import prefer_provider_value
 from .settings import (
     ImageDimensions,
     ImageGenerationAspectRatio,
@@ -18,13 +19,13 @@ _GEMINI_31_512_DIMENSIONS: dict[ImageGenerationAspectRatio, ImageDimensions] = {
     '5:4': (576, 464),
     '9:16': (384, 688),
     '16:9': (688, 384),
-    '21:9': (792, 168),
+    '21:9': (784, 336),
 }
 _GEMINI_31_STANDARD_RATIOS: tuple[ImageGenerationAspectRatio, ...] = tuple(_GEMINI_31_512_DIMENSIONS)
 # The extended ratios and 21:9 neither scale uniformly from the 512 tier nor match Google's published
 # table, so every tier is listed as observed against the live API.
 _GEMINI_31_EXPLICIT_DIMENSIONS: dict[ImageGenerationAspectRatio, dict[str | None, ImageDimensions]] = {
-    '21:9': {'512': (792, 168), '1K': (1584, 672), '2K': (3168, 1344), '4K': (6336, 2688)},
+    '21:9': {'512': (784, 336), '1K': (1584, 672), '2K': (3168, 1344), '4K': (6336, 2688)},
     '1:4': {'512': (256, 1024), '1K': (512, 2064), '2K': (1024, 4128), '4K': (2048, 8256)},
     '1:8': {'512': (176, 1456), '1K': (352, 2928), '2K': (704, 5856), '4K': (1408, 11712)},
     '4:1': {'512': (1024, 256), '1K': (2064, 512), '2K': (4128, 1024), '4K': (8256, 2048)},
@@ -93,20 +94,6 @@ class _GoogleGeometry:
     conflicts: list[str]
 
 
-def _prefer_google_value(
-    provider_value: str | None,
-    mapped_value: str | None,
-    *,
-    setting_name: str,
-    conflicts: list[str],
-) -> str | None:
-    if provider_value is None:
-        return mapped_value
-    if mapped_value is not None and provider_value != mapped_value:
-        conflicts.append(setting_name)
-    return provider_value
-
-
 def resolve_google_geometry(
     model_name: str,
     settings: ImageGenerationSettings,
@@ -122,14 +109,14 @@ def resolve_google_geometry(
 
     if dimensions := settings.get('dimensions'):
         mapped_aspect_ratio, mapped_size = resolve_google_dimensions(model_name, dimensions)
-        aspect_ratio = _prefer_google_value(
+        aspect_ratio = prefer_provider_value(
             aspect_ratio, mapped_aspect_ratio, setting_name='dimensions', conflicts=conflicts
         )
-        image_size = _prefer_google_value(image_size, mapped_size, setting_name='dimensions', conflicts=conflicts)
+        image_size = prefer_provider_value(image_size, mapped_size, setting_name='dimensions', conflicts=conflicts)
     elif common_aspect_ratio := settings.get('aspect_ratio'):
         # Forwarded whether or not the model's geometry profile lists the ratio: the profile records
         # the shapes we can name for `dimensions`, and the API is the authority on what it accepts.
-        aspect_ratio = _prefer_google_value(
+        aspect_ratio = prefer_provider_value(
             aspect_ratio, common_aspect_ratio, setting_name='aspect_ratio', conflicts=conflicts
         )
         profile = _google_image_geometry_profile(model_name)

@@ -3,7 +3,7 @@ from collections.abc import Sequence
 
 from pydantic_ai.exceptions import UserError
 
-from .settings import ImageDimensions, ImageGenerationSettings
+from .settings import ImageGenerationSettings
 
 
 def validate_image_generation_settings(settings: ImageGenerationSettings) -> None:
@@ -15,15 +15,10 @@ def validate_image_generation_settings(settings: ImageGenerationSettings) -> Non
     if settings.get('aspect_ratio') is not None:
         raise UserError('Image generation `dimensions` and `aspect_ratio` are mutually exclusive')
 
-    validate_image_dimensions(dimensions)
-
-
-def validate_image_dimensions(dimensions: ImageDimensions) -> None:
-    """Validate the common exact-dimensions value before provider-specific mapping."""
-    if not isinstance(dimensions, tuple):
-        raise UserError('Image generation `dimensions` must be a `(width, height)` tuple of positive integers')
-    if len(dimensions) != 2 or any(
-        not isinstance(value, int) or isinstance(value, bool) or value <= 0 for value in dimensions
+    if (
+        not isinstance(dimensions, tuple)
+        or len(dimensions) != 2
+        or any(not isinstance(value, int) or isinstance(value, bool) or value <= 0 for value in dimensions)
     ):
         raise UserError('Image generation `dimensions` must be a `(width, height)` tuple of positive integers')
 

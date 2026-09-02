@@ -81,6 +81,8 @@ google = ["google-genai>=2.18.0"]
 # `anthropic>=1` is built on `httpx2` and drops legacy HTTPX entirely; it also removes
 # `temperature`/`top_p`/`top_k` from `messages.create()`, which the model sends via `extra_body`.
 anthropic = ["anthropic>=1.0.0"]
+# `xai-sdk>=1.16.0` adds the `image_file_id`/`image_file_ids` arguments to `image.sample()` and
+# `image.sample_batch()`, which carry `UploadedFile` reference images to the image generation API.
 xai = ["xai-sdk>=1.16.0"]
 groq = ["groq>=0.25.0"]
 openrouter = ["openai>=3.0.0"]

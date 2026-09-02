@@ -16,3 +16,15 @@ def image_media_type_from_bytes(data: bytes) -> str | None:
     if data[:4] == b'RIFF' and data[8:12] == b'WEBP':
         return 'image/webp'
     return None
+
+
+def output_format_from_media_type(media_type: str) -> str | None:
+    """Derive [`GeneratedImage.output_format`][pydantic_ai.images.GeneratedImage] from a media type.
+
+    No provider reports a trustworthy per-image format — Google and xAI report none at all, and
+    OpenAI echoes the requested one (openai-node#1850) — so every adapter derives it from the media
+    type it settled on for the returned bytes.
+    """
+    if media_type.startswith('image/'):
+        return media_type.removeprefix('image/')
+    return None

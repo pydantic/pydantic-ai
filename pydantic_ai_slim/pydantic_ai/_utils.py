@@ -1076,3 +1076,15 @@ def format_inlined_text_file(text: str, *, media_type: str, identifier: str) -> 
             f'-----END FILE id="{identifier}"-----',
         ]
     )
+
+
+_TOKEN_SPLIT_PATTERN = re.compile(r'[\s",.:]+')
+
+
+def estimate_string_tokens(text: str) -> int:
+    """Roughly estimate the number of tokens in a string by splitting on whitespace and punctuation.
+
+    Shared by the test models, which report a plausible usage count without pulling in a tokenizer.
+    Blank text counts as one token, so a caller that can be handed one guards it itself.
+    """
+    return len(_TOKEN_SPLIT_PATTERN.split(text.strip()))
