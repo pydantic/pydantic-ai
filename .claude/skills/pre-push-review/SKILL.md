@@ -1,6 +1,7 @@
 ---
-description: Run a high-judgment local review of the current branch before pushing, both before a
-  PR exists and between PR iterations
+name: pre-push-review
+description: Run an independent local review of the current branch before a push when the PR's
+  three-call review budget permits
 allowed-tools:
   - Read
   - Glob
@@ -18,8 +19,8 @@ allowed-tools:
 
 # Pre-push Review
 
-Use the strongest locally available reviewer to catch problems while they are still cheap
-to fix. Run this before the first push and again before every later push to an existing PR.
+Use a fresh reviewer to catch problems while they are still cheap to fix. Run this before the
+first push. Run it before a later push only when the caller's three-review budget permits.
 
 This is the local counterpart to `douwebot`: a high-judgment standards review paid for by
 the developer's model subscription. It is independent of the automatic `CI Review`, which

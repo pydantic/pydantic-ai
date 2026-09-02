@@ -54,8 +54,16 @@ applied automatically — don't set them.
 ## Before you push
 - Commit the exact state you intend to push. Leave nothing staged, unstaged or uncommitted unless
   the user's instructions override this.
-- Run `pre-push-review`. Address every finding, commit the fixes, and repeat the review until it
-  returns no findings. This applies before the first PR push and between every later PR iteration.
+- Run `pre-push-review` in a fresh subagent before the first push in the current task.
+- In Claude Code, set the pre-push reviewer's model to `opus`.
+- In Codex, dispatch the Terra-pinned `reviewer` agent.
+- Do not use Fable or Sol for pre-push review. Other harnesses use their normal reviewer selection.
+- Dispatch `pre-push-review` at most three times per PR during one task. Count every dispatch,
+  including repeated reviews after findings.
+- Count only `pre-push-review` dispatches. Do not count the final metadata review.
+- Address every finding and commit the fixes. Repeat the review while the three-call budget remains.
+- After the third review, fix its findings and run the relevant local checks. Do not dispatch a
+  fourth review; continue with the push, CI, and hosted review.
 - Never force-push an open PR branch. Push follow-up commits so previous reviews remain valid;
   maintainers can squash them when merging.
 - Attempt the push. If it fails, read the real error — do not preemptively decide you lack
