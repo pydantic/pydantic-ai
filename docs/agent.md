@@ -433,7 +433,7 @@ _(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())
 
 You can retrieve usage statistics (tokens, requests, etc.) at any time from the [`AgentRun`][pydantic_ai.agent.AgentRun] object via `agent_run.usage`. This property returns a [`RunUsage`][pydantic_ai.usage.RunUsage] object containing the usage data.
 
-[`RunUsage.cost`][pydantic_ai.usage.RunUsage.cost] additionally holds a best-effort estimate of the run's total cost in USD, calculated from each request's usage with [genai-prices](https://github.com/pydantic/genai-prices). Requests to models or providers that genai-prices doesn't have pricing data for don't contribute to the total.
+[`RunUsage.cost`][pydantic_ai.usage.RunUsage.cost] additionally holds a best-effort estimate of the run's total cost in USD, calculated from each request's usage with [genai-prices](https://github.com/pydantic/genai-prices). Requests to models or providers that genai-prices doesn't have pricing data for don't contribute to the total. See [keeping model prices up to date](#keeping-model-prices-up-to-date) for how to price models released after your install.
 
 Once the run finishes, `agent_run.result` becomes an [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] object containing the final output (and related metadata).
 
@@ -848,9 +848,11 @@ Cancellation is **run-scoped**: `cancel()` cancels the run its `RunContext` belo
 
 ### Additional Configuration
 
-#### Updating model prices
+#### Keeping model prices up to date
 
-Price calculations use the data bundled with [`genai-prices`](https://github.com/pydantic/genai-prices/blob/main/packages/python/README.md#updateprices). To refresh that data hourly in a background thread, call [`update_in_background()`][pydantic_ai.prices.update_in_background] at application startup:
+Pydantic AI ships with a list of model prices. That list is only refreshed with each release, so a model that came out after you installed Pydantic AI has no price and its cost is `None` until you upgrade.
+
+To pick up new prices as they're published, call [`update_in_background()`][pydantic_ai.prices.update_in_background] once when your app starts:
 
 ```python {test="skip"}
 from pydantic_ai import prices
@@ -858,7 +860,33 @@ from pydantic_ai import prices
 prices.update_in_background()
 ```
 
-This helper retains shared ownership of the updater for the process lifetime. Do not call it before `os.fork()`; call it for the first time in each final child process because it cannot recover updater state inherited from a parent. For configuration, waiting, or shutdown, use [`genai_prices.UpdatePrices`](https://github.com/pydantic/genai-prices/blob/main/packages/python/README.md#updateprices) directly.
+This downloads the latest price list right away and again every hour, in the background, so your code never waits for it. If a download fails, the last good list stays in use.
+
+The call returns an updater you can hold on to. Use it to wait for the first download before your first run, or to stop updating when your app shuts down:
+
+```python {test="skip"}
+from pydantic_ai import prices
+
+updater = prices.update_in_background()
+updater.wait()  # block until the first download has finished
+
+# ... run your agents ...
+
+updater.stop()  # stop updating, e.g. when your app shuts down
+```
+
+It also works as a context manager, which is handy in a web framework's startup hook:
+
+```python {test="skip"}
+from pydantic_ai import prices
+
+with prices.update_in_background():
+    ...  # your app runs here; updating stops on exit
+```
+
+If your app runs several worker processes, call it in each worker after it starts, not before the workers are forked.
+
+To download from your own URL or on a different schedule, use [`genai_prices.UpdatePrices`](https://github.com/pydantic/genai-prices/blob/main/packages/python/README.md#updateprices) directly; it shares one background download with `update_in_background()`.
 
 #### Usage Limits
 
@@ -1018,7 +1046,7 @@ except UsageLimitExceeded as e:
 Like `output_tokens_limit`, this is checked after each response, since a response's output cost isn't known until it arrives. Setting `count_tokens_before_request=True` additionally prices the counted input tokens and rejects the request up front when that lower bound alone exceeds the limit.
 
 !!! note
-    Cost is best-effort: it's `None` for models and providers [genai-prices](https://github.com/pydantic/genai-prices) has no pricing data for. With a [`cost_limit`][pydantic_ai.usage.UsageLimits.cost_limit], a run that could not be priced at all emits [`CostNotFoundWarning`][pydantic_ai.exceptions.CostNotFoundWarning] rather than being silently unconstrained; an unexpected pricing failure emits [`CostCalculationFailedWarning`][pydantic_ai.exceptions.CostCalculationFailedWarning]. Don't rely on `cost_limit` as a hard billing guarantee — pair it with [`request_limit`][pydantic_ai.usage.UsageLimits.request_limit] or your provider's own spend controls.
+    Cost is best-effort: it's `None` for models and providers [genai-prices](https://github.com/pydantic/genai-prices) has no pricing data for, including models released after your install unless you [keep prices up to date](#keeping-model-prices-up-to-date). With a [`cost_limit`][pydantic_ai.usage.UsageLimits.cost_limit], a run that could not be priced at all emits [`CostNotFoundWarning`][pydantic_ai.exceptions.CostNotFoundWarning] rather than being silently unconstrained; an unexpected pricing failure emits [`CostCalculationFailedWarning`][pydantic_ai.exceptions.CostCalculationFailedWarning]. Don't rely on `cost_limit` as a hard billing guarantee — pair it with [`request_limit`][pydantic_ai.usage.UsageLimits.request_limit] or your provider's own spend controls.
 
 #### Model (Run) Settings
 

@@ -1,43 +1,39 @@
-"""Keep model pricing data fresh by fetching the latest `genai-prices` data in the background."""
+"""Keep model prices up to date by downloading the latest price list in the background."""
 
 from __future__ import annotations
 
-from threading import Lock
-
-from genai_prices import UpdatePrices as _UpdatePrices
+from genai_prices import UpdatePrices
 
 __all__ = ('update_in_background',)
 
-_updater: _UpdatePrices | None = None
-_updater_lock = Lock()
 
+def update_in_background() -> UpdatePrices:
+    """Download the latest model prices now, and again every hour, in the background.
 
-def update_in_background() -> None:
-    """Start fetching the latest model pricing data in the background.
+    Pydantic AI ships with a price list that's only refreshed with each release, so a model that
+    came out after your install has no cost until you upgrade. Call this once when your app
+    starts to pick up new prices as they're published.
 
-    The updater is retained as a shared owner for the lifetime of the process, so repeated calls
-    are safe and other libraries can independently acquire compatible ownership.
-    Do not call this before `os.fork()`. Call it for the first time in each final child process;
-    this helper cannot recover updater state inherited from a parent process.
+    Downloads never block your code. If one fails, the last good price list stays in use and the
+    failure is logged to the `genai-prices` logger.
 
-    This is a fire-and-forget convenience wrapper. For shutdown, configuration, or waiting for
-    the first fetch, use
-    [`genai_prices.UpdatePrices`](https://github.com/pydantic/genai-prices/blob/main/packages/python/README.md#updateprices)
-    directly
-    as a context manager or via its `start()`/`stop()` methods.
+    Returns the updater, which you can use to wait for the first download or to stop updating:
 
-    Example:
     ```python {test="skip"}
     from pydantic_ai import prices
 
-    prices.update_in_background()
+    updater = prices.update_in_background()
+    updater.wait()  # block until the first download has finished
+    updater.stop()  # stop updating, e.g. when your app shuts down
     ```
+
+    It also works as a context manager, which stops updating on exit. If your app runs several
+    worker processes, call this in each worker after it starts, not before the workers are forked.
+
+    To download from your own URL or on a different schedule, use
+    [`genai_prices.UpdatePrices`](https://github.com/pydantic/genai-prices/blob/main/packages/python/README.md#updateprices)
+    directly. It shares one background download with this function.
     """
-    global _updater
-    with _updater_lock:
-        if _updater is None:
-            updater = _UpdatePrices()
-            updater.start()
-            # This helper deliberately has no stop API; retaining the object keeps its shared
-            # ownership claim alive for the process lifetime.
-            _updater = updater
+    updater = UpdatePrices()
+    updater.start()
+    return updater
