@@ -289,6 +289,11 @@ _FAST_MODE_UNSUPPORTED_CLIENTS = (
     AsyncAnthropicFoundry,
     AsyncAnthropicVertex,
 )
+# `_THINKING_BINDING_UNSUPPORTED_CLIENTS` is a client-class boundary, not a base-URL one: a plain
+# `AsyncAnthropic` carrying a proxy or Pydantic AI Gateway base URL keeps the flag, because gating on the
+# host would strip the recovery from those users. Keeping it costs them nothing — the beta follows
+# `thinking.block_binding`, which is unset by default, and `_is_stale_thinking_block_error` retries only on
+# a 400 whose body carries Anthropic's own `The block is bound to a different conversation`.
 _THINKING_BINDING_UNSUPPORTED_CLIENTS = (
     AsyncAnthropicBedrock,
     AsyncAnthropicBedrockMantle,

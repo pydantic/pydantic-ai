@@ -14,6 +14,7 @@ from pydantic_ai.models.instrumented import InstrumentedModel
 
 from ..._inline_snapshot import snapshot
 from ...conftest import IsInt, RequestCapture, message, try_import
+from ..conftest import AnthropicModelFactory
 from ..test_anthropic import MockAnthropic, completion_message, get_mock_chat_completion_kwargs, mock_anthropic_client
 
 if TYPE_CHECKING:
@@ -641,7 +642,7 @@ async def stale_thinking_block_history(model: AnthropicModel) -> list[ModelMessa
 @_STALE_THINKING_BLOCK_PREFIX_CHANGE
 @pytest.mark.vcr()
 async def test_anthropic_fable_5_1_replays_a_stale_thinking_block_on_a_legacy_account(
-    allow_model_requests: None, anthropic_api_key: str
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
 ):
     """Pins the account-age carve-out this PR's default depends on.
 
@@ -651,9 +652,14 @@ async def test_anthropic_fable_5_1_replays_a_stale_thinking_block_on_a_legacy_ac
     the legacy account this cassette was recorded against the replay succeeds untouched: no 400, and
     no `input_transformations`, meaning the model still saw the reasoning.
 
+    The response half alone would not pin that: the default matchers ignore the request body, so the
+    recorded absence of `input_transformations` replays even if the default started asking for the
+    drop. Setting nothing is the claim, so the outbound `thinking` and the beta header are what the
+    assertion has to reach.
+
     https://platform.claude.com/docs/en/models/fable-5-1/whats-new-fable-5-1#editing-earlier-turns-invalidates-thinking-blocks
     """
-    m = AnthropicModel('claude-fable-5-1', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = anthropic_model('claude-fable-5-1', capture=True)
     history = await stale_thinking_block_history(m)
 
     second = Agent(m, instructions='You are a helpful assistant. Answer briefly. Today is 2026-09-01.')
@@ -661,12 +667,14 @@ async def test_anthropic_fable_5_1_replays_a_stale_thinking_block_on_a_legacy_ac
 
     response = message(replayed.all_messages(), ModelResponse, index=-1)
     assert response.provider_details == snapshot({'finish_reason': 'end_turn'})
+    assert 'thinking' not in request_capture.bodies('/v1/messages')[-1]
+    assert 'thinking-binding-controls-2026-08-01' not in request_capture.headers[-1].get('anthropic-beta', '')
 
 
 @_STALE_THINKING_BLOCK_PREFIX_CHANGE
 @pytest.mark.vcr()
 async def test_anthropic_fable_5_1_drops_a_stale_thinking_block(
-    allow_model_requests: None, anthropic_api_key: str, request_capture: RequestCapture
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
 ):
     """Asking for `drop_block` drops the stale block and lets the run continue.
 
@@ -677,9 +685,7 @@ async def test_anthropic_fable_5_1_drops_a_stale_thinking_block(
     so the recorded `thinking_dropped` replays even if the setting stopped reaching the wire. The
     outbound body and the beta header are what tie the transformation to what we actually sent.
     """
-    m = AnthropicModel(
-        'claude-fable-5-1', provider=AnthropicProvider(api_key=anthropic_api_key, http_client=request_capture.client)
-    )
+    m = anthropic_model('claude-fable-5-1', capture=True)
     history = await stale_thinking_block_history(m)
 
     settings = AnthropicModelSettings(
@@ -709,14 +715,16 @@ async def test_anthropic_fable_5_1_drops_a_stale_thinking_block(
 @_STALE_THINKING_BLOCK_PREFIX_CHANGE
 @pytest.mark.vcr()
 async def test_anthropic_fable_5_1_drops_a_stale_thinking_block_streamed(
-    allow_model_requests: None, anthropic_api_key: str
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
 ):
     """The same drop over a stream, where Anthropic reports it on `message_start`.
 
     Recorded rather than mocked because the event carrying `input_transformations` is the whole
-    point: a `message_delta` never carries one on a live stream.
+    point: a `message_delta` never carries one on a live stream. The outbound body and beta header
+    are asserted for the same reason as in the non-streamed sibling: without them the recorded
+    `thinking_dropped` replays even if the setting stopped reaching the wire.
     """
-    m = AnthropicModel('claude-fable-5-1', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = anthropic_model('claude-fable-5-1', capture=True)
     history = await stale_thinking_block_history(m)
 
     settings = AnthropicModelSettings(
@@ -737,3 +745,8 @@ async def test_anthropic_fable_5_1_drops_a_stale_thinking_block_streamed(
             ],
         }
     )
+    dropping_request = request_capture.bodies('/v1/messages')[-1]
+    assert dropping_request['thinking'] == snapshot(
+        {'type': 'adaptive', 'block_binding': {'prefix_mismatch_behavior': 'drop_block'}}
+    )
+    assert 'thinking-binding-controls-2026-08-01' in request_capture.headers[-1]['anthropic-beta']
