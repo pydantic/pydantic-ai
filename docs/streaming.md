@@ -285,6 +285,8 @@ Events describing the run itself, and events your own code emits:
 
 `AgentRunResultEvent` is not an `AgentStreamEvent`: it is appended by `run_stream_events()` so that one loop can see both the events and the result, which is why handlers and node streams never receive it.
 
+To annotate something narrower than the full union, the members are also grouped: [`ModelResponseStreamEvent`][pydantic_ai.messages.ModelResponseStreamEvent] covers the four model-response events, [`HandleResponseEvent`][pydantic_ai.messages.HandleResponseEvent] the seven tool events, and [`RealtimeSessionEvent`][pydantic_ai.messages.RealtimeSessionEvent] the realtime ones.
+
 During a [realtime session](realtime/overview.md), the same stream additionally carries the realtime-only [`RealtimeEvent`][pydantic_ai.realtime.RealtimeEvent] members that report speech boundaries, interruptions, reconnects, and session errors. See [Realtime events](realtime/events.md) for that vocabulary.
 
 ### Streaming events with the final output {#streaming-events-and-final-output}
@@ -721,6 +723,102 @@ Event names share one application-wide registry, and defining a second class wit
 
 UI adapters get the frontend payload by calling [`CustomEvent.to_payload()`][pydantic_ai.messages.CustomEvent.to_payload], which defaults to the event's own fields; override it when the UI should receive a different payload.
 
+## Cancelling streams
+
+Sometimes you need to stop a streaming response before it completes: a user clicks "stop generating" in a chat UI, you've received enough data to make a decision, or you want to avoid receiving more tokens. [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] and [`iter()`][pydantic_ai.agent.Agent.iter] support explicit cancellation by closing the underlying model stream. [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] is an async context manager, so cleanup runs deterministically when you stop consuming events — leaving the `async with` block cancels the background run task. To stop a non-streaming run, see [Cancelling a Run](agent.md#cancelling-a-run); to bound how long a single step may take, see [Timeouts](timeouts.md).
+
+!!! note "Model support"
+    The Google, xAI, and Hugging Face SDKs expose streaming only as async iterators, without documented per-stream transport handles. Pydantic AI safely interrupts its active iterator pulls, but the SDKs do not guarantee that closing the local iterator immediately stops remote generation or billing. See the [Google](models/google.md#streaming-cancellation), [xAI](models/xai.md#streaming-cancellation), and [Hugging Face](models/huggingface.md#streaming-cancellation) provider notes.
+
+### Cleaning up `run_stream_events`
+
+[`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] is an async context manager that yields an async iterator over events:
+
+```python {title="stream_cancel_stream_events.py"}
+from pydantic_ai import Agent, FinalResultEvent, PartStartEvent
+
+agent = Agent('openai:gpt-5.2')
+
+
+async def main():
+    async with agent.run_stream_events('Write a long essay about Python') as events:
+        async for event in events:
+            if isinstance(event, PartStartEvent):
+                print(f'Started: {event.part!r}')
+                #> Started: TextPart(content='Python is a ')
+            elif isinstance(event, FinalResultEvent):
+                break  # (1)!
+```
+
+1. Breaking out of the loop leaves the `async with` block, which cancels the background run task and closes the HTTP connection.
+
+_(This example is complete, it can be run "as is" -- you'll need to add `asyncio.run(main())` to run `main`)_
+
+The yielded [`AgentRunEvents`][pydantic_ai.agent.AgentRunEvents] handle exposes `cancel()` to cancel the whole run (see [Cancelling a Run](agent.md#cancelling-a-run)); continued iteration then raises [`RunCancelled`][pydantic_ai.exceptions.RunCancelled]. It also provides `all_messages()`, `new_messages()`, `usage`, and the completed `result`. From inside a tool or `event_stream_handler`, use [`RunContext.cancel()`][pydantic_ai.tools.RunContext.cancel] instead. As a response-level alternative, [`StreamedRunResult.cancel()`][pydantic_ai.result.StreamedRunResult.cancel] from `run_stream()` stops only the current model response.
+
+### Cancelling `run_stream`
+
+Call `cancel()` on the [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult] to cancel the stream:
+
+```python {title="stream_cancel_stream.py"}
+from pydantic_ai import Agent
+
+agent = Agent('openai:gpt-5.2')
+
+
+async def main():
+    async with agent.run_stream('Write a long essay about Python') as result:
+        text = ''
+        async for chunk in result.stream_text(delta=True):
+            text += chunk
+            if len(text) > 100:  # (1)!
+                await result.cancel()  # (2)!
+                break
+        print(result.cancelled)  # (3)!
+        #> True
+        print(result.response.state == 'interrupted')  # (4)!
+        #> True
+```
+
+1. Check a condition during streaming, for example whether enough text has been received.
+2. `cancel()` tells the model provider to stop generating tokens and closes the HTTP connection when the model integration supports it.
+3. The `cancelled` property reflects the cancellation state.
+4. The final [`ModelResponse`][pydantic_ai.messages.ModelResponse] is marked with `state='interrupted'` so that downstream code can identify incomplete responses.
+
+_(This example is complete, it can be run "as is" -- you'll need to add `asyncio.run(main())` to run `main`)_
+
+If you `break` out of `stream_text()` and then leave the surrounding `async with` block, the stream is cleaned up as the context exits. Use `cancel()` when you want to stop generation immediately instead of only stopping local consumption.
+
+!!! warning "Interrupted tool calls"
+    Cancelling or breaking out of a model response stream can leave the final [`ModelResponse`][pydantic_ai.messages.ModelResponse] with incomplete tool-call arguments. Pydantic AI records the response with `state='interrupted'`, and when the history is reused in another run the partial tool calls are [repaired automatically](message-history.md#making-histories-provider-valid). If you are controlling the graph with [`agent.iter()`][pydantic_ai.agent.Agent.iter], call [`agent_run.cancel()`][pydantic_ai.run.AgentRun.cancel] to stop the whole run as well, or check `response.state == 'interrupted'` before allowing the run to continue into tool execution.
+
+### Cancelling with `iter`
+
+When using [`agent.iter()`][pydantic_ai.agent.Agent.iter] for fine-grained control over the agent graph, you can cancel the [`AgentStream`][pydantic_ai.result.AgentStream] inside a `ModelRequestNode.stream()` context:
+
+```python {title="stream_cancel_iter.py"}
+from pydantic_ai import Agent, FinalResultEvent
+
+agent = Agent('openai:gpt-5.2')
+
+
+async def main():
+    async with agent.iter('Write a long essay about Python') as run:
+        async for node in run:
+            if Agent.is_model_request_node(node):
+                async with node.stream(run.ctx) as stream:
+                    async for event in stream:
+                        if isinstance(event, FinalResultEvent):
+                            await stream.cancel()  # (1)!
+                            break
+```
+
+1. `AgentStream.cancel()` cancels the stream at the model request level.
+
+_(This example is complete, it can be run "as is" -- you'll need to add `asyncio.run(main())` to run `main`)_
+
+To abort the run itself rather than just the current response -- and for how cancellation is recorded in message history -- see [Cancelling a Run](agent.md#cancelling-a-run).
+
 ## Streaming elsewhere
 
 The event stream is also what several other features are built on:
@@ -730,7 +828,7 @@ The event stream is also what several other features are built on:
 - [Durable execution](durable_execution/overview.md) streams events across replays, with per-backend restrictions on where you can emit.
 - The [`ProcessEventStream`](capabilities/process-event-stream.md) capability attaches a handler to an agent instead of passing one per run, and [event hooks](hooks.md#event-stream-hooks) observe or replace individual events.
 - [Capability events](capabilities/overview.md#capability-events) are how a reusable capability reports what it did.
-- [Cancelling streams](output.md#cancelling-streams) covers stopping a stream early, and [Cancelling a run](agent.md#cancelling-a-run) covers aborting the whole run.
+- [Cancelling a run](agent.md#cancelling-a-run) covers aborting a whole run, streamed or not, and [Timeouts](timeouts.md) bounds how long a single step may take.
 - [`pydantic_ai.messages`](api/messages.md) is the API reference for every event class.
 
 ## Examples

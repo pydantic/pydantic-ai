@@ -37,6 +37,8 @@
 - In docs examples, demonstrate realistic use cases that show *why* the feature matters — prevents misleading users with toy scenarios or debugging code that obscure actual value — Well-crafted examples help users understand when to apply features and avoid implementing unnecessary patterns for problems solvable with simpler approaches
 <!-- rule:54 -->
 - Use fence-level `{test="skip" lint="skip"}` instead of inline suppressions in doc examples — keeps code clean and reader-focused — Documentation code should model best practices; fence-level skip directives separate tooling concerns from the example itself, while inline `# noqa` or `# type: ignore` pollutes pedagogical code with implementation details
+
+- Don't point `requires=` at a doc example that defines a [`CustomEvent`][pydantic_ai.messages.CustomEvent] or [`CapabilityEvent`][pydantic_ai.messages.CapabilityEvent] subclass; give the dependent example its own event class instead — `tests/test_examples.py` re-executes the required example in the importing example's namespace, while event names and kinds are registered process-globally, so the class collides with its own earlier registration — The resulting duplicate-name `TypeError` is reported against the *required* example's line rather than the one that added `requires=`, so it reads like an unrelated regression in an example you didn't touch
 <!-- rule:151 -->
 - Cross-reference alternatives and explain trade-offs when documenting overlapping features — Prevents users from missing better-suited options or implementing duplicate functionality when multiple approaches exist (e.g., `UsageLimits` vs rate-limiting, provider-specific implementations)
 <!-- rule:1112 -->
