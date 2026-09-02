@@ -3,7 +3,7 @@ import json
 import re
 import sys
 from collections import defaultdict
-from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager, nullcontext
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
@@ -74,6 +74,7 @@ from pydantic_ai.capabilities import (
     RaiseContentFilterError,
     WrapRunHandler,
 )
+from pydantic_ai.durable_exec._base import construction_toolsets
 from pydantic_ai.exceptions import ContentFilterError
 from pydantic_ai.messages import AgentStreamEvent, FunctionToolResultEvent, ModelResponseStreamEvent
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
@@ -9436,8 +9437,68 @@ def test_override_toolsets():
     assert result.output == snapshot('{"baz":"Hello from baz"}')
 
 
-def test_registered_toolsets_ignores_overrides():
-    """`_registered_toolsets` reports what the agent was built with, not later additions.
+class _ToolsetOnlyAgent(AbstractAgent[None, str]):
+    """A third-party `AbstractAgent`: it has toolsets, and no way to add more after construction.
+
+    `construction_toolsets` has to answer for agents like this too, and the answer is simply their
+    `toolsets` -- there is nothing later to subtract. Written out here rather than mocked so the
+    claim is about a real `AbstractAgent` subclass.
+    """
+
+    def __init__(self, toolsets: Sequence[AbstractToolset[None]]) -> None:
+        self._toolsets = toolsets
+
+    @property
+    def toolsets(self) -> Sequence[AbstractToolset[None]]:
+        return self._toolsets
+
+    @property
+    def model(self) -> Any:
+        raise NotImplementedError
+
+    @property
+    def name(self) -> Any:
+        raise NotImplementedError
+
+    @name.setter
+    def name(self, value: Any) -> None:
+        raise NotImplementedError
+
+    @property
+    def description(self) -> Any:
+        raise NotImplementedError
+
+    @description.setter
+    def description(self, value: Any) -> None:
+        raise NotImplementedError
+
+    @property
+    def deps_type(self) -> type:
+        return type(None)
+
+    @property
+    def output_type(self) -> OutputSpec[str]:
+        return str
+
+    @property
+    def event_stream_handler(self) -> Any:
+        raise NotImplementedError
+
+    def iter(self, *args: Any, **kwargs: Any) -> Any:
+        raise NotImplementedError
+
+    def override(self, **kwargs: Any) -> Any:
+        raise NotImplementedError
+
+    async def __aenter__(self) -> AbstractAgent[None, str]:
+        raise NotImplementedError
+
+    async def __aexit__(self, *args: Any) -> bool | None:
+        raise NotImplementedError
+
+
+def test_construction_toolsets_ignores_overrides():
+    """`_construction_toolsets` reports what the agent was built with, not later additions.
 
     Durable execution reads it to tell construction-time toolsets — wrapped in activities/steps/tasks
     when the capability bound — from ones that arrive later and were never wrapped. `toolsets`
@@ -9453,10 +9514,10 @@ def test_registered_toolsets_ignores_overrides():
     with agent.override(toolsets=[overriding], tools=[lambda: 'hi']):
         # The agent's own function toolset leads both lists; only the user toolsets differ.
         assert list(agent.toolsets)[1:] == [overriding]
-        assert list(agent._registered_toolsets)[1:] == [registered]  # pyright: ignore[reportPrivateUsage]
-        assert agent.toolsets[0] is not agent._registered_toolsets[0]  # pyright: ignore[reportPrivateUsage]
+        assert list(agent._construction_toolsets)[1:] == [registered]  # pyright: ignore[reportPrivateUsage]
+        assert agent.toolsets[0] is not agent._construction_toolsets[0]  # pyright: ignore[reportPrivateUsage]
 
-    assert list(agent._registered_toolsets) == list(agent.toolsets)  # pyright: ignore[reportPrivateUsage]
+    assert list(agent._construction_toolsets) == list(agent.toolsets)  # pyright: ignore[reportPrivateUsage]
 
     @agent.toolset(id='decorated')
     def decorated_toolset(ctx: RunContext[Any]) -> FunctionToolset[Any]:
@@ -9464,19 +9525,21 @@ def test_registered_toolsets_ignores_overrides():
 
     assert isinstance(decorated_toolset(RunContext(deps=None, model=TestModel(), usage=RunUsage())), FunctionToolset)
     assert [toolset.id for toolset in agent.toolsets] == ['<agent>', 'registered', 'decorated']
-    assert [toolset.id for toolset in agent._registered_toolsets] == [  # pyright: ignore[reportPrivateUsage]
+    assert [toolset.id for toolset in agent._construction_toolsets] == [  # pyright: ignore[reportPrivateUsage]
         '<agent>',
         'registered',
     ]
 
-    # A wrapper reports its wrapped agent's construction-time toolsets, even during an override.
+    # `construction_toolsets` unwraps to the agent underneath, even during an override.
     wrapper = WrapperAgent(agent)
     with agent.override(toolsets=[overriding]):
         assert list(wrapper.toolsets)[1:] == [overriding]
-        assert list(wrapper._registered_toolsets)[1:] == [registered]  # pyright: ignore[reportPrivateUsage]
+        assert [toolset.id for toolset in construction_toolsets(wrapper)] == ['<agent>', 'registered']
 
-    # The `AbstractAgent` default remains appropriate for subclasses whose `toolsets` never includes later additions.
-    assert list(super(WrapperAgent, wrapper)._registered_toolsets) == list(wrapper.toolsets)  # pyright: ignore[reportPrivateUsage]
+    # Any other `AbstractAgent` has nothing to subtract -- it supports neither overrides nor
+    # decorator registration -- so its own `toolsets` is already the answer. That is why this is a
+    # function rather than a hook every implementation would have to answer.
+    assert list(construction_toolsets(_ToolsetOnlyAgent([registered]))) == [registered]
 
 
 def test_override_tools():

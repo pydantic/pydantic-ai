@@ -12,10 +12,9 @@ from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.toolsets.prepared import PreparedToolset
 
+from ._merge import merge_capability_fields, merge_field_values
 from .abstract import (
     AbstractCapability,
-    _merge_field_values,  # pyright: ignore[reportPrivateUsage]
-    merge_capability_fields,
 )
 
 
@@ -78,30 +77,35 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
         self.local = local
         self.__post_init__()
 
-    _declared: dict[str, Any] | None = field(init=False, repr=False, compare=False, default=None)
-    """What the caller passed as `native`/`local`, before `__post_init__` resolved it.
+    _declared_native: AgentNativeTool[AgentDepsT] | bool | None = field(
+        init=False, repr=False, compare=False, default=None
+    )
+    """What the caller passed as `native`, before `__post_init__` resolved it.
 
-    Resolution is destructive: `native=True` becomes a tool instance and `local=None` becomes the
-    subclass default, so afterwards there is no way to tell configuration the caller stated from
-    configuration this class derived. `combine` needs that distinction to rebuild the derived halves
-    from merged configuration, so the declarations are kept here. Excluded from `compare` because it
-    restates fields that are already compared.
+    Resolution is destructive: `native=True` becomes a tool instance, so afterwards there is no way
+    to tell configuration the caller stated from configuration this class derived. `combine` needs
+    that distinction to rebuild the derived half from merged configuration. Excluded from `compare`
+    because it restates a field that is already compared.
     """
 
-    def declared(self, name: str) -> Any:
-        """What the caller passed as `native` or `local`, before `__post_init__` resolved it."""
-        declared: dict[str, Any] | None = getattr(self, '_declared', None)
-        return (declared or {}).get(name)
+    _declared_local: str | Tool[AgentDepsT] | Callable[..., Any] | AbstractToolset[AgentDepsT] | bool | None = field(
+        init=False, repr=False, compare=False, default=None
+    )
+    """What the caller passed as `local`, before `__post_init__` resolved it. See `_declared_native`."""
+
+    _declarations_captured: bool = field(init=False, repr=False, compare=False, default=False)
+    """Whether the two fields above hold what the caller stated, rather than the field defaults."""
 
     def __post_init__(self) -> None:
-        # Set on the instance rather than relying on the field default: the subclasses declare their
-        # own `__init__`, which never runs the dataclass field initializers.
-        declared: dict[str, Any] | None = getattr(self, '_declared', None)
-        if declared is None:
-            declared = {}
-            object.__setattr__(self, '_declared', declared)
-        declared.setdefault('native', self.native)
-        declared.setdefault('local', self.local)
+        # Assigned through `object.__setattr__` rather than relying on the field defaults: the
+        # subclasses declare their own `__init__`, which never runs the dataclass field
+        # initializers. Capture happens once, so re-running `__post_init__` on an instance whose
+        # `native`/`local` are already resolved -- which `combine` does -- cannot overwrite the
+        # declarations with the resolved values.
+        if not self._declarations_captured:
+            object.__setattr__(self, '_declared_native', self.native)
+            object.__setattr__(self, '_declared_local', self.local)
+            object.__setattr__(self, '_declarations_captured', True)
         if self.native is False and self.local is False:
             raise UserError(f'{type(self).__name__}: both `native` and `local` cannot be False')
 
@@ -247,10 +251,13 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
         assert len(nol_capabilities) == len(capabilities)
         merged = merge_capability_fields(capabilities)
         assert isinstance(merged, cls)
-        declared = {
-            key: _merge_field_values([capability.declared(key) for capability in nol_capabilities])
-            for key in ('native', 'local')
-        }
-        merged = replace_no_init(merged, _declared={}, **declared)
+        # `_declarations_captured=False` so `__post_init__` re-reads the merged declarations below
+        # rather than keeping whichever instance `replace_no_init` copied from.
+        merged = replace_no_init(
+            merged,
+            _declarations_captured=False,
+            native=merge_field_values([capability._declared_native for capability in nol_capabilities]),
+            local=merge_field_values([capability._declared_local for capability in nol_capabilities]),
+        )
         merged.__post_init__()
         return merged

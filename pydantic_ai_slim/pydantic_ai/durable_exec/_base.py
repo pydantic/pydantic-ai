@@ -120,6 +120,30 @@ from ._utils import DurableModel, StreamedActivityResult, capture_event_stream, 
 _T = TypeVar('_T')
 
 
+def construction_toolsets(agent: AbstractAgent[AgentDepsT, Any]) -> Sequence[AbstractToolset[AgentDepsT]]:
+    """The toolsets `agent` was built with, ignoring anything added after construction.
+
+    `AbstractAgent.toolsets` is the wrong list to ask for here: it reflects an active
+    `override(toolsets=...)` and includes toolsets a `@agent.toolset` decorator registered after
+    construction. Those would land in the known-good set, and the runtime-toolset guard would wave
+    through the very thing it exists to catch -- toolsets that arrive after binding and were
+    therefore never wrapped for the durable engine.
+
+    Only `Agent` can tell the two lists apart, and only durable execution needs them told apart, so
+    the question is asked here rather than widened into a hook that every `AbstractAgent`
+    implementation would have to answer. An agent that supports no post-construction additions has
+    nothing to subtract, which is what its `toolsets` already reports.
+    """
+    from pydantic_ai.agent import Agent
+    from pydantic_ai.agent.wrapper import WrapperAgent
+
+    if isinstance(agent, WrapperAgent):
+        return construction_toolsets(agent.wrapped)
+    if isinstance(agent, Agent):
+        return agent._construction_toolsets  # pyright: ignore[reportPrivateUsage]
+    return agent.toolsets
+
+
 @runtime_checkable
 class _RestrictedRunContext(Protocol):
     def _expose_field(self, name: str) -> None: ...
@@ -534,11 +558,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         construction_leaves: set[int] = set()
         # `for_agent` always binds before a run.
         if self._agent is not None:  # pragma: no branch
-            # `_registered_toolsets`, not `toolsets`: the latter returns the *overridden* list while
-            # an `override(toolsets=...)` is in scope, so the overridden toolsets would land in the
-            # known-good set and this guard would wave through the very thing it exists to catch —
-            # toolsets that arrive after binding and therefore were never wrapped.
-            for agent_toolset in self._agent._registered_toolsets:  # pyright: ignore[reportPrivateUsage]
+            for agent_toolset in construction_toolsets(self._agent):
                 agent_toolset.apply(lambda leaf: construction_leaves.add(id(leaf)))
 
         runtime_leaves: list[AbstractToolset[AgentDepsT]] = []

@@ -35,13 +35,13 @@ from pydantic_ai.capabilities import (
     WebSearch,
     XSearch,
 )
+from pydantic_ai.capabilities._merge import merge_capability_fields
 from pydantic_ai.capabilities._ordering import find_capability
 from pydantic_ai.capabilities.abstract import (
     AbstractCapability,
     combine_duplicate_capabilities,
     declares_default_id,
     leaf_capabilities,
-    merge_capability_fields,
 )
 from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.capabilities.wrapper import WrapperCapability

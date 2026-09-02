@@ -3182,7 +3182,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         return self._build_toolset_list()
 
     @property
-    def _registered_toolsets(self) -> Sequence[AbstractToolset[AgentDepsT]]:
+    def _construction_toolsets(self) -> Sequence[AbstractToolset[AgentDepsT]]:
+        """The toolsets this agent was built with, ignoring anything added afterwards.
+
+        Read by `pydantic_ai.durable_exec` through `construction_toolsets`, which is where the
+        reason it exists is written down.
+        """
         return self._build_toolset_list(ignore_overrides=True)
 
     def _build_toolset_list(
@@ -3196,7 +3201,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         With `ignore_overrides`, active `override(tools=...)`/`override(toolsets=...)` values and
         dynamic toolsets added with `@agent.toolset` after construction are skipped, so the result
         is what the agent was built with. See
-        [`_registered_toolsets`][pydantic_ai.agent.AbstractAgent._registered_toolsets].
+        `Agent._construction_toolsets`.
         """
         toolsets: list[AbstractToolset[AgentDepsT]] = []
 
