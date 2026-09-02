@@ -220,9 +220,43 @@ class FileSystemCapability(AbstractCapability[None]):
         return request_context
 ```
 
-Pydantic AI stamps the emitting capability's run id as `capability_id`. Events emitted by its tools also receive `tool_call_id` and `tool_name`. They surface on the [agent run event stream](../agent.md#streaming-all-events) but are internal coordination signals, so UI adapters do not forward them by default. An application that wants to expose one to a frontend can consume it and emit an application [`CustomEvent`][pydantic_ai.messages.CustomEvent] with the public payload; a protocol adapter can instead override [`handle_capability_event()`][pydantic_ai.ui.UIEventStream.handle_capability_event].
+A capability publishes capability events specifically, and emitting an application [`CustomEvent`][pydantic_ai.messages.CustomEvent] from one raises a [`UserError`][pydantic_ai.exceptions.UserError]; see [Which event type do I use?](../agent.md#which-event-type) for the split. The payload cannot use the field names the envelope needs for itself: `data`, `capability_id`, `tool_call_id`, `tool_name`, and `event_kind` are rejected when the class is defined.
 
-The namespace and event name form the serialized `kind` (for example, `file_system.file_read`), and the event name is derived from the class name unless you pass an explicit `name=`. The `kind` is the event's wire identifier, so renaming the class renames the tag with it, breaking compatibility wherever events outlive the emitting process — [durable execution](../durable_execution/overview.md) histories and caches, persisted event logs, subscribers matching on the kind. A capability published as a library should pin `name=` on each of its events. Kinds are registered when the class is defined and must be unique within the process; re-executing the same class definition (as when re-running a notebook cell) replaces the registration. Import the module defining an event before deserialization to recover its typed subclass. Otherwise it becomes [`UnknownCapabilityEvent`][pydantic_ai.messages.UnknownCapabilityEvent] without losing payload fields; serializing it again preserves the wire representation so a later consumer can recover the typed event.
+Pydantic AI stamps the emitting capability's run id as `capability_id`. Events emitted by its tools also receive `tool_call_id` and `tool_name`. They surface on the [agent run event stream](../agent.md#streaming-all-events) but are internal coordination signals, so UI adapters do not forward them by default. A protocol adapter can override [`handle_capability_event()`][pydantic_ai.ui.UIEventStream.handle_capability_event] to map one onto its own protocol, building the payload itself as `CapabilityEvent` has no `to_payload()`. An application that wants to expose one to a frontend can instead consume it from an [event hook](../hooks.md#event-stream-hooks) and emit an application `CustomEvent` carrying the public payload:
+
+```python {title="republish_capability_event.py"}
+from dataclasses import dataclass
+
+from pydantic_ai import Agent, CapabilityEvent, CustomEvent, RunContext
+from pydantic_ai.capabilities import Hooks
+
+
+@dataclass(kw_only=True)
+class IndexRebuiltEvent(CapabilityEvent, namespace='search_index'):
+    documents: int
+
+
+@dataclass(kw_only=True)
+class SearchReadyEvent(CustomEvent):
+    documents: int
+
+
+hooks = Hooks()
+
+
+@hooks.on.event(IndexRebuiltEvent)
+async def republish(ctx: RunContext, event: IndexRebuiltEvent) -> None:
+    await ctx.emit(SearchReadyEvent(documents=event.documents))
+
+
+agent = Agent('test', capabilities=[hooks])
+```
+
+_(This example is complete, it can be run "as is")_
+
+An event hook belongs to the application rather than to a capability, so it is one of the places application `CustomEvent`s can be emitted.
+
+The namespace and event name form the serialized `kind` (for example, `file_system.file_read`), and the event name is derived from the class name unless you pass an explicit `name=`. The `kind` is the event's wire identifier, so renaming the class renames the tag with it, breaking compatibility wherever events outlive the emitting process — [durable execution](../durable_execution/overview.md) histories and caches, persisted event logs, subscribers matching on the kind. A capability published as a library should pin `name=` on each of its events. Kinds are registered when the class is defined and must be unique within the process; re-executing the same class definition (as when re-running a notebook cell) replaces the registration. Import the module defining an event before creating the adapter that deserializes it, as each pydantic `TypeAdapter` captures the kinds registered when it is created. Otherwise the event becomes an [`UnknownCapabilityEvent`][pydantic_ai.messages.UnknownCapabilityEvent] and a `UserWarning` is emitted, without losing payload fields; serializing it again preserves the wire representation so a later consumer can recover the typed event.
 
 ### Reacting to events
 
