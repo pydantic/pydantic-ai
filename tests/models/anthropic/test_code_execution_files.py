@@ -29,10 +29,19 @@ with try_import() as anthropic_imports_successful:
     from anthropic.types.beta import BetaTextBlock, BetaUsage
     from anthropic.types.beta.beta_container_params import BetaContainerParams
 
-    from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
+    from pydantic_ai.models.anthropic import (
+        AnthropicModel,
+        AnthropicModelSettings,
+        AnthropicStaleThinkingBlockWarning,
+    )
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
-    from ..test_anthropic import MockAnthropic, completion_message, get_mock_chat_completion_kwargs
+    from ..test_anthropic import (
+        MockAnthropic,
+        completion_message,
+        get_mock_chat_completion_kwargs,
+        stale_thinking_block_error,
+    )
 
 pytestmark = [
     pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed'),
@@ -259,6 +268,56 @@ async def test_anthropic_code_execution_files_500_with_uploads_drops_history_con
     completion_kwargs = get_mock_chat_completion_kwargs(mock_client)
     expected_containers: list[object] = ['container_from_history', OMIT] if expect_retry else ['container_from_history']
     assert [kwargs['container'] for kwargs in completion_kwargs] == expected_containers
+
+
+async def test_anthropic_code_execution_files_500_then_stale_thinking_block_still_retries(
+    allow_model_requests: None,
+):
+    """A stale thinking block rejected only by the container fallback still reaches the drop retry.
+
+    The fallback runs inside the handler that catches the original 500, so its own error used to
+    propagate without ever being classified — the run failed on a 400 the retry exists to absorb.
+    The third request is what pins the other half: the container the 500 disowned stays dropped,
+    rather than being resent by a retry that reads the container the first attempt used.
+    """
+    server_error = APIStatusError(
+        'server error',
+        response=httpx2.Response(status_code=500, request=httpx2.Request('POST', 'https://example.com/v1')),
+        body={'error': 'server error'},
+    )
+    mock_client = MockAnthropic.create_mock(
+        [
+            server_error,
+            stale_thinking_block_error(),
+            completion_message(
+                [BetaTextBlock(text='Summarized.', type='text')], usage=BetaUsage(input_tokens=1, output_tokens=1)
+            ),
+        ]
+    )
+    model = AnthropicModel('claude-fable-5-1', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(
+        model,
+        capabilities=[NativeTool(CodeExecutionTool(files=[UploadedFile(file_id='file_x', provider_name='anthropic')]))],
+    )
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Use the attached file.')]),
+        ModelResponse(
+            parts=[TextPart(content='Earlier answer.')],
+            provider_name='anthropic',
+            provider_details={'container_id': 'container_from_history'},
+        ),
+    ]
+
+    with pytest.warns(AnthropicStaleThinkingBlockWarning):
+        result = await agent.run('And now summarize it.', message_history=history)
+
+    assert result.output == snapshot('Summarized.')
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)
+    expected_containers: list[object] = ['container_from_history', OMIT, OMIT]
+    assert [kwargs['container'] for kwargs in completion_kwargs] == expected_containers
+    assert completion_kwargs[-1]['extra_body'] == snapshot(
+        {'thinking': {'block_binding': {'prefix_mismatch_behavior': 'drop_block'}}}
+    )
 
 
 async def test_anthropic_code_execution_files_append_to_every_user_message(allow_model_requests: None):

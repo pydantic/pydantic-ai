@@ -1101,6 +1101,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 extra_body=_build_extra_body(model_settings, thinking_override),
             )
 
+        retry_container = container
         with _map_api_errors(self.model_name, self._provider.model_id_namespace):
             try:
                 return await create(container, thinking, betas, None)
@@ -1114,7 +1115,14 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                         for block in message['content']
                     )
                 ):
-                    return await create(None, thinking, betas, None)
+                    try:
+                        return await create(None, thinking, betas, None)
+                    except APIStatusError as fallback_error:
+                        # Classify what the fallback hit, not the 500 that caused it, so a stale
+                        # thinking block rejected only on this attempt still reaches the retry
+                        # below. The history-resolved container is gone, so it stays dropped there.
+                        error = fallback_error
+                        retry_container = None
                 if not _is_stale_thinking_block_error(anthropic_profile, model_settings, thinking, error):
                     raise
 
@@ -1131,7 +1139,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 stacklevel=2,
             )
             return await create(
-                container, OMIT, betas | {_ANTHROPIC_THINKING_BINDING_BETA}, _drop_stale_thinking_blocks(thinking)
+                retry_container, OMIT, betas | {_ANTHROPIC_THINKING_BINDING_BETA}, _drop_stale_thinking_blocks(thinking)
             )
 
     @staticmethod
