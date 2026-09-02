@@ -32,6 +32,9 @@ AGENTS.override.md
 !.agents/skills/complete-partial-pr/
 .agents/skills/complete-partial-pr/*
 !.agents/skills/complete-partial-pr/SKILL.md
+!.agents/skills/pre-push-review/
+.agents/skills/pre-push-review/*
+!.agents/skills/pre-push-review/SKILL.md
 !.agents/skills/adding-a-provider-api-feature/
 .agents/skills/adding-a-provider-api-feature/*
 !.agents/skills/adding-a-provider-api-feature/SKILL.md

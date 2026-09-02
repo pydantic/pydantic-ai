@@ -55,11 +55,11 @@ applied automatically — don't set them.
 - Commit the exact state you intend to push. Leave nothing staged, unstaged or uncommitted unless
   the user's instructions override this.
 - Run `pre-push-review` in a fresh subagent before the first push in the current task.
-- In Claude Code, set the pre-push reviewer's model to `opus`.
-- In Codex, dispatch the Terra-pinned `reviewer` agent.
-- Do not use Fable or Sol for pre-push review. Other harnesses use their normal reviewer selection.
+- Use the reviewer tier defined by `pre-push-review`.
 - Dispatch `pre-push-review` at most three times per PR during one task. Count every dispatch,
   including repeated reviews after findings.
+- Track the count in the current task plan. Use the branch name until a PR number exists.
+- Reserve the next count before dispatch. Include `call N of 3` in the reviewer prompt.
 - Count only `pre-push-review` dispatches. Do not count the final metadata review.
 - Address every finding and commit the fixes. Repeat the review while the three-call budget remains.
 - After the third review, fix its findings and run the relevant local checks. Do not dispatch a

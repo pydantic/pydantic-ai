@@ -19,12 +19,21 @@ allowed-tools:
 
 # Pre-push Review
 
-Use a fresh reviewer to catch problems while they are still cheap to fix. Run this before the
-first push. Run it before a later push only when the caller's three-review budget permits.
+Catch problems while they are still cheap to fix. Run this before the first push. Run it before a
+later push only when the caller's three-review budget permits.
 
 This is the local counterpart to `douwebot`: a high-judgment standards review paid for by
 the developer's model subscription. It is independent of the automatic `CI Review`, which
 runs on GitHub after CI passes.
+
+## Select the reviewer tier
+
+Run the review in a fresh subagent.
+
+- In Claude Code, set the reviewer's model to `opus`.
+- In Codex, dispatch the Terra-pinned `reviewer` agent.
+- Do not use Fable or Sol for this review.
+- In other harnesses, use the normal reviewer selection.
 
 ## Read the review rubric
 
