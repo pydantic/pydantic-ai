@@ -20,7 +20,7 @@ from ._connection import close_backend_connection
 from .protocol import SandboxCommand, SupportsFilesystem
 
 if TYPE_CHECKING:
-    from .protocol import SandboxBackend, SandboxFileEntry, SandboxFilesystem, SupportsStart
+    from .protocol import SandboxBackend, SandboxFileEntry, SandboxFilesystem
     from .unavailable import UnavailableSandbox
 
 __all__ = ('ReadOnlySandbox',)
@@ -62,7 +62,7 @@ class ReadOnlySandbox:
     """A [`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] that forwards reads to a wrapped backend and refuses everything else.
 
     Reads (`working_dir`, `fs.read_bytes`, `fs.stat`, `fs.list_dir`, `fs.exists`) forward to
-    the wrapped backend; `run`, `start`, and file mutations raise
+    the wrapped backend; `run` and file mutations raise
     [`UserError`][pydantic_ai.exceptions.UserError] explaining the restriction. `sandbox_id`
     is the wrapped backend's own: a
     [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] names the environment, never the policy,
@@ -77,10 +77,6 @@ class ReadOnlySandbox:
         self._wrapped = wrapped
         if isinstance(wrapped, SupportsFilesystem):
             self.fs: SandboxFilesystem = _ReadOnlyFilesystem(wrapped.fs)
-
-    def _backend_for_internal_read(self) -> SandboxBackend:
-        """Return the unrestricted backend for the fixed, non-mutating read command."""
-        return self._wrapped
 
     @property
     def sandbox_id(self) -> str:
@@ -106,20 +102,8 @@ class ReadOnlySandbox:
     ) -> Never:
         raise UserError(_READ_ONLY_REASON)
 
-    async def start(
-        self,
-        command: SandboxCommand,
-        *,
-        shell: bool = False,
-        cwd: str | None = None,
-        env: Mapping[str, str] | None = None,
-        timeout: float | None = None,
-    ) -> Never:
-        raise UserError(_READ_ONLY_REASON)
-
 
 if TYPE_CHECKING:
     # Pins full structural conformance — signatures included — which `isinstance` cannot check.
     _conforms: SandboxBackend = ReadOnlySandbox(UnavailableSandbox(''))
     _fs_conforms: SupportsFilesystem = ReadOnlySandbox(UnavailableSandbox(''))
-    _start_conforms: SupportsStart = ReadOnlySandbox(UnavailableSandbox(''))

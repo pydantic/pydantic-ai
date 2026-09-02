@@ -48,10 +48,10 @@ restrictions, output limits, and path rules in the tool layer.
   explanation.
 
 Tools always call the same `ctx.sandbox` methods. `fs` needs a backend with
-`SupportsFilesystem`, while `start()` needs `SupportsStart`; unsupported operations raise
-`NotImplementedError`.
+`SupportsFilesystem`; unsupported filesystem operations raise `NotImplementedError`.
 
-Backends raise `SandboxTimeoutError` when a command exceeds its deadline and
+Backends raise `SandboxError` for deliberate recoverable operation failures,
+`SandboxTimeoutError` when a command exceeds its deadline, and
 `SandboxUnavailableError` when retrying against the same environment cannot succeed.
 
 ## Manage sandbox lifecycle with a capability

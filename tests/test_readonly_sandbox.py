@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -12,13 +11,11 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.sandboxes import (
-    LocalSandbox,
     ReadOnlySandbox,
     Sandbox,
     SandboxBackend,
     SandboxRef,
     SupportsFilesystem,
-    SupportsStart,
 )
 
 from .sandbox_fakes import FakeSandbox, RecordingSandboxBackend
@@ -44,8 +41,6 @@ async def test_reads_forward_and_mutations_raise():
         await sandbox.fs.remove('/workspace/data.csv')
     with pytest.raises(UserError, match='read-only'):
         await sandbox.run(['rm', '-rf', '/workspace'])
-    with pytest.raises(UserError, match='read-only'):
-        await sandbox.start(['sleep', '60'])
 
     assert backend.fs.files == {'/workspace/data.csv': b'a,b\n1,2\n'}
     assert backend.commands == []
@@ -130,20 +125,15 @@ async def test_filesystem_support_mirrors_wrapped_backend():
         await Sandbox(without_filesystem).read_text('data.csv')
 
 
-def test_start_is_always_claimed_and_refused():
-    """The wrapper declares `start()` even over a backend without it, so a backgrounded command
-    is refused as a policy error rather than reported as unsupported."""
-    assert isinstance(ReadOnlySandbox(RecordingSandboxBackend('no-start')), SupportsStart)
-
-
-async def test_windowed_read_uses_internal_non_mutating_command(tmp_path: Path):
-    (tmp_path / 'lines.txt').write_text('one\ntwo\nthree\nfour\n')
-    window = await Sandbox(ReadOnlySandbox(LocalSandbox(tmp_path))).read_file('lines.txt', offset=2, limit=2)
+async def test_windowed_read_through_read_only_never_executes_the_wrapped_backend():
+    backend = FakeSandbox('read-only', {'/workspace/lines.txt': b'one\ntwo\nthree\nfour\n'})
+    window = await Sandbox(ReadOnlySandbox(backend)).read_file('lines.txt', offset=2, limit=2)
 
     assert window.lines == ('two', 'three')
     assert window.start_line == 2
     assert window.has_more
-    assert window.total_lines is None
+    assert window.total_lines == 4
+    assert backend.commands == []
 
 
 async def test_agent_run_surfaces_read_only_reason():

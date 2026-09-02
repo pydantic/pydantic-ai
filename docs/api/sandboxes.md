@@ -7,18 +7,15 @@
             - FileEntry
             - FileWindow
             - SandboxBackend
+            - SandboxError
             - SandboxRef
             - SandboxTimeoutError
             - SandboxUnavailableError
             - SupportsFilesystem
-            - SupportsStart
-            - SupportsStream
             - LocalSandbox
             - ReadOnlySandbox
             - UnavailableSandbox
             - SandboxCommand
             - SandboxFilesystem
             - SandboxFileEntry
-            - SandboxProcess
-            - SandboxOutputChunk
             - SandboxResult

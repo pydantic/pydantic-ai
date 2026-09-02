@@ -25,12 +25,9 @@ from .protocol import (
     SandboxCommand,
     SandboxFileEntry,
     SandboxFilesystem,
-    SandboxProcess,
     SandboxResult,
     SupportsFilesystem,
-    SupportsStart,
 )
-from .readonly import ReadOnlySandbox
 from .references import SandboxRef
 
 _SandboxResolver: TypeAlias = 'Callable[[SandboxRef], Awaitable[SandboxBackend]]'
@@ -224,30 +221,6 @@ class Sandbox:
         backend = await self._ensure_backend()
         return await backend.run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
 
-    async def start(
-        self,
-        command: SandboxCommand,
-        *,
-        shell: bool = False,
-        cwd: str | None = None,
-        env: Mapping[str, str] | None = None,
-        timeout: float | None = None,
-    ) -> SandboxProcess:
-        """Start a command without waiting, returning a handle to the running process.
-
-        Requires a backend implementing [`SupportsStart`][pydantic_ai.sandboxes.SupportsStart];
-        otherwise raises `NotImplementedError` — background the command over
-        [`run()`][pydantic_ai.sandboxes.Sandbox.run] with `shell=True` instead.
-        """
-        _require_absolute_cwd(cwd)
-        backend = await self._ensure_backend()
-        if isinstance(backend, SupportsStart):
-            return await backend.start(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
-        raise NotImplementedError(
-            'This sandbox backend does not implement `start()`; run the command with `shell=True` '
-            'and shell backgrounding via `run()`, or use a backend that implements `SupportsStart`.'
-        )
-
     async def working_dir(self) -> str:
         """The sandbox's default working directory (absolute, filesystem-canonical POSIX path).
 
@@ -338,16 +311,10 @@ class Sandbox:
         end = offset + limit  # one extra line, to learn whether more exist
         try:
             backend = await self._ensure_backend()
-            # The policy wrapper blocks caller-supplied commands, but this argv is an
-            # implementation-owned, non-mutating read. Running it on the wrapped backend keeps
-            # windowed reads bounded without granting command execution through the wrapper.
-            command_backend = backend._backend_for_internal_read() if isinstance(backend, ReadOnlySandbox) else backend  # pyright: ignore[reportPrivateUsage]
             # argv, never shell=True: the path is an argument, not shell-interpreted text.
             # `{end}q` stops `sed` at the window instead of scanning to EOF, and the timeout
             # bounds the optimization on paths that never finish.
-            result = await command_backend.run(
-                ['sed', '-n', f'{offset},{end}p;{end}q', path], timeout=_SHELL_SLICE_TIMEOUT
-            )
+            result = await backend.run(['sed', '-n', f'{offset},{end}p;{end}q', path], timeout=_SHELL_SLICE_TIMEOUT)
         except Exception:
             return None
         if result.exit_code != 0 or result.stderr:

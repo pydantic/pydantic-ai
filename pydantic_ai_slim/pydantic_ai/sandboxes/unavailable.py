@@ -5,8 +5,7 @@ the same explicit failure mode. Pydantic AI uses it where a live execution
 environment cannot safely exist, and applications can pass one deliberately to disable
 execution with a policy-specific explanation.
 
-It implements the process-start and filesystem opt-ins natively so every operation surfaces
-the configured reason instead of raising `NotImplementedError` in the `Sandbox` API.
+It implements the filesystem opt-in natively so every operation surfaces the configured reason.
 """
 
 from __future__ import annotations
@@ -24,7 +23,6 @@ if TYPE_CHECKING:
     from .protocol import (
         SandboxBackend,
         SupportsFilesystem,
-        SupportsStart,
     )
 
 __all__ = ('UnavailableSandbox',)
@@ -79,19 +77,7 @@ class UnavailableSandbox:
     async def working_dir(self) -> Never:
         raise UserError(self.reason)
 
-    async def start(
-        self,
-        command: SandboxCommand,
-        *,
-        shell: bool = False,
-        cwd: str | None = None,
-        env: Mapping[str, str] | None = None,
-        timeout: float | None = None,
-    ) -> Never:
-        raise UserError(self.reason)
-
 
 if TYPE_CHECKING:
     _backend_conforms: SandboxBackend = UnavailableSandbox('')
-    _start_conforms: SupportsStart = UnavailableSandbox('')
     _fs_conforms: SupportsFilesystem = UnavailableSandbox('')

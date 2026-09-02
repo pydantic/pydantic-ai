@@ -22,11 +22,12 @@ from pydantic_ai.run import AgentRunResult
 from pydantic_ai.sandboxes import (
     Sandbox,
     SandboxBackend,
+    SandboxError,
     SandboxRef,
     SandboxResult,
     SandboxTimeoutError,
+    SandboxUnavailableError,
     SupportsFilesystem,
-    SupportsStart,
     UnavailableSandbox,
 )
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, WrapperToolset
@@ -169,13 +170,10 @@ class _MinimalBackend:
 
 
 async def test_backend_without_supports_filesystem_raises_on_fs_access():
-    """A backend that doesn't implement `SupportsFilesystem` fails at `.fs` access with a
-    clear pointer, mirroring how `.start()` behaves for backends without `SupportsStart`.
-    """
+    """A backend that doesn't implement `SupportsFilesystem` fails at `.fs` access with a clear pointer."""
     backend = _MinimalBackend()
     typed: SandboxBackend = backend
     assert not isinstance(typed, SupportsFilesystem)
-    assert not isinstance(typed, SupportsStart)
 
     sandbox = Sandbox(backend)
     # The required members still work: `.run` reaches the backend directly.
@@ -263,7 +261,7 @@ async def test_read_file_empty_window_without_filesystem_support():
 
 
 class _RunOnlySandbox:
-    """The smallest legal backend — the three required members, no `fs`, no `start` —
+    """The smallest legal backend — the three required members and no `fs` —
     delegating to a `FakeSandbox` so its `sed` emulation serves the slice."""
 
     def __init__(self, inner: FakeSandbox) -> None:
@@ -365,7 +363,7 @@ async def test_slice_that_times_out_falls_back_to_the_filesystem_window():
     assert backend.fs.reads == ['/workspace/file']
 
 
-async def test_run_and_start_reject_a_relative_cwd():
+async def test_run_rejects_a_relative_cwd():
     """A relative `cwd` has no sandbox meaning — a backend resolving it against ambient
     host state is exactly the one-environment break the protocol forbids — so the facade
     rejects it before any backend sees it.
@@ -373,8 +371,6 @@ async def test_run_and_start_reject_a_relative_cwd():
     sandbox = Sandbox(FakeSandbox('cwd'))
     with pytest.raises(ValueError, match='absolute'):
         await sandbox.run(['true'], cwd='subdir')
-    with pytest.raises(ValueError, match='absolute'):
-        await sandbox.start(['true'], cwd='subdir')
 
 
 async def test_read_file_missing_file_surfaces_filesystem_error_without_reading():
@@ -402,7 +398,6 @@ async def test_unavailable_sandbox_surfaces_reason_for_every_operation():
     operations = [
         sandbox.run(['echo', 'hello']),
         sandbox.working_dir(),
-        sandbox.start(['echo', 'hello']),
         sandbox.fs.read_bytes('/file'),
         sandbox.fs.write_bytes('/file', b'data'),
         sandbox.fs.stat('/file'),
@@ -414,6 +409,16 @@ async def test_unavailable_sandbox_surfaces_reason_for_every_operation():
     for operation in operations:
         with pytest.raises(UserError, match=reason):
             await operation
+
+
+def test_sandbox_errors_share_the_common_exception_family():
+    unavailable = SandboxUnavailableError('unavailable')
+    timeout = SandboxTimeoutError('timed out')
+
+    assert isinstance(unavailable, SandboxError)
+    assert isinstance(timeout, SandboxError)
+    assert issubclass(SandboxError, RuntimeError)
+    assert isinstance(timeout, TimeoutError)
 
 
 async def test_run_without_sandbox_is_unavailable_with_attachment_instructions():

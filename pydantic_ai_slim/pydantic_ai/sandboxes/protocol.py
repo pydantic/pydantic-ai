@@ -3,11 +3,10 @@
 A *sandbox* is an environment — a subprocess jail, a container, a microVM, a remote worker —
 that an agent run can execute commands in and read/write files of. Backends implement the
 small [`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] protocol (command execution and
-working-directory reporting); each additional capability (filesystem, background processes,
-streaming) is a separate optional `Supports*` protocol, so a backend implements exactly the
-parts its platform supports. Tools and capabilities use the read-only
-[`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox] object; identity and lifecycle
-are covered in the [sandbox documentation](../sandbox.md).
+working-directory reporting); filesystem access is the optional `SupportsFilesystem` protocol,
+so a backend implements exactly the parts its platform supports. Tools and capabilities use the
+read-only [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox] object; identity and
+lifecycle are covered in the [sandbox documentation](../sandbox.md).
 
 Contracts every implementation must honor (the rest are on the relevant members):
 
@@ -22,9 +21,9 @@ Contracts every implementation must honor (the rest are on the relevant members)
 
 from __future__ import annotations as _annotations
 
-from collections.abc import AsyncIterator, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Literal, Protocol, TypeAlias, runtime_checkable
+from typing import Protocol, TypeAlias, runtime_checkable
 
 # These protocols are frozen once released: conformance is structural, so adding a member
 # would silently break every existing backend. New operations go on concrete types or on new
@@ -35,16 +34,13 @@ __all__ = (
     'FileEntry',
     'SandboxBackend',
     'SandboxCommand',
+    'SandboxError',
     'SandboxFileEntry',
     'SandboxFilesystem',
-    'SandboxOutputChunk',
-    'SandboxProcess',
     'SandboxResult',
     'SandboxTimeoutError',
     'SandboxUnavailableError',
     'SupportsFilesystem',
-    'SupportsStart',
-    'SupportsStream',
 )
 
 SandboxCommand: TypeAlias = str | Sequence[str]
@@ -57,7 +53,14 @@ an argv sequence with `shell=True`: implementations must reject either mismatch 
 """
 
 
-class SandboxUnavailableError(RuntimeError):
+class SandboxError(RuntimeError):
+    """The sandbox layer deliberately failed an operation.
+
+    Callers should catch specific subclasses before this base class.
+    """
+
+
+class SandboxUnavailableError(SandboxError):
     """The sandbox environment is gone or permanently unusable from this process.
 
     Backends raise this (or a subclass) when the environment was terminated, expired at its
@@ -67,7 +70,7 @@ class SandboxUnavailableError(RuntimeError):
     """
 
 
-class SandboxTimeoutError(TimeoutError):
+class SandboxTimeoutError(SandboxError, TimeoutError):
     """A command exceeded the `timeout=` it was started with and was killed.
 
     `stdout` and `stderr` carry any output the command produced before the kill (empty when
@@ -121,24 +124,6 @@ class CommandResult:
     stderr: str
 
 
-class SandboxOutputChunk(Protocol):
-    """A chunk of live output from a started process.
-
-    Structural, like [`SandboxResult`][pydantic_ai.sandboxes.SandboxResult]: implementations
-    yield their native chunk types.
-    """
-
-    @property
-    def stream(self) -> Literal['stdout', 'stderr']:
-        """Which stream the chunk belongs to."""
-        ...
-
-    @property
-    def data(self) -> str:
-        """The chunk's text."""
-        ...
-
-
 class SandboxFileEntry(Protocol):
     """Metadata about a file or directory inside the sandbox.
 
@@ -178,54 +163,6 @@ class FileEntry:
     path: str
     is_dir: bool
     size: int | None
-
-
-class SandboxProcess(Protocol):
-    """A started command inside a sandbox.
-
-    Returned by [`Sandbox.start`][pydantic_ai.sandboxes.Sandbox.start]. `wait()` must be safe to
-    call more than once (and concurrently), returning the same result each time.
-    """
-
-    @property
-    def pid(self) -> int | None:
-        """Process ID inside the sandbox, if the backend reports one."""
-        ...
-
-    async def wait(self) -> SandboxResult:
-        """Wait for the process to complete and return its result.
-
-        If the process was started with `timeout=` and the deadline passes, the command is killed
-        and a [`SandboxTimeoutError`][pydantic_ai.sandboxes.SandboxTimeoutError] is raised.
-        """
-        ...
-
-    async def kill(self) -> None:
-        """Terminate the process.
-
-        Implementations that cannot kill must raise `NotImplementedError` naming the
-        alternative (typically: start the command with `timeout=`).
-        """
-        ...
-
-
-@runtime_checkable
-class SupportsStream(Protocol):
-    """Optional live-output support for a sandbox process.
-
-    Checked via `isinstance` against the process returned by
-    [`Sandbox.start`][pydantic_ai.sandboxes.Sandbox.start].
-    """
-
-    def stream(self) -> AsyncIterator[SandboxOutputChunk]:
-        """Iterate over the process's output as it is produced.
-
-        Consuming or skipping the stream never changes
-        [`wait()`][pydantic_ai.sandboxes.SandboxProcess.wait]: it returns the complete result
-        either way. The stream is single-consumer: callers must not assume that a second or
-        concurrent `stream()` call is supported.
-        """
-        ...
 
 
 class SandboxFilesystem(Protocol):
@@ -281,35 +218,6 @@ class SupportsFilesystem(Protocol):
     @property
     def fs(self) -> SandboxFilesystem:
         """Native file access inside the sandbox."""
-        ...
-
-
-@runtime_checkable
-class SupportsStart(Protocol):
-    """Optional native background-process support for a sandbox backend.
-
-    Checked via `isinstance` by [`Sandbox`][pydantic_ai.sandboxes.Sandbox].
-    """
-
-    async def start(
-        self,
-        command: SandboxCommand,
-        *,
-        shell: bool = False,
-        cwd: str | None = None,
-        env: Mapping[str, str] | None = None,
-        timeout: float | None = None,
-    ) -> SandboxProcess:
-        """Start a command without waiting, returning a handle to the running process.
-
-        When the returned process implements
-        [`SupportsStream`][pydantic_ai.sandboxes.SupportsStream], prefer `start()` + `stream()` +
-        [`wait()`][pydantic_ai.sandboxes.SandboxProcess.wait] over
-        [`run()`][pydantic_ai.sandboxes.SandboxBackend.run] when output produced before a timeout or
-        kill matters. Arguments as for `run()`.
-
-        The `timeout=` deadline runs from `start()`, not from the first `wait()`.
-        """
         ...
 
 
