@@ -37,7 +37,7 @@ the same boundary for every appended entry.
 
    Read exactly the file it prints. If it prints nothing, **your lane has no handoff**: say so and start from the live board. Other lanes' entries are visible in the index and are *not* yours — reading one makes you adopt PRs another manager drives. Never pick an entry by eye off the index; the script resolves the lane for you.
 4. If the brief is still the unfilled template → `/initialize-worktree` or `/adopt-pr` first.
-5. **Load the skills this session runs on before acting.** Always `i-have-adhd` (how David reads: lead with the result or decision, use the harness's structured question mechanism when available, no preamble/recap/closers). In the **manager** worktree also `pr-orchestrator` — it owns the tmux multi-PR workflow and its `helpers/` are the interface to every worker window; don't hand-roll `tmux send-keys` when a helper exists. Loading these late costs a half-session of output David skims past.
+5. **Load the skills this session runs on before acting.** Always `i-have-adhd` (how the user reads: lead with the result or decision, use the harness's structured question mechanism when available, no preamble/recap/closers). Loading it late costs a half-session of output the user skims past.
 
 **Every handoff body must repeat step 5 explicitly** — a fresh agent reads the handoff before it reads this file.
 

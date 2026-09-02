@@ -65,7 +65,6 @@ AGENTS.override.md
 !.agents/skills/branch-context/issue-comment-fingerprint
 !.agents/skills/branch-context/latest-handoff.sh
 !.agents/skills/branch-context/pr-decisions.template.md
-!.agents/skills/branch-context/skill-routing.md
 !.agents/skills/branch-context/status.sh
 !.agents/skills/branch-context/handoffs/
 .agents/skills/branch-context/handoffs/*
@@ -95,7 +94,6 @@ AGENTS.override.md
 !.claude/skills/branch-context/issue-comment-fingerprint
 !.claude/skills/branch-context/latest-handoff.sh
 !.claude/skills/branch-context/pr-decisions.template.md
-!.claude/skills/branch-context/skill-routing.md
 !.claude/skills/branch-context/status.sh
 !.claude/skills/complete-partial-pr
 !.claude/skills/file-followup-issue
