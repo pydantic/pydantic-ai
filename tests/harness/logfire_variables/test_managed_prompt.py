@@ -26,6 +26,7 @@ import pytest
 from inline_snapshot import snapshot
 from logfire.testing import CaptureLogfire
 from logfire.variables import LabeledValue, Rollout, VariableConfig, VariablesConfig
+from logfire.variables.abstract import NoOpVariableProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import Instrumentation
@@ -114,6 +115,19 @@ def span_attributes(capfire: CaptureLogfire) -> list[dict[str, Any]]:
 
 def test_public_reexport() -> None:
     assert ManagedPrompt is ManagedPromptFromPackage
+
+
+def test_no_variable_provider_is_configured() -> None:
+    """The resolution tests in this module rely on the no-provider fallback; assert it.
+
+    With a Logfire credential in `os.environ`, `logfire.configure()` lazily resolves a
+    `LogfireRemoteVariableProvider` that writes to the real Logfire API from background
+    threads, and the resolution tests then fail on span contents far from the cause.
+    `conftest.py` removes ambient credentials; this test fails at the boundary if a
+    credential still reaches the provider.
+    """
+    provider = logfire.DEFAULT_LOGFIRE_INSTANCE.config.get_variable_provider()
+    assert isinstance(provider, NoOpVariableProvider)
 
 
 def test_slug_becomes_prompt_variable_name() -> None:
