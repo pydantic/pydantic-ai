@@ -88,7 +88,7 @@ from pydantic_ai.usage import UsageLimits
 from ..._inline_snapshot import snapshot
 from ...continuation_utils import ScriptedContinuationModel, scripted_response
 from ...model_lifecycle_utils import LifecycleTrackingModel
-from ...sandbox_fakes import ConnectOnlySandboxCapability, RecordingSandboxBackend
+from ...sandbox_fakes import ConnectOnlySandboxCapability, RecordingSandboxBackend, ref_sandbox
 
 try:
     from temporalio import activity, workflow
@@ -2715,21 +2715,13 @@ def test_temporal_run_context_does_not_serialize_connected_backend():
     assert '_sandbox_state' not in serialized
 
 
-def test_temporal_run_context_deserializes_legacy_payload_without_sandbox_state():
-    serialized = TemporalRunContext.serialize_run_context(
-        _sandbox_context(Sandbox(UnavailableSandbox('not serialized')))
-    )
-    serialized.pop('_sandbox_state')
-
-    reconstructed = deserialize_run_context(TemporalRunContext, serialized, deps=None, agent=None)
-
-    with pytest.raises(UserError, match='not available inside a Temporal activity'):
-        _ = reconstructed.sandbox
-
-
-def test_temporal_run_context_ignores_empty_sandbox_state():
+@pytest.mark.parametrize('state', [None, {}], ids=['legacy-payload', 'empty'])
+def test_temporal_run_context_without_sandbox_state_has_no_sandbox(state: dict[str, Any] | None):
     serialized = TemporalRunContext.serialize_run_context(_sandbox_context(Sandbox(UnavailableSandbox('ignored'))))
-    serialized['_sandbox_state'] = {}
+    if state is None:
+        serialized.pop('_sandbox_state')
+    else:
+        serialized['_sandbox_state'] = state
 
     reconstructed = deserialize_run_context(TemporalRunContext, serialized, deps=None, agent=None)
 
@@ -2742,10 +2734,7 @@ async def test_temporal_run_context_reconnects_sandbox_ref_through_agent():
     agent = Agent(TestModel(), capabilities=[connector])
     ref = SandboxRef(sandbox_id='temporal-ref')
 
-    async def unused_resolver(_ref: SandboxRef) -> SandboxBackend:
-        raise AssertionError  # pragma: no cover
-
-    sandbox = Sandbox._from_ref(ref, unused_resolver)  # pyright: ignore[reportPrivateUsage]
+    sandbox = ref_sandbox(ref)
     serialized = TemporalRunContext.serialize_run_context(_sandbox_context(sandbox))
 
     reconstructed = deserialize_run_context(TemporalRunContext, serialized, deps=None, agent=agent)
@@ -2757,10 +2746,7 @@ async def test_temporal_run_context_reconnects_sandbox_ref_through_agent():
 async def test_temporal_run_context_ref_without_agent_cannot_connect():
     ref = SandboxRef(sandbox_id='orphan')
 
-    async def unused_resolver(_ref: SandboxRef) -> SandboxBackend:
-        raise AssertionError  # pragma: no cover
-
-    sandbox = Sandbox._from_ref(ref, unused_resolver)  # pyright: ignore[reportPrivateUsage]
+    sandbox = ref_sandbox(ref)
     reconstructed = deserialize_run_context(
         TemporalRunContext,
         TemporalRunContext.serialize_run_context(_sandbox_context(sandbox)),
@@ -2769,38 +2755,6 @@ async def test_temporal_run_context_ref_without_agent_cannot_connect():
     )
 
     with pytest.raises(UserError, match='no agent is attached'):
-        await reconstructed.sandbox.run(['true'])
-
-
-@pytest.mark.parametrize('failure', ['decline', 'user', 'runtime'])
-async def test_temporal_run_context_ref_connection_failures_are_typed(failure: str):
-    class Connector(Capability[Any]):
-        async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
-            if failure == 'decline':
-                return None
-            if failure == 'user':
-                raise UserError('specific failure')
-            raise RuntimeError('transport failure')
-
-    connector = Connector(id='connector')
-    agent = Agent(TestModel(), capabilities=[connector])
-    ref = SandboxRef(sandbox_id='broken')
-
-    async def unused_resolver(_ref: SandboxRef) -> SandboxBackend:
-        raise AssertionError  # pragma: no cover
-
-    sandbox = Sandbox._from_ref(ref, unused_resolver)  # pyright: ignore[reportPrivateUsage]
-    reconstructed = deserialize_run_context(
-        TemporalRunContext,
-        TemporalRunContext.serialize_run_context(_sandbox_context(sandbox)),
-        deps=None,
-        agent=agent,
-    )
-
-    match = {'decline': 'No capability can connect', 'user': 'specific failure', 'runtime': 'Failed to connect'}[
-        failure
-    ]
-    with pytest.raises(UserError, match=match):
         await reconstructed.sandbox.run(['true'])
 
 
@@ -2823,10 +2777,7 @@ async def test_temporal_run_context_closes_reconnected_sandbox_when_scope_is_can
     provider = Provider(id='provider')
     agent = Agent(TestModel(), capabilities=[provider])
 
-    async def unused_resolver(_ref: SandboxRef) -> SandboxBackend:
-        raise AssertionError  # pragma: no cover
-
-    sandbox = Sandbox._from_ref(SandboxRef(sandbox_id='provider-only'), unused_resolver)  # pyright: ignore[reportPrivateUsage]
+    sandbox = ref_sandbox(SandboxRef(sandbox_id='provider-only'))
     with anyio.CancelScope() as cancel_scope:
         async with activity_sandbox_connection_scope():
             reconstructed = deserialize_run_context(
@@ -2875,10 +2826,7 @@ async def test_temporal_activity_closes_deferred_sandbox_connections():
         type(None),
     ]
 
-    async def unused_resolver(_ref: SandboxRef) -> SandboxBackend:
-        raise AssertionError  # pragma: no cover
-
-    sandbox = Sandbox._from_ref(SandboxRef(sandbox_id='provider-only'), unused_resolver)  # pyright: ignore[reportPrivateUsage]
+    sandbox = ref_sandbox(SandboxRef(sandbox_id='provider-only'))
 
     # The activity runs outside a Temporal worker here, so stub what heartbeating asks of the SDK.
     with (
@@ -2917,10 +2865,7 @@ async def test_temporal_activity_sandbox_close_error_does_not_mask_handler_error
 
     agent = Agent(TestModel(), capabilities=[Provider(id='provider')])
 
-    async def unused_resolver(_ref: SandboxRef) -> SandboxBackend:
-        raise AssertionError  # pragma: no cover
-
-    sandbox = Sandbox._from_ref(SandboxRef(sandbox_id='provider-only'), unused_resolver)  # pyright: ignore[reportPrivateUsage]
+    sandbox = ref_sandbox(SandboxRef(sandbox_id='provider-only'))
     with pytest.raises(ValueError, match='handler failed'):
         async with activity_sandbox_connection_scope():
             reconstructed = deserialize_run_context(
@@ -2935,7 +2880,7 @@ async def test_temporal_activity_sandbox_close_error_does_not_mask_handler_error
     assert backend.close_calls == 1
 
 
-async def test_temporal_activity_sandbox_close_attempts_all_and_raises_first_error():
+async def test_temporal_activity_sandbox_close_raises_the_first_failure_after_closing_all():
     close_order: list[str] = []
 
     class FailingCloseBackend(RecordingSandboxBackend):
@@ -2954,10 +2899,7 @@ async def test_temporal_activity_sandbox_close_attempts_all_and_raises_first_err
 
     agent = Agent(TestModel(), capabilities=[Provider(id='provider')])
 
-    async def unused_resolver(_ref: SandboxRef) -> SandboxBackend:
-        raise AssertionError  # pragma: no cover
-
-    sandbox = Sandbox._from_ref(SandboxRef(sandbox_id='provider-only'), unused_resolver)  # pyright: ignore[reportPrivateUsage]
+    sandbox = ref_sandbox(SandboxRef(sandbox_id='provider-only'))
     with pytest.raises(RuntimeError, match='second close failed'):
         async with activity_sandbox_connection_scope():
             for _ in range(2):

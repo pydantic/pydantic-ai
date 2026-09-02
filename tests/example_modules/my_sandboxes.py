@@ -1,20 +1,17 @@
 """A fictional third-party sandbox library imported by the examples in `docs/sandbox.md`.
 
 `DockerSandbox` conforms to the `pydantic_ai.sandboxes.SandboxBackend` protocol structurally (pinned
-at the bottom), but nothing here runs real containers: commands succeed with empty output and
-the "filesystem" is an in-memory dict.
+at the bottom), but nothing here runs real containers.
 """
 
 from __future__ import annotations as _annotations
 
-import posixpath
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from types import TracebackType
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from pydantic_ai.sandboxes import SandboxBackend, SandboxProcess, SupportsFilesystem, SupportsStart
+    from pydantic_ai.sandboxes import SandboxBackend
 
 
 @dataclass(frozen=True)
@@ -24,67 +21,11 @@ class ContainerResult:
     stderr: str = ''
 
 
-@dataclass(frozen=True)
-class ContainerFileEntry:
-    name: str
-    path: str
-    is_dir: bool
-    size: int | None
-
-
-class ContainerFilesystem:
-    def __init__(self) -> None:
-        self._files: dict[str, bytes] = {}
-
-    def _content(self, path: str) -> bytes:
-        """Honors the protocol's missing-path contract: `FileNotFoundError`, not `KeyError`."""
-        if path not in self._files:
-            raise FileNotFoundError(path)
-        return self._files[path]
-
-    async def read_bytes(self, path: str) -> bytes:
-        return self._content(path)
-
-    async def write_bytes(self, path: str, data: bytes) -> None:
-        self._files[path] = data
-
-    async def stat(self, path: str) -> ContainerFileEntry:
-        size = len(self._content(path))
-        return ContainerFileEntry(name=posixpath.basename(path), path=path, is_dir=False, size=size)
-
-    async def list_dir(self, path: str) -> Sequence[ContainerFileEntry]:
-        prefix = path.rstrip('/') + '/'
-        return [await self.stat(file) for file in sorted(self._files) if file.startswith(prefix)]
-
-    async def make_dir(self, path: str) -> None:
-        pass
-
-    async def remove(self, path: str) -> None:
-        self._content(path)
-        del self._files[path]
-
-    async def exists(self, path: str) -> bool:
-        return path in self._files
-
-
 class DockerSandbox:
     provider = 'docker'
 
     def __init__(self, *, sandbox_id: str = 'container-0123456789ab'):
-        self._sandbox_id = sandbox_id
-        self.fs = ContainerFilesystem()
-
-    @property
-    def sandbox_id(self) -> str:
-        return self._sandbox_id
-
-    async def __aenter__(self) -> DockerSandbox:
-        return self
-
-    async def __aexit__(
-        self, exc_type: type[BaseException] | None, exc: BaseException | None, tb: TracebackType | None
-    ) -> None:
-        pass
+        self.sandbox_id = sandbox_id
 
     async def run(
         self,
@@ -96,17 +37,6 @@ class DockerSandbox:
         timeout: float | None = None,
     ) -> ContainerResult:
         return ContainerResult()
-
-    async def start(
-        self,
-        command: str | Sequence[str],
-        *,
-        shell: bool = False,
-        cwd: str | None = None,
-        env: Mapping[str, str] | None = None,
-        timeout: float | None = None,
-    ) -> SandboxProcess:
-        raise NotImplementedError('this docs stand-in does not run background processes')
 
     async def working_dir(self) -> str:
         return '/workspace'
@@ -132,5 +62,3 @@ class SandboxClient:
 if TYPE_CHECKING:
     # The docs promise that `DockerSandbox` is a valid `SandboxBackend`; hold this module to it.
     _conforms: SandboxBackend = DockerSandbox()
-    _filesystem_conforms: SupportsFilesystem = DockerSandbox()
-    _start_conforms: SupportsStart = DockerSandbox()

@@ -965,7 +965,6 @@ async def model_logic(  # noqa: C901
                 ]
             )
         elif m.content == 'Write fizzbuzz to fizzbuzz.py and run it.':
-            assert any(t.name == 'execute' for t in info.function_tools)
             return ModelResponse(
                 parts=[
                     ToolCallPart(

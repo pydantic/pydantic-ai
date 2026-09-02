@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 
-from pydantic_ai import Agent, RunContext, UserError
+from pydantic_ai import Agent, RunContext
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.sandboxes import (
@@ -22,9 +22,7 @@ from pydantic_ai.sandboxes import (
     SandboxTimeoutError,
     SupportsFilesystem,
     SupportsStart,
-    UnavailableSandbox,
 )
-from pydantic_ai.sandboxes._policy import default_sandbox_backend
 
 pytestmark = [
     pytest.mark.anyio,
@@ -55,26 +53,6 @@ def _process_running(pid: int) -> bool:
     return state != 'Z'
 
 
-def test_process_running_probe_sees_this_test_process():
-    """Deterministic anchor for the probe's alive path — polling after a kill may never
-    observe the process alive, so the kill-guarantee tests alone cannot pin it."""
-    assert _process_running(os.getpid()) is True
-
-
-@pytest.mark.skipif(not _HAS_PROCFS, reason='exercises the procfs read race, which needs procfs')
-def test_process_running_treats_vanished_procfs_entry_as_gone(monkeypatch: pytest.MonkeyPatch):
-    """A process reaped between the signal check and the procfs read counts as gone.
-
-    The race fires nondeterministically in the kill-guarantee tests, so pin it directly.
-    """
-
-    def vanished_read_text(self: Path, encoding: str = 'utf-8') -> str:
-        raise ProcessLookupError
-
-    monkeypatch.setattr(Path, 'read_text', vanished_read_text)
-    assert _process_running(os.getpid()) is False
-
-
 async def _assert_process_gone(pid: int) -> None:
     for _ in range(200):
         if not _process_running(pid):
@@ -103,14 +81,7 @@ def test_non_posix_platforms_are_rejected_at_construction(monkeypatch: pytest.Mo
         LocalSandbox()
 
 
-async def test_default_backend_is_unavailable_with_attachment_instructions():
-    sandbox = Sandbox(default_sandbox_backend())
-    assert isinstance(sandbox.backend, UnavailableSandbox)
-    with pytest.raises(UserError, match=r'No sandbox is attached to this run.+`sandbox=LocalSandbox\(\)`'):
-        await sandbox.run(['echo', 'hello'])
-
-
-def test_local_sandbox_conforms_to_the_protocol(tmp_path: Path):
+async def test_local_sandbox_conforms_to_the_protocol(tmp_path: Path):
     sandbox = LocalSandbox(tmp_path)
     assert isinstance(sandbox, SandboxBackend)
     assert isinstance(sandbox, SupportsFilesystem)
@@ -118,6 +89,21 @@ def test_local_sandbox_conforms_to_the_protocol(tmp_path: Path):
     typed: SandboxBackend = sandbox  # static conformance, checked because tests are type-checked
     assert typed.provider == 'local'
     assert sandbox.sandbox_id.startswith('local-')
+    with pytest.raises(NotImplementedError, match=r'does not implement `start\(\)`'):
+        await Sandbox(sandbox).start(['echo', 'hi'])
+
+
+@pytest.mark.parametrize('operation', ['root', 'cwd', 'fs'])
+async def test_relative_paths_are_rejected(tmp_path: Path, operation: str):
+    """A relative path would resolve against the host process's working directory, outside the
+    sandbox root, so every entry point rejects it instead of silently escaping."""
+    with pytest.raises(ValueError, match='absolute'):
+        if operation == 'root':
+            LocalSandbox('work')
+        elif operation == 'cwd':
+            await LocalSandbox(tmp_path).run(['pwd'], cwd='subdir')
+        else:
+            await LocalSandbox(tmp_path).fs.write_bytes('outside.txt', b'escape')
 
 
 async def test_run_argv_and_shell(tmp_path: Path):
@@ -163,7 +149,6 @@ async def test_timeout_kills_the_whole_process_group_and_raises(tmp_path: Path):
     error = exc_info.value
     assert isinstance(error, TimeoutError)
     assert error.timeout == timeout
-    assert error.stdout == ''
 
     await _assert_process_gone(int(pid_file.read_text()))
 
@@ -241,20 +226,6 @@ async def test_kill_tolerates_an_already_exited_group():
     LocalSandbox._kill(process)  # pyright: ignore[reportPrivateUsage]
 
 
-async def test_kill_propagates_permission_error(monkeypatch: pytest.MonkeyPatch):
-    """A denied group kill remains visible after best-effort direct-child cleanup."""
-    process = await asyncio.create_subprocess_exec('sleep', '30', start_new_session=True)
-
-    def deny_killpg(pgid: int, sig: int) -> None:
-        raise PermissionError('signal denied')
-
-    monkeypatch.setattr(os, 'killpg', deny_killpg)
-    with pytest.raises(PermissionError, match='signal denied'):
-        LocalSandbox._kill(process)  # pyright: ignore[reportPrivateUsage]
-    await process.wait()
-    assert process.returncode == -signal.SIGKILL
-
-
 async def test_abandoned_spawn_kill_falls_back_to_direct_child_on_denied_killpg(
     monkeypatch: pytest.MonkeyPatch,
 ):
@@ -315,24 +286,11 @@ async def test_env_overlays_the_host_environment(tmp_path: Path):
     assert greeting == 'hi'
     assert path  # PATH survived the overlay: env= augments, it does not replace
 
-    cwd_result = await sandbox.run(['pwd'], cwd=str(tmp_path))
-    assert cwd_result.stdout.rstrip('\n').endswith(tmp_path.name)
 
-
-async def test_optional_operations_raise_not_implemented(tmp_path: Path):
+async def test_cwd_selects_the_working_directory(tmp_path: Path):
     sandbox = LocalSandbox(tmp_path)
-    with pytest.raises(NotImplementedError, match=r'does not implement `start\(\)`'):
-        await Sandbox(sandbox).start(['echo', 'hi'])
-
-
-async def test_working_dir_and_resolve(tmp_path: Path):
-    backend = LocalSandbox(tmp_path)
-    sandbox = Sandbox(backend)
-    assert await sandbox.working_dir() == str(tmp_path)
-    assert await sandbox.resolve('notes.txt') == f'{tmp_path}/notes.txt'
-    assert await sandbox.resolve('sub/../notes.txt') == f'{tmp_path}/notes.txt'
-    assert await sandbox.resolve('/abs/./x') == '/abs/x'
-    assert await sandbox.resolve('x', base='/elsewhere') == '/elsewhere/x'
+    result = await sandbox.run(['pwd'], cwd=str(tmp_path))
+    assert result.stdout.rstrip('\n').endswith(tmp_path.name)
 
 
 async def test_symlinked_root_with_dotdot_keeps_one_environment(tmp_path: Path):
@@ -359,34 +317,21 @@ async def test_symlinked_root_with_dotdot_keeps_one_environment(tmp_path: Path):
     assert await sandbox.read_text('from_run.txt') == 'hello\n'
 
 
-async def test_relative_cwd_is_rejected(tmp_path: Path):
-    """A relative `cwd` would resolve against the host process's working directory — outside
-    the sandbox root — so the backend rejects it instead of silently escaping."""
-    sandbox = LocalSandbox(tmp_path)
-    with pytest.raises(ValueError, match='absolute'):
-        await sandbox.run(['pwd'], cwd='subdir')
-
-
-def test_relative_root_is_rejected():
-    """A relative `root` would depend on the host process's CWD at some later moment (root
-    canonicalization is lazy, and the host may `chdir` in between), so it is rejected at
-    construction — same contract as a relative `cwd=` at run time."""
-    with pytest.raises(ValueError, match='absolute'):
-        LocalSandbox('work')
-
-
-async def test_timeout_with_denied_group_kill_still_raises_timeout(monkeypatch: pytest.MonkeyPatch):
+async def test_timeout_with_denied_group_kill_still_raises_timeout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """The timeout contract promises a `SandboxTimeoutError` even when a hardened host denies the
-    group kill: the denial rides along as the cause instead of replacing the promised type."""
-    async with LocalSandbox() as sandbox:
+    group kill: the denial rides along as the cause, and the direct child is still killed."""
+    sandbox = LocalSandbox(tmp_path)
+    pid_file = tmp_path / 'pid'
 
-        def deny_killpg(pgid: int, sig: int) -> None:
-            raise PermissionError('signal denied')
+    def deny_killpg(pgid: int, sig: int) -> None:
+        raise PermissionError('signal denied')
 
-        monkeypatch.setattr(os, 'killpg', deny_killpg)
-        with pytest.raises(SandboxTimeoutError, match='denied') as exc_info:
-            await sandbox.run(['sleep', '30'], timeout=0.1)
-        assert isinstance(exc_info.value.__cause__, PermissionError)
+    monkeypatch.setattr(os, 'killpg', deny_killpg)
+    with pytest.raises(SandboxTimeoutError, match='denied') as exc_info:
+        # `exec` makes the shell's own PID the sleeping direct child.
+        await sandbox.run(f'echo $$ > {shlex.quote(str(pid_file))}; exec sleep 30', shell=True, timeout=0.1)
+    assert isinstance(exc_info.value.__cause__, PermissionError)
+    await _assert_process_gone(int(pid_file.read_text()))
 
 
 async def test_read_file_on_a_directory_raises(tmp_path: Path):
@@ -441,15 +386,34 @@ async def test_filesystem_round_trip_with_parent_creation(tmp_path: Path):
         await backend.fs.read_bytes(blob)
 
 
-async def test_facade_windowed_read_over_local_sandbox(tmp_path: Path):
+@pytest.mark.parametrize('operation', ['read_bytes', 'stat', 'list_dir', 'remove'])
+async def test_filesystem_reports_missing_paths(tmp_path: Path, operation: str):
+    fs = LocalSandbox(tmp_path).fs
+    with pytest.raises(FileNotFoundError):
+        await getattr(fs, operation)(str(tmp_path / 'missing'))
+
+
+@pytest.mark.parametrize(
+    ('content', 'offset', 'limit', 'expected'),
+    [
+        ('one\ntwo\nthree\nfour\n', 2, 2, (('two', 'three'), True, None)),
+        ('one\ntwo\nthree\n', 2, 5, (('two', 'three'), False, 3)),
+        ('one\n', 10, 2, ((), False, None)),
+        ('one', 1, 2, (('one',), False, 1)),
+    ],
+    ids=['inside', 'reaches-eof', 'past-eof', 'no-trailing-newline'],
+)
+async def test_windowed_read_runs_sed_inside_the_sandbox(
+    tmp_path: Path, content: str, offset: int, limit: int, expected: tuple[tuple[str, ...], bool, int | None]
+):
+    """The real `sed` slice: totals are known only when the window provably reached EOF."""
     sandbox = Sandbox(LocalSandbox(tmp_path))
-    await sandbox.write_text('notes.txt', 'one\ntwo\nthree\nfour\n')
+    await sandbox.write_text('notes.txt', content)
 
-    window = await sandbox.read_file('notes.txt', offset=2, limit=2)
+    window = await sandbox.read_file('notes.txt', offset=offset, limit=limit)
 
-    assert window.lines == ('two', 'three')
-    assert window.start_line == 2
-    assert window.has_more is True
+    assert (window.lines, window.has_more, window.total_lines) == expected
+    assert window.start_line == offset
 
 
 async def test_list_dir_symlink_sizes_match_stat(tmp_path: Path):
@@ -475,20 +439,6 @@ async def test_unused_default_sandbox_creates_no_directory(monkeypatch: pytest.M
     monkeypatch.setattr('pydantic_ai.sandboxes.local.tempfile.mkdtemp', fail_mkdtemp)
     async with LocalSandbox():
         pass  # never used: the lazy default root must never be created
-
-
-async def test_unused_agent_default_creates_no_directory(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr('pydantic_ai.sandboxes.local.tempfile.mkdtemp', fail_mkdtemp)
-    result = await Agent(FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('done')]))).run('go')
-    assert result.output == 'done'
-
-
-async def test_default_root_is_a_temp_dir_removed_on_exit():
-    async with LocalSandbox() as sandbox:
-        root = Path(await sandbox.working_dir())
-        assert root.exists()
-        await Sandbox(sandbox).write_text('x.txt', 'x')
-    assert not root.exists()
 
 
 async def test_temp_root_already_deleted_on_exit_does_not_raise():

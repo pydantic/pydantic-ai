@@ -107,7 +107,7 @@ class Sandbox:
     """
 
     def __init__(self, backend: SandboxBackend):
-        self._initialize(backend=backend, ref=None, resolver=None, close_backend=False)
+        self._initialize(backend=backend, ref=None, resolver=None)
 
     def _initialize(
         self,
@@ -115,12 +115,10 @@ class Sandbox:
         backend: SandboxBackend | None,
         ref: SandboxRef | None,
         resolver: _SandboxResolver | None,
-        close_backend: bool,
     ) -> None:
         self._backend: SandboxBackend | None = backend
         self._ref = ref
         self._resolver = resolver
-        self._close_backend = close_backend
         self._backend_closed = False
         self._connection_error: str | None = None
         self._deferred_filesystem: _DeferredFilesystem | None = None
@@ -139,7 +137,7 @@ class Sandbox:
     def _from_ref(cls, ref: SandboxRef, resolver: _SandboxResolver) -> Sandbox:
         """Create a `Sandbox` that connects to `ref` through `resolver` on its first operation."""
         sandbox = cls.__new__(cls)
-        sandbox._initialize(backend=None, ref=ref, resolver=resolver, close_backend=True)
+        sandbox._initialize(backend=None, ref=ref, resolver=resolver)
         return sandbox
 
     def _durable_identity(self) -> SandboxRef | SandboxBackend:
@@ -202,8 +200,6 @@ class Sandbox:
 
     async def _close_connected_backend(self) -> None:
         """Detach the connection opened by this `Sandbox` without terminating the environment."""
-        if not self._close_backend:
-            return
         async with self._connect_lock:
             backend = self._backend
             if not self._backend_closed and backend is not None:

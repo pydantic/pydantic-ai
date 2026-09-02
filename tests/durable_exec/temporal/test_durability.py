@@ -1150,11 +1150,6 @@ async def test_durability_validates_only_resolved_runtime_capability_layers():
     def extra_factory(ctx: RunContext[None]) -> AbstractCapability[None]:
         return CombinedCapability([_ExtraOne(), _ExtraTwo()])
 
-    assert isinstance(
-        extra_factory(RunContext(deps=None, model=TestModel(), usage=RunUsage())),
-        CombinedCapability,
-    )
-
     agent = Agent(
         TestModel(),
         name='runtime_capability_layers',

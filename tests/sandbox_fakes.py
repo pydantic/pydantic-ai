@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
 from pydantic_ai import RunContext
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.sandboxes import SandboxBackend, SandboxRef
+from pydantic_ai.sandboxes import Sandbox, SandboxBackend, SandboxRef
 
 
 @dataclass(frozen=True)
@@ -16,13 +17,74 @@ class FakeSandboxResult:
     stderr: str = ''
 
 
-class FakeSandboxHandle:
-    """Sandbox identity for paths that must never execute operations: doing so fails loudly."""
+@dataclass(frozen=True)
+class FakeEntry:
+    name: str
+    path: str
+    is_dir: bool
+    size: int | None = None
+
+
+class FakeFilesystem:
+    """An in-memory `SandboxFilesystem` that raises `FileNotFoundError` for missing paths."""
+
+    def __init__(self, files: dict[str, bytes] | None = None) -> None:
+        self.files: dict[str, bytes] = files or {}
+        self.reads: list[str] = []
+
+    def _content(self, path: str) -> bytes:
+        try:
+            return self.files[path]
+        except KeyError:
+            raise FileNotFoundError(path) from None
+
+    async def read_bytes(self, path: str) -> bytes:
+        self.reads.append(path)
+        return self._content(path)
+
+    async def write_bytes(self, path: str, data: bytes) -> None:
+        self.files[path] = data
+
+    async def stat(self, path: str) -> FakeEntry:
+        return FakeEntry(name=path.rsplit('/', 1)[-1], path=path, is_dir=False, size=len(self._content(path)))
+
+    async def list_dir(self, path: str) -> Sequence[FakeEntry]:
+        return [await self.stat(p) for p in self.files]
+
+    async def make_dir(self, path: str) -> None:
+        pass
+
+    async def remove(self, path: str) -> None:
+        self._content(path)
+        del self.files[path]
+
+    async def exists(self, path: str) -> bool:
+        return path in self.files
+
+
+# The facade's bounded slice form: print the window, then quit at its last line.
+_SED_WINDOW_EXPR = re.compile(r'^(\d+),(\d+)p;\2q$')
+
+
+class FakeSandbox:
+    """A minimal in-memory `SandboxBackend` with a filesystem.
+
+    The `sed` line-window form the `Sandbox` facade emits is served from the same files `fs`
+    exposes; `sed=False` models an environment without a usable `sed` (exit 127). Every other
+    command is recorded in `commands` and succeeds with empty output.
+    """
 
     provider = 'fake'
 
-    def __init__(self, sandbox_id: str = 'fake-sandbox') -> None:
-        self.sandbox_id = sandbox_id
+    def __init__(self, name: str, files: dict[str, bytes] | None = None, *, sed: bool = True) -> None:
+        self.name = name
+        self.fs = FakeFilesystem(files)
+        self.commands: list[str | Sequence[str]] = []
+        self._sed = sed
+
+    @property
+    def sandbox_id(self) -> str:
+        return f'fake-{self.name}'
 
     async def run(
         self,
@@ -33,13 +95,36 @@ class FakeSandboxHandle:
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
     ) -> FakeSandboxResult:
-        raise AssertionError('FakeSandboxHandle must not execute commands')  # pragma: no cover
+        if not isinstance(command, str) and list(command[:2]) == ['sed', '-n']:
+            if not self._sed:
+                return FakeSandboxResult(exit_code=127, stdout='', stderr='sed: not found')
+            expr, path = command[2], command[3]
+            window = _SED_WINDOW_EXPR.match(expr)
+            assert window is not None, f'FakeSandbox only emulates the line-window sed form, got {expr!r}'
+            if path not in self.fs.files:
+                return FakeSandboxResult(exit_code=2, stdout='', stderr=f'sed: {path}: No such file or directory')
+            # `sed` splits on `\n` only, prints the selected lines, and keeps the absence of a
+            # trailing newline on the file's final line.
+            text = self.fs.files[path].decode('utf-8', errors='replace')
+            lines = text.split('\n')
+            if lines[-1] == '':
+                lines.pop()
+            start, end = int(window[1]) - 1, int(window[2])
+            selected = lines[start:end]
+            stdout = '\n'.join(selected)
+            if selected and (start + len(selected) < len(lines) or text.endswith('\n')):
+                stdout += '\n'
+            return FakeSandboxResult(exit_code=0, stdout=stdout, stderr='')
+        self.commands.append(command)
+        return FakeSandboxResult(exit_code=0, stdout='', stderr='')
 
     async def working_dir(self) -> str:
-        raise AssertionError('FakeSandboxHandle must not execute operations')  # pragma: no cover
+        return '/workspace'
 
 
 class RecordingSandboxBackend:
+    """The four required backend members and nothing else, recording every command."""
+
     provider = 'fake'
 
     def __init__(self, sandbox_id: str) -> None:
@@ -62,22 +147,25 @@ class RecordingSandboxBackend:
         return '/workspace'
 
 
-class ConnectOnlySandboxCapability(AbstractCapability[Any]):
-    """Connects to any ref; never provisions anything.
+def ref_sandbox(ref: SandboxRef) -> Sandbox:
+    """A not-yet-connected `Sandbox` for `ref`, as a run holds before the first operation.
 
-    The connect-only shape of the lifecycle hooks: only `get_sandbox` is overridden, so this
-    capability serves `SandboxRef` run arguments (and refs provisioned elsewhere) without ever
-    owning a lifecycle.
+    For serialization tests only: connecting through it fails, so a test that needs a live
+    backend must reconnect through a capability's `get_sandbox`.
     """
+
+    async def never_connects(_ref: SandboxRef) -> SandboxBackend:
+        raise AssertionError('the deferred sandbox must be reconnected through a capability')
+
+    return Sandbox._from_ref(ref, never_connects)  # pyright: ignore[reportPrivateUsage]
+
+
+class ConnectOnlySandboxCapability(AbstractCapability[Any]):
+    """Connects to any ref; never provisions anything."""
 
     def __init__(self) -> None:
         self.sandbox_ids: list[str] = []
         self.backends: list[RecordingSandboxBackend] = []
-
-    def reset(self) -> None:
-        """Restore pristine state, so module-level capabilities can be shared across tests."""
-        self.sandbox_ids.clear()
-        self.backends.clear()
 
     async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
         self.sandbox_ids.append(ref.sandbox_id)
@@ -98,12 +186,6 @@ class AcquireOnlySandboxCapability(AbstractCapability[Any]):
     def __init__(self) -> None:
         self.events: list[str] = []
         self.backends: list[RecordingSandboxBackend] = []
-        self._created = 0
-
-    def reset(self) -> None:
-        """Restore pristine state, so module-level capabilities can be shared across tests."""
-        self.events.clear()
-        self.backends.clear()
         self._created = 0
 
     async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
@@ -132,10 +214,6 @@ class DecliningSandboxCapability(AbstractCapability[Any]):
     def __init__(self) -> None:
         self.acquire_calls = 0
 
-    def reset(self) -> None:
-        """Restore pristine state, so module-level capabilities can be shared across tests."""
-        self.acquire_calls = 0
-
     async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef | None:
         self.acquire_calls += 1
         return None
@@ -147,10 +225,3 @@ class FailingReleaseSandboxCapability(AcquireOnlySandboxCapability):
     async def release_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
         self.events.append(f'release-failed:{ref.sandbox_id}')
         raise RuntimeError(f'sandbox {ref.sandbox_id!r} is already gone')
-
-
-class SandboxContributingCapability(AbstractCapability[Any]):
-    """Capability whose sandbox contribution is rejected before anything is provisioned."""
-
-    async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
-        return SandboxRef(sandbox_id='fake-sandbox')  # pragma: no cover

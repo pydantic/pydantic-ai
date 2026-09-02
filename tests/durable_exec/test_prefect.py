@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import itertools
 import os
 import threading
 import uuid
@@ -106,7 +107,7 @@ from pydantic_ai.realtime import (
     RealtimeSession,
 )
 from pydantic_ai.realtime.codec import RealtimeConnection
-from pydantic_ai.sandboxes import Sandbox, SandboxBackend, SandboxRef
+from pydantic_ai.sandboxes import SandboxRef
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, ToolsetTool
@@ -161,6 +162,7 @@ from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsSameStr, IsStr
 from ..continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
 from ..model_lifecycle_utils import LifecycleTrackingModel
+from ..sandbox_fakes import ref_sandbox
 
 
 def test_durability_codecs() -> None:
@@ -2201,11 +2203,8 @@ def test_cache_policy_keys_deferred_sandbox_identity():
     cache_policy = PrefectAgentInputs()
     mock_task_ctx = MagicMock()
 
-    async def unused_resolver(_ref: SandboxRef) -> SandboxBackend:
-        raise AssertionError  # pragma: no cover
-
     def key_for(sandbox_id: str) -> str | None:
-        sandbox = Sandbox._from_ref(SandboxRef(sandbox_id=sandbox_id), unused_resolver)  # pyright: ignore[reportPrivateUsage]
+        sandbox = ref_sandbox(SandboxRef(sandbox_id=sandbox_id))
         ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), sandbox=sandbox)
         return cache_policy.compute_key(task_ctx=mock_task_ctx, inputs={'ctx': ctx}, flow_parameters={})
 
@@ -4584,16 +4583,16 @@ async def test_prefect_agent_run_sync_from_sync_tool_is_rejected():
 @pytest.mark.parametrize('blockbuster_enabled', [False])
 async def test_prefect_durability_runs_sandbox_lifecycle_in_tasks(blockbuster_enabled: bool) -> None:
     """Sandbox lifecycle operations execute as distinct Prefect tasks for each agent run."""
-    assert blockbuster_enabled is False
 
     class SandboxCapability(AbstractCapability[Any]):
         id = 'sandbox'
 
         def __init__(self) -> None:
             self.events: list[tuple[str, str, bool]] = []
+            self.created = itertools.count(1)
 
         async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
-            sandbox_id = f'sandbox-{len(self.events)}'
+            sandbox_id = f'sandbox-{next(self.created)}'
             self.events.append(('acquire', sandbox_id, TaskRunContext.get() is not None))
             return SandboxRef(sandbox_id=sandbox_id)
 
@@ -4611,8 +4610,8 @@ async def test_prefect_durability_runs_sandbox_lifecycle_in_tasks(blockbuster_en
 
     assert await run_agent_twice() == ('success (no tool calls)', 'success (no tool calls)')
     assert sandbox.events == [
-        ('acquire', 'sandbox-0', True),
-        ('release', 'sandbox-0', True),
+        ('acquire', 'sandbox-1', True),
+        ('release', 'sandbox-1', True),
         ('acquire', 'sandbox-2', True),
         ('release', 'sandbox-2', True),
     ]
