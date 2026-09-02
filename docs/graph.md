@@ -185,7 +185,7 @@ async def main():
 7. [`g.build()`][pydantic_graph.graph_builder.GraphBuilder.build] returns a [`Graph`][pydantic_graph.graph_builder.Graph] ready to execute.
 8. [`graph.run()`][pydantic_graph.graph_builder.Graph.run] is async and returns the raw output value (the `int` returned by the `End` node).
 
-_(This example is complete except for the async entry point. To run it, add `import asyncio` and call `asyncio.run(main())`.)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 A [mermaid diagram](#mermaid-diagrams) for this graph can be generated with `print(fives_graph)`, or by calling [`fives_graph.render()`][pydantic_graph.graph_builder.Graph.render]:
 
@@ -327,7 +327,7 @@ async def main():
 17. Initialize the state. This will be passed to the graph run and mutated as the graph runs.
 18. Run the graph with the initial state. The first node to execute is determined by the `start` step we wired into [`g.start_node`][pydantic_graph.graph_builder.GraphBuilder.start_node].
 
-_(This example is complete except for the async entry point. To run it, add `import asyncio` and call `asyncio.run(main())`.)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 A [mermaid diagram](#mermaid-diagrams) for this graph can be generated with `print(vending_machine_graph)`:
 
@@ -504,7 +504,7 @@ async def main():
     """
 ```
 
-_(This example is complete except for the async entry point. To run it, add `import asyncio` and call `asyncio.run(main())`.)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 ## Iterating Over a Graph
 
@@ -586,7 +586,7 @@ async def main():
     #> 5
 ```
 
-_(This example is complete except for the async entry point. To run it, call `asyncio.run(main())`.)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 ## Mermaid Diagrams
 

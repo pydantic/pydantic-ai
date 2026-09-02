@@ -140,7 +140,7 @@ async def main():
         """
 ```
 
-_(This example is complete except for the async entry point. To run it, add `import asyncio` and call `asyncio.run(main())`.)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 ### Using Messages as Input for Further Agent Runs
 

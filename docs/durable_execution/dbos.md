@@ -104,7 +104,7 @@ async def main():
 3. Attach durability via `capabilities=[...]`. The capability routes model requests and MCP communication through DBOS steps when the agent runs inside a workflow. Because DBOS workflows must be registered before `DBOS.launch()`, the agent must also be constructed before calling `DBOS.launch()`.
 4. Wrap `agent.run()` in your own `@DBOS.workflow` to make the run durable.
 
-_(This example is complete except for the async entry point. To run it, add `import asyncio` and call `asyncio.run(main())`.)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 Because the same agent works inside and outside a DBOS workflow, [`DBOSDurability`][pydantic_ai.durable_exec.dbos.DBOSDurability] composes with all other [capabilities](../capabilities/overview.md) without each needing a DBOS-specific wrapper variant.
 

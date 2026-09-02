@@ -36,7 +36,7 @@ async def main():
     #> Embedded 3 documents
 ```
 
-_(This example is complete except for the async entry point. To run it, add `import asyncio` and call `asyncio.run(main())`.)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 !!! tip "Queries vs Documents"
     Some embedding models optimize differently for queries and documents. Use
@@ -75,7 +75,7 @@ async def main():
     #> Cost: $0.000000
 ```
 
-_(This example is complete except for the async entry point. To run it, add `import asyncio` and call `asyncio.run(main())`.)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 ## Choosing a model
 
@@ -184,7 +184,7 @@ async def main():
     #> 1536
 ```
 
-_(This example is complete except for the async entry point. To run it, add `import asyncio` and call `asyncio.run(main())`.)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 See [OpenAI's embedding models](https://platform.openai.com/docs/guides/embeddings) for available models.
 
@@ -208,7 +208,7 @@ async def main():
     #> 256
 ```
 
-_(This example is complete except for the async entry point. To run it, add `import asyncio` and call `asyncio.run(main())`.)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 #### OpenAI-Compatible Providers {#openai-compatible}
 
@@ -290,7 +290,7 @@ async def main():
     #> 3072
 ```
 
-_(This example is complete except for the async entry point. To run it, add `import asyncio` and call `asyncio.run(main())`.)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 See the [Google Embeddings documentation](https://ai.google.dev/gemini-api/docs/embeddings) for available models.
 
@@ -336,7 +336,7 @@ async def main():
     #> 768
 ```
 
-_(This example is complete except for the async entry point. To run it, add `import asyncio` and call `asyncio.run(main())`.)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 #### Task Conditioning
 
@@ -411,7 +411,7 @@ async def main():
     #> 1024
 ```
 
-_(This example is complete except for the async entry point. To run it, add `import asyncio` and call `asyncio.run(main())`.)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 See the [Cohere Embed documentation](https://docs.cohere.com/docs/cohere-embed) for available models.
 
@@ -467,7 +467,7 @@ async def main():
     #> 1024
 ```
 
-_(This example is complete except for the async entry point. To run it, add `import asyncio` and call `asyncio.run(main())`.)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 See the [VoyageAI Embeddings documentation](https://docs.voyageai.com/docs/embeddings) for available models.
 
@@ -716,7 +716,7 @@ async def main():
     #> 768
 ```
 
-_(This example is complete except for the async entry point. To run it, add `import asyncio` and call `asyncio.run(main())`.)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 [`lightonai/DenseOn`](https://huggingface.co/lightonai/DenseOn) is a strong recent 149M-parameter general-purpose model that encodes queries and documents asymmetrically: [`embed_query()`][pydantic_ai.embeddings.Embedder.embed_query] and [`embed_documents()`][pydantic_ai.embeddings.Embedder.embed_documents] automatically apply the model's `query:` / `document:` prompts. See the [Sentence Transformers pretrained models](https://www.sbert.net/docs/sentence_transformer/pretrained_models.html) documentation and the [MTEB leaderboard](https://huggingface.co/spaces/mteb/leaderboard) for more options; see also [Choosing a model](#choosing-a-model) above.
 
@@ -791,7 +791,7 @@ async def main():
     #> 256
 ```
 
-_(This example is complete except for the async entry point. To run it, add `import asyncio` and call `asyncio.run(main())`.)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 ## Token Counting
 
@@ -817,7 +817,7 @@ async def main():
     #> Max tokens: 1024
 ```
 
-_(This example is complete except for the async entry point. To run it, add `import asyncio` and call `asyncio.run(main())`.)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 ## Testing
 

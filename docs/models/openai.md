@@ -418,7 +418,7 @@ async def main():
                     print(event.delta.content_delta)
 ```
 
-_(This example is complete except for the async entry point. To run it, add `import asyncio` and call `asyncio.run(main())`.)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 A `'phase'` key appears in `provider_details` whenever the model labels its output, but it is only sent back on models that [`OpenAIModelProfile.openai_supports_phase`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_supports_phase] marks as accepting it. On every other model the label is surfaced to you and dropped from follow-up requests.
 
