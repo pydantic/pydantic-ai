@@ -169,7 +169,8 @@ Adopted PR #<N> — "<title>"
   Unresolved threads (for triage): <count>
 
 Next:
-  - Work the unresolved threads with `/address-feedback` (triage → fix → reply → resolve)
+  - Inspect unresolved threads with `.agents/skills/pr-review-feedback/sweep-unresolved <PR#>`
+  - Then work the feedback (triage → fix → resolve), or hand the PR to `/pr-orchestrator`
 ```
 
 ## Rules
