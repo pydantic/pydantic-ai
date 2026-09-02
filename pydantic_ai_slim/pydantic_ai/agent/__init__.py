@@ -3038,18 +3038,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # from e.g. capability functions only materialize in `for_run`). Conflicting definitions
         # sharing a `unique_id` *within* a layer are ambiguous; last-wins *across* layers is the
         # intentional override mechanism. Instrumentation contributes no native tools.
-        base_native_tools = [
-            tool
-            for cap in resolved_layers[: len(resolved_layers) - len(extra_capabilities)]
-            for tool in cap.get_native_tools()
-        ]
+        base_native_tools = _layer_native_tools(resolved_layers[: len(resolved_layers) - len(extra_capabilities)])
         _validate_native_tool_ids(
             base_native_tools,
             source='override spec capabilities' if base_is_override else 'agent capabilities',
         )
-        extra_native_tools: list[AgentNativeTool[AgentDepsT]] = [
-            tool for cap in resolved_extras for tool in cap.get_native_tools()
-        ]
+        extra_native_tools = _layer_native_tools(resolved_extras)
         _validate_native_tool_ids(extra_native_tools, source='run capabilities')
 
         # `override(native_tools=...)` replaces the agent's *baseline* native tools while still
@@ -4143,6 +4137,20 @@ def _validate_instruction_source_ids(capabilities: Sequence[AbstractCapability[A
                     f'Capability id {existing.id!r} is used by multiple capabilities that contribute '
                     'instructions. Capability ids must be unique within a run.'
                 )
+
+
+def _layer_native_tools(layer: Sequence[AbstractCapability[AgentDepsT]]) -> list[AgentNativeTool[AgentDepsT]]:
+    """The native tools one layer contributes, with duplicates *within* it already resolved.
+
+    Two capabilities under one `id` in the same layer are one configuration stated twice, and the
+    merged one is what the layer contributes -- so reading the tools off the layer as supplied would
+    show one native tool id with two definitions and reject a pair the run goes on to combine. The
+    agent's own layer is resolved in `__init__`; a run's is only assembled here.
+    """
+    if not layer:
+        return []
+    tree = CombinedCapability(list(layer)) if len(layer) > 1 else layer[0]
+    return list(combine_duplicate_capabilities(tree, [layer]).get_native_tools())
 
 
 def _validate_native_tool_ids(native_tools: Sequence[AgentNativeTool[Any]], *, source: str) -> None:

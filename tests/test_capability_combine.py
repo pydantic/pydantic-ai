@@ -729,3 +729,23 @@ async def test_an_id_two_capabilities_only_share_after_for_run_is_still_a_collis
 
     with pytest.raises(UserError, match="Capability id 'chosen' is used by multiple capabilities"):
         await agent.run('hi')
+
+
+async def test_two_capabilities_supplied_for_one_run_merge_like_two_on_the_agent() -> None:
+    """A layer is a layer, whether the agent was constructed with it or a run supplied it.
+
+    Native tools are keyed by the tool's own id, so reading them off the layer as supplied showed
+    one id with two definitions and rejected a pair the run goes on to combine -- the agent's own
+    layer is resolved in `__init__`, but a run's is only assembled at run setup (#6705).
+    """
+    seen: list[Sequence[Any]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append(info.model_request_parameters.native_tools)
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(model_fn))
+
+    await agent.run('hi', capabilities=[WebSearch(search_context_size='low'), WebSearch(max_uses=3)])
+
+    assert seen == snapshot([[WebSearchTool(search_context_size='low', max_uses=3)]])
