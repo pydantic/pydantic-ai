@@ -1093,9 +1093,12 @@ async def test_google_cloud_image_generation_downloads_files_api_url(monkeypatch
 
     The blob's key spelling is google-genai's serialization rather than ours, and it varies by version:
     `tests/models/cassettes/test_google/test_google_url_input_force_download.yaml` records a live Vertex
-    200 for a request body carrying `inlineData.mimeType` (recorded under google-genai 1.70.0), while the
-    pinned 2.18.0 emits `mime_type` for the same construction. The assertion reads either spelling; the
-    coverage is that the downloaded `image/webp` wins over the URL's declared `image/png`.
+    200 for a request body carrying `inlineData.mimeType` (recorded when `uv.lock` pinned google-genai
+    1.70.0), while the pinned 2.18.0 emits `mime_type` for the same construction. The assertion reads
+    either spelling; the coverage is that the downloaded `image/webp` wins over the URL's declared
+    `image/png`.
+
+    Not a VCR test because `download_item` is monkeypatched, so no fetch reaches the wire.
     """
     download_mock = AsyncMock(return_value={'data': b'downloaded', 'data_type': 'image/webp'})
     monkeypatch.setattr(google_images, 'download_item', download_mock)
@@ -1244,10 +1247,12 @@ async def test_google_image_generation_accepts_the_gemini_api_provider_name_fami
     """Every Gemini Developer API provider name is accepted, not just `system`.
 
     Matching on `system` alone rejects two files this transport can serve: `'google-gla'`, the pre-v2
-    name still carried by persisted message history, and `'google'` — the name the Files API path
-    stamps — on a `GoogleCloudProvider` holding a Gemini API client, whose `name` stays `'google-cloud'`
-    while the bytes go to the only transport with a Files API. Mirrors `GoogleModel`'s
-    `_matching_provider_names`.
+    name still carried by persisted message history, and `'google'` — the name a file uploaded through
+    the Gemini Files API carries — on a `GoogleCloudProvider` holding a Gemini API client, whose `name`
+    stays `'google-cloud'` while the bytes go to the only transport with a Files API. Mirrors
+    `GoogleModel`'s `_matching_provider_names`.
+
+    Not a VCR test because a Files API upload expires, so the acceptance path cannot be recorded stably.
     """
     requests: list[httpx2.Request] = []
 

@@ -172,13 +172,10 @@ class GoogleImageGenerationModel(ImageGenerationModel):
         """Whether requests go to Google Cloud (Vertex) rather than the Gemini Developer API.
 
         Restated from `GoogleModel._is_google_cloud` rather than imported: it is an instance property
-        there, and `models/AGENTS.md` keeps provider-specific code in the provider's own module, so
-        sharing it would mean a new shared module owning Google transport logic. (`_metadata_as_usage`
-        is imported above because it is already a module-level function there.) Derived from the
-        client's transport rather than the provider name, because either provider accepts a pre-built
-        `client=` and stores it as-is, so the two can disagree in both directions: a Vertex-backed
-        client in `GoogleProvider` keeps `name` `'google'`, and a Gemini-API client in
-        `GoogleCloudProvider` keeps `name` `'google-cloud'`.
+        there whose body is a single attribute read. Derived from the client's transport rather than the
+        provider name, because either provider accepts a pre-built `client=` and stores it as-is, so the
+        two can disagree in both directions: a Vertex-backed client in `GoogleProvider` keeps `name`
+        `'google'`, and a Gemini-API client in `GoogleCloudProvider` keeps `name` `'google-cloud'`.
         """
         return bool(self._client.vertexai)
 
@@ -279,10 +276,14 @@ class GoogleImageGenerationModel(ImageGenerationModel):
 
         Only reachable on that transport, as `_map_input_image` rejects every `UploadedFile` on Vertex
         before this runs, so the accepted set is that transport's name family rather than `self.system`
-        alone. Mirrors `GoogleModel._matching_provider_names`: `google-gla` is the pre-v2 name for the
-        transport and is still stamped on files in persisted message history, and `self.system` covers
-        the construction where `GoogleCloudProvider` stores a Gemini API client as-is and keeps `name`
-        `'google-cloud'`.
+        alone. `google-gla` is the pre-v2 name for the transport and is still stamped on files in
+        persisted message history, and `self.system` covers the construction where `GoogleCloudProvider`
+        stores a Gemini API client as-is and keeps `name` `'google-cloud'`.
+
+        Wider than `GoogleModel._matching_provider_names`, which accepts a name family only when
+        `self.system` belongs to one and otherwise matches `self.system` alone: here the family is
+        accepted whatever `self.system` is, so a custom `BaseGoogleProvider` wrapping a Gemini API
+        client can still reference files uploaded through the Files API.
         """
         accepted = _GEMINI_API_PROVIDER_NAMES | {self.system}
         if item.provider_name not in accepted:

@@ -48,9 +48,11 @@ async def replace_subject(source: BinaryImage) -> BinaryImage:
 ```
 
 The order of multiple reference images is preserved. Provider-hosted files are supported by Google and xAI, and the
-[`UploadedFile.provider_name`][pydantic_ai.messages.UploadedFile] must match the selected provider. OpenAI's image-edit
-endpoint requires file content, so use `BinaryImage` or `ImageUrl` with OpenAI. Image URLs downloaded by Pydantic AI
-are limited to 50 MiB.
+[`UploadedFile.provider_name`][pydantic_ai.messages.UploadedFile] must name the provider the file was uploaded to. On
+xAI that is exactly the name of the provider you selected; Google additionally accepts `google-gla`, its pre-v2 name,
+and reads whether the Gemini Files API is available off the client's transport rather than off the provider name, as
+covered under [Google image generation](models/google.md#image-generation). OpenAI's image-edit endpoint requires file
+content, so use `BinaryImage` or `ImageUrl` with OpenAI. Image URLs downloaded by Pydantic AI are limited to 50 MiB.
 
 Editing applies to the whole image: masked editing, where a mask restricts the edit to a region, is not supported.
 Of the providers below only OpenAI exposes that primitive, so there is nothing portable to map it onto yet.
