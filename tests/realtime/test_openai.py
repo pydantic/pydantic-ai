@@ -3885,7 +3885,7 @@ def test_context_window_filled_from_genai_prices_unless_a_profile_layer_sets_it(
     provider nor a partial user profile set it (including to `None`); a callable user layer sees the fill."""
     provider = OpenAIProvider(api_key='k')
 
-    with patch('pydantic_ai.realtime.model.lookup_model_context_window', return_value=123) as lookup:
+    with patch('pydantic_ai.realtime.model.lookup_context_window', return_value=123) as lookup:
         model = OpenAIRealtimeModel('gpt-realtime', provider=provider)
         assert model.context_window == 123
         assert model.profile.get('context_window') == 123
@@ -3908,7 +3908,7 @@ def test_context_window_filled_from_genai_prices_unless_a_profile_layer_sets_it(
         def realtime_model_profile(model_name: str) -> RealtimeModelProfile:
             return RealtimeModelProfile(context_window=456)
 
-    with patch('pydantic_ai.realtime.model.lookup_model_context_window', side_effect=AssertionError('not consulted')):
+    with patch('pydantic_ai.realtime.model.lookup_context_window', side_effect=AssertionError('not consulted')):
         assert OpenAIRealtimeModel('gpt-realtime', provider=WindowProvider(api_key='k')).context_window == 456
 
     # Unpatched, the real lookup runs: whatever the pinned genai-prices data records for the model.

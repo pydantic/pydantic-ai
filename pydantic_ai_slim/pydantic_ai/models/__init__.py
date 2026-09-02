@@ -26,7 +26,7 @@ from typing_extensions import Self, TypeAliasType, TypedDict, deprecated
 from typing_inspection.introspection import get_literal_values
 
 from .. import _utils
-from .._genai_prices import lookup_context_window, lookup_model_context_window, preload_pricing_data
+from .._genai_prices import lookup_context_window, preload_pricing_data
 from .._http import DEFAULT_HTTP_TIMEOUT as DEFAULT_HTTP_TIMEOUT, legacy_httpx
 from .._json_schema import JsonSchemaTransformer
 from .._output import StructuredTextOutputSchema
@@ -915,7 +915,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             user is not None and not callable(user) and 'context_window' in user
         )
         if not context_window_set:
-            context_window = lookup_model_context_window(self)
+            context_window = lookup_context_window(self)
             if context_window is not None:
                 resolved = merge_profile(resolved, ModelProfile(context_window=context_window))
 

@@ -48,16 +48,28 @@ def iter_provider_references(
 
 
 def lookup_context_window(
-    model_name: str,
+    model: AbstractModel | str,
     *,
     provider_api_url: str | None = None,
     provider_name: str | None = None,
 ) -> int | None:
     """Look up a model's context window in [genai-prices](https://github.com/pydantic/genai-prices) data.
 
-    Returns the context window recorded for the model under the first provider reference that knows the
-    model, or `None` if none does or no context window is recorded.
+    Takes a model instance, whose `model_name`, `system`, and `base_url` are matched on, or a model name
+    together with the provider name and/or API URL to match on. Returns the context window recorded for
+    the model under the first provider reference that knows it, or `None` if none does or no context
+    window is recorded.
     """
+    if isinstance(model, str):
+        model_name = model
+    else:
+        model_name, provider_name = model.model_name, model.system
+        try:
+            provider_api_url = model.base_url
+        except (AttributeError, UserError):
+            # HuggingFace may have no base URL, and Bedrock Mantle resolves its profile inside `__init__`
+            # before the client that `base_url` reads exists; either just means no URL to match on.
+            provider_api_url = None
     for candidate_id, candidate_url in iter_provider_references(
         provider_api_url=provider_api_url, provider_id=provider_name
     ):
@@ -69,20 +81,6 @@ def lookup_context_window(
             continue
         return model_info.context_window
     return None
-
-
-def lookup_model_context_window(model: AbstractModel) -> int | None:
-    """[`lookup_context_window`][pydantic_ai._genai_prices.lookup_context_window] for a model instance.
-
-    Uses the model's `model_name`, `system`, and `base_url`. `base_url` may raise `UserError` (e.g.
-    HuggingFace without one) or `AttributeError` when the profile is first resolved inside a subclass
-    `__init__` before the client it reads exists (e.g. Bedrock Mantle); either just means no URL to match on.
-    """
-    try:
-        base_url = model.base_url
-    except (AttributeError, UserError):
-        base_url = None
-    return lookup_context_window(model.model_name, provider_api_url=base_url, provider_name=model.system)
 
 
 def calculate_price_for_usage(

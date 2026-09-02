@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any, Literal, NoReturn, Protocol
 
 from typing_extensions import TypeAliasType
 
-from .._genai_prices import lookup_model_context_window, preload_pricing_data
+from .._genai_prices import lookup_context_window, preload_pricing_data
 from ..exceptions import ModelAPIError, UserError
 from ..messages import ModelMessage
 from ..models import ModelRequestParameters
@@ -316,7 +316,7 @@ class RealtimeModel(AbstractModel):
             user is not None and not callable(user) and 'context_window' in user
         )
         if not context_window_set:
-            context_window = lookup_model_context_window(self)
+            context_window = lookup_context_window(self)
             if context_window is not None:
                 resolved = merge_realtime_profile(resolved, RealtimeModelProfile(context_window=context_window))
         if user is not None:
