@@ -78,7 +78,7 @@ async def main():
     #> Final state: 1
 ```
 
-_(This example is complete, it can be run "as is" — you'll need to add `import asyncio; asyncio.run(main())` to run `main`)_
+_(This example is complete except for the async entry point. To run it, add `import asyncio` and call `asyncio.run(main())`.)_
 
 ## Key Concepts
 
@@ -164,7 +164,7 @@ async def main():
     #> Items processed: 5
 ```
 
-_(This example is complete, it can be run "as is" — you'll need to add `import asyncio; asyncio.run(main())` to run `main`)_
+_(This example is complete except for the async entry point. To run it, add `import asyncio` and call `asyncio.run(main())`.)_
 
 In this example:
 
@@ -240,7 +240,7 @@ async def main():
                 break
 ```
 
-_(This example is complete, it can be run "as is" — you'll need to add `import asyncio; asyncio.run(main())` to run `main`)_
+_(This example is complete except for the async entry point. To run it, add `import asyncio` and call `asyncio.run(main())`.)_
 
 The [`GraphRun`][pydantic_graph.graph_builder.GraphRun] object provides:
 

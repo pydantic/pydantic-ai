@@ -47,7 +47,7 @@ async def main():
 2. Pass the dataclass type to the `deps_type` argument of the [`Agent` constructor][pydantic_ai.agent.Agent.__init__]. **Note**: we're passing the type here, NOT an instance, this parameter is not actually used at runtime, it's here so we can get full type checking of the agent.
 3. When running the agent, pass an instance of the dataclass to the `deps` parameter.
 
-_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+_(This example is complete except for the async entry point. To run it, add `import asyncio` and call `asyncio.run(main())`.)_
 
 ## Accessing Dependencies
 
@@ -96,7 +96,7 @@ async def main():
 3. Access the HTTP client through the [`.deps`][pydantic_ai.tools.RunContext.deps] attribute.
 4. Access the API key through the same attribute.
 
-_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+_(This example is complete except for the async entry point. To run it, add `import asyncio` and call `asyncio.run(main())`.)_
 
 In addition to [`.deps`][pydantic_ai.tools.RunContext.deps], [`RunContext`][pydantic_ai.tools.RunContext] provides access to the running agent via [`.agent`][pydantic_ai.tools.RunContext.agent], which is useful when [tools](tools.md), [hooks](hooks.md), or [capabilities](capabilities/overview.md) need to read agent properties like [`name`][pydantic_ai.agent.Agent.name] or [`output_type`][pydantic_ai.agent.Agent.output_type]. The [`.realtime`][pydantic_ai.tools.RunContext.realtime] property identifies realtime sessions without requiring a model type check, and [`.realtime_session`][pydantic_ai.tools.RunContext.realtime_session] exposes the live [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] to tools and hooks once it is connected.
 
@@ -106,9 +106,9 @@ Dependency fields can also be referenced in instructions and descriptions via [t
 
 [System prompt functions](agent.md#system-prompts), [function tools](tools.md) and [output validators](output.md#output-validator-functions) are all run in the async context of an agent run.
 
-If these functions are not coroutines (e.g. `async def`) they are called with
-[`run_in_executor`][asyncio.loop.run_in_executor] in a thread pool. It's therefore marginally preferable
-to use `async` methods where dependencies perform IO, although synchronous dependencies should work fine too.
+If these functions are synchronous, defined with `def` rather than `async def`, Pydantic AI calls them with
+[`run_in_executor`][asyncio.loop.run_in_executor] in a thread pool. Prefer `async` functions when dependencies
+perform I/O, although synchronous dependencies also work.
 
 !!! note "`run` vs. `run_sync` and Asynchronous vs. Synchronous dependencies"
     Whether you use synchronous or asynchronous dependencies is completely independent of whether you use `run` or `run_sync` — `run_sync` is just a wrapper around `run` and agents are always run in an async context.
@@ -157,7 +157,7 @@ async def main():
 1. Here we use a synchronous `httpx.Client` instead of an asynchronous `httpx.AsyncClient`.
 2. To match the synchronous dependency, the system prompt function is now a plain function, not a coroutine.
 
-_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+_(This example is complete except for the async entry point. To run it, add `import asyncio` and call `asyncio.run(main())`.)_
 
 ## Full Example
 
@@ -225,7 +225,7 @@ async def main():
 1. To pass `RunContext` to a tool, use the [`tool`][pydantic_ai.agent.Agent.tool] decorator.
 2. `RunContext` may optionally be passed to a [`output_validator`][pydantic_ai.agent.Agent.output_validator] function as the first argument.
 
-_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+_(This example is complete except for the async entry point. To run it, add `import asyncio` and call `asyncio.run(main())`.)_
 
 ## Overriding Dependencies
 

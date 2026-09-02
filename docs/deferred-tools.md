@@ -482,7 +482,7 @@ async def main():
 2. The optional `metadata` parameter passes the `task_id` so it can be matched with results later, accessible in `DeferredToolRequests.metadata` keyed by `tool_call_id`.
 3. In reality, this would typically happen in a separate process that polls for the task status or is notified when all pending tasks are complete.
 
-_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+_(This example is complete except for the async entry point. To run it, call `asyncio.run(main())`.)_
 
 ## Observing deferred tool calls in a stream
 
@@ -514,7 +514,7 @@ async def main():
                 #> Resolved: ['update_file_dotenv', 'delete_file']
 ```
 
-_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+_(This example is complete except for the async entry point. To run it, add `import asyncio` and call `asyncio.run(main())`.)_
 
 ## See Also
 
