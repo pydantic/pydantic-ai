@@ -489,6 +489,7 @@ async def test_session_resumption_after_drop(xai_ws_cassette: tuple[XaiProvider,
     assert 'cobalt' in (final_part.transcript or '').lower()
 
 
+@pytest.mark.usefixtures('no_genai_prices_context_window')
 def test_profile_allow_seeding() -> None:
     """Unit guard: the model advertises session seeding, which the seeding cassette test relies on.
 
@@ -514,4 +515,5 @@ def test_profile_allow_seeding() -> None:
         emits_input_speech_events=True,
         audio_input_sample_rate=24000,
         audio_output_sample_rate=24000,
+        context_window=None,
     )
