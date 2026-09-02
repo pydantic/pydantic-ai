@@ -446,6 +446,73 @@ def test_ui_attribute_shadowing_rejected():
             ui: ClassVar[bool] = False
 
 
+def test_shared_base_contributes_its_fields():
+    """A dataclass base holding fields common to a family reaches the payload and the wire."""
+
+    @dataclass(kw_only=True)
+    class AppEventBase(CustomEvent, abstract=True):
+        request_id: str
+
+    @dataclass(kw_only=True)
+    class ShardSyncedEvent(AppEventBase):
+        done: int
+
+    event = ShardSyncedEvent(request_id='r1', done=3)
+    assert event.to_payload() == snapshot({'request_id': 'r1', 'done': 3})
+
+    adapter = pydantic.TypeAdapter[AgentStreamEvent](AgentStreamEvent)
+    restored = adapter.validate_python(adapter.dump_python(event, mode='json'))
+    assert restored == snapshot(ShardSyncedEvent(request_id='r1', done=3))
+
+
+def test_abstract_base_is_not_registered_and_cannot_be_emitted():
+    """`abstract=True` keeps a fields-only base out of the registry and out of the stream."""
+
+    @dataclass(kw_only=True)
+    class SharedBase(CustomEvent, abstract=True):
+        request_id: str = 'r'
+
+    @dataclass(kw_only=True)
+    class ConcreteChildEvent(SharedBase):
+        pass
+
+    assert 'shared_base' not in CUSTOM_EVENT_TYPES
+    assert CUSTOM_EVENT_TYPES['concrete_child'] is ConcreteChildEvent
+    # `abstract` describes the class it's declared on, never the subclasses it exists to serve.
+    assert ConcreteChildEvent.__dict__.get('_abstract') is None
+    ConcreteChildEvent()
+
+    with pytest.raises(TypeError, match='is declared `abstract=True`'):
+        SharedBase()
+
+
+def test_undecorated_base_with_fields_rejected():
+    """A base whose fields `@dataclass` would ignore is rejected, rather than silently dropped."""
+
+    class UndecoratedBase(CustomEvent, abstract=True):
+        shared: str = 'x'
+
+    with pytest.raises(TypeError, match='declares fields but is not a dataclass'):
+
+        @dataclass(kw_only=True)
+        class LeafEvent(UndecoratedBase):  # pyright: ignore[reportUnusedClass]
+            done: int = 0
+
+
+def test_undecorated_base_with_only_class_vars_allowed():
+    """A `ClassVar` isn't payload, so a settings-only mixin doesn't need to be a dataclass."""
+
+    class MarkerMixin(CustomEvent, abstract=True):
+        marker: ClassVar[str] = 'm'
+
+    @dataclass(kw_only=True)
+    class MarkedEvent(MarkerMixin):
+        done: int = 0
+
+    assert MarkedEvent(done=1).to_payload() == snapshot({'done': 1})
+    assert MarkedEvent.marker == 'm'
+
+
 def test_slotted_event_class():
     """`@dataclass(slots=True)` recreates the class; the recreated class keeps its registered name."""
 

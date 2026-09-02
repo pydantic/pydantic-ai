@@ -43,10 +43,12 @@ from ._event_registry import (
     EventRegistry as _EventRegistry,
     event_family_schema as _event_family_schema,
     guard_post_init as _guard_post_init,
+    inherited_namespace as _inherited_namespace,
     inject_tag_field as _inject_tag_field,
     is_redefinition as _is_redefinition,
     keeps_canonical_registration as _keeps_canonical_registration,
     shadowed_envelope_fields as _shadowed_envelope_fields,
+    undecorated_field_base as _undecorated_field_base,
 )
 from ._instrumentation import redact_binary_content, serialize_any
 from ._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc
@@ -4540,6 +4542,13 @@ class CustomEvent:
     _registered_name: ClassVar[str | None] = None
     """The name this class is registered under; `None` on the base class and unregistered subclasses."""
 
+    _abstract: ClassVar[bool] = False
+    """Whether this class is a shared base rather than an event in its own right.
+
+    Set by the `abstract=True` class argument and read from the class's own `__dict__`, so it never
+    reaches the subclasses it exists to serve.
+    """
+
     ui: ClassVar[bool] = True
     """Whether [UI event streams](../ui/overview.md) forward this event class to the frontend.
 
@@ -4576,6 +4585,11 @@ class CustomEvent:
     def __post_init__(self) -> None:
         if type(self) is CustomEvent:
             raise TypeError('`CustomEvent` is a base class; define a dataclass subclass with typed payload fields.')
+        if type(self).__dict__.get('_abstract'):
+            raise TypeError(
+                f'`{type(self).__qualname__}` is declared `abstract=True`, so it has no event name to serialize '
+                f'under; emit one of its subclasses instead.'
+            )
         if '__dataclass_fields__' not in type(self).__dict__:
             # An undecorated subclass never receives its injected `name` default or its own payload
             # fields; without this check its payload would be silently dropped on deserialization.
@@ -4591,7 +4605,13 @@ class CustomEvent:
             )
 
     def __init_subclass__(
-        cls, *, name: str | None = None, ui: bool | None = None, _register: bool = True, **kwargs: Any
+        cls,
+        *,
+        name: str | None = None,
+        ui: bool | None = None,
+        abstract: bool = False,
+        _register: bool = True,
+        **kwargs: Any,
     ) -> None:
         super().__init_subclass__(**kwargs)
         # A subclass-defined `__post_init__` replaces the generated initializer's only call to the
@@ -4599,7 +4619,18 @@ class CustomEvent:
         _guard_post_init(cls, CustomEvent.__post_init__)
         if ui is not None:
             cls.ui = ui
-        if not _register:
+        if base := _undecorated_field_base(cls, CustomEvent):
+            raise TypeError(
+                f'Custom event {cls.__qualname__} inherits from {base.__qualname__}, which declares fields but '
+                f'is not a dataclass, so those fields would be silently dropped from every payload. Decorate '
+                f'it with `@dataclass(kw_only=True)`.'
+            )
+        if abstract:
+            # Recorded in the class's own `__dict__` rather than inherited, so a subclass is
+            # concrete unless it says otherwise, and so the flag survives the class recreation
+            # `@dataclass(slots=True)` performs, which re-runs this without the class arguments.
+            cls._abstract = True
+        if cls.__dict__.get('_abstract') or not _register:
             return
         # `@dataclass(slots=True)` recreates the class, re-invoking registration without the
         # original class arguments; the copied class body carries the original registration's name.
@@ -4699,6 +4730,16 @@ CAPABILITY_EVENT_TYPES: dict[str, type[CapabilityEvent]] = _EventRegistry()
 """Registry of [`CapabilityEvent`][pydantic_ai.messages.CapabilityEvent] subclasses, keyed by `kind`."""
 
 
+def _validate_capability_namespace(cls: type, namespace: str) -> None:
+    """Reject an unusable capability event namespace.
+
+    An empty namespace, or one with an empty dotted segment, produces a kind that can't be split back
+    into the namespace a subclass inherits.
+    """
+    if not namespace or not all(namespace.split('.')):
+        raise TypeError(f'Capability event {cls.__qualname__} has an invalid namespace {namespace!r}.')
+
+
 @dataclass(repr=False, kw_only=True)
 class CapabilityEvent:
     """A typed event emitted by a capability into the agent's event stream.
@@ -4754,11 +4795,26 @@ class CapabilityEvent:
     _registered_kind: ClassVar[str | None] = None
     """The kind this class is registered under; `None` on the base class and unregistered subclasses."""
 
+    _abstract: ClassVar[bool] = False
+    """Whether this class is a shared base rather than an event in its own right.
+
+    Set by the `abstract=True` class argument and read from the class's own `__dict__`, so it never
+    reaches the subclasses it exists to serve.
+    """
+
+    _abstract_namespace: ClassVar[str | None] = None
+    """The namespace an `abstract=True` base passes down, since it has no registered kind to derive one from."""
+
     __repr__ = _utils.dataclasses_no_defaults_repr
 
     def __post_init__(self) -> None:
         if type(self) is CapabilityEvent:
             raise TypeError('`CapabilityEvent` is a base class; define a dataclass subclass with a `namespace`.')
+        if type(self).__dict__.get('_abstract'):
+            raise TypeError(
+                f'`{type(self).__qualname__}` is declared `abstract=True`, so it has no event kind to serialize '
+                f'under; emit one of its subclasses instead.'
+            )
         if '__dataclass_fields__' not in type(self).__dict__:
             # An undecorated subclass never receives its injected `kind` default or its own payload
             # fields; without this check its payload would be silently dropped on deserialization.
@@ -4775,6 +4831,7 @@ class CapabilityEvent:
         namespace: str | None = None,
         name: str | None = None,
         dispatch: Literal['stream', 'inline'] | None = None,
+        abstract: bool = False,
         _register: bool = True,
         **kwargs: Any,
     ) -> None:
@@ -4786,7 +4843,20 @@ class CapabilityEvent:
             raise TypeError("`dispatch` must be either 'stream' or 'inline'.")
         if dispatch is not None:
             cls.event_dispatch = dispatch
-        if not _register:
+        if base := _undecorated_field_base(cls, CapabilityEvent):
+            raise TypeError(
+                f'Capability event {cls.__qualname__} inherits from {base.__qualname__}, which declares fields but '
+                f'is not a dataclass, so those fields would be silently dropped from every payload. Decorate '
+                f'it with `@dataclass(kw_only=True)`.'
+            )
+        if abstract:
+            # An abstract base never registers, so it has no `_registered_kind` for subclasses to
+            # derive their namespace from; keep the namespace itself so the family still inherits it.
+            cls._abstract = True
+            if namespace is not None:
+                _validate_capability_namespace(cls, namespace)
+                cls._abstract_namespace = namespace
+        if cls.__dict__.get('_abstract') or not _register:
             return
         # `@dataclass(slots=True)` recreates the class, re-invoking registration without the
         # original class arguments; the copied class body carries the original registration's kind.
@@ -4797,17 +4867,13 @@ class CapabilityEvent:
             event_kind = recreated_kind
         else:
             if namespace is None:
-                for base in cls.__mro__[1:]:
-                    if issubclass(base, CapabilityEvent) and (base_kind := base.__dict__.get('_registered_kind')):
-                        namespace = base_kind.rpartition('.')[0]
-                        break
+                namespace = _inherited_namespace(cls, CapabilityEvent)
             if namespace is None:
                 raise TypeError(
                     f'Capability event {cls.__qualname__} requires a namespace, e.g. '
                     f"`class {cls.__name__}(CapabilityEvent, namespace='my_capability')`."
                 )
-            if not namespace or not all(namespace.split('.')):
-                raise TypeError(f'Capability event {cls.__qualname__} has an invalid namespace {namespace!r}.')
+            _validate_capability_namespace(cls, namespace)
             event_name = name or to_snake(cls.__name__.removesuffix('Event'))
             if not event_name:
                 raise TypeError(

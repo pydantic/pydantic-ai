@@ -393,6 +393,27 @@ The payload cannot use the field names the envelope needs for itself: `data`, `t
 
 Emitting only works while the run is in progress and only from the family the emitting code owns, so each of these raises a [`UserError`][pydantic_ai.exceptions.UserError]: emitting a `CustomEvent` from a capability, emitting a [`CapabilityEvent`][pydantic_ai.messages.CapabilityEvent] from application code, and calling [`AgentRun.emit()`][pydantic_ai.run.AgentRun.emit] after the run has finished. Events emitted with `AgentRun.emit()` reach consumers that stream the run's nodes with `node.stream(run.ctx)`, as shown in [Streaming All Events and Output](#streaming-all-events-and-output); a bare `async for node in run` does not consume any event stream, so nothing surfaces.
 
+Events that share fields can share a base. Give the base its own `@dataclass` decorator — an undecorated one contributes no fields, which is rejected rather than left to surface as a payload quietly missing them — and mark it `abstract=True` so it stays out of the event registry and can't be emitted itself:
+
+```python {title="shared_event_base.py" noqa="F841"}
+from dataclasses import dataclass
+
+from pydantic_ai import CustomEvent
+
+
+@dataclass(kw_only=True)
+class AppEvent(CustomEvent, abstract=True):
+    request_id: str
+
+
+@dataclass(kw_only=True)
+class ReindexProgressEvent(AppEvent):
+    done: int
+    total: int
+```
+
+[`CapabilityEvent`](capabilities/overview.md#capability-events) bases work the same way, and a base is the natural place to put the family's `namespace=`.
+
 Custom event names are derived from the class name by removing `Event` and converting the rest to snake case, so `SyncProgressEvent` uses `sync_progress`. Override the name with a class argument, for example `class SyncProgressEvent(CustomEvent, name='sync_status')`. Names are registered when the class is defined and must be unique within the process; re-executing the same class definition (as when re-running a notebook cell) replaces the registration.
 
 The name is the event's wire identifier, not just a label: it's what a serialized event carries, so renaming the class renames the tag along with it. A rename is a compatibility break wherever events outlive the process that emitted them — [durable execution](durable_execution/overview.md) histories and caches, persisted event logs, a frontend matching on the name. Pass an explicit `name=` to pin the tag when you want the class free to be renamed.

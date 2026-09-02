@@ -13,6 +13,7 @@ from pydantic_ai import Agent, CapabilityEvent, CustomEvent, RunContext, Unknown
 from pydantic_ai.capabilities import AbstractCapability, Capability, Hooks, ProcessEventStream, WrapperCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
+    CAPABILITY_EVENT_TYPES,
     AgentStreamEvent,
     FunctionToolResultEvent,
     ModelMessage,
@@ -172,6 +173,26 @@ def test_multi_segment_namespace_inherited():
 
     assert NestedNamespaceEvent().kind == 'acme.files.nested_namespace'
     assert DerivedNestedEvent().kind == 'acme.files.derived_nested'
+
+
+def test_abstract_base_carries_the_namespace_without_registering():
+    """A fields-only base can declare the family's namespace and stay out of the registry itself."""
+
+    @dataclass(kw_only=True)
+    class SearchEventBase(CapabilityEvent, namespace='search_cap', abstract=True):
+        query: str
+
+    @dataclass(kw_only=True)
+    class SearchStartedEvent(SearchEventBase):
+        pass
+
+    assert not any(kind.startswith('search_cap.search_event_base') for kind in CAPABILITY_EVENT_TYPES)
+    assert SearchStartedEvent(query='q').kind == 'search_cap.search_started'
+    # The base's field is inherited rather than lost with its registration.
+    assert SearchStartedEvent(query='q').query == 'q'
+
+    with pytest.raises(TypeError, match='is declared `abstract=True`'):
+        SearchEventBase(query='q')
 
 
 def test_subclass_can_replace_the_inherited_namespace():

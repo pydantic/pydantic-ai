@@ -15,13 +15,15 @@ from __future__ import annotations
 import dataclasses
 import functools
 import inspect
+import re
 import sys
 import warnings
 from collections.abc import Callable, Mapping
-from typing import Any
+from typing import Any, get_origin
 
 import pydantic
 import pydantic_core
+from typing_inspection import typing_objects
 
 from ._utils import is_str_dict
 from .exceptions import UserError
@@ -184,6 +186,65 @@ def shadowed_envelope_fields(cls: type, reserved: frozenset[str]) -> str | None:
     """The class's own field names that shadow the family's envelope fields, or `None`."""
     shadowed = own_annotation_names(cls) & reserved
     return ', '.join(sorted(shadowed)) if shadowed else None
+
+
+def _annotates_payload_fields(cls: type) -> bool:
+    """Whether the class annotates names that a `@dataclass` decorator would turn into fields.
+
+    `ClassVar`s are excluded: they are settings rather than payload, so a mixin carrying only those
+    loses nothing by not being a dataclass. The annotation is inspected without being evaluated, so a
+    `ClassVar` that can't be resolved yet is still recognized from its written form.
+    """
+    if sys.version_info >= (3, 14):
+        import annotationlib
+
+        annotations = annotationlib.get_annotations(cls, format=annotationlib.Format.FORWARDREF)
+    else:
+        annotations = inspect.get_annotations(cls)
+    for annotation in annotations.values():
+        if typing_objects.is_classvar(get_origin(annotation)) or typing_objects.is_classvar(annotation):
+            continue
+        # An unevaluated annotation arrives as a string or `ForwardRef`; match how it was written.
+        text = annotation if isinstance(annotation, str) else getattr(annotation, '__forward_arg__', None)
+        if text is not None and re.match(r'^(typing\.)?ClassVar\b', text.strip()):
+            continue
+        return True
+    return False
+
+
+def inherited_namespace(cls: type, family: type) -> str | None:
+    """The namespace `cls` inherits from its nearest base that carries one, or `None`.
+
+    A registered base holds its namespace inside `_registered_kind`; an `abstract=True` base never
+    registered, so it keeps the namespace on its own attribute instead. Either way the search stops at
+    the first base that has one, so a subclass takes the namespace of the family it was defined in.
+    """
+    for base in cls.__mro__[1:]:
+        if not issubclass(base, family):
+            continue
+        if base_kind := base.__dict__.get('_registered_kind'):
+            return base_kind.rpartition('.')[0]
+        if base_namespace := base.__dict__.get('_abstract_namespace'):
+            return base_namespace
+    return None
+
+
+def undecorated_field_base(cls: type, family: type) -> type | None:
+    """A class between `cls` and `family` that declares payload fields but isn't a dataclass.
+
+    `@dataclass` only collects fields from bases that are dataclasses themselves, so an intermediate
+    base holding shared fields silently contributes nothing unless it is decorated too: the fields
+    vanish from the payload, the wire, and every consumer, with no error anywhere. Each base is fully
+    built by the time a subclass is being registered, so its decoration can be checked reliably here.
+    """
+    for base in cls.__mro__[1:]:
+        if base is family or not issubclass(base, family):
+            break
+        if '__dataclass_fields__' in base.__dict__:
+            continue
+        if _annotates_payload_fields(base):
+            return base
+    return None
 
 
 def inject_tag_field(cls: type, tag_field: str, tag_value: str) -> None:
