@@ -138,11 +138,6 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         self.id = id
         self.description = description
         self.defer_loading = defer_loading
-        if fallback_model is not None and local is not None:
-            raise UserError(
-                'ImageGeneration: cannot specify both `fallback_model` and `local` — '
-                'use `fallback_model` for the default subagent fallback, or `local` for a custom tool'
-            )
         self.native = native
         self.local = local
         self.fallback_model = fallback_model
@@ -157,6 +152,19 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         self.size = size
         self.aspect_ratio = aspect_ratio
         self.__post_init__()
+
+    def __post_init__(self) -> None:
+        # Checked here rather than in `__init__` so a merge is held to it too: `combine` can pair
+        # one instance's `fallback_model` with another's `local`, which no constructor accepts, and
+        # the local tool would then take effect with `fallback_model` silently ignored. Runs before
+        # the base resolves `local`, so it reads what was declared rather than what was
+        # materialized.
+        if self.fallback_model is not None and self.local is not None:
+            raise UserError(
+                'ImageGeneration: cannot specify both `fallback_model` and `local` — '
+                'use `fallback_model` for the default subagent fallback, or `local` for a custom tool'
+            )
+        super().__post_init__()
 
     def _image_gen_kwargs(self) -> dict[str, Any]:
         """Collect non-None ImageGenerationTool config fields."""

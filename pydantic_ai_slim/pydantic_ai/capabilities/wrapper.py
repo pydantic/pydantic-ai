@@ -45,6 +45,11 @@ if TYPE_CHECKING:
     from pydantic_ai.run import AgentRunResult
 
 
+def _registers_children(wrapped: AbstractCapability[Any], collected: Sequence[AbstractCapability[Any]]) -> bool:
+    """Whether `collected` -- what `wrapped.apply` yielded -- is more than `wrapped` itself."""
+    return len(collected) != 1 or collected[0] is not wrapped
+
+
 @dataclass
 class WrapperCapability(AbstractCapability[AgentDepsT]):
     """A capability that wraps another capability and delegates all methods.
@@ -81,8 +86,15 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
 
     def apply(self, visitor: Callable[[AbstractCapability[AgentDepsT]], None]) -> None:
         visitor(self)
-        if self._registers_wrapped_children:
-            self.wrapped.apply(visitor)
+        # Collected once and replayed rather than asking `_registers_wrapped_children` and then
+        # walking the subtree again: two walks per level turns a chain of `n` wrappers into
+        # `2**n` traversals, so a stack of `prefix_tools()` calls stops resolving in any
+        # reasonable time. One walk per level keeps the cost of the chain linear in its depth.
+        wrapped_capabilities: list[AbstractCapability[AgentDepsT]] = []
+        self.wrapped.apply(wrapped_capabilities.append)
+        if _registers_children(self.wrapped, wrapped_capabilities):
+            for capability in wrapped_capabilities:
+                visitor(capability)
 
     @property
     def _registers_wrapped_children(self) -> bool:
@@ -91,10 +103,15 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         A wrapper over a leaf capability is the registered proxy for that leaf. A wrapper
         over a container still needs the container's leaves registered for child-owned hooks
         and toolsets to resolve their capability ids.
+
+        Recomputed on every access rather than cached: `replace_no_init` carries subclass state
+        onto the rebound copy verbatim, so a cached answer would outlive the `wrapped` it was
+        computed for -- and a rebind is exactly when the answer can change, e.g. a
+        `DynamicCapability` leaf resolving into a container.
         """
         wrapped_capabilities: list[AbstractCapability[AgentDepsT]] = []
         self.wrapped.apply(wrapped_capabilities.append)
-        return len(wrapped_capabilities) != 1 or wrapped_capabilities[0] is not self.wrapped
+        return _registers_children(self.wrapped, wrapped_capabilities)
 
     def visit_and_replace(
         self, visitor: Callable[[AbstractCapability[AgentDepsT]], AbstractCapability[AgentDepsT] | None]

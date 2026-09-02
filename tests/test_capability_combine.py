@@ -42,6 +42,7 @@ from pydantic_ai.capabilities.abstract import (
     merge_capability_fields,
 )
 from pydantic_ai.capabilities.combined import CombinedCapability
+from pydantic_ai.capabilities.wrapper import WrapperCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -560,3 +561,57 @@ async def test_two_native_capabilities_on_one_agent_merge_rather_than_collide() 
     await agent.run('hi')
 
     assert seen == snapshot([[WebSearchTool(search_context_size='low', max_uses=3)]])
+
+
+def test_a_chain_of_wrappers_walks_its_subtree_once_per_level() -> None:
+    """A wrapper asks what its subtree registers and then registers it, from one walk, not two.
+
+    `apply` used to call `_registers_wrapped_children` -- itself a full walk of the subtree --
+    and then walk that same subtree again to visit it. Two walks per level is `2 ** depth`
+    traversals for a chain of wrappers, so a stack of `prefix_tools()` calls over a container
+    stopped resolving in any reasonable time.
+    """
+    walks = 0
+
+    class _CountingContainer(CombinedCapability[Any]):
+        def apply(self, visitor: Callable[[AbstractCapability[Any]], None]) -> None:
+            nonlocal walks
+            walks += 1
+            super().apply(visitor)
+
+    capability: AbstractCapability[Any] = _CountingContainer([Capability[Any](id='a'), Capability[Any](id='b')])
+    for _ in range(6):
+        capability = WrapperCapability[Any](wrapped=capability)
+
+    # Building the container walked it once, to sort its leaves into ordering tiers.
+    walks = 0
+    seen: list[AbstractCapability[Any]] = []
+    capability.apply(seen.append)
+
+    assert walks == 1
+    assert len(seen) == 8
+
+
+@pytest.mark.parametrize('capability_type', [ImageGeneration, XSearch])
+def test_a_merge_cannot_reach_a_combination_the_constructor_rejects(
+    capability_type: type[ImageGeneration[Any]] | type[XSearch[Any]],
+) -> None:
+    """`fallback_model` and `local` are alternatives, and merging two instances must not pair them.
+
+    Each states one half of a combination `__init__` refuses, so the merged capability would carry
+    both -- and the local tool would take effect while `fallback_model` was silently ignored. The
+    invariant lives in `__post_init__`, which `combine` re-runs, rather than in `__init__`, which
+    it cannot.
+    """
+    with pytest.raises(UserError, match='cannot specify both `fallback_model` and `local`'):
+        capability_type.combine(
+            [
+                capability_type(fallback_model=TestModel()),
+                capability_type(local=_a_local_tool),
+            ]
+        )
+
+
+def _a_local_tool(prompt: str) -> str:  # pragma: no cover
+    """A local fallback."""
+    return 'x'
