@@ -69,7 +69,8 @@ google_extras = {'google', 'google-realtime'}
 google_requirements = [requirement for requirement in slim if requirement.name == 'google-genai']
 assert len(google_requirements) == len(google_extras)
 for requirement in google_requirements:
-    assert requirement.specifier.contains('2.18.0')
+    # 2.21.0 added the per-Part `media_processing` field (agentic media processing) that `GoogleModel` forwards.
+    assert requirement.specifier.contains('2.21.0')
     assert requirement.marker is not None
     assert str(requirement.marker).removeprefix('extra == ').strip('"') in google_extras
 
