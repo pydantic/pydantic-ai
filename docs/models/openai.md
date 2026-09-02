@@ -383,6 +383,8 @@ agent = Agent(
 
 The mode is inferred from which parameters you pass: supplying `message_count_threshold` or `trigger` implies stateless mode, otherwise stateful mode is used. You can also pass `stateless=True` or `stateless=False` explicitly. Mixing parameters from different modes raises [`UserError`][pydantic_ai.exceptions.UserError].
 
+Because stateless mode decides compaction client-side, it emits the [compaction lifecycle events](../capabilities/compaction.md#compaction-events): a cancellable [`CompactionStartEvent`][pydantic_ai.capabilities.CompactionStartEvent] before calling the endpoint and a [`CompactionEndEvent`][pydantic_ai.capabilities.CompactionEndEvent] after.
+
 !!! tip
     Stateful compaction pairs especially well with [`openai_previous_response_id='auto'`](#referencing-earlier-responses) or [`openai_conversation_id`](#using-durable-conversations). Both rely on OpenAI's server-side conversation state, so OpenAI can use a previously compacted context as the starting point for the next turn without you having to resend it.
 

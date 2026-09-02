@@ -313,7 +313,7 @@ Name the classes when you can. Beyond narrowing the `event` argument for the typ
 
 Listeners run sequentially in capability order, and marked methods within one capability run in definition order. The emitting capability also receives its own events. By default, listeners run when the event reaches its position in the stream, so listener ordering always matches stream ordering and listener work does not add to the emitter's latency. For events emitted during tool execution, listeners run before the next model request. An event emitted during `before_model_request` may only reach listeners after that request begins, with the same as-soon-as-possible timing as [`ctx.enqueue()`][pydantic_ai.tools.RunContext.enqueue].
 
-Decision events that need listener mutations before the emitter continues declare `dispatch='immediate'` on the event class:
+Decision events that need listener mutations before the emitter continues declare `dispatch='immediate'` on the event class, with the decision fields alongside. The built-in [compaction events](compaction.md#compaction-events) are declared this way: [`CompactionStartEvent`][pydantic_ai.capabilities.CompactionStartEvent] carries `cancelled`/`cancel_reason` and a `cancel()` method, so any capability can hold a compaction attempt.
 
 Building on the file-system capability above, a write can announce itself before it happens and let a listener veto it:
 
