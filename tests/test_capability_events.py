@@ -174,6 +174,21 @@ def test_multi_segment_namespace_inherited():
     assert DerivedNestedEvent().kind == 'acme.files.derived_nested'
 
 
+def test_subclass_can_replace_the_inherited_namespace():
+    """Inheriting a namespace is a default, not a lock: a subclass can declare its own."""
+
+    @dataclass(kw_only=True)
+    class OriginalNamespaceEvent(CapabilityEvent, namespace='original_cap'):
+        pass
+
+    @dataclass(kw_only=True)
+    class RehomedEvent(OriginalNamespaceEvent, namespace='rehomed_cap'):
+        pass
+
+    assert OriginalNamespaceEvent().kind == 'original_cap.original_namespace'
+    assert RehomedEvent().kind == 'rehomed_cap.rehomed'
+
+
 def test_round_trip():
     adapter = pydantic.TypeAdapter[AgentStreamEvent](AgentStreamEvent)
     event = FileReadEvent(path='a.txt', capability_id='files')
