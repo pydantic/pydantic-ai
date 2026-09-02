@@ -1,7 +1,9 @@
+"""Durable-operation markers and dispatch, importable by `capabilities` without a `durable_exec` import cycle."""
+
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import KW_ONLY, dataclass
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 if TYPE_CHECKING:
@@ -15,6 +17,7 @@ ResultT = TypeVar('ResultT')
 @dataclass(frozen=True)
 class DurableOperationMarker:
     name: str
+    _: KW_ONLY
     function: Callable[..., Awaitable[Any]]
     base_hook: bool = False
 
@@ -32,12 +35,19 @@ def set_durable_operation_marker(obj: object, marker: DurableOperationMarker) ->
     setattr(obj, _MARKER_ATTRIBUTE, marker)
 
 
+def validate_operation_name(name: object) -> str:
+    if not isinstance(name, str):
+        raise TypeError(f'`durable_operation` name must be a string, got {type(name).__name__}')
+    if not name:
+        raise ValueError('`durable_operation` name must not be empty')
+    return name
+
+
 def base_hook_durable_operation(
     name: str,
 ) -> Callable[[Callable[..., Awaitable[ResultT]]], Callable[..., Awaitable[ResultT]]]:
     """Mark a base hook so every override inherits durable execution automatically."""
-    if not name:
-        raise ValueError('`base_hook_durable_operation` name must not be empty')
+    name = validate_operation_name(name)
 
     def decorate(function: Callable[..., Awaitable[ResultT]]) -> Callable[..., Awaitable[ResultT]]:
         set_durable_operation_marker(
@@ -61,33 +71,24 @@ async def invoke_durable_operation(
     args: tuple[Any, ...],
     kwargs: dict[str, Any],
 ) -> ResultT:
-    """Invoke a capability operation through the active durability binding when present."""
-    operation = active_durable_operation(capability, operation_name, ctx)
-    if operation is not None:
-        return cast(ResultT, await operation(*args, **kwargs))
-    return await handler(*args, **kwargs)
+    """Run a capability operation through the durability binding active for `ctx`, else through `handler`.
 
-
-def active_durable_operation(
-    capability: AbstractCapability[Any], operation_name: str, ctx: RunContext[Any]
-) -> Callable[..., Awaitable[object]] | None:
-    """Return the dispatcher when the operation is bound to the active durable run."""
+    A per-run operation registered on the context wins; otherwise the dispatcher the durability
+    capability bound for the agent at `for_agent` time is used; otherwise the plain handler runs.
+    """
+    operations = ctx._durable_operations  # pyright: ignore[reportPrivateUsage]
     operation = (
-        ctx._durable_operations.get((capability.id, operation_name))  # pyright: ignore[reportPrivateUsage]
-        if ctx._durable_operations is not None and capability.id is not None  # pyright: ignore[reportPrivateUsage]
+        operations.get((capability.id, operation_name))
+        if operations is not None and capability.id is not None
         else None
     )
     if operation is not None:
-        return operation
+        return cast(ResultT, await operation(*args, **kwargs))
     dispatcher = (
         capability._get_durable_operation_bindings().get(ctx.agent, {}).get(operation_name)  # pyright: ignore[reportPrivateUsage]
         if ctx.agent is not None
         else None
     )
     if dispatcher is None:
-        return None
-
-    async def dispatch(*args: object, **kwargs: object) -> object:
-        return await dispatcher(ctx, args, kwargs)
-
-    return dispatch
+        return await handler(*args, **kwargs)
+    return cast(ResultT, await dispatcher(ctx, args, kwargs))

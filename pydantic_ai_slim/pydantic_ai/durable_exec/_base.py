@@ -83,7 +83,6 @@ from ._operation import (
     ModelRequestParams,
     ParameterTransport,
     ResultCodec,
-    SandboxOperationId,
     ToolsetCallToolId,
     ToolsetCallToolParams,
     ToolsetGetInstructionsId,
@@ -368,13 +367,8 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                         result = await call_declaration(declaration, recovered, params=semantic_params)
                     return CapabilityOperationResult(value=result, usage_delta=durable_ctx.usage - usage_before)
 
-                operation_id = (
-                    SandboxOperationId(capability_id, operation=operation_name)
-                    if operation_name in ('acquire_sandbox', 'release_sandbox')
-                    else CapabilityOperationId(capability_id, operation=operation_name)
-                )
                 operation = DurableOperation(
-                    operation_id=operation_id,
+                    operation_id=CapabilityOperationId(capability_id, operation=operation_name),
                     handler=handler,
                     parameter_transport=self._capability_operation_parameter_transport(declaration),
                     cache_identity=CapabilityCacheIdentity(),

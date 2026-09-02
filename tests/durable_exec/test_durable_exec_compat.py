@@ -31,7 +31,6 @@ from pydantic_ai.durable_exec import (
     ModelCompactMessagesId,
     ModelRequestId,
     OperationConfigRole,
-    SandboxOperationId,
     ToolsetCallToolId,
     ToolsetGetInstructionsId,
     ToolsetGetToolsId,
@@ -90,7 +89,6 @@ def test_public_engine_builder_exports() -> None:
         'OperationConfigRole',
         'RegisteredOperationBackend',
         'RoleBasedOperationConfig',
-        'SandboxOperationId',
         'ToolsetKind',
         'ToolsetValidateToolArgumentsId',
     ]
@@ -198,8 +196,8 @@ def _operation_ids() -> list[DurableOperationId]:
         ToolsetCallToolId('dynamic', toolset_id='dynamic'),
         ToolsetValidateToolArgumentsId('dynamic', toolset_id='dynamic'),
         CapabilityOperationId('compat', operation='operation'),
-        SandboxOperationId('compat', operation='acquire_sandbox'),
-        SandboxOperationId('compat', operation='release_sandbox'),
+        CapabilityOperationId('compat', operation='acquire_sandbox'),
+        CapabilityOperationId('compat', operation='release_sandbox'),
     ]
 
 

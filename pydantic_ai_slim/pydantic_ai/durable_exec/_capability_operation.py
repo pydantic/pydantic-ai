@@ -19,7 +19,9 @@ from pydantic_ai.capabilities._durable_operation import (
     DurableOperationMarker,
     base_hook_durable_operation as base_hook_durable_operation,
     get_durable_operation_marker,
+    invoke_durable_operation,
     set_durable_operation_marker,
+    validate_operation_name as _validate_operation_name,
 )
 from pydantic_ai.capabilities.abstract import AbstractCapability, leaf_capabilities
 from pydantic_ai.capabilities.wrapper import WrapperCapability
@@ -171,17 +173,6 @@ class CapabilityCacheIdentity(CacheIdentity[CapabilityOperationParams]):
         return (params.model_id, params.arguments, params.run_context)
 
 
-Marker = DurableOperationMarker
-
-
-def _validate_operation_name(name: object) -> str:
-    if not isinstance(name, str):
-        raise TypeError(f'`durable_operation` name must be a string, got {type(name).__name__}')
-    if not name:
-        raise ValueError('`durable_operation` name must not be empty')
-    return name
-
-
 def durable_operation(name: str) -> Callable[[Callable[P, A]], Callable[P, A]]:
     """Declare an async capability method as a durable operation.
 
@@ -226,20 +217,19 @@ def durable_operation(name: str) -> Callable[[Callable[P, A]], Callable[P, A]]:
             if target.__name__ in _SYNC_NEVER_DURABLE_HOOKS:
                 set_durable_operation_marker(
                     target,
-                    Marker(
+                    DurableOperationMarker(
                         name=name,
                         function=cast(Callable[..., Awaitable[Any]], target),
                     ),
                 )
                 return target
             raise TypeError('`durable_operation` can only decorate async methods')
-        marker = Marker(name=name, function=cast(Callable[..., Awaitable[Any]], target))
-        signature = inspect.signature(target)
+        marker = DurableOperationMarker(name=name, function=cast(Callable[..., Awaitable[Any]], target))
 
         @wraps(target)
         async def decorated(self: AbstractCapability[Any], *args: Any, **kwargs: Any) -> Any:
             # Bind the call so context parameters are visible regardless of calling style.
-            bound = signature.bind(self, *args, **kwargs)
+            bound = inspect.signature(target).bind(self, *args, **kwargs)
 
             # Find the explicit or ambient run context that selects durable dispatch.
             ctx: RunContext[Any] | None = get_current_run_context()
@@ -256,28 +246,8 @@ def durable_operation(name: str) -> Callable[[Callable[P, A]], Callable[P, A]]:
                 (value for value in bound.arguments.values() if isinstance(value, ModelRequestContext)), None
             )
 
-            # Resolve the per-run operation first, then the agent-bound fallback.
             handler = target.__get__(self, type(self))
-            operations = ctx._durable_operations  # pyright: ignore[reportPrivateUsage]
-            operation = (
-                operations.get((self.id, marker.name)) if operations is not None and self.id is not None else None
-            )
-            if operation is not None:
-                result = await operation(*args, **kwargs)
-            else:
-                dispatcher = (
-                    self._get_durable_operation_bindings().get(ctx.agent, {}).get(marker.name)  # pyright: ignore[reportPrivateUsage]
-                    if ctx.agent is not None
-                    else None
-                )
-                if dispatcher is None:
-                    result = await handler(*args, **kwargs)
-                else:
-                    result = await dispatcher(
-                        ctx,
-                        cast(tuple[object, ...], args),
-                        cast(dict[str, object], kwargs),
-                    )
+            result = await invoke_durable_operation(self, marker.name, ctx, handler, args, kwargs)
 
             # Apply worker-side model-request mutations back to the live context.
             if request_context is not None and isinstance(result, _ResolvedModelRequestContext):

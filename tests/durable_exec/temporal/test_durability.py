@@ -9,8 +9,9 @@ from collections.abc import AsyncIterable
 from dataclasses import dataclass, replace
 from datetime import timedelta
 from decimal import Decimal
+from types import SimpleNamespace
 from typing import Any, cast
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -1205,6 +1206,9 @@ async def test_durability_runs_sandbox_lifecycle_as_activities(monkeypatch: pyte
         return await activity(*args)
 
     monkeypatch.setattr('pydantic_ai.durable_exec.temporal._operation_backend.execute_activity', execute_activity)
+    # The activities run in-process here, so stub what heartbeating asks of the SDK.
+    monkeypatch.setattr('temporalio.activity.info', lambda: SimpleNamespace(heartbeat_timeout=None))
+    monkeypatch.setattr('temporalio.activity.heartbeat', Mock())
     with patch('pydantic_ai.durable_exec.temporal._durability.workflow.in_workflow', return_value=True):
         result = await agent.run('hello')
 

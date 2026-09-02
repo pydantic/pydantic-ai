@@ -28,7 +28,7 @@ from pydantic_ai.exceptions import FallbackExceptionGroup, UnexpectedModelBehavi
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
-from ._run_context import TemporalRunContext
+from ._run_context import TemporalRunContext, activity_sandbox_connection_scope
 
 if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AbstractAgent
@@ -57,7 +57,8 @@ async def heartbeating() -> AsyncGenerator[None]:
 
     Every activity we register beats, so that a long-but-healthy activity isn't mistaken for a
     crashed worker, and so workflow cancellation stays deliverable (cancellation reaches an
-    activity as a response to a heartbeat).
+    activity as a response to a heartbeat). The body's deferred sandbox connections are closed
+    on the way out, still under heartbeat.
 
     The beat interval is derived from the activity's configured `heartbeat_timeout` so a
     custom (shorter or longer) timeout keeps working; the SDK additionally throttles
@@ -80,7 +81,8 @@ async def heartbeating() -> AsyncGenerator[None]:
 
     task = asyncio.create_task(beat())
     try:
-        yield
+        async with activity_sandbox_connection_scope():
+            yield
     except BaseException:
         # The body's exception is already propagating; a heartbeat failure must not replace it.
         task.cancel()

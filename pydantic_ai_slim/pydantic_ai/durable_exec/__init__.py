@@ -24,7 +24,6 @@ if TYPE_CHECKING:
         ModelCompactMessagesId,
         ModelRequestId,
         OperationConfigRole,
-        SandboxOperationId,
         ToolsetCallToolId,
         ToolsetGetInstructionsId,
         ToolsetGetToolsId,
@@ -64,7 +63,6 @@ __all__ = [
     'OperationConfigRole',
     'RegisteredOperationBackend',
     'RoleBasedOperationConfig',
-    'SandboxOperationId',
     'ToolsetKind',
     'ToolsetValidateToolArgumentsId',
 ]
@@ -85,7 +83,6 @@ _exports = {
     'ToolsetGetToolsId': ('._operation', 'ToolsetGetToolsId'),
     'ModelRequestId': ('._operation', 'ModelRequestId'),
     'OperationConfigRole': ('._operation', 'OperationConfigRole'),
-    'SandboxOperationId': ('._operation', 'SandboxOperationId'),
     'ToolsetKind': ('._operation', 'ToolsetKind'),
     'ToolsetValidateToolArgumentsId': ('._operation', 'ToolsetValidateToolArgumentsId'),
     'CallableOperationBackend': ('._operation_backend', 'CallableOperationBackend'),

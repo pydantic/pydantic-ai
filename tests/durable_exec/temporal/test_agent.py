@@ -12,6 +12,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import timedelta
 from decimal import Decimal
+from types import SimpleNamespace
 from typing import Any, Literal, cast
 from unittest.mock import patch
 
@@ -2879,11 +2880,11 @@ async def test_temporal_activity_closes_deferred_sandbox_connections():
 
     sandbox = Sandbox._from_ref(SandboxRef(sandbox_id='provider-only'), unused_resolver)  # pyright: ignore[reportPrivateUsage]
 
-    @asynccontextmanager
-    async def no_heartbeating():
-        yield
-
-    with patch('pydantic_ai.durable_exec.temporal._function_toolset.heartbeating', no_heartbeating):
+    # The activity runs outside a Temporal worker here, so stub what heartbeating asks of the SDK.
+    with (
+        patch('temporalio.activity.info', return_value=SimpleNamespace(heartbeat_timeout=None)),
+        patch('temporalio.activity.heartbeat'),
+    ):
         result = await call_tool_activity(
             CallToolParams(
                 name='use_sandbox',

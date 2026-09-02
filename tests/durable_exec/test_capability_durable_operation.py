@@ -14,7 +14,6 @@ import pytest
 
 from pydantic_ai import Agent, ModelMessage, ModelSettings
 from pydantic_ai.capabilities import AbstractCapability, ResolveModelId, WrapperCapability, durable_operation
-from pydantic_ai.capabilities._durable_operation import active_durable_operation, invoke_durable_operation
 from pydantic_ai.durable_exec import DurabilityEngineSpec
 from pydantic_ai.durable_exec._base import BaseDurabilityCapability
 from pydantic_ai.durable_exec._capability_operation import (
@@ -97,32 +96,6 @@ pytestmark = pytest.mark.anyio
 requires_dbos = pytest.mark.skipif(not dbos_available, reason='DBOS is not installed')
 requires_prefect = pytest.mark.skipif(not prefect_available, reason='Prefect is not installed')
 requires_temporal = pytest.mark.skipif(not temporal_available, reason='Temporal is not installed')
-
-
-def test_base_hook_durable_operation_rejects_empty_name() -> None:
-    with pytest.raises(ValueError, match='must not be empty'):
-        base_hook_durable_operation('')
-
-
-async def test_active_run_context_operation_takes_precedence() -> None:
-    capability = AbstractCapability[Any]()
-    capability.id = 'capability'
-
-    async def operation(value: str) -> str:
-        return f'durable:{value}'
-
-    async def handler(value: str) -> str:
-        return f'local:{value}'  # pragma: no cover
-
-    ctx = RunContext(
-        deps=None,
-        model=TestModel(),
-        usage=RunUsage(),
-        _durable_operations={('capability', 'operation'): operation},
-    )
-
-    assert active_durable_operation(capability, 'operation', ctx) is operation
-    assert await invoke_durable_operation(capability, 'operation', ctx, handler, ('value',), {}) == 'durable:value'
 
 
 @pytest.fixture(autouse=True)

@@ -7,7 +7,6 @@ from .._operation import (
     ModelCancelSuspendedResponseId,
     ModelCompactMessagesId,
     ModelRequestId,
-    SandboxOperationId,
     ToolsetCallToolId,
     ToolsetGetInstructionsId,
     ToolsetGetToolsId,
@@ -25,8 +24,6 @@ class PrefectOperationNamer(DurableOperationNamer):
 
     def operation_name(self, operation_id: DurableOperationId) -> str:
         match operation_id:
-            case SandboxOperationId(capability_id=capability_id, operation=operation):
-                return f'Capability: {capability_id}.{operation}'
             case CapabilityOperationId(capability_id=capability_id, operation=operation):
                 return f'Capability: {capability_id}.{operation}'
             case ModelRequestId(streaming=True, model_name=model_name):

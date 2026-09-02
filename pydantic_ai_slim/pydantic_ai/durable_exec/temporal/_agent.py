@@ -67,7 +67,7 @@ from ._run_context import (
     deserialize_run_context,
 )
 from ._toolset import (
-    temporalize_toolset as _default_temporalize_toolset,
+    temporalize_toolset,
     toolset_temporal_activities,
     with_non_retryable_errors,
 )
@@ -156,7 +156,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 AbstractAgent[AgentDepsT, Any] | None,
             ],
             AbstractToolset[AgentDepsT],
-        ] = _default_temporalize_toolset,
+        ] = temporalize_toolset,
     ):
         """Wrap an agent to enable it to be used inside a Temporal workflow, by automatically offloading model requests, tool calls, and MCP server communication to Temporal activities.
 

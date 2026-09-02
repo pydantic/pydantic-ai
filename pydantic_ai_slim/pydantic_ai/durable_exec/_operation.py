@@ -124,15 +124,6 @@ class CapabilityOperationId:
 
 
 @dataclass(frozen=True)
-class SandboxOperationId:
-    """Identifies a sandbox lifecycle operation contributed by a capability."""
-
-    capability_id: str
-    _: KW_ONLY
-    operation: Literal['acquire_sandbox', 'release_sandbox']
-
-
-@dataclass(frozen=True)
 class ToolsetGetToolsId:
     """Identifies durable tool discovery for a particular toolset.
 
@@ -208,7 +199,6 @@ DurableOperationId: TypeAlias = (
     | ModelCompactMessagesId
     | ModelCancelSuspendedResponseId
     | CapabilityOperationId
-    | SandboxOperationId
     | EventStreamHandlerId
     | ToolsetGetToolsId
     | ToolsetGetInstructionsId
