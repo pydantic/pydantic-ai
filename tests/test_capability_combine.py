@@ -282,9 +282,8 @@ def test_capability_combine_policy_holds(name: str) -> None:
 
     if isinstance(policy, Anonymous):
         # Anonymous capabilities declare no default id, so two never meet under one key. Read
-        # through `declares_default_id` rather than the class attribute: a capability with a
-        # custom `__init__` states its default in the signature, where the attribute reads `None`
-        # and would pass this on a capability that is not anonymous at all.
+        # through `declares_default_id` rather than the class attribute directly, so this test
+        # asks the same question the resolver does.
         assert not declares_default_id(capability_type), (
             f'{name} is declared `Anonymous` but its instances carry a default id'
         )
