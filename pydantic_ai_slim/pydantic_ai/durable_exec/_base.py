@@ -596,7 +596,8 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         # framework's unavailable placeholder) can be carried across the durable boundary, and a
         # ref must not connect in {container} code either — durable units reconnect it themselves.
         sandbox = ctx.__dict__.get('sandbox')
-        if isinstance(sandbox, Sandbox):
+        # A deserialized context can arrive without one; every run in-process has one.
+        if isinstance(sandbox, Sandbox):  # pragma: no branch
             identity = sandbox._durable_identity()  # pyright: ignore[reportPrivateUsage]
             if isinstance(identity, SandboxRef):
                 sandbox._forbid_connection(  # pyright: ignore[reportPrivateUsage]
