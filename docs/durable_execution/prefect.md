@@ -102,7 +102,7 @@ async def main():
 2. Attach durability via `capabilities=[...]`. The capability routes model requests, tool calls, and MCP communication through Prefect tasks when the agent runs inside a flow.
 3. Wrap `agent.run()` in your own `@flow` to make the run durable.
 
-_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 Because the same agent works inside and outside a Prefect flow, [`PrefectDurability`][pydantic_ai.durable_exec.prefect.PrefectDurability] composes with all other [capabilities](../capabilities/overview.md) without each needing a Prefect-specific wrapper variant.
 
@@ -286,7 +286,7 @@ async def main():
     #> Paris
 ```
 
-_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 ### Retry Considerations
 

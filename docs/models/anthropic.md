@@ -2,7 +2,7 @@
 
 ## Install
 
-To use `AnthropicModel` models, you need to either install `pydantic-ai`, or install `pydantic-ai-slim` with the `anthropic` optional group:
+To use `AnthropicModel`, install either `pydantic-ai` or `pydantic-ai-slim` with the `anthropic` optional group:
 
 ```bash
 pip/uv-add "pydantic-ai-slim[anthropic]"
