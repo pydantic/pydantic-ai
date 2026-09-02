@@ -5,15 +5,15 @@ Split out of `test_capabilities.py` per #7304.
 
 from __future__ import annotations
 
+import importlib.util
 import re
 import warnings
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
-from logfire.testing import CaptureLogfire
 
 from pydantic_ai import Capability as TopLevelCapability
 from pydantic_ai._run_context import RunContext
@@ -72,6 +72,11 @@ from .capability_models import (
 )
 from .conftest import iter_message_parts, remove_schema_descriptions
 
+if TYPE_CHECKING:
+    from logfire.testing import CaptureLogfire
+
+logfire_installed = importlib.util.find_spec('logfire') is not None
+
 _SEARCH_TOOLS_NAME = ToolSearch.function_tool_name
 
 pytestmark = [
@@ -112,6 +117,7 @@ def test_instrumentation_default_settings() -> None:
     assert isinstance(instr.settings, InstrumentationSettings)
 
 
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
 async def test_instrumentation_from_capability_function_runs_without_agent_span(capfire: CaptureLogfire) -> None:
     """An `Instrumentation` that only materializes in `for_run` misses the whole-run hook, so no run span."""
 
