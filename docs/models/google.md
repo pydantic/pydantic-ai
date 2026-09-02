@@ -366,7 +366,7 @@ By default Gemini consumes a fixed sampling of a whole video. With `media_proces
 from pydantic_ai import Agent, VideoUrl
 from pydantic_ai.models.google import GoogleModel
 
-agent = Agent(GoogleModel('gemini-3.7-flash'))
+agent = Agent(GoogleModel('gemini-3.7-flash', provider='google-cloud'))
 result = agent.run_sync(
     [
         'Summarize the key moments of this lecture with timestamps.',
@@ -379,7 +379,7 @@ result = agent.run_sync(
 print(result.output)
 ```
 
-The value is passed through as-is, so the API decides which models and media types accept it; at the time of writing Google lists Gemini 3.7 Flash, 3.6 Flash, and 3.5 Flash Lite. The field itself needs `google-genai>=2.21.0`; with an older SDK the request fails validation on `media_processing`. Each of the model's own segment or transcript fetches appears in the response as a [`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart]/[`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] pair with `tool_name='media_processing'`, like other provider-executed tools, so the steps are visible in the message history; the API does not expose which segment was fetched, so `args` and `content` are `None`. The fetches are billed as tool-use prompt tokens in the usage. The pairs are not sent back to the model in later requests; only the final part's signature is. See Google's [agentic video understanding](https://ai.google.dev/gemini-api/docs/video-understanding#agentic-video-understanding) docs for the current model list, length limits, and latency notes.
+The value is passed through as-is, so the API decides which models and media types accept it; at the time of writing Google lists Gemini 3.7 Flash, 3.6 Flash, and 3.5 Flash Lite. The example targets Google Cloud so it can pass a `gs://` URI; on the Gemini API, upload the video via the Files API or pass it as `BinaryContent` instead. The field itself needs `google-genai>=2.21.0`; with an older SDK, `GoogleModel` raises a `UserError` saying so. Each of the model's own segment or transcript fetches appears in the response as a [`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart]/[`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] pair with `tool_name='media_processing'`, like other provider-executed tools, so the steps are visible in the message history; the API does not expose which segment was fetched, so `args` and `content` are `None`. The fetches are billed as tool-use prompt tokens in the usage. The pairs are not sent back to the model in later requests; only the final part's signature is. See Google's [agentic video understanding](https://ai.google.dev/gemini-api/docs/video-understanding#agentic-video-understanding) docs for the current model list, length limits, and latency notes.
 
 See the [input documentation](../input.md) for more details and examples.
 

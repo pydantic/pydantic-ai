@@ -174,7 +174,7 @@ build-constraint-dependencies = [
 ]
 
 [tool.uv.exclude-newer-package]
-google-genai = false  # `media_processing` needs 2.21.0 (2026-08-31); drop once it ages past the window
+google-genai = "2026-08-31T21:49:15Z"  # admits 2.21.0 (published 21:49:12Z, needed for `media_processing`) while keeping the age gate for later releases; drop once it ages out
 # These are our own packages, not worth defending from supply chain attacks on them.
 # `listentome` is maintained by a Pydantic team member and counts as one of ours.
 listentome = false

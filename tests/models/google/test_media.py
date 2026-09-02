@@ -11,6 +11,7 @@ https://github.com/pydantic/pydantic-ai/issues/6524.
 
 from __future__ import annotations as _annotations
 
+import re
 from copy import deepcopy
 from dataclasses import dataclass
 
@@ -37,10 +38,20 @@ with try_import() as imports_successful:
     from pydantic_ai.models.google import GoogleModel
     from pydantic_ai.providers.google import GoogleProvider
 
+
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='google-genai not installed'),
     pytest.mark.anyio,
 ]
+
+
+def _sdk_has_media_processing() -> bool:
+    """Whether the installed google-genai has the per-Part `media_processing` field (2.21.0+)."""
+    try:
+        from google.genai.types import PartDict
+    except ImportError:  # pragma: no cover
+        return False
+    return 'media_processing' in PartDict.__annotations__
 
 
 @pytest.fixture
@@ -284,6 +295,7 @@ MEDIA_PROCESSING_CASES = [
 ]
 
 
+@pytest.mark.skipif(not _sdk_has_media_processing(), reason='`media_processing` needs google-genai>=2.21.0')
 @pytest.mark.parametrize('case', [pytest.param(c, id=c.id) for c in MEDIA_PROCESSING_CASES])
 async def test_media_processing_forwarding(
     case: MediaProcessingCase, mapping_model: GoogleModel, vertex_mapping_model: GoogleModel
@@ -534,3 +546,12 @@ async def test_map_user_prompt_with_text_content(mapping_model: GoogleModel):
     content = await mapping_model._map_user_prompt(user_prompt_part)  # pyright: ignore[reportPrivateUsage]
 
     assert content == snapshot([{'text': 'Hi'}, {'text': 'This is some context'}])
+
+
+async def test_media_processing_requires_supporting_sdk(mapping_model: GoogleModel, mocker: MockerFixture):
+    """On an SDK without the per-Part field, asking for `media_processing` raises an actionable
+    error instead of failing request validation deep inside the SDK."""
+    mocker.patch('pydantic_ai.models.google._SDK_SUPPORTS_MEDIA_PROCESSING', False)
+    content = BinaryContent(data=b'\x00', media_type='video/mp4', vendor_metadata={'media_processing': 'AGENTIC'})
+    with pytest.raises(UserError, match=re.escape('requires `google-genai>=2.21.0`')):
+        await mapping_model._map_user_prompt(UserPromptPart(content=[content]))  # pyright: ignore[reportPrivateUsage]

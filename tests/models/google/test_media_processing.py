@@ -37,14 +37,28 @@ with try_import() as imports_successful:
     )
     from pydantic_ai.providers.google import GoogleProvider
 
+
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='google-genai not installed'),
     pytest.mark.anyio,
 ]
 
+
+def _sdk_has_media_processing() -> bool:
+    """Whether the installed google-genai has the per-Part `media_processing` field (2.21.0+)."""
+    try:
+        from google.genai.types import PartDict
+    except ImportError:  # pragma: no cover
+        return False
+    return 'media_processing' in PartDict.__annotations__
+
+
 AGENTIC_VIDEO = BinaryContent(
     data=b'\x00\x00\x00\x00', media_type='video/mp4', vendor_metadata={'media_processing': 'AGENTIC'}
 )
+# The response-side tests feed the model an agentic-shaped response regardless of the request, so they use a
+# plain video and run on every supported SDK; request forwarding is asserted separately where the SDK has the field.
+VIDEO = BinaryContent(data=b'\x00\x00\x00\x00', media_type='video/mp4')
 FINAL_SIGNATURE = b'sig-final'
 FINAL_SIGNATURE_B64 = base64.b64encode(FINAL_SIGNATURE).decode()
 STEP_1_B64 = base64.b64encode(b'sig-step-1').decode()
@@ -81,7 +95,7 @@ async def test_agentic_steps_surface_as_native_tool_pair(allow_model_requests: N
     pair sharing a `tool_call_id`, the final Part keeps its own signature, and replaying the
     response sends back exactly that one signature — the pair is omitted."""
     model = GoogleModel('gemini-3.7-flash', provider=GoogleProvider(api_key='test-key'))
-    generate_content = mocker.patch.object(
+    mocker.patch.object(
         model.client.aio.models,
         'generate_content',
         return_value=_response(
@@ -93,10 +107,9 @@ async def test_agentic_steps_surface_as_native_tool_pair(allow_model_requests: N
         ),
     )
 
-    result = await Agent(model).run(['Which animal appears last?', AGENTIC_VIDEO])
+    result = await Agent(model).run(['Which animal appears last?', VIDEO])
 
     assert result.output == 'An otter appears last.'
-    assert _sent_media_processing(generate_content.call_args.kwargs) == 'AGENTIC'
 
     response = result.all_messages()[-1]
     assert isinstance(response, ModelResponse)
@@ -124,7 +137,7 @@ async def test_agentic_steps_surface_as_native_tool_pair_streaming(allow_model_r
     then a final delta carrying the turn's signature. The result must match the
     non-streaming path exactly."""
     model = GoogleModel('gemini-3.7-flash', provider=GoogleProvider(api_key='test-key'))
-    generate_content_stream = mocker.patch.object(
+    mocker.patch.object(
         model.client.aio.models,
         'generate_content_stream',
         return_value=_aiter(
@@ -137,11 +150,10 @@ async def test_agentic_steps_surface_as_native_tool_pair_streaming(allow_model_r
         ),
     )
 
-    async with Agent(model).run_stream(['Which animal appears last?', AGENTIC_VIDEO]) as result:
+    async with Agent(model).run_stream(['Which animal appears last?', VIDEO]) as result:
         output = await result.get_output()
 
     assert output == 'An otter appears last.'
-    assert _sent_media_processing(generate_content_stream.call_args.kwargs) == 'AGENTIC'
 
     response = result.all_messages()[-1]
     assert isinstance(response, ModelResponse)
@@ -180,7 +192,7 @@ async def test_agentic_odd_step_count_keeps_trailing_call(allow_model_requests: 
         ),
     )
 
-    result = await Agent(model).run(['Describe it.', AGENTIC_VIDEO])
+    result = await Agent(model).run(['Describe it.', VIDEO])
 
     response = result.all_messages()[-1]
     assert isinstance(response, ModelResponse)
@@ -192,3 +204,29 @@ async def test_agentic_odd_step_count_keeps_trailing_call(allow_model_requests: 
     assert _content_model_response(response, frozenset({'google'})) == snapshot(
         {'role': 'model', 'parts': [{'text': 'Done.', 'thought_signature': FINAL_SIGNATURE}]}
     )
+
+
+@pytest.mark.skipif(not _sdk_has_media_processing(), reason='`media_processing` needs google-genai>=2.21.0')
+async def test_agentic_request_carries_media_processing_in_both_paths(
+    allow_model_requests: None, mocker: MockerFixture
+):
+    """Both `request()` and `request_stream()` send the per-Part `media_processing` field."""
+    model = GoogleModel('gemini-3.7-flash', provider=GoogleProvider(api_key='test-key'))
+    generate_content = mocker.patch.object(
+        model.client.aio.models,
+        'generate_content',
+        return_value=_response([{'text': 'ok', 'thought_signature': FINAL_SIGNATURE}]),
+    )
+    generate_content_stream = mocker.patch.object(
+        model.client.aio.models,
+        'generate_content_stream',
+        return_value=_aiter([_response([{'text': 'ok', 'thought_signature': FINAL_SIGNATURE}])]),
+    )
+    agent = Agent(model)
+
+    await agent.run(['Describe it.', AGENTIC_VIDEO])
+    assert _sent_media_processing(generate_content.call_args.kwargs) == 'AGENTIC'
+
+    async with agent.run_stream(['Describe it.', AGENTIC_VIDEO]) as result:
+        await result.get_output()
+    assert _sent_media_processing(generate_content_stream.call_args.kwargs) == 'AGENTIC'

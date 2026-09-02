@@ -1313,6 +1313,8 @@ class GoogleModel(Model[Client]):
             # of consuming a fixed sampling of the whole file, see
             # https://ai.google.dev/gemini-api/docs/video-understanding#agentic-video-understanding
             if 'media_processing' in vendor_metadata:
+                if not _SDK_SUPPORTS_MEDIA_PROCESSING:
+                    raise UserError('`vendor_metadata["media_processing"]` requires `google-genai>=2.21.0`')
                 part_dict['media_processing'] = vendor_metadata.pop('media_processing')
             # The remaining keys map to `video_metadata`, which only applies to video parts.
             if vendor_metadata and isinstance(file, (BinaryContent, VideoUrl, UploadedFile)):
@@ -1880,6 +1882,9 @@ def _can_echo_server_side_tool_part(tool_call_id: str, *, supports_tool_combinat
 
 
 MEDIA_PROCESSING_TOOL_NAME = 'media_processing'
+
+# The per-Part `media_processing` field arrived in google-genai 2.21.0; the `google` extra's floor is older.
+_SDK_SUPPORTS_MEDIA_PROCESSING = 'media_processing' in PartDict.__annotations__
 """`tool_name` of the native tool parts that represent agentic media processing steps.
 
 With `media_processing='AGENTIC'` on a video/audio Part, the model fetches the segments and
