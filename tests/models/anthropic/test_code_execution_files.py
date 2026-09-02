@@ -21,8 +21,8 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import CodeExecutionTool
 
-from .conftest import try_import
-from .models.conftest import cache_breakpoints, content_blocks, message_shape
+from ...conftest import try_import
+from ..conftest import cache_breakpoints, content_blocks, message_shape
 
 with try_import() as anthropic_imports_successful:
     from anthropic import APIStatusError, omit as OMIT
@@ -32,7 +32,7 @@ with try_import() as anthropic_imports_successful:
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
-    from .models.test_anthropic import MockAnthropic, completion_message, get_mock_chat_completion_kwargs
+    from ..test_anthropic import MockAnthropic, completion_message, get_mock_chat_completion_kwargs
 
 pytestmark = [
     pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed'),
