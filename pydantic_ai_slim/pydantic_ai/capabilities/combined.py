@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
+from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Callable, Sequence
+from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager, nullcontext
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, cast
 
@@ -13,6 +14,7 @@ from pydantic_ai._instructions import (
     normalize_instructions,
     validate_instruction_id_segment,
 )
+from pydantic_ai._run_context import RunPreparationContext
 from pydantic_ai._utils import aclose_all, gather, replace_no_init
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
@@ -170,11 +172,9 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
             return self
         return self._rebound(new_caps)
 
-    def _validate_runtime_capabilities(
-        self, ctx: RunContext[AgentDepsT], capabilities: Sequence[AbstractCapability[AgentDepsT]]
-    ) -> None:
+    def _validate_runtime_capabilities(self, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> None:
         for capability in self.capabilities:
-            capability._validate_runtime_capabilities(ctx, capabilities)
+            capability._validate_runtime_capabilities(capabilities)
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
         # The children's contributions, not `_collect_instructions`: that asks whether a subclass
@@ -393,6 +393,29 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         return tool_defs
 
     # --- Run lifecycle hooks ---
+
+    def wrap_entire_run(self, ctx: RunPreparationContext[AgentDepsT]) -> AbstractAsyncContextManager[None]:
+        # Deferred capabilities are always excluded, even when already loaded from resumed history.
+        capabilities = [
+            capability
+            for capability in self.capabilities
+            if capability.defer_loading is not True
+            and type(capability).wrap_entire_run is not AbstractCapability.wrap_entire_run
+        ]
+        if not capabilities:
+            return nullcontext()
+        return self._wrap_entire_run(ctx, capabilities)
+
+    @asynccontextmanager
+    async def _wrap_entire_run(
+        self,
+        ctx: RunPreparationContext[AgentDepsT],
+        capabilities: Sequence[AbstractCapability[AgentDepsT]],
+    ) -> AsyncGenerator[None]:
+        async with AsyncExitStack() as stack:
+            for capability in capabilities:
+                await stack.enter_async_context(capability.wrap_entire_run(ctx))
+            yield
 
     async def before_run(
         self,

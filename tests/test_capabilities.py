@@ -5,7 +5,8 @@ import contextvars
 import inspect
 import threading
 import time
-from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from traceback import extract_tb
 from typing import Any, cast
@@ -14,7 +15,7 @@ import anyio
 import pytest
 from pydantic import BaseModel
 
-from pydantic_ai import _agent_graph
+from pydantic_ai import RunPreparationContext, _agent_graph
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._utils import Some
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
@@ -2560,6 +2561,29 @@ async def test_wrapper_capability_delegates_hooks():
 
     assert 'before_run' in hook_calls
     assert 'after_run' in hook_calls
+
+
+async def test_wrapper_capability_delegates_wrap_entire_run():
+    """WrapperCapability forwards `wrap_entire_run` to the wrapped capability."""
+    events: list[str] = []
+
+    @dataclass
+    class WholeRunCap(AbstractCapability[Any]):
+        @asynccontextmanager
+        async def wrap_entire_run(self, ctx: RunPreparationContext[Any]) -> AsyncGenerator[None]:
+            events.append('enter')
+            try:
+                yield
+            finally:
+                events.append('exit')
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        events.append('model')
+        return ModelResponse(parts=[TextPart('done')])
+
+    await Agent(FunctionModel(respond), capabilities=[WrapperCapability(wrapped=WholeRunCap())]).run('Hello')
+
+    assert events == ['enter', 'model', 'exit']
 
 
 def test_wrapper_capability_for_agent_replaces():

@@ -559,9 +559,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             tool_config_key=self.engine_spec.tool_config_key,
         )
 
-    def _validate_runtime_capabilities(
-        self, ctx: RunContext[AgentDepsT], capabilities: Sequence[AbstractCapability[AgentDepsT]]
-    ) -> None:
+    def _validate_runtime_capabilities(self, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> None:
         """Reject capabilities added per-run inside a durable workflow or flow."""
         if not self.in_durable_context or not isinstance(
             self.get_durable_operation_backend(), RegisteredOperationBackend

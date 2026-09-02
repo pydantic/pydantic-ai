@@ -3,6 +3,7 @@ from __future__ import annotations
 from abc import ABC
 from collections import Counter
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
+from contextlib import AbstractAsyncContextManager, nullcontext
 from dataclasses import KW_ONLY, dataclass
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypeAlias
 from weakref import WeakValueDictionary
@@ -18,6 +19,7 @@ from pydantic_ai._instructions import (
     normalize_instructions,
     sourced_instruction,
 )
+from pydantic_ai._run_context import RunPreparationContext
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import (
@@ -394,9 +396,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """
         return self
 
-    def _validate_runtime_capabilities(
-        self, ctx: RunContext[AgentDepsT], capabilities: Sequence[AbstractCapability[AgentDepsT]]
-    ) -> None:
+    def _validate_runtime_capabilities(self, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> None:
         """Validate capabilities contributed specifically for this run.
 
         Deliberately private: whether this becomes part of the public runtime extension
@@ -601,6 +601,17 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         return tool_defs
 
     # --- Run lifecycle hooks ---
+
+    def wrap_entire_run(self, ctx: RunPreparationContext[AgentDepsT]) -> AbstractAsyncContextManager[None]:
+        """Bracket the complete lifecycle of a run, from before model resolution to after teardown.
+
+        Entered on the agent-level capability instance before `for_run`, so it must not keep
+        per-run state on `self`; [`Instrumentation`][pydantic_ai.capabilities.Instrumentation]
+        keeps its state on the run's private scope instead. Unlike `wrap_run` it receives no
+        handler and cannot alter control flow, and suppressing the run's exception is reported as
+        a [`UserError`][pydantic_ai.exceptions.UserError]. Deferred capabilities are never entered.
+        """
+        return nullcontext()
 
     async def before_run(
         self,
