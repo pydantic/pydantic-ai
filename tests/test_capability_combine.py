@@ -21,6 +21,7 @@ from inline_snapshot import snapshot
 import pydantic_ai.capabilities as capabilities_package
 from pydantic_ai import Agent, FunctionToolset, RunContext, Tool
 from pydantic_ai.capabilities import (
+    MCP,
     Capability,
     CapabilityOrdering,
     ImageGeneration,
@@ -749,3 +750,22 @@ async def test_two_capabilities_supplied_for_one_run_merge_like_two_on_the_agent
     await agent.run('hi', capabilities=[WebSearch(search_context_size='low'), WebSearch(max_uses=3)])
 
     assert seen == snapshot([[WebSearchTool(search_context_size='low', max_uses=3)]])
+
+
+def test_mcp_takes_the_same_derived_id_as_the_toolset_it_contributes() -> None:
+    """A server's identity is its URL, so the capability is named by it too, not just its leaf.
+
+    `MCP` already derived a stable id for the `MCPToolset` it builds, while the capability itself
+    stayed anonymous and fell back to a positional `mcp` / `mcp_2` -- which reorders when the
+    capability list does, so it is no use as a durable-operation name or an instruction key
+    (following up #6334, which fixed the toolset half).
+    """
+    capability = MCP[Any](url='https://mcp.example.com/sse')
+
+    assert capability.id == snapshot('mcp.example.com-sse')
+    assert cast('AbstractToolset[Any]', capability.get_toolset()).id == capability.id
+
+    # An explicit `id=` still wins, and a client that carries its own connection has nothing to
+    # derive from, so it stays anonymous and the run tells duplicates apart itself.
+    assert MCP[Any](url='https://mcp.example.com/sse', id='docs').id == 'docs'
+    assert MCP[Any](local=lambda: FunctionToolset[Any]()).id is None
