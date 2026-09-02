@@ -358,6 +358,9 @@ class _ChatCompletion(chat.ChatCompletion):
     service_tier: str | None = None  # type: ignore[reportIncompatibleVariableOverride]
     """OpenAI-compatible providers can return arbitrary `service_tier` values (e.g. `"standard"`, `"on_demand"`)."""
 
+    metadata: dict[str, Any] | None = None
+    """OpenAI-compatible providers can return non-string `metadata` values (e.g. Nebius returns a list under `weight_versions`)."""
+
 
 class _ChatCompletionChunk(ChatCompletionChunk):  # pyright: ignore[reportUnusedClass] — subclassed in openrouter.py
     """Relaxes strict Literal validation on fields that OpenAI-compatible providers may return non-standard values for."""
@@ -1195,7 +1198,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
 
         This method may be overridden by subclasses of `OpenAIChatModel` to apply custom completion validations.
         """
-        return _ChatCompletion.model_validate(response.model_dump())
+        return _ChatCompletion.model_validate(response.model_dump(warnings=False))
 
     def _process_provider_details(self, response: chat.ChatCompletion) -> dict[str, Any] | None:
         """Hook that response content to provider details.
