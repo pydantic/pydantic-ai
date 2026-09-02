@@ -1552,6 +1552,12 @@ def infer_model_profile(model: str) -> ModelProfile:
     provider, model_name = parse_model_id(model)
     if provider is None:
         return DEFAULT_PROFILE
+    if provider.startswith('gateway/'):
+        # Resolve the gateway prefix once, here: `infer_provider_class` would do it for the class lookup,
+        # but genai-prices needs the upstream name too, and `gateway/chat` doesn't contain one.
+        from ..providers.gateway import normalize_gateway_provider
+
+        provider = normalize_gateway_provider(provider)
 
     try:
         provider_class = infer_provider_class(provider)
@@ -1565,14 +1571,7 @@ def infer_model_profile(model: str) -> ModelProfile:
     profile = provider_profile or DEFAULT_PROFILE
 
     if 'context_window' not in (provider_profile or {}):
-        # genai-prices matches on the provider name alone, and a gateway prefix like `gateway/chat`
-        # doesn't contain one, so look up under the provider it resolves to.
-        lookup_provider = provider
-        if lookup_provider.startswith('gateway/'):
-            from ..providers.gateway import normalize_gateway_provider
-
-            lookup_provider = normalize_gateway_provider(lookup_provider)
-        context_window = lookup_context_window(model_name, provider_name=lookup_provider)
+        context_window = lookup_context_window(model_name, provider_name=provider)
         if context_window is not None:
             profile = merge_profile(profile, ModelProfile(context_window=context_window))
     return profile
