@@ -22,8 +22,6 @@ class ContainerResult:
 
 
 class DockerSandbox:
-    provider = 'docker'
-
     def __init__(self, *, sandbox_id: str = 'container-0123456789ab'):
         self.sandbox_id = sandbox_id
 

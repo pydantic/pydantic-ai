@@ -63,8 +63,8 @@ class ReadOnlySandbox:
 
     Reads (`working_dir`, `fs.read_bytes`, `fs.stat`, `fs.list_dir`, `fs.exists`) forward to
     the wrapped backend; `run`, `start`, and file mutations raise
-    [`UserError`][pydantic_ai.exceptions.UserError] explaining the restriction. Identity
-    (`provider`, `sandbox_id`) is the wrapped backend's own: a
+    [`UserError`][pydantic_ai.exceptions.UserError] explaining the restriction. `sandbox_id`
+    is the wrapped backend's own: a
     [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] names the environment, never the policy,
     so whoever supplies the sandbox re-applies the wrapper on every (re)connection.
 
@@ -81,10 +81,6 @@ class ReadOnlySandbox:
     def _backend_for_internal_read(self) -> SandboxBackend:
         """Return the unrestricted backend for the fixed, non-mutating read command."""
         return self._wrapped
-
-    @property
-    def provider(self) -> str:
-        return self._wrapped.provider
 
     @property
     def sandbox_id(self) -> str:

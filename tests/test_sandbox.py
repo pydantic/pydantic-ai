@@ -151,7 +151,6 @@ async def test_read_text_is_strict_about_encoding():
 class _MinimalBackend:
     """A backend that implements only the members `SandboxBackend` requires."""
 
-    provider = 'minimal'
     sandbox_id = 'minimal-1'
 
     async def run(
@@ -264,10 +263,8 @@ async def test_read_file_empty_window_without_filesystem_support():
 
 
 class _RunOnlySandbox:
-    """The smallest legal backend — the four required members, no `fs`, no `start` —
+    """The smallest legal backend — the three required members, no `fs`, no `start` —
     delegating to a `FakeSandbox` so its `sed` emulation serves the slice."""
-
-    provider = 'run-only'
 
     def __init__(self, inner: FakeSandbox) -> None:
         self._inner = inner
@@ -395,8 +392,6 @@ async def test_bare_run_context_sandbox_is_unavailable():
     on the host.
     """
     ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
-    assert ctx.sandbox.provider == 'unavailable'
-    assert not ctx.sandbox.attached
     with pytest.raises(UserError, match='created outside an agent run'):
         await ctx.sandbox.run(['echo', 'hello'])
 
@@ -426,33 +421,27 @@ async def test_run_without_sandbox_is_unavailable_with_attachment_instructions()
     operation raises with the ways to attach one.
     """
     agent: Agent = Agent(_tool_call_then_text('use_default'))
-    providers: list[str] = []
 
     @agent.tool
     async def use_default(ctx: RunContext[Any]) -> str:
-        providers.append(ctx.sandbox.provider)
         await ctx.sandbox.run(['echo', 'hello'])
         return 'ok'  # pragma: no cover
 
     with pytest.raises(UserError, match=r'No sandbox is attached to this run.+`sandbox=LocalSandbox\(\)`'):
         await agent.run('go')
-    assert providers == ['unavailable']
 
 
 async def test_unavailable_sandbox_run_argument_overrides_default_reason():
-    """A policy `UnavailableSandbox` is the run's sandbox: attached, refusing with its own reason."""
+    """A policy `UnavailableSandbox` is the run's sandbox, refusing with its own reason."""
     reason = 'local execution disabled'
     agent: Agent = Agent(_tool_call_then_text())
-    attached: list[bool] = []
 
     @agent.tool
     async def probe(ctx: RunContext[Any]) -> str:
-        attached.append(ctx.sandbox.attached)
         return (await ctx.sandbox.run(['echo', 'hello'])).stdout
 
     with pytest.raises(UserError, match=reason):
         await agent.run('go', sandbox=UnavailableSandbox(reason))
-    assert attached == [True]
 
 
 async def test_wrapper_agent_forwards_sandbox():

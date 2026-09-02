@@ -67,7 +67,6 @@ async def test_identity_and_working_dir_forward():
     """The wrapper keeps the wrapped backend's identity: policy is not part of it."""
     read_only = ReadOnlySandbox(FakeSandbox('rw'))
 
-    assert read_only.provider == 'fake'
     assert read_only.sandbox_id == 'fake-rw'
     assert await read_only.working_dir() == '/workspace'
 

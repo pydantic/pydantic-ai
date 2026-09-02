@@ -141,8 +141,7 @@ def _replace_run_context(
             }
             # Sandbox identity forks the key because tools can produce environment-specific
             # results. `sandbox_id` is known without connecting a deferred sandbox.
-            if value.sandbox.attached:
-                projected['sandbox'] = value.sandbox.sandbox_id
+            projected['sandbox'] = value.sandbox.sandbox_id
             inputs[key] = projected
 
     return inputs

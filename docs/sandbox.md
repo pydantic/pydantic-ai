@@ -153,9 +153,6 @@ spans two runs.
 Pass [`UnavailableSandbox`][pydantic_ai.sandboxes.UnavailableSandbox] as
 `sandbox=UnavailableSandbox(reason='Local execution is disabled by application policy.')` to
 prevent capabilities from attaching a sandbox and give attempted operations a useful error.
-A tool that can also work without a sandbox can check
-[`ctx.sandbox.attached`][pydantic_ai.sandboxes.Sandbox.attached], which is `False` only when the
-run has no sandbox at all.
 
 ### Making a sandbox read-only
 
@@ -190,7 +187,7 @@ data, enforce read-only access in the environment itself, for example with a rea
 
 ## Build a sandbox integration
 
-A backend is required to implement only four members: `provider`, `sandbox_id`, command
+A backend is required to implement only three members: `sandbox_id`, command
 execution, and its working directory. Pydantic AI exposes it to tools through a
 [`Sandbox`][pydantic_ai.sandboxes.Sandbox] object, which adds text decoding, path resolution,
 and line-window reads. Filesystem operations use the backend's

@@ -329,11 +329,6 @@ class SandboxBackend(Protocol):
     """
 
     @property
-    def provider(self) -> str:
-        """Short identifier of the backing implementation (e.g. `'docker'`, `'local'`)."""
-        ...
-
-    @property
     def sandbox_id(self) -> str:
         """The implementation's stable identifier for this sandbox, carried by [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef]."""
         ...

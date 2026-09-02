@@ -117,8 +117,6 @@ class LocalSandbox:
             directory commands actually run in.
     """
 
-    provider = 'local'
-
     def __init__(self, root: str | Path | None = None):
         if os.name != 'posix':
             raise NotImplementedError(

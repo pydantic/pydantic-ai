@@ -82,8 +82,7 @@ from ..native_tools import AbstractNativeTool
 from ..native_tools._tool_search import ToolSearchTool
 from ..output import OutputDataT, OutputSpec, StructuredDict
 from ..run import AgentRun, AgentRunResult
-from ..sandboxes import Sandbox, SandboxBackend, SandboxRef
-from ..sandboxes._policy import default_sandbox_backend
+from ..sandboxes import Sandbox, SandboxBackend, SandboxRef, UnavailableSandbox
 from ..settings import ModelSettings, merge_model_settings
 from ..template import TemplateStr
 from ..tool_manager import ParallelExecutionMode, ToolManager
@@ -400,6 +399,13 @@ def _normalize_agent_retry_overrides(retries: int | AgentRetries | None) -> Agen
 T = TypeVar('T')
 S = TypeVar('S')
 NoneType = type(None)
+
+_NO_SANDBOX_REASON = (
+    'No sandbox is attached to this run. Pass `sandbox=LocalSandbox()` to the run method to use the '
+    'local machine (unsafe: commands and file operations run with the full permissions of this process), '
+    'attach a capability that supplies a sandbox through its `acquire_sandbox` hook, or pass a `SandboxRef` '
+    'to connect to an existing environment. See https://ai.pydantic.dev/sandbox/ for details.'
+)
 
 
 @dataclasses.dataclass
@@ -1611,7 +1617,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 run_id=state.run_id,
                 conversation_id=state.conversation_id,
                 _cancellation=cancellation,
-                sandbox=Sandbox.wrap(default_sandbox_backend()),
+                sandbox=Sandbox.wrap(UnavailableSandbox(_NO_SANDBOX_REASON)),
             )
 
             async def _close_sandbox_connection(facade: Sandbox) -> None:

@@ -2439,7 +2439,7 @@ def test_cache_key_run_context_projection_is_exhaustive():
         '_run_capabilities_by_id',  # live instances are represented by their projected capability state instead
     }
     projected_via_derived_key = {
-        'sandbox',  # explicit backends project as (provider, sandbox_id); framework defaults are skipped
+        'sandbox',  # projected as `sandbox_id`, known without connecting a deferred sandbox
     }
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
     projected = set(_replace_run_context({'ctx': ctx})['ctx'])

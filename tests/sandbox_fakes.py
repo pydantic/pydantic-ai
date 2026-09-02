@@ -74,8 +74,6 @@ class FakeSandbox:
     command is recorded in `commands` and succeeds with empty output.
     """
 
-    provider = 'fake'
-
     def __init__(self, name: str, files: dict[str, bytes] | None = None, *, sed: bool = True) -> None:
         self.name = name
         self.fs = FakeFilesystem(files)
@@ -123,9 +121,7 @@ class FakeSandbox:
 
 
 class RecordingSandboxBackend:
-    """The four required backend members and nothing else, recording every command."""
-
-    provider = 'fake'
+    """The three required backend members and nothing else, recording every command."""
 
     def __init__(self, sandbox_id: str) -> None:
         self.sandbox_id = sandbox_id

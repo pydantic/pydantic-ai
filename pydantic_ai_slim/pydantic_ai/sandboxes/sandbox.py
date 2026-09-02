@@ -152,13 +152,6 @@ class Sandbox:
         self._connection_error = reason
 
     @property
-    def attached(self) -> bool:
-        """Whether a real sandbox backs this run, rather than the framework's unavailable placeholder."""
-        from ._policy import is_default_sandbox_backend
-
-        return not is_default_sandbox_backend(self._backend)
-
-    @property
     def backend(self) -> SandboxBackend:
         """The wrapped backend, for access to provider-specific functionality."""
         if self._backend is None:
@@ -167,10 +160,6 @@ class Sandbox:
                 'Call an async sandbox operation before accessing `sandbox.backend`.'
             )
         return self._backend
-
-    @property
-    def provider(self) -> str:
-        return self.backend.provider
 
     @property
     def sandbox_id(self) -> str:
@@ -210,7 +199,7 @@ class Sandbox:
         if isinstance(backend, SupportsFilesystem):
             return backend.fs
         raise NotImplementedError(
-            f'Sandbox backend {backend.provider!r} does not implement `SupportsFilesystem`; '
+            f'Sandbox backend {type(backend).__name__} does not implement `SupportsFilesystem`; '
             'implement `fs` on the backend, or reach for files through `sandbox.run(...)` shell commands.'
         )
 

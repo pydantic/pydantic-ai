@@ -2,8 +2,8 @@
 
 [`UnavailableSandbox`][pydantic_ai.sandboxes.UnavailableSandbox] gives sandbox operations
 the same explicit failure mode. Pydantic AI uses it where a live execution
-environment cannot safely exist, and applications can pass one deliberately to disable the
-default local sandbox with a policy-specific explanation.
+environment cannot safely exist, and applications can pass one deliberately to disable
+execution with a policy-specific explanation.
 
 It implements the process-start and filesystem opt-ins natively so every operation surfaces
 the configured reason instead of raising `NotImplementedError` in the `Sandbox` API.
@@ -59,7 +59,6 @@ class _UnavailableFilesystem:
 class UnavailableSandbox:
     """A `SandboxBackend` whose every operation raises `UserError` with a configured reason."""
 
-    provider = 'unavailable'
     sandbox_id = 'unavailable'
 
     def __init__(self, reason: str):

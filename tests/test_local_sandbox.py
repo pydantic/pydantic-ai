@@ -87,8 +87,7 @@ async def test_local_sandbox_conforms_to_the_protocol(tmp_path: Path):
     assert isinstance(sandbox, SupportsFilesystem)
     assert not isinstance(sandbox, SupportsStart)
     typed: SandboxBackend = sandbox  # static conformance, checked because tests are type-checked
-    assert typed.provider == 'local'
-    assert sandbox.sandbox_id.startswith('local-')
+    assert typed.sandbox_id.startswith('local-')
     with pytest.raises(NotImplementedError, match=r'does not implement `start\(\)`'):
         await Sandbox(sandbox).start(['echo', 'hi'])
 
