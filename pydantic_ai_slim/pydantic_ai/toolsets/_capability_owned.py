@@ -42,7 +42,7 @@ class CapabilityOwnedToolset(WrapperToolset[AgentDepsT]):
     ) -> str | InstructionPart | Sequence[str | InstructionPart] | None:
         if self.capability.defer_loading is True:
             return None
-        return await self.wrapped.get_instructions(ctx)
+        return await super().get_instructions(ctx)
 
     def apply(self, visitor: Callable[[AbstractToolset[AgentDepsT]], None]) -> None:
         visitor(self)

@@ -21,7 +21,7 @@ from genai_prices import types as genai_types
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 from typing_extensions import TypeAliasType, TypeVar, assert_never
 
-from pydantic_ai._cost import calculate_price_for_usage
+from pydantic_ai._genai_prices import calculate_price_for_usage
 
 from . import _otel_messages, _utils
 from ._instrumentation import redact_binary_content, serialize_any
@@ -45,6 +45,7 @@ for file in mimetypes.knownfiles:
     if os.path.isfile(file):
         _mime_types.read(file)  # pragma: lax no cover
 # TODO check for added mimetypes in Python 3.11 when dropping support for Python 3.10:
+# https://github.com/python/cpython/blob/3.11/Lib/mimetypes.py
 # Document types
 _mime_types.add_type('application/rtf', '.rtf')
 _mime_types.add_type('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', '.xlsx')
@@ -347,10 +348,17 @@ class VideoUrl(FileUrl):
 
     @property
     def is_youtube(self) -> bool:
-        """True if the URL has a YouTube domain."""
-        parsed = urlparse(self.url)
-        hostname = parsed.hostname
-        return hostname in ('youtu.be', 'youtube.com', 'www.youtube.com')
+        """True if the URL is on a YouTube host that models can resolve directly.
+
+        This is a specific set of hosts rather than every YouTube-owned domain, so
+        `music.youtube.com` is deliberately not one of them.
+        """
+        # Exact hosts, not a `.youtube.com` suffix match: Google rejects
+        # `music.youtube.com` as a `file_uri` with 400 INVALID_ARGUMENT, on the Gemini API
+        # and on Vertex alike, so a suffix match would hand it a URL it cannot resolve.
+        # Membership is also read by `download_item`, so a host added here stops being
+        # downloadable on every other provider too — verify both before extending this.
+        return urlparse(self.url).hostname in ('youtu.be', 'youtube.com', 'www.youtube.com', 'm.youtube.com')
 
     @property
     def format(self) -> VideoFormat:
@@ -1741,9 +1749,103 @@ class RetryPromptPart:
 # `from __future__ import annotations` at the top of this module.
 
 
+@dataclass(frozen=True, repr=False)
+class AgentInstructionSource:
+    """The agent's own instructions.
+
+    There is exactly one agent in scope, so it carries no id.
+    """
+
+    def __str__(self) -> str:
+        return 'agent'
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(frozen=True, repr=False)
+class ToolsetInstructionSource:
+    """A toolset with an `id`."""
+
+    id: str
+
+    def __str__(self) -> str:
+        return f'toolset:{self.id}'
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(frozen=True, repr=False)
+class CapabilityInstructionSource:
+    """A capability with an `id`."""
+
+    id: str
+
+    def __str__(self) -> str:
+        return f'capability:{self.id}'
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+InstructionSource: TypeAlias = AgentInstructionSource | ToolsetInstructionSource | CapabilityInstructionSource
+"""The source that authored an instruction part."""
+
+
+@dataclass(frozen=True, repr=False)
+class InstructionId:
+    """The key an instruction part is addressed by: who contributed it, and which of their parts it is."""
+
+    source: InstructionSource
+    """Who contributed the part: the agent, a toolset with an `id`, or a capability with an `id`."""
+
+    _: KW_ONLY
+
+    name: str | None = None
+    """Which of that source's parts this is, or `None` to address everything the source contributes."""
+
+    def __str__(self) -> str:
+        return f'{self.source}:{self.name}' if self.name is not None else str(self.source)
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+def _deserialize_instruction_id(value: str | InstructionId | None) -> InstructionId | None:
+    """Rebuild a key from the string it renders to.
+
+    A namespace this version doesn't know can only come from a newer one, whose keys it has no way to
+    address anyway, so it reads as unaddressable rather than failing the message it arrived on.
+    """
+    if not isinstance(value, str):
+        return value
+    if value == 'agent':
+        return InstructionId(AgentInstructionSource())
+    if value.startswith('agent:'):
+        return InstructionId(AgentInstructionSource(), name=value.removeprefix('agent:'))
+    for namespace, source_type in (
+        ('toolset', ToolsetInstructionSource),
+        ('capability', CapabilityInstructionSource),
+    ):
+        prefix = f'{namespace}:'
+        if value.startswith(prefix):
+            source_id, separator, name = value.removeprefix(prefix).partition(':')
+            return InstructionId(source_type(source_id), name=name if separator else None)
+    return None
+
+
+def _serialize_instruction_id(value: InstructionId | None) -> str | None:
+    return str(value) if value is not None else None
+
+
+SerializedInstructionId: TypeAlias = Annotated[
+    InstructionId | None,
+    pydantic.BeforeValidator(_deserialize_instruction_id),
+    pydantic.PlainSerializer(_serialize_instruction_id, return_type=str | None, when_used='json'),
+]
+"""An [`InstructionId`][pydantic_ai.messages.InstructionId] that persists as the string it renders to."""
+
+
 @dataclass(repr=False)
 class InstructionPart:
-    """A single instruction block with metadata about its origin.
+    """A single instruction part with metadata about its origin.
 
     Instructions are composed of one or more parts, each of which can be static (from a literal string)
     or dynamic (from a function, template, or toolset). This distinction allows model implementations
@@ -1752,7 +1854,7 @@ class InstructionPart:
     """
 
     content: str
-    """The text content of this instruction block."""
+    """The text content of this instruction part."""
 
     _: KW_ONLY
 
@@ -1762,6 +1864,38 @@ class InstructionPart:
     Static instructions (`dynamic=False`) come from literal strings passed to `Agent(instructions=...)`.
     Dynamic instructions (`dynamic=True`) come from `@agent.instructions` functions, `TemplateStr`,
     or toolset `get_instructions()` methods.
+    """
+
+    name: str | None = None
+    """What the author calls this part, relative to whatever contributes it.
+
+    Name a part relative to what you own — `'limits'`, not `'toolset:weather:limits'` — and the source
+    you contribute through qualifies it into an [`id`][pydantic_ai.messages.InstructionPart.id]. A name
+    cannot contain `:`, which delimits the segments of an id, and cannot be `'agent'`, which is the key
+    of the agent's own instructions.
+
+    Naming a part whose source has no identity of its own leaves `id` as `None`: there is no source key
+    to qualify the name against, so it says what the part is without making it addressable.
+    """
+
+    id: SerializedInstructionId = None
+    """The stable key this part is addressed by, or `None` if nothing addresses it.
+
+    The framework issues this while collecting instructions, from the author's
+    [`name`][pydantic_ai.messages.InstructionPart.name] and the identity of the source that contributed
+    the part — declare a `name` rather than setting this yourself. A consumer reading
+    [`ModelRequestParameters.instruction_parts`][pydantic_ai.models.ModelRequestParameters.instruction_parts]
+    can persist configuration against an id, because it survives the reordering and rewording that a
+    part's position and text do not.
+
+    [`InstructionId.source`][pydantic_ai.messages.InstructionId.source] is who contributed the part:
+
+    - [`AgentInstructionSource`][pydantic_ai.messages.AgentInstructionSource] — the agent's literal instructions
+    - [`ToolsetInstructionSource`][pydantic_ai.messages.ToolsetInstructionSource] — a toolset with an `id`
+    - [`CapabilityInstructionSource`][pydantic_ai.messages.CapabilityInstructionSource] — a capability with an `id`
+
+    An id renders and serializes as its segments joined by `:` — `'agent'`, `'toolset:weather'`, or
+    `'capability:budget:remaining'`.
     """
 
     part_kind: Literal['instruction'] = 'instruction'
@@ -1859,6 +1993,7 @@ class ModelRequest:
 
     Set to `'interrupted'` when the request was being assembled (e.g. collecting tool returns) and
     the run was abnormally terminated by an exception or cancellation before the request was sent to the model.
+    In that case `parts` holds only the tool returns that were collected, and is empty if none were.
     Appears in [`capture_run_messages`][pydantic_ai.capture_run_messages] output so consumers can detect partial state.
     """
 
@@ -2472,6 +2607,15 @@ ModelRequestPart = Annotated[
     pydantic.Discriminator(_model_request_part_discriminator),
 ]
 """A message part sent by Pydantic AI to a model."""
+
+
+def _tool_results_first_sort_key(part: ModelRequestPart) -> int:  # pyright: ignore[reportUnusedFunction]
+    """Stable-sort key placing the parts that answer tool calls ahead of a request's other parts.
+
+    Providers such as Anthropic require every tool result answering an assistant turn to lead the
+    next message, ahead of any other content.
+    """
+    return 0 if isinstance(part, ToolReturnPart | RetryPromptPart) else 1
 
 
 def _model_response_part_discriminator(v: Any) -> str | None:
@@ -3942,7 +4086,7 @@ class ToolCallEvent:
 
     args_valid: bool | None = None
     """Whether the tool arguments passed validation.
-    See the [custom validation docs](https://ai.pydantic.dev/tools-advanced/#args-validator) for more info.
+    See the [custom validation docs](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#args-validator) for more info.
 
     - `True`: Schema validation and custom validation (if configured) both passed; args are guaranteed valid.
     - `False`: Validation was performed and failed.
@@ -4092,10 +4236,11 @@ class DeferredToolResultsEvent:
 
 @dataclass(repr=False)
 class RealtimeTurnCompleteEvent:
-    """The exchange is over: the model has finished replying and nothing is outstanding.
+    """The model exchange is over: generation and tool work are complete.
 
-    This is the event to stop consuming on. It is synthesized by the session once no tool calls are
-    still running and no further response is in flight.
+    It is synthesized by the session once no tool calls are still running and no further response is
+    in flight. Input transcription can finish after this event. On WebRTC sidebands, provider playback
+    can also continue until [`RealtimeOutputSpeechEndEvent`][pydantic_ai.realtime.RealtimeOutputSpeechEndEvent].
     """
 
     _: KW_ONLY
@@ -4175,7 +4320,7 @@ class RealtimeOutputSpeechStartEvent:
     """The provider started playing the model's audio to the listener.
 
     Only reported where the provider, rather than your code, holds the audio on its way to the
-    listener: on a [WebRTC sideband](../realtime/lifecycle.md#browser-webrtc) the media flows
+    listener: on a [WebRTC sideband](../realtime/deployment.md#browser-webrtc-server-sideband) the media flows
     browser ↔ provider, so the session never sees audio and this is its only signal that the model has
     become audible. An ordinary session owns the audio and knows when it starts playing it, so no
     provider reports this there.

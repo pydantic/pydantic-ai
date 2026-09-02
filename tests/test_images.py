@@ -13,7 +13,7 @@ from types import SimpleNamespace
 from typing import Any, Literal, cast, get_args
 from unittest.mock import AsyncMock, MagicMock
 
-import httpx
+import httpx2
 import pytest
 from genai_prices.types import PriceCalculation
 
@@ -677,14 +677,14 @@ def test_google_image_generation_model_infers_string_provider(monkeypatch: pytes
 
 @asynccontextmanager
 async def _mock_google_provider(
-    handle_request: Callable[[httpx.Request], httpx.Response],
+    handle_request: Callable[[httpx2.Request], httpx2.Response],
 ) -> AsyncGenerator[GoogleProvider]:
     """A `GoogleProvider` whose transport is `handle_request`, closed when the block exits.
 
     `base_url` is pinned so `provider_url` is asserted against a value the test controls rather than
     the SDK's default endpoint.
     """
-    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handle_request))
+    http_client = httpx2.AsyncClient(transport=httpx2.MockTransport(handle_request))
     try:
         yield GoogleProvider(api_key='test-api-key', base_url='https://example.com', http_client=http_client)
     finally:
@@ -693,11 +693,11 @@ async def _mock_google_provider(
 
 @pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
 async def test_google_image_generation_wire_payload_and_response_mapping():
-    requests: list[httpx.Request] = []
+    requests: list[httpx2.Request] = []
 
-    def handle_request(request: httpx.Request) -> httpx.Response:
+    def handle_request(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
-        return httpx.Response(
+        return httpx2.Response(
             200,
             json={
                 'candidates': [
@@ -884,11 +884,11 @@ async def test_google_image_generation_requires_media_type_for_files_api_url():
 
 @pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
 async def test_google_image_generation_resolves_dimensions_and_aspect_ratio():
-    requests: list[httpx.Request] = []
+    requests: list[httpx2.Request] = []
 
-    def handle_request(request: httpx.Request) -> httpx.Response:
+    def handle_request(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
-        return httpx.Response(
+        return httpx2.Response(
             200,
             json={
                 'candidates': [
@@ -943,11 +943,11 @@ async def test_google_image_generation_wires_extra_body():
     - Merge site: python-genai `google/genai/_api_client.py`
       `_common.recursive_dict_update(request_dict, patched_http_options.extra_body)`.
     """
-    requests: list[httpx.Request] = []
+    requests: list[httpx2.Request] = []
 
-    def handle_request(request: httpx.Request) -> httpx.Response:
+    def handle_request(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
-        return httpx.Response(
+        return httpx2.Response(
             200,
             json={
                 'candidates': [
@@ -976,11 +976,11 @@ async def test_google_image_generation_wires_extra_body():
 async def test_google_image_generation_downloads_image_url(monkeypatch: pytest.MonkeyPatch):
     download_mock = AsyncMock(return_value={'data': b'downloaded', 'data_type': 'image/webp'})
     monkeypatch.setattr(google_images, 'download_item', download_mock)
-    requests: list[httpx.Request] = []
+    requests: list[httpx2.Request] = []
 
-    def handle_request(request: httpx.Request) -> httpx.Response:
+    def handle_request(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
-        return httpx.Response(
+        return httpx2.Response(
             200,
             json={
                 'candidates': [
@@ -1027,8 +1027,8 @@ async def test_google_image_generation_media_type_without_mime_type(image_bytes:
     produced by a stub.
     """
 
-    def handle_request(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
+    def handle_request(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
             200,
             json={
                 'candidates': [
@@ -1089,8 +1089,8 @@ async def test_google_image_generation_no_image_finish_reason():
     - ai.google.dev image-generation guide (NO_IMAGE soft failure): https://ai.google.dev/gemini-api/docs/image-generation
     """
 
-    def handle_request(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
+    def handle_request(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
             200,
             json={
                 'candidates': [
@@ -1126,8 +1126,8 @@ async def test_google_image_generation_image_safety_finish_reason():
     - `FinishReason.IMAGE_SAFETY`: python-genai `google/genai/types.py` `FinishReason`.
     """
 
-    def handle_request(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
+    def handle_request(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
             200,
             json={
                 'candidates': [
@@ -1160,8 +1160,8 @@ async def test_google_image_generation_prompt_blocked():
     - `BlockedReason.PROHIBITED_CONTENT`: python-genai `google/genai/types.py` `BlockedReason`.
     """
 
-    def handle_request(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
+    def handle_request(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
             200,
             json={
                 'promptFeedback': {
@@ -1198,8 +1198,8 @@ async def test_google_image_generation_degenerate_candidates():
     ]
     responses = iter(degenerate_responses)
 
-    def handle_request(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json=next(responses))
+    def handle_request(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, json=next(responses))
 
     async with _mock_google_provider(handle_request) as provider:
         model = GoogleImageGenerationModel('gemini-2.5-flash-image', provider=provider)
@@ -1226,8 +1226,8 @@ async def test_google_image_generation_supported_settings_emit_no_warning():
     - `warn_image_generation_settings` channel: `pydantic_ai/images/_validation.py`.
     """
 
-    def handle_request(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
+    def handle_request(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
             200,
             json={
                 'candidates': [
@@ -1258,8 +1258,8 @@ async def test_google_image_generation_supported_settings_emit_no_warning():
 
 @pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
 async def test_google_image_generation_maps_complete_provider_metadata():
-    def handle_request(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
+    def handle_request(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
             200,
             json={
                 'candidates': [
@@ -1343,8 +1343,8 @@ def test_google_image_generation_ignores_non_image_output_format():
 
 @pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
 async def test_google_image_generation_status_error():
-    def handle_request(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
+    def handle_request(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
             400,
             headers={'retry-after': '12'},
             json={'error': {'code': 400, 'message': 'invalid image request', 'status': 'INVALID_ARGUMENT'}},
@@ -1363,8 +1363,8 @@ async def test_google_image_generation_status_error():
     assert exc_info.value.retry_after == 12
 
 
-def _body_capturing_http_client() -> tuple[httpx.AsyncClient, list[dict[str, Any]]]:
-    """An `httpx.AsyncClient` paired with the list of JSON bodies it sends.
+def _body_capturing_http_client() -> tuple[httpx2.AsyncClient, list[dict[str, Any]]]:
+    """An `httpx2.AsyncClient` paired with the list of JSON bodies it sends.
 
     Request event hooks run inside `AsyncClient.send`, above the transport VCR patches, so the hook fires
     on replay too and sees the request the live code actually built. A cassette body is frozen and keeps
@@ -1375,10 +1375,10 @@ def _body_capturing_http_client() -> tuple[httpx.AsyncClient, list[dict[str, Any
     """
     sent_bodies: list[dict[str, Any]] = []
 
-    async def capture_request(request: httpx.Request) -> None:
+    async def capture_request(request: httpx2.Request) -> None:
         sent_bodies.append(json.loads(request.read()))
 
-    return httpx.AsyncClient(timeout=120, event_hooks={'request': [capture_request]}), sent_bodies
+    return httpx2.AsyncClient(timeout=120, event_hooks={'request': [capture_request]}), sent_bodies
 
 
 @pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
@@ -2908,11 +2908,11 @@ async def test_openai_image_edit_request(openai_mock_client: AsyncMock):
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
 async def test_openai_image_edit_wire_payload():
-    requests: list[httpx.Request] = []
+    requests: list[httpx2.Request] = []
 
-    def handle_request(request: httpx.Request) -> httpx.Response:
+    def handle_request(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
-        return httpx.Response(
+        return httpx2.Response(
             200,
             json={
                 'created': 456,
@@ -2921,7 +2921,7 @@ async def test_openai_image_edit_wire_payload():
             },
         )
 
-    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handle_request))
+    http_client = httpx2.AsyncClient(transport=httpx2.MockTransport(handle_request))
     openai_client = AsyncOpenAI(api_key='test-api-key', base_url='https://example.com/v1', http_client=http_client)
     provider = OpenAIProvider(openai_client=openai_client)
     model = OpenAIImageGenerationModel('gpt-image-1.5', provider=provider)
@@ -3059,7 +3059,9 @@ async def test_openai_image_edit_rejects_unsupported_image_format(openai_mock_cl
 async def test_openai_image_edit_status_error(openai_mock_client: AsyncMock):
     openai_mock_client.images.edit.side_effect = APIStatusError(
         'test error',
-        response=httpx.Response(status_code=500, request=httpx.Request('POST', 'https://example.com/v1/images/edits')),
+        response=httpx2.Response(
+            status_code=500, request=httpx2.Request('POST', 'https://example.com/v1/images/edits')
+        ),
         body={'error': 'test error'},
     )
     provider = OpenAIProvider(openai_client=cast(AsyncOpenAI, openai_mock_client))
@@ -3075,7 +3077,7 @@ async def test_openai_image_edit_status_error(openai_mock_client: AsyncMock):
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
 async def test_openai_image_generation_connection_error(openai_mock_client: AsyncMock):
     openai_mock_client.images.generate.side_effect = APIConnectionError(
-        message='connection failed', request=httpx.Request('POST', 'https://example.com/v1/images/generations')
+        message='connection failed', request=httpx2.Request('POST', 'https://example.com/v1/images/generations')
     )
     provider = OpenAIProvider(openai_client=cast(AsyncOpenAI, openai_mock_client))
     model = OpenAIImageGenerationModel('gpt-image-1', provider=provider)
@@ -3096,10 +3098,10 @@ async def test_openai_image_generation_rate_limited(openai_mock_client: AsyncMoc
     rate_limit_body = {'error': {'code': 'rate_limit_exceeded', 'type': 'requests', 'message': 'Rate limit reached'}}
     openai_mock_client.images.generate.side_effect = APIStatusError(
         'Rate limit reached',
-        response=httpx.Response(
+        response=httpx2.Response(
             status_code=429,
             headers={'retry-after': '30'},
-            request=httpx.Request('POST', 'https://example.com/v1/images/generations'),
+            request=httpx2.Request('POST', 'https://example.com/v1/images/generations'),
         ),
         body=rate_limit_body,
     )
@@ -3137,8 +3139,8 @@ async def test_openai_image_generation_moderation_blocked(openai_mock_client: As
     }
     openai_mock_client.images.generate.side_effect = APIStatusError(
         'moderation_blocked',
-        response=httpx.Response(
-            status_code=400, request=httpx.Request('POST', 'https://example.com/v1/images/generations')
+        response=httpx2.Response(
+            status_code=400, request=httpx2.Request('POST', 'https://example.com/v1/images/generations')
         ),
         body=moderation_body,
     )
@@ -3193,11 +3195,11 @@ async def test_openai_image_generation_tolerates_unknown_response_fields():
     images rather than choking on fields it doesn't model. Recorded through the real SDK over a mock
     transport so the SDK's own (extra-allowing) parsing is exercised, not a hand-built response object.
     """
-    requests: list[httpx.Request] = []
+    requests: list[httpx2.Request] = []
 
-    def handle_request(request: httpx.Request) -> httpx.Response:
+    def handle_request(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
-        return httpx.Response(
+        return httpx2.Response(
             200,
             json={
                 'created': 123,
@@ -3207,7 +3209,7 @@ async def test_openai_image_generation_tolerates_unknown_response_fields():
             },
         )
 
-    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handle_request))
+    http_client = httpx2.AsyncClient(transport=httpx2.MockTransport(handle_request))
     openai_client = AsyncOpenAI(api_key='test-api-key', base_url='https://example.com/v1', http_client=http_client)
     model = OpenAIImageGenerationModel('gpt-image-1', provider=OpenAIProvider(openai_client=openai_client))
 

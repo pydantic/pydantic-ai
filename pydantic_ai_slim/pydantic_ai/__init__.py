@@ -14,7 +14,7 @@ from .agent import (
     capture_run_messages,
 )
 from .agent.spec import AgentSpec
-from .capabilities import AgentCapability, CapabilityFunc
+from .capabilities import AgentCapability, Capability, CapabilityFunc
 from .concurrency import (
     AbstractConcurrencyLimiter,
     AnyConcurrencyLimit,
@@ -63,6 +63,7 @@ from .images import (
     ImageGenerator,
 )
 from .messages import (
+    AgentInstructionSource,
     AgentStreamEvent,
     AudioFormat,
     AudioMediaType,
@@ -73,6 +74,7 @@ from .messages import (
     BinaryContent,
     BinaryImage,
     CachePoint,
+    CapabilityInstructionSource,
     CompactionPart,
     DeferredToolRequestsEvent,
     DeferredToolResultsEvent,
@@ -90,7 +92,9 @@ from .messages import (
     ImageFormat,
     ImageMediaType,
     ImageUrl,
+    InstructionId,
     InstructionPart,
+    InstructionSource,
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
@@ -126,6 +130,7 @@ from .messages import (
     ToolResultEvent,
     ToolReturn,
     ToolReturnPart,
+    ToolsetInstructionSource,
     UploadedFile,
     UserContent,
     UserPromptPart,
@@ -247,6 +252,7 @@ __all__ = (
     'UsageLimitExceeded',
     'UserError',
     # messages
+    'AgentInstructionSource',
     'AgentStreamEvent',
     'AudioFormat',
     'AudioMediaType',
@@ -278,7 +284,10 @@ __all__ = (
     'ImageMediaType',
     'ImageUrl',
     'BinaryImage',
+    'CapabilityInstructionSource',
+    'InstructionId',
     'InstructionPart',
+    'InstructionSource',
     'ModelMessage',
     'ModelMessagesTypeAdapter',
     'ModelRequest',
@@ -301,6 +310,7 @@ __all__ = (
     'TextPart',
     'TextPartDelta',
     'ThinkingPart',
+    'ToolsetInstructionSource',
     'ToolAvailabilityDeltaEvent',
     'ToolAvailabilityDeltaPart',
     'ThinkingPartDelta',
@@ -361,6 +371,7 @@ __all__ = (
     'XSearchTool',
     # capabilities
     'AgentCapability',
+    'Capability',
     'CapabilityFunc',
     # output
     'ToolOutput',

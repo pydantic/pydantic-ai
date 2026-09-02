@@ -4,7 +4,7 @@ from datetime import datetime
 
 from genai_prices import types as genai_types
 
-from pydantic_ai._cost import calculate_price_for_usage
+from pydantic_ai._genai_prices import calculate_price_for_usage
 from pydantic_ai._utils import now_utc as _now_utc
 from pydantic_ai.messages import BinaryImage
 from pydantic_ai.usage import RequestUsage

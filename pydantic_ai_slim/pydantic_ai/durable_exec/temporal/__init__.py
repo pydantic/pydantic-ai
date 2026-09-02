@@ -27,6 +27,7 @@ from ...exceptions import AgentRunError, UserError
 from ._agent import TemporalAgent  # pyright: ignore[reportDeprecated]
 from ._durability import TemporalDurability
 from ._logfire import LogfirePlugin
+from ._operation_names import TemporalOperationNamer
 from ._payload_converter import PydanticAIPayloadConverter
 from ._run_context import TemporalRunContext
 from ._toolset import TemporalWrapperToolset
@@ -40,6 +41,7 @@ __all__ = [
     'AgentPlugin',
     'TemporalRunContext',
     'TemporalWrapperToolset',
+    'TemporalOperationNamer',
     'PydanticAIWorkflow',
     'PydanticAIPayloadConverter',
 ]
@@ -135,12 +137,14 @@ def _workflow_runner(runner: WorkflowRunner | None) -> WorkflowRunner:
             # Imported inside `logfire._internal.json_schema` when running `logfire.info` inside an activity with attributes to serialize
             'numpy',
             'pandas',
-            # `response.cost()` lazily imports `genai_prices` (and its `httpx2` dependency) on first call.
-            # When cost is calculated inside a workflow, the sandbox re-imports that chain and `httpx2._models`
-            # subclasses `urllib.request.Request`, which is restricted unless `genai_prices`/`httpx2` are passed
+            # `response.cost()` lazily imports `genai_prices` (and its httpx2 dependencies) on first call.
+            # When cost is calculated or an httpx2-backed model is constructed inside a workflow, the sandbox
+            # re-imports that chain and touches restricted request/lock types unless these modules are passed
             # through alongside the rest of the HTTP stack.
             'genai_prices',
             'httpx2',
+            'httpcore2',
+            'truststore',
         ),
     )
 

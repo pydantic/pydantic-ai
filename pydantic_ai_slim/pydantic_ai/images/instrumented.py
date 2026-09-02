@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from genai_prices.types import PriceCalculation
 from opentelemetry.util.types import AttributeValue
 
-from pydantic_ai._cost import best_effort_price
+from pydantic_ai._genai_prices import best_effort_price
 from pydantic_ai._instrumentation import (
     GEN_AI_PROVIDER_NAME_ATTRIBUTE,
     GEN_AI_REQUEST_MODEL_ATTRIBUTE,

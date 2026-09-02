@@ -2440,6 +2440,27 @@ async def test_send_helpers_forward_to_connection() -> None:
     ]
 
 
+async def test_send_audio_accepts_async_iterable() -> None:
+    """`send_audio` drains an async iterable chunk by chunk, so a capture loop can be one call.
+
+    Unit test: the per-chunk forwarding of a caller-supplied iterator has no wire signature of its
+    own — a cassette can't distinguish it from a caller looping over `send_audio(chunk)`.
+    """
+    conn = FakeRealtimeConnection([])
+    session = RealtimeSession(conn, _noop_runner)
+
+    async def microphone() -> AsyncIterator[bytes]:
+        yield b'\x01\x02'
+        yield b'\x03\x04'
+
+    await session.send_audio(microphone())
+
+    assert conn.sent == [
+        BinaryAudio(data=b'\x01\x02', media_type='audio/pcm'),
+        BinaryAudio(data=b'\x03\x04', media_type='audio/pcm'),
+    ]
+
+
 async def test_send_dispatches_through_bookkeeping_helpers() -> None:
     # `send(<str>)` must route through the text-turn path, so the user turn lands in history rather
     # than bypassing it (the raw pass-through used to skip all session bookkeeping).
@@ -4347,7 +4368,9 @@ async def test_agent_realtime_session_additional_instructions() -> None:
     model = FakeRealtimeModel(conn)
     async with agent.realtime(model, instructions='Custom').session() as session:
         _ = [e async for e in session]
-    assert model.last_instructions == 'Default\nCustom'
+    # Per-run instructions are their own block, so they're separated from the agent's by a blank
+    # line, exactly as in a graph run.
+    assert model.last_instructions == 'Default\n\nCustom'
 
 
 async def test_agent_realtime_session_default_instructions_empty() -> None:
@@ -5414,6 +5437,67 @@ async def test_parallel_ordered_events_are_not_stranded_by_a_failing_sibling() -
         with pytest.raises(RuntimeError, match='tool exploded'):
             async with agent.realtime(model).session() as session:
                 _ = [e async for e in session]
+
+
+async def test_tool_can_cancel_realtime_session() -> None:
+    """A fake connection makes the absence of a provider-bound tool result directly assertable."""
+    agent = Agent[None, str](deps_type=type(None))
+
+    @agent.tool
+    def cancel(ctx: RunContext[None]) -> str:
+        ctx.cancel()
+        return 'must be discarded'
+
+    conn = FakeRealtimeConnection([ToolCall(tool_call_id='tc', tool_name='cancel', args='{}'), ResponseDone()])
+    model = FakeRealtimeModel(conn)
+
+    session: _RealtimeSession | None = None
+    with pytest.raises(RunCancelled) as exc_info:
+        async with agent.realtime(model).session() as session:
+            _ = [e async for e in session]
+
+    assert session is not None
+    assert session.closed
+    parts = [part for message in exc_info.value.all_messages() for part in message.parts]
+    assert any(isinstance(part, ToolCallPart) for part in parts)
+    assert any(isinstance(part, ToolReturnPart) and part.outcome == 'interrupted' for part in parts)
+    assert not any(isinstance(item, ToolResult) for item in conn.sent)
+
+
+async def test_realtime_cancellation_does_not_wait_for_sync_tool_worker() -> None:
+    """A unit test because a recording cannot observe whether the local worker thread outlives the session."""
+    worker_started = ThreadEvent()
+    worker_release = ThreadEvent()
+    worker_finished = ThreadEvent()
+    agent = Agent[None, str](deps_type=type(None))
+
+    @agent.tool
+    def cancel_and_block(ctx: RunContext[None]) -> str:
+        ctx.cancel()
+        worker_started.set()
+        worker_release.wait()
+        worker_finished.set()
+        return 'must be discarded'
+
+    conn = FakeRealtimeConnection(
+        [ToolCall(tool_call_id='tc', tool_name='cancel_and_block', args='{}'), ResponseDone()]
+    )
+
+    async def consume() -> None:
+        async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
+            _ = [event async for event in session]
+
+    task = asyncio.create_task(consume())
+    await asyncio.to_thread(worker_started.wait)
+    try:
+        with pytest.raises(RunCancelled):
+            await asyncio.wait_for(asyncio.shield(task), timeout=5)
+        assert not worker_finished.is_set()
+        assert not any(isinstance(item, ToolResult) for item in conn.sent)
+    finally:
+        worker_release.set()
+        assert await asyncio.to_thread(worker_finished.wait, 5)
+        await asyncio.gather(task, return_exceptions=True)
 
 
 async def test_nested_run_cancellation_is_isolated_into_a_failed_tool_return() -> None:
