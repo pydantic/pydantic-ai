@@ -3624,7 +3624,14 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                         if item.provider_name == self.system:
                             raw_content = (item.provider_details or {}).get('raw_content')
 
-                        if item.id and (should_send_item_id or raw_content):
+                        # Chat Completions stores its reasoning field name (`reasoning` or
+                        # `reasoning_content`) as a synthetic part ID. A matching provider name does
+                        # not make that a Responses item ID, but native Responses reasoning always
+                        # carries at least one of these protocol artifacts.
+                        native_reasoning = bool(
+                            item.id and (item.id.startswith('rs_') or item.signature or raw_content)
+                        )
+                        if item.id and native_reasoning and (should_send_item_id or raw_content):
                             signature: str | None = None
                             if (
                                 item.signature
