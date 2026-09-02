@@ -79,15 +79,17 @@ class FileCredentialSource(OpenAICodexCredentialSource):
         self.path.write_text(json.dumps(asdict(credentials)))
 
 
-source = FileCredentialSource(Path('codex-credentials.json'))
-if not source.path.exists():
-    flow = OpenAICodexOAuthFlow()
-    webbrowser.open(flow.authorization_url())
-    await source.save(await flow.exchange_code_from_callback())
+async def main():
+    source = FileCredentialSource(Path('codex-credentials.json'))
+    if not source.path.exists():
+        flow = OpenAICodexOAuthFlow()
+        webbrowser.open(flow.authorization_url())
+        await source.save(await flow.exchange_code_from_callback())
 
-provider = OpenAICodexProvider(credential_source=source)
-agent = Agent(OpenAIResponsesModel('gpt-5.6-luna', provider=provider))
-...
+    provider = OpenAICodexProvider(credential_source=source)
+    agent = Agent(OpenAIResponsesModel('gpt-5.6-luna', provider=provider))
+    result = await agent.run('Where does "hello world" come from?')
+    print(result.output)
 ```
 
 Keep the file wherever your app keeps secrets, not in `~/.codex`, which belongs to the Codex CLI.
