@@ -545,4 +545,4 @@ agent = Agent(GoogleModel('gemini-3.7-flash'), model_settings=model_settings)
 ## Streaming cancellation
 
 !!! note "Transport cancellation"
-    [`cancel()`][pydantic_ai.result.StreamedRunResult.cancel] safely interrupts an active local stream pull, including one running in another task. The `google-genai` SDK exposes no documented per-stream transport handle, so closing the returned iterator does not guarantee immediate HTTP teardown or when remote generation and billing stop. See [googleapis/python-genai#2425](https://github.com/googleapis/python-genai/issues/2425).
+    [`cancel()`][pydantic_ai.result.StreamedRunResult.cancel] safely interrupts an active local stream pull, including one running in another task. The `google-genai` SDK exposes no documented per-stream transport handle, so closing the returned iterator does not guarantee immediate HTTP teardown or indicate when remote generation stops and billing ends. See [googleapis/python-genai#2425](https://github.com/googleapis/python-genai/issues/2425).

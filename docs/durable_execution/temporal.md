@@ -156,7 +156,7 @@ async def main():
 9. We start the worker that will listen on the specified task queue and run workflows and activities. In a real world application, this might be run in a separate service.
 10. We call on the server to execute the workflow on a worker that's listening on the specified task queue.
 
-_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 Because the same agent works inside and outside a workflow, [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability] composes with all other [capabilities](../capabilities/overview.md) (instrumentation, [`SetToolMetadata`][pydantic_ai.capabilities.SetToolMetadata], [`ProcessEventStream`][pydantic_ai.capabilities.ProcessEventStream], etc.) without each needing a Temporal-specific wrapper variant.
 
