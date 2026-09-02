@@ -369,7 +369,7 @@ agent = Agent(
 )
 ```
 
-As an alternative, `OpenAICompaction` supports a **stateless mode** (`stateless=True`) that calls the stateless `/responses/compact` endpoint via a `before_model_request` hook. Use this in [ZDR](https://openai.com/enterprise-privacy/) environments where OpenAI must not retain conversation data, when using [`openai_store=False`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_store], or when you need explicit out-of-band control over when compaction runs. Stateless mode requires you to specify either a [`message_count_threshold`][pydantic_ai.models.openai.OpenAICompaction] or a custom `trigger` callable:
+As an alternative, `OpenAICompaction` supports a **stateless mode** (`stateless=True`) that calls the stateless `/responses/compact` endpoint via a `before_model_request` hook. Use this in [ZDR](https://openai.com/enterprise-privacy/) environments where OpenAI must not retain conversation data, when using [`openai_store=False`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_store], or when you need explicit out-of-band control over when compaction runs. Stateless mode requires a context-window, message-count, or custom trigger:
 
 ```python {title="openai_compaction_stateless.py" test="skip"}
 from pydantic_ai import Agent
@@ -377,11 +377,13 @@ from pydantic_ai.models.openai import OpenAICompaction
 
 agent = Agent(
     'openai-responses:gpt-5.2',
-    capabilities=[OpenAICompaction(message_count_threshold=20)],
+    capabilities=[OpenAICompaction(context_window_used_threshold=0.8)],
 )
 ```
 
-The mode is inferred from which parameters you pass: supplying `message_count_threshold` or `trigger` implies stateless mode, otherwise stateful mode is used. You can also pass `stateless=True` or `stateless=False` explicitly. Mixing parameters from different modes raises [`UserError`][pydantic_ai.exceptions.UserError].
+`context_window_used_threshold` compacts when the latest response's [`context_window_used`][pydantic_ai.tools.RunContext.context_window_used] reaches the given fraction. It leaves history unchanged when usage is unknown, including before the first response. Because newly added content can make the next request larger than that estimate, leave enough headroom below `1.0`.
+
+The mode is inferred from which parameters you pass: supplying `context_window_used_threshold`, `message_count_threshold`, or `trigger` implies stateless mode, otherwise stateful mode is used. You can also pass `stateless=True` or `stateless=False` explicitly. Mixing parameters from different modes raises [`UserError`][pydantic_ai.exceptions.UserError].
 
 !!! tip
     Stateful compaction pairs especially well with [`openai_previous_response_id='auto'`](#referencing-earlier-responses) or [`openai_conversation_id`](#using-durable-conversations). Both rely on OpenAI's server-side conversation state, so OpenAI can use a previously compacted context as the starting point for the next turn without you having to resend it.
