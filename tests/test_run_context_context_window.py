@@ -8,7 +8,6 @@ the property reads the most recent `ModelResponse`'s `total_tokens` against the 
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -116,14 +115,42 @@ def test_context_window_used_uses_latest_response():
     assert ctx.context_window_used == 0.4
 
 
-def test_context_window_used_none_for_fallback_model():
-    """`None` for `FallbackModel`, which has no single model profile of its own."""
-    ctx = RunContext(deps=None, model=FallbackModel(TestModel()), usage=RunUsage())
-    assert ctx.context_window_used is None
+def test_context_window_used_measures_fallback_model_against_smallest_candidate_window():
+    """A `FallbackModel` has no profile, but its `context_window` is the smallest known candidate window."""
+    model = FallbackModel(
+        FunctionModel(lambda messages, info: ModelResponse(parts=[]), profile=ModelProfile(context_window=1000)),
+        FunctionModel(lambda messages, info: ModelResponse(parts=[]), profile=ModelProfile(context_window=500)),
+        TestModel(),  # window unknown: doesn't constrain the result
+    )
+    assert model.context_window == 500
+
+    ctx = RunContext(
+        deps=None,
+        model=model,
+        usage=RunUsage(),
+        messages=[ModelResponse(parts=[TextPart('done')], usage=RequestUsage(input_tokens=150, output_tokens=50))],
+    )
+    assert ctx.context_window_used == 0.4
 
 
-def test_context_window_used_none_for_non_request_response_model():
-    """`None` for a model that isn't a request-response `Model` (e.g. a realtime model): no profile to read."""
-    model = MagicMock(spec=AbstractModel)
-    ctx = RunContext(deps=None, model=model, usage=RunUsage())
+class _WindowlessModel(AbstractModel):
+    """A model outside the request-response hierarchy that doesn't override `context_window`."""
+
+    @property
+    def model_name(self) -> str:
+        return 'windowless'
+
+    @property
+    def system(self) -> str:
+        return 'test'
+
+
+def test_context_window_used_none_for_model_without_context_window():
+    """`None` for any `AbstractModel` whose `context_window` is unknown, e.g. a realtime model."""
+    ctx = RunContext(
+        deps=None,
+        model=_WindowlessModel(),
+        usage=RunUsage(),
+        messages=[ModelResponse(parts=[TextPart('done')], usage=RequestUsage(input_tokens=150, output_tokens=50))],
+    )
     assert ctx.context_window_used is None

@@ -880,6 +880,11 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         """
         return frozenset()
 
+    @property
+    def context_window(self) -> int | None:
+        """The resolved profile's [`context_window`][pydantic_ai.profiles.ModelProfile.context_window]."""
+        return self.profile.get('context_window')
+
     def _get_resolved_context_window(self) -> int | None:
         """Look up an unset profile context window from genai-prices."""
         try:

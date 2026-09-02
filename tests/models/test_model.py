@@ -594,6 +594,12 @@ def test_profile_context_window_from_genai_prices():
     assert context_window == model_info.context_window
 
 
+def test_context_window_reads_profile():
+    """`Model.context_window` is the profile's `context_window`, `None` when the profile doesn't know it."""
+    assert TestModel(profile=ModelProfile(context_window=1234)).context_window == 1234
+    assert TestModel().context_window is None
+
+
 def test_profile_context_window_unknown_model():
     """A model genai-prices doesn't know keeps `context_window` as `None`."""
     with patch.dict(os.environ, {'OPENAI_API_KEY': 'x'}):

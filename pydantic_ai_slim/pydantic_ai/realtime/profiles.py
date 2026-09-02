@@ -113,6 +113,13 @@ class RealtimeModelProfile(TypedDict, total=False):
     Read it via [`RealtimeSession.audio_output_sample_rate`][pydantic_ai.realtime.RealtimeSession.audio_output_sample_rate]
     (or [`RealtimeModel.audio_output_sample_rate`][pydantic_ai.realtime.RealtimeModel.audio_output_sample_rate]
     before a session exists), which fall back to the default when a profile omits it."""
+    context_window: int | None
+    """The maximum number of tokens the model can hold in a session, input and output combined. Default: `None` (unknown).
+
+    When no profile layer sets this, [`RealtimeModel.profile`][pydantic_ai.realtime.RealtimeModel.profile]
+    fills it in from [genai-prices](https://github.com/pydantic/genai-prices) data if the model is known
+    there. Set it explicitly for models it doesn't know, e.g. `profile={'context_window': 128_000}`.
+    Read it via [`RealtimeModel.context_window`][pydantic_ai.models.AbstractModel.context_window]."""
 
 
 DEFAULT_AUDIO_SAMPLE_RATE = 24000
@@ -134,6 +141,7 @@ DEFAULT_REALTIME_PROFILE: RealtimeModelProfile = {
     'emits_input_speech_events': False,
     'audio_input_sample_rate': DEFAULT_AUDIO_SAMPLE_RATE,
     'audio_output_sample_rate': DEFAULT_AUDIO_SAMPLE_RATE,
+    'context_window': None,
 }
 """Default realtime model profile values."""
 

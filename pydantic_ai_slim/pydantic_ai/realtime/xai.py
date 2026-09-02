@@ -56,6 +56,7 @@ except ImportError as _import_error:  # pragma: no cover
         '`pip install "pydantic-ai-slim[xai-realtime]"`'
     ) from _import_error
 
+from .._genai_prices import preload_pricing_data
 from .._instrumentation import get_instructions
 from ..exceptions import UserError
 from ..messages import ModelMessage, RealtimeSessionReconnectEvent
@@ -391,6 +392,7 @@ class XaiRealtimeModel(RealtimeModel):
             )
         self._provider = provider
         self._api_key = api_key
+        preload_pricing_data()
 
     @property
     def model_name(self) -> XaiRealtimeModelName:

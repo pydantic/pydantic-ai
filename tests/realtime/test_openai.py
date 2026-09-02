@@ -12,6 +12,7 @@ import wave
 from collections.abc import AsyncIterator, Sequence
 from contextlib import AbstractAsyncContextManager
 from typing import Any, Literal, cast, get_args, get_origin
+from unittest.mock import patch
 
 import pytest
 from inline_snapshot import snapshot
@@ -3876,6 +3877,41 @@ def test_user_profile_corrects_a_thinking_claim_defeated_by_the_model_name() -> 
     )
     assert corrected.profile.get('supports_thinking') is True
     assert corrected._session_config('', None, model_settings=None)['reasoning'] == {'effort': 'low'}  # pyright: ignore[reportPrivateUsage]
+
+
+def test_context_window_filled_from_genai_prices_unless_a_profile_layer_sets_it() -> None:
+    """Resolution step 3 mirrors `Model.profile`: genai-prices fills `context_window` only when neither the
+    provider nor a partial user profile set it (including to `None`); a callable user layer sees the fill."""
+    provider = OpenAIProvider(api_key='k')
+
+    with patch('pydantic_ai.realtime.model.lookup_context_window', return_value=123) as lookup:
+        model = OpenAIRealtimeModel('gpt-realtime', provider=provider)
+        assert model.context_window == 123
+        assert model.profile.get('context_window') == 123
+        lookup.assert_called_with('gpt-realtime', provider_api_url=provider.base_url, provider_name='openai')
+
+        explicit = OpenAIRealtimeModel('gpt-realtime', provider=provider, profile={'context_window': None})
+        assert explicit.context_window is None
+
+        seen: list[int | None] = []
+
+        def use_resolved(resolved: RealtimeModelProfile) -> RealtimeModelProfile:
+            seen.append(resolved.get('context_window'))
+            return resolved
+
+        assert OpenAIRealtimeModel('gpt-realtime', provider=provider, profile=use_resolved).context_window == 123
+        assert seen == [123]
+
+    class WindowProvider(OpenAIProvider):
+        @staticmethod
+        def realtime_model_profile(model_name: str) -> RealtimeModelProfile:
+            return RealtimeModelProfile(context_window=456)
+
+    with patch('pydantic_ai.realtime.model.lookup_context_window', side_effect=AssertionError('not consulted')):
+        assert OpenAIRealtimeModel('gpt-realtime', provider=WindowProvider(api_key='k')).context_window == 456
+
+    # genai-prices doesn't record a window for this model today, so the profile keeps the default `None`.
+    assert OpenAIRealtimeModel('gpt-realtime', provider=provider).context_window is None
 
 
 class _ConnectSequence:

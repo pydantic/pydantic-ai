@@ -340,31 +340,22 @@ class RunContext(Generic[RunContextAgentDepsT]):
         Computed as the latest response's reported
         [`total_tokens`][pydantic_ai.usage.RequestUsage.total_tokens] (input, including cached tokens,
         plus output) over the active model's
-        [`context_window`][pydantic_ai.profiles.ModelProfile.context_window]. This estimates how full
+        [`context_window`][pydantic_ai.models.AbstractModel.context_window]. This estimates how full
         the next request may be; history processing and newly added content can change its actual
         size. Useful to trigger history compaction, e.g. in a
         [history processor](https://pydantic.dev/docs/ai/message-history#processing-message-history).
 
-        Returns `None` — never a misleading `0.0` — when the ratio cannot be calculated. This
-        includes when the context window, usage, or message history is unavailable, before the first
-        model response, and for a fallback model whose candidate models may have different context
-        windows.
+        Returns `None` — never a misleading `0.0` — when the ratio cannot be calculated: when the
+        context window, usage, or message history is unavailable, or before the first model response.
+        A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] measures against the smallest
+        of its candidates' windows.
         """
-        from .models import Model  # imported here because `models` imports `RunContext` at module level
-
         try:
             model, messages = self.model, self.messages
         except UserError:
             # A durable run context can omit live model state and message history at an activity boundary.
             return None
-        if not isinstance(model, Model):
-            # e.g. a realtime model, whose profile has no `context_window`
-            return None
-        try:
-            context_window = model.profile.get('context_window')
-        except NotImplementedError:
-            # A fallback model has no single profile because its candidate models may differ.
-            return None
+        context_window = model.context_window
         if context_window is None or context_window <= 0:
             return None
         for message in reversed(messages):

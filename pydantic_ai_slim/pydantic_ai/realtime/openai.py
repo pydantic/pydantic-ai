@@ -48,6 +48,7 @@ if TYPE_CHECKING:
     from openai import AsyncOpenAI
     from openai.types.realtime.realtime_truncation_param import RealtimeTruncationParam
 
+from .._genai_prices import preload_pricing_data
 from .._http import AsyncHTTPClient
 from .._instrumentation import get_instructions
 from ..exceptions import UserError
@@ -926,6 +927,7 @@ class OpenAIRealtimeModel(RealtimeModel):
         self.settings = settings
         self._profile = profile
         self._provider = self._resolve_provider(provider)
+        preload_pricing_data()
 
     @staticmethod
     def _resolve_provider(provider: Provider[AsyncOpenAI] | str) -> Provider[AsyncOpenAI]:

@@ -442,6 +442,17 @@ class FallbackModel(Model):
     def profile(self) -> ModelProfile:
         raise NotImplementedError('FallbackModel does not have its own model profile.')
 
+    @property
+    def context_window(self) -> int | None:
+        """The smallest known context window among the candidate models, or `None` if none is known.
+
+        Any candidate may end up answering, and history that fits the smallest window fits them all,
+        so compacting against it errs towards compacting early rather than overflowing a fallback.
+        Candidates with an unknown window don't constrain the result.
+        """
+        windows = [window for model in self.models if (window := model.context_window) is not None]
+        return min(windows) if windows else None
+
     def customize_request_parameters(self, model_request_parameters: ModelRequestParameters) -> ModelRequestParameters:
         return model_request_parameters  # pragma: no cover
 
