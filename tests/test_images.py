@@ -47,6 +47,7 @@ from pydantic_ai.images import (
     infer_image_generation_model,
     merge_image_generation_settings,
 )
+from pydantic_ai.messages import UploadedFileProviderName
 from pydantic_ai.models import override_allow_model_requests
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.usage import RequestUsage
@@ -79,7 +80,7 @@ with try_import() as google_imports_successful:
         GoogleImageGenerationModel,
         GoogleImageGenerationSettings,
     )
-    from pydantic_ai.providers.google import GoogleCloudLocation, GoogleProvider
+    from pydantic_ai.providers.google import BaseGoogleProvider, GoogleCloudLocation, GoogleProvider
     from pydantic_ai.providers.google_cloud import GoogleCloudProvider
 
 with try_import() as xai_imports_successful:
@@ -1070,6 +1071,56 @@ async def test_google_image_generation_downloads_image_url(monkeypatch: pytest.M
 
 
 @pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
+async def test_google_cloud_image_generation_downloads_files_api_url(monkeypatch: pytest.MonkeyPatch):
+    """On the Vertex transport a Files API URL is downloaded and inlined instead of sent as `fileData`.
+
+    Only the Gemini Developer API resolves `generativelanguage.googleapis.com/v1beta/files` URIs, so the
+    `fileData` shortcut is keyed on the transport like the `UploadedFile` rejection: forwarding the URL
+    would hand Vertex a reference it cannot fetch.
+
+    The blob keeps its proto field name on this transport: `_Part_to_vertex` in `google/genai/models.py`
+    copies `inline_data` through verbatim, where `_Part_to_mldev` renames it via `_Blob_to_mldev`. Vertex
+    accepts either spelling — the `test_multimodal_tool_return_matrix[direct-url_force_download-document-google_vertex]`
+    cassette records a live 200 for a request body carrying `mime_type`.
+    """
+    download_mock = AsyncMock(return_value={'data': b'downloaded', 'data_type': 'image/webp'})
+    monkeypatch.setattr(google_images, 'download_item', download_mock)
+    requests: list[httpx2.Request] = []
+
+    def handle_request(request: httpx2.Request) -> httpx2.Response:
+        requests.append(request)
+        return httpx2.Response(
+            200,
+            json={
+                'candidates': [
+                    {
+                        'content': {
+                            'parts': [{'inlineData': {'data': 'aGVsbG8=', 'mimeType': 'image/png'}}],
+                            'role': 'model',
+                        },
+                        'finishReason': 'STOP',
+                    }
+                ]
+            },
+        )
+
+    image_url = ImageUrl('https://generativelanguage.googleapis.com/v1beta/files/abc123', media_type='image/png')
+
+    http_client = httpx2.AsyncClient(transport=httpx2.MockTransport(handle_request))
+    try:
+        provider = GoogleCloudProvider(api_key='test-api-key', base_url='https://example.com', http_client=http_client)
+        model = GoogleImageGenerationModel('gemini-3.1-flash-image', provider=provider)
+
+        await model.generate('edit this image', images=[image_url])
+    finally:
+        await http_client.aclose()
+
+    download_mock.assert_awaited_once_with(image_url, data_format='bytes')
+    body = json.loads(requests[0].content)
+    assert body['contents'][0]['parts'][1] == {'inlineData': {'data': 'ZG93bmxvYWRlZA==', 'mime_type': 'image/webp'}}
+
+
+@pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
 @pytest.mark.parametrize(
     ('image_bytes', 'expected'),
     [
@@ -1138,23 +1189,45 @@ async def test_google_image_generation_rejects_invalid_uploaded_file(uploaded_fi
 
 
 @pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
-async def test_google_cloud_image_generation_rejects_uploaded_file():
-    """Vertex AI has no Files API, so an `UploadedFile` reference is rejected instead of forwarded.
+@pytest.mark.parametrize(
+    ('provider_factory', 'file_provider_name'),
+    [
+        pytest.param(
+            lambda: GoogleCloudProvider(api_key='test-api-key'),
+            'google-cloud',
+            id='google-cloud-provider',
+        ),
+        pytest.param(
+            lambda: GoogleCloudProvider(api_key='test-api-key'),
+            'google',
+            id='gemini-files-api-file-on-vertex',
+        ),
+        pytest.param(
+            lambda: GoogleProvider(client=GoogleClient(vertexai=True, project='test-project', location='us-central1')),
+            'google',
+            id='vertex-client-in-google-provider',
+        ),
+    ],
+)
+async def test_google_cloud_image_generation_rejects_uploaded_file(
+    provider_factory: Callable[[], BaseGoogleProvider], file_provider_name: UploadedFileProviderName
+):
+    """The Files API is unavailable on Vertex AI, so an `UploadedFile` is rejected instead of forwarded.
 
-    The provider check in `ImageGenerationModel` only compares `provider_name` against `system`, so a
-    file labelled `'google-cloud'` passes it and would otherwise be sent as a `fileData` part that
-    Vertex cannot resolve. The provider table in `docs/image-generation.md` marks `UploadedFile` ❌ for
-    Google Cloud; this is what makes that mark true.
+    The rejection is keyed on the client's transport rather than on `system`: `GoogleProvider` stores a
+    pre-built Vertex client as-is and keeps `name` `'google'`, so a name-keyed check would forward the
+    file as a `fileData` part Vertex cannot resolve. It also runs before the `provider_name` check, so a
+    file uploaded through the Gemini Files API (`provider_name='google'`) gets this error rather than
+    provider-mismatch advice that only leads back to it.
     """
-    provider = GoogleCloudProvider(api_key='test-api-key')
-    model = GoogleImageGenerationModel('gemini-3.1-flash-image', provider=provider)
+    model = GoogleImageGenerationModel('gemini-3.1-flash-image', provider=provider_factory())
     uploaded_file = UploadedFile(
         file_id='https://generativelanguage.googleapis.com/v1beta/files/abc123',
-        provider_name='google-cloud',
+        provider_name=file_provider_name,
         media_type='image/png',
     )
 
-    with pytest.raises(UserError, match='Google Files API URIs are specific to the Gemini Developer API'):
+    with pytest.raises(UserError, match='The Gemini Files API is not available on Google Cloud'):
         await model.generate('edit this image', images=[uploaded_file])
 
 
@@ -3301,8 +3374,7 @@ async def test_openai_image_edit_status_error(openai_mock_client: AsyncMock):
     """A 5xx on the edit endpoint surfaces as `ModelHTTPError` with the status and body preserved.
 
     Not a VCR test because a deliberate 500 from the edit endpoint is not reproducible on demand, and
-    the structured error body a recording would capture depends on which OpenAI failure produced it. The
-    body here is fixed from OpenAI's documented error format instead.
+    the structured error body a recording would capture depends on which OpenAI failure produced it.
     """
     openai_mock_client.images.edit.side_effect = APIStatusError(
         'test error',

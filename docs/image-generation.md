@@ -59,7 +59,7 @@ Of the providers below only OpenAI exposes that primitive, so there is nothing p
 | --- | --- | --- | --- | --- | --- |
 | OpenAI | ✅ | ✅ | ❌ | ✅ | Reference images must be PNG, JPEG, or WebP; any other media type raises [`UserError`][pydantic_ai.exceptions.UserError]. |
 | Google Gemini API | ✅ | ✅ | ✅ | ❌ | — |
-| Google Cloud (Vertex AI) | ✅ | ✅ | ❌ | ❌ | Reference images are sent inline, so pass `BinaryImage` or `ImageUrl`; Vertex file URIs (`gs://`) are not accepted as an `UploadedFile.file_id`. |
+| Google Cloud (Vertex AI) | ✅ | ✅ | ❌ | ❌ | The Gemini Files API is not available on Vertex AI, and the adapter does not accept the `gs://` URIs Vertex uses instead, so pass reference images as `BinaryImage` or `ImageUrl`. Whether a client targets Vertex is read off the client, not the provider name. |
 | xAI | ✅ | ✅ | ✅ | ✅ | At most three reference images. Every `UploadedFile` must come before any `ImageUrl` or `BinaryImage`, because xAI sends file IDs ahead of URL and binary inputs; another order raises [`UserError`][pydantic_ai.exceptions.UserError] rather than silently resequencing them. `extra_headers` and `extra_body` are ignored with a warning: the transport is gRPC, which has no per-request header or body escape hatch. |
 
 `google:` is the Gemini Developer API (Google AI Studio) and `google-cloud:` is Vertex AI, exactly as for
