@@ -717,6 +717,22 @@ Event names share one application-wide registry, and defining a second class wit
 
 UI adapters get the frontend payload by calling [`CustomEvent.to_payload()`][pydantic_ai.messages.CustomEvent.to_payload], which defaults to the event's own fields; override it when the UI should receive a different payload.
 
+Custom events are forwarded to the frontend by default, as the application that emits them is also the one serving that frontend. An event that exists only for server-side consumers — metrics, an audit log, an `event_stream_handler` of your own — opts out with `ui=False`, and then reaches every in-process consumer while the [AG-UI](ui/ag-ui.md) and [Vercel AI](ui/vercel-ai.md) adapters skip it:
+
+```python {title="internal_custom_event.py" noqa="F841"}
+from dataclasses import dataclass
+
+from pydantic_ai import CustomEvent
+
+
+@dataclass(kw_only=True)
+class IndexProgressEvent(CustomEvent, ui=False):
+    done: int
+    total: int
+```
+
+Subclasses inherit the setting, and because the check happens before the protocol-specific handler, adapters for other protocols honor it too. The flag lives on the class rather than on the wire, so an event deserialized where its defining module hasn't been imported arrives as an `UnknownCustomEvent` and is forwarded; import the module that defines your events in the process that serves the frontend. To send a *different* payload rather than nothing, override `to_payload()` instead — returning `None` from it sends an event with a null payload, which is how you send a name-only signal.
+
 ## Cancelling streams
 
 Sometimes you need to stop a streaming response before it completes: a user clicks "stop generating" in a chat UI, you've received enough data to make a decision, or you want to avoid receiving more tokens. [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] and [`iter()`][pydantic_ai.agent.Agent.iter] support explicit cancellation by closing the underlying model stream. [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] is an async context manager, so cleanup runs deterministically when you stop consuming events — leaving the `async with` block cancels the background run task. To stop a non-streaming run, see [Cancelling a Run](agent.md#cancelling-a-run); to bound how long a single step may take, see [Timeouts](timeouts.md).

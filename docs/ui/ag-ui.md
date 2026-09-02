@@ -195,7 +195,7 @@ server using the [`StateDeps`][pydantic_ai.ui.StateDeps] [dependencies type](../
 validate state contained in [`RunAgentInput.state`](https://docs.ag-ui.com/sdk/js/core/types#runagentinput) using a Pydantic `BaseModel` specified as a generic parameter.
 
 !!! note "Custom dependencies type with AG-UI state"
-    If you want to use your own dependencies type to hold AG-UI state as well as other things, it needs to implements the
+    If you want to use your own dependencies type to hold AG-UI state as well as other things, it needs to implement the
     [`StateHandler`][pydantic_ai.ui.StateHandler] protocol, meaning it needs to be a [dataclass](https://docs.python.org/3/library/dataclasses.html) with a non-optional `state` field. This lets Pydantic AI ensure that state is properly isolated between requests by building a new dependencies object each time.
 
     If the `state` field's type is a Pydantic `BaseModel` subclass, the raw state dictionary on the request is automatically validated. If not, you can validate the raw value yourself in your dependencies dataclass's `__post_init__` method.
@@ -369,7 +369,7 @@ See [Deferred tools and human-in-the-loop tool approval](../deferred-tools.md) f
 
 ### Events
 
-To emit events while a run is in progress — for example progress updates from a long-running tool — emit a [`CustomEvent`](../streaming.md#custom-events) via [`ctx.emit()`][pydantic_ai.tools.RunContext.emit]. Each event is delivered to the client as an AG-UI [`CustomEvent`](https://docs.ag-ui.com/sdk/python/core/events#customevent) with its `name` and the result of [`to_payload()`][pydantic_ai.messages.CustomEvent.to_payload] — the event's own fields, unless overridden — as its `value`. The `value` shape is the same whether or not the event was emitted from inside a tool call; an event whose frontend needs the attribution can include `tool_call_id` in its payload by overriding `to_payload()`. An AG-UI [`BaseEvent`](https://docs.ag-ui.com/sdk/python/core/events#baseevent) payload is passed through verbatim.
+To emit events while a run is in progress — for example progress updates from a long-running tool — emit a [`CustomEvent`](../streaming.md#custom-events) via [`ctx.emit()`][pydantic_ai.tools.RunContext.emit]. Each event is delivered to the client as an AG-UI [`CustomEvent`](https://docs.ag-ui.com/sdk/python/core/events#customevent) with its `name` and the result of [`to_payload()`][pydantic_ai.messages.CustomEvent.to_payload] — the event's own fields, unless overridden — as its `value`. The `value` shape is the same whether or not the event was emitted from inside a tool call; an event whose frontend needs the attribution can include `tool_call_id` in its payload by overriding `to_payload()`. An AG-UI [`BaseEvent`](https://docs.ag-ui.com/sdk/python/core/events#baseevent) payload is passed through verbatim. An event class declared [`ui=False`](../streaming.md#custom-events) is never forwarded, so events meant only for server-side consumers stay off the wire.
 
 In addition, Pydantic AI tools can send [AG-UI events](https://docs.ag-ui.com/concepts/events) at the point a tool returns by returning a
 [`ToolReturn`](../tools-advanced.md#advanced-tool-returns) object with a

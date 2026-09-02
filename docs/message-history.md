@@ -140,7 +140,7 @@ async def main():
         """
 ```
 
-_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 ### Using Messages as Input for Further Agent Runs
 
@@ -861,6 +861,56 @@ agent = Agent('openai:gpt-5.2', capabilities=[ProcessHistory(summarize_old_messa
 
 !!! warning "Be careful when summarizing the message history"
     When summarizing the message history, you need to make sure that tool calls and returns are paired, otherwise the LLM may return an error. For more details, refer to [this GitHub issue](https://github.com/pydantic/pydantic-ai/issues/2050#issuecomment-3019976269), where you can find examples of summarizing the message history.
+
+#### Compact when the context window fills {#compact-when-the-context-window-fills}
+
+The processors above rewrite history on every run. To wait until the conversation approaches the model's [`context_window`][pydantic_ai.profiles.ModelProfile.context_window], check [`ctx.context_window_used`][pydantic_ai.tools.RunContext.context_window_used]. It returns the fraction of the window occupied after the latest response, or `None` when Pydantic AI cannot calculate it reliably.
+
+```python {title="compact_when_window_fills.py"}
+from pydantic_ai import (
+    Agent,
+    ModelMessage,
+    ModelRequest,
+    RetryPromptPart,
+    RunContext,
+    ToolReturnPart,
+    UserPromptPart,
+)
+from pydantic_ai.capabilities import ProcessHistory, ReinjectSystemPrompt
+
+
+def compact_when_window_fills(
+    ctx: RunContext,
+    messages: list[ModelMessage],
+) -> list[ModelMessage]:
+    used = ctx.context_window_used
+    if used is None or used <= 0.8:
+        return messages
+
+    # Keep the most recent complete user turn, including any later tool calls and returns.
+    for index in range(len(messages) - 1, -1, -1):
+        message = messages[index]
+        if not isinstance(message, ModelRequest):
+            continue
+        has_user_prompt = any(isinstance(part, UserPromptPart) for part in message.parts)
+        has_tool_result = any(isinstance(part, (ToolReturnPart, RetryPromptPart)) for part in message.parts)
+        if has_user_prompt and not has_tool_result:
+            return messages[index:]
+    return messages
+
+
+agent = Agent(
+    'openai:gpt-5.2',
+    system_prompt='You are a helpful assistant.',
+    capabilities=[ProcessHistory(compact_when_window_fills), ReinjectSystemPrompt()],
+)
+```
+
+Treat `None` as unknown, not as an empty context window. It is returned before the first model response and when the model's window or response usage is unknown. The example leaves history unchanged in these cases. A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] measures against the smallest window among its candidates, so compaction happens early enough for whichever candidate answers.
+
+Keep [`ReinjectSystemPrompt`][pydantic_ai.capabilities.ReinjectSystemPrompt] after the compaction processor, as shown, so the system prompt dropped with the old history is put back. The example keeps everything from the latest plain user turn onward; a turn that pairs tool results with a new prompt is kept whole, so a run started that way may keep more history than needed.
+
+Pydantic AI fills the window size from [genai-prices](https://github.com/pydantic/genai-prices) where its data records one. For a custom or local model, or one genai-prices doesn't cover yet, set the size explicitly with `profile={'context_window': 128_000}` — see [Inspecting a model's profile](models/overview.md#inspecting-a-models-profile).
 
 ### Testing History Processors
 

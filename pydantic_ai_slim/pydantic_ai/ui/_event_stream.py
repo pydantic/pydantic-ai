@@ -484,8 +484,12 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                 async for e in self.handle_deferred_tool_results(event):
                     yield e
             case CustomEvent():
-                async for e in self.handle_custom_event(event):
-                    yield e
+                # Checked here rather than in each protocol's handler so that `ui=False` holds for
+                # third-party adapters too, and so an adapter overriding `handle_custom_event` can't
+                # forward an event the application declared server-side only.
+                if event.ui:
+                    async for e in self.handle_custom_event(event):
+                        yield e
             case CapabilityEvent():
                 async for e in self.handle_capability_event(event):
                     yield e

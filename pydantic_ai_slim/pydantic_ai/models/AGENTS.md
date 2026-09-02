@@ -14,7 +14,7 @@
 - Don't add preemptive client-side guards that reject provider-namespaced settings (`google_*`, `openai_*`, …) based on assumed capability limits; forward the setting the user opted into and let the provider API surface the actual incompatibility — the API is the authority on what it currently supports, so a client-side guard degrades functionality on outdated assumptions
 <!-- rule:478 -->
 - Token counting must mirror actual request parameters (`tools`, `system_prompt`, configs) and use identical message formatting — Ensures token count estimates match actual API usage, preventing billing surprises and quota errors
-- Per-request injections or mutations of request content (message blocks, tool defs, instructions, cache breakpoints) must anchor to a position that doesn't move with history length (e.g. the first user message or a fixed index), never the last message or a length-based index — anchoring to a moving position shifts the cacheable prefix every turn, so the provider silently re-processes the tail instead of reading from cache, a cost/latency regression that surfaces no error
+- Per-request injections or mutations of request content (message blocks, tool defs, instructions, cache breakpoints) must land on a set of positions chosen by message identity, not by history length (e.g. every user message). Never anchor to a position *defined as* the tail — "the last message", or any length-based index — because that position moves every turn, which shifts the cacheable prefix, so the provider silently re-processes the tail instead of reading from cache, a cost/latency regression that surfaces no error. Covering the last message is correct when it falls out of an identity rule that covers the others too; what is forbidden is making the tail itself the anchor. Stability is necessary but not sufficient: pinning to the first user message alone is stable and still wrong when the wire needs the injection later in the conversation, which is how `container_upload` blocks stopped reaching a fresh container (https://github.com/pydantic/pydantic-ai/issues/7775). Cover every position the API acts on *and will accept the injection at*, then check each one is identity-anchored. Those are different sets: Anthropic acts on a `container_upload` in a user message holding only `tool_result` blocks, and rejects the request for it, so that position is excluded on purpose
 
 ## Error Handling
 
@@ -36,6 +36,7 @@
 
 <!-- rule:9 -->
 - Place provider-specific code in `models/{provider}.py`, not shared modules — add functions consistently across all providers even if some are simple — Maintains clear architectural boundaries and prevents shared compatibility layers from accumulating provider-specific logic that becomes hard to maintain
+- Anthropic-only helpers with a long background live in `_anthropic_*.py` siblings (`_anthropic_containers.py`, `_anthropic_bedrock_count_tokens.py`) so a reader of `anthropic.py` is not forced through them
 
 A model should read reveal modes through `self.tool_deferral_mode` and
 `self.tool_addition_mode`, never directly from the corresponding profile keys. An adapter that

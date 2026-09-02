@@ -44,12 +44,12 @@ from pydantic_graph.basenode import NodeRunEndT
 
 from . import _enqueue, _output, _system_prompt, exceptions, messages as _messages, models, result, usage as _usage
 from ._cancel import RunCancellation
-from ._cost import best_effort_price, fill_response_cost
 from ._deferred_capabilities import (
     _parse_loaded_capabilities,  # pyright: ignore[reportPrivateUsage]
     parse_loaded_capabilities,
     registered_loaded_capability_ids,
 )
+from ._genai_prices import best_effort_price, fill_response_cost
 from ._run_context import AnchoredEvidence, EventStreamBuffer, dispatch_event_stream, set_current_run_context
 from .exceptions import ToolRetryError
 
@@ -2224,16 +2224,21 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
             # Capture the partial tool returns collected so far. State is 'interrupted'
             # so `capture_run_messages` consumers can detect partial state. The user prompt
             # is intentionally omitted: this request was never sent to the model.
-            if output_parts:
-                ctx.state.message_history.append(
-                    _messages.ModelRequest(
-                        parts=list(output_parts),
-                        run_id=ctx.state.run_id,
-                        conversation_id=ctx.state.conversation_id,
-                        timestamp=now_utc(),
-                        state='interrupted',
-                    )
+            #
+            # It's appended even when no tool finished and it's therefore empty: this node only runs
+            # for a response that made tool calls, so the marker is what tells the resume path that
+            # those calls will never be answered and need synthesized `'interrupted'` returns.
+            # Without it, a run cancelled during its first (or only) tool call would leave a history
+            # that can't take a new prompt.
+            ctx.state.message_history.append(
+                _messages.ModelRequest(
+                    parts=list(output_parts),
+                    run_id=ctx.state.run_id,
+                    conversation_id=ctx.state.conversation_id,
+                    timestamp=now_utc(),
+                    state='interrupted',
                 )
+            )
             raise
 
         if output_final_result:
