@@ -94,10 +94,11 @@ def test_sanitize_messages_keeps_trailing_native_tool_calls():
         ModelResponse(parts=[NativeToolCallPart(tool_name='web_search', tool_call_id='native-2')]),
     ]
 
-    with warnings.catch_warnings():
-        warnings.simplefilter('error')  # no dangling-tool-call warning should fire for native calls
+    with warnings.catch_warnings(record=True) as caught_warnings:
+        warnings.filterwarnings('always', message=r'Client-submitted history ended with unresolved tool call')
         assert sanitize_messages(paired) == paired
         assert sanitize_messages(lone) == lone
+    assert not caught_warnings
 
 
 def test_sanitize_messages_strips_compaction_provenance_stamp():
