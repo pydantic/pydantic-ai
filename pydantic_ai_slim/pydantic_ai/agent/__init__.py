@@ -1643,22 +1643,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 resolved_models=resolved_models_by_selection,
             )
 
-        prepared = _PreparedAgentRun[AgentDepsT, Any](
-            graph=graph,
-            state=state,
-            binding=binding,
-            cancellation_token=cancellation_token,
-            model=model_used,
-            capability_owns_current_model=capability_owns_current_model,
-            run_capability=run_capability,
-            toolset=toolset,
-            usage_limits=usage_limits,
-            entered_model_ids=self._entered_model_ids.copy(),
-            concurrency_limiter=self._concurrency_limiter,
-            resolve_metadata=functools.partial(self._resolve_and_store_metadata, metadata=metadata),
-        )
-
-        prepared.graph_deps = _agent_graph.GraphAgentDeps[AgentDepsT, OutputDataT](
+        model_resources = _RunModelResources(self._entered_model_ids.copy())
+        graph_deps = _agent_graph.GraphAgentDeps[AgentDepsT, OutputDataT](
             user_deps=deps,
             agent=self,
             prompt=user_prompt,
@@ -1670,7 +1656,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             model_selector=model_selector,
             model_selected_for_step=model_selected_for_step,
             evaluate_model_selector=evaluate_model_selector,
-            enter_model=prepared.enter_model,
+            enter_model=model_resources.enter_model,
             get_model_settings=get_model_settings,
             usage_limits=usage_limits,
             max_output_retries=effective_output_toolset_max_retries,
@@ -1690,7 +1676,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             cancellation=binding.cancellation if binding is not None else RunCancellation(),
         )
 
-        prepared.user_prompt_node = _agent_graph.UserPromptNode[AgentDepsT](
+        user_prompt_node = _agent_graph.UserPromptNode[AgentDepsT](
             user_prompt=user_prompt,
             deferred_tool_results=deferred_tool_results,
             instructions=instructions_literal,
@@ -1700,9 +1686,23 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             system_prompt_dynamic_functions=self._system_prompt_dynamic_functions,
         )
 
-        prepared.agent_name = self.name or 'agent'
-
-        return prepared
+        return _PreparedAgentRun[AgentDepsT, Any](
+            graph=graph,
+            state=state,
+            graph_deps=graph_deps,
+            user_prompt_node=user_prompt_node,
+            agent_name=self.name or 'agent',
+            binding=binding,
+            cancellation_token=cancellation_token,
+            model=model_used,
+            capability_owns_current_model=capability_owns_current_model,
+            model_resources=model_resources,
+            run_capability=run_capability,
+            toolset=toolset,
+            usage_limits=usage_limits,
+            concurrency_limiter=self._concurrency_limiter,
+            resolve_metadata=functools.partial(self._resolve_and_store_metadata, metadata=metadata),
+        )
 
     def _get_metadata(
         self,
@@ -2990,6 +2990,26 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
 
 @dataclasses.dataclass
+class _RunModelResources:
+    """Enter every model selected by a run on its shared resource stack."""
+
+    entered_model_ids: set[int]
+    _stack: AsyncExitStack | None = dataclasses.field(default=None, init=False, repr=False)
+
+    def bind_stack(self, stack: AsyncExitStack) -> None:
+        assert self._stack is None
+        self._stack = stack
+
+    async def enter_model(self, selected_model: models.Model) -> None:
+        model_identity = id(selected_model)
+        if model_identity in self.entered_model_ids:
+            return
+        assert self._stack is not None
+        await self._stack.enter_async_context(selected_model)
+        self.entered_model_ids.add(model_identity)
+
+
+@dataclasses.dataclass
 class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
     """The fully assembled inputs and resources for one graph-based agent run."""
 
@@ -3000,31 +3020,22 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
         _result.FinalResult[_PreparedOutputT],
     ]
     state: _agent_graph.GraphAgentState
+    graph_deps: _agent_graph.GraphAgentDeps[_PreparedDepsT, _PreparedOutputT]
+    user_prompt_node: _agent_graph.UserPromptNode[_PreparedDepsT, _PreparedOutputT]
+    agent_name: str
     binding: RunBinding | None
     cancellation_token: CancellationToken | None
     model: models.Model
     capability_owns_current_model: bool
+    model_resources: _RunModelResources
     run_capability: AbstractCapability[_PreparedDepsT]
     toolset: AbstractToolset[_PreparedDepsT]
     usage_limits: _usage.UsageLimits
-    entered_model_ids: set[int]
     concurrency_limiter: _concurrency.AbstractConcurrencyLimiter | None
     resolve_metadata: Callable[
         [GraphRunContext[_agent_graph.GraphAgentState, _agent_graph.GraphAgentDeps[_PreparedDepsT, _PreparedOutputT]]],
         dict[str, Any] | None,
     ]
-    user_prompt_node: _agent_graph.UserPromptNode[_PreparedDepsT, _PreparedOutputT] = dataclasses.field(init=False)
-    agent_name: str = dataclasses.field(init=False)
-    graph_deps: _agent_graph.GraphAgentDeps[_PreparedDepsT, _PreparedOutputT] = dataclasses.field(init=False)
-    _model_stack: AsyncExitStack | None = dataclasses.field(default=None, init=False, repr=False)
-
-    async def enter_model(self, selected_model: models.Model) -> None:
-        model_identity = id(selected_model)
-        if model_identity in self.entered_model_ids:
-            return
-        assert self._model_stack is not None
-        await self._model_stack.enter_async_context(selected_model)
-        self.entered_model_ids.add(model_identity)
 
     @asynccontextmanager
     async def open(self) -> AsyncGenerator[AgentRun[_PreparedDepsT, _PreparedOutputT]]:  # noqa: C901
@@ -3080,12 +3091,12 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
             if self.cancellation_token is not None:
                 graph_deps.cancellation.attach_token(self.cancellation_token)
 
-            self._model_stack = stack
+            self.model_resources.bind_stack(stack)
             await stack.enter_async_context(
                 _concurrency.get_concurrency_context(self.concurrency_limiter, f'agent:{self.agent_name}')
             )
             if self.capability_owns_current_model:
-                await self.enter_model(self.model)
+                await self.model_resources.enter_model(self.model)
             graph_run = await stack.enter_async_context(
                 self.graph.iter(
                     inputs=self.user_prompt_node,
