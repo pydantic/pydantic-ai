@@ -42,7 +42,7 @@ dataset = Dataset(
 
 ### Rubric
 
-The `rubric` is your evaluation criteria. Be specific and clear:
+The `rubric` defines the evaluation criteria. Be specific and clear:
 
 **Bad rubrics (vague):**
 ```python
@@ -116,7 +116,7 @@ Choose the judge model based on cost/quality tradeoffs:
 ```python
 from pydantic_evals.evaluators import LLMJudge
 
-# Default: GPT-4o (good balance)
+# Default: openai:gpt-5.2
 LLMJudge(rubric='...')
 
 # Anthropic Claude (alternative default)
@@ -125,16 +125,16 @@ LLMJudge(
     model='anthropic:claude-sonnet-4-6',
 )
 
-# Cheaper option for simple checks
+# Lightweight option for simple checks
 LLMJudge(
     rubric='Response contains profanity',
-    model='openai:gpt-5-mini',
+    model='openai:gpt-5.6-luna',
 )
 
-# Premium option for nuanced evaluation
+# Most capable option for nuanced evaluation
 LLMJudge(
     rubric='Response demonstrates deep understanding of quantum mechanics',
-    model='anthropic:claude-opus-4-5',
+    model='openai:gpt-5.6-sol',
 )
 ```
 
@@ -545,7 +545,7 @@ LLM judges make API calls, which cost money and time.
 
 **Mitigation:**
 
-- Use cheaper models for simple checks (`gpt-5-mini`)
+- Use lightweight models for simple checks (`gpt-5.6-luna`)
 - Run deterministic checks first to fail fast
 - Cache results when possible
 - Limit evaluation to changed cases

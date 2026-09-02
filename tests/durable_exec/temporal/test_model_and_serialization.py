@@ -1232,6 +1232,31 @@ def test_temporal_model_base_url_follows_active_model():
         assert temporal_model.base_url is None
 
 
+def test_temporal_model_context_window_follows_active_model():
+    """`context_window` resolves through `using_model()` like `profile` does.
+
+    Forwarding the wrapped default's would have `RunContext.context_window_used` measure a run on
+    the active model against the default model's window.
+    """
+    temporal_model = TemporalModel(
+        TestModel(model_name='default-model', profile={'context_window': 100}),
+        activity_name_prefix='test__context_window',
+        activity_config={'start_to_close_timeout': timedelta(seconds=60)},
+        deps_type=type(None),
+        models={'alt': TestModel(model_name='alt-model', profile={'context_window': 1000})},
+    )
+
+    assert temporal_model.context_window == 100
+
+    with temporal_model.using_model('alt'):
+        assert temporal_model.context_window == 1000
+
+    with temporal_model.using_model('openai:gpt-5'):
+        # An unregistered model ID resolves through profile inference, not the wrapped default's window.
+        assert temporal_model.context_window == infer_model_profile('openai:gpt-5').get('context_window')
+        assert temporal_model.context_window not in (None, 100)
+
+
 def test_temporal_model_model_id_follows_active_model():
     """`model_id` resolves through `using_model()` rather than reporting the wrapped default's.
 

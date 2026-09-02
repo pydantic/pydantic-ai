@@ -12,7 +12,7 @@ The [`Agent`][pydantic_ai.Agent] class has full API documentation, but conceptua
 | [Instructions](#instructions)                             | A set of instructions for the LLM written by the developer.                                               |
 | [Function tool(s)](tools.md) and [toolsets](toolsets.md)  | Functions that the LLM may call to get information while generating a response.                           |
 | [Structured output type](output.md)                       | The structured datatype the LLM must return at the end of a run, if specified.                            |
-| [Dependency type constraint](dependencies.md)             | Dynamic instructions functions, tools, and output functions may all use dependencies when they're run.          |
+| [Dependency type constraint](dependencies.md)             | Dynamic instruction functions, tools, and output functions may all use dependencies when they're run.          |
 | [LLM model](api/models/base.md)                           | Optional default LLM model associated with the agent. Can also be specified when running the agent.       |
 | [Model Settings](#additional-configuration)               | Optional default model settings to help fine tune requests. Can also be specified when running the agent. |
 | [Capabilities](capabilities/overview.md)                           | Reusable bundles of tools, hooks, instructions, and model settings that extend agent behavior.            |
@@ -117,7 +117,7 @@ async def main():
     """
 ```
 
-_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 You can also pass messages from previous runs to continue a conversation or provide context, as described in [Messages and Chat History](message-history.md).
 
@@ -355,7 +355,7 @@ async def main():
     #> The capital of France is Paris.
 ```
 
-_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 - The `AgentRun` is an async iterator that yields each node (`BaseNode` or `End`) in the flow.
 - The run ends when an `End` node is returned.
@@ -427,7 +427,7 @@ async def main():
 3. When you call `await agent_run.next(node)`, it executes that node in the agent's graph, updates the run's history, and returns the _next_ node to run.
 4. You could also inspect or mutate the new `node` here as needed.
 
-_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 #### Accessing usage and final output
 
@@ -620,7 +620,7 @@ async def main():
     except RunCancelled as exc:
         messages = exc.all_messages()
         print(f'Cancelled after {len(messages)} messages')
-        #> Cancelled after 2 messages
+        #> Cancelled after 3 messages
         await agent.run(message_history=messages)  # (2)!
 ```
 
@@ -629,7 +629,7 @@ async def main():
 
 [UI adapter](ui/overview.md) users can persist this resumable history with the `on_cancel` callback.
 
-_(This example is complete, it can be run "as is" -- you'll need to add `asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 [`agent.run_sync()`][pydantic_ai.agent.AbstractAgent.run_sync] accepts the same token. Calling `token.cancel()` from another thread is the only way to interrupt a synchronous run while it is blocked.
 
@@ -676,7 +676,7 @@ async def main():
         assert cancelled is not None
         messages = cancelled.all_messages()
         print(f'Cancelled after {len(messages)} messages')
-        #> Cancelled after 2 messages
+        #> Cancelled after 3 messages
         await agent.run(message_history=messages)  # (3)!
 ```
 
@@ -684,7 +684,7 @@ async def main():
 2. External cancellation is never converted: `asyncio.timeout()`, [`TaskGroup`][asyncio.TaskGroup], and [Temporal](durable_execution/temporal.md) cancellation semantics are preserved. The run state rides along on the original `CancelledError`.
 3. [`RunCancelled.all_messages()`][pydantic_ai.exceptions.RunCancelled.all_messages] contains everything completed before cancellation, including completed tool results. Any dangling tool call is [repaired automatically](message-history.md#making-histories-provider-valid) when the history is resumed.
 
-_(This example is complete, it can be run "as is" -- you'll need to add `asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 On Python 3.10, asyncio recreates `CancelledError` across an `await task` boundary, but chains the original exception -- carrying the attached run state -- via `__context__`, which `from_cancellation()` traverses. The chain is attached only to the first `await` of the cancelled task, so later awaits of the same task see an unchained exception; [`capture_run_messages()`][pydantic_ai.agent.capture_run_messages] is the fallback when only history is needed.
 
@@ -708,7 +708,7 @@ async def main():
 
 1. Idempotent, a no-op once the run has finished, and callable before the first iteration to prevent the run from starting at all.
 
-_(This example is complete, it can be run "as is" -- you'll need to add `asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 Externally cancelling the consuming task works here too: the background run tears down, the propagating `CancelledError` carries the run state for `from_cancellation()`, and the handle's `all_messages()` and `usage` remain accessible afterwards.
 
@@ -771,7 +771,7 @@ async def main():
 2. First-party cancellation is a `RunCancelled` you can consume: the run stopped because your own code asked it to, so returning normally is fine.
 3. External cancellation stays `CancelledError`, and a stop button's `task.cancel()` is indistinguishable from a timeout or a [`TaskGroup`][asyncio.TaskGroup] tearing down -- so re-raise it (swallowing it would break those teardowns), reaching for [`from_cancellation()`][pydantic_ai.exceptions.RunCancelled.from_cancellation] only to capture the partial state first. It returns `None` when nothing is attached, e.g. an application shutdown unrelated to this run.
 
-_(This example is complete, it can be run "as is" -- you'll need to add `asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 !!! note "Why two exception types?"
     Cancellation can originate from two different places, and only one of them is Pydantic AI's to name:
@@ -803,7 +803,7 @@ async def main():
 1. `AgentRun.cancel()` is safe to call from another task and is a no-op once the run has finished.
 2. Inside the `agent.iter()` block, cancellation surfaces as `asyncio.CancelledError`; after the context exits, first-party cancellation raises `RunCancelled` with a detached state snapshot.
 
-_(This example is complete, it can be run "as is" -- you'll need to add `asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 #### Message History After Cancellation
 
@@ -829,7 +829,7 @@ async def main():
 1. The message history includes the interrupted response with any partial content that was received before cancellation.
 2. The interrupted response state lets your application decide whether to keep, inspect, or discard the partial response before reusing the history.
 
-_(This example is complete, it can be run "as is" -- you'll need to add `asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 !!! note "Reusing interrupted history"
     Interrupted history can be passed directly into another run. Before the next model request, Pydantic AI [repairs the transcript](message-history.md#making-histories-provider-valid): any tool call that never received a result — including one whose arguments were cut off mid-stream — is answered with a synthesized [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] telling the model it was interrupted.
@@ -1693,6 +1693,13 @@ with capture_run_messages() as messages:  # (2)!
                 run_id='...',
                 conversation_id='...',
             ),
+            ModelRequest(
+                parts=[],
+                timestamp=datetime.datetime(...),
+                run_id='...',
+                conversation_id='...',
+                state='interrupted',
+            ),
         ]
         """
     else:
@@ -1706,7 +1713,7 @@ _(This example is complete, it can be run "as is")_
 
 When a run is cut short by an exception while streaming, an exception inside a tool, or external cancellation, Pydantic AI still captures partial state where it can. Partial [`ModelResponse`][pydantic_ai.messages.ModelResponse] and [`ModelRequest`][pydantic_ai.messages.ModelRequest] messages have `state='interrupted'` so persistence layers and UIs can distinguish them from complete messages.
 
-For model responses, interrupted messages contain the response parts streamed before the interruption. For model requests, interrupted messages contain the tool results that completed before tool execution stopped. The captured messages reflect exactly what happened — half-finished tool call parts are not turned into synthetic tool results at capture time. When an interrupted history is passed back into a run, it is [repaired automatically](message-history.md#making-histories-provider-valid) before the next model request.
+For model responses, interrupted messages contain the response parts streamed before the interruption. For model requests, interrupted messages contain the tool results that completed before tool execution stopped — if none did, the request is still recorded, with no parts, marking the point where the response's tool calls were abandoned. The captured messages reflect exactly what happened — half-finished tool call parts are not turned into synthetic tool results at capture time. When an interrupted history is passed back into a run, it is [repaired automatically](message-history.md#making-histories-provider-valid) before the next model request.
 
 In this example, `get_volume` completes before `get_mass` raises, so the interrupted request contains the completed `get_volume` return:
 
