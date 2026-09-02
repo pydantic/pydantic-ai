@@ -23,7 +23,6 @@ import pydantic_ai.images._openai_geometry as openai_geometry
 from pydantic_ai import (
     BinaryImage,
     GeneratedImage,
-    ImageGenerationInput,
     ImageGenerationResult,
     ImageGenerator,
     ImageUrl,
@@ -38,6 +37,7 @@ from pydantic_ai.exceptions import (
 )
 from pydantic_ai.images import (
     ImageGenerationAspectRatio,
+    ImageGenerationInput,
     ImageGenerationModel,
     ImageGenerationSettings,
     InstrumentedImageGenerationModel,

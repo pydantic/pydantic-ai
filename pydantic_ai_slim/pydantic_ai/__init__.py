@@ -56,7 +56,6 @@ from .images import (
     GeneratedImage,
     ImageDimensions,
     ImageGenerationAspectRatio,
-    ImageGenerationInput,
     ImageGenerationModel,
     ImageGenerationResult,
     ImageGenerationSettings,
@@ -214,7 +213,6 @@ __all__ = (
     'EmbeddingResult',
     # images
     'ImageGenerator',
-    'ImageGenerationInput',
     'ImageGenerationModel',
     'ImageGenerationSettings',
     'ImageGenerationAspectRatio',
