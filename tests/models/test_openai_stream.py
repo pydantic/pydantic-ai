@@ -94,7 +94,7 @@ async def test_clean_eof_without_finish_reason_is_rejected_when_required(
 async def test_complete_stream_is_accepted_when_finish_reason_is_required(
     allow_model_requests: None, openai_api_key: str
 ):
-    """Accept a recorded OpenAI stream whose terminal chunk supplies a finish reason."""
+    """Accept a finish reason followed by a no-choices moderation chunk, which must not reset it."""
     model = OpenAIChatModel(
         'gpt-5',
         provider=OpenAIProvider(api_key=openai_api_key),
