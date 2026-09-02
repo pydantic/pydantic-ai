@@ -644,6 +644,49 @@ def _a_local_tool(prompt: str) -> str:  # pragma: no cover
     return 'x'
 
 
+async def test_a_second_local_search_tool_replaces_the_first() -> None:
+    """`local` names one fallback, so two under one id resolve like any other scalar: later wins.
+
+    Two independent local search tools was never a configuration worth keeping -- an agent searches
+    one way -- so this is the dictionary rule applied to a key, not a special case. A user who does
+    want two search tools names them apart with an explicit `id=`, and both survive.
+    """
+    offered: list[list[str]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        offered.append(sorted(tool.name for tool in info.function_tools))
+        return ModelResponse(parts=[TextPart('done')])
+
+    def alpha(query: str) -> str:  # pragma: no cover
+        """Search alpha."""
+        return query
+
+    def beta(query: str) -> str:  # pragma: no cover
+        """Search beta."""
+        return query
+
+    agent = Agent(
+        FunctionModel(model_fn),
+        capabilities=[
+            WebSearch(native=False, local=Tool(alpha, name='alpha')),
+            WebSearch(native=False, local=Tool(beta, name='beta')),
+        ],
+    )
+    await agent.run('hi')
+    assert offered == [['beta']]
+
+    named_apart = Agent(
+        FunctionModel(model_fn),
+        capabilities=[
+            WebSearch(native=False, local=Tool(alpha, name='alpha')),
+            WebSearch(native=False, local=Tool(beta, name='beta'), id='second_search'),
+        ],
+    )
+    offered.clear()
+    await named_apart.run('hi')
+    assert offered == [['alpha', 'beta']]
+
+
 async def test_a_run_level_capability_replaces_the_agent_level_one_whole() -> None:
     """Across layers the later one overrides; `combine` is not consulted.
 
