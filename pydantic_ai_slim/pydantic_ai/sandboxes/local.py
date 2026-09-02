@@ -11,6 +11,7 @@ import os
 import shutil
 import signal
 import tempfile
+import time
 import uuid
 from collections.abc import Mapping, Sequence
 from contextlib import suppress
@@ -23,12 +24,15 @@ from typing_extensions import Self
 
 from pydantic_ai._utils import run_in_executor
 
-from .protocol import CommandResult, FileEntry, SandboxCommand, SandboxTimeoutError
+from .protocol import CommandResult, FileEntry, SandboxCommand, SandboxError, SandboxTimeoutError
 
 if TYPE_CHECKING:
     from .protocol import SandboxBackend, SupportsFilesystem
 
 __all__ = ('LocalSandbox',)
+
+_MAX_CAPTURE_BYTES = 10 * 1024 * 1024
+_OUTPUT_DRAIN_GRACE = 2.0
 
 
 class _LocalFilesystem:
@@ -101,7 +105,10 @@ class LocalSandbox:
     explicit opt-in for trusted workloads, tests, and development. POSIX-only: construction
     raises `NotImplementedError` elsewhere, where the timeout contract (kill the whole process
     group at the deadline) can't be honored.
-    `start()` is not implemented (use `run(timeout=...)` to bound commands).
+
+    Commands receive only `PATH`, `HOME`, `LANG`, and `TMPDIR` from the parent when present, plus
+    variables explicitly supplied through `env`. This prevents framework credentials from being
+    inherited, but is a leak fix rather than an isolation boundary.
 
     Deliberately no base class: it conforms to the protocol structurally, like any
     third-party backend would.
@@ -183,6 +190,45 @@ class LocalSandbox:
     async def working_dir(self) -> str:
         return str(await self._root_path())
 
+    async def _spawn_process(
+        self, command: SandboxCommand, shell: bool, cwd: str | None, env: Mapping[str, str]
+    ) -> asyncio.subprocess.Process:
+        process_cwd = cwd or await self._root_path()
+        if shell:
+            # The type check in `run()` narrows `command` for the shell branch.
+            assert isinstance(command, str)
+            return await asyncio.create_subprocess_shell(
+                command,
+                cwd=process_cwd,
+                env=env,
+                stdin=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                # Each command leads its own process group, so the timeout kill takes out
+                # the whole tree — killing only `sh` would leave its children running.
+                start_new_session=True,
+            )
+        # The type check in `run()` narrows `command` for the argv branch.
+        assert not isinstance(command, str)
+        return await asyncio.create_subprocess_exec(
+            *command,
+            cwd=process_cwd,
+            env=env,
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            start_new_session=True,
+        )
+
+    @staticmethod
+    async def _await_spawn(
+        spawn: asyncio.Task[asyncio.subprocess.Process | Exception], deadline: float | None
+    ) -> asyncio.subprocess.Process | Exception:
+        if deadline is None:
+            return await asyncio.shield(spawn)
+        remaining = max(0.0, deadline - time.monotonic())
+        return await asyncio.wait_for(asyncio.shield(spawn), timeout=remaining)
+
     async def run(
         self,
         command: SandboxCommand,
@@ -192,38 +238,26 @@ class LocalSandbox:
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
     ) -> CommandResult:
+        deadline = None if timeout is None else time.monotonic() + timeout
         if cwd is not None and not os.path.isabs(cwd):
             raise ValueError(
                 f'cwd must be an absolute path, got {cwd!r}: a relative cwd would resolve against '
                 "the host process's working directory, not the sandbox root"
             )
-        # `env` overlays the host environment rather than replacing it, so passing one
-        # variable doesn't strip PATH from the child.
-        merged_env = {**os.environ, **env} if env is not None else None
-        if shell:
-            if not isinstance(command, str):
-                raise TypeError('an argv sequence cannot be combined with shell=True; pass a single command string')
-            spawn_coroutine = asyncio.create_subprocess_shell(
-                command,
-                cwd=cwd or await self._root_path(),
-                env=merged_env,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                # Each command leads its own process group, so the timeout kill takes out
-                # the whole tree — killing only `sh` would leave its children running.
-                start_new_session=True,
+        # Keep the child environment small so the framework's credentials do not reach commands;
+        # the caller can explicitly provide any additional variables it needs.
+        merged_env = {key: os.environ[key] for key in ('PATH', 'HOME', 'LANG', 'TMPDIR') if key in os.environ}
+        if env is not None:
+            merged_env.update(env)
+        if shell != isinstance(command, str):
+            message = (
+                'an argv sequence cannot be combined with shell=True; pass a single command string'
+                if shell
+                else 'a string command requires shell=True; pass an argv sequence otherwise'
             )
-        else:
-            if isinstance(command, str):
-                raise TypeError('a string command requires shell=True; pass an argv sequence otherwise')
-            spawn_coroutine = asyncio.create_subprocess_exec(
-                *command,
-                cwd=cwd or await self._root_path(),
-                env=merged_env,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                start_new_session=True,
-            )
+            raise TypeError(message)
+
+        spawn_coroutine = self._spawn_process(command, shell, cwd, merged_env)
 
         # If we're cancelled mid-spawn, the child may already be forked with nobody holding a
         # handle to kill its process group. Shield the spawn so we always get the handle back,
@@ -237,28 +271,61 @@ class LocalSandbox:
 
         spawn = asyncio.ensure_future(guarded_spawn())
         try:
-            outcome = await asyncio.shield(spawn)
+            outcome = await self._await_spawn(spawn, deadline)
         except asyncio.CancelledError:
             spawn.add_done_callback(self._kill_abandoned_spawn)
             raise
+        except (TimeoutError, asyncio.TimeoutError) as error:
+            spawn.add_done_callback(self._kill_abandoned_spawn)
+            raise SandboxTimeoutError(
+                f'command timed out after {timeout} seconds and was killed',
+                stdout='',
+                stderr='',
+                timeout=timeout,
+            ) from error
         if isinstance(outcome, Exception):
             raise outcome
         process = outcome
+        assert process.stdout is not None
+        assert process.stderr is not None
+        stdout_buffer = bytearray()
+        stderr_buffer = bytearray()
+        reader_tasks = [
+            asyncio.create_task(self._read_stream(process.stdout, stdout_buffer, stderr_buffer)),
+            asyncio.create_task(self._read_stream(process.stderr, stderr_buffer, stdout_buffer)),
+        ]
+
+        async def wait_for_exit() -> int:
+            # `Process.wait()` also waits for pipe EOF, which descendants can postpone.
+            while process.returncode is None:
+                await asyncio.sleep(0.01)
+            return process.returncode
+
+        process_wait_task = asyncio.create_task(wait_for_exit())
         try:
-            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout)
+            await self._wait_for_direct_child(process, process_wait_task, reader_tasks, deadline)
+            await self._drain_output(reader_tasks, deadline)
+            self._close_transport(process)
         except (TimeoutError, asyncio.TimeoutError) as error:  # asyncio's is distinct on 3.10
             # The contract: a timeout kills the command first, then raises SandboxTimeoutError —
             # even when a hardened host denies the group kill, in which case the
             # denial rides along as the cause instead of replacing the promised type.
-            denial = await self._kill_and_reap(process)
+            denial = await self._kill_and_reap_and_close(process, process_wait_task, reader_tasks)
+            stdout = stdout_buffer.decode('utf-8', errors='replace')
+            stderr = stderr_buffer.decode('utf-8', errors='replace')
             if denial is not None:
                 raise SandboxTimeoutError(
                     f'command timed out after {timeout} seconds; killing its process group was '
                     'denied, so only the direct child was killed and grandchildren may survive',
+                    stdout=stdout,
+                    stderr=stderr,
                     timeout=timeout,
                 ) from denial
             raise SandboxTimeoutError(
-                f'command timed out after {timeout} seconds and was killed', timeout=timeout
+                f'command timed out after {timeout} seconds and was killed',
+                stdout=stdout,
+                stderr=stderr,
+                timeout=timeout,
             ) from error
         except BaseException:
             # Cancellation or any other failure while the pipes were open: kill the group,
@@ -266,14 +333,85 @@ class LocalSandbox:
             # with a kill-denial error would break the caller's cancel scope. `returncode`
             # alone can't tell us the group is gone: a shell can exit while a background
             # child keeps the pipes open.
-            await self._kill_and_reap(process)
+            await self._kill_and_reap_and_close(process, process_wait_task, reader_tasks)
             raise
         assert process.returncode is not None
         return CommandResult(
             exit_code=process.returncode,
-            stdout=stdout.decode('utf-8', errors='replace'),
-            stderr=stderr.decode('utf-8', errors='replace'),
+            stdout=stdout_buffer.decode('utf-8', errors='replace'),
+            stderr=stderr_buffer.decode('utf-8', errors='replace'),
         )
+
+    @staticmethod
+    async def _read_stream(stream: asyncio.StreamReader, buffer: bytearray, other_buffer: bytearray) -> None:
+        while chunk := await stream.read(64 * 1024):
+            buffer.extend(chunk)
+            if len(buffer) + len(other_buffer) > _MAX_CAPTURE_BYTES:
+                raise SandboxError(
+                    f'local sandbox output exceeded {_MAX_CAPTURE_BYTES // (1024 * 1024)} MiB safety limit; '
+                    "redirect the command's "
+                    'output to a file and read a window of it with `read_file` instead'
+                )
+
+    @staticmethod
+    async def _wait_for_direct_child(
+        process: asyncio.subprocess.Process,
+        process_wait_task: asyncio.Task[int],
+        reader_tasks: list[asyncio.Task[None]],
+        deadline: float | None,
+    ) -> None:
+        pending = {process_wait_task, *reader_tasks}
+        while process_wait_task in pending:
+            remaining = None if deadline is None else deadline - time.monotonic()
+            done, pending = await asyncio.wait(pending, timeout=remaining, return_when=asyncio.FIRST_COMPLETED)
+            if not done:
+                if process.returncode is None:
+                    raise asyncio.TimeoutError
+                break
+            for task in done:
+                task.result()
+
+        if not process_wait_task.done():
+            process_wait_task.cancel()
+            await asyncio.gather(process_wait_task, return_exceptions=True)
+
+    @staticmethod
+    async def _drain_output(reader_tasks: list[asyncio.Task[None]], deadline: float | None) -> None:
+        pending_readers = [task for task in reader_tasks if not task.done()]
+        if not pending_readers:
+            return
+        remaining = _OUTPUT_DRAIN_GRACE
+        if deadline is not None:
+            remaining = min(remaining, max(0.0, deadline - time.monotonic()))
+        done, pending_readers = await asyncio.wait(pending_readers, timeout=remaining)
+        for task in done:
+            task.result()
+        if pending_readers:
+            for task in pending_readers:
+                task.cancel()
+            await asyncio.gather(*pending_readers, return_exceptions=True)
+
+    async def _kill_and_reap_and_close(
+        self,
+        process: asyncio.subprocess.Process,
+        process_wait_task: asyncio.Task[int],
+        reader_tasks: list[asyncio.Task[None]],
+    ) -> PermissionError | None:
+        cleanup = asyncio.create_task(self._kill_and_reap(process))
+        try:
+            denial = await asyncio.shield(cleanup)
+        finally:
+            process_wait_task.cancel()
+            for task in reader_tasks:
+                task.cancel()
+            await asyncio.gather(process_wait_task, *reader_tasks, return_exceptions=True)
+            self._close_transport(process)
+        return denial
+
+    @staticmethod
+    def _close_transport(process: asyncio.subprocess.Process) -> None:
+        # The private transport closes pipe descriptors retained by descendants after child exit.
+        process._transport.close()  # pyright: ignore[reportUnknownMemberType, reportAttributeAccessIssue]
 
     async def _kill_and_reap(self, process: asyncio.subprocess.Process) -> PermissionError | None:
         """Kill the group and reap the direct child, reporting a denied group kill.
@@ -285,6 +423,7 @@ class LocalSandbox:
         except PermissionError as error:
             return error
         finally:
+            self._close_transport(process)
             await process.wait()
         return None
 

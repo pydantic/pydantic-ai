@@ -6,6 +6,8 @@ import asyncio
 import os
 import shlex
 import signal
+import sys
+import time
 from contextlib import suppress
 from pathlib import Path
 from typing import Any
@@ -19,9 +21,9 @@ from pydantic_ai.sandboxes import (
     LocalSandbox,
     Sandbox,
     SandboxBackend,
+    SandboxError,
     SandboxTimeoutError,
     SupportsFilesystem,
-    SupportsStart,
 )
 
 pytestmark = [
@@ -85,11 +87,8 @@ async def test_local_sandbox_conforms_to_the_protocol(tmp_path: Path):
     sandbox = LocalSandbox(tmp_path)
     assert isinstance(sandbox, SandboxBackend)
     assert isinstance(sandbox, SupportsFilesystem)
-    assert not isinstance(sandbox, SupportsStart)
     typed: SandboxBackend = sandbox  # static conformance, checked because tests are type-checked
     assert typed.sandbox_id.startswith('local-')
-    with pytest.raises(NotImplementedError, match=r'does not implement `start\(\)`'):
-        await Sandbox(sandbox).start(['echo', 'hi'])
 
 
 @pytest.mark.parametrize('operation', ['root', 'cwd', 'fs'])
@@ -140,16 +139,66 @@ async def test_timeout_kills_the_whole_process_group_and_raises(tmp_path: Path):
     pid_file = tmp_path / 'pid'
     timeout = 0.2
     with pytest.raises(SandboxTimeoutError, match='was killed') as exc_info:
-        # The shell exits immediately, but its background child inherits the output pipes,
-        # so `communicate()` remains pending. Cleanup must key off communication completing,
-        # not the already-populated return code of the group leader.
-        await sandbox.run(_background_sleep_command(pid_file), shell=True, timeout=timeout)
+        # `exec` makes the shell's own PID the sleeping direct child, so the timeout applies to
+        # a command that has not completed rather than to a descendant holding a pipe open.
+        await sandbox.run(f'echo $$ > {shlex.quote(str(pid_file))}; exec sleep 30', shell=True, timeout=timeout)
 
     error = exc_info.value
     assert isinstance(error, TimeoutError)
     assert error.timeout == timeout
 
     await _assert_process_gone(int(pid_file.read_text()))
+
+
+async def test_output_over_safety_cap_kills_the_process_group(tmp_path: Path):
+    sandbox = LocalSandbox(tmp_path)
+    pid_file = tmp_path / 'pid'
+    with pytest.raises(SandboxError, match=r'10 MiB.*redirect.*file.*read_file'):
+        await sandbox.run(
+            f"echo $$ > {shlex.quote(str(pid_file))}; exec sh -c 'yes x & yes y >&2 & wait'",
+            shell=True,
+        )
+
+    await _assert_process_gone(int(pid_file.read_text()))
+
+
+async def test_background_child_holding_a_pipe_returns_after_the_drain_grace(tmp_path: Path):
+    sandbox = LocalSandbox(tmp_path)
+    pid_file = tmp_path / 'pid'
+    child_pid_file = tmp_path / 'child-pid'
+    command = (
+        f'echo $$ > {shlex.quote(str(pid_file))}; sleep 30 & echo $! > {shlex.quote(str(child_pid_file))}; echo started'
+    )
+    started = time.monotonic()
+    result = await sandbox.run(command, shell=True, timeout=10)
+
+    assert time.monotonic() - started < 5
+    assert (result.exit_code, result.stdout) == (0, 'started\n')
+    await _assert_process_gone(int(pid_file.read_text()))
+    child_pid = int(child_pid_file.read_text())
+    try:
+        assert _process_running(child_pid)
+    finally:
+        with suppress(ProcessLookupError):
+            os.kill(child_pid, signal.SIGKILL)
+    await _assert_process_gone(child_pid)
+
+
+async def test_timeout_keeps_output_printed_before_the_deadline(tmp_path: Path):
+    sandbox = LocalSandbox(tmp_path)
+    with pytest.raises(SandboxTimeoutError) as exc_info:
+        await sandbox.run('echo stdout; echo stderr >&2; sleep 30', shell=True, timeout=0.2)
+
+    error = exc_info.value
+    assert error.stdout == 'stdout\n'
+    assert error.stderr == 'stderr\n'
+
+
+async def test_stdin_is_devnull(tmp_path: Path):
+    sandbox = LocalSandbox(tmp_path)
+    result = await sandbox.run([sys.executable, '-c', 'import sys; print("eof" if sys.stdin.read() == "" else "data")'])
+
+    assert result.stdout == 'eof\n'
 
 
 async def test_cancellation_kills_the_whole_process_group(tmp_path: Path):
@@ -278,12 +327,25 @@ async def test_facade_follows_backend_across_root_recreation():
     assert not second.exists()
 
 
-async def test_env_overlays_the_host_environment(tmp_path: Path):
+async def test_local_environment_contains_only_allowed_variables(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    allowed = {
+        'PATH': '/bin:/usr/bin',
+        'HOME': str(tmp_path / 'home'),
+        'LANG': 'C.UTF-8',
+        'TMPDIR': str(tmp_path / 'tmp'),
+    }
+    for key, value in allowed.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setenv('LOCAL_SANDBOX_HOST_SECRET', 'do-not-pass')
+    monkeypatch.setenv('LOCAL_SANDBOX_EXPLICIT', 'host-value')
     sandbox = LocalSandbox(tmp_path)
-    result = await sandbox.run('echo "$GREETING:$PATH"', shell=True, env={'GREETING': 'hi'})
-    greeting, _, path = result.stdout.rstrip('\n').partition(':')
-    assert greeting == 'hi'
-    assert path  # PATH survived the overlay: env= augments, it does not replace
+    result = await sandbox.run(
+        ['/usr/bin/env'],
+        env={'LOCAL_SANDBOX_EXPLICIT': 'explicit-value'},
+    )
+
+    child_environment = dict(line.split('=', 1) for line in result.stdout.splitlines())
+    assert child_environment == {**allowed, 'LOCAL_SANDBOX_EXPLICIT': 'explicit-value'}
 
 
 async def test_cwd_selects_the_working_directory(tmp_path: Path):
