@@ -573,7 +573,7 @@ Anthropic enforces the check for accounts created on or after 31 August 2026. Fo
 
 Anthropic reports every drop, and Pydantic AI surfaces it two ways. Under [instrumentation](../logfire.md) the model request span carries an `anthropic.input_transformations` event, so a drop is visible in the trace as it happens. On the response it is recorded in `provider_details`:
 
-```python {title="dropped_thinking_blocks.py" test="skip"}
+```python {title="dropped_thinking_blocks.py"}
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelResponse
 
