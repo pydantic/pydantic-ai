@@ -1,7 +1,7 @@
 from typing import Any, TypeAlias
 
 from pydantic_ai._history_processor import HistoryProcessor
-from pydantic_ai._run_context import AgentDepsT, RunPreparationContext
+from pydantic_ai._run_context import AgentDepsT
 from pydantic_ai.native_tools._tool_search import (
     ToolSearchFunc as ToolSearchFunc,
     ToolSearchLocalStrategy as ToolSearchLocalStrategy,
@@ -113,7 +113,6 @@ __all__ = [
     'ModelIdResolver',
     'NodeResult',
     'RawToolArgs',
-    'RunPreparationContext',
     'ValidatedToolArgs',
     'WrapModelRequestHandler',
     'WrapNodeRunHandler',

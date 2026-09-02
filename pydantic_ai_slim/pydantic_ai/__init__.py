@@ -1,7 +1,6 @@
 from importlib.metadata import version as _metadata_version
 
 from ._cancel import CancellationToken
-from ._run_context import RunPreparationContext
 from .agent import (
     Agent,
     AgentModelSettings,
@@ -327,7 +326,6 @@ __all__ = (
     'Tool',
     'ToolDefinition',
     'RunContext',
-    'RunPreparationContext',
     'DeferredToolRequests',
     'DeferredToolResults',
     'ToolApproved',

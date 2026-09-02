@@ -23,11 +23,10 @@ from .exceptions import UserError
 if TYPE_CHECKING:
     from ._cancel import RunCancellation
     from .agent import Agent
-    from .agent.abstract import AbstractAgent
     from .capabilities.abstract import AbstractCapability
-    from .models import AbstractModel, Model
+    from .models import AbstractModel
     from .realtime import RealtimeModelSettings, RealtimeSession
-    from .sandboxes import Sandbox, SandboxBackend, SandboxRef
+    from .sandboxes import Sandbox
     from .settings import ModelSettings
     from .tool_manager import ToolManager
     from .tools import ToolDefinition
@@ -53,64 +52,6 @@ def _default_sandbox() -> Sandbox:
             "from a capability's `acquire_sandbox`."
         )
     )
-
-
-@dataclasses.dataclass
-class RunScope:
-    """Mutable state owned by a single agent run.
-
-    Created once per run and carried by reference on `RunPreparationContext`, `RunContext`
-    (per-step rebuilds copy the reference), and the graph deps, so hooks that fire on the shared
-    agent-level capability instances before `for_run()` copies exist and hooks that fire on the
-    per-run copies observe the same object. Run-scoped capability state belongs here — it dies
-    with the run — rather than in capability-instance side tables that outlive it.
-    """
-
-    capability_state: dict[object, Any] = field(default_factory=dict[object, Any])
-    """Per-run capability state, keyed by an opaque token private to the owning capability."""
-
-
-@dataclasses.dataclass(frozen=True, kw_only=True)
-class RunPreparationContext(Generic[AgentDepsT]):
-    """Information available while an agent run is being prepared."""
-
-    agent: AbstractAgent[AgentDepsT, Any]
-    """The agent being run."""
-
-    deps: AgentDepsT
-    """Dependencies supplied for the run."""
-
-    model: Model | None
-    """The model explicitly supplied to the run or through an override, if any.
-
-    Model resolution has not happened yet, so the agent's configured model and capability
-    contributions are not reflected here.
-    """
-
-    sandbox: SandboxBackend | SandboxRef | None
-    """The sandbox explicitly supplied to the run, if any.
-
-    This is the original run argument, before it is wrapped in the user-facing
-    [`Sandbox`][pydantic_ai.sandboxes.Sandbox] facade. Capability sandbox resolution has not
-    happened yet. When this is `None`, a capability may contribute a sandbox; if none does, the
-    run falls back to the framework default. Use [`wrap_run`][pydantic_ai.capabilities.AbstractCapability.wrap_run]
-    when an operation needs the assembled sandbox facade.
-    """
-
-    messages: list[_messages.ModelMessage]
-    """The provided message history, or an empty list for a new conversation."""
-
-    usage: RunUsage
-    """LLM usage associated with the run."""
-
-    run_id: str
-    """Unique identifier for the agent run."""
-
-    conversation_id: str
-    """Unique identifier for the conversation this run belongs to."""
-
-    _run_scope: RunScope = field(default_factory=RunScope, repr=False, compare=False)
-    """Private per-run scope shared by all contexts belonging to one run execution."""
 
 
 @dataclasses.dataclass(frozen=True)
@@ -249,9 +190,6 @@ class RunContext(Generic[RunContextAgentDepsT]):
     Managed by the framework: read it if useful, but use [`enqueue`][pydantic_ai.tools.RunContext.enqueue]
     to add messages rather than mutating it directly.
     """
-
-    _run_scope: RunScope = field(default_factory=RunScope, repr=False, compare=False)
-    """Private per-run scope shared by all contexts belonging to one run execution."""
 
     _cancellation: RunCancellation | None = field(default=None, repr=False)
     """Private implementation detail — not part of the public API; do not read or write.
@@ -672,12 +610,6 @@ class RunContext(Generic[RunContextAgentDepsT]):
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-def get_run_scope(ctx: RunPreparationContext[Any] | RunContext[Any]) -> RunScope:
-    """Return the framework-owned per-run scope for the run `ctx` belongs to."""
-    # This module owns the private field and exposes only this internal accessor to sibling modules.
-    return ctx._run_scope  # pyright: ignore[reportPrivateUsage]
-
-
 _run_context_init = RunContext.__init__
 
 
@@ -702,6 +634,8 @@ def _run_context_init_with_capability_loaded(
 # keyword is invisible to `replace()`, and `@wraps` keeps `inspect.signature` resolving to the real
 # one. `TemporalRunContext` defines its own `__init__` and is unaffected either way.
 RunContext.__init__ = _run_context_init_with_capability_loaded
+
+
 _CURRENT_RUN_CONTEXT: ContextVar[RunContext[Any] | None] = ContextVar(
     'pydantic_ai.current_run_context',
     default=None,

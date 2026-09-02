@@ -21,7 +21,7 @@ from pydantic_core import PydanticSerializationError
 from typing_extensions import Self
 
 from pydantic_ai import FunctionToolset, ToolsetTool
-from pydantic_ai._run_context import RunPreparationContext, set_current_run_context
+from pydantic_ai._run_context import set_current_run_context
 from pydantic_ai._utils import aclose_if_supported, get_union_args
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
@@ -46,7 +46,7 @@ from pydantic_ai.models import (
 )
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.run import AgentRunResult
-from pydantic_ai.sandboxes import SandboxRef, UnavailableSandbox
+from pydantic_ai.sandboxes import Sandbox, SandboxRef, UnavailableSandbox
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
 from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
@@ -598,21 +598,15 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         cancellation = ctx.__dict__.get('_cancellation')
         if cancellation is not None and cancellation.has_token:
             raise cancellation_token_unsupported_error(self.engine_name)
-
-    @asynccontextmanager
-    async def wrap_entire_run(self, ctx: RunPreparationContext[AgentDepsT]) -> AsyncGenerator[None]:
-        """Reject live sandbox handles before model and sandbox-provider resolution."""
-        sandbox = ctx.sandbox
-        if (
-            self.in_durable_context
-            and sandbox is not None
-            and not isinstance(sandbox, (SandboxRef, UnavailableSandbox))
-        ):
+        # A live sandbox backend is likewise a same-process handle: only a `SandboxRef` (or the
+        # framework's unavailable placeholder) can be carried across the durable boundary.
+        sandbox = ctx.__dict__.get('sandbox')
+        identity = sandbox._durable_identity() if isinstance(sandbox, Sandbox) else None  # pyright: ignore[reportPrivateUsage]
+        if identity is not None and not isinstance(identity, (SandboxRef, UnavailableSandbox)):
             raise UserError(
                 f'A live sandbox backend cannot be passed to an agent run inside {self.engine_name} durable '
                 f'{self.durable_container_noun}. Pass a `SandboxRef` instead.'
             )
-        yield
 
     def _effective_event_stream_handler(self) -> EventStreamHandler[AgentDepsT] | None:
         """The handler in-boundary event delivery targets for the current run.

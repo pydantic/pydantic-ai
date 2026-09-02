@@ -111,14 +111,6 @@ def test_instrumentation_default_settings() -> None:
     assert isinstance(instr.settings, InstrumentationSettings)
 
 
-async def test_instrumentation_from_capability_function_runs_without_agent_span() -> None:
-    def instrumentation_for_run(ctx: RunContext[Any]) -> Instrumentation:
-        return Instrumentation()
-
-    result = await Agent(TestModel(), capabilities=[instrumentation_for_run]).run('hello')
-    assert result.output == 'success (no tool calls)'
-
-
 def test_agent_from_spec_basic():
     """Test Agent.from_spec with basic capabilities."""
     agent = Agent.from_spec(

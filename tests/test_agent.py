@@ -3,7 +3,7 @@ import json
 import re
 import sys
 from collections import defaultdict
-from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Sequence
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable
 from contextlib import asynccontextmanager, nullcontext
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
@@ -10266,73 +10266,6 @@ def test_toolsets():
         assert toolset not in agent.toolsets
 
 
-class _DescriptionAgent(AbstractAgent[None, str]):
-    """Minimal concrete `AbstractAgent` for pinning the `render_description` default.
-
-    Only `description` behaves; every member the test doesn't touch raises instead of
-    simulating behavior.
-    """
-
-    def __init__(self) -> None:
-        self._description: str | None = None
-
-    @property
-    def model(self) -> Model | str | None:
-        raise NotImplementedError  # pragma: no cover
-
-    @property
-    def name(self) -> str | None:
-        raise NotImplementedError  # pragma: no cover
-
-    @name.setter
-    def name(self, value: str | None) -> None:
-        raise NotImplementedError  # pragma: no cover
-
-    @property
-    def description(self) -> str | None:
-        return self._description
-
-    @description.setter
-    def description(self, value: Any) -> None:
-        self._description = value
-
-    @property
-    def deps_type(self) -> type:
-        raise NotImplementedError  # pragma: no cover
-
-    @property
-    def output_type(self) -> type[str]:
-        raise NotImplementedError  # pragma: no cover
-
-    @property
-    def event_stream_handler(self) -> None:
-        raise NotImplementedError  # pragma: no cover
-
-    @property
-    def toolsets(self) -> Sequence[AbstractToolset[None]]:
-        raise NotImplementedError  # pragma: no cover
-
-    def iter(self, *args: Any, **kwargs: Any) -> Any:
-        raise NotImplementedError  # pragma: no cover
-
-    def override(self, *args: Any, **kwargs: Any) -> Any:
-        raise NotImplementedError  # pragma: no cover
-
-    async def __aenter__(self) -> Any:
-        raise NotImplementedError  # pragma: no cover
-
-    async def __aexit__(self, *args: Any) -> None:
-        raise NotImplementedError  # pragma: no cover
-
-
-def test_abstract_agent_render_description_default():
-    """`AbstractAgent.render_description` defaults to returning `description` unchanged."""
-    stub = _DescriptionAgent()
-    assert stub.render_description() is None
-    stub.description = 'plain description'
-    assert stub.render_description() == 'plain description'
-
-
 async def test_wrapper_agent():
     foo_toolset = FunctionToolset()
 
@@ -10359,10 +10292,8 @@ async def test_wrapper_agent():
     assert wrapper_agent.description == agent.description
     wrapper_agent.description = 'wrapped description'
     assert wrapper_agent.description == 'wrapped description'
-    # Setting via `wrapper_agent.description` mutates the wrapped agent, and the wrapper
-    # delegates rendering.
+    # `render_description` is `Agent`-only; setting via `wrapper_agent.description` mutates the wrapped agent.
     assert agent.render_description() == 'wrapped description'
-    assert wrapper_agent.render_description() == 'wrapped description'
     assert wrapper_agent.output_type == agent.output_type
     assert wrapper_agent.event_stream_handler == agent.event_stream_handler
     assert wrapper_agent.root_capability is agent.root_capability

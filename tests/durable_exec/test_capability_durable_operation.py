@@ -240,7 +240,7 @@ async def test_wrapped_sandbox_provider_lifecycle_uses_durable_dispatch() -> Non
     assert provider.events == ['acquire', 'release']
 
 
-async def test_durability_rejects_live_sandbox_before_run_preparation() -> None:
+async def test_durability_rejects_live_sandbox_in_durable_context() -> None:
     from ..sandbox_fakes import RecordingSandboxBackend
 
     agent = Agent(TestModel(), name='live_sandbox', capabilities=[RecordingDurability()])

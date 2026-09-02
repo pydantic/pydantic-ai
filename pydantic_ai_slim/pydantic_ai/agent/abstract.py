@@ -380,10 +380,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         """Set the description of the agent."""
         raise NotImplementedError
 
-    def render_description(self, deps: AgentDepsT = None) -> str | None:
-        """Return the agent description rendered for the supplied dependencies."""
-        return self.description
-
     @property
     @abstractmethod
     def deps_type(self) -> type:

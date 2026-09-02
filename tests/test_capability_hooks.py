@@ -63,7 +63,7 @@ from pydantic_ai.result import FinalResult
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import DeferredToolRequests, ToolDefinition
-from pydantic_ai.toolsets import FunctionToolset, WrapperToolset
+from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.usage import RequestUsage
 from pydantic_graph import End
 
@@ -218,33 +218,6 @@ class TestRunHooks:
                 pass
         assert agent_run.result is not None
         assert agent_run.result.output == 'recovered via iter'
-
-    async def test_toolset_enter_failure_propagates_through_wrap_run(self):
-        events: list[str] = []
-
-        @dataclass
-        class HoldingCap(AbstractCapability[Any]):
-            async def wrap_run(self, ctx: RunContext[Any], *, handler: Any) -> AgentRunResult[Any]:
-                events.append('wrap_run')
-                try:
-                    return await handler()
-                except RuntimeError:
-                    events.append('wrap_run_error')
-                    raise
-
-        class ExplodingToolset(WrapperToolset[Any]):
-            async def __aenter__(self) -> Any:
-                events.append('toolset_enter')
-                raise RuntimeError('toolset entry failed')
-
-        agent = Agent(
-            FunctionModel(simple_model_function),
-            toolsets=[ExplodingToolset(wrapped=FunctionToolset())],
-            capabilities=[HoldingCap()],
-        )
-        with pytest.raises(RuntimeError, match='toolset entry failed'):
-            await agent.run('hello')
-        assert events == ['wrap_run', 'toolset_enter', 'wrap_run_error']
 
 
 class TestModelRequestHooks:

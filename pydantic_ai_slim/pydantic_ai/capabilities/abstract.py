@@ -3,7 +3,6 @@ from __future__ import annotations
 from abc import ABC
 from collections import Counter
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
-from contextlib import AbstractAsyncContextManager, nullcontext
 from dataclasses import KW_ONLY, dataclass
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypeAlias
 from weakref import WeakValueDictionary
@@ -19,7 +18,6 @@ from pydantic_ai._instructions import (
     normalize_instructions,
     sourced_instruction,
 )
-from pydantic_ai._run_context import RunPreparationContext
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import (
@@ -69,7 +67,6 @@ NodeResult: TypeAlias = '_agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResu
 
 WrapRunHandler: TypeAlias = 'Callable[[], Awaitable[AgentRunResult[Any]]]'
 """Handler type for [`wrap_run`][pydantic_ai.capabilities.AbstractCapability.wrap_run]."""
-
 
 WrapNodeRunHandler: TypeAlias = 'Callable[[_agent_graph.AgentNode[AgentDepsT, Any]], Awaitable[_agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]]]'
 """Handler type for [`wrap_node_run`][pydantic_ai.capabilities.AbstractCapability.wrap_node_run]."""
@@ -677,46 +674,6 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         return tool_defs
 
     # --- Run lifecycle hooks ---
-
-    def wrap_entire_run(self, ctx: RunPreparationContext[AgentDepsT]) -> AbstractAsyncContextManager[None]:
-        """Bracket the complete lifecycle of an [`iter()`][pydantic_ai.agent.Agent.iter] run.
-
-        This context-manager-shaped hook is typically implemented with
-        `@contextlib.asynccontextmanager`. The run enters the returned manager on its own
-        exit stack, so it can observe entry, exit, and any exception that propagates through
-        the manager's `__aexit__`. Unlike
-        [`wrap_run`][pydantic_ai.capabilities.AbstractCapability.wrap_run], it receives no
-        `handler` and has no control-flow power: it cannot short-circuit, replace, or retry
-        the run. Suppressing the run's exception (catching around `yield` without
-        re-raising) is a contract violation the run detects: it raises
-        [`UserError`][pydantic_ai.exceptions.UserError] with the suppressed error as its
-        cause. An exception raised by the hook's own cleanup propagates under normal
-        context-manager semantics, exactly like a toolset or sandbox teardown error.
-
-        This hook is invoked on the agent-level capability instance **before**
-        [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run]. It must not store
-        per-run state on `self`: the per-run capability instance does not exist yet. Use
-        `ctx.run_id` as the correlation point when state needs to bridge this hook and per-run
-        hooks, as [`Instrumentation`][pydantic_ai.capabilities.Instrumentation] does.
-
-        The hook is entered before model and sandbox resolution, capability and toolset `for_run`,
-        resource entry, and graph construction — and before the run's cancellation binding, so a
-        `cancel()` issued while hooks are entering takes effect only once they finish. It exits
-        after the entire run, including `after_run`/`on_run_error` and resource teardown. Multiple
-        hooks follow middleware order: the first capability is entered first and exits last,
-        matching `wrap_run`.
-
-        `ctx.model` and `ctx.sandbox` contain only values explicitly supplied to the run (including
-        overrides); configured and capability-contributed values are resolved inside this hook's
-        scope. Use `wrap_run` for anything that needs the assembled run.
-
-        Deferred capabilities are always excluded from this chain, including capabilities
-        already loaded in resumed message history. This matches
-        [`acquire_sandbox`][pydantic_ai.capabilities.AbstractCapability.acquire_sandbox] because
-        the chain is entered once at run start.
-
-        """
-        return nullcontext()
 
     async def before_run(
         self,

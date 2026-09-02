@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import re
-from collections.abc import AsyncGenerator, AsyncIterator, Mapping, Sequence
-from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -35,8 +34,9 @@ from pydantic_ai.sandboxes import (
     SupportsStart,
     SupportsStream,
 )
-from pydantic_ai.toolsets import FunctionToolset, WrapperToolset
+from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, WrapperToolset
 from pydantic_ai.usage import RunUsage
+from pydantic_graph import End
 
 from .sandbox_fakes import (
     AcquireOnlySandboxCapability,
@@ -1066,46 +1066,61 @@ async def test_lifecycle_capability_tears_down_when_capability_resolution_fails(
     assert lifecycle.events == ['acquire:created-1', 'release:created-1']
 
 
-async def test_failing_sandbox_acquisition_exits_whole_run_context():
+@pytest.mark.parametrize('run_mode', ['run', 'iter', 'run_stream'])
+async def test_sandbox_lifecycle_brackets_the_run(run_mode: str) -> None:
+    """The sandbox is acquired before `for_run` and released after the run's own teardown."""
     events: list[str] = []
 
-    @dataclass
-    class Bracket(AbstractCapability[Any]):
-        @asynccontextmanager
-        async def wrap_entire_run(self, ctx: Any) -> AsyncGenerator[None]:
-            events.append('enter')
-            try:
-                yield
-            finally:
-                events.append('exit')
+    class LifecycleToolset(WrapperToolset[Any]):
+        async def __aenter__(self) -> LifecycleToolset:
+            events.append('toolset_enter')
+            await self.wrapped.__aenter__()
+            return self
+
+        async def __aexit__(self, *args: Any) -> bool | None:
+            events.append('toolset_exit')
+            return await self.wrapped.__aexit__(*args)
 
     @dataclass
-    class FailingAcquirer(AbstractCapability[Any]):
+    class OrderingSandboxCapability(AbstractCapability[Any]):
         async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
-            raise RuntimeError('acquisition failed')
+            events.append('acquire_sandbox')
+            return SandboxRef(provider='fake', sandbox_id='lifecycle')
 
-    with pytest.raises(RuntimeError, match='acquisition failed'):
-        await Agent(TestModel(), capabilities=[Bracket(), FailingAcquirer()]).run('go')
-    assert events == ['enter', 'exit']
+        async def release_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
+            events.append('release_sandbox')
 
+        async def for_run(self, ctx: RunContext[Any]) -> AbstractCapability[Any]:
+            events.append('for_run')
+            return self
 
-async def test_pre_sandbox_validation_failure_exits_whole_run_context():
-    events: list[str] = []
+        def get_toolset(self) -> AbstractToolset[Any]:
+            return LifecycleToolset(wrapped=FunctionToolset())
 
-    @dataclass
-    class Bracket(AbstractCapability[Any]):
-        @asynccontextmanager
-        async def wrap_entire_run(self, ctx: Any) -> AsyncGenerator[None]:
-            events.append('enter')
-            try:
-                yield
-            finally:
-                events.append('exit')
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        events.append('model')
+        return ModelResponse(parts=[TextPart('done')])
 
-    agent = Agent(TestModel(), capabilities=[Bracket()])
-    with pytest.raises(UserError, match=r"`tool_choice='required'` prevents"):
-        await agent.run('go', model_settings={'tool_choice': 'required'})
-    assert events == ['enter', 'exit']
+    async def stream_function(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        events.append('model')
+        yield 'done'
+
+    agent = Agent(
+        FunctionModel(model_function, stream_function=stream_function), capabilities=[OrderingSandboxCapability()]
+    )
+
+    if run_mode == 'run':
+        await agent.run('hello')
+    elif run_mode == 'iter':
+        async with agent.iter('hello') as agent_run:
+            node = agent_run.next_node
+            while not isinstance(node, End):
+                node = await agent_run.next(node)
+    else:
+        async with agent.run_stream('hello') as stream:
+            await stream.get_output()
+
+    assert events == ['acquire_sandbox', 'for_run', 'toolset_enter', 'model', 'toolset_exit', 'release_sandbox']
 
 
 async def test_duplicate_per_run_supplier_ids_fail_before_acquisition():
