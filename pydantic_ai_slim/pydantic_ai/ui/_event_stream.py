@@ -51,6 +51,7 @@ from ..messages import (
     ToolCallPartDelta,
     ToolResultEvent,
     ToolReturnPart,
+    UnknownCustomEvent,
 )
 from ..output import OutputDataT
 from ..run import AgentRunResult, AgentRunResultEvent
@@ -487,7 +488,13 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                 # Checked here rather than in each protocol's handler so that `ui=False` holds for
                 # third-party adapters too, and so an adapter overriding `handle_custom_event` can't
                 # forward an event the application declared server-side only.
-                if event.ui:
+                #
+                # An unknown event is one whose class this process never imported, so its `ui` says
+                # nothing about what the application declared: the flag lives on the class, not on
+                # the wire. Forwarding it would leak the payload of an event that may well have been
+                # declared `ui=False` where it was emitted, so the unresolved case fails closed.
+                # Import the modules defining your events in the process that serves the frontend.
+                if event.ui and not isinstance(event, UnknownCustomEvent):
                     async for e in self.handle_custom_event(event):
                         yield e
             case CapabilityEvent():

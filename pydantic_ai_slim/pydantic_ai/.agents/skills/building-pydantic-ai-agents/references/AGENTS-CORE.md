@@ -144,7 +144,7 @@ To surface progress or intermediate results from an async tool into the same eve
 
 `CustomEvent` is for application-owned code only. Code that lives inside a capability must define namespaced `CapabilityEvent` subclasses instead; emitting either family from the other's side raises `UserError`. See CAPABILITIES-AND-HOOKS.md.
 
-Custom events reach the AG-UI and Vercel AI frontends by default. For an event that should stay server-side (metrics, audit logs), declare the class `ui=False` — `class IndexProgressEvent(CustomEvent, ui=False)` — and every UI adapter skips it while in-process consumers still receive it. Declaring a `ui` field or `ClassVar` on an event class is rejected, since it would shadow that flag.
+Custom events reach the AG-UI and Vercel AI frontends by default. For an event that should stay server-side (metrics, audit logs), declare the class `ui=False` — `class IndexProgressEvent(CustomEvent, ui=False)` — and every UI adapter skips it while in-process consumers still receive it. Declaring a `ui` field or `ClassVar` on an event class is rejected, since it would shadow that flag. The flag is class-level, not on the wire, so adapters also skip an `UnknownCustomEvent` (a class this process never imported): when events reach the frontend from another process, import their defining modules there or none of them are forwarded.
 
 ```python
 from dataclasses import dataclass

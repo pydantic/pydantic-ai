@@ -731,7 +731,9 @@ class IndexProgressEvent(CustomEvent, ui=False):
     total: int
 ```
 
-Subclasses inherit the setting, and because the check happens before the protocol-specific handler, adapters for other protocols honor it too. The flag lives on the class rather than on the wire, so an event deserialized where its defining module hasn't been imported arrives as an `UnknownCustomEvent` and is forwarded; import the module that defines your events in the process that serves the frontend. To send a *different* payload rather than nothing, override `to_payload()` instead — returning `None` from it sends an event with a null payload, which is how you send a name-only signal.
+Subclasses inherit the setting, and because the check happens before the protocol-specific handler, adapters for other protocols honor it too. To send a *different* payload rather than nothing, override `to_payload()` instead — returning `None` from it sends an event with a null payload, which is how you send a name-only signal.
+
+The flag lives on the class rather than on the wire, so an event deserialized where its defining module hasn't been imported arrives as an [`UnknownCustomEvent`][pydantic_ai.messages.UnknownCustomEvent] whose `ui` says nothing about what the application declared. Those aren't forwarded either, so an event crossing a process boundary can't leak a payload its class had opted out of. If events reach your frontend from another process — a [durable execution](durable_execution/overview.md) workflow, a queue, a websocket fan-out, as in [encoding events without a request](ui/overview.md#encoding-events-without-a-request) — import the modules that define them there, or none of your custom events will reach the frontend.
 
 ## Cancelling streams
 
