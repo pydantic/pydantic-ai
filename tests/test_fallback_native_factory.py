@@ -211,7 +211,7 @@ async def test_callable_native_none_raises(case: Case, allow_model_requests: Non
     capability = case.with_none_factory(_recording_fallback_model(case, seen_native_tools))
     agent = Agent[str, str](_outer_model(case), deps_type=str, capabilities=[capability])
 
-    with pytest.raises(UserError, match='returned `None`'):
+    with pytest.raises(UserError, match=r'returned `None`.*drop `fallback_model`'):
         await agent.run(case.prompt, deps=case.deps)
 
     assert seen_native_tools == []
@@ -234,7 +234,7 @@ async def test_native_false_keeps_fallback_overrides(case: Case, allow_model_req
 @case_param
 async def test_subagent_dynamic_native_none_raises(case: Case):
     """The subagent raises when its dynamic factory returns `None` instead of enabling the default tool."""
-    with pytest.raises(UserError, match='returned `None`'):
+    with pytest.raises(UserError, match=r'returned `None`.*drop `fallback_model`'):
         await case.subagent(build_run_context(), case.subagent_input)
 
 
