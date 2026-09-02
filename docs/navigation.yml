@@ -255,7 +255,7 @@ navigation:
             path: "modal-sandbox.md"
             source: "harness"
             slug: "harness/modal-sandbox"
-          - page: "Sprite Sandbox"
+          - page: "Fly.io Sprites Sandbox"
             path: "sprite-sandbox.md"
             source: "harness"
             slug: "harness/sprite-sandbox"
