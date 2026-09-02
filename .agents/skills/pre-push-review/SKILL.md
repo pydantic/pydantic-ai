@@ -1,16 +1,23 @@
 ---
 name: pre-push-review
-description: Run the repository's high-judgment standards review locally on the exact candidate commit
-  before it is pushed
+description: Run the repository's high-judgment standards review locally on the exact candidate
+  commit when the current task's three-review budget permits
 ---
 
 # Pre-push Review
 
-Use the strongest locally available reviewer to catch problems while they are still cheap
-to fix. Run this before every push of a candidate commit.
+Use a fresh designated reviewer to catch problems while they are still cheap to fix. Run this
+before the first push. Run it before a later push only while the three-review budget permits.
 
 This is the local counterpart to the repository's high-judgment hosted review, run through the
 developer's model subscription. It is independent of the hosted review that runs after push.
+
+## Select the reviewer tier
+
+- In Claude Code, use an Opus reviewer.
+- In Codex, use the Terra-pinned `reviewer` agent.
+- Never use Fable or Sol for this review.
+- In other harnesses, use the normal reviewer selection.
 
 ## Read the review rubric
 

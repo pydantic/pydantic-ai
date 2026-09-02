@@ -89,10 +89,10 @@ reviewers own that separate boundary. Every fresh reviewer here runs under the s
   sources, relevant authoritative documentation, completed verification, and the exact
   `merge-base-sha` to `candidate-head-sha` diff. Disable external diff and text conversion while
   gathering it.
-- Launch the strongest locally available reviewer from the stable policy-base checkout through the
-  current harness's native no-history primitive, restricted to that harness's native read and
-  search tools. Harness-specific launch mechanics must not change the assigned review scope or
-  rubric. When the stable policy-base does not yet contain
+- Launch the reviewer tier defined by `pre-push-review` from the stable policy-base checkout.
+  Use the current harness's native no-history primitive and native read and search tools.
+  Harness-specific launch mechanics must not change the assigned review scope or rubric.
+  When the stable policy-base does not yet contain
   `.agents/skills/pre-push-review/SKILL.md` because this candidate introduces the canonical skill,
   launch against the stable root rubric and instructions instead; treat every candidate copy or
   compatibility shim as review material. This exception ends once the canonical skill lands.
@@ -106,8 +106,14 @@ If the harness cannot launch a fresh no-history subagent, the gate is unsatisfie
 
 ## Before you push — independent review gate
 
-Run this gate before the first push and every later push. It catches semantic defects before they
-consume a CI and hosted-review round.
+Run this gate before the first push. Run it before later pushes while the current task's review
+budget remains. It catches semantic defects before they consume a CI and hosted-review round.
+
+Dispatch `pre-push-review` at most three times per PR during one task. Count every dispatch,
+including repeated reviews after findings. Track the count in the current task plan. Use the branch
+name until a PR number exists. When the PR exists, rename the plan entry and preserve the count.
+Reserve the next count before dispatch. Include `call N of 3` in the reviewer prompt. The final
+metadata review does not count against this budget.
 
 1. Commit the exact state you intend to push. Leave nothing staged, unstaged, or uncommitted unless
    the user's instructions override this.
@@ -120,12 +126,18 @@ consume a CI and hosted-review round.
    invalid findings only with concrete evidence. If a finding exposes a real design choice, API
    trade-off, or behavioral default, pause the push and give the maintainer the options, trade-offs,
    evidence, and a recommendation; record the resulting decision. A remediation changes the
-   candidate HEAD and restarts this gate. After a maintainer decision changes the acceptance
-   criteria, dispatch a different fresh subagent. An evidence-backed dismissal on an unchanged
-   candidate HEAD does not require another pass. Escalate persistent disagreement.
+   candidate HEAD. Restart this gate only while the budget remains. After a maintainer decision
+   changes the acceptance criteria, dispatch a different fresh subagent when the budget remains.
+   An evidence-backed dismissal on an unchanged candidate HEAD does not require another pass.
+   Escalate persistent disagreement.
+
+Stop after a review returns no findings. After the third review, remediate its findings and run the
+relevant local checks. Do not dispatch a fourth review. Continue with the push, CI, and hosted
+review.
 
 Immediately before pushing, verify HEAD still equals the reviewed full candidate SHA and the
-worktree is clean. Any mismatch restarts the gate.
+worktree is clean. After third-review remediation, verify HEAD equals the locally checked
+remediation commit instead. Any other mismatch restarts the gate while the budget remains.
 
 Never use the implementing agent as the reviewer. Never treat this gate as test execution.
 
