@@ -673,7 +673,7 @@ async def test_nonstream_cancel_during_retry_sleep_cancels_job() -> None:
 
 async def test_nonstream_max_generation_continuations_cancels_job(monkeypatch: pytest.MonkeyPatch) -> None:
     """Hitting the max-continuations limit cancels the still-suspended job before raising, so it doesn't leak."""
-    monkeypatch.setattr('pydantic_ai._agent_graph.MAX_GENERATION_CONTINUATIONS', 2)
+    monkeypatch.setattr('pydantic_ai._agent_graph.model_call.MAX_GENERATION_CONTINUATIONS', 2)
 
     def fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[TextPart('paused')], state='suspended')
@@ -868,7 +868,7 @@ async def test_background_poll_survives_past_max_generation_continuations(
     so it must not count against the accumulate ceiling that guards a runaway `pause_turn` model — a
     healthy background job that legitimately runs long has to be allowed to finish.
     """
-    monkeypatch.setattr('pydantic_ai._agent_graph.MAX_GENERATION_CONTINUATIONS', 3)
+    monkeypatch.setattr('pydantic_ai._agent_graph.model_call.MAX_GENERATION_CONTINUATIONS', 3)
 
     poll_count = 8  # far past the strict cap of 3
     if stream:
@@ -989,7 +989,7 @@ async def test_nonstream_model_change_chain_counts_against_strict_ceiling(monkey
     cap (the runaway guard) rather than inherit the generous same-id backstop, and cancel the still-live
     job before raising.
     """
-    monkeypatch.setattr('pydantic_ai._agent_graph.MAX_GENERATION_CONTINUATIONS', 2)
+    monkeypatch.setattr('pydantic_ai._agent_graph.model_call.MAX_GENERATION_CONTINUATIONS', 2)
 
     def _suspended_model_change(model_name: str, provider_response_id: str) -> ModelResponse:
         return ModelResponse(
@@ -1139,7 +1139,7 @@ async def test_interrupted_later_segment_cost_is_checked_before_resume(monkeypat
         if response.usage.cost is None:
             response.usage.cost = Decimal(response.usage.input_tokens) / 1000
 
-    monkeypatch.setattr('pydantic_ai._agent_graph.fill_response_cost', finalize)
+    monkeypatch.setattr('pydantic_ai._agent_graph.model_call.fill_response_cost', finalize)
     model = _ScriptedModel(
         segments=[
             _StreamSegment(['first'], 'suspended', 'r1', input_tokens=6, output_tokens=1, cost=Decimal('0.006')),

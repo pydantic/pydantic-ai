@@ -15356,7 +15356,7 @@ async def test_background_max_polls(allow_model_requests: None, monkeypatch: pyt
     is why a legitimately long job isn't killed after 10 generation continuations. Patch it small here.
     Scripted responses are required because a live VCR recording cannot deterministically reach the backstop.
     """
-    monkeypatch.setattr('pydantic_ai._agent_graph.MAX_BACKGROUND_POLLS', 3)
+    monkeypatch.setattr('pydantic_ai._agent_graph.model_call.MAX_BACKGROUND_POLLS', 3)
     retrieve_response = _text_response('still working...', status='in_progress', background=True)
 
     mock_client = MockOpenAIResponses(
