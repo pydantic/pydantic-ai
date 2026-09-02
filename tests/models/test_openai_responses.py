@@ -5108,7 +5108,17 @@ async def test_openai_responses_thinking_without_summary(allow_model_requests: N
         pytest.param(
             ThinkingPart(content='thinking', id='reasoning_content', provider_name='openai'),
             {'role': 'assistant', 'content': '<think>\nthinking\n</think>'},
-            id='chat-field-id',
+            id='chat-reasoning-content-field-id',
+        ),
+        pytest.param(
+            ThinkingPart(content='thinking', id='reasoning', provider_name='openai'),
+            {'role': 'assistant', 'content': '<think>\nthinking\n</think>'},
+            id='chat-reasoning-field-id',
+        ),
+        pytest.param(
+            ThinkingPart(content='thinking', id='content', provider_name='openai'),
+            {'role': 'assistant', 'content': '<think>\nthinking\n</think>'},
+            id='chat-tagged-content-field-id',
         ),
         pytest.param(
             ThinkingPart(content='thinking', id='rs_123', provider_name='openai'),
@@ -5148,7 +5158,7 @@ async def test_openai_responses_thinking_without_summary(allow_model_requests: N
         ),
     ],
 )
-async def test_openai_responses_reasoning_replay_requires_native_evidence(
+async def test_openai_responses_does_not_replay_chat_reasoning_ids(
     allow_model_requests: None, thinking_part: ThinkingPart, expected_input: object
 ) -> None:
     response = response_message(
