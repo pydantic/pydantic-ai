@@ -61,6 +61,7 @@ from pydantic_ai.messages import (
     ToolReturn,
     ToolReturnContent,
     ToolReturnPart,
+    UnknownCustomEvent,
     UploadedFile,
     UserPromptPart,
     VideoUrl,
@@ -1863,6 +1864,31 @@ async def test_custom_event_with_ui_false_is_not_forwarded():
         [
             {'type': 'start'},
             {'type': 'data-vercel_shown', 'data': {'done': 2}},
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+            '[DONE]',
+        ]
+    )
+
+
+async def test_unknown_custom_event_is_not_forwarded():
+    """An event whose class this process never imported can't be known to be frontend-safe."""
+    unknown = UnknownCustomEvent(name='never_imported', data={'token': 's3cr3t'})
+
+    async def event_generator():
+        yield unknown
+
+    request = SubmitMessage(id='foo', messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='go')])])
+    event_stream = VercelAIEventStream(run_input=request)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    # The payload would otherwise ride out as `data-never_imported`.
+    assert events == snapshot(
+        [
+            {'type': 'start'},
             {'type': 'finish-step'},
             {'type': 'finish'},
             '[DONE]',

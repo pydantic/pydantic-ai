@@ -4566,8 +4566,11 @@ class CustomEvent:
 
     The flag lives on the class rather than on the wire, so an event deserialized in a process that
     hasn't imported its defining module arrives as an
-    [`UnknownCustomEvent`][pydantic_ai.messages.UnknownCustomEvent] and is forwarded. Import the module
-    that defines your events in the process that serves the frontend.
+    [`UnknownCustomEvent`][pydantic_ai.messages.UnknownCustomEvent], whose `ui` says nothing about what
+    the application declared. Those are not forwarded either, so an event that crosses a process
+    boundary can't leak a payload its class had opted out of. Import the modules that define your
+    events in the process that serves the frontend, or its custom events won't reach the frontend at
+    all.
     """
 
     def __post_init__(self) -> None:
