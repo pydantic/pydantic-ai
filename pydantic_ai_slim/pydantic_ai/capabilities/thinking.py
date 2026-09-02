@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
 from dataclasses import KW_ONLY, dataclass
 from typing import Any
 
 from pydantic_ai.settings import ModelSettings, ThinkingLevel
 
-from .abstract import AbstractCapability, merge_capability_fields
+from .abstract import AbstractCapability
 
 
 @dataclass
@@ -38,12 +37,3 @@ class Thinking(AbstractCapability[Any]):
 
     def get_model_settings(self) -> ModelSettings | None:
         return ModelSettings(thinking=self.effort)
-
-    @classmethod
-    def combine(cls, capabilities: Sequence[AbstractCapability[Any]]) -> AbstractCapability[Any]:
-        """An agent has one thinking configuration: the last one supplied is the one in effect.
-
-        Two of these under one `id` are one configuration stated twice, so the run keeps the
-        last. That is what lets `agent.run(capabilities=[...])` override an agent-level one.
-        """
-        return merge_capability_fields(capabilities)

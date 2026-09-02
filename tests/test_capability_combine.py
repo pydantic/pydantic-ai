@@ -13,7 +13,7 @@ import pkgutil
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import KW_ONLY, dataclass, field
-from typing import Any, TypeGuard, cast
+from typing import Any, ClassVar, Literal, TypeGuard, cast
 
 import pytest
 from inline_snapshot import snapshot
@@ -38,6 +38,7 @@ from pydantic_ai.capabilities._ordering import find_capability
 from pydantic_ai.capabilities.abstract import (
     AbstractCapability,
     combine_duplicate_capabilities,
+    declares_default_id,
     leaf_capabilities,
     merge_capability_fields,
 )
@@ -279,11 +280,18 @@ def test_capability_combine_policy_holds(name: str) -> None:
     capability_type = _shipped_capability_types()[name]
 
     if isinstance(policy, Anonymous):
-        # Anonymous capabilities carry no default id, so two never meet under one key.
-        assert capability_type.id is None, (
-            f'{name} is declared `Anonymous` but carries a default id {capability_type.id!r}'
+        # Anonymous capabilities declare no default id, so two never meet under one key. Read
+        # through `declares_default_id` rather than the class attribute: a capability with a
+        # custom `__init__` states its default in the signature, where the attribute reads `None`
+        # and would pass this on a capability that is not anonymous at all.
+        assert not declares_default_id(capability_type), (
+            f'{name} is declared `Anonymous` but its instances carry a default id'
         )
         return
+
+    assert declares_default_id(capability_type), (
+        f'{name} is declared `Combines` but declares no default id, so two never meet'
+    )
 
     first, second = policy.make()
     assert first.id is not None and first.id == second.id, (
@@ -292,15 +300,55 @@ def test_capability_combine_policy_holds(name: str) -> None:
     policy.check(type(first).combine([first, second]))
 
 
-def test_base_combine_rejects_duplicates() -> None:
-    """A capability that has not said how it composes refuses to guess."""
+def test_an_id_the_user_chose_twice_is_a_collision_not_a_repeat() -> None:
+    """A class that declares no default `id` has not said an agent has one of it.
+
+    So an `id` on one of its instances exists only because the user passed it, and passing the same
+    one twice names two capabilities the same rather than stating one configuration twice. Merging
+    would paper over the typo; the class is never asked.
+    """
 
     @dataclass
     class Custom(AbstractCapability[Any]):
         pass
 
-    with pytest.raises(UserError, match='is used by'):
-        Custom.combine([Custom(id='same'), Custom(id='same')])
+    with pytest.raises(UserError, match="Capability id 'same' is used by multiple capabilities"):
+        Agent(TestModel(), capabilities=[Custom(id='same'), Custom(id='same')])
+
+
+def test_combines_reject_refuses_to_merge() -> None:
+    """`combines = 'reject'` is for two identities rather than two statements of one configuration."""
+
+    @dataclass
+    class Account(AbstractCapability[Any]):
+        combines: ClassVar[Literal['merge', 'reject']] = 'reject'
+
+        token: str = ''
+
+        _: KW_ONLY
+
+        id: str | None = 'account'
+
+    with pytest.raises(UserError, match='Repeated Account capabilities cannot be combined'):
+        Agent(TestModel(), capabilities=[Account('first'), Account('second')])
+
+
+def test_a_declared_id_merges_without_an_override() -> None:
+    """Declaring a default `id` is the statement that an agent has one, so a repeat merges."""
+
+    @dataclass
+    class Settings(AbstractCapability[Any]):
+        effort: str | None = None
+        budget: int | None = None
+
+        _: KW_ONLY
+
+        id: str | None = 'settings'
+
+    merged = Settings.combine([Settings(effort='low'), Settings(budget=10)])
+
+    assert isinstance(merged, Settings)
+    assert (merged.effort, merged.budget) == ('low', 10)
 
 
 async def test_one_instance_registered_twice_survives_once() -> None:
@@ -615,3 +663,71 @@ def test_a_merge_cannot_reach_a_combination_the_constructor_rejects(
 def _a_local_tool(prompt: str) -> str:  # pragma: no cover
     """A local fallback."""
     return 'x'
+
+
+async def test_a_run_level_capability_replaces_the_agent_level_one_whole() -> None:
+    """Across layers the later one overrides; `combine` is not consulted.
+
+    A run states what *this* run does. Merging would let an agent-level allow-list widen the very
+    restriction the run was passed to impose, and would leave agent-level settings in place that
+    the run's configuration replaced.
+    """
+    seen: list[Sequence[Any]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append(info.model_request_parameters.native_tools)
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(
+        FunctionModel(model_fn),
+        capabilities=[WebSearch(allowed_domains=['agent.example'], max_uses=5)],
+    )
+
+    await agent.run('hi', capabilities=[WebSearch(allowed_domains=['run.example'])])
+
+    assert seen == snapshot([[WebSearchTool(allowed_domains=['run.example'])]])
+
+
+async def test_two_capabilities_on_one_agent_merge_rather_than_override() -> None:
+    """Within a layer they are one configuration stated twice, so both sides' domains survive.
+
+    Two packaged capabilities each bringing a `WebSearch` is the shape this exists for: an agent
+    composed of a coder and a researcher should reach the union of what each was allowed.
+    """
+    seen: list[Sequence[Any]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append(info.model_request_parameters.native_tools)
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(
+        FunctionModel(model_fn),
+        capabilities=[
+            WebSearch(allowed_domains=['stackoverflow.com', 'github.com']),
+            WebSearch(allowed_domains=['wikipedia.org']),
+        ],
+    )
+
+    await agent.run('hi')
+
+    assert seen == snapshot([[WebSearchTool(allowed_domains=['stackoverflow.com', 'github.com', 'wikipedia.org'])]])
+
+
+async def test_mutually_exclusive_fields_survive_a_run_level_override() -> None:
+    """Overriding across layers never builds a combination no constructor would accept.
+
+    `XSearch` refuses `allowed_x_handles` beside `excluded_x_handles`. Merging an agent-level
+    instance carrying one into a run-level instance carrying the other produced exactly that, so a
+    run that narrowed the handles raised instead of taking effect.
+    """
+    seen: list[Sequence[Any]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append(info.model_request_parameters.native_tools)
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[XSearch(allowed_x_handles=['pydantic'])])
+
+    await agent.run('hi', capabilities=[XSearch(excluded_x_handles=['spam'])])
+
+    assert seen == snapshot([[XSearchTool(excluded_x_handles=['spam'])]])

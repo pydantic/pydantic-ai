@@ -5,6 +5,8 @@ from abc import ABC
 from collections import Counter
 from collections.abc import AsyncIterable, Awaitable, Callable, Collection, Mapping, Sequence, Set as AbstractSet
 from dataclasses import KW_ONLY, dataclass
+from functools import cache
+from inspect import Parameter, signature
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypeAlias, cast
 from weakref import WeakValueDictionary
 
@@ -285,6 +287,20 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     override is optional and only adds routing context to the load catalog.
     """
 
+    combines: ClassVar[Literal['merge', 'reject']] = 'merge'
+    """What two of this capability under one `id` mean, when the class declares a default `id`.
+
+    `'merge'`, the default: they are one configuration stated twice, and the run uses the two
+    merged field by field -- a value only one of them states is kept, and a value both state takes
+    the later one. Declaring a default `id` is already the statement that an agent has one of these,
+    so merging a repeat is almost always what it meant.
+
+    `'reject'`: two of them are two *identities* rather than two statements of one configuration --
+    two accounts, two credentials -- and merging would silently drop one. The run raises instead.
+
+    Override [`combine`][pydantic_ai.capabilities.AbstractCapability.combine] for anything else.
+    """
+
     @classmethod
     def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
         """Combine capabilities that resolved to the same `id` into the one the run will use.
@@ -293,28 +309,19 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         that `id` refers to. Rather than guessing, the run asks the class how its own instances
         compose, once per duplicated `id`, with every instance in application order.
 
-        The default raises: for most capabilities a repeat is a mistake — the same one added twice,
-        or two that were meant to be told apart — and a run-local id assigned by position instead
-        would be neither predictable nor stable. Capabilities whose repeats *do* have a meaning
-        override this:
+        The default follows [`combines`][pydantic_ai.capabilities.AbstractCapability.combines], so
+        most capabilities never override this. Override it when composing takes more than merging
+        fields -- `NativeOrLocalTool` rebuilds its native tool from the merged configuration,
+        because that tool, not the capability, is what reaches the provider.
 
-        - A single-purpose capability composes by **last wins**, which is what makes
-          `agent.run(capabilities=[Thinking(effort='high')])` override an agent-level `Thinking`:
-
-            ```python {noqa="F821" test="skip"}
-            @classmethod
-            def combine(
-                cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]
-            ) -> AbstractCapability[AgentDepsT]:
-                return capabilities[-1]
-            ```
-
-        - A capability that bundles others merges them, so two bundles sharing a member contribute
-          it once.
-
-        Only reached by capabilities that have an `id` at all: an
+        Only reached by capabilities that declare a default `id`. An
         [`id`][pydantic_ai.capabilities.AbstractCapability.id] of `None` means "however many of
-        these you like", and those are told apart by the run instead.
+        these you like", and those are told apart by the run instead; an `id` the *user* passed to
+        a capability that declares none is a naming collision rather than a repeat, and is rejected
+        without asking the class.
+
+        Only reached *within* one layer, too: a capability supplied for a run overrides its
+        agent-level namesake outright rather than composing with it.
 
         Args:
             capabilities: The two or more capabilities sharing an `id`, in application order.
@@ -325,14 +332,11 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
             The single capability the `id` refers to for this run.
 
         Raises:
-            UserError: By default, naming the `id` and how to resolve the duplication.
+            UserError: When `combines` is `'reject'`, naming the `id` and how to resolve it.
         """
-        raise UserError(
-            f'Capability id {capabilities[0].id!r} is used by {len(capabilities)} capabilities. '
-            f'Pass a distinct `id` to each, or `id=None` to have the run tell them apart. '
-            f'To define how repeated {cls.__name__} capabilities compose, override '
-            f'`{cls.__name__}.combine()`.'
-        )
+        if cls.combines == 'merge':
+            return merge_capability_fields(capabilities)
+        raise UserError(repeated_id_message(capabilities[0].id or '', cls, len(capabilities)))
 
     def apply(self, visitor: Callable[[AbstractCapability[AgentDepsT]], None]) -> None:
         """Run a visitor function on all leaf capabilities in this tree.
@@ -1352,23 +1356,28 @@ def leaf_capabilities(capability: AbstractCapability[AgentDepsT]) -> list[Abstra
 
 def combine_duplicate_capabilities(
     capability: AbstractCapability[AgentDepsT],
-    applied: Sequence[AbstractCapability[AgentDepsT]] | None = None,
+    layers: Sequence[Sequence[AbstractCapability[AgentDepsT]]] | None = None,
 ) -> AbstractCapability[AgentDepsT]:
-    """Resolve capabilities sharing an `id` in a tree down to one each, via `AbstractCapability.combine`.
+    """Resolve capabilities sharing an `id` in a tree down to one each.
 
-    Runs over the whole composed tree rather than a layer at a time, so wherever two capabilities
-    meet — both on the agent, both passed to one run, or one of each — the same rule applies and the
-    same `combine` decides. `agent.run(capabilities=[Thinking(effort='high')])` overriding an
-    agent-level `Thinking` is then not a special case but the ordinary meaning of two capabilities
-    under one id.
+    Two capabilities under one `id` mean different things depending on where they came from, so the
+    rule is different in each direction:
 
-    `Agent.__init__` also runs it over the capabilities the agent was constructed with, because it
-    goes on to bind them and read what they contribute long before a run exists, and two that will
-    merge into one must not be read as two. That pass is redundant with this one by run setup, which
-    is fine: combining leaves no duplicate for the second pass to find.
+    * **Within a layer** they are one configuration stated twice, and
+      [`combine`][pydantic_ai.capabilities.AbstractCapability.combine] decides what that means.
+      `Agent(capabilities=[Coder(), Researcher()])` brings two `WebSearch` capabilities with
+      different allow-lists, and the agent should be able to reach both sets of domains.
+    * **Across layers** the later layer *overrides* the earlier one outright, and `combine` is not
+      consulted at all. `agent.run(capabilities=[WebSearch(allowed_domains=[...])])` states what
+      this run may reach; merging it into the agent's list would widen the very restriction it was
+      passed to impose. A run-level capability replaces its agent-level namesake, whole.
+
+    `Agent.__init__` also runs this over the capabilities the agent was constructed with -- one
+    layer, so within-layer rules -- because it goes on to bind them and read what they contribute
+    long before a run exists, and two that will merge into one must not be read as two.
 
     Keeping both is not an option: `_build_run_capabilities` maps the id to exactly one of them, so
-    the other would go on contributing tools and instructions while nothing could name it —
+    the other would go on contributing tools and instructions while nothing could name it --
     `resolve_capability_id` wouldn't find it, and it would be missing from
     `RunContext.active_capability_ids`.
 
@@ -1379,18 +1388,23 @@ def combine_duplicate_capabilities(
 
     Capabilities with `id=None` are left alone: the run tells those apart itself.
 
-    `applied` is the layers in the order they were supplied, and it decides which of two duplicates
-    counts as later. The composed tree cannot answer that: `CombinedCapability` sorts its leaves
-    into ordering tiers, so a capability supplied later but positioned `'outermost'` moves ahead of
-    one supplied earlier, and reading "last" off the tree would hand `combine` the two in the wrong
-    order -- turning a run-level override into the agent-level capability winning. Omit it only
-    where there is no meaningful application order to state.
+    `layers` is the application layers in order, each holding the capabilities supplied to it. The
+    composed tree cannot answer either question: `CombinedCapability` sorts its leaves into ordering
+    tiers, so a capability supplied later but positioned `'outermost'` moves ahead of one supplied
+    earlier, and reading "last" off the tree would turn a run-level override into the agent-level
+    capability winning. Omit it only where everything belongs to one layer.
     """
+    if layers is None:
+        layers = [[capability]]
     order: dict[int, int] = {}
-    for index, leaf in enumerate(
-        leaf for layer in (applied if applied is not None else [capability]) for leaf in leaf_capabilities(layer)
-    ):
-        order.setdefault(id(leaf), index)
+    layer_of: dict[int, int] = {}
+    position = 0
+    for layer_index, layer in enumerate(layers):
+        for member in layer:
+            for leaf in leaf_capabilities(member):
+                order.setdefault(id(leaf), position)
+                layer_of.setdefault(id(leaf), layer_index)
+                position += 1
 
     by_id: dict[str, list[AbstractCapability[AgentDepsT]]] = {}
     for leaf in leaf_capabilities(capability):
@@ -1412,7 +1426,12 @@ def combine_duplicate_capabilities(
     for capability_id, duplicates in by_id.items():
         if len(duplicates) == 1:
             continue
-        combined_duplicate = _combine_duplicates(capability_id, duplicates)
+        # Only the last layer to state this id has a say; everything an earlier layer said under it
+        # is overridden, not merged in. `combine` then settles what the survivors within that one
+        # layer mean -- and with a single survivor there is nothing to settle, so it isn't called.
+        last_layer = max(layer_of.get(id(duplicate), 0) for duplicate in duplicates)
+        surviving = [duplicate for duplicate in duplicates if layer_of.get(id(duplicate), 0) == last_layer]
+        combined_duplicate = _combine_duplicates(capability_id, surviving) if len(surviving) > 1 else surviving[-1]
         for index, duplicate in enumerate(duplicates):
             is_last = index == len(duplicates) - 1
             replacements.setdefault(id(duplicate), []).append(combined_duplicate if is_last else None)
@@ -1435,9 +1454,48 @@ def combine_duplicate_capabilities(
 def _combine_duplicates(
     capability_id: str, duplicates: Sequence[AbstractCapability[AgentDepsT]]
 ) -> AbstractCapability[AgentDepsT]:
-    """Ask the shared class how its instances compose, or reject a class-crossing `id`."""
+    """Ask the shared class how its instances compose, or reject a `id` no class claims."""
     reject_class_crossing_id(capability_id, {type(duplicate) for duplicate in duplicates})
+    if not declares_default_id(type(duplicates[-1])):
+        raise UserError(repeated_id_message(capability_id, type(duplicates[-1]), len(duplicates)))
     return duplicates[-1].combine(duplicates)
+
+
+def repeated_id_message(capability_id: str, capability_type: type[AbstractCapability[Any]], count: int) -> str:
+    """Why this `id` cannot resolve to one capability, in the terms that apply to this class.
+
+    Shared by `Agent(...)` validation and the run's own resolution so the two report a repeat the
+    same way, whichever notices it first.
+    """
+    if not declares_default_id(capability_type):
+        # The class says nothing about how many of it an agent has, so this `id` is one the user
+        # chose -- and choosing it twice is a naming collision, not one configuration stated twice.
+        return (
+            f'Capability id {capability_id!r} is used by multiple capabilities. '
+            'Capability ids must be unique within a run.'
+        )
+    return (
+        f'Capability id {capability_id!r} is used by {count} capabilities. '
+        'Pass a distinct `id` to each, or `id=None` to have the run tell them apart. '
+        f'Repeated {capability_type.__name__} capabilities cannot be combined.'
+    )
+
+
+@cache
+def declares_default_id(capability_type: type[AbstractCapability[Any]]) -> bool:
+    """Whether the class itself names the `id` its instances carry, rather than the user.
+
+    A default `id` is a class saying "an agent has one of me", which is what makes a repeat
+    something to combine. Without one, an `id` only exists because the user passed it, and two
+    they passed the same are two capabilities they meant to tell apart.
+    """
+    if getattr(capability_type, 'id', None) is not None:
+        return True
+    try:
+        parameter = signature(capability_type.__init__).parameters.get('id')
+    except (TypeError, ValueError):  # pragma: no cover
+        return False
+    return parameter is not None and parameter.default not in (Parameter.empty, None)
 
 
 def reject_class_crossing_id(capability_id: str, types: Collection[type[AbstractCapability[Any]]]) -> None:

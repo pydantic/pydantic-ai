@@ -26,7 +26,7 @@ from ..tools import (
 from ..toolsets import AbstractToolset
 from ..toolsets._tool_search import ToolSearchToolset, keywords_search_fn
 from ._deferred_capabilities import record_loaded_capability_tools
-from .abstract import AbstractCapability, CapabilityOrdering, merge_capability_fields
+from .abstract import AbstractCapability, CapabilityOrdering
 
 if TYPE_CHECKING:
     from ..models import ModelRequestContext
@@ -157,15 +157,6 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
             self._search_fn = self.strategy
         else:
             self._search_fn = None
-
-    @classmethod
-    def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
-        """An agent has one tool-discovery configuration: the merged one is what the run uses.
-
-        Two of these otherwise both register `search_tools` and contribute the same native tool,
-        which surfaces as a name or native-tool-id conflict rather than as the duplicate it is.
-        """
-        return merge_capability_fields(capabilities)
 
     def get_ordering(self) -> CapabilityOrdering:
         return CapabilityOrdering(position='outermost')

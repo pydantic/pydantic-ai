@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
 from dataclasses import KW_ONLY, dataclass, replace
 from typing import TYPE_CHECKING, Any, cast
 
@@ -8,7 +7,7 @@ from pydantic_ai.messages import ModelMessage, ModelRequest, SystemPromptPart
 from pydantic_ai.models import Model
 from pydantic_ai.tools import AgentDepsT, RunContext
 
-from .abstract import AbstractCapability, merge_capability_fields
+from .abstract import AbstractCapability
 
 if TYPE_CHECKING:
     from pydantic_ai.models import ModelRequestContext
@@ -85,15 +84,6 @@ class ReinjectSystemPrompt(AbstractCapability[AgentDepsT]):
         if sys_parts:
             _prepend_to_first_request(messages, sys_parts)
         return request_context
-
-    @classmethod
-    def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
-        """One reinjection policy per agent: the last one supplied is the one in effect.
-
-        Two of these under one `id` are one configuration stated twice, so the run keeps the
-        last. That is what lets `agent.run(capabilities=[...])` override an agent-level one.
-        """
-        return merge_capability_fields(capabilities)
 
 
 def _has_system_prompt(messages: list[ModelMessage]) -> bool:

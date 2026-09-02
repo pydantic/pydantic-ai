@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
 from dataclasses import KW_ONLY, dataclass
 from typing import TYPE_CHECKING
 
@@ -8,7 +7,7 @@ from pydantic_ai._run_context import AgentDepsT, RunContext
 from pydantic_ai.exceptions import ContentFilterError
 from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelResponse
 
-from .abstract import AbstractCapability, merge_capability_fields
+from .abstract import AbstractCapability
 
 if TYPE_CHECKING:
     from pydantic_ai.models import ModelRequestContext
@@ -57,12 +56,3 @@ class RaiseContentFilterError(AbstractCapability[AgentDepsT]):
             raise ContentFilterError(message, body=body)
 
         return response
-
-    @classmethod
-    def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
-        """Raising on a content filter is on or off: the last one supplied is the one in effect.
-
-        Two of these under one `id` are one configuration stated twice, so the run keeps the
-        last. That is what lets `agent.run(capabilities=[...])` override an agent-level one.
-        """
-        return merge_capability_fields(capabilities)

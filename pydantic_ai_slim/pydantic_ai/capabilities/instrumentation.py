@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import warnings
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable
 from dataclasses import KW_ONLY, dataclass, field, replace
 from typing import TYPE_CHECKING, Any, ClassVar
 
@@ -46,7 +46,6 @@ from .abstract import (
     WrapOutputProcessHandler,
     WrapRunHandler,
     WrapToolExecuteHandler,
-    merge_capability_fields,
 )
 
 if TYPE_CHECKING:
@@ -599,12 +598,3 @@ class Instrumentation(AbstractCapability[Any]):
                 serialize_any(redact_binary_content(value, self.settings))
             ).decode(),
         )
-
-    @classmethod
-    def combine(cls, capabilities: Sequence[AbstractCapability[Any]]) -> AbstractCapability[Any]:
-        """An agent is instrumented one way: the last settings supplied are the ones in effect.
-
-        Two of these under one `id` are one configuration stated twice, so the run keeps the
-        last. That is what lets `agent.run(capabilities=[...])` override an agent-level one.
-        """
-        return merge_capability_fields(capabilities)

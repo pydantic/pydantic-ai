@@ -6,10 +6,11 @@ Custom capability classes can be plain classes or dataclasses. The shared metada
 
 Capabilities that cover a single fixed concern instead declare a stable default `id` — the built-in [`WebSearch`][pydantic_ai.capabilities.WebSearch] uses `'web_search'`, [`Thinking`][pydantic_ai.capabilities.Thinking] uses `'thinking'`, and so on — so [durable execution](../durable_execution/overview.md) can identify what they contribute without you naming something you never constructed. Give your own capability a default `id` when it is one-off in the same way.
 
-Because the id is fixed, two of them meet under one id. What that means is the capability's own decision, taken by [`combine`][pydantic_ai.capabilities.AbstractCapability.combine]:
+Because the id is fixed, two of them can meet under one id, and what that means depends on where they came from.
+
+**Two on the same agent** are one configuration stated twice, so they merge field by field: a value only one of them states is kept, and a value both state takes the later one. That is what lets two packaged capabilities each bring a `WebSearch` and the agent reach both sets of domains. Declare it with [`combines`][pydantic_ai.capabilities.AbstractCapability.combines], which is `'merge'` by default:
 
 ```python {title="combine_capability.py"}
-from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -20,15 +21,13 @@ from pydantic_ai.capabilities import AbstractCapability
 class Retries(AbstractCapability[Any]):
     limit: int = 3
     id: str | None = 'retries'
-
-    @classmethod
-    def combine(
-        cls, capabilities: Sequence[AbstractCapability[Any]]
-    ) -> AbstractCapability[Any]:
-        return capabilities[-1]
 ```
 
-The default raises, because for most capabilities a repeat is a mistake — the same one added twice, or two that were meant to be told apart. The one-off built-ins keep the last, which is what makes `agent.run(capabilities=[Thinking(effort='high')])` override an agent-level `Thinking`: an agent-level capability and a run-level one meet under exactly the same rule as two on the agent. Pass a distinct `id` to keep both, or `id=None` to opt back into the derived-and-disambiguated ids.
+Set `combines = 'reject'` when two instances are two *identities* rather than two statements of one configuration — two accounts, two credentials — so that merging them would silently drop one. Override [`combine`][pydantic_ai.capabilities.AbstractCapability.combine] when composing takes more than merging fields.
+
+**A capability supplied for a run** overrides its agent-level namesake outright — `agent.run(capabilities=[Thinking(effort='high')])` replaces the agent's `Thinking` rather than merging with it. A run states what *this* run does, so merging would let an agent-level setting the run meant to replace survive, and let an agent-level allow-list widen a restriction the run was passed to impose. `combine` is not consulted across layers.
+
+To keep two rather than resolving them, pass a distinct `id` to each, or `id=None` to opt back into the derived-and-disambiguated ids. An `id` you pass to a capability that declares no default is a name you chose, so passing the same one twice is reported as a collision rather than merged.
 
 ```python {title="custom_capability_plain.py"}
 from typing import Any
