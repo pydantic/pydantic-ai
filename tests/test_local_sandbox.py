@@ -241,6 +241,27 @@ async def test_cancellation_during_spawn_still_kills_the_process_group(tmp_path:
     await _assert_process_gone(int(pid_file.read_text()))
 
 
+async def test_timeout_during_spawn_still_kills_the_process_group(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    sandbox = LocalSandbox(tmp_path)
+    pid_file = tmp_path / 'pid'
+    release = asyncio.Event()
+    real_create_subprocess_shell = asyncio.create_subprocess_shell
+
+    async def held_spawn(*args: Any, **kwargs: Any) -> asyncio.subprocess.Process:
+        process = await real_create_subprocess_shell(*args, **kwargs)
+        await release.wait()
+        return process
+
+    monkeypatch.setattr(asyncio, 'create_subprocess_shell', held_spawn)
+    try:
+        with pytest.raises(SandboxTimeoutError, match='was killed'):
+            await sandbox.run(_background_sleep_command(pid_file), shell=True, timeout=0.01)
+    finally:
+        release.set()
+
+    await _assert_process_gone(int(pid_file.read_text()))
+
+
 async def test_cancellation_during_failing_spawn_is_tolerated(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """A spawn that fails after its run was cancelled has nobody left to receive the error;
     the abandoned-spawn cleanup must consume it instead of leaving it unretrieved."""

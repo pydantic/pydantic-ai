@@ -295,22 +295,15 @@ class LocalSandbox:
             asyncio.create_task(self._read_stream(process.stderr, stderr_buffer, stdout_buffer)),
         ]
 
-        async def wait_for_exit() -> int:
-            # `Process.wait()` also waits for pipe EOF, which descendants can postpone.
-            while process.returncode is None:
-                await asyncio.sleep(0.01)
-            return process.returncode
-
-        process_wait_task = asyncio.create_task(wait_for_exit())
         try:
-            await self._wait_for_direct_child(process, process_wait_task, reader_tasks, deadline)
+            await self._wait_for_direct_child(process, reader_tasks, deadline)
             await self._drain_output(reader_tasks, deadline)
             self._close_transport(process)
         except (TimeoutError, asyncio.TimeoutError) as error:  # asyncio's is distinct on 3.10
             # The contract: a timeout kills the command first, then raises SandboxTimeoutError —
             # even when a hardened host denies the group kill, in which case the
             # denial rides along as the cause instead of replacing the promised type.
-            denial = await self._kill_and_reap_and_close(process, process_wait_task, reader_tasks)
+            denial = await self._kill_and_reap_and_close(process, reader_tasks)
             stdout = stdout_buffer.decode('utf-8', errors='replace')
             stderr = stderr_buffer.decode('utf-8', errors='replace')
             if denial is not None:
@@ -333,7 +326,7 @@ class LocalSandbox:
             # with a kill-denial error would break the caller's cancel scope. `returncode`
             # alone can't tell us the group is gone: a shell can exit while a background
             # child keeps the pipes open.
-            await self._kill_and_reap_and_close(process, process_wait_task, reader_tasks)
+            await self._kill_and_reap_and_close(process, reader_tasks)
             raise
         assert process.returncode is not None
         return CommandResult(
@@ -356,28 +349,31 @@ class LocalSandbox:
     @staticmethod
     async def _wait_for_direct_child(
         process: asyncio.subprocess.Process,
-        process_wait_task: asyncio.Task[int],
         reader_tasks: list[asyncio.Task[None]],
         deadline: float | None,
     ) -> None:
-        pending = {process_wait_task, *reader_tasks}
-        while process_wait_task in pending:
+        # Polled, not `await process.wait()`: that only returns once every pipe reaches EOF, which a
+        # descendant holding the command's stdout can postpone indefinitely.
+        while process.returncode is None:
+            for task in reader_tasks:
+                if task.done():
+                    task.result()
             remaining = None if deadline is None else deadline - time.monotonic()
-            done, pending = await asyncio.wait(pending, timeout=remaining, return_when=asyncio.FIRST_COMPLETED)
-            if not done:
-                if process.returncode is None:
-                    raise asyncio.TimeoutError
-                break
-            for task in done:
+            if remaining is not None and remaining <= 0:
+                raise asyncio.TimeoutError
+            await asyncio.sleep(0.01 if remaining is None else min(0.01, remaining))
+        for task in reader_tasks:
+            if task.done():
                 task.result()
-
-        if not process_wait_task.done():
-            process_wait_task.cancel()
-            await asyncio.gather(process_wait_task, return_exceptions=True)
 
     @staticmethod
     async def _drain_output(reader_tasks: list[asyncio.Task[None]], deadline: float | None) -> None:
-        pending_readers = [task for task in reader_tasks if not task.done()]
+        pending_readers: set[asyncio.Task[None]] = set()
+        for task in reader_tasks:
+            if task.done():
+                task.result()
+            else:
+                pending_readers.add(task)
         if not pending_readers:
             return
         remaining = _OUTPUT_DRAIN_GRACE
@@ -394,17 +390,15 @@ class LocalSandbox:
     async def _kill_and_reap_and_close(
         self,
         process: asyncio.subprocess.Process,
-        process_wait_task: asyncio.Task[int],
         reader_tasks: list[asyncio.Task[None]],
     ) -> PermissionError | None:
         cleanup = asyncio.create_task(self._kill_and_reap(process))
         try:
             denial = await asyncio.shield(cleanup)
         finally:
-            process_wait_task.cancel()
             for task in reader_tasks:
                 task.cancel()
-            await asyncio.gather(process_wait_task, *reader_tasks, return_exceptions=True)
+            await asyncio.gather(*reader_tasks, return_exceptions=True)
             self._close_transport(process)
         return denial
 

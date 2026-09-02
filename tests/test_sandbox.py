@@ -104,17 +104,6 @@ def make_probe_agent(seen: list[str], **kwargs: Any) -> Agent:
     return agent
 
 
-def make_identity_probe_agent(seen: list[Sandbox], **kwargs: Any) -> Agent:
-    agent: Agent = Agent(_tool_call_then_text(), **kwargs)
-
-    @agent.tool
-    async def probe(ctx: RunContext[Any]) -> str:
-        seen.append(ctx.sandbox)
-        return 'ok'
-
-    return agent
-
-
 def make_connecting_probe_agent(seen: list[str], **kwargs: Any) -> Agent:
     agent: Agent = Agent(_tool_call_then_text(), **kwargs)
 
@@ -303,6 +292,20 @@ async def test_read_file_windowed_works_without_filesystem_support():
 
     with pytest.raises(NotImplementedError, match='SupportsFilesystem'):
         await sandbox.read_file('file')
+
+
+async def test_read_file_windowed_preserves_no_trailing_newline():
+    inner = FakeSandbox('run-only-no-trailing-newline')
+    inner.fs.files['/workspace/file'] = b'one\ntwo\nthree'
+
+    window = await Sandbox(_RunOnlySandbox(inner)).read_file('file', offset=2, limit=2)
+
+    assert (window.lines, window.text, window.has_more, window.total_lines) == (
+        ('two', 'three'),
+        'two\nthree',
+        False,
+        3,
+    )
 
 
 async def test_windowed_read_without_shell_or_filesystem_has_targeted_error():

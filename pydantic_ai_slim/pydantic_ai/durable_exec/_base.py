@@ -596,19 +596,18 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         # framework's unavailable placeholder) can be carried across the durable boundary, and a
         # ref must not connect in {container} code either — durable units reconnect it themselves.
         sandbox = ctx.__dict__.get('sandbox')
-        if not isinstance(sandbox, Sandbox):
-            return
-        identity = sandbox._durable_identity()  # pyright: ignore[reportPrivateUsage]
-        if isinstance(identity, SandboxRef):
-            sandbox._forbid_connection(  # pyright: ignore[reportPrivateUsage]
-                f'`ctx.sandbox` cannot connect inside {self.engine_name} {self.durable_container_noun} code. '
-                'Use it from tools or other durable units, which reconnect it through `get_sandbox`.'
-            )
-        elif not isinstance(identity, UnavailableSandbox):
-            raise UserError(
-                f'A live sandbox backend cannot be passed to an agent run inside {self.engine_name} durable '
-                f'{self.durable_container_noun}. Pass a `SandboxRef` instead.'
-            )
+        if isinstance(sandbox, Sandbox):
+            identity = sandbox._durable_identity()  # pyright: ignore[reportPrivateUsage]
+            if isinstance(identity, SandboxRef):
+                sandbox._forbid_connection(  # pyright: ignore[reportPrivateUsage]
+                    f'`ctx.sandbox` cannot connect inside {self.engine_name} {self.durable_container_noun} code. '
+                    'Use it from tools or other durable units, which reconnect it through `get_sandbox`.'
+                )
+            elif not isinstance(identity, UnavailableSandbox):
+                raise UserError(
+                    f'A live sandbox backend cannot be passed to an agent run inside {self.engine_name} durable '
+                    f'{self.durable_container_noun}. Pass a `SandboxRef` instead.'
+                )
 
     def _effective_event_stream_handler(self) -> EventStreamHandler[AgentDepsT] | None:
         """The handler in-boundary event delivery targets for the current run.

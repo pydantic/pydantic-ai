@@ -1148,7 +1148,8 @@ async def test_durability_validates_only_resolved_runtime_capability_layers():
         return CombinedCapability([_BaseOne(), _BaseTwo(), _SkipRequest()])
 
     def extra_factory(ctx: RunContext[None]) -> AbstractCapability[None]:
-        return CombinedCapability([_ExtraOne(), _ExtraTwo()])
+        # Never called: the per-run layer is rejected before its factory runs, which is the point.
+        return CombinedCapability([_ExtraOne(), _ExtraTwo()])  # pragma: no cover
 
     agent = Agent(
         TestModel(),

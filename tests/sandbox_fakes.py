@@ -151,7 +151,8 @@ def ref_sandbox(ref: SandboxRef) -> Sandbox:
     """
 
     async def never_connects(_ref: SandboxRef) -> SandboxBackend:
-        raise AssertionError('the deferred sandbox must be reconnected through a capability')
+        # This resolver is only supplied to serialization tests; connecting through it is impossible by design.
+        raise AssertionError('the deferred sandbox must be reconnected through a capability')  # pragma: no cover
 
     return Sandbox._from_ref(ref, never_connects)  # pyright: ignore[reportPrivateUsage]
 
