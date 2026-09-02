@@ -147,9 +147,12 @@ class _WindowlessModel(AbstractModel):
 
 def test_context_window_used_none_for_model_without_context_window():
     """`None` for any `AbstractModel` whose `context_window` is unknown, e.g. a realtime model."""
+    model = _WindowlessModel()
+    assert model.model_id == 'test:windowless'
+    assert model.context_window is None
     ctx = RunContext(
         deps=None,
-        model=_WindowlessModel(),
+        model=model,
         usage=RunUsage(),
         messages=[ModelResponse(parts=[TextPart('done')], usage=RequestUsage(input_tokens=150, output_tokens=50))],
     )
