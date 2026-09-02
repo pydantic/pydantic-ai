@@ -1,8 +1,7 @@
 from __future__ import annotations as _annotations
 
-from pydantic_ai import ModelProfile
-from pydantic_ai.profiles import merge_profile
-from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
+from . import ModelProfile, merge_profile
+from .openai import OpenAIModelProfile, openai_model_profile
 
 
 def openai_codex_model_profile(model_name: str) -> ModelProfile:
