@@ -1565,7 +1565,14 @@ def infer_model_profile(model: str) -> ModelProfile:
     profile = provider_profile or DEFAULT_PROFILE
 
     if 'context_window' not in (provider_profile or {}):
-        context_window = lookup_context_window(model_name, provider_name=provider)
+        # genai-prices matches on the provider name alone, and a gateway prefix like `gateway/chat`
+        # doesn't contain one, so look up under the provider it resolves to.
+        lookup_provider = provider
+        if lookup_provider.startswith('gateway/'):
+            from ..providers.gateway import normalize_gateway_provider
+
+            lookup_provider = normalize_gateway_provider(lookup_provider)
+        context_window = lookup_context_window(model_name, provider_name=lookup_provider)
         if context_window is not None:
             profile = merge_profile(profile, ModelProfile(context_window=context_window))
     return profile

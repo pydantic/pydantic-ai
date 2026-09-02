@@ -409,6 +409,27 @@ def test_infer_model_profile_matches_provider(model_id: str, provider_path: str,
     assert {key: value for key, value in profile.items() if key != 'context_window'} == provider_profile
 
 
+@pytest.mark.parametrize(
+    ('gateway_model_id', 'direct_model_id'),
+    [
+        ('gateway/openai:gpt-5', 'openai:gpt-5'),
+        ('gateway/chat:gpt-5', 'openai:gpt-5'),
+        ('gateway/responses:gpt-5', 'openai:gpt-5'),
+        ('gateway/anthropic:claude-sonnet-4-5', 'anthropic:claude-sonnet-4-5'),
+        (
+            'gateway/converse:anthropic.claude-sonnet-4-5-20250929-v1:0',
+            'bedrock:anthropic.claude-sonnet-4-5-20250929-v1:0',
+        ),
+        ('gateway/google:gemini-2.5-flash', 'google-cloud:gemini-2.5-flash'),
+    ],
+)
+def test_infer_model_profile_context_window_through_gateway(gateway_model_id: str, direct_model_id: str):
+    """A gateway model ID gets the same `context_window` as the provider it routes to, aliases included."""
+    direct = infer_model_profile(direct_model_id).get('context_window')
+    assert direct is not None
+    assert infer_model_profile(gateway_model_id).get('context_window') == direct
+
+
 def test_infer_model_profile_respects_explicit_unknown_context_window():
     """An explicit provider value suppresses the genai-prices lookup for raw model IDs."""
     with patch(
