@@ -4681,23 +4681,24 @@ async def test_anthropic_retry_carries_the_configured_thinking_forward(allow_mod
 
 
 @pytest.mark.parametrize(
-    'model_name,settings',
+    'model_name,asks_to_fail',
     [
-        pytest.param('claude-fable-5', None, id='model_does_not_bind'),
-        pytest.param(
-            'claude-fable-5-1',
-            AnthropicModelSettings(
-                anthropic_thinking={'type': 'adaptive', 'block_binding': {'prefix_mismatch_behavior': 'error'}}
-            ),
-            id='caller_asked_to_fail',
-        ),
+        pytest.param('claude-fable-5', False, id='model_does_not_bind'),
+        pytest.param('claude-fable-5-1', True, id='caller_asked_to_fail'),
     ],
 )
 async def test_anthropic_does_not_retry_a_stale_thinking_block(
-    allow_model_requests: None, model_name: str, settings: AnthropicModelSettings | None
+    allow_model_requests: None, model_name: str, asks_to_fail: bool
 ):
     """The retry is scoped: a model that doesn't bind can't produce this, and an explicit
     `'error'` is a caller asking to fail rather than to lose reasoning."""
+    settings = (
+        AnthropicModelSettings(
+            anthropic_thinking={'type': 'adaptive', 'block_binding': {'prefix_mismatch_behavior': 'error'}}
+        )
+        if asks_to_fail
+        else None
+    )
     mock_client = MockAnthropic.create_mock(stale_thinking_block_error())
     m = AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=mock_client))
 
