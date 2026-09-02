@@ -1126,13 +1126,20 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     raise
 
             warnings.warn(
-                f'{self.model_name!r} rejected a replayed thinking block because the conversation prefix '
-                'changed, which Anthropic enforces for accounts created on or after 2026-08-31. Pydantic AI '
-                "retried the request with `prefix_mismatch_behavior='drop_block'`, so the run continued "
-                "without that turn's reasoning. To skip the rejected request, ask for the drop yourself: "
-                "`model_settings={'anthropic_thinking': {'type': 'adaptive', 'block_binding': "
+                f'{self.model_name!r} rejected a replayed thinking block: the conversation prefix changed '
+                'between requests, which Anthropic enforces for accounts created on or after 2026-08-31. '
+                "Pydantic AI retried with `prefix_mismatch_behavior='drop_block'`, so the run continued "
+                "without that turn's reasoning. The cause is something earlier in the request that is not "
+                'byte-stable between turns — commonly instructions carrying a per-request value such as a '
+                'timestamp, or a tool added, removed or reordered mid-conversation. That same instability '
+                'invalidates the prompt cache on every model and provider, where it raises nothing and '
+                'silently re-charges the whole conversation at uncached rates, so this rejection is the '
+                'loud version of a normally-silent cost. Making the prefix stable is the real fix; to skip '
+                'the rejected request instead, ask for the drop yourself: `model_settings='
+                "{'anthropic_thinking': {'type': 'adaptive', 'block_binding': "
                 "{'prefix_mismatch_behavior': 'drop_block'}}}`. To keep the retry and silence this warning: "
                 "`warnings.simplefilter('ignore', AnthropicStaleThinkingBlockWarning)`. See "
+                'https://pydantic.dev/docs/ai/models/anthropic/#thinking-block-binding and '
                 'https://platform.claude.com/docs/en/build-with-claude/preserved-thinking',
                 AnthropicStaleThinkingBlockWarning,
                 stacklevel=2,
