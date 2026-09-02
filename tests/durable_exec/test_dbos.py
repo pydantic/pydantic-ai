@@ -975,16 +975,17 @@ async def test_capability_contributed_toolset_id_from_capability():
 
 
 async def test_capability_contributed_toolsets_with_colliding_derived_id():
-    """Two genuinely different MCP servers whose URLs derive the same id would silently collide on the
-    per-run tool-defs cache key under DBOS (the second server returning the first's cached tools).
+    """Two genuinely different MCP servers whose URLs derive the same id are rejected by `Agent`.
 
-    Both `MCP(url=...)` capabilities leave `cap.id=None` (so the agent-level capability-id uniqueness
-    check passes), yet both derive `a.com-api` from their URLs' host + last path segment.
+    Both would key their steps on `a.com-api` under DBOS, the second server returning the first's
+    cached tools. DBOS used to be what caught it, because `MCP(url=...)` left the capability
+    anonymous and only its toolset carried the derived id, so the agent-level capability-id
+    uniqueness check had nothing to compare. Now the capability takes the same derived id, and a
+    plain `Agent` rejects the pair before any engine is involved -- so the same mistake is reported
+    the same way with or without durable execution.
 
-    A plain `Agent` lets this through: it only rejects a shared id where the id has to become an
-    instruction key, and neither server has been connected to, so neither has contributed a block.
-    DBOS needs more — the id keys each server's step names whether or not it says anything to the
-    model — so its own leaf walk is what reports this, naming the toolset to change.
+    DBOS keeps its own leaf walk for collisions that never reach a capability id, such as two
+    toolsets passed directly to `toolsets=`; `test_nested_toolsets_with_colliding_id` covers that.
 
     This isn't a VCR test: the collision is rejected during local construction, before any model or
     MCP request, so there's no network round-trip to record.
@@ -992,10 +993,7 @@ async def test_capability_contributed_toolsets_with_colliding_derived_id():
     with pytest.raises(
         UserError,
         match=re.escape(
-            'MCP toolsets need to have a unique `id` in order to be used with DBOS, '
-            "but more than one leaf toolset uses the id 'a.com-api'. "
-            "The ID identifies the MCP server's steps within the workflow, so duplicates would collide. "
-            'Set a distinct `id` on each `MCPToolset` (or the `Capability`/`MCP` that contributes it) to disambiguate them.'
+            "Capability id 'a.com-api' is used by multiple capabilities. Capability ids must be unique within a run."
         ),
     ):
         DBOSAgent(  # pyright: ignore[reportDeprecated]
