@@ -590,22 +590,50 @@ def _build_extra_body(
     extra_body = model_settings.get('extra_body')
     if not fields:
         return extra_body
-    if is_str_dict(extra_body):
-        return {**fields, **extra_body}
-    return fields
+    if not is_str_dict(extra_body):
+        return fields
+    merged = {**fields, **extra_body}
+    if thinking_override is not None and (caller_thinking := _extra_body_thinking(model_settings)) is not None:
+        # A caller's own `extra_body['thinking']` would otherwise replace the retry's payload
+        # wholesale, and the retried request would be rejected exactly like the first one. Their
+        # keys still win: only `block_binding`, which they provably did not set (see
+        # `_is_stale_thinking_block_error`), comes from the retry.
+        merged['thinking'] = {**thinking_override, **caller_thinking}
+    return merged
+
+
+def _extra_body_thinking(model_settings: AnthropicModelSettings) -> dict[str, object] | None:
+    """The `thinking` object a caller hand-rolled in `extra_body`, if any.
+
+    `extra_body` is how a caller reaches a field the installed SDK cannot type yet, so it can carry
+    `thinking` — including a `block_binding` of their own, which must be honored rather than
+    retried over.
+    """
+    extra_body = model_settings.get('extra_body')
+    if not is_str_dict(extra_body):
+        return None
+    thinking = extra_body.get('thinking')
+    return thinking if is_str_dict(thinking) else None
 
 
 def _is_stale_thinking_block_error(
-    profile: ModelProfile, thinking: BetaThinkingConfigParam | Omit, error: APIStatusError
+    profile: ModelProfile,
+    model_settings: AnthropicModelSettings,
+    thinking: BetaThinkingConfigParam | Omit,
+    error: APIStatusError,
 ) -> bool:
     """Whether Anthropic rejected a replayed thinking block that the request can be retried without.
 
-    Scoped to models that bind and to requests that set no `block_binding` of their own: an explicit
-    `'error'` is a caller asking to fail, and an explicit `'drop_block'` cannot produce this error.
+    Scoped to models that bind and to requests that set no `block_binding` of their own, through the
+    typed `thinking` config or through `extra_body`: an explicit `'error'` is a caller asking to
+    fail, and an explicit `'drop_block'` cannot produce this error.
     """
     if error.status_code != 400 or not profile.get('anthropic_binds_thinking_blocks', False):
         return False
     if not isinstance(thinking, Omit) and 'block_binding' in thinking:
+        return False
+    caller_thinking = _extra_body_thinking(model_settings)
+    if caller_thinking is not None and 'block_binding' in caller_thinking:
         return False
     body: object | None = error.body
     return (
@@ -1087,7 +1115,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     )
                 ):
                     return await create(None, thinking, betas, None)
-                if not _is_stale_thinking_block_error(anthropic_profile, thinking, error):
+                if not _is_stale_thinking_block_error(anthropic_profile, model_settings, thinking, error):
                     raise
 
             warnings.warn(

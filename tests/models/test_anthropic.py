@@ -4680,6 +4680,46 @@ async def test_anthropic_retry_carries_the_configured_thinking_forward(allow_mod
     )
 
 
+async def test_anthropic_retry_survives_a_caller_extra_body_thinking(allow_model_requests: None):
+    """A hand-rolled `extra_body['thinking']` must not swallow the binding the retry adds.
+
+    `extra_body` normally wins over anything Pydantic AI builds, which would make the retried
+    request byte-identical to the rejected one — the caller's keys still win here, only the
+    `block_binding` they didn't set comes from the retry.
+    """
+    mock_client = MockAnthropic.create_mock(
+        [
+            stale_thinking_block_error(),
+            completion_message(
+                [BetaTextBlock(text='4', type='text')], usage=BetaUsage(input_tokens=10, output_tokens=1)
+            ),
+        ]
+    )
+    settings = AnthropicModelSettings(extra_body={'thinking': {'display': 'updates'}})
+    m = AnthropicModel('claude-fable-5-1', provider=AnthropicProvider(anthropic_client=mock_client))
+
+    with pytest.warns(AnthropicStaleThinkingBlockWarning):
+        await Agent(m, model_settings=settings).run('What is 2+2?')
+
+    first, retried = get_mock_chat_completion_kwargs(mock_client)
+    assert first['extra_body'] == snapshot({'thinking': {'display': 'updates'}})
+    assert retried['extra_body'] == snapshot(
+        {'thinking': {'block_binding': {'prefix_mismatch_behavior': 'drop_block'}, 'display': 'updates'}}
+    )
+
+
+async def test_anthropic_does_not_retry_a_block_binding_set_through_extra_body(allow_model_requests: None):
+    """`extra_body` is also how a caller sets `block_binding`, and that choice is theirs to keep."""
+    mock_client = MockAnthropic.create_mock(stale_thinking_block_error())
+    settings = AnthropicModelSettings(extra_body={'thinking': {'block_binding': None}})
+    m = AnthropicModel('claude-fable-5-1', provider=AnthropicProvider(anthropic_client=mock_client))
+
+    with pytest.raises(ModelHTTPError, match='bound to a different conversation'):
+        await Agent(m, model_settings=settings).run('What is 2+2?')
+
+    assert len(get_mock_chat_completion_kwargs(mock_client)) == 1
+
+
 @pytest.mark.parametrize(
     'model_name,asks_to_fail',
     [
