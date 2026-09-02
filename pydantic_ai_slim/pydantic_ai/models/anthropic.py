@@ -999,13 +999,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         model_request_parameters: ModelRequestParameters,
     ) -> BetaThinkingConfigParam:
         """Get the thinking parameter, falling back to unified thinking."""
-        profile = self.profile
         if anthropic_thinking := model_settings.get('anthropic_thinking'):
             return anthropic_thinking
         thinking = model_request_parameters.thinking
         if thinking is None or thinking is False:
             return OMIT  # type: ignore[return-value]
-        if profile.get('anthropic_supports_adaptive_thinking', False):
+        if self.profile.get('anthropic_supports_adaptive_thinking', False):
             return {'type': 'adaptive'}
         return {'type': 'enabled', 'budget_tokens': ANTHROPIC_THINKING_BUDGET_MAP[thinking]}
 
@@ -2765,15 +2764,14 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         effort: AnthropicEffort | None = model_settings.get('anthropic_effort')
         # Fall back to unified thinking effort level when anthropic_effort is not set
         # Only map effort level strings; bare True just enables thinking without a specific effort
-        profile = self.profile
         if (
             effort is None
-            and profile.get('anthropic_supports_effort', False)
+            and self.profile.get('anthropic_supports_effort', False)
             and isinstance(model_request_parameters.thinking, str)
         ):
             effort = resolve_anthropic_effort(
                 model_request_parameters.thinking,
-                supports_xhigh=profile.get('anthropic_supports_xhigh_effort', False),
+                supports_xhigh=self.profile.get('anthropic_supports_xhigh_effort', False),
             )
 
         if effort is not None:
@@ -2819,8 +2817,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if task_budget is None:
             return None
 
-        profile = self.profile
-        if not profile.get('anthropic_supports_task_budgets', False):
+        if not self.profile.get('anthropic_supports_task_budgets', False):
             raise UserError(
                 f'Model {self.model_name!r} does not support `anthropic_task_budget`. '
                 'See https://platform.claude.com/docs/en/build-with-claude/task-budgets for the supported models.'
