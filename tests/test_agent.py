@@ -11809,21 +11809,44 @@ def test_agent_allows_identical_agent_level_native_tools():
     )
 
 
-def test_agent_rejects_conflicting_run_level_native_tool_ids():
-    """Two run-level native tools sharing an id but with conflicting definitions fail at run time.
+def _native_tool_override_model() -> FunctionModel:
+    def model_function(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.model_request_parameters.native_tools == snapshot(
+            [MCPServerTool(id='api', url='https://mcp.example.com/tenant-b/api')]
+        )
+        return ModelResponse(parts=[TextPart('done')])
 
-    Unit test rather than VCR: the guard raises before any request a cassette could record.
-    """
+    return FunctionModel(model_function)
+
+
+def test_agent_allows_run_level_native_tool_override():
+    """Pin the native tools passed to the model, which a cassette would not inspect."""
+
+    agent = Agent(_native_tool_override_model())
+
+    agent.run_sync(
+        'Hello',
+        capabilities=[
+            NativeTool(MCPServerTool(id='api', url='https://mcp.example.com/tenant-a/api')),
+            NativeTool(MCPServerTool(id='api', url='https://mcp.example.com/tenant-b/api')),
+        ],
+    )
+
+
+def test_agent_rejects_conflicting_run_level_native_tool_ids():
+    """The conflict is raised before a provider request can be recorded."""
+
+    class ConflictingNativeTools(AbstractCapability[Any]):
+        def get_native_tools(self) -> list[MCPServerTool]:
+            return [
+                MCPServerTool(id='api', url='https://mcp.example.com/tenant-a/api'),
+                MCPServerTool(id='api', url='https://mcp.example.com/tenant-b/api'),
+            ]
+
     agent = Agent(model=TestModel())
 
     with pytest.raises(UserError, match="Native tool id 'mcp_server:api' maps to conflicting definitions"):
-        agent.run_sync(
-            'Hello',
-            capabilities=[
-                NativeTool(MCPServerTool(id='api', url='https://mcp.example.com/tenant-a/api')),
-                NativeTool(MCPServerTool(id='api', url='https://mcp.example.com/tenant-b/api')),
-            ],
-        )
+        agent.run_sync('Hello', capabilities=[ConflictingNativeTools()])
 
 
 def test_agent_rejects_conflicting_override_native_tool_ids():
@@ -11845,12 +11868,10 @@ def test_agent_rejects_conflicting_override_native_tool_ids():
         agent.run_sync('Hello')
 
 
-def test_agent_rejects_conflicting_dynamic_capability_native_tool_ids():
-    """Native tools contributed by `for_run()` are validated within the run-capabilities layer.
+def test_agent_allows_dynamic_run_level_native_tool_override():
+    """Pin native tools that only materialize during run-level capability resolution."""
 
-    Unit test rather than VCR: the guard raises before any request a cassette could record.
-    """
-    agent = Agent(model=TestModel())
+    agent = Agent(_native_tool_override_model())
 
     def cap_a(ctx: RunContext[Any]) -> AbstractCapability[Any]:
         return NativeTool(MCPServerTool(id='api', url='https://mcp.example.com/tenant-a/api'))
@@ -11858,8 +11879,7 @@ def test_agent_rejects_conflicting_dynamic_capability_native_tool_ids():
     def cap_b(ctx: RunContext[Any]) -> AbstractCapability[Any]:
         return NativeTool(MCPServerTool(id='api', url='https://mcp.example.com/tenant-b/api'))
 
-    with pytest.raises(UserError, match="Native tool id 'mcp_server:api' maps to conflicting definitions"):
-        agent.run_sync('Hello', capabilities=[cap_a, cap_b])
+    agent.run_sync('Hello', capabilities=[cap_a, cap_b])
 
 
 def test_agent_rejects_conflicting_agent_level_dynamic_capability_native_tool_ids():

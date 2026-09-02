@@ -3016,10 +3016,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             base_native_tools,
             source='override spec capabilities' if base_is_override else 'agent capabilities',
         )
-        extra_native_tools: list[AgentNativeTool[AgentDepsT]] = [
-            tool for cap in resolved_extras for tool in cap.get_native_tools()
-        ]
-        _validate_native_tool_ids(extra_native_tools, source='run capabilities')
+        extra_native_tools: list[AgentNativeTool[AgentDepsT]] = []
+        for capability in resolved_extras:
+            capability_native_tools = list(capability.get_native_tools())
+            _validate_native_tool_ids(capability_native_tools, source='run capabilities')
+            extra_native_tools.extend(capability_native_tools)
 
         # `override(native_tools=...)` replaces the agent's *baseline* native tools while still
         # preserving any additional per-run capability-contributed native tools on top.
