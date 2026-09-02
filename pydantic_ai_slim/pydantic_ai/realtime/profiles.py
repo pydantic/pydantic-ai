@@ -23,8 +23,9 @@ class RealtimeModelProfile(TypedDict, total=False):
 
     All fields are optional. Consumers treat absent boolean flags as `False` — except the handful
     documented below as defaulting to `True`, which describe a capability every provider has unless it
-    says otherwise — absent `supported_native_tools` as empty, and absent sample rates as the values in
-    [`DEFAULT_REALTIME_PROFILE`][pydantic_ai.realtime.codec.DEFAULT_REALTIME_PROFILE].
+    says otherwise — absent `supported_native_tools` as empty, absent sample rates as the values in
+    [`DEFAULT_REALTIME_PROFILE`][pydantic_ai.realtime.codec.DEFAULT_REALTIME_PROFILE], and an absent
+    `context_window` as unknown.
     """
 
     supports_image_input: bool
@@ -119,7 +120,7 @@ class RealtimeModelProfile(TypedDict, total=False):
     When no profile layer sets this, [`RealtimeModel.profile`][pydantic_ai.realtime.RealtimeModel.profile]
     fills it in from [genai-prices](https://github.com/pydantic/genai-prices) data if the model is known
     there. Set it explicitly for models it doesn't know, e.g. `profile={'context_window': 128_000}`.
-    Read it via [`RealtimeModel.context_window`][pydantic_ai.models.AbstractModel.context_window]."""
+    Read it via [`RealtimeModel.context_window`][pydantic_ai.realtime.RealtimeModel.context_window]."""
 
 
 DEFAULT_AUDIO_SAMPLE_RATE = 24000
