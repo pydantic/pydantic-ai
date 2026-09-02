@@ -40,8 +40,8 @@ with try_import() as anthropic_imports_successful:
         MockAnthropic,
         completion_message,
         get_mock_chat_completion_kwargs,
-        stale_thinking_block_error,
     )
+    from .test_thinking_block_binding import stale_thinking_block_error
 
 pytestmark = [
     pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed'),
