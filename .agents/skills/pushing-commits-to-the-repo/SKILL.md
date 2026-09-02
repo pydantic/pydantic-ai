@@ -161,9 +161,10 @@ if the head changes, capture the new SHA and restart the loop.
 1. **Synchronize PR metadata.** Update the title, summary, verification, and collapsed PR-decisions
    section for the pushed commit. Compare the dated decision entries in the body with the local log;
    the local log is authoritative.
-2. **Watch CI to a terminal state.** Require the `CI` workflow, including coverage, to succeed for
-   the captured SHA. Don't idle. If it fails, diagnose: fix if the failure is yours; if it's a known
-   flake or pre-existing on main, say so with evidence.
+2. **Watch CI to a terminal state.** Require the `CI` workflow to succeed for the captured SHA.
+   Its success certifies every job it contains, coverage included. Do not inspect individual jobs
+   or their logs to reconfirm a success. Don't idle. If it fails, diagnose: fix if the failure is
+   yours; if it's a known flake or pre-existing on main, say so with evidence.
 3. **Wait for a standards review on the captured SHA.**
    [`.github/workflows/pydantic-ai-pr-review.md`](../../../.github/workflows/pydantic-ai-pr-review.md)
    is the source of truth for eligibility and accepted verdicts or no-ops.
@@ -193,9 +194,10 @@ if the head changes, capture the new SHA and restart the loop.
    choice, an API trade-off, a behavioral default), leave a comment containing: the background,
    your reasoning, the decision that needs making, the trade-offs (pros/cons of each option), and
    your recommendation. Then **poll every 30 minutes for a reply** and continue when it lands.
-6. Wait for every applicable current-HEAD check to reach an accepted terminal state; classify any
-   documented skip explicitly. Repeat until CI is green, the required hosted review covers the
-   current HEAD, no applicable check is pending or failing, and no comment is outstanding.
+6. Stop when steps 2 through 4 have each reached an accepted terminal state on the current HEAD,
+   with any documented skip classified explicitly. Their results are the evidence; do not re-read a
+   state an earlier step already established. When the HEAD changes, capture the new SHA and repeat
+   the loop.
 
 ## When the loop completes — consider a deep `douwebot` review
 
@@ -233,7 +235,13 @@ before handing the PR back or requesting merge:
 
 ## Before handing the PR back
 
-Run this final metadata check after CI, the required hosted review, and comments have settled:
+Run this final metadata check after CI, the required hosted review, and comments have settled.
+
+Skip the check for test-only changes, typo-only changes, dependency bumps, and mechanical chores
+when the title and body were written after the final code push and the scope has not changed since.
+Do not dispatch a metadata-review subagent for an exempt PR.
+
+When the check applies:
 
 1. Capture the exact current title and body before dispatching the reviewer.
 2. Dispatch a fresh subagent under the fresh reviewer context contract that has not worked on the PR.
