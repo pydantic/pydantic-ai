@@ -303,6 +303,10 @@ def _decode_data_url(value: str) -> BinaryImage:
 
     Stricter than `BinaryContent.from_data_uri`, which decodes without `validate=True`: a malformed
     payload must raise here rather than silently decode to truncated image bytes.
+
+    The header's media type is the provider's own claim and is trusted, as Google's `mime_type` is.
+    Only the OpenAI adapter overrides a provider's claim by sniffing the bytes, because gpt-image
+    echoes a requested `output_format` it did not return (openai-node#1850).
     """
     header, encoded = value.split(',', maxsplit=1)
     if not header.startswith('data:image/') or not header.endswith(';base64'):

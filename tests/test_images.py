@@ -1088,6 +1088,9 @@ async def test_google_image_generation_no_image_finish_reason():
     - `FinishReason.NO_IMAGE` ("model was expected to generate an image, but none was generated"):
       python-genai `google/genai/types.py` `FinishReason`.
     - ai.google.dev image-generation guide (NO_IMAGE soft failure): https://ai.google.dev/gemini-api/docs/image-generation
+
+    Not a VCR test because a `NO_IMAGE` refusal cannot be provoked on demand, so the response is fixed
+    from the finish reason the SDK documents.
     """
 
     def handle_request(request: httpx2.Request) -> httpx2.Response:
@@ -1125,6 +1128,9 @@ async def test_google_image_generation_image_safety_finish_reason():
     than a generic `UnexpectedModelBehavior`, and name the reason in the message.
 
     - `FinishReason.IMAGE_SAFETY`: python-genai `google/genai/types.py` `FinishReason`.
+
+    Not a VCR test because a moderation block cannot be provoked on demand, so the response is fixed
+    from the finish reason the SDK documents.
     """
 
     def handle_request(request: httpx2.Request) -> httpx2.Response:
@@ -1159,6 +1165,9 @@ async def test_google_image_generation_prompt_blocked():
     naming the block reason, with the block details preserved in the body.
 
     - `BlockedReason.PROHIBITED_CONTENT`: python-genai `google/genai/types.py` `BlockedReason`.
+
+    Not a VCR test because a prompt-level moderation block cannot be provoked on demand, so the
+    response is fixed from the block reason the SDK documents.
     """
 
     def handle_request(request: httpx2.Request) -> httpx2.Response:
@@ -1192,6 +1201,9 @@ async def test_google_image_generation_degenerate_candidates():
     since neither carries a moderation signal), naming the finish reason when one is present.
 
     - Empty `parts` / 200-OK-no-image guard: python-genai response shape `candidates[].content.parts`.
+
+    Not a VCR test because a degenerate response cannot be provoked on demand, so both shapes are
+    fixed from the candidate structure the SDK documents.
     """
     degenerate_responses: list[dict[str, object]] = [
         {'candidates': [{'content': {'parts': [], 'role': 'model'}, 'finishReason': 'STOP'}]},
@@ -1324,6 +1336,11 @@ async def test_google_image_generation_maps_complete_provider_metadata():
 
 @pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
 async def test_google_image_generation_maps_non_http_api_error():
+    """A Google `APIError` whose code is below 400 surfaces as `ModelAPIError`, not `ModelHTTPError`.
+
+    Not a VCR test because a sub-400 `APIError` cannot be provoked on demand, so the error is fixed
+    from the shape the SDK documents.
+    """
     client = AsyncMock()
     client.aio.models.generate_content.side_effect = google_errors.APIError(302, {'error': 'redirect'})
     provider = GoogleProvider(client=cast(GoogleClient, client))
@@ -1344,6 +1361,12 @@ def test_google_image_generation_ignores_non_image_output_format():
 
 @pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
 async def test_google_image_generation_status_error():
+    """A Gemini 4xx surfaces as `ModelHTTPError` keeping the status, body, and `retry-after`.
+
+    Not a VCR test because a provider error response cannot be provoked on demand, so the body is
+    fixed from Google's documented error format.
+    """
+
     def handle_request(request: httpx2.Request) -> httpx2.Response:
         return httpx2.Response(
             400,
@@ -1964,6 +1987,9 @@ async def test_xai_image_generation_invalid_response(base64_value: str):
     type, so we surface `UnexpectedModelBehavior` rather than dropping it as a flagged slot.
 
     Reference: `xai_sdk.aio.image.ImageResponse.base64` raises when the payload is empty.
+
+    Not a VCR test because a malformed slot cannot be provoked on demand, so the payload is fixed
+    from the response shape the SDK documents.
     """
     mock_client = AsyncMock()
     proto = xai_image_pb2.ImageResponse(
@@ -2060,6 +2086,9 @@ async def test_xai_image_generation_all_slots_moderated_raises_content_filter():
     content-moderation outcome, so we raise the semantically-correct `ContentFilterError`.
 
     Reference: `xai_sdk.aio.image.ImageResponse.respect_moderation` (silent moderation, per-slot).
+
+    Not a VCR test because a moderation block cannot be provoked on demand, so the flagged slots are
+    fixed from the response shape the SDK documents.
     """
     mock_client = AsyncMock()
     mock_client.image.sample_batch.return_value = _xai_moderated_image_responses(
@@ -2116,6 +2145,11 @@ async def test_xai_image_generation_usage_falls_back_to_sdk_totals(monkeypatch: 
 
 @pytest.mark.skipif(not xai_imports_successful(), reason='xAI SDK not installed')
 async def test_xai_image_generation_empty_response():
+    """A batch that comes back with no slots at all is unexpected behavior, not a moderation block.
+
+    Not a VCR test because an empty batch cannot be provoked on demand, so the response is fixed
+    from the sequence the SDK documents.
+    """
     mock_client = AsyncMock()
     mock_client.image.sample_batch.return_value = []
     model = XaiImageGenerationModel(
@@ -2150,6 +2184,9 @@ async def test_xai_image_generation_maps_grpc_status_to_http(status_name: str, e
     `NameError` at collection time in environments without the xAI extras.
 
     Reference: `_GRPC_STATUS_TO_HTTP` in `pydantic_ai.images.xai`.
+
+    Not a VCR test because gRPC never reaches the HTTP transport VCR patches, and these statuses
+    cannot be provoked on demand, so each is fixed from the codes xAI documents.
     """
     status_code = grpc.StatusCode[status_name]
 
@@ -2813,6 +2850,11 @@ async def test_openai_gpt_image_2_webp_generation_vcr(openai_api_key: str):
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
 async def test_openai_response_without_image_data(openai_mock_client: AsyncMock):
+    """A response with no image, no base64, undecodable base64, or unrecognized bytes raises cleanly.
+
+    Not a VCR test because a malformed response cannot be provoked on demand, so each shape is fixed
+    from OpenAI's documented response format.
+    """
     provider = OpenAIProvider(openai_client=cast(AsyncOpenAI, openai_mock_client))
     model = OpenAIImageGenerationModel('gpt-image-1', provider=provider)
 
@@ -3058,6 +3100,11 @@ async def test_openai_image_edit_rejects_unsupported_image_format(openai_mock_cl
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
 async def test_openai_image_edit_status_error(openai_mock_client: AsyncMock):
+    """A 5xx on the edit endpoint surfaces as `ModelHTTPError` with the status and body preserved.
+
+    Not a VCR test because a provider error response cannot be provoked on demand, so the body is
+    fixed from OpenAI's documented error format.
+    """
     openai_mock_client.images.edit.side_effect = APIStatusError(
         'test error',
         response=httpx2.Response(
@@ -3077,6 +3124,11 @@ async def test_openai_image_edit_status_error(openai_mock_client: AsyncMock):
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
 async def test_openai_image_generation_connection_error(openai_mock_client: AsyncMock):
+    """A connection failure surfaces as `ModelAPIError` rather than the SDK's own exception.
+
+    Not a VCR test because a transport failure cannot be provoked on demand, so the error is fixed
+    from the shape the SDK documents.
+    """
     openai_mock_client.images.generate.side_effect = APIConnectionError(
         message='connection failed', request=httpx2.Request('POST', 'https://example.com/v1/images/generations')
     )
@@ -3095,6 +3147,9 @@ async def test_openai_image_generation_rate_limited(openai_mock_client: AsyncMoc
     the limit before its first successful generation, so this is a common first-call failure, not an edge case.
 
     See https://platform.openai.com/docs/guides/rate-limits.
+
+    Not a VCR test because a rate limit cannot be provoked on demand, so the response is fixed from
+    OpenAI's documented error format.
     """
     rate_limit_body = {'error': {'code': 'rate_limit_exceeded', 'type': 'requests', 'message': 'Rate limit reached'}}
     openai_mock_client.images.generate.side_effect = APIStatusError(
@@ -3129,6 +3184,9 @@ async def test_openai_image_generation_moderation_blocked(openai_mock_client: As
     block reflects the prompt, so retrying the identical request is wrong; we assert a single attempt.
 
     See https://developers.openai.com/api/docs/guides/image-generation#content-moderation.
+
+    Not a VCR test because a moderation block cannot be provoked on demand, so the response is fixed
+    from OpenAI's documented error format.
     """
     moderation_body = {
         'error': {
