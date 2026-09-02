@@ -72,6 +72,13 @@ class XSearch(NativeOrLocalTool[AgentDepsT]):
     When unset, inherits the native tool's default (`False`).
     """
 
+    id: str | None = 'x_search'
+    """One-off: an agent searches, fetches or generates one way, so the id is fixed.
+
+    Declared here rather than only as an `__init__` default so the class states it where
+    `declares_default_id` -- and a reader -- can see it.
+    """
+
     def __init__(
         self,
         *,

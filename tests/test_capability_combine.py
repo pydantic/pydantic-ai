@@ -13,7 +13,7 @@ import pkgutil
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import KW_ONLY, dataclass, field
-from typing import Any, ClassVar, Literal, TypeGuard, cast
+from typing import Any, TypeGuard, cast
 
 import pytest
 from inline_snapshot import snapshot
@@ -314,23 +314,6 @@ def test_an_id_the_user_chose_twice_is_a_collision_not_a_repeat() -> None:
 
     with pytest.raises(UserError, match="Capability id 'same' is used by multiple capabilities"):
         Agent(TestModel(), capabilities=[Custom(id='same'), Custom(id='same')])
-
-
-def test_combines_reject_refuses_to_merge() -> None:
-    """`combines = 'reject'` is for two identities rather than two statements of one configuration."""
-
-    @dataclass
-    class Account(AbstractCapability[Any]):
-        combines: ClassVar[Literal['merge', 'reject']] = 'reject'
-
-        token: str = ''
-
-        _: KW_ONLY
-
-        id: str | None = 'account'
-
-    with pytest.raises(UserError, match='Repeated Account capabilities cannot be combined'):
-        Agent(TestModel(), capabilities=[Account('first'), Account('second')])
 
 
 def test_a_declared_id_merges_without_an_override() -> None:
@@ -731,3 +714,22 @@ async def test_mutually_exclusive_fields_survive_a_run_level_override() -> None:
     await agent.run('hi', capabilities=[XSearch(excluded_x_handles=['spam'])])
 
     assert seen == snapshot([[XSearchTool(excluded_x_handles=['spam'])]])
+
+
+async def test_an_id_two_capabilities_only_share_after_for_run_is_still_a_collision() -> None:
+    """The run resolves duplicates before it validates ids, so this is caught there.
+
+    `Agent(...)` sees only what it was handed, and these two agree on nothing at construction --
+    the shared `id` appears when `for_run` hands back the capability the run actually uses. That is
+    past the construction-time check, so the resolver applies the same rule itself.
+    """
+
+    @dataclass
+    class Renaming(AbstractCapability[Any]):
+        async def for_run(self, ctx: RunContext[Any]) -> AbstractCapability[Any]:
+            return Renaming(id='chosen')
+
+    agent = Agent(TestModel(call_tools=[]), capabilities=[Renaming(), Renaming()])
+
+    with pytest.raises(UserError, match="Capability id 'chosen' is used by multiple capabilities"):
+        await agent.run('hi')

@@ -48,6 +48,13 @@ class WebSearch(NativeOrLocalTool[AgentDepsT]):
     external_web_access: bool | None
     """Whether OpenAI Responses may fetch live web content. `False` requires native support."""
 
+    id: str | None = 'web_search'
+    """One-off: an agent searches, fetches or generates one way, so the id is fixed.
+
+    Declared here rather than only as an `__init__` default so the class states it where
+    `declares_default_id` -- and a reader -- can see it.
+    """
+
     def __init__(
         self,
         *,

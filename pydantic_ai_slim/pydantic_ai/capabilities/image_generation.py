@@ -109,6 +109,13 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
     Supported by: Google (Gemini), OpenAI Responses (maps `'1:1'`, `'2:3'`, `'3:2'` to sizes).
     """
 
+    id: str | None = 'image_generation'
+    """One-off: an agent searches, fetches or generates one way, so the id is fixed.
+
+    Declared here rather than only as an `__init__` default so the class states it where
+    `declares_default_id` -- and a reader -- can see it.
+    """
+
     def __init__(
         self,
         *,

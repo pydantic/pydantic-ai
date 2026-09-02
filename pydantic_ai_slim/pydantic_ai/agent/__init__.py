@@ -4100,24 +4100,10 @@ def _validate_capability_ids(capabilities: Sequence[AbstractCapability[Any]]) ->
         owner = owners.get(cap.id)
         if owner is not None:
             reject_class_crossing_id(cap.id, {owner, type(cap)})
-            if not _may_repeat(type(cap)):
-                raise exceptions.UserError(repeated_id_message(cap.id, type(cap), 2))
+            if not declares_default_id(type(cap)):
+                raise exceptions.UserError(repeated_id_message(cap.id))
         owners.setdefault(cap.id, type(cap))
     return set(owners)
-
-
-def _may_repeat(capability_type: type[AbstractCapability[Any]]) -> bool:
-    """Whether two of this capability under one `id` are something the class knows how to resolve.
-
-    A class that declares a default `id` has said an agent has one of it, and
-    [`combines`][pydantic_ai.capabilities.AbstractCapability.combines] says what a repeat means --
-    unless it says `'reject'`, or the class replaced `combine` with one of its own, which may
-    reject too. Anything else is an `id` the user chose twice, which nothing can resolve.
-    """
-    if not declares_default_id(capability_type):
-        return False
-    overrides_combine = capability_type.combine.__func__ is not AbstractCapability.combine.__func__
-    return overrides_combine or capability_type.combines == 'merge'
 
 
 def _validate_instruction_source_ids(capabilities: Sequence[AbstractCapability[Any]]) -> None:
@@ -4150,7 +4136,7 @@ def _validate_instruction_source_ids(capabilities: Sequence[AbstractCapability[A
         for source in sources:
             if source.id is None:
                 continue
-            if (existing := sources_by_id.setdefault(source.id, source)) is not source and not _may_repeat(
+            if (existing := sources_by_id.setdefault(source.id, source)) is not source and not declares_default_id(
                 type(source)
             ):
                 raise exceptions.UserError(

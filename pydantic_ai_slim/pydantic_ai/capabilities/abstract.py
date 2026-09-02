@@ -5,8 +5,6 @@ from abc import ABC
 from collections import Counter
 from collections.abc import AsyncIterable, Awaitable, Callable, Collection, Mapping, Sequence, Set as AbstractSet
 from dataclasses import KW_ONLY, dataclass
-from functools import cache
-from inspect import Parameter, signature
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypeAlias, cast
 from weakref import WeakValueDictionary
 
@@ -287,41 +285,28 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     override is optional and only adds routing context to the load catalog.
     """
 
-    combines: ClassVar[Literal['merge', 'reject']] = 'merge'
-    """What two of this capability under one `id` mean, when the class declares a default `id`.
-
-    `'merge'`, the default: they are one configuration stated twice, and the run uses the two
-    merged field by field -- a value only one of them states is kept, and a value both state takes
-    the later one. Declaring a default `id` is already the statement that an agent has one of these,
-    so merging a repeat is almost always what it meant.
-
-    `'reject'`: two of them are two *identities* rather than two statements of one configuration --
-    two accounts, two credentials -- and merging would silently drop one. The run raises instead.
-
-    Override [`combine`][pydantic_ai.capabilities.AbstractCapability.combine] for anything else.
-    """
-
     @classmethod
     def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
         """Combine capabilities that resolved to the same `id` into the one the run will use.
 
         Two capabilities under one `id` name the same thing, so exactly one of them can be what
-        that `id` refers to. Rather than guessing, the run asks the class how its own instances
-        compose, once per duplicated `id`, with every instance in application order.
+        that `id` refers to. The default merges them field by field: a value only one of them
+        states is kept, and a value both state takes the later one.
 
-        The default follows [`combines`][pydantic_ai.capabilities.AbstractCapability.combines], so
-        most capabilities never override this. Override it when composing takes more than merging
-        fields -- `NativeOrLocalTool` rebuilds its native tool from the merged configuration,
-        because that tool, not the capability, is what reaches the provider.
+        That default needs no thought from most capabilities, because it follows from the `id`.
+        Declaring a default `id` *is* the statement that an agent has one of these, so a repeat is
+        one configuration stated twice and merging is what it meant. A capability that can
+        legitimately appear several times declares no default `id` instead -- and then this is
+        never reached, because the run tells anonymous capabilities apart itself, and an `id` the
+        *user* passed to such a capability is a name they chose, so passing it twice is reported as
+        a collision rather than merged.
 
-        Only reached by capabilities that declare a default `id`. An
-        [`id`][pydantic_ai.capabilities.AbstractCapability.id] of `None` means "however many of
-        these you like", and those are told apart by the run instead; an `id` the *user* passed to
-        a capability that declares none is a naming collision rather than a repeat, and is rejected
-        without asking the class.
+        Override it when composing takes more than merging fields: `NativeOrLocalTool` rebuilds its
+        native tool from the merged configuration, because that tool, not the capability, is what
+        reaches the provider.
 
-        Only reached *within* one layer, too: a capability supplied for a run overrides its
-        agent-level namesake outright rather than composing with it.
+        Only reached *within* one layer: a capability supplied for a run overrides its agent-level
+        namesake outright rather than composing with it.
 
         Args:
             capabilities: The two or more capabilities sharing an `id`, in application order.
@@ -330,13 +315,8 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
         Returns:
             The single capability the `id` refers to for this run.
-
-        Raises:
-            UserError: When `combines` is `'reject'`, naming the `id` and how to resolve it.
         """
-        if cls.combines == 'merge':
-            return merge_capability_fields(capabilities)
-        raise UserError(repeated_id_message(capabilities[0].id or '', cls, len(capabilities)))
+        return merge_capability_fields(capabilities)
 
     def apply(self, visitor: Callable[[AbstractCapability[AgentDepsT]], None]) -> None:
         """Run a visitor function on all leaf capabilities in this tree.
@@ -1454,48 +1434,37 @@ def combine_duplicate_capabilities(
 def _combine_duplicates(
     capability_id: str, duplicates: Sequence[AbstractCapability[AgentDepsT]]
 ) -> AbstractCapability[AgentDepsT]:
-    """Ask the shared class how its instances compose, or reject a `id` no class claims."""
+    """Ask the shared class how its instances compose, or reject an `id` no class claims."""
     reject_class_crossing_id(capability_id, {type(duplicate) for duplicate in duplicates})
     if not declares_default_id(type(duplicates[-1])):
-        raise UserError(repeated_id_message(capability_id, type(duplicates[-1]), len(duplicates)))
+        raise UserError(repeated_id_message(capability_id))
     return duplicates[-1].combine(duplicates)
 
 
-def repeated_id_message(capability_id: str, capability_type: type[AbstractCapability[Any]], count: int) -> str:
-    """Why this `id` cannot resolve to one capability, in the terms that apply to this class.
+def repeated_id_message(capability_id: str) -> str:
+    """Why an `id` the user chose for two capabilities cannot resolve to one.
 
-    Shared by `Agent(...)` validation and the run's own resolution so the two report a repeat the
-    same way, whichever notices it first.
+    Shared by `Agent(...)` validation and the run's own resolution so the two report it the same
+    way, whichever notices first.
     """
-    if not declares_default_id(capability_type):
-        # The class says nothing about how many of it an agent has, so this `id` is one the user
-        # chose -- and choosing it twice is a naming collision, not one configuration stated twice.
-        return (
-            f'Capability id {capability_id!r} is used by multiple capabilities. '
-            'Capability ids must be unique within a run.'
-        )
     return (
-        f'Capability id {capability_id!r} is used by {count} capabilities. '
-        'Pass a distinct `id` to each, or `id=None` to have the run tell them apart. '
-        f'Repeated {capability_type.__name__} capabilities cannot be combined.'
+        f'Capability id {capability_id!r} is used by multiple capabilities. Capability ids must be unique within a run.'
     )
 
 
-@cache
 def declares_default_id(capability_type: type[AbstractCapability[Any]]) -> bool:
     """Whether the class itself names the `id` its instances carry, rather than the user.
 
     A default `id` is a class saying "an agent has one of me", which is what makes a repeat
-    something to combine. Without one, an `id` only exists because the user passed it, and two
-    they passed the same are two capabilities they meant to tell apart.
+    something to combine rather than a collision. Without one, an `id` exists only because the user
+    passed it, and two they passed the same are two capabilities they meant to tell apart.
+
+    Read off the class attribute, so declaring a default means writing one -- `id: str | None =
+    'web_search'` in the class body. A capability that only passes `id=` up from inside its own
+    `__init__` has not declared anything a reader or this check can see, and is treated as
+    anonymous; two of it collide, loudly, and the fix is to hoist the default into the class body.
     """
-    if getattr(capability_type, 'id', None) is not None:
-        return True
-    try:
-        parameter = signature(capability_type.__init__).parameters.get('id')
-    except (TypeError, ValueError):  # pragma: no cover
-        return False
-    return parameter is not None and parameter.default not in (Parameter.empty, None)
+    return getattr(capability_type, 'id', None) is not None
 
 
 def reject_class_crossing_id(capability_id: str, types: Collection[type[AbstractCapability[Any]]]) -> None:
