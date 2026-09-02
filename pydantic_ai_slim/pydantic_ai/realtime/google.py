@@ -36,7 +36,6 @@ except ImportError as _import_error:
         'you can use the `google-realtime` optional group - `pip install "pydantic-ai-slim[google-realtime]"`'
     ) from _import_error
 
-from .._genai_prices import preload_pricing_data
 from .._instrumentation import get_instructions
 from .._utils import generate_tool_call_id
 from ..exceptions import ModelHTTPError, UserError
@@ -673,14 +672,12 @@ class GoogleRealtimeModel(RealtimeModel):
         settings: RealtimeModelSettings | None = None,
         profile: RealtimeModelProfileSpec | None = None,
     ) -> None:
+        super().__init__(settings=settings, profile=profile)
         self.model = model
-        self.settings = settings
-        self._profile = profile
         if isinstance(provider, str):
             provider_name = 'gateway/google-cloud' if provider == 'gateway' else provider
             provider = cast('Provider[Client]', infer_provider(provider_name))
         self._provider = provider
-        preload_pricing_data()
 
     @property
     def client(self) -> Client:
