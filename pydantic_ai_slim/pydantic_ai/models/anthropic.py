@@ -2967,6 +2967,13 @@ class AnthropicStreamedResponse(StreamedResponse):
                     if event.message.container:
                         self.provider_details = self.provider_details or {}
                         self.provider_details['container_id'] = event.message.container.id
+                    # A live stream reports dropped thinking blocks here, on the opening message,
+                    # not on the `message_delta` that also types the field.
+                    if event.message.input_transformations:
+                        self.provider_details = self.provider_details or {}
+                        self.provider_details['input_transformations'] = _report_input_transformations(
+                            event.message.input_transformations
+                        )
 
                 elif isinstance(event, BetaRawContentBlockStartEvent):
                     current_block = event.content_block
@@ -3158,9 +3165,10 @@ class AnthropicStreamedResponse(StreamedResponse):
                         self.provider_details['container_id'] = event.delta.container.id
                     if event.input_transformations:
                         self.provider_details = self.provider_details or {}
-                        self.provider_details['input_transformations'] = _report_input_transformations(
-                            event.input_transformations
-                        )
+                        self.provider_details['input_transformations'] = [
+                            *self.provider_details.get('input_transformations', []),
+                            *_report_input_transformations(event.input_transformations),
+                        ]
 
                 elif isinstance(event, BetaRawContentBlockStopEvent):  # pragma: no branch
                     if event.index in ignored_server_tool_use_indices:

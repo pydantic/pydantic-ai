@@ -4751,10 +4751,40 @@ async def test_anthropic_thinking_block_binding_skipped_when_thinking_disabled(a
     assert _THINKING_BINDING_BETA not in sent_betas(mock_client)
 
 
-def dropped_thinking_transformation() -> BetaThinkingDroppedInputTransformation:
-    return BetaThinkingDroppedInputTransformation(
-        path='messages.1.content.0', reason='prefix_binding_mismatch', type='thinking_dropped'
-    )
+def dropped_thinking_transformation(path: str = 'messages.1.content.0') -> BetaThinkingDroppedInputTransformation:
+    return BetaThinkingDroppedInputTransformation(path=path, reason='prefix_binding_mismatch', type='thinking_dropped')
+
+
+def dropped_thinking_stream(
+    start_transformation: BetaThinkingDroppedInputTransformation | None = None,
+    delta_transformation: BetaThinkingDroppedInputTransformation | None = None,
+) -> list[BetaRawMessageStreamEvent]:
+    return [
+        BetaRawMessageStartEvent(
+            type='message_start',
+            message=BetaMessage(
+                id='msg_123',
+                model='claude-fable-5-1',
+                role='assistant',
+                type='message',
+                content=[],
+                stop_reason=None,
+                usage=BetaUsage(input_tokens=5, output_tokens=0),
+                input_transformations=[start_transformation] if start_transformation else None,
+            ),
+        ),
+        BetaRawContentBlockStartEvent(
+            type='content_block_start', index=0, content_block=BetaTextBlock(type='text', text='4')
+        ),
+        BetaRawContentBlockStopEvent(type='content_block_stop', index=0),
+        BetaRawMessageDeltaEvent(
+            type='message_delta',
+            delta=Delta(stop_reason='end_turn'),
+            usage=BetaMessageDeltaUsage(input_tokens=5, output_tokens=1),
+            input_transformations=[delta_transformation] if delta_transformation else None,
+        ),
+        BetaRawMessageStopEvent(type='message_stop'),
+    ]
 
 
 async def test_anthropic_records_dropped_thinking_blocks(allow_model_requests: None):
@@ -4787,33 +4817,10 @@ async def test_anthropic_records_dropped_thinking_blocks(allow_model_requests: N
 
 
 async def test_anthropic_records_dropped_thinking_blocks_streamed(allow_model_requests: None):
-    """The same report arrives on the streaming `message_delta` event."""
-    stream = [
-        BetaRawMessageStartEvent(
-            type='message_start',
-            message=BetaMessage(
-                id='msg_123',
-                model='claude-fable-5-1',
-                role='assistant',
-                type='message',
-                content=[],
-                stop_reason=None,
-                usage=BetaUsage(input_tokens=5, output_tokens=0),
-            ),
-        ),
-        BetaRawContentBlockStartEvent(
-            type='content_block_start', index=0, content_block=BetaTextBlock(type='text', text='4')
-        ),
-        BetaRawContentBlockStopEvent(type='content_block_stop', index=0),
-        BetaRawMessageDeltaEvent(
-            type='message_delta',
-            delta=Delta(stop_reason='end_turn'),
-            usage=BetaMessageDeltaUsage(input_tokens=5, output_tokens=1),
-            input_transformations=[dropped_thinking_transformation()],
-        ),
-        BetaRawMessageStopEvent(type='message_stop'),
-    ]
-    mock_client = MockAnthropic.create_stream_mock(stream)
+    """A live stream reports the drop on `message_start`, before any content arrives."""
+    mock_client = MockAnthropic.create_stream_mock(
+        dropped_thinking_stream(start_transformation=dropped_thinking_transformation())
+    )
     m = AnthropicModel('claude-fable-5-1', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m)
 
@@ -4826,6 +4833,32 @@ async def test_anthropic_records_dropped_thinking_blocks_streamed(allow_model_re
             'finish_reason': 'end_turn',
             'input_transformations': [
                 {'path': 'messages.1.content.0', 'reason': 'prefix_binding_mismatch', 'type': 'thinking_dropped'}
+            ],
+        }
+    )
+
+
+async def test_anthropic_records_dropped_thinking_blocks_from_every_stream_event(allow_model_requests: None):
+    """`message_delta` types the field too, so a report arriving there is appended, not dropped."""
+    mock_client = MockAnthropic.create_stream_mock(
+        dropped_thinking_stream(
+            start_transformation=dropped_thinking_transformation(),
+            delta_transformation=dropped_thinking_transformation('messages.3.content.0'),
+        )
+    )
+    m = AnthropicModel('claude-fable-5-1', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    async with agent.run_stream('What is 2+2?') as result:
+        await result.get_output()
+
+    response = message(result.all_messages(), ModelResponse, index=-1)
+    assert response.provider_details == snapshot(
+        {
+            'finish_reason': 'end_turn',
+            'input_transformations': [
+                {'path': 'messages.1.content.0', 'reason': 'prefix_binding_mismatch', 'type': 'thinking_dropped'},
+                {'path': 'messages.3.content.0', 'reason': 'prefix_binding_mismatch', 'type': 'thinking_dropped'},
             ],
         }
     )
@@ -4870,32 +4903,9 @@ async def test_anthropic_dropped_thinking_blocks_reach_the_trace_streamed(
     allow_model_requests: None, capfire: CaptureLogfire
 ):
     """The streamed report arrives mid-iteration, so it has to land while the request span is open."""
-    stream = [
-        BetaRawMessageStartEvent(
-            type='message_start',
-            message=BetaMessage(
-                id='msg_123',
-                model='claude-fable-5-1',
-                role='assistant',
-                type='message',
-                content=[],
-                stop_reason=None,
-                usage=BetaUsage(input_tokens=5, output_tokens=0),
-            ),
-        ),
-        BetaRawContentBlockStartEvent(
-            type='content_block_start', index=0, content_block=BetaTextBlock(type='text', text='4')
-        ),
-        BetaRawContentBlockStopEvent(type='content_block_stop', index=0),
-        BetaRawMessageDeltaEvent(
-            type='message_delta',
-            delta=Delta(stop_reason='end_turn'),
-            usage=BetaMessageDeltaUsage(input_tokens=5, output_tokens=1),
-            input_transformations=[dropped_thinking_transformation()],
-        ),
-        BetaRawMessageStopEvent(type='message_stop'),
-    ]
-    mock_client = MockAnthropic.create_stream_mock(stream)
+    mock_client = MockAnthropic.create_stream_mock(
+        dropped_thinking_stream(start_transformation=dropped_thinking_transformation())
+    )
     m = AnthropicModel('claude-fable-5-1', provider=AnthropicProvider(anthropic_client=mock_client))
 
     async with Agent(InstrumentedModel(m)).run_stream('What is 2+2?') as result:
@@ -4934,6 +4944,38 @@ async def test_anthropic_fable_5_1_drops_a_stale_thinking_block(allow_model_requ
     replayed = await second.run('And times two?', message_history=result.all_messages())
 
     response = message(replayed.all_messages(), ModelResponse, index=-1)
+    assert response.provider_details == snapshot(
+        {
+            'finish_reason': 'end_turn',
+            'input_transformations': [
+                {'path': 'messages.1.content.0', 'reason': 'prefix_binding_mismatch', 'type': 'thinking_dropped'}
+            ],
+        }
+    )
+
+
+@pytest.mark.moves_cache_prefix(reason='the changed instructions string is what invalidates the thinking block')
+@pytest.mark.vcr()
+async def test_anthropic_fable_5_1_drops_a_stale_thinking_block_streamed(
+    allow_model_requests: None, anthropic_api_key: str
+):
+    """The same drop over a stream, where Anthropic reports it on `message_start`.
+
+    Recorded rather than mocked because the event carrying `input_transformations` is the whole
+    point: a `message_delta` never carries one on a live stream.
+    """
+    m = AnthropicModel('claude-fable-5-1', provider=AnthropicProvider(api_key=anthropic_api_key))
+
+    first = Agent(m, instructions='You are a helpful assistant. Answer briefly.')
+    result = await first.run('Think about it, then say what 17*23 is.')
+    thought = message(result.all_messages(), ModelResponse, index=-1)
+    assert any(isinstance(part, ThinkingPart) for part in thought.parts), 'no thinking block to invalidate'
+
+    second = Agent(m, instructions='You are a helpful assistant. Answer briefly. Today is 2026-09-01.')
+    async with second.run_stream('And times two?', message_history=result.all_messages()) as streamed:
+        await streamed.get_output()
+
+    response = message(streamed.all_messages(), ModelResponse, index=-1)
     assert response.provider_details == snapshot(
         {
             'finish_reason': 'end_turn',
