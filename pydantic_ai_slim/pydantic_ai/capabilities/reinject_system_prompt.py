@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, cast
 
@@ -48,10 +49,13 @@ class ReinjectSystemPrompt(AbstractCapability[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         request_context: ModelRequestContext,
     ) -> ModelRequestContext:
-        messages = request_context.messages
-        if self.replace_existing:
-            _strip_system_prompts(messages)
-        elif _has_system_prompt(messages):
+        request_messages = list(request_context.messages)
+        persistent_messages = ctx.messages
+        if (
+            not self.replace_existing
+            and _has_system_prompt(request_messages)
+            and _has_system_prompt(persistent_messages)
+        ):
             return request_context
         # `ctx.agent` is always set during an agent run.
         if ctx.agent is None:
@@ -65,26 +69,30 @@ class ReinjectSystemPrompt(AbstractCapability[AgentDepsT]):
         sys_parts = await ctx.agent.system_prompt_parts(
             deps=ctx.deps,
             model=model,
-            message_history=messages,
+            message_history=request_messages,
             prompt=ctx.prompt,
             usage=ctx.usage,
             # This hook only runs in the classic request pipeline, where `ctx.model_settings`
             # never holds `RealtimeModelSettings`.
             model_settings=cast('ModelSettings | None', ctx.model_settings),
         )
-        if sys_parts:
-            _prepend_to_first_request(messages, sys_parts)
+        request_context.messages = _reinject_system_prompt(
+            request_messages, sys_parts, replace_existing=self.replace_existing
+        )
+        ctx.messages[:] = _reinject_system_prompt(
+            persistent_messages, sys_parts, replace_existing=self.replace_existing
+        )
         return request_context
 
 
-def _has_system_prompt(messages: list[ModelMessage]) -> bool:
+def _has_system_prompt(messages: Sequence[ModelMessage]) -> bool:
     for msg in messages:
         if isinstance(msg, ModelRequest) and any(isinstance(p, SystemPromptPart) for p in msg.parts):
             return True
     return False
 
 
-def _strip_system_prompts(messages: list[ModelMessage]) -> None:
+def _without_system_prompts(messages: Sequence[ModelMessage]) -> list[ModelMessage]:
     kept: list[ModelMessage] = []
     for msg in messages:
         if isinstance(msg, ModelRequest):
@@ -94,9 +102,26 @@ def _strip_system_prompts(messages: list[ModelMessage]) -> None:
             if len(filtered_parts) != len(msg.parts):
                 msg = replace(msg, parts=filtered_parts)
         kept.append(msg)
-    messages[:] = kept
+    return kept
 
 
-def _prepend_to_first_request(messages: list[ModelMessage], sys_parts: list[SystemPromptPart]) -> None:
+def _with_system_prompt(messages: Sequence[ModelMessage], sys_parts: list[SystemPromptPart]) -> list[ModelMessage]:
+    messages = list(messages)
     i, first_request = next((i, m) for i, m in enumerate(messages) if isinstance(m, ModelRequest))
     messages[i] = replace(first_request, parts=[*sys_parts, *first_request.parts])
+    return messages
+
+
+def _reinject_system_prompt(
+    messages: Sequence[ModelMessage],
+    sys_parts: list[SystemPromptPart],
+    *,
+    replace_existing: bool,
+) -> list[ModelMessage]:
+    if replace_existing:
+        messages = _without_system_prompts(messages)
+    elif _has_system_prompt(messages):
+        return list(messages)
+    if sys_parts:
+        return _with_system_prompt(messages, sys_parts)
+    return list(messages)

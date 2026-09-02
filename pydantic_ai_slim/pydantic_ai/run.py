@@ -269,8 +269,9 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         """Synchronize the graph runner's state to match a hook-modified result.
 
         After a capability hook changes the result (e.g. `on_node_run_error` recovering,
-        or `after_node_run` converting End↔node), the graph runner's internal `_next` must
-        be updated so that `output` and `next_node` reflect the hook's decision.
+        `after_node_run` converting `End` ↔ node, or `wrap_node_run` replacing the handler result),
+        the graph runner's internal `_next` must be updated so that `output` and `next_node`
+        reflect the hook's decision.
         """
         if isinstance(result, End):
             self._graph_run.override_next(EndMarker(result.data))
@@ -294,6 +295,9 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                 ] = node
                 if _agent_graph.is_agent_node(base_node):  # pragma: no branch
                     return base_node
+        # Defensive fallback, like the two guarded branches above: reached only if a wrapper
+        # returns a *node* while the graph holds an `EndMarker`/`ErrorMarker` or an unrecognised
+        # shape — no streamed node's handler can produce that state in the current lifecycle.
         return None
 
     def _graph_reflects(self, result: _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]) -> bool:
@@ -320,7 +324,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             pass
         return self._task_to_node(task)
 
-    async def _wrap_and_advance(
+    async def _wrap_and_advance_streaming(
         self,
         run_context: RunContext[AgentDepsT],
         node: _agent_graph.AgentNode[AgentDepsT, Any],
@@ -329,11 +333,11 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             Awaitable[_agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]],
         ],
     ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
-        """Execute `wrap_node_run(step_fn)` → `on_node_run_error` → `after_node_run`.
+        """Run the post-stream portion of the node lifecycle.
 
-        This is the portion of the hook lifecycle after `before_node_run` has already fired.
-        Used by both `_run_node_with_hooks` and directly by `run_stream()` which calls
-        `before_node_run` separately (before streaming).
+        This is the documented `run_stream()` exception to wrap-outermost ordering:
+        `before_node_run` has already fired before streaming, so `wrap_node_run` encloses only
+        graph advancement, followed by `on_node_run_error` recovery and `after_node_run`.
         """
         self.ctx.deps.cancellation.bind()
         cap = self.ctx.deps.root_capability
@@ -378,10 +382,10 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             Awaitable[_agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]],
         ],
     ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
-        """Run a node through the full capability hook lifecycle with a custom step function.
+        """Run the complete node lifecycle inside `wrap_node_run`.
 
-        Fires hooks in order: `before_node_run` → `wrap_node_run(step_fn)` → `after_node_run`,
-        with `on_node_run_error` handling exceptions from `wrap_node_run`.
+        The wrapped handler runs `before_node_run`, the step with `on_node_run_error` recovery,
+        and `after_node_run`.
         """
         # Bind before `before_node_run` awaits: when the run is driven from a different task than
         # the previous step (manual `next()` from another task), the controller must target this
@@ -390,11 +394,39 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         self.ctx.deps.cancellation.bind()
         run_context = _agent_graph.build_run_context(self.ctx)
         cap = self.ctx.deps.root_capability
-        node = await cap.before_node_run(run_context, node=node)
-        # A `before_node_run` hook that absorbed an external cancellation must not
-        # let the node itself start.
-        _utils.raise_if_cancelling()
-        return await self._wrap_and_advance(run_context, node, step_fn)
+
+        async def lifecycle(
+            lifecycle_node: _agent_graph.AgentNode[AgentDepsT, Any],
+        ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
+            lifecycle_node = await cap.before_node_run(run_context, node=lifecycle_node)
+            # A `before_node_run` hook that absorbed an external cancellation must not
+            # let the node itself start.
+            _utils.raise_if_cancelling()
+            try:
+                result = await step_fn(lifecycle_node)
+            except Exception as e:
+                if not cap._has_on_node_run_error:  # pyright: ignore[reportPrivateUsage]
+                    raise
+                result = await cap.on_node_run_error(run_context, node=lifecycle_node, error=e)
+                # The graph runner is in `ErrorMarker` state; update it to match the recovery.
+                self._sync_graph_state(result)
+            # If the step or recovery absorbed an external cancellation, re-assert it before
+            # `after_node_run` fires; the step's messages are already recorded.
+            _utils.raise_if_cancelling()
+            pre_hook_result = result
+            result = await cap.after_node_run(run_context, node=lifecycle_node, result=result)
+            if result is not pre_hook_result:
+                self._sync_graph_state(result)
+            _utils.raise_if_cancelling()
+            return result
+
+        if cap._has_wrap_node_run:  # pyright: ignore[reportPrivateUsage]
+            result = await cap.wrap_node_run(run_context, node=node, handler=lifecycle)
+        else:
+            result = await lifecycle(node)
+        if not self._graph_reflects(result):
+            self._sync_graph_state(result)
+        return result
 
     async def next(
         self,

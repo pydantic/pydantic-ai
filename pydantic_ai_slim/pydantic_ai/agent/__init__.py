@@ -215,7 +215,9 @@ async def _run_lifecycle_hooks(  # noqa: C901
     _run_ready = asyncio.Event()
     _run_done = asyncio.Event()
     _run_error: BaseException | None = None
+    _handler_errors: list[BaseException] = []
     _wrap_context: list[tuple[ContextVar[Any], Any]] | None = None
+    _body_context: contextvars.Context | None = None
 
     async def _do_run() -> AgentRunResult[Any]:
         nonlocal _wrap_context
@@ -235,15 +237,35 @@ async def _run_lifecycle_hooks(  # noqa: C901
         ]
         _run_ready.set()
         await _run_done.wait()
+        # The run body executes in the caller's task. Bring its latest ContextVar values back
+        # into this wrapper task before running the post-body lifecycle, so error/after hooks and
+        # the post-handler half of `wrap_run` observe state produced while the run was active.
+        body_context = _body_context
+        if body_context is not None:
+            for var in body_context:
+                var.set(body_context[var])
         if _run_error is not None:
-            raise extract_error(_run_error) if extract_error is not None else _run_error
-        if result_ready is not None and not result_ready():  # pragma: no cover
+            error = extract_error(_run_error) if extract_error is not None else _run_error
+            if isinstance(error, (GeneratorExit, KeyboardInterrupt)):
+                raise error
+            try:
+                result = await run_capability.on_run_error(run_ctx, error=error)
+            except BaseException as exc:
+                _handler_errors.append(exc)
+                raise
+        elif result_ready is not None and not result_ready():  # pragma: no cover
             # The caller finished without a result (e.g. `break` out of iteration): there is
             # nothing to return, so park until the wrap task is cancelled below. Normally the
             # cancellation is delivered at this task's resume point before this line runs, so
             # it's only reached if a `wrap_run` implementation absorbed the cancellation.
-            await asyncio.Future[AgentRunResult[Any]]()
-        return build_result()
+            result = await asyncio.Future[AgentRunResult[Any]]()
+        else:
+            result = build_result()
+        try:
+            return await run_capability.after_run(run_ctx, result=result)
+        except BaseException as exc:
+            _handler_errors.append(exc)
+            raise
 
     outer_context = contextvars.copy_context()
     _wrap_task = asyncio.create_task(run_capability.wrap_run(run_ctx, handler=_do_run))
@@ -283,7 +305,6 @@ async def _run_lifecycle_hooks(  # noqa: C901
 
     async def _finalize_result(result: AgentRunResult[Any]) -> None:
         nonlocal _run_error
-        result = await run_capability.after_run(run_ctx, result=result)
         # Every completion path funnels through here — including `wrap_run`/`on_run_error`
         # recovering from the very `CancelledError` an external cancel delivered. If that
         # cancellation is still pending on this task, re-assert it rather than let the run
@@ -309,6 +330,7 @@ async def _run_lifecycle_hooks(  # noqa: C901
             # the error from handler() and returns a recovery result, it is suppressed.
         finally:
             if not short_circuited:
+                _body_context = contextvars.copy_context()
                 _run_done.set()
                 if _run_error is None and (result_ready is None or result_ready()):
                     await _finalize_result(await _wrap_task)
@@ -318,11 +340,13 @@ async def _run_lifecycle_hooks(  # noqa: C901
                     try:
                         await _finalize_result(await _wrap_task)
                     except BaseException as wrap_exc:
+                        if _handler_errors and wrap_exc is _handler_errors[-1]:
+                            _run_error = wrap_exc
                         # Attach wrap_run's own errors as context so they're visible in tracebacks
                         # (but don't mask the original). Skip CancelledError: it's expected
                         # cancellation propagation, and setting __context__ on it causes hangs on
                         # Python 3.10.
-                        if not isinstance(wrap_exc, asyncio.CancelledError) and wrap_exc is not _run_error:
+                        elif not isinstance(wrap_exc, asyncio.CancelledError) and wrap_exc is not _run_error:
                             # Only fires for bugs in `wrap_run` implementations.
                             _run_error.__context__ = wrap_exc  # pragma: no cover
                 # `_run_done.set()` can't complete `_wrap_task` synchronously, so the task is
@@ -334,17 +358,8 @@ async def _run_lifecycle_hooks(  # noqa: C901
                     except (asyncio.CancelledError, BaseException):
                         pass
 
-        # If wrap_run didn't recover, give on_run_error a chance.
-        if _run_error is not None:
-            try:
-                result = await run_capability.on_run_error(run_ctx, error=_run_error)
-            except BaseException as on_error_exc:
-                _run_error = on_error_exc
-            else:
-                await _finalize_result(result)
-
-        # If on_run_error didn't recover either, re-raise. In an @asynccontextmanager,
-        # not re-raising suppresses the exception.
+        # If neither on_run_error nor wrap_run recovered, re-raise. In an
+        # @asynccontextmanager, not re-raising suppresses the exception.
         if _run_error is not None:
             raise _run_error
     finally:

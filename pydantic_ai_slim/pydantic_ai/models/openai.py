@@ -2094,7 +2094,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             request_context.model_request_parameters,
         )
         response = await self._responses_compact(
-            request_context.messages,
+            list(request_context.messages),
             cast(OpenAIResponsesModelSettings, model_settings or {}),
             model_request_parameters,
             instructions_override=instructions,
@@ -4900,11 +4900,11 @@ class OpenAICompaction(AbstractCapability[AgentDepsT]):
 
         return resolve
 
-    def _should_compact(self, messages: list[ModelMessage]) -> bool:
+    def _should_compact(self, messages: Sequence[ModelMessage]) -> bool:
         if not self.stateless:
             return False
         if self.trigger is not None:
-            return self.trigger(messages)
+            return self.trigger(list(messages))
         if self.message_count_threshold is not None:
             return len(messages) > self.message_count_threshold
         return False  # pragma: no cover
@@ -4942,7 +4942,9 @@ class OpenAICompaction(AbstractCapability[AgentDepsT]):
         compacted_response = await request_context.model.compact_messages(compact_ctx)
 
         # Replace message history with compaction + last request
-        request_context.messages = [compacted_response, request_context.messages[-1]]
+        messages = [compacted_response, request_context.messages[-1]]
+        request_context.messages = messages.copy()
+        ctx.messages[:] = messages
         return request_context
 
     @classmethod

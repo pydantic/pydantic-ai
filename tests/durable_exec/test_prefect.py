@@ -94,7 +94,7 @@ from pydantic_ai.exceptions import (
     UsageLimitExceeded,
     UserError,
 )
-from pydantic_ai.models import ModelRequestParameters, ModelResolutionContext
+from pydantic_ai.models import ModelRequestContext, ModelRequestParameters, ModelResolutionContext
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
@@ -3419,6 +3419,39 @@ async def test_prefect_durability_runtime_registered_wrapper_model() -> None:
         return (await agent.run('hello', model=wrapped)).output
 
     assert await run_agent() == 'wrapped-response'
+
+
+async def test_prefect_durability_outer_before_model_swap_runs_in_task() -> None:
+    """An outer `before_model_request` model swap cannot bypass the Prefect task boundary."""
+    task_contexts: list[TaskRunContext[Any] | None] = []
+
+    def swapped_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        task_contexts.append(TaskRunContext.get())
+        return ModelResponse(parts=[TextPart(content='swapped-response')])
+
+    swapped_model = FunctionModel(swapped_model_fn)
+
+    @dataclass
+    class SwapModel(AbstractCapability[Any]):
+        async def before_model_request(
+            self, ctx: RunContext[Any], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            request_context.model = swapped_model
+            return request_context
+
+    agent = Agent(
+        _durability_fn_model,
+        name='durability_outer_before_model_swap',
+        capabilities=[SwapModel(), PrefectDurability(models={'swapped': swapped_model})],
+    )
+
+    @flow
+    async def run_agent() -> str:
+        return (await agent.run('hello')).output
+
+    assert await run_agent() == 'swapped-response'
+    assert len(task_contexts) == 1
+    assert task_contexts[0] is not None
 
 
 async def test_prefect_durability_override_registered_model() -> None:

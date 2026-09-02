@@ -2196,6 +2196,42 @@ class TestContextVarPropagation:
         assert result.output == 'recovered'
         assert cap.seen_in_error == 'error-path'
 
+    async def test_contextvar_written_during_run_visible_in_on_run_error(self):
+        """Context vars written by run-body hooks propagate back to the run wrapper task."""
+
+        @dataclass
+        class StashAndRecover(AbstractCapability):
+            seen_in_error: str | None = None
+
+            async def after_node_run(self, ctx: RunContext[Any], *, node: Any, result: Any) -> Any:
+                _test_cv.set('from-run-body')
+                return result
+
+            async def on_run_error(self, ctx: RunContext[Any], *, error: BaseException) -> AgentRunResult[Any]:
+                self.seen_in_error = _test_cv.get(None)
+                return AgentRunResult(output='recovered')
+
+        calls = 0
+
+        def failing_second_request(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                return ModelResponse(parts=[ToolCallPart('tool', {}, tool_call_id='1')])
+            raise RuntimeError('model exploded')
+
+        cap = StashAndRecover()
+        agent = Agent(FunctionModel(failing_second_request), capabilities=[cap])
+
+        @agent.tool_plain
+        def tool() -> str:
+            return 'ok'
+
+        result = await agent.run('hello')
+
+        assert result.output == 'recovered'
+        assert cap.seen_in_error == 'from-run-body'
+
 
 # --- WrapperCapability and PrefixTools tests ---
 

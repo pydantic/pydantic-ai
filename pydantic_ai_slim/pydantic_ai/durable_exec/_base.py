@@ -12,7 +12,8 @@ from collections.abc import (
     Mapping,
     Sequence,
 )
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import AsyncExitStack, asynccontextmanager, contextmanager
+from contextvars import ContextVar
 from functools import partial
 from typing import Any, ClassVar, Literal, NamedTuple, Protocol, TypeVar, cast, runtime_checkable
 from weakref import ReferenceType, ref
@@ -274,6 +275,9 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         self._bound_capability_operations: dict[tuple[str, str], CapabilityBoundOperation] = {}
         self._capability_declarations: dict[tuple[str, str], CapabilityMethodDeclaration] = {}
         self._resolved_request_models: dict[int, _ResolvedRequestModel] = {}
+        self._request_model_scope: ContextVar[AsyncExitStack | None] = ContextVar(
+            f'{type(self).__name__}_request_model_scope', default=None
+        )
 
     def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> Self:
         """Bind to the agent and register this engine's durable units on a new copy."""
@@ -288,6 +292,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         bound.name = self.name or agent.name or ''
         bound._agent = agent
         bound._resolved_request_models = {}
+        bound._request_model_scope = ContextVar(f'{type(self).__name__}_request_model_scope', default=None)
         bound._bind_models(agent)
         bound._toolsets_by_id = {}
         bound._bind_to_agent(agent)
@@ -1291,66 +1296,101 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         if not self.in_durable_context:
             return await handler(request_context)
 
+        async with AsyncExitStack() as model_scope:
+            token = self._request_model_scope.set(model_scope)
+            try:
+                request_context.model = await self._build_durable_model(ctx, request_context)
+                return await handler(request_context)
+            finally:
+                self._request_model_scope.reset(token)
+
+    async def before_model_request(
+        self,
+        ctx: RunContext[AgentDepsT],
+        request_context: ModelRequestContext,
+    ) -> ModelRequestContext:
+        """Validate the final request and repair durability after an outer hook swaps the model."""
+        if not self.in_durable_context:
+            return request_context
+
+        self._validate_model_request_parameters(request_context.model_request_parameters)
+        model: Model | None = request_context.model
+        while model is not None:
+            if isinstance(model, DurableModel):
+                return request_context
+            model = model.wrapped if isinstance(model, WrapperModel) else None
+
+        request_context.model = await self._build_durable_model(ctx, request_context)
+        return request_context
+
+    async def _build_durable_model(
+        self,
+        ctx: RunContext[AgentDepsT],
+        request_context: ModelRequestContext,
+    ) -> DurableModel:
+        """Assemble the base-owned durable model used before and after the before-hook chain."""
+        self._validate_model_request_parameters(request_context.model_request_parameters)
         resolved = self._resolved_request_model(request_context.model)
         owned = resolved is not None and not resolved.registered
+        model_scope = self._request_model_scope.get()
+        assert model_scope is not None
+        active_model = await model_scope.enter_async_context(managed_model_scope(request_context.model, owned=owned))
+        request_context.model = active_model
         model_id = self._model_id_for_request(ctx, request_context)
-        async with managed_model_scope(request_context.model, owned=owned) as active_model:
-            request_context.model = active_model
-            self._validate_model_request_parameters(request_context.model_request_parameters)
-            model_name = request_context.model.model_name
-            backend = self.get_durable_operation_backend()
-            operations = self._bound_model_operations or self._bind_model_operations(
-                backend, model_id=model_id, model_name=model_name
+        self._validate_model_request_parameters(request_context.model_request_parameters)
+        model_name = request_context.model.model_name
+        backend = self.get_durable_operation_backend()
+        operations = self._bound_model_operations or self._bind_model_operations(
+            backend, model_id=model_id, model_name=model_name
+        )
+
+        async def request_segment(request: ModelRequestContext) -> ModelResponse:
+            return await operations.request(
+                ModelRequestParams(
+                    model_id,
+                    messages=request.messages,
+                    model_settings=request.model_settings,
+                    model_request_parameters=request.model_request_parameters,
+                    run_context=ctx,
+                )
             )
 
-            async def request_segment(request: ModelRequestContext) -> ModelResponse:
-                return await operations.request(
-                    ModelRequestParams(
-                        model_id,
-                        messages=request.messages,
-                        model_settings=request.model_settings,
-                        model_request_parameters=request.model_request_parameters,
-                        run_context=ctx,
-                    )
+        async def request_stream_segment(request: ModelRequestContext) -> StreamedActivityResult:
+            result = await operations.request_stream(
+                ModelRequestParams(
+                    model_id,
+                    messages=request.messages,
+                    model_settings=request.model_settings,
+                    model_request_parameters=request.model_request_parameters,
+                    run_context=ctx,
                 )
-
-            async def request_stream_segment(request: ModelRequestContext) -> StreamedActivityResult:
-                result = await operations.request_stream(
-                    ModelRequestParams(
-                        model_id,
-                        messages=request.messages,
-                        model_settings=request.model_settings,
-                        model_request_parameters=request.model_request_parameters,
-                        run_context=ctx,
-                    )
-                )
-                return await self._load_streamed_activity_result(result, request.model_request_parameters)
-
-            async def cancel_suspended_response_segment(response: ModelResponse) -> None:
-                await operations.cancel_suspended_response(
-                    ModelCancelSuspendedResponseParams(model_id, response=response, run_context=ctx)
-                )
-
-            async def compact_messages_segment(
-                compact_context: ModelRequestContext, instructions: str | None
-            ) -> ModelResponse:
-                return await operations.compact_messages(
-                    ModelCompactMessagesParams(
-                        model_id,
-                        request_context=compact_context,
-                        instructions=instructions,
-                        run_context=ctx,
-                    )
-                )
-
-            request_context.model = DurableModel(
-                request_context.model,
-                request_segment=request_segment,
-                request_stream_segment=request_stream_segment,
-                compact_messages_segment=compact_messages_segment,
-                cancel_suspended_response_segment=cancel_suspended_response_segment,
             )
-            return await handler(request_context)
+            return await self._load_streamed_activity_result(result, request.model_request_parameters)
+
+        async def cancel_suspended_response_segment(response: ModelResponse) -> None:
+            await operations.cancel_suspended_response(
+                ModelCancelSuspendedResponseParams(model_id, response=response, run_context=ctx)
+            )
+
+        async def compact_messages_segment(
+            compact_context: ModelRequestContext, instructions: str | None
+        ) -> ModelResponse:
+            return await operations.compact_messages(
+                ModelCompactMessagesParams(
+                    model_id,
+                    request_context=compact_context,
+                    instructions=instructions,
+                    run_context=ctx,
+                )
+            )
+
+        return DurableModel(
+            request_context.model,
+            request_segment=request_segment,
+            request_stream_segment=request_stream_segment,
+            compact_messages_segment=compact_messages_segment,
+            cancel_suspended_response_segment=cancel_suspended_response_segment,
+        )
 
     async def _load_streamed_activity_result(
         self, result: object, model_request_parameters: ModelRequestParameters
@@ -1478,8 +1518,8 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         return toolset.visit_and_replace(swap)
 
     def get_ordering(self) -> CapabilityOrdering:
-        # Innermost: durable dispatch must be the last wrapper around the model handler so every
-        # other capability's contribution is already applied inside the durable unit.
+        # Innermost: install durable dispatch before outer before-hooks may perform model I/O,
+        # then run the final before-hook repair after every outer request rewrite.
         return CapabilityOrdering(position='innermost')
 
     @classmethod
@@ -1591,9 +1631,9 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         Prefer the original model-id string the run's model was resolved from
         ([`ModelRequestContext.model_id`][pydantic_ai.models.ModelRequestContext.model_id]) when the
         request still targets the run's model: it survives aliases that the resolved model's own
-        `model_id` doesn't (the worker-side chain re-resolves the same string the caller wrote). A
-        model swapped in by an outer capability's `before_model_request` invalidates the provenance,
-        so it falls back to `_find_model_id`.
+        `model_id` doesn't (the worker-side chain re-resolves the same string the caller wrote).
+        Durability is the last writer in the before-chain, so it directly sees any outer model swap;
+        a swap invalidates the provenance and falls back to `_find_model_id`.
         """
         provenance = request_context.model_id
         # A durable run always targets a regular `Model`, never a realtime model, so `ctx.model`

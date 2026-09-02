@@ -894,7 +894,7 @@ def test_unannotated_parameter_is_rejected_at_bind() -> None:
         Agent(TestModel(), name='unannotated', capabilities=[Unannotated(), RecordingDurability()])
 
 
-async def test_decorated_model_request_hook_round_trips_mutation() -> None:
+async def test_decorated_model_request_hook_round_trips_request_only_mutation() -> None:
     agent = Agent(
         TestModel(call_tools=[]),
         name='before_model',
@@ -905,13 +905,18 @@ async def test_decorated_model_request_hook_round_trips_mutation() -> None:
 
     requests = [message for message in result.all_messages() if isinstance(message, ModelRequest)]
     assert isinstance(requests[-1].parts[0], UserPromptPart)
-    assert requests[-1].parts[0].content == 'replaced'
+    assert requests[-1].parts[0].content == 'original'
     durability = RecordingDurability.from_agent(agent)
     assert durability is not None
     assert any(name == 'before_model__capability__before_model.before_model_request' for name, _ in durability.calls)
+    model_call = next(cache_key for name, cache_key in durability.calls if name == 'before_model__model.request')
+    sent_request = cast(list[ModelMessage], model_call[1])[-1]
+    assert isinstance(sent_request, ModelRequest)
+    assert isinstance(sent_request.parts[0], UserPromptPart)
+    assert sent_request.parts[0].content == 'replaced'
 
 
-async def test_custom_model_request_operation_round_trips_projection() -> None:
+async def test_custom_model_request_operation_round_trips_request_only_projection() -> None:
     agent = Agent(
         TestModel(call_tools=[]),
         name='custom_model_request',
@@ -922,12 +927,19 @@ async def test_custom_model_request_operation_round_trips_projection() -> None:
 
     requests = [message for message in result.all_messages() if isinstance(message, ModelRequest)]
     assert isinstance(requests[-1].parts[0], UserPromptPart)
-    assert requests[-1].parts[0].content == 'custom replacement'
+    assert requests[-1].parts[0].content == 'original'
     durability = RecordingDurability.from_agent(agent)
     assert durability is not None
     assert any(
         name == 'custom_model_request__capability__custom_model_request.rewrite_request' for name, _ in durability.calls
     )
+    model_call = next(
+        cache_key for name, cache_key in durability.calls if name == 'custom_model_request__model.request'
+    )
+    sent_request = cast(list[ModelMessage], model_call[1])[-1]
+    assert isinstance(sent_request, ModelRequest)
+    assert isinstance(sent_request.parts[0], UserPromptPart)
+    assert sent_request.parts[0].content == 'custom replacement'
 
 
 def test_durable_operation_bindings_do_not_retain_agents() -> None:
