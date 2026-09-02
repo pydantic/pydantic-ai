@@ -4741,7 +4741,7 @@ async def test_anthropic_respects_block_binding_in_mapping_extra_body(allow_mode
 @pytest.mark.parametrize(
     'client_cls,binds_thinking_blocks',
     [
-        pytest.param(AsyncAnthropic, True, id='direct'),
+        pytest.param(MockAnthropic, True, id='direct'),
         pytest.param(AsyncAnthropicBedrock, False, id='bedrock'),
         pytest.param(AsyncAnthropicBedrockMantle, False, id='bedrock-mantle'),
         pytest.param(AsyncAnthropicFoundry, False, id='foundry'),
