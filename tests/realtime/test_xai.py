@@ -264,6 +264,7 @@ async def test_connection_send_tool_result_image_raises_with_nothing_sent() -> N
 # --- capabilities --------------------------------------------------------------------------------
 
 
+@pytest.mark.usefixtures('no_genai_prices_context_window')
 def test_profile() -> None:
     """xAI supports cancellation-based interruption but not output truncation, and no image input."""
     assert _model().profile == RealtimeModelProfile(

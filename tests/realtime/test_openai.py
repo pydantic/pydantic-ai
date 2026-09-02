@@ -15,6 +15,7 @@ from typing import Any, Literal, cast, get_args, get_origin
 from unittest.mock import patch
 
 import pytest
+from genai_prices.data_snapshot import get_snapshot
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
@@ -3910,8 +3911,11 @@ def test_context_window_filled_from_genai_prices_unless_a_profile_layer_sets_it(
     with patch('pydantic_ai.realtime.model.lookup_context_window', side_effect=AssertionError('not consulted')):
         assert OpenAIRealtimeModel('gpt-realtime', provider=WindowProvider(api_key='k')).context_window == 456
 
-    # genai-prices doesn't record a window for this model today, so the profile keeps the default `None`.
-    assert OpenAIRealtimeModel('gpt-realtime', provider=provider).context_window is None
+    # Unpatched, the real lookup runs: whatever the pinned genai-prices data records for the model.
+    _, model_info = get_snapshot().find_provider_model(
+        'gpt-realtime', provider=None, provider_id='openai', provider_api_url=None
+    )
+    assert OpenAIRealtimeModel('gpt-realtime', provider=provider).context_window == model_info.context_window
 
 
 class _ConnectSequence:
