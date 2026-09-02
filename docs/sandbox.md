@@ -39,6 +39,24 @@ each case:
     tests, which is why it is opt-in. Attach a container-, VM-, or remote-backed sandbox before
     exposing command execution or file access to untrusted input.
 
+Commands run by `LocalSandbox` inherit only `PATH`, `HOME`, `LANG` and `TMPDIR`, plus `env`; other
+parent variables, including provider API keys, are not inherited by default, but `HOME` and the
+host filesystem remain available. Output is capped at 10 MiB: redirect noisy output to a file and
+read a window instead. A background process can delay return by up to the two-second drain grace.
+
+Every interface that owns a run takes the same `sandbox=` argument, and none of them attaches a
+sandbox for you:
+
+```python {title="sandbox_to_cli.py" test="skip"}
+from pathlib import Path
+
+from pydantic_ai import Agent
+from pydantic_ai.sandboxes import LocalSandbox
+
+agent = Agent('anthropic:claude-sonnet-5')
+agent.to_cli_sync(sandbox=LocalSandbox(root=Path.cwd()))
+```
+
 ## Read files without flooding model context
 
 Use [`Sandbox.read_file()`][pydantic_ai.sandboxes.Sandbox.read_file] instead of loading a whole
@@ -196,13 +214,10 @@ and line-window reads. Filesystem operations use the backend's
 | Need | [`Sandbox`][pydantic_ai.sandboxes.Sandbox] API | Backend support |
 |---|---|---|
 | Execute a command | [`run()`][pydantic_ai.sandboxes.Sandbox.run] | — |
-| Background process | [`start()`][pydantic_ai.sandboxes.Sandbox.start] | [`SupportsStart`][pydantic_ai.sandboxes.SupportsStart] (else `NotImplementedError`) |
 | Read/write files | [`fs`][pydantic_ai.sandboxes.Sandbox.fs] / [`read_text()`][pydantic_ai.sandboxes.Sandbox.read_text] / [`write_text()`][pydantic_ai.sandboxes.Sandbox.write_text] | [`SupportsFilesystem`][pydantic_ai.sandboxes.SupportsFilesystem] (else `NotImplementedError`) |
 | Windowed read | [`read_file()`][pydantic_ai.sandboxes.Sandbox.read_file] | `sed` over `run()`, with [`SupportsFilesystem`][pydantic_ai.sandboxes.SupportsFilesystem] fallback (else `NotImplementedError`) |
 | Working directory | [`working_dir()`][pydantic_ai.sandboxes.Sandbox.working_dir] | — |
 | Path resolution | [`resolve()`][pydantic_ai.sandboxes.Sandbox.resolve] | Handled by `Sandbox` |
-
-Implement `SupportsStart` when the backend can return a real process handle.
 
 The protocol contracts that matter to callers:
 
@@ -212,6 +227,8 @@ The protocol contracts that matter to callers:
   `stderr` attributes contain output produced before termination when the backend can recover it.
 - Backends raise [`SandboxUnavailableError`][pydantic_ai.sandboxes.SandboxUnavailableError] when
   the environment is permanently unusable and consumers should stop retrying it.
+- Backends raise [`SandboxError`][pydantic_ai.sandboxes.SandboxError] for deliberate recoverable
+  operation failures; catch specific subclasses before the base class.
 - A filesystem reports a missing path with the builtin `FileNotFoundError`, and its `stat()` and
   `list_dir()` entries can reuse the concrete [`FileEntry`][pydantic_ai.sandboxes.FileEntry]
   carrier instead of declaring their own.

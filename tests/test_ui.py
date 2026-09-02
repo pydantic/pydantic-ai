@@ -63,6 +63,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.output import OutputDataT
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
+from pydantic_ai.sandboxes import SandboxRef
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, ExternalToolset
 
@@ -1335,9 +1336,19 @@ async def test_run_stream_native_metadata_forwarded():
     assert run_result_event.result.metadata == {'ui': 'native'}
 
 
-async def test_adapter_dispatch_request():
+async def test_adapter_dispatch_request(monkeypatch: pytest.MonkeyPatch):
     agent = Agent(model=TestModel())
     request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+    sandbox = SandboxRef(sandbox_id='test')
+    captured_sandbox: list[object] = []
+
+    run_stream_events = agent.run_stream_events
+
+    def capture_run_stream_events(**kwargs: Any) -> Any:
+        captured_sandbox.append(kwargs['sandbox'])
+        return run_stream_events(**kwargs)
+
+    monkeypatch.setattr(agent, 'run_stream_events', capture_run_stream_events)
 
     async def receive() -> dict[str, Any]:
         return {'type': 'http.request', 'body': request.model_dump_json().encode('utf-8')}
@@ -1359,7 +1370,11 @@ async def test_adapter_dispatch_request():
         captured_metadata.append(run_result.metadata)
 
     response = await DummyUIAdapter.dispatch_request(
-        starlette_request, agent=agent, metadata={'ui': 'dispatch'}, on_complete=on_complete
+        starlette_request,
+        agent=agent,
+        metadata={'ui': 'dispatch'},
+        on_complete=on_complete,
+        sandbox=sandbox,
     )
 
     assert isinstance(response, StreamingResponse)
@@ -1398,6 +1413,7 @@ async def test_adapter_dispatch_request():
         ]
     )
     assert captured_metadata == [{'ui': 'dispatch'}]
+    assert captured_sandbox == [sandbox]
 
 
 def test_manage_system_prompt_visible_in_base_adapter_signatures():

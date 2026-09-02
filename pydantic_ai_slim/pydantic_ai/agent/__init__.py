@@ -3939,6 +3939,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         *,
         models: ModelsParam = None,
         deps: AgentDepsT = None,
+        sandbox: SandboxBackend | SandboxRef | None = None,
         model_settings: ModelSettings | None = None,
         instructions: str | None = None,
         html_source: str | Path | None = None,
@@ -3953,7 +3954,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         The returned Starlette application can be mounted into a FastAPI app or run directly
         with any ASGI server (uvicorn, hypercorn, etc.).
 
-        Note that the `deps` and `model_settings` will be the same for each request.
+        Note that the `deps`, `sandbox`, and `model_settings` will be the same for each request.
         To provide different `deps` for each request use the lower-level adapters directly.
 
         The agent's configured native tools (registered via `capabilities=[NativeTool(...)]`
@@ -3968,6 +3969,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 The agent's model is always included. Native tool support is automatically
                 determined from each model's profile.
             deps: Optional dependencies to use for all requests.
+            sandbox: Optional sandbox backend or [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] for all requests; overrides capability contributions. See the [sandbox docs](../sandbox.md).
             model_settings: Optional settings to use for all model requests.
             instructions: Optional extra instructions to pass to each agent run.
             html_source: Path or URL for the chat UI HTML. Can be:
@@ -4008,6 +4010,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             self,
             models=models,
             deps=deps,
+            sandbox=sandbox,
             model_settings=model_settings,
             instructions=instructions,
             html_source=html_source,
