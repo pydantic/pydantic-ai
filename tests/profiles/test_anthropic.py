@@ -330,11 +330,13 @@ def test_model_profile_does_not_support_dynamic_filtering(model_name: str):
 
 
 def test_model_profile_fable_5():
-    """Claude Fable 5 mirrors the Opus 4.8 capability set, minus fast speed and forced tool choice.
+    """Claude Fable 5 mirrors the Opus 4.8 capability set, minus fast speed.
 
-    Capabilities verified live against the Anthropic API: it rejects sampling settings and
-    budget-based thinking, accepts adaptive thinking + `xhigh` effort + task budgets + json-schema
-    output, but rejects `anthropic_speed='fast'` and a forced `tool_choice` outright.
+    Capabilities verified live against the Anthropic API: it rejects sampling settings,
+    budget-based thinking and `anthropic_speed='fast'`, and accepts adaptive thinking + `xhigh`
+    effort + task budgets + json-schema output. It also accepts a forced `tool_choice` — 200 on
+    both `{'type': 'any'}` and `{'type': 'tool'}`, on the GA and beta endpoints — and Anthropic's
+    forcing-tool-use table lists only the 5.1 generation.
     """
     profile = anthropic_model_profile('claude-fable-5')
     assert profile is not None
@@ -349,28 +351,40 @@ def test_model_profile_fable_5():
     assert profile.get('anthropic_supports_task_budgets') is True
     assert profile.get('anthropic_default_code_execution_tool_version') == '20260120'
 
-    # Fable-5-specific divergences from the Opus mirror
+    # Fable-5-specific divergence from the Opus mirror
     assert profile.get('anthropic_supports_fast_speed') is False
-    assert profile.get('anthropic_supports_forced_tool_choice') is False
 
 
-def test_model_profile_mythos_rejects_forced_tool_choice():
-    """Claude Mythos Preview rejects a forced `tool_choice` outright, like Fable 5.
+@pytest.mark.parametrize(
+    ('model_name', 'supports_forcing'),
+    [
+        ('claude-fable-5-1', False),
+        ('claude-mythos-5-1', False),
+        ('claude-fable-5', True),
+        ('claude-mythos-5', True),
+        ('claude-mythos-preview', True),
+        ('claude-opus-5', True),
+    ],
+)
+def test_model_profile_forced_tool_choice(model_name: str, supports_forcing: bool):
+    """Only the 5.1 generation rejects a forced `tool_choice` outright.
 
-    Per the Anthropic docs, requests with `tool_choice: {'type': 'any'}` or `{'type': 'tool'}`
-    return a 400 on this model, so `anthropic_supports_forced_tool_choice` must be False.
+    Anthropic's forcing-tool-use table names Claude Fable 5.1 and Claude Mythos 5.1 and no other
+    model. Verified live: `claude-fable-5-1` returns a 400 for `{'type': 'any'}` and
+    `{'type': 'tool'}` while `claude-fable-5` returns 200 for both, on the GA and beta endpoints.
+    The Mythos ids are Project Glasswing-only and unreachable with our credentials, so they follow
+    the table.
     """
-    profile = anthropic_model_profile('claude-mythos-preview')
+    profile = anthropic_model_profile(model_name)
     assert profile is not None
-    assert profile.get('anthropic_supports_forced_tool_choice') is False
+    assert profile.get('anthropic_supports_forced_tool_choice') is supports_forcing
 
 
 def test_model_profile_mythos_5():
     """Claude Mythos 5 is the safety-classifier-free twin of Claude Fable 5 and carries the same
     capability profile (Anthropic: 'Mythos 5 shares the same capabilities without the safety classifiers').
 
-    Every capability is documented for Mythos 5 by name except the forced-`tool_choice` rejection,
-    which is inferred from it being both the successor to Mythos Preview and Fable 5's twin.
+    Every capability is documented for Mythos 5 by name.
     """
     profile = anthropic_model_profile('claude-mythos-5')
     assert profile is not None
@@ -385,9 +399,8 @@ def test_model_profile_mythos_5():
     assert profile.get('anthropic_supports_task_budgets') is True
     assert profile.get('anthropic_default_code_execution_tool_version') == '20260120'
 
-    # Shared divergences from the Opus mirror (same as Fable 5)
+    # Shared divergence from the Opus mirror (same as Fable 5)
     assert profile.get('anthropic_supports_fast_speed') is False
-    assert profile.get('anthropic_supports_forced_tool_choice') is False
 
 
 def test_model_profile_fable_5_1():
@@ -400,9 +413,9 @@ def test_model_profile_fable_5_1():
     search, the advisor tool, code execution `20260120`, web search/fetch `20260209`, a
     mid-conversation `system` entry, and `tool_addition` by reference.
 
-    The pair diverges on forced `tool_choice`, but only in the API's live behavior, not in this
-    profile: `claude-fable-5-1` returns a 400 while `claude-fable-5` now accepts forcing. Both
-    resolve to `anthropic_supports_forced_tool_choice=False` — see `anthropic_model_profile`.
+    The pair diverges on forced `tool_choice`: `claude-fable-5-1` returns a 400 while
+    `claude-fable-5` accepts forcing, so only 5.1 carries
+    `anthropic_supports_forced_tool_choice=False` — see `test_model_profile_forced_tool_choice`.
     """
     profile = anthropic_model_profile('claude-fable-5-1')
     assert profile == snapshot(

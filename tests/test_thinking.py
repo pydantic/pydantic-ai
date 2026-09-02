@@ -709,7 +709,7 @@ class TestAnthropicThinkingOutputToolsConflict:
                 id='unified_thinking_on_non_adaptive_profile_switches_to_native',
             ),
             pytest.param(
-                'claude-fable-5',
+                'claude-fable-5-1',
                 None,
                 'native',
                 id='adaptive_profile_that_cannot_force_switches_to_native',
@@ -746,9 +746,9 @@ class TestAnthropicThinkingOutputToolsConflict:
         'model_name,anthropic_thinking,expected_message',
         [
             pytest.param(
-                'claude-fable-5',
+                'claude-fable-5-1',
                 None,
-                "'claude-fable-5' does not support output tools when a thinking setting is configured, "
+                "'claude-fable-5-1' does not support output tools when a thinking setting is configured, "
                 'because it rejects the forced tool choice they require. '
                 'Use `output_type=NativeOutput(...)` instead.',
                 id='adaptive_profile_that_cannot_force_names_the_model',

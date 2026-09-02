@@ -947,11 +947,8 @@ async def test_anthropic_single_tool_forcing_under_unified_thinking(
 
 # Models that reject a forced `tool_choice` outright, even without thinking (unlike other Anthropic models).
 NO_FORCING_ANTHROPIC_MODELS = [
-    'claude-fable-5',
     'claude-fable-5-1',
-    'claude-mythos-5',
     'claude-mythos-5-1',
-    'claude-mythos-preview',
 ]
 
 

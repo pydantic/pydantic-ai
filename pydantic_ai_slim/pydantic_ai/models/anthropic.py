@@ -10,6 +10,7 @@ from functools import cached_property
 from typing import Any, Literal, TypeAlias, cast, overload
 
 import pydantic_core
+from opentelemetry.trace import get_current_span
 from pydantic import TypeAdapter
 from typing_extensions import assert_never
 
@@ -220,6 +221,7 @@ try:
         BetaThinkingBlockParam,
         BetaThinkingConfigParam,
         BetaThinkingDelta,
+        BetaThinkingDroppedInputTransformation,
         BetaTokenTaskBudgetParam,
         BetaToolChoiceParam,
         BetaToolParam,
@@ -599,6 +601,25 @@ def _unset_thinking_block_binding(
     if not profile.get('anthropic_binds_thinking_blocks', False):
         return None
     return _ANTHROPIC_DROP_STALE_THINKING_BLOCKS
+
+
+def _report_input_transformations(
+    transformations: list[BetaThinkingDroppedInputTransformation],
+) -> list[dict[str, Any]]:
+    """Report Anthropic's input transformations on the current span, and return them for `provider_details`.
+
+    A dropped thinking block is otherwise silent: the model answered without the reasoning we
+    replayed, and nothing in the response says so. `provider_details` keeps it inspectable after the
+    run; the span event surfaces it in the trace, on the model request that lost the reasoning.
+    """
+    reported = [transformation.model_dump() for transformation in transformations]
+    span = get_current_span()
+    if span.is_recording():
+        span.add_event(
+            'anthropic.input_transformations',
+            attributes={'anthropic.input_transformations': pydantic_core.to_json(reported).decode()},
+        )
+    return reported
 
 
 def _resolve_anthropic_service_tier(
@@ -1393,13 +1414,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if response.container:
             provider_details = provider_details or {}
             provider_details['container_id'] = response.container.id
-        # A dropped thinking block is otherwise silent: the model answered without the reasoning we
-        # replayed. Surface Anthropic's own report so a run can be inspected after the fact.
         if response.input_transformations:
             provider_details = provider_details or {}
-            provider_details['input_transformations'] = [
-                transformation.model_dump() for transformation in response.input_transformations
-            ]
+            provider_details['input_transformations'] = _report_input_transformations(response.input_transformations)
 
         return ModelResponse(
             parts=items,
@@ -3141,9 +3158,9 @@ class AnthropicStreamedResponse(StreamedResponse):
                         self.provider_details['container_id'] = event.delta.container.id
                     if event.input_transformations:
                         self.provider_details = self.provider_details or {}
-                        self.provider_details['input_transformations'] = [
-                            transformation.model_dump() for transformation in event.input_transformations
-                        ]
+                        self.provider_details['input_transformations'] = _report_input_transformations(
+                            event.input_transformations
+                        )
 
                 elif isinstance(event, BetaRawContentBlockStopEvent):  # pragma: no branch
                     if event.index in ignored_server_tool_use_indices:
@@ -3845,7 +3862,7 @@ def _support_tool_forcing(
     """A forced `tool_choice` ('required'/specific tool) isn't always compatible with Anthropic.
 
     Extended thinking rejects forcing (adaptive thinking does not), and some models
-    (e.g. Claude Fable 5, Claude Mythos Preview) reject it unconditionally.
+    (Claude Fable 5.1, Claude Mythos 5.1) reject it unconditionally.
     We only raise an error if the user explicitly set a forcing value; a forcing value that came
     from the `tool_choice` resolution logic falls back softly to 'auto'.
     Ref: https://platform.claude.com/docs/en/agents-and-tools/tool-use/implement-tool-use#forcing-tool-use

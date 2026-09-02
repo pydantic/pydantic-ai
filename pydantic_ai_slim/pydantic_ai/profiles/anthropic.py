@@ -114,8 +114,8 @@ class AnthropicModelProfile(ModelProfile, total=False):
     anthropic_supports_forced_tool_choice: bool
     """Whether the model accepts a forced `tool_choice` (`{'type': 'any'}` or `{'type': 'tool'}`).
 
-    Most Anthropic models only reject forcing alongside extended thinking; Claude Fable 5 and Claude
-    Mythos Preview reject it unconditionally with a 400. When False, a resolved `required` tool choice
+    Most Anthropic models only reject forcing alongside extended thinking; Claude Fable 5.1 and Claude
+    Mythos 5.1 reject it unconditionally with a 400. When False, a resolved `required` tool choice
     falls back to `auto` (filtering tools to the requested set), and an explicit `tool_choice='required'`
     (or an explicit list of tools) raises a `UserError`.
     """
@@ -246,15 +246,12 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         ('claude-fable-5', 'claude-mythos-5', 'claude-opus-4-7', 'claude-opus-4-8', 'claude-opus-5', 'claude-sonnet-5')
     )
 
-    # These models reject a forced `tool_choice` (`any`/`tool`) outright, unlike other Anthropic
-    # models which only reject forcing alongside extended thinking. Anthropic's forcing-tool-use
-    # docs name Fable 5.1 and Mythos 5.1; this list is deliberately wider, and `claude-fable-5`
-    # accepts forcing live, so Fable 5, Mythos 5, and Mythos Preview are candidates for removal.
-    # The 5.1 ids are spelled out rather than left to the shorter prefixes, which already match
-    # them, so that removing the three wider entries cannot silently take the 5.1 models along.
-    supports_forced_tool_choice = not model_name.startswith(
-        ('claude-fable-5', 'claude-fable-5-1', 'claude-mythos-5', 'claude-mythos-5-1', 'claude-mythos-preview')
-    )
+    # The 5.1 generation rejects a forced `tool_choice` (`any`/`tool`) outright, unlike other
+    # Anthropic models which only reject forcing alongside extended thinking. Anthropic's
+    # forcing-tool-use table names Claude Fable 5.1 and Claude Mythos 5.1 and nothing else, and
+    # `claude-fable-5` accepts both forcing shapes live (200 on `any` and `tool`, GA and beta
+    # endpoints), so Fable 5, Mythos 5, and Mythos Preview no longer belong here.
+    supports_forced_tool_choice = not model_name.startswith(('claude-fable-5-1', 'claude-mythos-5-1'))
 
     # Claude Fable 5.1 alone binds thinking blocks to the conversation prefix: Claude Fable 5,
     # Opus 5, and Sonnet 5 all return 200 for a replayed block under an explicit

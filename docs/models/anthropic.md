@@ -549,7 +549,7 @@ agent = Agent(
 
 ## Forced tool choice
 
-Most Anthropic models let you force a tool call via [`tool_choice='required'`][pydantic_ai.settings.ModelSettings.tool_choice] (or a list of tool names), except while [extended thinking](../capabilities/thinking.md#anthropic) is enabled — [adaptive thinking](../capabilities/thinking.md#adaptive-thinking-effort) is compatible with forcing. Anthropic documents **Claude Fable 5.1** and **Claude Mythos 5.1** as rejecting a forced tool choice unconditionally, even without thinking. Pydantic AI marks those with [`anthropic_supports_forced_tool_choice=False`][pydantic_ai.profiles.anthropic.AnthropicModelProfile.anthropic_supports_forced_tool_choice], along with **Claude Fable 5** and the earlier **Claude Mythos** models.
+Most Anthropic models let you force a tool call via [`tool_choice='required'`][pydantic_ai.settings.ModelSettings.tool_choice] (or a list of tool names), except while [extended thinking](../capabilities/thinking.md#anthropic) is enabled — [adaptive thinking](../capabilities/thinking.md#adaptive-thinking-effort) is compatible with forcing. Anthropic documents **Claude Fable 5.1** and **Claude Mythos 5.1** as rejecting a forced tool choice unconditionally, even without thinking, and Pydantic AI marks those two with [`anthropic_supports_forced_tool_choice=False`][pydantic_ai.profiles.anthropic.AnthropicModelProfile.anthropic_supports_forced_tool_choice].
 
 On a model that doesn't support forcing:
 
@@ -567,7 +567,7 @@ Because [Tool Output](../output.md#tool-output) resolves to a forced tool choice
 
 Anthropic enforces the check on accounts created on or after 31 August 2026. On an older account the mismatch is recorded, but acted on only if the request sets a behavior.
 
-On that model Pydantic AI defaults Anthropic's `thinking.block_binding.prefix_mismatch_behavior` to `'drop_block'`, marked by [`anthropic_binds_thinking_blocks=True`][pydantic_ai.profiles.anthropic.AnthropicModelProfile.anthropic_binds_thinking_blocks]. The stale block is dropped and the request proceeds instead of failing. **The model no longer sees that turn's reasoning** — the trade is one turn's thinking against a failed run. Anthropic reports every drop, and Pydantic AI records it on the response:
+On that model Pydantic AI defaults Anthropic's `thinking.block_binding.prefix_mismatch_behavior` to `'drop_block'`, marked by [`anthropic_binds_thinking_blocks=True`][pydantic_ai.profiles.anthropic.AnthropicModelProfile.anthropic_binds_thinking_blocks]. The stale block is dropped and the request proceeds instead of failing. **The model no longer sees that turn's reasoning** — the trade is one turn's thinking against a failed run. Anthropic reports every drop, and Pydantic AI surfaces it two ways. Under [instrumentation](../logfire.md) the model request span carries an `anthropic.input_transformations` event, so a drop is visible in the trace as it happens. On the response it is recorded in `provider_details`:
 
 ```python {title="dropped_thinking_blocks.py" test="skip"}
 from pydantic_ai import Agent

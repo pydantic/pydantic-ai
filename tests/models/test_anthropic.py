@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeVar, cast
 from unittest.mock import AsyncMock, MagicMock
 
 if TYPE_CHECKING:
+    from logfire.testing import CaptureLogfire
     from vcr.cassette import Cassette
 
 import httpx2
@@ -66,6 +67,7 @@ from pydantic_ai.messages import (
     UploadedFile,
 )
 from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models.instrumented import InstrumentedModel
 from pydantic_ai.native_tools import (
     SUPPORTED_NATIVE_TOOLS,
     AdvisorTool,
@@ -88,6 +90,7 @@ from ..cassette_utils import single_request_body
 from ..conftest import (
     IsDatetime,
     IsInstance,
+    IsInt,
     IsNow,
     IsStr,
     TestEnv,
@@ -4825,6 +4828,89 @@ async def test_anthropic_records_dropped_thinking_blocks_streamed(allow_model_re
                 {'path': 'messages.1.content.0', 'reason': 'prefix_binding_mismatch', 'type': 'thinking_dropped'}
             ],
         }
+    )
+
+
+def dropped_thinking_span_events(capfire: CaptureLogfire) -> list[dict[str, Any]]:
+    return [event for span in capfire.exporter.exported_spans_as_dict() for event in span.get('events', [])]
+
+
+async def test_anthropic_dropped_thinking_blocks_reach_the_trace(allow_model_requests: None, capfire: CaptureLogfire):
+    """`provider_details` is only readable after the run; the span event puts the drop in the trace."""
+    mock_client = MockAnthropic.create_mock(
+        BetaMessage(
+            id='123',
+            content=[BetaTextBlock(text='4', type='text')],
+            model='claude-fable-5-1',
+            role='assistant',
+            stop_reason='end_turn',
+            type='message',
+            usage=BetaUsage(input_tokens=5, output_tokens=10),
+            input_transformations=[dropped_thinking_transformation()],
+        )
+    )
+    m = AnthropicModel('claude-fable-5-1', provider=AnthropicProvider(anthropic_client=mock_client))
+
+    await Agent(InstrumentedModel(m)).run('What is 2+2?')
+
+    assert dropped_thinking_span_events(capfire) == snapshot(
+        [
+            {
+                'name': 'anthropic.input_transformations',
+                'timestamp': IsInt(),
+                'attributes': {
+                    'anthropic.input_transformations': '[{"path":"messages.1.content.0","reason":"prefix_binding_mismatch","type":"thinking_dropped"}]'
+                },
+            }
+        ]
+    )
+
+
+async def test_anthropic_dropped_thinking_blocks_reach_the_trace_streamed(
+    allow_model_requests: None, capfire: CaptureLogfire
+):
+    """The streamed report arrives mid-iteration, so it has to land while the request span is open."""
+    stream = [
+        BetaRawMessageStartEvent(
+            type='message_start',
+            message=BetaMessage(
+                id='msg_123',
+                model='claude-fable-5-1',
+                role='assistant',
+                type='message',
+                content=[],
+                stop_reason=None,
+                usage=BetaUsage(input_tokens=5, output_tokens=0),
+            ),
+        ),
+        BetaRawContentBlockStartEvent(
+            type='content_block_start', index=0, content_block=BetaTextBlock(type='text', text='4')
+        ),
+        BetaRawContentBlockStopEvent(type='content_block_stop', index=0),
+        BetaRawMessageDeltaEvent(
+            type='message_delta',
+            delta=Delta(stop_reason='end_turn'),
+            usage=BetaMessageDeltaUsage(input_tokens=5, output_tokens=1),
+            input_transformations=[dropped_thinking_transformation()],
+        ),
+        BetaRawMessageStopEvent(type='message_stop'),
+    ]
+    mock_client = MockAnthropic.create_stream_mock(stream)
+    m = AnthropicModel('claude-fable-5-1', provider=AnthropicProvider(anthropic_client=mock_client))
+
+    async with Agent(InstrumentedModel(m)).run_stream('What is 2+2?') as result:
+        await result.get_output()
+
+    assert dropped_thinking_span_events(capfire) == snapshot(
+        [
+            {
+                'name': 'anthropic.input_transformations',
+                'timestamp': IsInt(),
+                'attributes': {
+                    'anthropic.input_transformations': '[{"path":"messages.1.content.0","reason":"prefix_binding_mismatch","type":"thinking_dropped"}]'
+                },
+            }
+        ]
     )
 
 
