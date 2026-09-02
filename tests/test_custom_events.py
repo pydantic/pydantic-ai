@@ -517,24 +517,23 @@ def test_undecorated_base_with_evaluated_class_vars_allowed():
     """The `ClassVar` check reads an evaluated annotation too, not just the source-text form.
 
     This module uses `from __future__ import annotations`, so every annotation in it arrives as a
-    string. A module without it (and any module below Python 3.14) hands over the real `ClassVar`
-    object instead, which is the other branch of the check.
+    string. A module without it hands over the real `ClassVar` object instead, which is the other
+    branch of the check. `dont_inherit=True` is what makes that happen here: `exec` otherwise
+    compiles with the calling module's future statements, string annotations included.
     """
     namespace: dict[str, Any] = {'CustomEvent': CustomEvent, 'dataclass': dataclass, 'ClassVar': ClassVar}
-    try:
-        exec(
-            textwrap.dedent(
-                """
-                class EvaluatedMarkerMixin(CustomEvent, abstract=True):
-                    marker: ClassVar[str] = 'm'
+    source = textwrap.dedent(
+        """
+        class EvaluatedMarkerMixin(CustomEvent, abstract=True):
+            marker: ClassVar[str] = 'm'
 
-                @dataclass(kw_only=True)
-                class EvaluatedMarkedEvent(EvaluatedMarkerMixin):
-                    done: int = 0
-                """
-            ),
-            namespace,
-        )
+        @dataclass(kw_only=True)
+        class EvaluatedMarkedEvent(EvaluatedMarkerMixin):
+            done: int = 0
+        """
+    )
+    try:
+        exec(compile(source, '<evaluated_class_vars>', 'exec', dont_inherit=True), namespace)
         event_cls: type[CustomEvent] = namespace['EvaluatedMarkedEvent']
         event = event_cls(done=1)  # pyright: ignore[reportCallIssue]
         assert event.to_payload() == snapshot({'done': 1})
