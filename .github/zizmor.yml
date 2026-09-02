@@ -18,8 +18,15 @@ rules:
       - at-claude.yml
       - bots.yml
       - ci.yml
-      - docs-preview.yml
+      - docs-navigation.yml
       - manually-deploy-docs.yml
+      # These reusable triage workflows deliberately consume the named
+      # `workflow_call` webhook secret. A job-level environment can shadow that
+      # value with a caller-repository environment secret, breaking cross-repo
+      # callers; the webhook is passed only to trusted, SHA-pinned code/actions.
+      - issue-pr-attention-monitor.yml
+      - pydantic-ai-owner-routing.yml
+      - weekly-maintainer-digest.yml
       # gh-aw-generated agentic workflow lockfiles (see
       # .github/workflows/README-pydantic-ai-agents.md). gh-aw injects API /
       # GitHub secrets as job-level env by design; they are held by the AWF
@@ -28,7 +35,9 @@ rules:
       # the corresponding .md sources are the editable surface.
       - pydantic-ai-attention-triage.lock.yml
       - pydantic-ai-bug-hunter.lock.yml
+      - pydantic-ai-community-demand.lock.yml
       - pydantic-ai-docs-drift.lock.yml
+      - pydantic-ai-feature-digest.lock.yml
       - pydantic-ai-pr-review.lock.yml
       - pydantic-ai-provider-mapping-sweep.lock.yml
       - pydantic-ai-provider-parity-explore.lock.yml
@@ -69,7 +78,9 @@ rules:
       # untrusted-input path the audit exists to catch does not apply here.
       - pydantic-ai-attention-triage.lock.yml
       - pydantic-ai-bug-hunter.lock.yml
+      - pydantic-ai-community-demand.lock.yml
       - pydantic-ai-docs-drift.lock.yml
+      - pydantic-ai-feature-digest.lock.yml
       - pydantic-ai-pr-review.lock.yml
       - pydantic-ai-provider-mapping-sweep.lock.yml
       - pydantic-ai-provider-parity-explore.lock.yml

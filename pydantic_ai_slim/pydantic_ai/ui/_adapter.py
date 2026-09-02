@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import re
 import warnings
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
 from dataclasses import KW_ONLY, Field, dataclass
 from functools import cached_property
 from http import HTTPStatus
@@ -17,17 +18,20 @@ from typing import (
     runtime_checkable,
 )
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, TypeAdapter, ValidationError
 from typing_extensions import Self, TypeVar
 
-from pydantic_ai import DeferredToolRequests, DeferredToolResults, _instructions
+from pydantic_ai import CancellationToken, DeferredToolRequests, DeferredToolResults, _instructions
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.agent.abstract import AgentMetadata
 from pydantic_ai.capabilities import AbstractCapability, ReinjectSystemPrompt
 from pydantic_ai.messages import (
+    CompactionPart,
     ForceDownloadMode,
     ModelMessage,
+    ToolAvailabilityDeltaPart,
+    _drop_compaction_parts,  # pyright: ignore[reportPrivateUsage]
     sanitize_messages,
 )
 from pydantic_ai.models import KnownModelName, Model
@@ -37,7 +41,7 @@ from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
 
-from ._event_stream import NativeEvent, OnCompleteFunc, UIEventStream
+from ._event_stream import NativeEvent, OnCancelFunc, OnCompleteFunc, UIEventStream
 
 if TYPE_CHECKING:
     from starlette.requests import Request
@@ -68,6 +72,10 @@ DispatchDepsT = TypeVar('DispatchDepsT')
 DispatchOutputDataT = TypeVar('DispatchOutputDataT')
 """TypeVar for output data to avoid awkwardness with unbound classvar output data."""
 
+_TOOL_NAME_PATTERN = re.compile(r'[a-zA-Z0-9_-]{1,64}')
+"""The tool-name shape accepted by the strictest supported model providers."""
+_TOOL_AVAILABILITY_DELTA_PART_ADAPTER = TypeAdapter(ToolAvailabilityDeltaPart)
+
 
 # TODO(v3): remove this helper along with the Vercel AI adapter's deprecated `preserve_file_data` alias (AG-UI's `preserve_file_data` is a separate, non-deprecated setting)
 def resolve_allow_uploaded_files(
@@ -94,6 +102,64 @@ def resolve_allow_uploaded_files(
         stacklevel=stacklevel,
     )
     return preserve_file_data
+
+
+_COMPACTION_PART_ADAPTER = TypeAdapter(CompactionPart)
+
+
+def compaction_payload(part: CompactionPart) -> dict[str, Any]:
+    """Serialize a compaction part as a UI payload, omitting fields whose value is `None`.
+
+    The payload is faithful — `provider_details` travels verbatim, provenance stamp included.
+    Trust is enforced on the load side: client-submitted messages pass through
+    [`sanitize_messages`][pydantic_ai.messages.sanitize_messages], which strips the stamp.
+    """
+    return {
+        key: value
+        for key, value in {
+            'content': part.content,
+            'id': part.id,
+            'provider_name': part.provider_name,
+            'provider_details': part.provider_details,
+        }.items()
+        if value is not None
+    }
+
+
+def compaction_part_from_payload(payload: Mapping[str, Any]) -> CompactionPart | None:
+    """Build a [`CompactionPart`][pydantic_ai.messages.CompactionPart] from a UI payload.
+
+    Like `tool_availability_delta_from_payload`, validation here is shape hygiene at the UI
+    boundary, not a security gate: malformed data returns `None` and the part is skipped, rather
+    than raising out of `load_messages` and taking the whole request with it. Skipping — instead of
+    degrading to an empty part — is deliberate: even an empty `CompactionPart` acts as a visibility
+    boundary for [`post_compaction_window`][pydantic_ai.messages.post_compaction_window] (which
+    ignores `provider_name`), resetting derived state like tool discovery, so it would not be
+    inert. The cost is that a corrupted-in-transit valid boundary un-compacts the conversation —
+    acceptable, since the protocol history still holds the plaintext messages and the window merely
+    re-inflates until the next compaction.
+    """
+    try:
+        return _COMPACTION_PART_ADAPTER.validate_python(payload)
+    except ValidationError:
+        return None
+
+
+def tool_availability_delta_from_payload(payload: Mapping[str, Any]) -> ToolAvailabilityDeltaPart:
+    """Build a [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart] from a UI payload.
+
+    Client-driven tool availability is intentional. Validation here is shape hygiene at the UI
+    boundary, not a security gate: malformed data renders an empty change rather than raising out of
+    `load_messages` and taking the whole request with it.
+    """
+    try:
+        part = _TOOL_AVAILABILITY_DELTA_PART_ADAPTER.validate_python(payload)
+    except ValidationError:
+        return ToolAvailabilityDeltaPart()
+    part.tools_added = [name for name in part.tools_added if _TOOL_NAME_PATTERN.fullmatch(name)]
+    if part.tool_call_id is not None and not part.tool_call_id.strip():
+        part.tool_call_id = None
+    return part
 
 
 @runtime_checkable
@@ -375,6 +441,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         self,
         stream: AsyncIterator[NativeEvent],
         on_complete: OnCompleteFunc[EventT] | None = None,
+        on_cancel: OnCancelFunc[EventT] | None = None,
     ) -> AsyncIterator[EventT]:
         """Transform a stream of Pydantic AI events into protocol-specific events.
 
@@ -382,8 +449,10 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             stream: The stream of Pydantic AI events to transform.
             on_complete: Optional callback function called when the agent run completes successfully.
                 The callback receives the completed [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] and can optionally yield additional protocol-specific events.
+            on_cancel: Optional callback function called when the agent run ends in first-party cancellation.
+                The callback receives the [`RunCancelled`][pydantic_ai.exceptions.RunCancelled] and can optionally yield additional protocol-specific events.
         """
-        return self.build_event_stream().transform_stream(stream, on_complete=on_complete)
+        return self.build_event_stream().transform_stream(stream, on_complete=on_complete, on_cancel=on_cancel)
 
     def encode_stream(self, stream: AsyncIterator[EventT]) -> AsyncIterator[str]:
         """Encode a stream of protocol-specific events as strings according to the `Accept` header value.
@@ -414,6 +483,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: UsageLimits | None = None,
+        cancellation_token: CancellationToken | None = None,
         usage: RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -434,12 +504,13 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
+            cancellation_token: Optional token for cancelling this run from another task.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
-            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
+            capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
                 Use `capabilities=[NativeTool(...)]` to add provider-side native tools per request.
         """
         if deferred_tool_results is None:
@@ -448,6 +519,10 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             conversation_id = self.conversation_id
 
         frontend_messages = self.sanitize_messages(self.messages, deferred_tool_results=deferred_tool_results)
+        if message_history:
+            # A client-supplied compaction part would trim the trusted server-side history off the
+            # wire, so only the server's own boundaries are honored. See `_drop_compaction_parts`.
+            frontend_messages = _drop_compaction_parts(frontend_messages)
         message_history = [*(message_history or []), *frontend_messages]
 
         toolset = self.toolset
@@ -483,6 +558,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 deferred_tool_results=deferred_tool_results,
                 conversation_id=conversation_id,
                 run_id=run_id,
+                cancellation_token=cancellation_token,
                 model=model,
                 deps=deps,
                 model_settings=model_settings,
@@ -512,12 +588,14 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: UsageLimits | None = None,
+        cancellation_token: CancellationToken | None = None,
         usage: RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AbstractCapability[AgentDepsT]] | None = None,
         on_complete: OnCompleteFunc[EventT] | None = None,
+        on_cancel: OnCancelFunc[EventT] | None = None,
     ) -> AsyncIterator[EventT]:
         """Run the agent with the protocol-specific run input and stream protocol-specific events.
 
@@ -533,15 +611,18 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
+            cancellation_token: Optional token for cancelling this run from another task.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
-            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
+            capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
                 Use `capabilities=[NativeTool(...)]` to add provider-side native tools per request.
             on_complete: Optional callback function called when the agent run completes successfully.
                 The callback receives the completed [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] and can optionally yield additional protocol-specific events.
+            on_cancel: Optional callback function called when the agent run ends in first-party cancellation.
+                The callback receives the [`RunCancelled`][pydantic_ai.exceptions.RunCancelled] and can optionally yield additional protocol-specific events.
         """
         return self.transform_stream(
             self.run_stream_native(
@@ -550,6 +631,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 deferred_tool_results=deferred_tool_results,
                 conversation_id=conversation_id,
                 run_id=run_id,
+                cancellation_token=cancellation_token,
                 model=model,
                 instructions=instructions,
                 deps=deps,
@@ -562,6 +644,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 capabilities=capabilities,
             ),
             on_complete=on_complete,
+            on_cancel=on_cancel,
         )
 
     @classmethod
@@ -580,12 +663,14 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         output_type: OutputSpec[Any] | None = None,
         model_settings: ModelSettings | None = None,
         usage_limits: UsageLimits | None = None,
+        cancellation_token: CancellationToken | None = None,
         usage: RunUsage | None = None,
         metadata: AgentMetadata[DispatchDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[DispatchDepsT]] | None = None,
         capabilities: Sequence[AbstractCapability[DispatchDepsT]] | None = None,
         on_complete: OnCompleteFunc[EventT] | None = None,
+        on_cancel: OnCancelFunc[EventT] | None = None,
         manage_system_prompt: Literal['server', 'client'] = 'server',
         allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
         allowed_file_url_force_download: frozenset[ForceDownloadMode] = frozenset(),
@@ -611,15 +696,18 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
+            cancellation_token: Optional token for cancelling this run from another task.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
-            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
+            capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
                 Use `capabilities=[NativeTool(...)]` to add provider-side native tools per request.
             on_complete: Optional callback function called when the agent run completes successfully.
                 The callback receives the completed [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] and can optionally yield additional protocol-specific events.
+            on_cancel: Optional callback function called when the agent run ends in first-party cancellation.
+                The callback receives the [`RunCancelled`][pydantic_ai.exceptions.RunCancelled] and can optionally yield additional protocol-specific events.
             manage_system_prompt: Who owns the system prompt. See
                 [`UIAdapter.manage_system_prompt`][pydantic_ai.ui.UIAdapter.manage_system_prompt].
             allowed_file_url_schemes: URL schemes allowed for file URL parts from the client. See
@@ -656,9 +744,16 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                     **kwargs,
                 ),
             )
-        except ValidationError as e:  # pragma: no cover
+        except ValidationError as e:
+            try:
+                content = e.json()
+            except ValueError:
+                # A body that isn't valid UTF-8 leaves the raw bytes on `input_value`, which
+                # `e.json()` can't serialize — drop the echoed input so the client still gets its
+                # 422 rather than a 500.
+                content = e.json(include_input=False)
             return Response(
-                content=e.json(),
+                content=content,
                 media_type='application/json',
                 status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
             )
@@ -669,6 +764,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 deferred_tool_results=deferred_tool_results,
                 conversation_id=conversation_id,
                 run_id=run_id,
+                cancellation_token=cancellation_token,
                 deps=deps,
                 output_type=output_type,
                 model=model,
@@ -681,5 +777,6 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 toolsets=toolsets,
                 capabilities=capabilities,
                 on_complete=on_complete,
+                on_cancel=on_cancel,
             ),
         )

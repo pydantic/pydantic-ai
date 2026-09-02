@@ -19,6 +19,8 @@ Since agents are stateless and designed to be global, you do not need to include
 
 You'll generally want to pass [`ctx.usage`][pydantic_ai.tools.RunContext.usage] to the [`usage`][pydantic_ai.agent.AbstractAgent.run] keyword argument of the delegate agent run so usage within that run counts towards the total usage of the parent agent run.
 
+[Cancellation](agent.md#cancellation-and-sub-agents) is run-scoped: a delegate agent cancelling itself surfaces to the parent as a failed tool return rather than cancelling the parent, and a shared [`CancellationToken`][pydantic_ai.CancellationToken] cancels a whole tree of runs at once.
+
 !!! note "Multiple models"
     Agent delegation doesn't need to use the same model for each agent. If you choose different models within a run, the final [`result.usage`][pydantic_ai.agent.AgentRunResult.usage] still accumulates any per-response cost that could be calculated. However, monetary cost cannot be reconstructed from its aggregate token counts because models may have different pricing. You can use [`UsageLimits`][pydantic_ai.usage.UsageLimits] — including `cost_limit`, `request_limit`, `total_tokens_limit`, and `tool_calls_limit` — to avoid unexpected costs or runaway tool loops.
 
@@ -73,6 +75,11 @@ RunUsage(
 6. Since the function returns `#!python list[str]`, and the `output_type` of `joke_generation_agent` is also `#!python list[str]`, we can simply return `#!python r.output` from the tool.
 
 _(This example is complete, it can be run "as is")_
+
+!!! warning "Delegate from an `async def` function, not a sync one"
+    Note that `joke_factory` above is `async def` and uses `await joke_generation_agent.run(...)`. That's required, not stylistic: [`run_sync()`][pydantic_ai.agent.AbstractAgent.run_sync] and [`run_stream_sync()`][pydantic_ai.agent.AbstractAgent.run_stream_sync] cannot be used inside a tool, [output function](output.md#output-functions), or other function called during an agent run, and raise [`UserError`][pydantic_ai.exceptions.UserError] there.
+
+    The parent agent can still be started with `run_sync()`, as in the example above; only the delegating function has to be `async def`. If it also needs to do blocking work, keep it `async def` and push just that part into [`asyncio.to_thread()`][asyncio.to_thread].
 
 !!! note "Delegation inside a Temporal workflow"
     A tool running in a [Temporal](durable_execution/temporal.md) activity receives a copy of the run context, so `usage=ctx.usage` does not carry the delegate's usage back to the parent run. See [Agent Run Context and Dependencies](durable_execution/temporal.md#agent-run-context-and-dependencies).
@@ -177,7 +184,7 @@ async def main():
 5. Define a tool on the delegate agent that uses the dependencies to make an HTTP request.
 6. Usage now includes 4 requests — 2 from the calling agent and 2 from the delegate agent.
 
-_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 This example shows how even a fairly simple agent delegation can lead to a complex control flow:
 
@@ -326,7 +333,7 @@ async def main():  # (7)!
 6. Define a function to find the user's seat preference, which asks the user for their seat preference and then calls the agent to extract the seat preference.
 7. Now that we've put our logic for running each agent into separate functions, our main app becomes very simple.
 
-_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 The control flow for this example can be summarised as follows:
 

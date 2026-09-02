@@ -58,10 +58,10 @@ agent = Agent(model)
 ...
 ```
 
-You can also customize the provider with a custom `httpx.AsyncClient`:
+You can also customize the provider with a custom `httpx2.AsyncClient`:
 
 ```python
-from httpx import AsyncClient
+from httpx2 import AsyncClient
 
 from pydantic_ai import Agent
 from pydantic_ai.models.mistral import MistralModel
@@ -75,3 +75,5 @@ model = MistralModel(
 agent = Agent(model)
 ...
 ```
+
+The Mistral provider also accepts a legacy `httpx.AsyncClient` during Pydantic AI v2, but emits a deprecation warning. Use `httpx2.AsyncClient` for new code; legacy HTTPX client support will be removed in Pydantic AI v3.

@@ -132,7 +132,7 @@ class DeepEvalGEval(Evaluator):
         }
 ```
 
-The same wrapper shape works for DeepEval's `FaithfulnessMetric`, `AnswerRelevancyMetric`,
+The same wrapper works for DeepEval's `FaithfulnessMetric`, `AnswerRelevancyMetric`,
 `HallucinationMetric`, and others — swap the metric class and populate the relevant
 `LLMTestCase` fields (for example `retrieval_context` for faithfulness).
 

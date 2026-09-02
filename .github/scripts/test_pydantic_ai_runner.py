@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
+import yaml
 from pytest import LogCaptureFixture
 
 # `.github/scripts/` isn't on sys.path by default — the shim package lives
@@ -936,10 +937,49 @@ def test_attention_workflow_uses_direct_classification():
     assert 'run_workflow' not in text
 
 
+def test_attention_workflow_fetches_tags_for_runner_version():
+    workflow_dir = Path(__file__).parent.parent / 'workflows'
+    source = workflow_dir / 'pydantic-ai-attention-triage.md'
+    source_steps = agentic_workflow_guard.parse_frontmatter(source)['pre-agent-steps']
+    compiled = yaml.safe_load((workflow_dir / 'pydantic-ai-attention-triage.lock.yml').read_text(encoding='utf-8'))
+    compiled_steps = compiled['jobs']['agent']['steps']
+    expected_checkout_config = {
+        'repository': '${{ job.workflow_repository }}',
+        'ref': '${{ job.workflow_sha }}',
+        'persist-credentials': False,
+        'fetch-depth': 0,
+    }
+
+    for steps in (source_steps, compiled_steps):
+        checkout_index, checkout = next(
+            (index, step)
+            for index, step in enumerate(steps)
+            if str(step.get('uses', '')).startswith('actions/checkout@')
+            and step.get('with', {}).get('ref') == expected_checkout_config['ref']
+        )
+        prewarm_index = next(
+            index
+            for index, step in enumerate(steps)
+            if step.get('name') == 'Pre-warm Pydantic AI gh-aw shim uv environment'
+        )
+        assert checkout_index < prewarm_index
+        assert checkout['with'] == expected_checkout_config
+
+
 def test_runner_drops_dynamic_workflow_dependencies():
     runner = (Path(__file__).parent / 'pydantic-ai-runner').read_text(encoding='utf-8')
     assert 'dynamic-workflow' not in runner
     assert 'pydantic-monty' not in runner
+
+
+def test_runner_resolves_pydantic_ai_from_the_workspace():
+    """The shim's code is this checkout, so its library must be too — see #6998, #7103."""
+    runner = (Path(__file__).parent / 'pydantic-ai-runner').read_text(encoding='utf-8')
+    assert '# [tool.uv.sources]' in runner
+    assert '# pydantic-ai-slim = { path = "../../pydantic_ai_slim" }' in runner
+
+    lock = (Path(__file__).parent / 'pydantic-ai-runner.lock').read_text(encoding='utf-8')
+    assert 'directory = "../../pydantic_ai_slim"' in lock
 
 
 def test_compiled_workflows_pin_retry_policy():

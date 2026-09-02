@@ -10,6 +10,7 @@ from __future__ import annotations as _annotations
 
 from typing import Literal
 
+import pytest
 from pydantic import BaseModel
 
 from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer, google_model_profile
@@ -219,3 +220,24 @@ def test_model_profile_image_model():
     assert profile.get('supports_image_output', False) is True
     assert profile.get('supports_json_schema_output', False) is False
     assert profile.get('supports_tools', True) is False
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'expected'),
+    [
+        ('gemini-3.7-flash', False),
+        ('gemini-3-pro-preview', False),
+        ('gemini-3.1-pro-preview', False),
+        ('gemini-3-flash-preview', True),
+    ],
+)
+def test_model_profile_supports_minimal_thinking_level(model_name: str, expected: bool):
+    profile = google_model_profile(model_name)
+    assert profile is not None
+    assert profile.get('google_supports_minimal_thinking_level', True) is expected
+
+
+def test_model_profile_minimal_thinking_level_matches_model_prefix():
+    profile = google_model_profile('gemini-3-pro-preview-variant')
+    assert profile is not None
+    assert profile.get('google_supports_minimal_thinking_level', True) is False

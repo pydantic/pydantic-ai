@@ -16,13 +16,19 @@ from typing_extensions import assert_never
 
 from pydantic_ai._instrumentation import model_attributes, model_request_parameters_attributes
 from pydantic_ai._run_context import RunContext
-from pydantic_ai._utils import get_first_param_type, is_async_callable
+from pydantic_ai._utils import await_maybe, get_first_param_type
 
-from .._cost import fill_response_cost
+from .._genai_prices import fill_response_cost
 from ..exceptions import FallbackExceptionGroup, ModelAPIError, UserError
 from ..messages import ModelResponse
 from ..profiles import ModelProfile
-from . import KnownModelName, Model, ModelRequestParameters, StreamedResponse, infer_model
+from . import (
+    KnownModelName,
+    Model,
+    ModelRequestParameters,
+    StreamedResponse,
+    infer_model,
+)
 
 if TYPE_CHECKING:
     from ..messages import ModelMessage
@@ -170,7 +176,7 @@ class FallbackModel(Model):
         handlers = self._exception_handlers if isinstance(value, Exception) else self._response_handlers
         for handler in handlers:
             # pyright can't narrow handler's param type from the isinstance check on value
-            result = await handler(value) if is_async_callable(handler) else handler(value)  # type: ignore[arg-type]
+            result = await await_maybe(handler(value))  # type: ignore[arg-type]
             if result:
                 return True
         return False
@@ -248,12 +254,14 @@ class FallbackModel(Model):
             # `_get_continuation_model` only returns a model when the last message is a suspended response.
             suspended_response = messages[-1]
             assert isinstance(suspended_response, ModelResponse)
+            prepared_parameters = model_request_parameters
             try:
                 _, prepared_parameters = pinned.prepare_request(model_settings, model_request_parameters)
-                prepared_messages = pinned.prepare_messages(messages)
+                prepared_messages = pinned.prepare_messages(messages, model_request_parameters)
                 response = await pinned.request(prepared_messages, model_settings, model_request_parameters)
             except Exception as exc:
                 if not await self._should_fallback(exc):
+                    self._set_span_attributes(pinned, prepared_parameters)
                     raise
                 # Best-effort cancel the suspended server-side job we're abandoning before rewinding
                 # and retrying the chain. `FallbackModel` swallows the error, so the graph's own
@@ -272,15 +280,17 @@ class FallbackModel(Model):
                 return response
 
         for model in self.models:
+            prepared_parameters = model_request_parameters
             try:
                 _, prepared_parameters = model.prepare_request(model_settings, model_request_parameters)
                 # Each inner model has its own profile, so re-run `prepare_messages` per model.
-                prepared_messages = model.prepare_messages(messages)
+                prepared_messages = model.prepare_messages(messages, model_request_parameters)
                 response = await model.request(prepared_messages, model_settings, model_request_parameters)
             except Exception as exc:
                 if await self._should_fallback(exc):
                     exceptions.append(exc)
                     continue
+                self._set_span_attributes(model, prepared_parameters)
                 raise exc
 
             if await self._should_fallback(response):
@@ -331,14 +341,16 @@ class FallbackModel(Model):
             suspended_response = messages[-1]
             assert isinstance(suspended_response, ModelResponse)
             async with AsyncExitStack() as stack:
+                prepared_parameters = model_request_parameters
                 try:
                     _, prepared_parameters = pinned.prepare_request(model_settings, model_request_parameters)
-                    prepared_messages = pinned.prepare_messages(messages)
+                    prepared_messages = pinned.prepare_messages(messages, model_request_parameters)
                     streamed_response = await stack.enter_async_context(
                         pinned.request_stream(prepared_messages, model_settings, model_request_parameters, run_context)
                     )
                 except Exception as exc:
                     if not await self._should_fallback(exc):
+                        self._set_span_attributes(pinned, prepared_parameters)
                         raise
                     # Best-effort cancel the suspended server-side job we're abandoning before
                     # rewinding to the chain (see the non-streaming path above); `FallbackModel`
@@ -361,9 +373,10 @@ class FallbackModel(Model):
 
         for model in self.models:
             async with AsyncExitStack() as stack:
+                prepared_parameters = model_request_parameters
                 try:
                     _, prepared_parameters = model.prepare_request(model_settings, model_request_parameters)
-                    prepared_messages = model.prepare_messages(messages)
+                    prepared_messages = model.prepare_messages(messages, model_request_parameters)
                     streamed_response = await stack.enter_async_context(
                         model.request_stream(prepared_messages, model_settings, model_request_parameters, run_context)
                     )
@@ -371,7 +384,8 @@ class FallbackModel(Model):
                     if await self._should_fallback(exc):
                         exceptions.append(exc)
                         continue
-                    raise exc  # pragma: no cover
+                    self._set_span_attributes(model, prepared_parameters)
+                    raise exc
 
                 # After a rewind, mark this fresh stream as replacing the abandoned suspended turn.
                 # Unlike the continuation pin (stamped after `yield`, once the final `state` is known),
@@ -428,6 +442,17 @@ class FallbackModel(Model):
     def profile(self) -> ModelProfile:
         raise NotImplementedError('FallbackModel does not have its own model profile.')
 
+    @property
+    def context_window(self) -> int | None:
+        """The smallest known context window among the candidate models, or `None` if none is known.
+
+        Any candidate may end up answering, and history that fits the smallest window fits them all,
+        so compacting against it errs towards compacting early rather than overflowing a fallback.
+        Candidates with an unknown window don't constrain the result.
+        """
+        windows = [window for model in self.models if (window := model.context_window) is not None]
+        return min(windows) if windows else None
+
     def customize_request_parameters(self, model_request_parameters: ModelRequestParameters) -> ModelRequestParameters:
         return model_request_parameters  # pragma: no cover
 
@@ -436,7 +461,11 @@ class FallbackModel(Model):
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
         return model_settings, model_request_parameters
 
-    def prepare_messages(self, messages: list[ModelMessage]) -> list[ModelMessage]:
+    def prepare_messages(
+        self,
+        messages: list[ModelMessage],
+        model_request_parameters: ModelRequestParameters | None = None,
+    ) -> list[ModelMessage]:
         # `FallbackModel` doesn't have its own profile; dispatch applies each inner model's profile instead.
         return messages
 

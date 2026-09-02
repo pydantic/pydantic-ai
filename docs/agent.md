@@ -12,7 +12,7 @@ The [`Agent`][pydantic_ai.Agent] class has full API documentation, but conceptua
 | [Instructions](#instructions)                             | A set of instructions for the LLM written by the developer.                                               |
 | [Function tool(s)](tools.md) and [toolsets](toolsets.md)  | Functions that the LLM may call to get information while generating a response.                           |
 | [Structured output type](output.md)                       | The structured datatype the LLM must return at the end of a run, if specified.                            |
-| [Dependency type constraint](dependencies.md)             | Dynamic instructions functions, tools, and output functions may all use dependencies when they're run.          |
+| [Dependency type constraint](dependencies.md)             | Dynamic instruction functions, tools, and output functions may all use dependencies when they're run.          |
 | [LLM model](api/models/base.md)                           | Optional default LLM model associated with the agent. Can also be specified when running the agent.       |
 | [Model Settings](#additional-configuration)               | Optional default model settings to help fine tune requests. Can also be specified when running the agent. |
 | [Capabilities](capabilities/overview.md)                           | Reusable bundles of tools, hooks, instructions, and model settings that extend agent behavior.            |
@@ -117,7 +117,7 @@ async def main():
     """
 ```
 
-_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 You can also pass messages from previous runs to continue a conversation or provide context, as described in [Messages and Chat History](message-history.md).
 
@@ -125,6 +125,7 @@ You can also pass messages from previous runs to continue a conversation or prov
 
 As shown in the example above, [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] makes it easy to stream the agent's final output as it comes in.
 It also takes an optional `event_stream_handler` argument that you can use to gain insight into what is happening during the run before the final output is produced.
+During a realtime session, the same handler stream can also contain realtime-only [`RealtimeEvent`][pydantic_ai.realtime.RealtimeEvent] members.
 
 The example below shows how to stream events and text output. You can also [stream structured output](output.md#streaming-structured-output).
 
@@ -237,6 +238,7 @@ _(This example is complete, it can be run "as is")_
 Like `agent.run_stream()`, [`agent.run()`][pydantic_ai.agent.AbstractAgent.run_stream] takes an optional `event_stream_handler`
 argument that lets you stream all events from the model's streaming response and the agent's execution of tools.
 Unlike `run_stream()`, it always runs the agent graph to completion even if text was received ahead of tool calls that looked like it could've been the final result.
+During a realtime session, an event stream handler can also receive realtime-only [`RealtimeEvent`][pydantic_ai.realtime.RealtimeEvent] members.
 
 For convenience, a [`agent.run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] method is also available as a wrapper around `run(event_stream_handler=...)`. It is an async context manager that yields an async iterator over [`AgentStreamEvent`s][pydantic_ai.messages.AgentStreamEvent] ending with an [`AgentRunResultEvent`][pydantic_ai.run.AgentRunResultEvent] carrying the final run result.
 
@@ -353,7 +355,7 @@ async def main():
     #> The capital of France is Paris.
 ```
 
-_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 - The `AgentRun` is an async iterator that yields each node (`BaseNode` or `End`) in the flow.
 - The run ends when an `End` node is returned.
@@ -425,7 +427,7 @@ async def main():
 3. When you call `await agent_run.next(node)`, it executes that node in the agent's graph, updates the run's history, and returns the _next_ node to run.
 4. You could also inspect or mutate the new `node` here as needed.
 
-_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 #### Accessing usage and final output
 
@@ -585,6 +587,265 @@ if __name__ == '__main__':
 
 _(This example is complete, it can be run "as is")_
 
+### Cancelling a Run
+
+A run in flight can be cancelled entirely -- e.g. when a user hits a "stop" button. Create a [`CancellationToken`][pydantic_ai.CancellationToken], pass it to the run, and call `cancel()` from the stop handler. Cancellation raises [`RunCancelled`][pydantic_ai.exceptions.RunCancelled] with the completed message history and usage so you can persist and resume the conversation:
+
+```python {title="run_cancel.py"}
+import asyncio
+
+from pydantic_ai import Agent, CancellationToken, RunCancelled
+
+agent = Agent('test')
+tool_started = asyncio.Event()
+
+
+@agent.tool_plain
+async def slow_lookup() -> str:
+    tool_started.set()
+    await asyncio.sleep(10)
+    return 'result'
+
+
+async def main():
+    token = CancellationToken()
+    run = asyncio.create_task(
+        agent.run('Look something up', cancellation_token=token)
+    )
+    await tool_started.wait()
+    token.cancel()  # (1)!
+
+    try:
+        await run
+    except RunCancelled as exc:
+        messages = exc.all_messages()
+        print(f'Cancelled after {len(messages)} messages')
+        #> Cancelled after 3 messages
+        await agent.run(message_history=messages)  # (2)!
+```
+
+1. `cancel()` is idempotent and thread-safe. One token may govern multiple concurrent runs, cancelling all of them. A token is single-use: once cancelled it stays cancelled, and passing an already-cancelled token to a run prevents that run from starting (which also closes the "cancel raced ahead of the run" gap). So mint a fresh token per run or per stop gesture -- reusing one token across a session would cancel every run after the first before it starts.
+2. [`RunCancelled.all_messages()`][pydantic_ai.exceptions.RunCancelled.all_messages] contains everything completed before cancellation, including completed tool results. Any dangling tool call is [repaired automatically](message-history.md#making-histories-provider-valid) when the history is resumed.
+
+[UI adapter](ui/overview.md) users can persist this resumable history with the `on_cancel` callback.
+
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
+
+[`agent.run_sync()`][pydantic_ai.agent.AbstractAgent.run_sync] accepts the same token. Calling `token.cancel()` from another thread is the only way to interrupt a synchronous run while it is blocked.
+
+!!! note "Which mechanism, and which exception"
+    A [`CancellationToken`][pydantic_ai.CancellationToken] is the one to reach for by default -- it's the only surface that works from outside the run, from another thread, and against `run_sync()`, and one token can govern several runs at once. The others exist for where a token can't reach:
+
+    | Where you are when you cancel | Use | Run ends with |
+    | --- | --- | --- |
+    | Outside the run (a "stop" button, another thread) | [`CancellationToken`][pydantic_ai.CancellationToken] | [`RunCancelled`][pydantic_ai.exceptions.RunCancelled] |
+    | Inside a tool, `event_stream_handler`, or capability hook | [`RunContext.cancel()`][pydantic_ai.tools.RunContext.cancel] | [`RunCancelled`][pydantic_ai.exceptions.RunCancelled] |
+    | Consuming [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] | [`AgentRunEvents.cancel()`][pydantic_ai.agent.AgentRunEvents.cancel] on the yielded handle | [`RunCancelled`][pydantic_ai.exceptions.RunCancelled] |
+    | Driving the graph yourself via [`agent.iter()`][pydantic_ai.agent.Agent.iter] | [`AgentRun.cancel()`][pydantic_ai.run.AgentRun.cancel] | [`RunCancelled`][pydantic_ai.exceptions.RunCancelled] |
+    | The environment cancelled you (`asyncio.timeout()`, a [`TaskGroup`][asyncio.TaskGroup], shutdown) | *(you don't call anything)* | [`CancelledError`][asyncio.CancelledError] |
+
+    The first four are **first-party**: Pydantic AI stops the run itself and raises `RunCancelled`, an ordinary catchable exception carrying the resumable history. The last is **external**: the `CancelledError` keeps propagating unchanged -- so `asyncio.timeout()` still raises `TimeoutError`, a `TaskGroup` still tears down, and Temporal still ends the workflow *Cancelled* -- with the same history *attached* for [`RunCancelled.from_cancellation()`][pydantic_ai.exceptions.RunCancelled.from_cancellation]. Pydantic AI can't turn an external `CancelledError` into `RunCancelled` without breaking those semantics; that's why cancellation has two kinds, covered next.
+
+When the surrounding environment cancels the run -- for example through `asyncio.timeout()`, a [`TaskGroup`][asyncio.TaskGroup], or application shutdown -- the [`CancelledError`][asyncio.CancelledError] remains unchanged. [`RunCancelled.from_cancellation()`][pydantic_ai.exceptions.RunCancelled.from_cancellation] provides the attached run state:
+
+```python {title="run_external_cancel.py"}
+import asyncio
+
+from pydantic_ai import Agent, RunCancelled
+
+agent = Agent('test')
+tool_started = asyncio.Event()
+
+
+@agent.tool_plain
+async def slow_lookup() -> str:
+    tool_started.set()
+    await asyncio.sleep(10)
+    return 'result'
+
+
+async def main():
+    task = asyncio.create_task(agent.run('Look something up'))
+    await tool_started.wait()
+    task.cancel()  # (1)!
+
+    try:
+        await task
+    except asyncio.CancelledError as exc:
+        cancelled = RunCancelled.from_cancellation(exc)  # (2)!
+        assert cancelled is not None
+        messages = cancelled.all_messages()
+        print(f'Cancelled after {len(messages)} messages')
+        #> Cancelled after 3 messages
+        await agent.run(message_history=messages)  # (3)!
+```
+
+1. This demonstrates cancellation imposed by the surrounding asyncio environment. For application stop gestures, prefer a `CancellationToken`.
+2. External cancellation is never converted: `asyncio.timeout()`, [`TaskGroup`][asyncio.TaskGroup], and [Temporal](durable_execution/temporal.md) cancellation semantics are preserved. The run state rides along on the original `CancelledError`.
+3. [`RunCancelled.all_messages()`][pydantic_ai.exceptions.RunCancelled.all_messages] contains everything completed before cancellation, including completed tool results. Any dangling tool call is [repaired automatically](message-history.md#making-histories-provider-valid) when the history is resumed.
+
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
+
+On Python 3.10, asyncio recreates `CancelledError` across an `await task` boundary, but chains the original exception -- carrying the attached run state -- via `__context__`, which `from_cancellation()` traverses. The chain is attached only to the first `await` of the cancelled task, so later awaits of the same task see an unchained exception; [`capture_run_messages()`][pydantic_ai.agent.capture_run_messages] is the fallback when only history is needed.
+
+When consuming [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events], the yielded [`AgentRunEvents`][pydantic_ai.agent.AgentRunEvents] handle offers a first-party alternative that needs no task juggling: [`AgentRunEvents.cancel()`][pydantic_ai.agent.AgentRunEvents.cancel] is safe to call from another task (e.g. a UI's "stop" handler) and surfaces as `RunCancelled` on continued iteration:
+
+```python {title="run_cancel_stream_events.py"}
+from pydantic_ai import Agent, RunCancelled
+
+agent = Agent('test')
+
+
+async def main():
+    async with agent.run_stream_events('Write a long essay about Python') as events:
+        try:
+            async for _event in events:
+                events.cancel()  # (1)!
+        except RunCancelled as exc:
+            print(f'Cancelled after {len(exc.all_messages())} messages')
+            #> Cancelled after 2 messages
+```
+
+1. Idempotent, a no-op once the run has finished, and callable before the first iteration to prevent the run from starting at all.
+
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
+
+Externally cancelling the consuming task works here too: the background run tears down, the propagating `CancelledError` carries the run state for `from_cancellation()`, and the handle's `all_messages()` and `usage` remain accessible afterwards.
+
+To request cancellation from a tool, an `event_stream_handler`, or a capability hook, call [`RunContext.cancel()`][pydantic_ai.tools.RunContext.cancel]. This requests first-party cancellation, so the run ends with [`RunCancelled`][pydantic_ai.exceptions.RunCancelled] rather than an external `CancelledError`. `cancel()` itself returns normally — the cancellation is delivered at the calling code's next `await`, and the tool's return value is discarded — so a tool can still run cleanup after requesting it:
+
+```python {title="run_cancel_from_tool.py"}
+from pydantic_ai import Agent, RunCancelled, RunContext
+
+agent = Agent('test')
+
+
+@agent.tool
+async def stop(ctx: RunContext) -> str:
+    ctx.cancel()
+    return 'discarded'  # cancel() returned; this value is never sent to the model
+
+
+async def main():
+    try:
+        await agent.run('Stop now')
+    except RunCancelled as exc:
+        print(f'Cancelled after {len(exc.all_messages())} messages')
+        #> Cancelled after 2 messages
+```
+
+!!! note "Cancellation is cooperative"
+    Pydantic AI requests cancellation of in-flight work, discards results that arrive after cancellation, and closes the resources it owns. Async tools receive `CancelledError` at a suspension point. A synchronous (`def`) tool runs in a worker thread, which Python cannot safely terminate; depending on the run mode, cancellation may wait for the worker or let it finish in the background. Either way, its result is discarded, but any side effects are not rolled back. Cancelling provider-side model generation is best-effort and depends on the provider.
+
+You may not control which way cancellation will arrive: a caller wraps `agent.run()` in a task for a stop gesture, while a tool -- perhaps from another library -- calls `ctx.cancel()` internally. Handle each on its own terms -- consume the first-party `RunCancelled`, but let an external `CancelledError` keep propagating so timeouts and task groups still tear down correctly, capturing its state first if you need it:
+
+```python {title="run_cancel_either_way.py"}
+import asyncio
+
+from pydantic_ai import Agent, RunCancelled, RunContext
+
+agent = Agent('test')
+
+
+@agent.tool
+async def imported_tool(ctx: RunContext) -> str:
+    ctx.cancel()  # (1)!
+    return 'discarded'
+
+
+async def main():
+    task = asyncio.create_task(agent.run('Go'))
+    try:
+        await task
+    except RunCancelled as exc:  # (2)!
+        print(f'Cancelled after {len(exc.all_messages())} messages')
+        #> Cancelled after 2 messages
+    except asyncio.CancelledError as exc:  # (3)!
+        cancelled = RunCancelled.from_cancellation(exc)
+        if cancelled is not None:
+            ...  # persist cancelled.all_messages() before re-raising
+        raise
+```
+
+1. Here the tool cancels first-party, so `await task` raises `RunCancelled`. Had a stop button called `task.cancel()` instead, `await task` would raise `CancelledError` and the second handler would run.
+2. First-party cancellation is a `RunCancelled` you can consume: the run stopped because your own code asked it to, so returning normally is fine.
+3. External cancellation stays `CancelledError`, and a stop button's `task.cancel()` is indistinguishable from a timeout or a [`TaskGroup`][asyncio.TaskGroup] tearing down -- so re-raise it (swallowing it would break those teardowns), reaching for [`from_cancellation()`][pydantic_ai.exceptions.RunCancelled.from_cancellation] only to capture the partial state first. It returns `None` when nothing is attached, e.g. an application shutdown unrelated to this run.
+
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
+
+!!! note "Why two exception types?"
+    Cancellation can originate from two different places, and only one of them is Pydantic AI's to name:
+
+    - **Your application** decides to stop the run, through one of the dedicated cancellation methods. Pydantic AI issued that cancellation itself, so it can consume it before asyncio interprets it and raise `RunCancelled` instead: the run ends with an ordinary, catchable application error.
+    - **The asyncio environment** cancels the task the run happens to be on: `asyncio.Task.cancel()`, `asyncio.timeout()` expiring, a [`TaskGroup`][asyncio.TaskGroup] tearing down after a sibling failed, a server shutting down, workflow cancellation under [durable execution](durable_execution/overview.md). All of these deliver the very same `CancelledError` signal, so Pydantic AI cannot tell a stop button from a timeout -- and the exception's type is load-bearing for everything built on it: `asyncio.timeout()` only produces `TimeoutError`, a `TaskGroup` only treats the task as cleanly cancelled, and Temporal only ends the workflow as *Cancelled* if `CancelledError` itself keeps propagating. Raising `RunCancelled` in its place would silently break each of those. So the run state is *attached to* the propagating `CancelledError` for [`from_cancellation()`][pydantic_ai.exceptions.RunCancelled.from_cancellation], rather than replacing it.
+
+Cancellation is terminal: capability hooks may observe it and clean up, but cannot recover the run to success — on Python 3.11+ this holds even if user code absorbs the delivered cancellation; on Python 3.10 it is best-effort. When first-party and external cancellation race, external cancellation wins. On Python 3.10, that race cannot be distinguished, so first-party cancellation wins instead.
+
+For fine-grained control over the agent graph, call [`AgentRun.cancel()`][pydantic_ai.run.AgentRun.cancel] on the handle returned by [`agent.iter()`][pydantic_ai.agent.Agent.iter]:
+
+```python {title="run_cancel_iter.py"}
+from pydantic_ai import Agent, RunCancelled
+
+agent = Agent('test')
+
+
+async def main():
+    try:
+        async with agent.iter('Write a long essay about Python') as agent_run:
+            async for node in agent_run:
+                if Agent.is_call_tools_node(node):
+                    agent_run.cancel()  # (1)!
+    except RunCancelled as exc:
+        print(f'Cancelled after {len(exc.all_messages())} messages')  # (2)!
+        #> Cancelled after 2 messages
+```
+
+1. `AgentRun.cancel()` is safe to call from another task and is a no-op once the run has finished.
+2. Inside the `agent.iter()` block, cancellation surfaces as `asyncio.CancelledError`; after the context exits, first-party cancellation raises `RunCancelled` with a detached state snapshot.
+
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
+
+#### Message History After Cancellation
+
+When a stream is cancelled mid-generation, the response is recorded with `state='interrupted'` in the message history. The history includes any partial content that was received before cancellation:
+
+```python {title="stream_cancel_history.py"}
+from pydantic_ai import Agent
+
+agent = Agent('openai:gpt-5.2')
+
+
+async def main():
+    async with agent.run_stream('Tell me about Python') as result:
+        async for text in result.stream_text(delta=True):
+            break
+        await result.cancel()
+
+    messages = result.all_messages()  # (1)!
+    print(messages[-1].state)  # (2)!
+    #> interrupted
+```
+
+1. The message history includes the interrupted response with any partial content that was received before cancellation.
+2. The interrupted response state lets your application decide whether to keep, inspect, or discard the partial response before reusing the history.
+
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
+
+!!! note "Reusing interrupted history"
+    Interrupted history can be passed directly into another run. Before the next model request, Pydantic AI [repairs the transcript](message-history.md#making-histories-provider-valid): any tool call that never received a result — including one whose arguments were cut off mid-stream — is answered with a synthesized [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] telling the model it was interrupted.
+
+!!! info "Usage tracking for cancelled streams"
+    Token usage reported by `usage` after cancellation is partial and provider-dependent. Pydantic AI stops pulling from the stream immediately, so final usage events may never arrive; some provider SDKs may also continue generation server-side after the local stream is closed. Do not rely on cancelled-stream usage for cost-critical accounting.
+    For OpenAI chat completions, [`openai_continuous_usage_stats`][pydantic_ai.models.openai.OpenAIChatModelSettings] can improve in-stream usage reporting by requesting cumulative usage data with each chunk, but cancelled-stream usage is still best-effort.
+
+#### Cancellation and sub-agents
+
+Cancellation is **run-scoped**: `cancel()` cancels the run its `RunContext` belongs to, and a `CancellationToken` cancels the runs it's attached to. This matters when you use [agent delegation](multi-agent-applications.md#agent-delegation) — a tool that runs another agent with `await sub_agent.run(...)`:
+
+- **A sub-agent cancelling itself does not cancel the parent** — when it's `await`ed inside a tool body. If the sub-agent (or one of its tools) calls `ctx.cancel()`, that cancels the *sub-agent's* run. The delegate tool sees a [`RunCancelled`][pydantic_ai.exceptions.RunCancelled], which — if it isn't caught — surfaces to the parent as a *failed tool return* the parent's model can react to, not as a cancellation of the parent run. This isolation is specific to tool bodies: a sub-agent `await`ed from an `event_stream_handler`, an [output validator](output.md#output-validator-functions), or a [capability](capabilities/overview.md) hook runs directly on the parent's task, so its `cancel()` *does* surface as the parent's own `RunCancelled`.
+- **To cancel the parent too, opt in from the delegate tool** by catching `RunCancelled` and calling `ctx.cancel()` on the parent's context (or re-raising a different error).
+- **To cancel a whole tree of runs at once, share one `CancellationToken`** across the parent and its sub-agents — cancelling it stops all of them. A parent cancelled this way (or by an external `asyncio.CancelledError`) also tears down any sub-agent run it is `await`ing inline, since they run on the same task.
+
 ### Additional Configuration
 
 #### Usage Limits
@@ -618,7 +879,7 @@ try:
 except UsageLimitExceeded as e:
     print(e)
     """
-    Exceeded the output_tokens_limit of 10 (output_tokens=32). Consider raising the limit, or see the docs on usage limits for budget-aware patterns: https://ai.pydantic.dev/agent/#usage-limits
+    Exceeded the output_tokens_limit of 10 (output_tokens=32). Consider raising the limit, or see the docs on usage limits for budget-aware patterns: https://pydantic.dev/docs/ai/core-concepts/agent/#usage-limits
     """
 ```
 
@@ -658,7 +919,7 @@ try:
 except UsageLimitExceeded as e:
     print(e)
     """
-    The next request would exceed the request_limit of 3. Consider raising the limit, or see the docs on usage limits for budget-aware patterns: https://ai.pydantic.dev/agent/#usage-limits
+    The next request would exceed the request_limit of 3. Consider raising the limit, or see the docs on usage limits for budget-aware patterns: https://pydantic.dev/docs/ai/core-concepts/agent/#usage-limits
     """
 ```
 
@@ -686,7 +947,7 @@ try:
 except UsageLimitExceeded as e:
     print(e)
     """
-    The next tool call(s) would exceed the tool_calls_limit of 1 (tool_calls=2). Consider raising the limit, or see the docs on usage limits for budget-aware patterns: https://ai.pydantic.dev/agent/#usage-limits
+    The next tool call(s) would exceed the tool_calls_limit of 1 (tool_calls=2). Consider raising the limit, or see the docs on usage limits for budget-aware patterns: https://pydantic.dev/docs/ai/core-concepts/agent/#usage-limits
     """
 ```
 
@@ -713,7 +974,7 @@ try:
 except UsageLimitExceeded as e:
     print(e)
     """
-    Exceeded the per_request_input_tokens_limit of 10 (request_input_tokens=62). Consider raising the limit, or see the docs on usage limits for budget-aware patterns: https://ai.pydantic.dev/agent/#usage-limits
+    Exceeded the per_request_input_tokens_limit of 10 (request_input_tokens=62). Consider raising the limit, or see the docs on usage limits for budget-aware patterns: https://pydantic.dev/docs/ai/core-concepts/agent/#usage-limits
     """
 ```
 
@@ -738,7 +999,7 @@ try:
 except UsageLimitExceeded as e:
     print(e)
     """
-    Exceeded the `cost_limit` of 0.0001 (`usage.cost`=Decimal('0.000201')). Consider raising the limit, or see the docs on usage limits for budget-aware patterns: https://ai.pydantic.dev/agent/#usage-limits
+    Exceeded the `cost_limit` of 0.0001 (`usage.cost`=Decimal('0.000201')). Consider raising the limit, or see the docs on usage limits for budget-aware patterns: https://pydantic.dev/docs/ai/core-concepts/agent/#usage-limits
     """
 ```
 
@@ -1142,13 +1403,87 @@ _(This example is complete, it can be run "as is")_
 
 Note that returning an empty string will result in no instruction message added.
 
-Instructions can also come from [capabilities](capabilities/overview.md) via [`get_instructions()`][pydantic_ai.capabilities.AbstractCapability.get_instructions], or from [template strings](agent-spec.md#template-strings) rendered against the agent's dependencies.
+Instructions can also come from [capabilities](capabilities/overview.md) via [`get_instructions()`][pydantic_ai.capabilities.AbstractCapability.get_instructions], [toolsets](toolsets.md#building-a-custom-toolset) via [`get_instructions()`][pydantic_ai.toolsets.AbstractToolset.get_instructions], or from [template strings](agent-spec.md#template-strings) rendered against the agent's dependencies.
+
+### Instruction parts {#instruction-parts}
+
+Each source contributes its own instruction part. Parts are sent to the model as one string, separated by a blank line, and are also available individually as [`InstructionPart`][pydantic_ai.messages.InstructionPart]s on [`ModelRequestParameters.instruction_parts`][pydantic_ai.models.ModelRequestParameters.instruction_parts].
+
+You declare a [`name`][pydantic_ai.messages.InstructionPart.name]; the framework issues an [`id`][pydantic_ai.messages.InstructionPart.id]. Name a part relative to what you own — `'limits'`, not `'toolset:weather:limits'` — and the source contributing it supplies the rest, so you never repeat your own identity and can never claim another source's key. The [`InstructionId`][pydantic_ai.messages.InstructionId] you get back pairs the [`source`][pydantic_ai.messages.InstructionId.source] that contributed the part with the [`name`][pydantic_ai.messages.InstructionId.name], if there is one, and renders as its segments joined by `:`:
+
+| `str(part.id)` | Addresses |
+|---|---|
+| `'agent'` | The agent's own `instructions` |
+| `'toolset:<toolset id>'` | Everything a [toolset](toolsets.md) with an [`id`][pydantic_ai.toolsets.AbstractToolset.id] contributes |
+| `'capability:<capability id>'` | Everything a [capability](capabilities/overview.md) with an [`id`][pydantic_ai.capabilities.AbstractCapability.id] contributes |
+| `'agent:<name>'` | One part the agent named |
+| `'toolset:<toolset id>:<name>'` | One part that toolset named |
+| `'capability:<capability id>:<name>'` | One part that capability named |
+
+There are two ways to declare a name, depending on what the part is:
+
+- **A function** is named where it is registered: [`@agent.instructions(name=...)`][pydantic_ai.agent.Agent.instructions], [`@capability.instructions(name=...)`][pydantic_ai.capabilities.Capability.instructions].
+- **Literal text** carries its name on the text itself, by passing an [`InstructionPart`][pydantic_ai.messages.InstructionPart] anywhere instructions are accepted — `Agent(instructions=...)`, `Capability(instructions=...)`, `FunctionToolset(instructions=...)`, or a `get_instructions()` implementation on a [capability](capabilities/custom.md) or [toolset](toolsets.md#building-a-custom-toolset). The part also decides whether it counts as [`dynamic`][pydantic_ai.messages.InstructionPart.dynamic], which is what keeps it outside the cacheable prefix (see [prompt caching](models/anthropic.md#prompt-caching)), and a part is always kept whole rather than merged with its neighbours.
+
+Because a part's id is stable across runs, an application that stores instruction configuration elsewhere (say, a UI where a user edits the instructions an MCP server contributes) can key that configuration on the id instead of on the part's position or wording, both of which change as the agent evolves.
+
+A source key is what everything else is built from, so it keeps its meaning permanently: giving more sources ids later can only add keys, never change what an existing key addresses.
+
+Capability ids, toolset ids, and instruction names cannot contain `:`, because the character is reserved as the delimiter between these segments. The name `'agent'` is also reserved, because on its own it is the key of the agent's own instructions.
+
+```python {title="instruction_parts.py"}
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import Capability
+from pydantic_ai.models.test import TestModel
+
+model = TestModel()
+agent = Agent(
+    model,
+    instructions='Be concise.',
+    capabilities=[Capability(instructions='Cite your sources.', id='research')],
+)
+
+
+@agent.instructions(name='local_time')
+def local_time() -> str:
+    return 'The time is 10:00.'
+
+
+@agent.instructions
+def user_name(ctx: RunContext[None]) -> str:
+    return 'The user is Frank.'
+
+
+agent.run_sync('What is the capital of Italy?')
+
+parts = model.last_model_request_parameters.instruction_parts or []
+print([(part.name, str(part.id) if part.id is not None else None, part.content) for part in parts])
+"""
+[
+    (None, 'agent', 'Be concise.'),
+    (None, 'capability:research', 'Cite your sources.'),
+    ('local_time', 'agent:local_time', 'The time is 10:00.'),
+    (None, None, 'The user is Frank.'),
+]
+"""
+```
+
+_(This example is complete, it can be run "as is")_
+
+Two consequences worth knowing before you key configuration on an id:
+
+- **A key covers everything under it.** Where a source contributes several parts and none of them are named, they all carry the source key, so replacing that key's text replaces all of them — computed parts included. That is the honest meaning of "I control what this capability tells the model", but it means parts a source didn't name can't be addressed one by one. `'agent'` is the deliberate exception: it covers only the literal instructions the agent was built with, so taking over the base prompt doesn't silently swallow an `@agent.instructions` function that injects the date or the user's name.
+- **Some parts can't be addressed at all.** They take part in the prompt like any other, but nothing keys them: an instructions function with no `name` (a function's own name isn't unique, and a lambda or [template string](agent-spec.md#template-strings) has none), a callable passed to `Agent(instructions=...)`, anything passed as runtime instructions to a specific run, and anything from a toolset or capability without an `id`. If you need one of your own callables to be overridable, register it with `@agent.instructions(name=...)` or [`@capability.instructions(name=...)`][pydantic_ai.capabilities.Capability.instructions] instead of passing it to the constructor.
+
+    Naming a part whose source has no `id` leaves its `id` as `None`, because there is no source key to qualify the name against. The name still travels with the part, so you can see what its author called it, but nothing addresses it.
 
 ## Reflection and self-correction
 
 Validation errors from both function tool parameter validation and [structured output validation](output.md#structured-output) can be passed back to the model with a request to retry.
 
 You can also raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] from within a [tool](tools.md) or [output function](output.md#output-functions) to tell the model it should retry generating a response.
+
+This is one of [several layers that can retry](retries.md) during a run, each with its own budget.
 
 - The default retry count is **1** but can be altered for the [entire agent][pydantic_ai.agent.Agent.__init__] with `retries` or [`AgentRetries`][pydantic_ai.agent.AgentRetries], a [specific tool][pydantic_ai.agent.Agent.tool], or [outputs][pydantic_ai.agent.Agent.__init__]. Both the tool and output sides of the agent retry budget can also be overridden per run via `agent.run(retries={'tools': ..., 'output': ...})` and friends (or for a block of runs via [`agent.override()`][pydantic_ai.agent.Agent.override]). At these call sites a bare `int` overrides both budgets, just like at construction — pass a dict such as `retries={'tools': ...}` to override just one. The tool-retry default and its per-run override apply to function tools, output tools, and MCP tools.
 - You can access the current retry count from within a tool, output validator, or output function via [`ctx.retry`][pydantic_ai.tools.RunContext.retry].
@@ -1271,6 +1606,8 @@ If models behave unexpectedly (e.g., the retry limit is exceeded, or their API r
 
 In these cases, [`capture_run_messages`][pydantic_ai.capture_run_messages] can be used to access the messages exchanged during the run to help diagnose the issue.
 
+For a run that was cancelled rather than failed, [`RunCancelled`][pydantic_ai.exceptions.RunCancelled] and [`RunCancelled.from_cancellation()`][pydantic_ai.exceptions.RunCancelled.from_cancellation] carry the run's history directly -- see [Cancelling a Run](#cancelling-a-run).
+
 ```python {title="agent_model_errors.py"}
 from pydantic_ai import Agent, ModelRetry, UnexpectedModelBehavior, capture_run_messages
 
@@ -1292,7 +1629,7 @@ with capture_run_messages() as messages:  # (2)!
         print('An error occurred:', e)
         """
         An error occurred:
-        Tool 'calc_volume' exceeded max retries count of 1. Consider raising the retry limit, or see the docs on tool retries: https://ai.pydantic.dev/tools-advanced/#tool-retries
+        Tool 'calc_volume' exceeded max retries count of 1. Consider raising the retry limit, or see the docs on tool retries: https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#tool-retries
         """
         print('cause:', repr(e.__cause__))
         #> cause: ModelRetry('Please try again.')
@@ -1356,6 +1693,13 @@ with capture_run_messages() as messages:  # (2)!
                 run_id='...',
                 conversation_id='...',
             ),
+            ModelRequest(
+                parts=[],
+                timestamp=datetime.datetime(...),
+                run_id='...',
+                conversation_id='...',
+                state='interrupted',
+            ),
         ]
         """
     else:
@@ -1369,7 +1713,7 @@ _(This example is complete, it can be run "as is")_
 
 When a run is cut short by an exception while streaming, an exception inside a tool, or external cancellation, Pydantic AI still captures partial state where it can. Partial [`ModelResponse`][pydantic_ai.messages.ModelResponse] and [`ModelRequest`][pydantic_ai.messages.ModelRequest] messages have `state='interrupted'` so persistence layers and UIs can distinguish them from complete messages.
 
-For model responses, interrupted messages contain the response parts streamed before the interruption. For model requests, interrupted messages contain the tool results that completed before tool execution stopped. The captured messages reflect exactly what happened — half-finished tool call parts are not turned into synthetic tool results at capture time. When an interrupted history is passed back into a run, it is [repaired automatically](message-history.md#making-histories-provider-valid) before the next model request.
+For model responses, interrupted messages contain the response parts streamed before the interruption. For model requests, interrupted messages contain the tool results that completed before tool execution stopped — if none did, the request is still recorded, with no parts, marking the point where the response's tool calls were abandoned. The captured messages reflect exactly what happened — half-finished tool call parts are not turned into synthetic tool results at capture time. When an interrupted history is passed back into a run, it is [repaired automatically](message-history.md#making-histories-provider-valid) before the next model request.
 
 In this example, `get_volume` completes before `get_mass` raises, so the interrupted request contains the completed `get_volume` return:
 

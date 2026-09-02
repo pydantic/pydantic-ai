@@ -2,7 +2,7 @@
 
 ## Install
 
-To use `AnthropicModel` models, you need to either install `pydantic-ai`, or install `pydantic-ai-slim` with the `anthropic` optional group:
+To use `AnthropicModel`, install either `pydantic-ai` or `pydantic-ai-slim` with the `anthropic` optional group:
 
 ```bash
 pip/uv-add "pydantic-ai-slim[anthropic]"
@@ -65,10 +65,10 @@ agent = Agent(model)
 
 ## Custom HTTP Client
 
-You can customize the `AnthropicProvider` with a custom `httpx.AsyncClient`:
+You can customize the `AnthropicProvider` with a custom `httpx2.AsyncClient`:
 
 ```python
-from httpx import AsyncClient
+from httpx2 import AsyncClient
 
 from pydantic_ai import Agent
 from pydantic_ai.models.anthropic import AnthropicModel
@@ -82,6 +82,11 @@ model = AnthropicModel(
 agent = Agent(model)
 ...
 ```
+
+A legacy `httpx.AsyncClient` is not accepted: `anthropic` 1.0 is built on `httpx2` and rejects one at
+client construction.
+
+The `AsyncAnthropic` client that the provider builds also retries failed requests on its own — `max_retries=2` by default, so a request can reach the network up to three times before your code sees an error. Pass `max_retries=0` when you construct the client yourself (for example as `anthropic_client=`) to keep the retry policy in your transport alone. See [Provider SDK retries](../retries.md#provider-sdk-retries) for when this layer fires.
 
 ## Model settings
 
@@ -323,7 +328,7 @@ print(result.output)
 
 ### Smart Instruction Caching
 
-When you use `anthropic_cache_instructions` with both static and dynamic [instructions](../agent.md#instructions), Pydantic AI automatically places the cache boundary at the optimal point. Static instructions (from `Agent(instructions=...)`) are sorted before dynamic instructions (from `@agent.instructions` functions or [toolsets](../toolsets.md)), and the cache point is placed after the last static instruction block.
+When you use `anthropic_cache_instructions` with both static and dynamic [instructions](../agent.md#instructions), Pydantic AI automatically places the cache boundary at the optimal point. Static instructions (from `Agent(instructions=...)`) are sorted before dynamic instructions (from `@agent.instructions` functions or [toolsets](../toolsets.md)), and the cache point is placed after the last static instruction part.
 
 This means your stable, static instructions are cached efficiently, while dynamic instructions (which may change between requests) remain outside the cache boundary and don't cause cache invalidation.
 
@@ -546,16 +551,20 @@ agent = Agent(
 
 ## Forced tool choice
 
-Most Anthropic models let you force a tool call via [`tool_choice='required'`][pydantic_ai.settings.ModelSettings.tool_choice] (or a list of tool names), except while thinking is enabled. **Claude Fable 5** and the **Claude Mythos** models reject a forced tool choice unconditionally — even without thinking — so Pydantic AI marks them with [`anthropic_supports_forced_tool_choice=False`][pydantic_ai.profiles.anthropic.AnthropicModelProfile.anthropic_supports_forced_tool_choice].
+Most Anthropic models let you force a tool call via [`tool_choice='required'`][pydantic_ai.settings.ModelSettings.tool_choice] (or a list of tool names), except while [extended thinking](../capabilities/thinking.md#anthropic) is enabled — [adaptive thinking](../capabilities/thinking.md#adaptive-thinking-effort) is compatible with forcing. **Claude Fable 5** and the **Claude Mythos** models reject a forced tool choice unconditionally — even without thinking — so Pydantic AI marks them with [`anthropic_supports_forced_tool_choice=False`][pydantic_ai.profiles.anthropic.AnthropicModelProfile.anthropic_supports_forced_tool_choice].
 
 On a model that doesn't support forcing:
 
 - An explicit `tool_choice='required'` (or a list of tool names) raises a [`UserError`][pydantic_ai.exceptions.UserError]; use `tool_choice='auto'` instead.
-- A `required` choice that Pydantic AI resolved on your behalf (e.g. from an [output tool](../output.md#tool-output)) falls back softly to `'auto'`, with the available tools filtered to the requested set so the model can still only pick from them. Filtering the tool definitions invalidates Anthropic's prompt cache, since the cached prefix includes the tool array.
+- A `required` choice that Pydantic AI resolved on your behalf (e.g. from an [output tool](../output.md#tool-output)) falls back softly to `'auto'`. If the resolved choice named a single tool, the available tool list is filtered to that tool while `tool_choice` remains `'auto'`, which invalidates Anthropic's prompt cache since the cached prefix includes the tool array. The model may therefore answer with text instead of calling it; when an output tool is required, Pydantic AI retries with a prompt to call a tool.
+
+Because [Tool Output](../output.md#tool-output) resolves to a forced tool choice, extended thinking is also incompatible with it: a bare structured `output_type` switches to [Native Output](../output.md#native-output) (or [Prompted Output](../output.md#prompted-output) on models without JSON schema support), and an explicit `ToolOutput(...)` raises a [`UserError`][pydantic_ai.exceptions.UserError]. Adaptive thinking keeps Tool Output, except on the models above that reject forcing outright — whenever a thinking setting is configured, those behave as they always have: a bare structured `output_type` switches away from Tool Output, and an explicit `ToolOutput(...)` raises a [`UserError`][pydantic_ai.exceptions.UserError].
 
 ## Message Compaction
 
 Anthropic supports [automatic context compaction](https://docs.anthropic.com/en/docs/build-with-claude/compaction) to manage long conversations. When input tokens exceed a configured threshold, the API automatically generates a summary that replaces older messages while preserving context.
+
+After compaction, subsequent requests send only the compacted window, from the latest compaction block onward, which reduces request size — the API ignores earlier content either way. The standing system prompt is unaffected: it's sent as the separate `system` parameter, which compaction doesn't replace.
 
 The easiest way to enable compaction is with the [`AnthropicCompaction`][pydantic_ai.models.anthropic.AnthropicCompaction] capability:
 
@@ -612,3 +621,11 @@ agent = Agent(
 ```
 
 Pydantic AI raises a [`UserError`][pydantic_ai.exceptions.UserError] if you explicitly select a tool version that the model does not support.
+
+### Code Execution Containers
+
+When you continue a run from message history, Pydantic AI automatically reuses the Anthropic code execution container recorded in that history. Anthropic containers expire after 30 days, and a request that refers to an expired container returns an error.
+
+If a request uploads files through [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool] and Anthropic returns HTTP 500 for a history-derived container, Pydantic AI retries once without the rejected container ID so Anthropic can create a fresh container and receive the uploads. Other errors are raised without this retry. The fresh container does not contain state or files from the expired container.
+
+Set [`anthropic_container`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_container] explicitly when container continuity is required. An explicitly configured container is never replaced automatically; Anthropic's original error is raised instead.
