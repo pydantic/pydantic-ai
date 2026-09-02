@@ -195,6 +195,39 @@ def test_abstract_base_carries_the_namespace_without_registering():
         SearchEventBase(query='q')
 
 
+def test_abstract_base_can_inherit_rather_than_declare_a_namespace():
+    """An `abstract=True` base doesn't have to name the namespace; it can sit inside an existing family."""
+
+    @dataclass(kw_only=True)
+    class IndexStartedEvent(CapabilityEvent, namespace='index_cap'):
+        pass
+
+    @dataclass(kw_only=True)
+    class IndexProgressBase(IndexStartedEvent, abstract=True):
+        done: int
+
+    @dataclass(kw_only=True)
+    class IndexChunkDoneEvent(IndexProgressBase):
+        pass
+
+    assert not any(kind.endswith('index_progress_base') for kind in CAPABILITY_EVENT_TYPES)
+    # The namespace came down through the registered grandparent rather than an explicit argument.
+    assert IndexChunkDoneEvent(done=1).kind == 'index_cap.index_chunk_done'
+
+
+def test_undecorated_capability_event_base_with_fields_rejected():
+    """An undecorated base contributes no fields, so its payload would vanish silently."""
+
+    class BareFieldsBase(CapabilityEvent, namespace='undecorated_cap', abstract=True):
+        path: str
+
+    with pytest.raises(UserError, match='declares fields but is not a dataclass'):
+
+        @dataclass(kw_only=True)
+        class BareFieldsChildEvent(BareFieldsBase):  # pyright: ignore[reportUnusedClass]
+            pass
+
+
 def test_subclass_can_replace_the_inherited_namespace():
     """Inheriting a namespace is a default, not a lock: a subclass can declare its own."""
 

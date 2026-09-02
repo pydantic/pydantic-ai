@@ -206,7 +206,7 @@ def undecorated_field_base(cls: type, family: type) -> type | None:
     vanish from the payload, the wire, and every consumer, with no error anywhere. Each base is fully
     built by the time a subclass is being registered, so its decoration can be checked reliably here.
     """
-    for base in cls.__mro__[1:]:
+    for base in cls.__mro__[1:]:  # pragma: no branch  # `family` is always in the MRO, so this always breaks
         if base is family or not issubclass(base, family):
             break
         if '__dataclass_fields__' in base.__dict__:

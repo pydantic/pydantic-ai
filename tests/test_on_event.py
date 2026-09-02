@@ -953,3 +953,36 @@ async def test_unlistened_events_never_reach_a_capability() -> None:
     # Plenty of model events flowed past, but only the custom event was ever handed to `Narrow`.
     assert len({event.event_kind for event in events}) > 1
     assert dispatched == ['custom', 'note:on_event_note']
+
+
+async def test_hooks_filters_non_matching_callbacks_once_dispatch_is_entered() -> None:
+    """A broad callback opens the gate; the per-entry filter still keeps others from firing.
+
+    `listens_to` decides whether `Hooks` is entered at all, but once it is, each registered callback
+    is still matched individually — otherwise a bare callback would drag every typed sibling along.
+    """
+    hooks = Hooks()
+    seen: list[str] = []
+
+    @hooks.on.event
+    async def everything(ctx: RunContext[Any], event: AgentStreamEvent) -> None:
+        seen.append(f'any:{event.event_kind}')
+
+    @hooks.on.event(FileReadEvent)
+    async def only_reads(ctx: RunContext[Any], event: FileReadEvent) -> None:
+        seen.append(f'read:{event.path}')
+
+    emitter = Capability[Any](id='emitter')
+
+    @emitter.tool
+    async def read_file(ctx: RunContext[Any]) -> str:
+        await ctx.emit(DirectoryListedEvent(path='dir'))
+        await ctx.emit(FileReadEvent(path='file'))
+        return 'ok'
+
+    await Agent(FunctionModel(stream_function=_tool_then_text), capabilities=[emitter, hooks]).run('go')
+
+    # The directory event reached the bare callback but was filtered out of the typed one.
+    assert 'any:capability' in seen
+    assert seen.count('read:file') == 1
+    assert not any(entry == 'read:dir' for entry in seen)

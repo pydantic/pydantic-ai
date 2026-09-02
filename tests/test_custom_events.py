@@ -513,6 +513,35 @@ def test_undecorated_base_with_only_class_vars_allowed():
     assert MarkedEvent.marker == 'm'
 
 
+def test_undecorated_base_with_evaluated_class_vars_allowed():
+    """The `ClassVar` check reads an evaluated annotation too, not just the source-text form.
+
+    This module uses `from __future__ import annotations`, so every annotation in it arrives as a
+    string. A module without it (and any module below Python 3.14) hands over the real `ClassVar`
+    object instead, which is the other branch of the check.
+    """
+    namespace: dict[str, Any] = {'CustomEvent': CustomEvent, 'dataclass': dataclass, 'ClassVar': ClassVar}
+    try:
+        exec(
+            textwrap.dedent(
+                """
+                class EvaluatedMarkerMixin(CustomEvent, abstract=True):
+                    marker: ClassVar[str] = 'm'
+
+                @dataclass(kw_only=True)
+                class EvaluatedMarkedEvent(EvaluatedMarkerMixin):
+                    done: int = 0
+                """
+            ),
+            namespace,
+        )
+        event = namespace['EvaluatedMarkedEvent'](done=1)
+        assert event.to_payload() == snapshot({'done': 1})
+        assert type(event).marker == 'm'
+    finally:
+        CUSTOM_EVENT_TYPES.pop('evaluated_marked', None)
+
+
 def test_slotted_event_class():
     """`@dataclass(slots=True)` recreates the class; the recreated class keeps its registered name."""
 
