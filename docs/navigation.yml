@@ -912,11 +912,6 @@ navigation:
             slug: "api/pydantic-ai/embeddings"
             aliases:
               - "api/embeddings"
-          - page: "images"
-            path: "api/images.md"
-            slug: "api/pydantic-ai/images"
-            aliases:
-              - "api/images"
           - page: "exceptions"
             path: "api/exceptions.md"
             slug: "api/pydantic-ai/exceptions"
@@ -935,6 +930,11 @@ navigation:
           - page: "function_signature"
             path: "api/function_signature.md"
             slug: "api/pydantic-ai/function_signature"
+          - page: "images"
+            path: "api/images.md"
+            slug: "api/pydantic-ai/images"
+            aliases:
+              - "api/images"
           - page: "mcp"
             path: "api/mcp.md"
             slug: "api/pydantic-ai/mcp"

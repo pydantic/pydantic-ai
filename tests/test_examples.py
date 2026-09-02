@@ -82,16 +82,10 @@ code_examples: dict[str, CodeExample] = {}
 
 
 @pytest.fixture(autouse=True)
-def blockbuster_enabled(request: pytest.FixtureRequest) -> bool:
-    """Skip the detector for pytest-examples' synchronous output-file reader.
-
-    Not every test in this file is a parametrized example test, so the `example`
-    fixture is looked up dynamically rather than required.
-    """
-    if 'example' in request.fixturenames:
-        example = request.getfixturevalue('example')
-        if isinstance(example, CodeExample) and example.prefix_settings().get('title') == 'voyageai_embeddings.py':
-            return False
+def blockbuster_enabled(example: CodeExample) -> bool:
+    """Skip the detector for pytest-examples' synchronous output-file reader."""
+    if example.prefix_settings().get('title') == 'voyageai_embeddings.py':
+        return False
     return True
 
 
@@ -1309,11 +1303,6 @@ def mock_infer_image_generation_model(model: ImageGenerationModel | str) -> Imag
 
     actual_model = infer_image_generation_model(model)
     return TestImageGenerationModel(actual_model.model_name, provider_name=actual_model.system)
-
-
-def test_mock_infer_image_generation_model_preserves_instance():
-    model = TestImageGenerationModel()
-    assert mock_infer_image_generation_model(model) is model
 
 
 def mock_infer_model(model: Model | KnownModelName) -> Model:

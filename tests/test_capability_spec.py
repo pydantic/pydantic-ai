@@ -111,8 +111,6 @@ def test_capability_types() -> None:
 
 def test_instrumentation_default_settings() -> None:
     """`Instrumentation()` lazy-imports `InstrumentationSettings` and constructs default settings."""
-    from pydantic_ai.models.instrumented import InstrumentationSettings
-
     instr = Instrumentation()
     assert isinstance(instr.settings, InstrumentationSettings)
 

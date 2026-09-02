@@ -1,3 +1,8 @@
+"""Tests for the `ImageGeneration` capability.
+
+Split out of `test_capabilities.py` per #7304.
+"""
+
 from __future__ import annotations
 
 import inspect
