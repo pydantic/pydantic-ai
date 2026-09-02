@@ -92,7 +92,7 @@ The sections below describe the two kinds of deferred tools the handler can reso
 
 If a tool function always requires approval, you can pass the `requires_approval=True` argument to the [`@agent.tool`][pydantic_ai.agent.Agent.tool] decorator, [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain] decorator, [`Tool`][pydantic_ai.tools.Tool] class, [`FunctionToolset.tool`][pydantic_ai.toolsets.FunctionToolset.tool] decorator, or [`FunctionToolset.add_function()`][pydantic_ai.toolsets.FunctionToolset.add_function] method. Inside the function, you can then assume that the tool call has been approved.
 
-If whether a tool function requires approval depends on the tool call arguments or the agent [run context][pydantic_ai.tools.RunContext] (e.g. [dependencies](dependencies.md) or message history), you can raise the [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] exception from the tool function. The [`RunContext.tool_call_approved`][pydantic_ai.tools.RunContext.tool_call_approved] property will be `True` if the tool call has already been approved.
+If approval depends on the tool call's arguments or the agent [run context][pydantic_ai.tools.RunContext], such as [dependencies](dependencies.md) or message history, raise [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] from the tool function. The [`RunContext.tool_call_approved`][pydantic_ai.tools.RunContext.tool_call_approved] property will be `True` if the tool call has already been approved.
 
 You can also raise it from the tool's [`args_validator`](tools-advanced.md#args-validator), which runs before the tool function and lets you reject invalid arguments before asking a human to approve them.
 

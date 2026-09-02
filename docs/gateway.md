@@ -47,7 +47,7 @@ This section contains instructions on how to set up your account and run your ap
 
 1. Sign up at [logfire.pydantic.dev](https://logfire.pydantic.dev/)
 2. Choose a region and create an account.
-3. Activate the gateway in your organizations settings.
+3. Activate the Gateway in your organization's settings.
 
 ### Create Gateway API keys
 
