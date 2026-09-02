@@ -5,8 +5,9 @@ import string
 from collections.abc import AsyncGenerator, AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import InitVar, dataclass, field
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Any, Literal, cast
+from uuid import UUID
 
 import pydantic_core
 from typing_extensions import assert_never
@@ -517,16 +518,27 @@ class _JsonSchemaTestData:
 
     def _str_gen(self, schema: dict[str, Any]) -> str:
         """Generate a string from a JSON Schema string."""
-        min_len = schema.get('minLength')
-        if min_len is not None:
-            return self._char() * min_len
-
         if schema.get('maxLength') == 0:
             return ''
 
+        # Consult `format` before `minLength`. Types like `AnyUrl` emit
+        # `format: uri` together with `minLength: 1`; returning `minLength`
+        # first made TestModel emit `'a'` and fail Pydantic validation.
         if fmt := schema.get('format'):
             if fmt == 'date':
                 return (date(2024, 1, 1) + timedelta(days=self.seed)).isoformat()
+            if fmt == 'date-time':
+                return (datetime(2024, 1, 1, tzinfo=timezone.utc) + timedelta(days=self.seed)).isoformat()
+            if fmt == 'time':
+                return time(hour=self.seed % 24).isoformat()
+            if fmt == 'uuid':
+                return str(UUID(int=self.seed))
+            if fmt in {'uri', 'uri-reference', 'url'}:
+                return 'https://example.com'
+
+        min_len = schema.get('minLength')
+        if min_len is not None:
+            return self._char() * min_len
 
         return self._char()
 
