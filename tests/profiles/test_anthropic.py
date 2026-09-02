@@ -430,9 +430,11 @@ def test_model_profile_fable_5_1():
         }
     )
 
-    # Anthropic documents Mythos 5.1 as offering "the same capabilities" as Fable 5.1. It is
-    # Project Glasswing-only and not reachable with our credentials, so the profile is the mirror.
-    assert anthropic_model_profile('claude-mythos-5-1') == profile
+    # Anthropic documents Mythos 5.1 as offering "the same capabilities" as Fable 5.1, with one
+    # carve-out: "Claude Mythos 5.1 doesn't run this check" for thinking-block binding. It is
+    # Project Glasswing-only and not reachable with our credentials, so the rest is the mirror.
+    assert profile is not None
+    assert anthropic_model_profile('claude-mythos-5-1') == {**profile, 'anthropic_binds_thinking_blocks': False}
 
 
 def test_model_profile_sonnet_5():

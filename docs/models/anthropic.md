@@ -560,12 +560,14 @@ Because [Tool Output](../output.md#tool-output) resolves to a forced tool choice
 
 ## Thinking block binding
 
-**Claude Fable 5.1** and **Claude Mythos 5.1** bind each thinking block to the conversation prefix that produced it. Replaying message history after that prefix changes fails with a 400 (`The block is bound to a different conversation`), and two ordinary Pydantic AI features change it:
+**Claude Fable 5.1** binds each thinking block to the conversation prefix that produced it. Replaying message history after that prefix changes fails with a 400 (`The block is bound to a different conversation`), and two ordinary Pydantic AI features change it:
 
 - a [dynamic instructions](../agent.md#instructions) function whose text differs between runs, and
 - a [filtered toolset](../toolsets.md#filtering-tools) that advertises a new tool mid-conversation, unless the tool uses [deferred loading](../toolsets.md#deferred-loading).
 
-On those models Pydantic AI defaults Anthropic's `thinking.block_binding.prefix_mismatch_behavior` to `'drop_block'`, marked by [`anthropic_binds_thinking_blocks=True`][pydantic_ai.profiles.anthropic.AnthropicModelProfile.anthropic_binds_thinking_blocks]. The stale block is dropped and the request proceeds instead of failing. **The model no longer sees that turn's reasoning** — the trade is one turn's thinking against a failed run. Anthropic reports every drop, and Pydantic AI records it on the response:
+Anthropic enforces the check on accounts created on or after 31 August 2026. On an older account the mismatch is recorded, but acted on only if the request sets a behavior.
+
+On that model Pydantic AI defaults Anthropic's `thinking.block_binding.prefix_mismatch_behavior` to `'drop_block'`, marked by [`anthropic_binds_thinking_blocks=True`][pydantic_ai.profiles.anthropic.AnthropicModelProfile.anthropic_binds_thinking_blocks]. The stale block is dropped and the request proceeds instead of failing. **The model no longer sees that turn's reasoning** — the trade is one turn's thinking against a failed run. Anthropic reports every drop, and Pydantic AI records it on the response:
 
 ```python {title="dropped_thinking_blocks.py" test="skip"}
 from pydantic_ai import Agent
@@ -593,7 +595,22 @@ agent = Agent('anthropic:claude-fable-5-1', model_settings=settings)
 ...
 ```
 
-Models that don't bind thinking blocks are unaffected: their requests carry no `block_binding` and no binding beta.
+On an account created before 31 August 2026 you can also keep the stale block, since Anthropic acts on the mismatch only when asked to. Set `block_binding` to `None` and Pydantic AI asks for nothing:
+
+```python {title="account_default_block_binding.py"}
+from pydantic_ai import Agent
+from pydantic_ai.models.anthropic import AnthropicModelSettings
+
+settings: AnthropicModelSettings = {
+    'anthropic_thinking': {'type': 'adaptive', 'block_binding': None}
+}
+agent = Agent('anthropic:claude-fable-5-1', model_settings=settings)
+...
+```
+
+There is no third behavior: `prefix_mismatch_behavior` is either `'error'` or `'drop_block'`, so on an account created on or after 31 August 2026 a stale block can only fail the request or be dropped.
+
+Models that don't bind thinking blocks are unaffected: their requests carry no `block_binding` and no binding beta. Anthropic documents **Claude Mythos 5.1** as not running this check, so it is not marked either.
 
 ## Message Compaction
 

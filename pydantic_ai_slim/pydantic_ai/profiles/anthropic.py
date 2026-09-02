@@ -256,10 +256,11 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         ('claude-fable-5', 'claude-fable-5-1', 'claude-mythos-5', 'claude-mythos-5-1', 'claude-mythos-preview')
     )
 
-    # Only the 5.1 generation binds thinking blocks to the conversation prefix: Claude Fable 5,
+    # Claude Fable 5.1 alone binds thinking blocks to the conversation prefix: Claude Fable 5,
     # Opus 5, and Sonnet 5 all return 200 for a replayed block under an explicit
-    # `prefix_mismatch_behavior` of `'error'`.
-    binds_thinking_blocks = model_name.startswith(('claude-fable-5-1', 'claude-mythos-5-1'))
+    # `prefix_mismatch_behavior` of `'error'`, and Anthropic documents that Claude Mythos 5.1
+    # "doesn't run this check" — the one capability on which it is not Fable 5.1's mirror.
+    binds_thinking_blocks = model_name.startswith('claude-fable-5-1')
 
     supports_dynamic_filtering = model_name.startswith(
         (
