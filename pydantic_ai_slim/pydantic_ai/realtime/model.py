@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any, Literal, NoReturn, Protocol
 
 from typing_extensions import TypeAliasType
 
-from .._genai_prices import lookup_model_context_window, preload_pricing_data
+from .._genai_prices import lookup_model_context_window
 from ..exceptions import ModelAPIError, UserError
 from ..messages import ModelMessage
 from ..models import ModelRequestParameters
@@ -159,24 +159,9 @@ class RealtimeModel(AbstractModel):
     _profile: RealtimeModelProfileSpec | None = None
     """The user's `profile=` override, applied as the last layer of [`profile`][pydantic_ai.realtime.RealtimeModel.profile].
 
-    Concrete models take it as a keyword-only `profile` init argument and pass it to the base
-    constructor, mirroring how [`Model`][pydantic_ai.models.Model] stores its own `profile=`.
+    Concrete models take it as a keyword-only `profile` init argument and assign it here, mirroring how
+    [`Model`][pydantic_ai.models.Model] stores its own `profile=`.
     """
-
-    def __init__(
-        self,
-        *,
-        settings: RealtimeModelSettings | None = None,
-        profile: RealtimeModelProfileSpec | None = None,
-    ) -> None:
-        """Store the model-level `settings` and `profile=` layers, as [`Model`][pydantic_ai.models.Model]'s constructor does.
-
-        Also loads genai-prices' data snapshot, which [`profile`][pydantic_ai.realtime.RealtimeModel.profile]
-        consults for `context_window`, so that one-time cost stays off the event loop.
-        """
-        self.settings = settings
-        self._profile = profile
-        preload_pricing_data()
 
     @classmethod
     def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
