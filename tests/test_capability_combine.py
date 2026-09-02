@@ -441,7 +441,7 @@ def test_merged_local_fallback_carries_the_merged_configuration() -> None:
 
 
 async def test_a_later_layer_wins_even_when_it_sorts_first() -> None:
-    """Application order decides which duplicate is later, not the ordering-sorted tree.
+    """Which layer a duplicate came from decides, not where the tree sorted it.
 
     `CombinedCapability` sorts leaves into ordering tiers, so a capability supplied for the run but
     positioned `'outermost'` moves ahead of the agent-level one. Reading "last" off the tree then
@@ -470,10 +470,6 @@ class _Positioned(AbstractCapability[Any]):
 
     def get_ordering(self) -> CapabilityOrdering:
         return CapabilityOrdering(position='outermost') if self.outermost else CapabilityOrdering()
-
-    @classmethod
-    def combine(cls, capabilities: Sequence[AbstractCapability[Any]]) -> AbstractCapability[Any]:
-        return merge_capability_fields(capabilities)
 
 
 @dataclass
