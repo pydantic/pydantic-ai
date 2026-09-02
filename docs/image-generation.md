@@ -2,11 +2,24 @@
 
 Pydantic AI provides a provider-agnostic API for generating and editing images with dedicated image models.
 Use [`ImageGenerator`][pydantic_ai.images.ImageGenerator] when your application, rather than an agent, decides when to
-create an image.
+create an image. When the agent should make that call, use the
+[`ImageGeneration` capability](capabilities/image-generation.md) instead.
 
 ## Quick Start
 
-Pass a provider-prefixed model name to [`ImageGenerator`][pydantic_ai.images.ImageGenerator], then call
+Install the optional group for the provider you want to use, for example OpenAI:
+
+```bash
+pip/uv-add "pydantic-ai-slim[openai]"
+```
+
+Set its API key as an environment variable:
+
+```bash
+export OPENAI_API_KEY='your-api-key'
+```
+
+Then pass a provider-prefixed model name to [`ImageGenerator`][pydantic_ai.images.ImageGenerator], and call
 [`generate()`][pydantic_ai.images.ImageGenerator.generate]:
 
 ```python {title="image_generation_quickstart.py"}
@@ -26,6 +39,30 @@ async def main():
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`.)_
 
 [`generate_sync()`][pydantic_ai.images.ImageGenerator.generate_sync] provides the same interface for synchronous code.
+
+See [Providers](#providers) for the install group and environment variable each provider uses.
+
+## Choosing a model
+
+Every [`KnownImageGenerationModelName`][pydantic_ai.images.KnownImageGenerationModelName] is listed below. Any other
+model name the provider accepts also works: an unrecognized name is passed through, so a newly released model needs no
+Pydantic AI release. The exceptions are `dall-e-2` and `dall-e-3`, which are
+[rejected on construction](#output-geometry). Check the
+[OpenAI](https://developers.openai.com/api/docs/guides/image-generation),
+[Gemini](https://ai.google.dev/gemini-api/docs/image-generation), and
+[xAI](https://docs.x.ai/developers/model-capabilities/images/generation) documentation for what each model costs and
+does best.
+
+| Provider | Models |
+| --- | --- |
+| OpenAI | `openai:gpt-image-2`, `openai:gpt-image-1.5`, `openai:gpt-image-1`, `openai:gpt-image-1-mini` |
+| Google Gemini API | `google:gemini-3.1-flash-image`, `google:gemini-3.1-flash-lite-image`, `google:gemini-3-pro-image`, `google:gemini-2.5-flash-image` |
+| Google Cloud (Vertex AI) | The same four Gemini models under the `google-cloud:` prefix, or `gateway/google:` through the [Pydantic AI Gateway](gateway.md) |
+| xAI | `xai:grok-imagine-image`, `xai:grok-imagine-image-quality` |
+
+The exact shapes each family can produce differ, so check
+[Canonical Dimensions for `aspect_ratio`](#canonical-dimensions-for-aspect_ratio) before committing to a model for a
+fixed layout.
 
 ## Editing Images
 
@@ -60,9 +97,9 @@ Of the providers below only OpenAI exposes that primitive, so there is nothing p
 | Provider | Generation | Reference editing | `UploadedFile` | Multiple outputs | Notes |
 | --- | --- | --- | --- | --- | --- |
 | OpenAI | ✅ | ✅ | ❌ | ✅ | Reference images must be PNG, JPEG, or WebP; any other media type raises [`UserError`][pydantic_ai.exceptions.UserError]. |
-| Google Gemini API | ✅ | ✅ | ✅ | ❌ | — |
+| Google Gemini API | ✅ | ✅ | ✅ | ❌ | [`UploadedFile.file_id`][pydantic_ai.messages.UploadedFile] must be the Files API URI (`file.uri`, which starts with `https://`), not the `files/...` resource name; any other value raises [`UserError`][pydantic_ai.exceptions.UserError]. A Files API URL passed as an `ImageUrl` instead needs an explicit `media_type`, since those URLs carry no file extension. See [Uploaded Files](input.md#uploaded-files). |
 | Google Cloud (Vertex AI) | ✅ | ✅ | ❌ | ❌ | The Gemini Files API is not available on Vertex AI, and the adapter does not accept the `gs://` URIs Vertex uses instead, so pass reference images as `BinaryImage` or `ImageUrl`. Whether a client targets Vertex is read off the client, not the provider name. |
-| xAI | ✅ | ✅ | ✅ | ✅ | At most three reference images. Every `UploadedFile` must come before any `ImageUrl` or `BinaryImage`, because xAI sends file IDs ahead of URL and binary inputs; another order raises [`UserError`][pydantic_ai.exceptions.UserError] rather than silently resequencing them. `extra_headers` and `extra_body` are ignored with a warning: the transport is gRPC, which has no per-request header or body escape hatch. |
+| xAI | ✅ | ✅ | ✅ | ✅ | xAI documents up to five reference images and enforces the limit itself, so an over-limit request comes back as a 400 [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError]. Every `UploadedFile` must come before any `ImageUrl` or `BinaryImage`, because xAI sends file IDs ahead of URL and binary inputs; another order raises [`UserError`][pydantic_ai.exceptions.UserError] rather than silently resequencing them. `extra_headers` and `extra_body` are ignored with a warning: the transport is gRPC, which has no per-request header or body escape hatch. |
 
 `google:` is the Gemini Developer API (Google AI Studio) and `google-cloud:` is Vertex AI, exactly as for
 conversational models. `gateway/google:` routes Gemini through the [Pydantic AI Gateway](gateway.md), which serves it
@@ -72,16 +109,91 @@ image-only output, matching the `ImageGenerator` result contract and avoiding un
 
 ## Providers
 
-A `'provider:model-name'` string configures the provider from its usual environment variables. To customize
-authentication, the base URL, or the underlying SDK client, construct the provider's image model class yourself and
-pass it to [`ImageGenerator`][pydantic_ai.images.ImageGenerator]:
+A `'provider:model-name'` string configures the provider from its usual environment variables.
 
-- [`OpenAIImageGenerationModel`][pydantic_ai.images.openai.OpenAIImageGenerationModel]
-- [`GoogleImageGenerationModel`][pydantic_ai.images.google.GoogleImageGenerationModel]
-- [`XaiImageGenerationModel`][pydantic_ai.images.xai.XaiImageGenerationModel]
+### OpenAI
 
-Each takes the [`Provider`][pydantic_ai.providers.Provider] its SDK uses, so an OpenAI-compatible gateway or a
-pre-configured client works the same way it does for conversational models:
+[`OpenAIImageGenerationModel`][pydantic_ai.images.openai.OpenAIImageGenerationModel] works with OpenAI's Images API and
+the GPT Image model family.
+
+#### Install
+
+To use OpenAI image models, you need to either install `pydantic-ai`, or install `pydantic-ai-slim` with the `openai`
+optional group:
+
+```bash
+pip/uv-add "pydantic-ai-slim[openai]"
+```
+
+#### Configuration
+
+Go to [platform.openai.com](https://platform.openai.com/) and generate an API key, then set it as an environment
+variable:
+
+```bash
+export OPENAI_API_KEY='your-api-key'
+```
+
+See the [OpenAI image-generation notes](models/openai.md#image-generation) for provider-specific behavior.
+
+### Google
+
+[`GoogleImageGenerationModel`][pydantic_ai.images.google.GoogleImageGenerationModel] works with the Gemini image models
+through the Gemini API (Google AI Studio) or Google Cloud (formerly known as Vertex AI).
+
+#### Install
+
+To use Google image models, you need to either install `pydantic-ai`, or install `pydantic-ai-slim` with the `google`
+optional group:
+
+```bash
+pip/uv-add "pydantic-ai-slim[google]"
+```
+
+#### Configuration
+
+Go to [aistudio.google.com](https://aistudio.google.com/) and generate an API key, then set it as an environment
+variable:
+
+```bash
+export GOOGLE_API_KEY='your-api-key'
+```
+
+The `google-cloud:` prefix uses Google Cloud instead, which authenticates with Application Default Credentials rather
+than an API key. See the [Google image-generation notes](models/google.md#image-generation) for provider-specific
+behavior and [Google Cloud configuration](models/google.md#google-cloud-enterprise) for the credential options.
+
+### xAI
+
+[`XaiImageGenerationModel`][pydantic_ai.images.xai.XaiImageGenerationModel] works with the Grok Imagine models through
+the official xAI SDK, which connects over gRPC.
+
+#### Install
+
+To use xAI image models, you need to either install `pydantic-ai`, or install `pydantic-ai-slim` with the `xai`
+optional group:
+
+```bash
+pip/uv-add "pydantic-ai-slim[xai]"
+```
+
+#### Configuration
+
+Go to [console.x.ai](https://console.x.ai/team/default/api-keys) and create an API key, then set it as an environment
+variable:
+
+```bash
+export XAI_API_KEY='your-api-key'
+```
+
+See the [xAI image-generation notes](models/xai.md#image-generation) for provider-specific behavior.
+
+### Customizing the provider
+
+To customize authentication, the base URL, or the underlying SDK client, construct the provider's image model class
+yourself and pass it to [`ImageGenerator`][pydantic_ai.images.ImageGenerator]. Each takes the
+[`Provider`][pydantic_ai.providers.Provider] its SDK uses, so an OpenAI-compatible gateway or a pre-configured client
+works the same way it does for conversational models:
 
 ```python {title="image_generation_provider.py"}
 from pydantic_ai import ImageGenerator
@@ -95,13 +207,14 @@ model = OpenAIImageGenerationModel(
 generator = ImageGenerator(model)
 ```
 
-See the [OpenAI](models/openai.md#image-generation), [Google](models/google.md#image-generation), and
-[xAI](models/xai.md#image-generation) pages for provider setup and limitations.
-
 ## Settings
 
 [`ImageGenerationSettings`][pydantic_ai.images.ImageGenerationSettings] provides portable settings, while provider
-settings classes add provider-prefixed controls. Defaults can be set on the generator and overridden for one call:
+settings classes add provider-prefixed controls.
+
+Settings can be specified on the model, at the generator level (applied to all calls), or per call.
+They are merged in that order: later settings override earlier values for the same key, while values set only in
+earlier layers are preserved. The example below shows generator defaults extended for one call:
 
 ```python {title="image_generation_settings.py"}
 from pydantic_ai import ImageGenerator
@@ -122,7 +235,10 @@ async def main():
     assert result.image.media_type.startswith('image/')
 ```
 
-Settings are applied on a best-effort basis. A provider adapter warns when it cannot apply an explicit setting.
+Four settings can be dropped with a warning, because the selected request has no field for them: `openai_moderation`
+on an edit and `openai_input_fidelity` on a generation, and `extra_headers` and `extra_body` on xAI, whose gRPC
+transport has no per-request header or body escape hatch. Everything else is either forwarded to the provider or, for
+geometry, rejected before the request — see [Output Geometry](#output-geometry).
 
 OpenAI transparent backgrounds require `openai_output_format='png'` or `'webp'`, and model support varies.
 Provider-specific settings are forwarded so the provider remains the authority on current model support; see the
@@ -137,9 +253,9 @@ Use one of these settings to control output geometry:
 - `aspect_ratio='16:9'` requests a ratio and lets Pydantic AI select a canonical model-specific shape.
 
 `dimensions` and `aspect_ratio` are mutually exclusive. Provider-specific geometry controls — `openai_size`,
-`google_image_config.image_size`, `xai_aspect_ratio`, and `xai_resolution` — remain prefixed because the providers use
-different concepts and value ranges. An explicit provider-specific geometry setting takes precedence over a portable
-one and produces a warning.
+`google_image_config.aspect_ratio`, `google_image_config.image_size`, `xai_aspect_ratio`, and `xai_resolution` — remain
+prefixed because the providers use different concepts and value ranges. An explicit provider-specific geometry setting
+takes precedence over the value a portable setting maps to, and warns only when the two disagree.
 
 Gemini takes the aspect ratio as a native request field, so the ratio you ask for is sent as-is and Gemini decides
 whether it can honor it; a rejection arrives as a [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError]. OpenAI and
@@ -157,6 +273,11 @@ An OpenAI model Pydantic AI does not recognize — a GPT Image release newer tha
 structurally valid `dimensions`, which travel to OpenAI as the plain `size` string for it to validate. `aspect_ratio`
 still raises [`UserError`][pydantic_ai.exceptions.UserError] for such a model, because Pydantic AI has no canonical
 shapes to map the ratio onto; use `dimensions` or `openai_size` instead.
+
+`dall-e-2` and `dall-e-3` are the exception to that fallthrough:
+[`OpenAIImageGenerationModel`][pydantic_ai.images.openai.OpenAIImageGenerationModel] raises
+[`UserError`][pydantic_ai.exceptions.UserError] on construction for both, because they diverge from the GPT Image
+contract in response format, size set, image count, and quality vocabulary.
 
 ### Canonical Dimensions for `aspect_ratio`
 
@@ -198,7 +319,7 @@ them exactly:
 | --- | --- |
 | GPT Image 1.x (`gpt-image-1`, `gpt-image-1-mini`, `gpt-image-1.5`) | `1024×1024`, `1024×1536`, or `1536×1024`. |
 | GPT Image 2 | Any positive dimensions where both sides are multiples of 16, the longest edge is at most 3840, the aspect ratio does not exceed 3:1, and the total area is between 655,360 and 8,294,400 pixels. |
-| Any other OpenAI model | Any positive dimensions, forwarded as `size` for OpenAI to accept or reject. |
+| Any other OpenAI model except DALL·E | Any positive dimensions, forwarded as `size` for OpenAI to accept or reject. |
 | Gemini 2.5 Flash Image | The ten dimensions shown in its canonical column above. This model has no separate resolution tier. |
 | Gemini 3.1 Flash Lite Image | The fourteen `1K` dimensions shown in its column above. This model serves no other tier. |
 | Gemini 3 Pro Image | The ten `1K` dimensions shown above, plus `2K` and `4K` variants obtained by multiplying both sides by 2 or 4. |
@@ -214,7 +335,7 @@ for the four extended ratios. Flash Lite serves only their `1K` column:
 | `1:8` | `176×1456` | `352×2928` | `704×5856` | `1408×11712` |
 | `4:1` | `1024×256` | `2064×512` | `4128×1024` | `8256×2048` |
 | `8:1` | `1456×176` | `2928×352` | `5856×704` | `11712×1408` |
-| `21:9` | `792×168` | `1584×672` | `3168×1344` | `6336×2688` |
+| `21:9` | `784×336` | `1584×672` | `3168×1344` | `6336×2688` |
 
 xAI documents the ratios and resolution tiers but not their complete exact pixel mapping. These dimensions were verified
 against both `grok-imagine-image` and `grok-imagine-image-quality`:
@@ -251,8 +372,27 @@ Use the provider settings types when you need an option that is not portable:
 These types extend `ImageGenerationSettings`. Their provider-prefixed fields use public types from the corresponding
 provider SDK where those types are available. See the [OpenAI](models/openai.md#image-generation),
 [Google](models/google.md#image-generation), and [xAI](models/xai.md#image-generation) pages for provider-specific setup
-and limitations. Image count, output format, quality, background, moderation, input fidelity, compression, and
-provider resolution are not portable settings; use the relevant provider-prefixed field.
+and limitations.
+
+Image count, output format, quality, background, moderation, input fidelity, compression, and provider resolution are
+not portable settings, so OpenAI and xAI expose them as prefixed fields. Google is the exception: the Gemini request
+carries all of its image options in one native object, so `GoogleImageGenerationSettings` adds only
+`google_image_config`.
+
+Asking for more than one image is the prefixed setting readers reach for most: `openai_n` on OpenAI and `xai_n` on
+xAI. Each provider validates its own upper bound and reports an over-limit request as a
+[`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError]:
+
+```python {title="image_generation_count.py"}
+from pydantic_ai import ImageGenerator
+from pydantic_ai.images.openai import OpenAIImageGenerationSettings
+from pydantic_ai.images.xai import XaiImageGenerationSettings
+
+openai_generator = ImageGenerator('openai:gpt-image-2', settings=OpenAIImageGenerationSettings(openai_n=3))
+xai_generator = ImageGenerator('xai:grok-imagine-image', settings=XaiImageGenerationSettings(xai_n=3))
+```
+
+Gemini returns one image per request, so there is no Google equivalent.
 
 ## Results and Usage
 
@@ -264,6 +404,27 @@ provider-specific response details. Image bytes are always available as a
 A result always holds at least one image, so [`result.image`][pydantic_ai.images.ImageGenerationResult.image] returns
 the first one's [`BinaryImage`][pydantic_ai.messages.BinaryImage] directly. Use `result.images` when you asked for more
 than one image or need per-image metadata such as `revised_prompt`.
+
+```python {title="image_generation_result.py"}
+from pydantic_ai import ImageGenerator
+
+generator = ImageGenerator('openai:gpt-image-2')
+
+
+async def main():
+    result = await generator.generate('A watercolor map of a floating city.')
+
+    print(result.image.media_type)
+    #> image/png
+    print(len(result.images))
+    #> 1
+    print(result.images[0].output_format)
+    #> png
+    print(result.usage.input_tokens)
+    #> 8
+```
+
+_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`.)_
 
 xAI's `provider_details` can contain `cost_usd` reported by xAI. This is provider metadata, not a portable cost
 calculation, and is kept separate from [`cost()`][pydantic_ai.images.ImageGenerationResult.cost].
@@ -279,8 +440,9 @@ calculation, and is kept separate from [`cost()`][pydantic_ai.images.ImageGenera
 Image generation raises the same exceptions as the rest of Pydantic AI:
 
 - [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError] when a provider blocks a request or its output for
-  content moderation. OpenAI raises it for a `moderation_blocked` response, Google for a safety, recitation, or
-  prohibited-content block, and xAI when every image in a batch is flagged.
+  content moderation. OpenAI raises it for a `moderation_blocked` response, Google for a safety, recitation,
+  prohibited-content, or [Model Armor](models/google.md#model-armor-google-cloud-only) block, and xAI when every image
+  in a batch is flagged.
 - [`UserError`][pydantic_ai.exceptions.UserError] when the request cannot be built: an empty prompt, a reference-image
   type the selected provider does not accept, or `dimensions` the selected model cannot produce exactly.
 - [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] for other 4xx and 5xx provider responses, and
@@ -337,24 +499,93 @@ Each call opens a span named `image_generation {model}` carrying `gen_ai.operati
 `gen_ai.output.type='image'`. `image_generation` is a custom operation name: the OpenTelemetry GenAI conventions
 enumerate no value for image generation, while `image` is one of their standard output types.
 
+See the [Debugging and Monitoring guide](logfire.md) for more details on using Logfire with Pydantic AI.
+
 ## Testing
 
 Use [`TestImageGenerationModel`][pydantic_ai.images.TestImageGenerationModel] for deterministic tests without API calls:
 
 ```python {title="test_image_generation.py"}
 from pydantic_ai import ImageGenerator
-from pydantic_ai.images import TestImageGenerationModel
+from pydantic_ai.images import ImageGenerationSettings, TestImageGenerationModel
 
 
 async def test_image_workflow():
+    generator = ImageGenerator('openai:gpt-image-2')
     test_model = TestImageGenerationModel()
-    generator = ImageGenerator(test_model)
 
-    result = await generator.generate('A test image', settings={'dimensions': (1024, 1024)})
+    with generator.override(model=test_model):
+        result = await generator.generate(
+            'A test image',
+            settings=ImageGenerationSettings(dimensions=(1024, 1024)),
+        )
 
-    assert len(result.images) == 1
-    assert test_model.last_settings == {'dimensions': (1024, 1024)}
+        # TestImageGenerationModel returns a single 1x1 PNG
+        assert len(result.images) == 1
+
+        # Check what settings were used
+        assert test_model.last_settings == {'dimensions': (1024, 1024)}
 ```
+
+Setting [`ALLOW_MODEL_REQUESTS`][pydantic_ai.models.ALLOW_MODEL_REQUESTS] to `False` also blocks image generation
+requests, so a generator you forgot to override raises instead of quietly calling the provider.
+[`TestImageGenerationModel`][pydantic_ai.images.TestImageGenerationModel] is unaffected, as it never reaches a provider.
+
+## Building Custom Image Generation Models
+
+To integrate an image provider Pydantic AI does not ship, subclass
+[`ImageGenerationModel`][pydantic_ai.images.ImageGenerationModel]:
+
+```python {title="custom_image_generation_model.py"}
+from collections.abc import Sequence
+
+from pydantic_ai import BinaryImage
+from pydantic_ai.images import (
+    GeneratedImage,
+    ImageGenerationInput,
+    ImageGenerationModel,
+    ImageGenerationResult,
+    ImageGenerationSettings,
+)
+
+
+class MyCustomImageGenerationModel(ImageGenerationModel):
+    @property
+    def model_name(self) -> str:
+        return 'my-custom-model'
+
+    @property
+    def system(self) -> str:
+        return 'my-provider'
+
+    async def generate(
+        self,
+        prompt: str,
+        *,
+        images: Sequence[ImageGenerationInput] | None = None,
+        settings: ImageGenerationSettings | None = None,
+    ) -> ImageGenerationResult:
+        prompt, images, settings = self.prepare_generate(prompt, images=images, settings=settings)
+
+        # Call your image generation API here
+        data = b'...'  # Placeholder
+
+        return ImageGenerationResult(
+            images=[GeneratedImage(content=BinaryImage(data=data, media_type='image/png'))],
+            prompt=prompt,
+            model_name=self.model_name,
+            provider_name=self.system,
+            settings=settings,
+        )
+```
+
+`prepare_generate()` validates the prompt and reference inputs and merges the model's own default settings under the
+ones passed in, so a subclass gets the same portable behavior as the built-in adapters. Return at least one image:
+[`generate()`][pydantic_ai.images.ImageGenerationModel.generate] promises a non-empty result, and
+[`result.image`][pydantic_ai.images.ImageGenerationResult.image] relies on it.
+
+Use [`WrapperImageGenerationModel`][pydantic_ai.images.WrapperImageGenerationModel] if you want to wrap an existing
+model to add custom behavior like caching or logging.
 
 ## Using Image Generation with an Agent
 
