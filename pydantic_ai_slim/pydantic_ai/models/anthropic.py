@@ -320,6 +320,7 @@ _ANTHROPIC_SAMPLING_PARAMS = ('temperature', 'top_p', 'top_k')
 _ANTHROPIC_TASK_BUDGETS_BETA = 'task-budgets-2026-03-13'
 _ANTHROPIC_THINKING_BINDING_BETA = 'thinking-binding-controls-2026-08-01'
 _ANTHROPIC_DROP_STALE_THINKING_BLOCKS: BetaThinkingBlockBindingParam = {'prefix_mismatch_behavior': 'drop_block'}
+_STALE_THINKING_BLOCK_MARKER = 'The block is bound to a different conversation'
 _ANTHROPIC_FILES_API_BETA = 'files-api-2025-04-14'
 _ANTHROPIC_COMPACT_EDIT_TYPE = 'compact_20260112'
 
@@ -392,6 +393,25 @@ _ANTHROPIC_SERVER_TOOL_CALLER_DETAIL = 'anthropic_caller'
 
 AnthropicTaskBudget: TypeAlias = BetaTokenTaskBudgetParam
 """Anthropic task budget payload for `output_config.task_budget`."""
+
+
+class AnthropicStaleThinkingBlockWarning(Warning):
+    """Warning raised when Anthropic rejected a replayed thinking block and Pydantic AI retried without it.
+
+    Claude Fable 5.1 binds each thinking block to the conversation prefix that produced it and
+    rejects a replay once that prefix changes — which a dynamic
+    [instructions][pydantic_ai.Agent.instructions] function and a
+    [filtered toolset](../toolsets.md#filtering-tools) both do by design. Anthropic enforces the
+    check for accounts created on or after 2026-08-31; for older accounts it records the mismatch
+    and acts on it only if the request asks it to.
+
+    Pydantic AI therefore asks for nothing by default, so an older account keeps replaying its
+    reasoning untouched. Where the check is enforced, the rejected request is retried once with
+    `thinking.block_binding.prefix_mismatch_behavior='drop_block'`: the stale block is dropped, the
+    run continues, and the drop is recorded on
+    [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details] and as
+    an `anthropic.input_transformations` span event.
+    """
 
 
 class AnthropicModelSettings(ModelSettings, total=False):
@@ -544,9 +564,9 @@ class AnthropicModelSettings(ModelSettings, total=False):
 
 
 def _build_extra_body(
-    model_settings: AnthropicModelSettings, thinking_binding: BetaThinkingBlockBindingParam | None = None
+    model_settings: AnthropicModelSettings, thinking_override: dict[str, object] | None = None
 ) -> object | None:
-    """Merge the sampling settings, and any type-less `thinking.block_binding`, into `extra_body`.
+    """Merge the sampling settings, and a `thinking` object the SDK cannot type, into `extra_body`.
 
     `anthropic>=1` dropped `temperature`/`top_p`/`top_k` from the `messages.create()` signature, and
     passing one is a `TypeError`. The API still takes them, so they ride in `extra_body` — the route
@@ -559,8 +579,8 @@ def _build_extra_body(
     fields: dict[str, Any] = {
         setting: value for setting in _ANTHROPIC_SAMPLING_PARAMS if (value := model_settings.get(setting)) is not None
     }
-    if thinking_binding is not None:
-        fields['thinking'] = {'block_binding': thinking_binding}
+    if thinking_override is not None:
+        fields['thinking'] = thinking_override
     extra_body = model_settings.get('extra_body')
     if not fields:
         return extra_body
@@ -569,38 +589,38 @@ def _build_extra_body(
     return fields
 
 
-def _bind_thinking_blocks(profile: ModelProfile, thinking: BetaThinkingConfigParam) -> BetaThinkingConfigParam:
-    """Default `prefix_mismatch_behavior` to `drop_block` on models that bind thinking blocks.
+def _is_stale_thinking_block_error(
+    profile: ModelProfile, thinking: BetaThinkingConfigParam | Omit, error: APIStatusError
+) -> bool:
+    """Whether Anthropic rejected a replayed thinking block that the request can be retried without.
 
-    Claude Fable 5.1 binds each thinking block to the conversation prefix that produced it, so
-    replaying history after a dynamic `@agent.instructions` string changes, or after a conditional
-    toolset advertises a new non-deferred tool, fails with a 400. Dropping the stale block costs the
-    model that turn's reasoning; failing the request costs the run.
+    Scoped to models that bind and to requests that set no `block_binding` of their own: an explicit
+    `'error'` is a caller asking to fail, and an explicit `'drop_block'` cannot produce this error.
     """
-    if thinking['type'] == 'disabled' or 'block_binding' in thinking:
-        return thinking
-    if not profile.get('anthropic_binds_thinking_blocks', False):
-        return thinking
-    bound = thinking.copy()
-    bound['block_binding'] = _ANTHROPIC_DROP_STALE_THINKING_BLOCKS
-    return bound
+    if error.status_code != 400 or not profile.get('anthropic_binds_thinking_blocks', False):
+        return False
+    if not isinstance(thinking, Omit) and 'block_binding' in thinking:
+        return False
+    body: object | None = error.body
+    return (
+        _utils.is_str_dict(body)
+        and _utils.is_str_dict(reported := body.get('error'))
+        and isinstance(message := reported.get('message'), str)
+        and _STALE_THINKING_BLOCK_MARKER in message
+    )
 
 
-def _unset_thinking_block_binding(
-    profile: ModelProfile, thinking: BetaThinkingConfigParam | Omit
-) -> BetaThinkingBlockBindingParam | None:
-    """The `block_binding` a request with no `thinking` config still has to carry, if any.
+def _drop_stale_thinking_blocks(thinking: BetaThinkingConfigParam | Omit) -> dict[str, object]:
+    """The `thinking` object for the retried request, carrying the caller's own config plus the drop.
 
-    A binding model emits thinking blocks whether or not the request configured thinking, so
-    replaying them fails even when `thinking` is absent — and `block_binding` then has nowhere typed
-    to ride. The API accepts a `thinking` object holding `block_binding` alone, which the SDK's
-    discriminated union cannot express, so that shape travels through `extra_body`.
+    A binding model emits thinking blocks whether or not the request configured thinking, so the
+    retry usually has no `thinking` object for the binding to ride in — and the API accepts one
+    holding `block_binding` alone, which the SDK's discriminated union cannot express. Rather than
+    split the two cases, the retry always sends the whole object through `extra_body`, which reaches
+    the same JSON key without needing a `type` the caller never asked for.
     """
-    if not isinstance(thinking, Omit):
-        return None
-    if not profile.get('anthropic_binds_thinking_blocks', False):
-        return None
-    return _ANTHROPIC_DROP_STALE_THINKING_BLOCKS
+    configured: dict[str, object] = {} if isinstance(thinking, Omit) else dict(thinking)
+    return {**configured, 'block_binding': _ANTHROPIC_DROP_STALE_THINKING_BLOCKS}
 
 
 def _report_input_transformations(
@@ -950,15 +970,13 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         """Get the thinking parameter, falling back to unified thinking."""
         profile = self.profile
         if anthropic_thinking := model_settings.get('anthropic_thinking'):
-            return _bind_thinking_blocks(profile, anthropic_thinking)
+            return anthropic_thinking
         thinking = model_request_parameters.thinking
         if thinking is None or thinking is False:
             return OMIT  # type: ignore[return-value]
         if profile.get('anthropic_supports_adaptive_thinking', False):
-            return _bind_thinking_blocks(profile, {'type': 'adaptive'})
-        return _bind_thinking_blocks(
-            profile, {'type': 'enabled', 'budget_tokens': ANTHROPIC_THINKING_BUDGET_MAP[thinking]}
-        )
+            return {'type': 'adaptive'}
+        return {'type': 'enabled', 'budget_tokens': ANTHROPIC_THINKING_BUDGET_MAP[thinking]}
 
     @overload
     async def _messages_create(
@@ -1022,11 +1040,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         self._validate_task_budget_vs_context_management(model_settings, context_management)
         container = self._get_container(messages, model_settings)
 
-        unset_thinking_binding = _unset_thinking_block_binding(anthropic_profile, thinking)
-        if unset_thinking_binding is not None:
-            betas.add(_ANTHROPIC_THINKING_BINDING_BETA)
-
-        with _map_api_errors(self.model_name, self._provider.model_id_namespace):
+        async def create(
+            thinking: BetaThinkingConfigParam | Omit,
+            betas: set[str],
+            thinking_override: dict[str, object] | None,
+        ) -> BetaMessage | AsyncStream[BetaRawMessageStreamEvent]:
             return await self.client.beta.messages.create(
                 max_tokens=model_settings.get('max_tokens', 4096),
                 system=system_prompt or OMIT,
@@ -1048,8 +1066,29 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 service_tier=_resolve_anthropic_service_tier(model_settings),
                 speed=self._effective_speed(model_settings, anthropic_profile),
                 extra_headers=extra_headers,
-                extra_body=_build_extra_body(model_settings, unset_thinking_binding),
+                extra_body=_build_extra_body(model_settings, thinking_override),
             )
+
+        with _map_api_errors(self.model_name, self._provider.model_id_namespace):
+            try:
+                return await create(thinking, betas, None)
+            except APIStatusError as error:
+                if not _is_stale_thinking_block_error(anthropic_profile, thinking, error):
+                    raise
+
+            warnings.warn(
+                f'{self.model_name!r} rejected a replayed thinking block because the conversation prefix '
+                'changed, which Anthropic enforces for accounts created on or after 2026-08-31. Pydantic AI '
+                "retried the request with `prefix_mismatch_behavior='drop_block'`, so the run continued "
+                "without that turn's reasoning. To skip the rejected request, ask for the drop yourself: "
+                "`model_settings={'anthropic_thinking': {'type': 'adaptive', 'block_binding': "
+                "{'prefix_mismatch_behavior': 'drop_block'}}}`. To keep the retry and silence this warning: "
+                "`warnings.simplefilter('ignore', AnthropicStaleThinkingBlockWarning)`. See "
+                'https://platform.claude.com/docs/en/build-with-claude/preserved-thinking',
+                AnthropicStaleThinkingBlockWarning,
+                stacklevel=2,
+            )
+            return await create(OMIT, betas | {_ANTHROPIC_THINKING_BINDING_BETA}, _drop_stale_thinking_blocks(thinking))
 
     @staticmethod
     def _add_compaction_params(

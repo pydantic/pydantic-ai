@@ -567,9 +567,11 @@ Because [Tool Output](../output.md#tool-output) resolves to a forced tool choice
 - a [dynamic instructions](../agent.md#instructions) function whose text differs between runs, and
 - a [filtered toolset](../toolsets.md#filtering-tools) that advertises a new tool mid-conversation, unless the tool uses [deferred loading](../toolsets.md#deferred-loading).
 
-Anthropic enforces the check on accounts created on or after 31 August 2026. On an older account the mismatch is recorded, but acted on only if the request sets a behavior.
+Anthropic enforces the check for accounts created on or after 31 August 2026. For an older account it records the mismatch but acts on it only if the request sets `thinking.block_binding.prefix_mismatch_behavior`.
 
-On that model Pydantic AI defaults Anthropic's `thinking.block_binding.prefix_mismatch_behavior` to `'drop_block'`, marked by [`anthropic_binds_thinking_blocks=True`][pydantic_ai.profiles.anthropic.AnthropicModelProfile.anthropic_binds_thinking_blocks]. The stale block is dropped and the request proceeds instead of failing. **The model no longer sees that turn's reasoning** — the trade is one turn's thinking against a failed run. Anthropic reports every drop, and Pydantic AI surfaces it two ways. Under [instrumentation](../logfire.md) the model request span carries an `anthropic.input_transformations` event, so a drop is visible in the trace as it happens. On the response it is recorded in `provider_details`:
+**Pydantic AI sets nothing by default**, so an older account keeps replaying its reasoning untouched. Where the check is enforced, the rejected request is retried once with `prefix_mismatch_behavior='drop_block'`: the stale block is dropped, the run continues, and a [`AnthropicStaleThinkingBlockWarning`][pydantic_ai.models.anthropic.AnthropicStaleThinkingBlockWarning] explains what happened. **The model no longer sees that turn's reasoning** — the trade is one turn's thinking against a failed run. Models marked [`anthropic_binds_thinking_blocks=True`][pydantic_ai.profiles.anthropic.AnthropicModelProfile.anthropic_binds_thinking_blocks] are the only ones that retry.
+
+Anthropic reports every drop, and Pydantic AI surfaces it two ways. Under [instrumentation](../logfire.md) the model request span carries an `anthropic.input_transformations` event, so a drop is visible in the trace as it happens. On the response it is recorded in `provider_details`:
 
 ```python {title="dropped_thinking_blocks.py" test="skip"}
 from pydantic_ai import Agent
@@ -584,35 +586,35 @@ for message in result.new_messages():
             print(transformation['path'], transformation['reason'])
 ```
 
-To fail loudly instead, set the behavior yourself — Pydantic AI leaves an explicit `block_binding` untouched and still sends the beta the field requires:
+To skip the rejected request — and the warning — ask for the drop up front. Pydantic AI sends an explicit `block_binding` as given, with the beta the field requires, and never retries:
 
-```python {title="strict_block_binding.py"}
+```python {title="drop_stale_thinking_blocks.py"}
 from pydantic_ai import Agent
 from pydantic_ai.models.anthropic import AnthropicModelSettings
 
 settings: AnthropicModelSettings = {
-    'anthropic_thinking': {'type': 'adaptive', 'block_binding': {'prefix_mismatch_behavior': 'error'}}
+    'anthropic_thinking': {
+        'type': 'adaptive',
+        'block_binding': {'prefix_mismatch_behavior': 'drop_block'},
+    }
 }
 agent = Agent('anthropic:claude-fable-5-1', model_settings=settings)
 ...
 ```
 
-On an account created before 31 August 2026 you can also keep the stale block, since Anthropic acts on the mismatch only when asked to. Set `block_binding` to `None` and Pydantic AI asks for nothing:
+To fail loudly instead of losing the reasoning, set `'error'` in the same place. To keep the retry but stop hearing about it, filter the warning:
 
-```python {title="account_default_block_binding.py"}
-from pydantic_ai import Agent
-from pydantic_ai.models.anthropic import AnthropicModelSettings
+```python {title="silence_stale_thinking_block_warning.py"}
+import warnings
 
-settings: AnthropicModelSettings = {
-    'anthropic_thinking': {'type': 'adaptive', 'block_binding': None}
-}
-agent = Agent('anthropic:claude-fable-5-1', model_settings=settings)
-...
+from pydantic_ai.models.anthropic import AnthropicStaleThinkingBlockWarning
+
+warnings.simplefilter('ignore', AnthropicStaleThinkingBlockWarning)
 ```
 
-There is no third behavior: `prefix_mismatch_behavior` is either `'error'` or `'drop_block'`, so on an account created on or after 31 August 2026 a stale block can only fail the request or be dropped.
+There is no third behavior: `prefix_mismatch_behavior` is either `'error'` or `'drop_block'`. Passing `None` is how you ask for Anthropic's account default explicitly, which keeps the block only where the check isn't enforced.
 
-Models that don't bind thinking blocks are unaffected: their requests carry no `block_binding` and no binding beta. Anthropic documents **Claude Mythos 5.1** as not running this check, so it is not marked either.
+Models that don't bind thinking blocks are unaffected: their requests carry no `block_binding` and no binding beta, and a 400 from them is never retried. Anthropic documents **Claude Mythos 5.1** as not running this check, so it is not marked either.
 
 ## Message Compaction
 

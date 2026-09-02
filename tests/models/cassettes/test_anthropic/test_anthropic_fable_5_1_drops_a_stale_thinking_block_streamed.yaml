@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '341'
+      - '266'
       content-type:
       - application/json
       host:
@@ -26,16 +26,13 @@ interactions:
       system:
       - text: You are a helpful assistant. Answer briefly.
         type: text
-      thinking:
-        block_binding:
-          prefix_mismatch_behavior: drop_block
     uri: https://api.anthropic.com/v1/messages?beta=true
   response:
     headers:
       connection:
       - keep-alive
       content-length:
-      - '1370'
+      - '1337'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
@@ -43,20 +40,19 @@ interactions:
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-b8ad788853ad12b7219c590784037245-a12c5920e2495d5b-01
+      - 00-cc911ace7753601108df498f330752a3-189dcb263d85f713-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
     parsed_body:
       content:
-      - signature: CAQS/wMKEAgRGAI4AUIIdGhpbmtpbmcSDAWwy6O876umRPQdTRoMUtCO7Y8+xweU8IfuIjDOrnqbntWjrMSyWVkEehdzan8USTcf92FzCdHUDlbGUQb3OBdWV4k4UbkjgNb5w5IqnANzUt5NUJFjbVN0J4A/cP1Fss6K1/qP48lgHg7TSoSEoZK8kKAI7iEeMFb7twkxYByP2eBeI/gAKgwKRzJ/F3elHZGTkh+20hVP7lv1UM2/Q9qjBAkJ/aDzCUlhUepzp/eyTnRf2Lnmyc5Cgx2fgpxIEl5ywDxyLROnAg1Ek8HRiwpu/ZPh6/UYS7FTfOOvA12KBWYfSoGP7nSrryx9fbOWlXHzfqPAk1SMzKIAzb0z4HuEb1SUDKr7+qc2quc2LJhik3ufiH8pbT2IfAUJ9ExVwtEdYtAETh1O41dx8d2QFelj0y5tyI5EvNsFqQZJnQP1C/oGXCXbDWIWmjqS5Y76QAjM2+qLnxHnuM9E9Nc740hSIpxvECK4dxdsUnryth98tRlkGJky1GINK2lnK6iw50cKo6kZxeJKxun2lwonavvI6RWZFVqCHYVHrTWBbjk7g0Fq+f6qOFmmvB07jc5/J0u2800SqhHZwin4oY3+PC66n4BhaTk4hXjUCSnwEB0oe5D6bpXIyDuUJtKf6de5mz6Ckoa5Nxvmn/wHGAE=
+      - signature: CAQS/wMKEAgRGAI4AUIIdGhpbmtpbmcSDF1ku+forfSj6QpbgxoM37YCogleIZ/PdScKIjB5FNxcm8P7jXysyW32O3brIan96UC7sm5/HTrRLRSRtzjGN4BgbandzIDd5lNyAYsqnAOrNuKULUZRDs/3iKFulbAWypTc7tq62Ltk75oPAlnKCtvotN34AbShPTR8EYGHjvtyHPuWdKV0n0WXSdOGQG04QaFTFb/W/CqFW4aXV6W+d8axAbg/dtYmbRZ5sdSeJzksfc17gIU9d85DdJ1yepTfhJf5o8f1rrvXzsvAscx9n6kBlQU647FYc74q0bOdyqoZWxIvKG+cwWfndU5AVar5qxofSEKcEzI1J/iFcA1ISI90rN2gHAwPZbSwog2KOU10cy0gKaE0A1Iae1bweq19fkBGK/Na4A8t5XuInf5gy9CKf6MkmphjTCUFu51ZCWuKAirJysnzk4ftQjmGOKEhOP+9n2TJj4bYDjmRCRZaw4Mke2NQn/dqWmhMD5EISnfOUga7hCEy8jzXPKjza/KhE2qjLqQBIksDR90oFyIFAhhfKV+IX/NzWsKd/8LAaqG532Wo7F0KgxJU3hJVsLXEVgYvPzd0OYoo+VmERxNTKJsFlYw/PaPBOQSISw4sm7grj84hqzFS0h6BUEaehovoXFguJSIkLl5ovP0CGAE=
         thinking: ''
         type: thinking
-      - text: 17 × 23 = (17 × 20) + (17 × 3) = 340 + 51 = **391**.
+      - text: 17 × 23 = 17 × 20 + 17 × 3 = 340 + 51 = **391**.
         type: text
-      id: msg_011CedrmT4NcWU4HBA5DqeEv
-      input_transformations: []
+      id: msg_011Cedu6CqskQbdHP7kNJPia
       model: claude-fable-5-1
       role: assistant
       stop_details: null
@@ -87,7 +83,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1316'
+      - '1332'
       content-type:
       - application/json
       host:
@@ -101,10 +97,10 @@ interactions:
           type: text
         role: user
       - content:
-        - signature: CAQS/wMKEAgRGAI4AUIIdGhpbmtpbmcSDAWwy6O876umRPQdTRoMUtCO7Y8+xweU8IfuIjDOrnqbntWjrMSyWVkEehdzan8USTcf92FzCdHUDlbGUQb3OBdWV4k4UbkjgNb5w5IqnANzUt5NUJFjbVN0J4A/cP1Fss6K1/qP48lgHg7TSoSEoZK8kKAI7iEeMFb7twkxYByP2eBeI/gAKgwKRzJ/F3elHZGTkh+20hVP7lv1UM2/Q9qjBAkJ/aDzCUlhUepzp/eyTnRf2Lnmyc5Cgx2fgpxIEl5ywDxyLROnAg1Ek8HRiwpu/ZPh6/UYS7FTfOOvA12KBWYfSoGP7nSrryx9fbOWlXHzfqPAk1SMzKIAzb0z4HuEb1SUDKr7+qc2quc2LJhik3ufiH8pbT2IfAUJ9ExVwtEdYtAETh1O41dx8d2QFelj0y5tyI5EvNsFqQZJnQP1C/oGXCXbDWIWmjqS5Y76QAjM2+qLnxHnuM9E9Nc740hSIpxvECK4dxdsUnryth98tRlkGJky1GINK2lnK6iw50cKo6kZxeJKxun2lwonavvI6RWZFVqCHYVHrTWBbjk7g0Fq+f6qOFmmvB07jc5/J0u2800SqhHZwin4oY3+PC66n4BhaTk4hXjUCSnwEB0oe5D6bpXIyDuUJtKf6de5mz6Ckoa5Nxvmn/wHGAE=
+        - signature: CAQS/wMKEAgRGAI4AUIIdGhpbmtpbmcSDF1ku+forfSj6QpbgxoM37YCogleIZ/PdScKIjB5FNxcm8P7jXysyW32O3brIan96UC7sm5/HTrRLRSRtzjGN4BgbandzIDd5lNyAYsqnAOrNuKULUZRDs/3iKFulbAWypTc7tq62Ltk75oPAlnKCtvotN34AbShPTR8EYGHjvtyHPuWdKV0n0WXSdOGQG04QaFTFb/W/CqFW4aXV6W+d8axAbg/dtYmbRZ5sdSeJzksfc17gIU9d85DdJ1yepTfhJf5o8f1rrvXzsvAscx9n6kBlQU647FYc74q0bOdyqoZWxIvKG+cwWfndU5AVar5qxofSEKcEzI1J/iFcA1ISI90rN2gHAwPZbSwog2KOU10cy0gKaE0A1Iae1bweq19fkBGK/Na4A8t5XuInf5gy9CKf6MkmphjTCUFu51ZCWuKAirJysnzk4ftQjmGOKEhOP+9n2TJj4bYDjmRCRZaw4Mke2NQn/dqWmhMD5EISnfOUga7hCEy8jzXPKjza/KhE2qjLqQBIksDR90oFyIFAhhfKV+IX/NzWsKd/8LAaqG532Wo7F0KgxJU3hJVsLXEVgYvPzd0OYoo+VmERxNTKJsFlYw/PaPBOQSISw4sm7grj84hqzFS0h6BUEaehovoXFguJSIkLl5ovP0CGAE=
           thinking: ''
           type: thinking
-        - text: 17 × 23 = (17 × 20) + (17 × 3) = 340 + 51 = **391**.
+        - text: 17 × 23 = 17 × 20 + 17 × 3 = 340 + 51 = **391**.
           type: text
         role: assistant
       - content:
@@ -119,12 +115,13 @@ interactions:
       thinking:
         block_binding:
           prefix_mismatch_behavior: drop_block
+        type: adaptive
     uri: https://api.anthropic.com/v1/messages?beta=true
   response:
     body:
       string: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-fable-5-1","id":"msg_011CedrmdecBEWcVi52j4omW","type":"message","role":"assistant","content":[],"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":95,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"global"},"input_transformations":[{"type":"thinking_dropped","path":"messages.1.content.0","reason":"prefix_binding_mismatch"}]}}
+        data: {"type":"message_start","message":{"model":"claude-fable-5-1","id":"msg_011Cedu6YqA91duwsaTmvue9","type":"message","role":"assistant","content":[],"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":95,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"global"},"input_transformations":[{"type":"thinking_dropped","path":"messages.1.content.0","reason":"prefix_binding_mismatch"}]}  }
 
         event: content_block_start
         data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}      }
@@ -133,19 +130,19 @@ interactions:
         data: {"type": "ping"}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"391"}  }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"391"}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" × 2 = **782**."}   }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" × 2 = **782**."} }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":0      }
+        data: {"type":"content_block_stop","index":0 }
 
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null},"usage":{"input_tokens":95,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":13,"output_tokens_details":{"thinking_tokens":0}}      }
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null},"usage":{"input_tokens":95,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":13,"output_tokens_details":{"thinking_tokens":0}}          }
 
         event: message_stop
-        data: {"type":"message_stop"  }
+        data: {"type":"message_stop"             }
 
     headers:
       cache-control:
@@ -153,7 +150,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1425'
+      - '1441'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
@@ -161,7 +158,7 @@ interactions:
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-ecce5fb08df9570d3f3401d9532b617f-c49cc22452c6219d-01
+      - 00-b67fcbfcf9e2c3b3de62af01bbac0767-5f6eedd205f574aa-01
       transfer-encoding:
       - chunked
       vary:
