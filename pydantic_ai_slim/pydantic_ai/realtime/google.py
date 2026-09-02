@@ -672,9 +672,8 @@ class GoogleRealtimeModel(RealtimeModel):
         settings: RealtimeModelSettings | None = None,
         profile: RealtimeModelProfileSpec | None = None,
     ) -> None:
+        super().__init__(settings=settings, profile=profile)
         self.model = model
-        self.settings = settings
-        self._profile = profile
         if isinstance(provider, str):
             provider_name = 'gateway/google-cloud' if provider == 'gateway' else provider
             provider = cast('Provider[Client]', infer_provider(provider_name))
