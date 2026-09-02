@@ -222,6 +222,15 @@ CASES = [
         thinking=False,
         present={'generationConfig.thinkingConfig.thinking_budget': 0},
     ),
+    WireCase(
+        id='google-gemini-38-flash-disable',
+        provider='google',
+        model_name='gemini-3.8-flash',
+        thinking=False,
+        # Gemini 3+ takes `thinking_level` rather than a budget, and 3.8 Flash rejects `MINIMAL`,
+        # so the disable signal folds to the lowest level it accepts.
+        present={'generationConfig.thinkingConfig.thinking_level': 'LOW'},
+    ),
     # Mistral: adjustable-reasoning models take the binary `reasoning_effort` ('high'/'none');
     # always-on magistral must never receive it (https://docs.mistral.ai/capabilities/reasoning/).
     WireCase(
