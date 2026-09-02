@@ -8,7 +8,7 @@ Capabilities that cover a single fixed concern instead declare a stable default 
 
 Because the id is fixed, two of them can meet under one id, and what that means depends on where they came from.
 
-**Two on the same agent** are one configuration stated twice, so they merge field by field: a value only one of them states is kept, and a value both state takes the later one. That is what lets two packaged capabilities each bring a `WebSearch` and the agent reach both sets of domains. Declare it with [`combines`][pydantic_ai.capabilities.AbstractCapability.combines], which is `'merge'` by default:
+**Two on the same agent** are one configuration stated twice, so they merge field by field: a value only one of them states is kept, and a value both state takes the later one. That is what lets two packaged capabilities each bring a `WebSearch` and the agent reach both sets of domains. There is nothing to declare beyond the default `id` itself — writing one *is* the statement that an agent has one of these:
 
 ```python {title="combine_capability.py"}
 from dataclasses import dataclass
@@ -23,7 +23,9 @@ class Retries(AbstractCapability[Any]):
     id: str | None = 'retries'
 ```
 
-Set `combines = 'reject'` when two instances are two *identities* rather than two statements of one configuration — two accounts, two credentials — so that merging them would silently drop one. Override [`combine`][pydantic_ai.capabilities.AbstractCapability.combine] when composing takes more than merging fields.
+When two instances are two *identities* rather than two statements of one configuration — two accounts, two credentials — a fixed default `id` is the wrong shape, because merging them would silently drop one. Derive the `id` from whatever distinguishes them instead, the way [`MCP`][pydantic_ai.capabilities.MCP] derives one from its server URL: two identities then carry two ids and stay two capabilities, and two under one id are a genuine mistake that is reported.
+
+Override [`combine`][pydantic_ai.capabilities.AbstractCapability.combine] only when composing takes more than merging fields — a budget that should take the *smaller* of two values, say.
 
 **A capability supplied for a run** overrides its agent-level namesake outright — `agent.run(capabilities=[Thinking(effort='high')])` replaces the agent's `Thinking` rather than merging with it. A run states what *this* run does, so merging would let an agent-level setting the run meant to replace survive, and let an agent-level allow-list widen a restriction the run was passed to impose. `combine` is not consulted across layers.
 
