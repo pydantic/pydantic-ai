@@ -20,6 +20,7 @@ from pydantic_ai import (
     Agent,
     AgentRetries,
     AgentRunResultEvent,
+    AgentSpec,
     AudioUrl,
     BinaryContent,
     BinaryImage,
@@ -39,6 +40,7 @@ from pydantic_ai import (
     ModelResponse,
     ModelResponsePart,
     ModelRetry,
+    ModelSelectionContext,
     PrefixedToolset,
     RequestUsage,
     RetryPromptPart,
@@ -72,6 +74,7 @@ from pydantic_ai.capabilities import (
     PrepareOutputTools,
     PrepareTools,
     RaiseContentFilterError,
+    SelectModel,
     WrapRunHandler,
 )
 from pydantic_ai.exceptions import ContentFilterError
@@ -4206,6 +4209,70 @@ async def test_agent_iter_metadata_surfaces_on_result() -> None:
     assert agent_run.metadata == {'env': 'tests'}
     assert agent_run.result is not None
     assert agent_run.result.metadata == {'env': 'tests'}
+
+
+async def test_agent_iter_prepares_all_run_inputs() -> None:
+    selected_steps: list[int] = []
+    seen_tools: list[list[str]] = []
+    output_retries: list[int] = []
+
+    def output(ctx: RunContext[object], result: str) -> str:
+        assert ctx.max_retries == 1
+        output_retries.append(ctx.retry)
+        if ctx.retry == 0:
+            raise ModelRetry('retry once')
+        return result
+
+    run_toolset = FunctionToolset()
+
+    @run_toolset.tool_plain
+    def run_tool() -> str:
+        return 'from run toolset'
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen_tools.append([tool.name for tool in info.function_tools])
+        has_run_tool_return = any(
+            isinstance(part, ToolReturnPart) and part.tool_name == 'run_tool'
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+        )
+        if not has_run_tool_return:
+            return ModelResponse(parts=[ToolCallPart('run_tool', {})])
+
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {'result': 'done'})])
+
+    selected_model = FunctionModel(respond)
+
+    def select(ctx: ModelSelectionContext[object]) -> Model:
+        selected_steps.append(ctx.run_step)
+        return selected_model
+
+    agent = Agent(
+        None,
+        metadata={'agent': 'metadata'},
+        output_type=ToolOutput(output),
+        retries={'output': 3},
+    )
+
+    async with agent.iter(
+        'hi',
+        spec=AgentSpec(metadata={'spec': 'metadata'}, retries={'output': 0}),
+        capabilities=[SelectModel(select)],
+        toolsets=[run_toolset],
+        metadata={'run': 'metadata'},
+        retries={'output': 1},
+    ) as agent_run:
+        assert agent_run.metadata == {'agent': 'metadata', 'spec': 'metadata', 'run': 'metadata'}
+        async for _ in agent_run:
+            pass
+
+    assert agent_run.result is not None
+    assert agent_run.result.output == 'done'
+    assert agent_run.result.metadata == {'agent': 'metadata', 'spec': 'metadata', 'run': 'metadata'}
+    assert selected_steps == [1, 2, 3]
+    assert seen_tools == [['run_tool'], ['run_tool'], ['run_tool']]
+    assert output_retries == [0, 1]
 
 
 async def test_agent_metadata_persisted_when_run_fails() -> None:
