@@ -150,7 +150,7 @@ case1 = Case(
 dataset = Dataset(name='capital_quiz', cases=[case1])
 ```
 
-_(This example is complete and can be run as written.)_
+_(This example is complete, it can be run "as is")_
 
 See [Dataset Management](evals/how-to/dataset-management.md) to learn about saving, loading, and generating datasets.
 
@@ -195,7 +195,7 @@ dataset.add_evaluator(MyEvaluator())
 1. You can add built-in evaluators to a dataset using the [`add_evaluator`][pydantic_evals.dataset.Dataset.add_evaluator] method.
 2. This custom evaluator returns a simple score based on whether the output matches the expected output.
 
-_(This example is complete and can be run as written.)_
+_(This example is complete, it can be run "as is")_
 
 Learn more:
 
@@ -267,7 +267,7 @@ report.print(include_input=True, include_output=True, include_durations=False)  
 4. Run the evaluation with [`evaluate_sync`][pydantic_evals.dataset.Dataset.evaluate_sync], which runs the function against all test cases in the dataset, and returns an [`EvaluationReport`][pydantic_evals.reporting.EvaluationReport] object.
 5. Print the report with [`print`][pydantic_evals.reporting.EvaluationReport.print], which shows the results of the evaluation. We have omitted duration here just to keep the printed output from changing from run to run.
 
-_(This example is complete and can be run as written.)_
+_(This example is complete, it can be run "as is")_
 
 See [Quick Start](evals/quick-start.md) for more examples and [Concurrency & Performance](evals/how-to/concurrency.md) to learn about controlling parallel execution.
 
