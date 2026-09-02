@@ -14,6 +14,15 @@ env:
   UV_FROZEN: "1"
   # Ubuntu's system interpreters are older and slower than uv's optimized managed builds.
   UV_PYTHON_PREFERENCE: only-managed
+  # Authenticate the Git fetches uv makes for Git-sourced dependencies. Anonymous HTTPS clones are
+  # capped per client IP, and runners that share an egress pool exhaust that budget as a matrix
+  # fans out, at which point GitHub answers with a credential challenge that surfaces as
+  # `could not read Username for 'https://github.com'` and fails the install before any test runs.
+  # `GIT_CONFIG_*` applies to every `uv sync` and implicit `uv run` sync without writing credentials
+  # into the checkout, so `actions/checkout`'s `persist-credentials: false` still holds.
+  GIT_CONFIG_COUNT: "1"
+  GIT_CONFIG_KEY_0: url.https://x-access-token:${{ github.token }}@github.com/.insteadOf
+  GIT_CONFIG_VALUE_0: https://github.com/
 
 permissions:
   contents: read
@@ -34,34 +43,40 @@ jobs:
       pull-requests: read
     outputs:
       docs_only: ${{ steps.classify.outputs.docs_only }}
+      pyright_changed: ${{ steps.classify.outputs.pyright_changed }}
     steps:
-      - name: Detect documentation-only pull requests
+      - name: Classify pull request changes
         id: classify
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          if [ "${{ github.event_name }}" != "pull_request" ]; then
+          run_all_checks() {
             echo 'docs_only=false' >> "$GITHUB_OUTPUT"
+            echo 'pyright_changed=true' >> "$GITHUB_OUTPUT"
+          }
+
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            run_all_checks
             exit 0
           fi
 
           if ! total=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq '.changed_files'); then
             echo '::warning::Could not read the PR changed-file count; running full CI.'
-            echo 'docs_only=false' >> "$GITHUB_OUTPUT"
+            run_all_checks
             exit 0
           fi
           if ! gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files" \
             --jq '.[] | [.filename, (.previous_filename // "")] | @tsv' > "$RUNNER_TEMP/changed-files.txt"; then
             echo '::warning::Could not list the PR changed files; running full CI.'
-            echo 'docs_only=false' >> "$GITHUB_OUTPUT"
+            run_all_checks
             exit 0
           fi
 
           mapfile -t changed_files < "$RUNNER_TEMP/changed-files.txt"
           if [ "$total" -eq 0 ] || [ "${#changed_files[@]}" -ne "$total" ]; then
             echo "::warning::Expected $total changed files, received ${#changed_files[@]}; running full CI."
-            echo 'docs_only=false' >> "$GITHUB_OUTPUT"
+            run_all_checks
             exit 0
           fi
 
@@ -75,16 +90,30 @@ jobs:
             esac
           }
 
+          is_pyright_input() {
+            # All Python/stub files conservatively cover Pyright's include and import graph;
+            # the remaining paths change its command, configuration, dependencies, or this gate.
+            case "$1" in
+              *.py|*.pyi|*/py.typed|py.typed|pyproject.toml|*/pyproject.toml|uv.lock|uv.toml|*/uv.toml|pyrightconfig*.json|Makefile|.pre-commit-config.yaml|.github/workflows/ci.yml) ;;
+              *) return 1 ;;
+            esac
+          }
+
           docs_only=true
+          pyright_changed=false
           for changed_file in "${changed_files[@]}"; do
             IFS=$'\t' read -r filename previous_filename <<< "$changed_file"
             if ! is_docs_markdown "$filename" || \
               { [ -n "$previous_filename" ] && ! is_docs_markdown "$previous_filename"; }; then
               docs_only=false
-              break
+            fi
+            if is_pyright_input "$filename" || \
+              { [ -n "$previous_filename" ] && is_pyright_input "$previous_filename"; }; then
+              pyright_changed=true
             fi
           done
           echo "docs_only=$docs_only" >> "$GITHUB_OUTPUT"
+          echo "pyright_changed=$pyright_changed" >> "$GITHUB_OUTPUT"
 
   quality:
     name: quality checks
@@ -201,7 +230,7 @@ jobs:
         with:
           extra_args: --all-files --verbose
         env:
-          SKIP: no-commit-to-branch
+          SKIP: ${{ needs.classify.outputs.pyright_changed == 'true' && 'no-commit-to-branch' || 'no-commit-to-branch,typecheck' }}
           # pre-commit hooks shell out via `uv run`; without this they would
           # re-sync the venv and drop the out-of-band harness install above.
           UV_NO_SYNC: "1"
@@ -855,11 +884,11 @@ jobs:
           enable-cache: true
           cache-suffix: dev
 
-      - run: uv sync --group dev
-      - run: uv run coverage combine
-      - run: uv run coverage report
+      - run: uv sync --group dev --group coverage
+      - run: uv run --no-sync coverage combine
+      - run: uv run --no-sync coverage report
 
-      - run: uv run strict-no-cover
+      - run: uv run --no-sync strict-no-cover
         env:
           COVERAGE_FILE: .coverage/.coverage
 

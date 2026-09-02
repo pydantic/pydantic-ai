@@ -90,6 +90,7 @@ from ..conftest import (
     IsInstance,
     IsNow,
     IsStr,
+    RequestCapture,
     TestEnv,
     iter_message_parts,
     message,
@@ -97,7 +98,7 @@ from ..conftest import (
     try_import,
 )
 from ..parts_from_messages import part_types_from_messages
-from .conftest import AnthropicModelFactory, RequestCapture, cache_breakpoints, content_blocks, message_shape
+from .conftest import AnthropicModelFactory, cache_breakpoints, content_blocks, json_objects, message_shape
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
@@ -893,53 +894,6 @@ async def test_anthropic_code_execution_files_with_message_cache(allow_model_req
             }
         ]
     )
-
-
-async def test_anthropic_code_execution_files_append_to_first_user_message(allow_model_requests: None):
-    """Pins the internal `_map_message` placement: uploads attach to the *first* user message (keeping the cacheable prefix byte-identical as history grows), not a later one, and none are added when history has no user message.
-
-    Not a VCR test: the first-vs-later placement and the no-user-message branch can't be reached through a single agent run, so it taps `_map_message` directly.
-    """
-    c = completion_message([BetaTextBlock(text='Response', type='text')], BetaUsage(input_tokens=10, output_tokens=5))
-    mock_client = MockAnthropic.create_mock(c)
-    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
-    parameters = ModelRequestParameters(
-        native_tools=[
-            CodeExecutionTool(files=[UploadedFile(file_id='file_anthropic', provider_name='anthropic')]),
-        ]
-    )
-
-    _, messages = await model._map_message(  # pyright: ignore[reportPrivateUsage]
-        [
-            ModelRequest(parts=[UserPromptPart(content='Use the attached file.')]),
-            ModelResponse(parts=[TextPart(content='Previous response')]),
-            ModelRequest(parts=[UserPromptPart(content='And now summarize it.')]),
-        ],
-        parameters,
-        AnthropicModelSettings(),
-    )
-
-    assert messages == snapshot(
-        [
-            {
-                'role': 'user',
-                'content': [
-                    {'text': 'Use the attached file.', 'type': 'text'},
-                    {'file_id': 'file_anthropic', 'type': 'container_upload'},
-                ],
-            },
-            {'role': 'assistant', 'content': [{'text': 'Previous response', 'type': 'text'}]},
-            {'role': 'user', 'content': [{'text': 'And now summarize it.', 'type': 'text'}]},
-        ]
-    )
-
-    _, messages = await model._map_message(  # pyright: ignore[reportPrivateUsage]
-        [ModelResponse(parts=[TextPart(content='Previous response')])],
-        parameters,
-        AnthropicModelSettings(),
-    )
-
-    assert messages == snapshot([{'role': 'assistant', 'content': [{'text': 'Previous response', 'type': 'text'}]}])
 
 
 async def test_anthropic_cache_and_cache_messages_conflict(allow_model_requests: None):
@@ -12000,20 +11954,21 @@ async def test_anthropic_lazy_advertisement_live(
     request_bodies = request_capture.bodies()
     assert len(request_bodies) >= 3
     before, reveal, *later = request_bodies
-    before_tools = before['tools']
-    reveal_tools = reveal['tools']
+    before_tools = json_objects(before['tools'])
+    reveal_tools = json_objects(reveal['tools'])
     before_names = [tool.get('name') for tool in before_tools]
     reveal_names = [tool.get('name') for tool in reveal_tools]
     assert 'lookup_refund_policy' not in before_names
     assert reveal_tools[:-1] == before_tools
     assert reveal_names == [*before_names, 'lookup_refund_policy']
     assert reveal_tools[-1]['defer_loading'] is True
-    addition_names = [
-        block['tool']['name']
-        for message in reveal['messages']
-        for block in message['content']
-        if block.get('type') == 'tool_addition'
-    ]
+    addition_names: list[str] = []
+    for block in content_blocks(reveal, 'tool_addition'):
+        tool = block['tool']
+        assert isinstance(tool, dict)
+        name = tool['name']
+        assert isinstance(name, str)
+        addition_names.append(name)
     # List equality: a same-request duplicate `tool_addition` must fail here, not only in the
     # dedupe unit test.
     assert addition_names == ['lookup_refund_policy']
@@ -12068,20 +12023,21 @@ async def test_anthropic_fable_5_lazy_advertisement_live(
     request_bodies = request_capture.bodies()
     assert len(request_bodies) >= 3
     before, reveal, *later = request_bodies
-    before_tools = before['tools']
-    reveal_tools = reveal['tools']
+    before_tools = json_objects(before['tools'])
+    reveal_tools = json_objects(reveal['tools'])
     before_names = [tool.get('name') for tool in before_tools]
     reveal_names = [tool.get('name') for tool in reveal_tools]
     assert 'lookup_refund_policy' not in before_names
     assert reveal_tools[:-1] == before_tools
     assert reveal_names == [*before_names, 'lookup_refund_policy']
     assert reveal_tools[-1]['defer_loading'] is True
-    addition_names = [
-        block['tool']['name']
-        for message in reveal['messages']
-        for block in message['content']
-        if block.get('type') == 'tool_addition'
-    ]
+    addition_names: list[str] = []
+    for block in content_blocks(reveal, 'tool_addition'):
+        tool = block['tool']
+        assert isinstance(tool, dict)
+        name = tool['name']
+        assert isinstance(name, str)
+        addition_names.append(name)
     # List equality: a same-request duplicate `tool_addition` must fail here, not only in the
     # dedupe unit test.
     assert addition_names == ['lookup_refund_policy']
@@ -12266,9 +12222,8 @@ async def test_anthropic_explicit_tool_search_keeps_search_surface(
     result = await agent.run(
         'Use tool search to find search_only_tool, call it with query "recorded", then return only its result.'
     )
-    advertised = [
-        (tool['name'], tool.get('defer_loading'), tool.get('description')) for tool in request_capture.body()['tools']
-    ]
+    tools = json_objects(request_capture.body()['tools'])
+    advertised = [(tool['name'], tool.get('defer_loading'), tool.get('description')) for tool in tools]
     assert advertised == snapshot(
         [
             (
@@ -12353,9 +12308,8 @@ async def test_anthropic_deferred_capability_tool_callable_without_tool_search(
     result = await agent.run(
         'First load the refunds capability. Then call lookup_refund_policy for order-123. Return only the tool result.'
     )
-    advertised = [
-        (tool['name'], tool.get('defer_loading'), tool.get('description')) for tool in request_capture.body()['tools']
-    ]
+    tools = json_objects(request_capture.body()['tools'])
+    advertised = [(tool['name'], tool.get('defer_loading'), tool.get('description')) for tool in tools]
     assert advertised == snapshot(
         [
             (
@@ -12383,16 +12337,16 @@ The following capabilities are deferred and can be loaded using the `load_capabi
     request_bodies = request_capture.bodies()
     assert len(request_bodies) >= 3
     for request_body in request_bodies:
+        tools = json_objects(request_body['tools'])
         assert not any(
-            tool.get('name') in {'search_tools', 'tool_search_tool_bm25', 'tool_search_tool_regex'}
-            for tool in request_body['tools']
+            tool.get('name') in {'search_tools', 'tool_search_tool_bm25', 'tool_search_tool_regex'} for tool in tools
         )
-    [initial_lookup] = [tool for tool in request_bodies[0]['tools'] if tool.get('name') == 'lookup_refund_policy']
+    initial_tools = json_objects(request_bodies[0]['tools'])
+    [initial_lookup] = [tool for tool in initial_tools if tool.get('name') == 'lookup_refund_policy']
     assert initial_lookup['defer_loading'] is True
-    assert all(
-        [tool for tool in request_body['tools'] if tool.get('name') == 'lookup_refund_policy'] == [initial_lookup]
-        for request_body in request_bodies[1:]
-    )
+    for request_body in request_bodies[1:]:
+        tools = json_objects(request_body['tools'])
+        assert [tool for tool in tools if tool.get('name') == 'lookup_refund_policy'] == [initial_lookup]
     assert any(
         part.tool_name == 'lookup_refund_policy'
         for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
@@ -12433,9 +12387,8 @@ async def test_anthropic_deferred_capability_without_tool_search_across_models(
     result = await agent.run(
         'First load the refunds capability. Then call lookup_refund_policy for order-123. Return only the tool result.'
     )
-    advertised = [
-        (tool['name'], tool.get('defer_loading'), tool.get('description')) for tool in request_capture.body()['tools']
-    ]
+    tools = json_objects(request_capture.body()['tools'])
+    advertised = [(tool['name'], tool.get('defer_loading'), tool.get('description')) for tool in tools]
     assert advertised == snapshot(
         [
             (

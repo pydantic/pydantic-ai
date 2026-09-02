@@ -12,11 +12,11 @@ Capabilities can provide any combination of:
 
 This makes them the primary extension point for Pydantic AI. Whether you're building a memory system, a guardrail, a cost tracker, or an approval workflow, a capability is the right abstraction.
 
-Capabilities can be always-on or [loaded by the model on demand](on-demand.md). The [capability index below](#available-capabilities) spans Pydantic AI itself and [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/), [third-party packages](third-party.md) provide many more, and you can define your own, [declaratively](#bundling-behavior-with-capability) or by [subclassing](custom.md). To run agents durably across failures, restarts, and long waits, see [Durable Execution](../durable_execution/overview.md).
+Capabilities can be always-on or [loaded by the model on demand](on-demand.md). The [capability index below](#available-capabilities) covers Pydantic AI and [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/). [Third-party packages](third-party.md) provide many more capabilities, and you can define your own [declaratively](#bundling-behavior-with-capability) or by [subclassing](custom.md). To run agents durably across failures, restarts, and long waits, see [Durable Execution](../durable_execution/overview.md).
 
 ## Available capabilities
 
-Capabilities come from two packages, and they all compose, with each other and with your own. Core (`pydantic-ai`) ships the capabilities that require model or framework support: provider-native tools, provider APIs, and deep loop integration. **[Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/)**, the official capability library and harness for Pydantic AI, ships everything else, from single capabilities to [complete agents](https://pydantic.dev/docs/ai/harness/coder/). The **Package** column says which; every entry links to its documentation.
+Capabilities come from two packages, and they compose with each other and with capabilities you define. Core (`pydantic-ai`) ships the capabilities that require model or framework support: provider-native tools, provider APIs, and deep loop integration. **[Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/)**, the official capability library and harness for Pydantic AI, ships everything else, from single capabilities to [complete agents](https://pydantic.dev/docs/ai/harness/coder/). The **Package** column says which; every entry links to its documentation.
 
 ### Harnesses
 

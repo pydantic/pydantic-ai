@@ -3624,7 +3624,12 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                         if item.provider_name == self.system:
                             raw_content = (item.provider_details or {}).get('raw_content')
 
-                        if item.id and (should_send_item_id or raw_content):
+                        # Chat Completions stores its content/reasoning field name as a synthetic
+                        # part ID. Preserve opaque IDs from compatible Responses APIs unless they
+                        # collide with one of those sentinels without carrying native wire data.
+                        synthetic_chat_reasoning = item.id in ('content', 'reasoning', 'reasoning_content')
+                        native_reasoning = not synthetic_chat_reasoning or bool(item.signature or raw_content)
+                        if item.id and native_reasoning and (should_send_item_id or raw_content):
                             signature: str | None = None
                             if (
                                 item.signature
@@ -3881,11 +3886,12 @@ class OpenAIStreamedResponse(StreamedResponse):
     _model_settings: OpenAIChatModelSettings | None = None
     _has_refusal: bool = field(default=False, init=False)
     _refusal_text: str = field(default='', init=False)
+    _has_finish_reason: bool = field(default=False, init=False)
 
     async def close_stream(self) -> None:
         await self._response.source.close()
 
-    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         with _map_api_errors(self._model_name, self._model_id_namespace):
             async for chunk in self._validate_response():
                 if self._provider_timestamp is None and chunk.created:
@@ -3921,6 +3927,8 @@ class OpenAIStreamedResponse(StreamedResponse):
                 if not chunk.choices:
                     continue
                 choice = chunk.choices[0]
+                raw_finish_reason = choice.finish_reason
+                self._has_finish_reason = self._has_finish_reason or bool(raw_finish_reason)
 
                 # When using Azure OpenAI and an async content filter is enabled, the openai SDK can return None deltas.
                 if choice.delta is None:  # pyright: ignore[reportUnnecessaryComparison]
@@ -3935,7 +3943,7 @@ class OpenAIStreamedResponse(StreamedResponse):
                     self._refusal_text += choice.delta.refusal
                     continue
 
-                if (raw_finish_reason := choice.finish_reason) and not self._has_refusal:
+                if raw_finish_reason and not self._has_refusal:
                     self.finish_reason = self._map_finish_reason(raw_finish_reason)
 
                 if provider_details := self._map_provider_details(chunk):  # pragma: no branch
@@ -3948,6 +3956,15 @@ class OpenAIStreamedResponse(StreamedResponse):
 
             if self._refusal_text:
                 self.provider_details = {**(self.provider_details or {}), 'refusal': self._refusal_text}
+            if (
+                self._model_profile.get('openai_chat_streaming_requires_finish_reason', False)
+                and not self._has_finish_reason
+                and not self.cancelled
+            ):
+                raise ModelAPIError(
+                    model_name=self.model_name,
+                    message='Streamed response ended without a `finish_reason`',
+                )
 
     def _validate_response(self) -> AsyncIterable[ChatCompletionChunk]:
         """Hook that validates incoming chunks.

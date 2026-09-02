@@ -63,6 +63,8 @@ agent = Agent(model)
 
 `OpenAIProvider` also accepts a custom `AsyncOpenAI` client via the `openai_client` parameter, so you can customise the `organization`, `project`, `base_url` etc. as defined in the [OpenAI API docs](https://platform.openai.com/docs/api-reference).
 
+The client retries failed requests on its own, independently of the agent's retry budgets. It defaults to `max_retries=2`, so one model request can reach the network up to three times. It honors the `x-should-retry` response header; without that header, it retries status 408, 409, 429 or 5xx, plus timeouts and connection errors, but not other 4xx responses such as 400 or 401. Set `max_retries=0` to keep the retry policy in your transport alone. See [Retry multiplication](../retries.md#retry-multiplication) for how the layers stack.
+
 ```python {title="custom_openai_client.py"}
 from openai import AsyncOpenAI
 
@@ -416,7 +418,7 @@ async def main():
                     print(event.delta.content_delta)
 ```
 
-_(This example is complete, it can be run "as is" -- you'll need to add `asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 A `'phase'` key appears in `provider_details` whenever the model labels its output, but it is only sent back on models that [`OpenAIModelProfile.openai_supports_phase`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_supports_phase] marks as accepting it. On every other model the label is surfaced to you and dropped from follow-up requests.
 
@@ -517,6 +519,16 @@ model = OpenAIChatModel(
 )
 agent = Agent(model)
 ```
+
+#### Detect incomplete streamed responses
+
+Some OpenAI-compatible APIs can close a Chat Completions stream cleanly without a terminal
+`finish_reason`, making a partial response look complete. If your provider guarantees that complete
+streams include a finish reason, set
+[`openai_chat_streaming_requires_finish_reason=True`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_chat_streaming_requires_finish_reason]
+in the model profile. Pydantic AI will then raise [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError]
+when the stream reaches EOF without one. The option defaults to `False` because some compatible APIs
+do not guarantee the field.
 
 #### Models that accept only one leading system message
 

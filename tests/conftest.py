@@ -10,7 +10,7 @@ import secrets
 import sys
 from collections.abc import AsyncIterator, Callable, Generator, Iterator, Sequence
 from contextlib import contextmanager, suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
 from functools import cache, cached_property
@@ -22,6 +22,7 @@ import httpx
 import httpx2
 import pytest
 from _pytest.assertion.rewrite import AssertionRewritingHook
+from pydantic import JsonValue, TypeAdapter
 from pytest_mock import MockerFixture
 from vcr import VCR, request as vcr_request
 from vcr.record_mode import RecordMode
@@ -800,6 +801,62 @@ def fail_cache_prefix_violations(request: pytest.FixtureRequest, vcr: Cassette |
     if cassette_path_value is None or not (cassette_path := Path(cassette_path_value)).is_file():
         return
     check_cache_prefix_stability(request.node, cassette_path)
+
+
+# `validate_json` parses through pydantic-core rather than the stdlib, and types the result without a cast.
+_REQUEST_BODY_ADAPTER = TypeAdapter(dict[str, JsonValue])
+
+
+@dataclass
+class RequestCapture:
+    """Outbound request bodies, as the live code built them.
+
+    A cassette records what was sent when it was recorded, and the default matchers ignore the body,
+    so a request whose payload has since drifted still replays against its recording. httpx event
+    hooks run inside `AsyncClient.send`, above the transport VCR patches, so they fire on replay too
+    and see what is actually going out. Pass `capture.client` as a provider's `http_client` and
+    snapshot a projection of `capture.body(...)` to pin the fields a test's claim rests on.
+    """
+
+    paths: list[str] = field(default_factory=list[str])
+    raw_bodies: list[bytes] = field(default_factory=list[bytes])
+    headers: list[httpx2.Headers] = field(default_factory=list[httpx2.Headers])
+    client: httpx2.AsyncClient = field(init=False)
+
+    def __post_init__(self) -> None:
+        self.client = httpx2.AsyncClient(event_hooks={'request': [self._record]})
+
+    async def _record(self, request: httpx2.Request) -> None:
+        # Only the raw bytes are kept here: the hook runs on every request of every test that asks
+        # for a capture, while a test typically inspects one of them. Parsing happens in `body`.
+        self.paths.append(request.url.path)
+        self.raw_bodies.append(request.read())
+        # The cassette serializer strips `anthropic-*` headers, so the wire is the only place a test
+        # can see beta gating.
+        self.headers.append(request.headers)
+
+    def bodies(self, path_suffix: str = '') -> list[dict[str, JsonValue]]:
+        """Every captured body whose URL path ends with `path_suffix`, parsed on demand."""
+        return [
+            _REQUEST_BODY_ADAPTER.validate_json(raw)
+            for path, raw in zip(self.paths, self.raw_bodies)
+            if path.endswith(path_suffix)
+        ]
+
+    def body(self, path_suffix: str = '', index: int = 0) -> dict[str, JsonValue]:
+        """The `index`th captured body whose URL path ends with `path_suffix`, parsed on demand."""
+        matches = self.bodies(path_suffix)
+        assert matches, f'no captured request matching {path_suffix!r}; saw {self.paths}'
+        return matches[index]
+
+
+@pytest.fixture
+async def request_capture(anyio_backend: str) -> AsyncIterator[RequestCapture]:
+    capture = RequestCapture()
+    yield capture
+    # Built directly rather than through `create_async_httpx2_client`, so the autouse
+    # `close_httpx_clients` tracker never sees it and its pool would otherwise leak per test.
+    await capture.client.aclose()
 
 
 _HttpClient: TypeAlias = 'httpx.AsyncClient | httpx2.AsyncClient'

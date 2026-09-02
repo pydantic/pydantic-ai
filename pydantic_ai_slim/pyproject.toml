@@ -66,9 +66,8 @@ dependencies = [
     "exceptiongroup>=1.2.2; python_version < '3.11'",
     "opentelemetry-api>=1.28.0",
     "typing-inspection>=0.4.0",
-    # 0.1.5 adds GPT-5.6 price reductions, time-dependent DeepSeek V4 pricing, and fixes
-    # reasoning-token extraction for OpenAI-compatible providers.
-    "genai-prices>=0.1.5",
+    # 0.1.6 fixes the xAI Realtime usage extraction root and OpenAI's inclusive long-context boundary.
+    "genai-prices>=0.1.6",
 ]
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning.optional-dependencies]

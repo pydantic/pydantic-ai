@@ -97,6 +97,8 @@ Good uses:
 - summarizing old messages
 - applying app-specific history policies
 
+To decide *when* to trim or summarize, a context-aware processor can check `ctx.context_window_used` — the fraction of the model's context window occupied as of the last response. Treat `None` as unknown and leave history unchanged; it means there is no response yet or the window or usage is unknown. The window size itself is `model.context_window`, read from the profile's `context_window` (filled automatically from genai-prices data, or set explicitly via `profile={'context_window': 128_000}` for custom/local models); a `FallbackModel` reports the smallest window among its candidates.
+
 ## Inject Messages Mid-Run
 
 Use `RunContext.enqueue(...)` (from a tool or capability hook) or `AgentRun.enqueue(...)` (from external code driving `agent.iter()`) to add content to the conversation while a run is in progress — e.g. a tool adding follow-up context, or an external event "steering" the agent.

@@ -333,6 +333,38 @@ class RunContext(Generic[RunContextAgentDepsT]):
         """Whether this is the last attempt at running this tool before an error is raised."""
         return self.retry == self.max_retries
 
+    @property
+    def context_window_used(self) -> float | None:
+        """Fraction of the model's context window occupied as of the most recent model response.
+
+        Computed as the latest response's reported
+        [`total_tokens`][pydantic_ai.usage.RequestUsage.total_tokens] (input, including cached tokens,
+        plus output) over the active model's
+        [`context_window`][pydantic_ai.models.AbstractModel.context_window]. This estimates how full
+        the next request may be; history processing and newly added content can change its actual
+        size, and the value can exceed `1.0` when the last response came from a model with a larger
+        window. Useful to trigger history compaction, e.g. in a
+        [history processor](https://pydantic.dev/docs/ai/message-history#processing-message-history).
+
+        Returns `None` — never a misleading `0.0` — when the ratio cannot be calculated: when the
+        context window, usage, or message history is unavailable, or before the first model response.
+        A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] measures against the smallest
+        of its candidates' windows.
+        """
+        try:
+            model, messages = self.model, self.messages
+        except UserError:
+            # A durable run context can omit live model state and message history at an activity boundary.
+            return None
+        context_window = model.context_window
+        if context_window is None or context_window <= 0:
+            return None
+        for message in reversed(messages):
+            if isinstance(message, _messages.ModelResponse):
+                tokens = message.usage.total_tokens
+                return tokens / context_window if tokens else None
+        return None
+
     def _emit_event(self, event: _messages.AgentStreamEvent) -> None:
         """Append an event to the run's event buffer for the agent graph to drain into the event stream.
 

@@ -4349,7 +4349,55 @@ def test_unknown_tool():
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
+            ModelRequest(
+                parts=[],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+                state='interrupted',
+            ),
         ]
+    )
+
+
+def test_failed_run_history_is_resumable():
+    """A history captured from a run that raised is resumable, not just one from a cancelled run.
+
+    The run ends on a response whose tool call never got a result, and the interrupted request
+    that closes out the turn is empty because nothing completed. It's still recorded, so the
+    dangling call is closed out with a synthesized return and the history takes a new prompt.
+    """
+    seen_by_model: list[list[ModelMessage]] = []
+
+    def model_func(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        seen_by_model.append(list(messages))
+        if any(isinstance(part, UserPromptPart) and part.content == 'Never mind.' for part in messages[-1].parts):
+            return ModelResponse(parts=[TextPart('success')])
+        return ModelResponse(parts=[ToolCallPart('foobar', '{}', tool_call_id='call_foobar')])
+
+    agent = Agent(FunctionModel(model_func))
+
+    with capture_run_messages() as messages:
+        with pytest.raises(UnexpectedModelBehavior, match=r"Tool 'foobar' exceeded max retries count of 1"):
+            agent.run_sync('Hello')
+
+    result = agent.run_sync('Never mind.', message_history=messages)
+    assert result.output == 'success'
+    assert seen_by_model[-1][-1] == snapshot(
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='foobar',
+                    content='The tool call was interrupted before a result was produced.',
+                    tool_call_id='call_foobar',
+                    metadata={'pydantic_ai_synthesized_tool_return': True},
+                    timestamp=IsNow(tz=timezone.utc),
+                    outcome='interrupted',
+                ),
+                UserPromptPart(content='Never mind.', timestamp=IsNow(tz=timezone.utc)),
+            ],
+            timestamp=IsNow(tz=timezone.utc),
+        )
     )
 
 
@@ -4473,6 +4521,13 @@ def test_unknown_tool_multiple_retries():
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+                state='interrupted',
             ),
         ]
     )
@@ -12288,15 +12343,15 @@ async def test_raise_content_filter_error_capability_streaming():
 
     class ContentFilterStreamModel(Model):
         @property
-        def system(self) -> str:  # pragma: no cover
+        def system(self) -> str:
             return 'test'
 
         @property
-        def model_name(self) -> str:  # pragma: no cover
+        def model_name(self) -> str:
             return 'test-model'
 
         @property
-        def base_url(self) -> str:  # pragma: no cover
+        def base_url(self) -> str:
             return 'https://test.example.com'
 
         async def request(  # pragma: no cover
@@ -13932,15 +13987,15 @@ async def test_image_output_validator_model_retry():
 
     class ImageStreamModel(Model):
         @property
-        def system(self) -> str:  # pragma: no cover
+        def system(self) -> str:
             return 'test'
 
         @property
-        def model_name(self) -> str:  # pragma: no cover
+        def model_name(self) -> str:
             return 'image-model'
 
         @property
-        def base_url(self) -> str:  # pragma: no cover
+        def base_url(self) -> str:
             return 'https://test.example.com'
 
         async def request(  # pragma: no cover
@@ -14005,15 +14060,15 @@ async def test_image_output_validators_run_stream():
 
     class ImageStreamModel(Model):
         @property
-        def system(self) -> str:  # pragma: no cover
+        def system(self) -> str:
             return 'test'
 
         @property
-        def model_name(self) -> str:  # pragma: no cover
+        def model_name(self) -> str:
             return 'image-model'
 
         @property
-        def base_url(self) -> str:  # pragma: no cover
+        def base_url(self) -> str:
             return 'https://test.example.com'
 
         async def request(  # pragma: no cover
