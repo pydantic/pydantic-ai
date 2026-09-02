@@ -16,6 +16,7 @@ from dataclasses import KW_ONLY, dataclass, field
 from typing import Any, TypeGuard, cast
 
 import pytest
+from inline_snapshot import snapshot
 
 import pydantic_ai.capabilities as capabilities_package
 from pydantic_ai import Agent, FunctionToolset, RunContext, Tool
@@ -42,7 +43,8 @@ from pydantic_ai.capabilities.abstract import (
 )
 from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ModelRequest
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import WebFetchTool, WebSearchTool, XSearchTool
 from pydantic_ai.toolsets import AbstractToolset
@@ -533,3 +535,28 @@ def test_an_id_two_classes_claim_is_rejected_whichever_one_comes_first() -> None
 
     with pytest.raises(UserError, match=message):
         Agent(TestModel(), capabilities=[_Note(id='shared'), Thinking(id='shared')])
+
+
+async def test_two_native_capabilities_on_one_agent_merge_rather_than_collide() -> None:
+    """Duplicates the agent was constructed with are resolved before anything reads them.
+
+    Native tools are keyed by the tool's own id, not the capability's, so two `WebSearch`
+    capabilities on one agent looked to `_validate_native_tool_ids` like one id with two
+    definitions and were rejected at `Agent(...)` -- while the same two supplied one per layer
+    merged as designed. Combining the agent's own list as it is assembled is what makes the rule
+    the docs state ("two on the agent") true of the case they name.
+    """
+    seen: list[Sequence[Any]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append(info.model_request_parameters.native_tools)
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(
+        FunctionModel(model_fn),
+        capabilities=[WebSearch(search_context_size='low'), WebSearch(max_uses=3)],
+    )
+
+    await agent.run('hi')
+
+    assert seen == snapshot([[WebSearchTool(search_context_size='low', max_uses=3)]])

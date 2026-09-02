@@ -1356,10 +1356,16 @@ def combine_duplicate_capabilities(
 ) -> AbstractCapability[AgentDepsT]:
     """Resolve capabilities sharing an `id` in a tree down to one each, via `AbstractCapability.combine`.
 
-    Runs once over the whole composed tree rather than per layer, so wherever two capabilities meet
-    — both on the agent, both passed to one run, or one of each — the same rule applies and the same
-    `combine` decides. `agent.run(capabilities=[Thinking(effort='high')])` overriding an agent-level
-    `Thinking` is then not a special case but the ordinary meaning of two capabilities under one id.
+    Runs over the whole composed tree rather than a layer at a time, so wherever two capabilities
+    meet — both on the agent, both passed to one run, or one of each — the same rule applies and the
+    same `combine` decides. `agent.run(capabilities=[Thinking(effort='high')])` overriding an
+    agent-level `Thinking` is then not a special case but the ordinary meaning of two capabilities
+    under one id.
+
+    `Agent.__init__` also runs it over the capabilities the agent was constructed with, because it
+    goes on to bind them and read what they contribute long before a run exists, and two that will
+    merge into one must not be read as two. That pass is redundant with this one by run setup, which
+    is fine: combining leaves no duplicate for the second pass to find.
 
     Keeping both is not an option: `_build_run_capabilities` maps the id to exactly one of them, so
     the other would go on contributing tools and instructions while nothing could name it —

@@ -649,6 +649,17 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         self._root_capability = CombinedCapability(capabilities)
         _validate_capability_ids(self._root_capability.capabilities)
+        # Two capabilities the agent itself was given meet under their shared id here, before
+        # anything reads what they contribute: `for_agent`, toolset extraction and native-tool
+        # validation all run below, and each would otherwise see a pair that is really one --
+        # native tools most visibly, since two differently configured `WebSearch` instances carry
+        # the same native tool id and reading them as two makes that a conflict. Duplicates
+        # *across* layers stay with run setup, where the run-level list first exists.
+        combined = combine_duplicate_capabilities(self._root_capability, capabilities)
+        # `visit_and_replace` on a container rebuilds a container, and combining keeps one
+        # occurrence of every id, so it can neither change shape nor empty the tree.
+        assert isinstance(combined, CombinedCapability), 'combining the agent capabilities kept a container'
+        self._root_capability = combined
         _validate_instruction_source_ids([self._root_capability])
 
         # Keep the constructor value untouched while capabilities bind. A capability may interpret
