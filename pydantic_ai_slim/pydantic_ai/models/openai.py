@@ -3607,7 +3607,7 @@ class OpenAIStreamedResponse(StreamedResponse):
     async def close_stream(self) -> None:
         await self._response.source.close()
 
-    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         with _map_api_errors(self._model_name):
             async for chunk in self._validate_response():
                 if self._provider_timestamp is None and chunk.created:
@@ -3672,18 +3672,15 @@ class OpenAIStreamedResponse(StreamedResponse):
 
             if self._refusal_text:
                 self.provider_details = {**(self.provider_details or {}), 'refusal': self._refusal_text}
-            self._ensure_finish_reason()
-
-    def _ensure_finish_reason(self) -> None:
-        if (
-            self._model_profile.get('openai_chat_streaming_requires_finish_reason', False)
-            and not self._has_finish_reason
-            and not self.cancelled
-        ):
-            raise ModelAPIError(
-                model_name=self.model_name,
-                message='Streamed response ended without a `finish_reason`',
-            )
+            if (
+                self._model_profile.get('openai_chat_streaming_requires_finish_reason', False)
+                and not self._has_finish_reason
+                and not self.cancelled
+            ):
+                raise ModelAPIError(
+                    model_name=self.model_name,
+                    message='Streamed response ended without a `finish_reason`',
+                )
 
     def _validate_response(self) -> AsyncIterable[ChatCompletionChunk]:
         """Hook that validates incoming chunks.
