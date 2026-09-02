@@ -741,15 +741,24 @@ def test_google_image_generation_model_infers_string_provider(monkeypatch: pytes
 @asynccontextmanager
 async def _mock_google_provider(
     handle_request: Callable[[httpx2.Request], httpx2.Response],
-) -> AsyncGenerator[GoogleProvider]:
-    """A `GoogleProvider` whose transport is `handle_request`, closed when the block exits.
+    *,
+    build_provider: Callable[[google_types.HttpOptions], BaseGoogleProvider] | None = None,
+) -> AsyncGenerator[BaseGoogleProvider]:
+    """A Google provider whose transport is `handle_request`, closed when the block exits.
 
     `base_url` is pinned so `provider_url` is asserted against a value the test controls rather than
-    the SDK's default endpoint.
+    the SDK's default endpoint. `build_provider` receives the wired `HttpOptions` and returns a
+    provider built from a pre-built `client=`, for the constructions where the provider's name and its
+    client's transport disagree.
     """
     http_client = httpx2.AsyncClient(transport=httpx2.MockTransport(handle_request))
     try:
-        yield GoogleProvider(api_key='test-api-key', base_url='https://example.com', http_client=http_client)
+        if build_provider is None:
+            yield GoogleProvider(api_key='test-api-key', base_url='https://example.com', http_client=http_client)
+        else:
+            yield build_provider(
+                google_types.HttpOptions(base_url='https://example.com', httpx_async_client=http_client)
+            )
     finally:
         await http_client.aclose()
 
@@ -1078,10 +1087,15 @@ async def test_google_cloud_image_generation_downloads_files_api_url(monkeypatch
     `fileData` shortcut is keyed on the transport like the `UploadedFile` rejection: forwarding the URL
     would hand Vertex a reference it cannot fetch.
 
-    The blob keeps its proto field name on this transport: `_Part_to_vertex` in `google/genai/models.py`
-    copies `inline_data` through verbatim, where `_Part_to_mldev` renames it via `_Blob_to_mldev`. Vertex
-    accepts either spelling — the `test_multimodal_tool_return_matrix[direct-url_force_download-document-google_vertex]`
-    cassette records a live 200 for a request body carrying `mime_type`.
+    Built on the disagreeing pair — a Vertex client stored as-is by `GoogleProvider`, which keeps `name`
+    `'google'` — so a name-keyed regression fails here. A `GoogleCloudProvider` would agree with its own
+    transport and keep passing either way.
+
+    The blob's key spelling is google-genai's serialization rather than ours, and it varies by version:
+    `tests/models/cassettes/test_google/test_google_url_input_force_download.yaml` records a live Vertex
+    200 for a request body carrying `inlineData.mimeType` (recorded under google-genai 1.70.0), while the
+    pinned 2.18.0 emits `mime_type` for the same construction. The assertion reads either spelling; the
+    coverage is that the downloaded `image/webp` wins over the URL's declared `image/png`.
     """
     download_mock = AsyncMock(return_value={'data': b'downloaded', 'data_type': 'image/webp'})
     monkeypatch.setattr(google_images, 'download_item', download_mock)
@@ -1106,18 +1120,21 @@ async def test_google_cloud_image_generation_downloads_files_api_url(monkeypatch
 
     image_url = ImageUrl('https://generativelanguage.googleapis.com/v1beta/files/abc123', media_type='image/png')
 
-    http_client = httpx2.AsyncClient(transport=httpx2.MockTransport(handle_request))
-    try:
-        provider = GoogleCloudProvider(api_key='test-api-key', base_url='https://example.com', http_client=http_client)
+    async with _mock_google_provider(
+        handle_request,
+        build_provider=lambda http_options: GoogleProvider(
+            client=GoogleClient(vertexai=True, api_key='test-api-key', http_options=http_options)
+        ),
+    ) as provider:
         model = GoogleImageGenerationModel('gemini-3.1-flash-image', provider=provider)
+        assert model.system == 'google'
 
         await model.generate('edit this image', images=[image_url])
-    finally:
-        await http_client.aclose()
 
     download_mock.assert_awaited_once_with(image_url, data_format='bytes')
     body = json.loads(requests[0].content)
-    assert body['contents'][0]['parts'][1] == {'inlineData': {'data': 'ZG93bmxvYWRlZA==', 'mime_type': 'image/webp'}}
+    blob = body['contents'][0]['parts'][1]['inlineData']
+    assert (blob['data'], blob.get('mimeType') or blob.get('mime_type')) == ('ZG93bmxvYWRlZA==', 'image/webp')
 
 
 @pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
@@ -1176,7 +1193,7 @@ async def test_google_image_generation_media_type_without_mime_type(image_bytes:
         ),
         (
             UploadedFile(file_id='https://example.com/file.png', provider_name='openai', media_type='image/png'),
-            "provider_name='openai'.*Expected `provider_name` to be `'google'`",
+            r"provider_name='openai'.*Expected `provider_name` to be one of \['google', 'google-gla'\]",
         ),
     ],
 )
@@ -1186,6 +1203,87 @@ async def test_google_image_generation_rejects_invalid_uploaded_file(uploaded_fi
 
     with pytest.raises(UserError, match=error_message):
         await model.generate('edit this image', images=[uploaded_file])
+
+
+_GEMINI_API_NAME_FAMILY_CASES: list[
+    tuple[Callable[[google_types.HttpOptions], BaseGoogleProvider], UploadedFileProviderName, str]
+] = [
+    (
+        lambda http_options: GoogleProvider(
+            client=GoogleClient(vertexai=False, api_key='test-api-key', http_options=http_options)
+        ),
+        'google-gla',
+        'google',
+    ),
+    (
+        lambda http_options: GoogleCloudProvider(
+            client=GoogleClient(vertexai=False, api_key='test-api-key', http_options=http_options)
+        ),
+        'google',
+        'google-cloud',
+    ),
+]
+"""Constructions whose provider name differs from the one the Gemini Files API stamps on a file.
+
+Built lazily so the module still imports without `google-genai`, and annotated so the builders keep
+their parameter type — `pytest.param` erases it.
+"""
+
+
+@pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
+@pytest.mark.parametrize(
+    ('build_provider', 'file_provider_name', 'expected_system'),
+    _GEMINI_API_NAME_FAMILY_CASES,
+    ids=['pre-v2-name-on-google-provider', 'gemini-api-client-in-google-cloud-provider'],
+)
+async def test_google_image_generation_accepts_the_gemini_api_provider_name_family(
+    build_provider: Callable[[google_types.HttpOptions], BaseGoogleProvider],
+    file_provider_name: UploadedFileProviderName,
+    expected_system: str,
+):
+    """Every Gemini Developer API provider name is accepted, not just `system`.
+
+    Matching on `system` alone rejects two files this transport can serve: `'google-gla'`, the pre-v2
+    name still carried by persisted message history, and `'google'` — the name the Files API path
+    stamps — on a `GoogleCloudProvider` holding a Gemini API client, whose `name` stays `'google-cloud'`
+    while the bytes go to the only transport with a Files API. Mirrors `GoogleModel`'s
+    `_matching_provider_names`.
+    """
+    requests: list[httpx2.Request] = []
+
+    def handle_request(request: httpx2.Request) -> httpx2.Response:
+        requests.append(request)
+        return httpx2.Response(
+            200,
+            json={
+                'candidates': [
+                    {
+                        'content': {
+                            'parts': [{'inlineData': {'data': 'aGVsbG8=', 'mimeType': 'image/png'}}],
+                            'role': 'model',
+                        },
+                        'finishReason': 'STOP',
+                    }
+                ]
+            },
+        )
+
+    uploaded_file = UploadedFile(
+        file_id='https://generativelanguage.googleapis.com/v1beta/files/abc123',
+        provider_name=file_provider_name,
+        media_type='image/png',
+    )
+
+    async with _mock_google_provider(handle_request, build_provider=build_provider) as provider:
+        model = GoogleImageGenerationModel('gemini-3.1-flash-image', provider=provider)
+        assert model.system == expected_system
+
+        result = await model.generate('edit this image', images=[uploaded_file])
+
+    assert result.images[0].content == BinaryImage(data=b'hello', media_type='image/png')
+    # The `fileData` wire shape is pinned by `test_google_image_generation_wire_payload_and_response_mapping`;
+    # here the file id reaching the wire is what proves the name was accepted rather than rejected.
+    assert uploaded_file.file_id in requests[0].content.decode()
 
 
 @pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')

@@ -386,7 +386,8 @@ The direct adapter accepts inline images and downloadable image URLs on both API
 available on Vertex AI, and the adapter does not accept the `gs://` URIs Vertex uses instead, so a Vertex client raises
 [`UserError`][pydantic_ai.exceptions.UserError] and reference images must be passed as `BinaryImage` or `ImageUrl`.
 Which API a model talks to is read off the client, not the provider name, so a Vertex-backed client passed to
-[`GoogleProvider`][pydantic_ai.providers.google.GoogleProvider] is treated as Vertex. See the
+[`GoogleProvider`][pydantic_ai.providers.google.GoogleProvider] is treated as Vertex, and a Gemini Developer API client
+passed to [`GoogleCloudProvider`][pydantic_ai.providers.google_cloud.GoogleCloudProvider] keeps Files API support. See the
 [image-generation guide](../image-generation.md) for the common API and geometry behavior. The adapter requests an
 image-only response because [`ImageGenerator`][pydantic_ai.images.ImageGenerator] returns generated images rather than
 Gemini's optional conversational text.

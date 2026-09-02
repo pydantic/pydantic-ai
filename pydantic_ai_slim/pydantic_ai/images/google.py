@@ -39,7 +39,10 @@ try:
         PartDict,
     )
 
-    from pydantic_ai.models.google import _metadata_as_usage  # pyright: ignore[reportPrivateUsage]
+    from pydantic_ai.models.google import (
+        _GEMINI_API_PROVIDER_NAMES,  # pyright: ignore[reportPrivateUsage]
+        _metadata_as_usage,  # pyright: ignore[reportPrivateUsage]
+    )
 except ImportError as _import_error:
     raise ImportError(
         'Please install `google-genai` to use the Google image generation model, '
@@ -168,11 +171,14 @@ class GoogleImageGenerationModel(ImageGenerationModel):
     def _is_google_cloud(self) -> bool:
         """Whether requests go to Google Cloud (Vertex) rather than the Gemini Developer API.
 
-        Mirrors `GoogleModel._is_google_cloud`, which is an instance property on that class and so
-        cannot be shared. Derived from the client's transport rather than the provider name, because
-        either provider accepts a pre-built `client=` and stores it as-is, so the two can disagree in
-        both directions: a Vertex-backed client in `GoogleProvider` keeps `name` `'google'`, and a
-        Gemini-API client in `GoogleCloudProvider` keeps `name` `'google-cloud'`.
+        Restated from `GoogleModel._is_google_cloud` rather than imported: it is an instance property
+        there, and `models/AGENTS.md` keeps provider-specific code in the provider's own module, so
+        sharing it would mean a new shared module owning Google transport logic. (`_metadata_as_usage`
+        is imported above because it is already a module-level function there.) Derived from the
+        client's transport rather than the provider name, because either provider accepts a pre-built
+        `client=` and stores it as-is, so the two can disagree in both directions: a Vertex-backed
+        client in `GoogleProvider` keeps `name` `'google'`, and a Gemini-API client in
+        `GoogleCloudProvider` keeps `name` `'google-cloud'`.
         """
         return bool(self._client.vertexai)
 
@@ -267,6 +273,23 @@ class GoogleImageGenerationModel(ImageGenerationModel):
         if image.vendor_metadata and (media_resolution := image.vendor_metadata.get('media_resolution')) is not None:
             part['media_resolution'] = media_resolution
         return part
+
+    def _validate_uploaded_file_provider(self, item: UploadedFile) -> None:
+        """Raise `UserError` unless the file carries a Gemini Developer API provider name.
+
+        Only reachable on that transport, as `_map_input_image` rejects every `UploadedFile` on Vertex
+        before this runs, so the accepted set is that transport's name family rather than `self.system`
+        alone. Mirrors `GoogleModel._matching_provider_names`: `google-gla` is the pre-v2 name for the
+        transport and is still stamped on files in persisted message history, and `self.system` covers
+        the construction where `GoogleCloudProvider` stores a Gemini API client as-is and keeps `name`
+        `'google-cloud'`.
+        """
+        accepted = _GEMINI_API_PROVIDER_NAMES | {self.system}
+        if item.provider_name not in accepted:
+            raise UserError(
+                f'UploadedFile with `provider_name={item.provider_name!r}` cannot be used with {type(self).__name__}. '
+                f'Expected `provider_name` to be one of {sorted(accepted)!r}.'
+            )
 
     def _map_response(
         self,
