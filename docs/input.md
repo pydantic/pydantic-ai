@@ -1,5 +1,6 @@
-# Image, Audio, Video & Document Input
+# Multimodal Input
 
+Alongside text, agents can accept image, audio, video, and document input, as long as the model supports it.
 
 ## Image Input
 
@@ -49,21 +50,21 @@ print(result.output)
 !!! info
     Some models do not support audio input. Please check the model's documentation to confirm whether it supports audio input.
 
-You can provide audio input using either [`AudioUrl`][pydantic_ai.AudioUrl] or [`BinaryContent`][pydantic_ai.BinaryContent]. The process is analogous to the examples above.
+For audio, use [`AudioUrl`][pydantic_ai.AudioUrl] or [`BinaryContent`][pydantic_ai.BinaryContent].
 
 ## Video Input
 
 !!! info
     Some models do not support video input. Please check the model's documentation to confirm whether it supports video input.
 
-You can provide video input using either [`VideoUrl`][pydantic_ai.VideoUrl] or [`BinaryContent`][pydantic_ai.BinaryContent]. The process is analogous to the examples above.
+For video, use [`VideoUrl`][pydantic_ai.VideoUrl] or [`BinaryContent`][pydantic_ai.BinaryContent].
 
 ## Document Input
 
 !!! info
     Some models do not support document input. Please check the model's documentation to confirm whether it supports document input.
 
-You can provide document input using either [`DocumentUrl`][pydantic_ai.DocumentUrl] or [`BinaryContent`][pydantic_ai.BinaryContent]. The process is similar to the examples above.
+For documents, use [`DocumentUrl`][pydantic_ai.DocumentUrl] or [`BinaryContent`][pydantic_ai.BinaryContent].
 
 If you have a direct URL for the document, you can use [`DocumentUrl`][pydantic_ai.DocumentUrl]:
 
@@ -149,7 +150,7 @@ Support for file URLs varies depending on type and provider:
 | [`GoogleModel`][pydantic_ai.models.google.GoogleModel] (Google Cloud) | All URL types | — | — |
 | [`GoogleModel`][pydantic_ai.models.google.GoogleModel] (Gemini API) | [YouTube](models/google.md#document-image-audio-and-video-input), [Files API](models/google.md#document-image-audio-and-video-input) | All other URLs | — |
 | [`XaiModel`][pydantic_ai.models.xai.XaiModel] | `ImageUrl` | `DocumentUrl` | `AudioUrl`, `VideoUrl` |
-| [`MistralModel`][pydantic_ai.models.mistral.MistralModel] | `ImageUrl`, `DocumentUrl` (PDF) | — | `AudioUrl`, `VideoUrl`, `DocumentUrl` (non-PDF) |
+| [`MistralModel`][pydantic_ai.models.mistral.MistralModel] | `ImageUrl`, `DocumentUrl` (PDF) | `DocumentUrl` (`text/plain`) | `AudioUrl`, `VideoUrl`, `DocumentUrl` (non-PDF, non-text) |
 | [`BedrockConverseModel`][pydantic_ai.models.bedrock.BedrockConverseModel] | S3 URLs (`s3://`) | `ImageUrl`, `DocumentUrl`, `VideoUrl` | `AudioUrl` |
 | [`OpenRouterModel`][pydantic_ai.models.openrouter.OpenRouterModel] | `ImageUrl`, `DocumentUrl`, `VideoUrl` | `AudioUrl` | — |
 

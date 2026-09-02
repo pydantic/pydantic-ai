@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import KW_ONLY, dataclass
 from typing import TYPE_CHECKING, Annotated, Literal, Union, cast
 
@@ -20,9 +20,6 @@ from .messages import (
     ToolCallPart,
     ToolReturnPart,
 )
-
-DEFERRED_CAPABILITY_TOOL_METADATA_KEY = 'pydantic_ai_deferred_capability_tool'
-"""Tool metadata key marking function tools owned by an on-demand capability."""
 
 if TYPE_CHECKING:
     from .messages import ModelMessage
@@ -139,7 +136,44 @@ _TYPED_PART_TAGS_BY_TYPE[LoadCapabilityReturnPart] = 'capability-load-return'
 
 
 def parse_loaded_capabilities(messages: Sequence[ModelMessage]) -> set[str]:
-    """Parse message history to find capabilities loaded via the `load_capability` tool."""
+    """Parse visible history to find capabilities loaded via `load_capability`.
+
+    Every [`CompactionPart`][pydantic_ai.messages.CompactionPart] resets the derived
+    state at its exact position in a response. This is deliberately provider-agnostic:
+    over-counting can expose tools whose load evidence is no longer visible, while
+    under-counting once only permitted a redundant, idempotent load. Now that availability
+    gates execution, an under-count also *refuses* the call — see
+    [`post_compaction_window`][pydantic_ai.messages.post_compaction_window] for when that
+    is wrong and what is tracked to fix it.
+
+    Only the [`post_compaction_window`][pydantic_ai.messages.post_compaction_window] is scanned —
+    the one definition of the boundary — so only pairs entirely after the boundary count.
+    """
+    # This module loads while `messages` is still mid-import (see the module-level import note),
+    # and `post_compaction_window` is defined after that point, so it can only be imported at call time.
+    from .messages import post_compaction_window
+
+    return _parse_loaded_capabilities(post_compaction_window(messages))
+
+
+def registered_loaded_capability_ids(messages: Sequence[ModelMessage], capability_ids: Collection[str]) -> set[str]:
+    """`parse_loaded_capabilities`, narrowed to capabilities this run actually registered.
+
+    History outlives configuration: a conversation resumed against a smaller capability set still
+    carries the load records of capabilities that are no longer configured, and without this
+    `RunContext.loaded_capability_ids` — and the `active_capability_ids` that unions it — would
+    name a capability the run has no way to act on. Every consumer today starts from a real
+    capability or a real `ToolDefinition`, so nothing observes the difference yet; the sets are
+    public, though, and should not promise something that isn't there.
+
+    Leans on the registry being seeded once at run start. Capabilities registered mid-run would make
+    this a moving target and would need the narrowing reapplied wherever they land.
+    """
+    return parse_loaded_capabilities(messages) & set(capability_ids)
+
+
+def _parse_loaded_capabilities(messages: Sequence[ModelMessage]) -> set[str]:
+    """Parse capability-load evidence from an already-selected message window."""
     call_id_by_tool_call_id: dict[str, str] = {}
     loaded: set[str] = set()
     for msg in messages:

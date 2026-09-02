@@ -8,6 +8,7 @@ from typing_extensions import Self
 
 from .._run_context import AgentDepsT, RunContext
 from ..messages import InstructionPart
+from ._instruction_collection import flatten_instruction_contributions
 from .abstract import AbstractToolset, ToolsetTool
 
 
@@ -15,14 +16,14 @@ from .abstract import AbstractToolset, ToolsetTool
 class WrapperToolset(AbstractToolset[AgentDepsT]):
     """A toolset that wraps another toolset and delegates to it.
 
-    See [toolset docs](../toolsets.md#wrapping-a-toolset) for more information.
+    See [toolset docs](../toolsets.md#changing-tool-execution) for more information.
     """
 
     wrapped: AbstractToolset[AgentDepsT]
 
     @property
     def id(self) -> str | None:
-        return None  # pragma: no cover
+        return None
 
     @property
     def label(self) -> str:
@@ -50,12 +51,15 @@ class WrapperToolset(AbstractToolset[AgentDepsT]):
     async def get_instructions(
         self, ctx: RunContext[AgentDepsT]
     ) -> str | InstructionPart | Sequence[str | InstructionPart] | None:
-        """Delegate instructions to the wrapped toolset.
+        """Collect instructions from the wrapped authoring toolset."""
+        contributions = await self._collect_child_instruction_contributions(ctx)
+        return flatten_instruction_contributions(contributions) or None
 
-        This explicit delegation ensures type safety and proper propagation of the
-        instructions from wrapped toolsets to the agent's system prompt.
-        """
-        return await self.wrapped.get_instructions(ctx)
+    def _instruction_children(self) -> Sequence[AbstractToolset[AgentDepsT]]:
+        return (self.wrapped,)
+
+    def _authors_own_instructions(self) -> bool:
+        return type(self).get_instructions is not WrapperToolset.get_instructions
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         return await self.wrapped.get_tools(ctx)

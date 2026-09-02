@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import Literal, cast
 
 from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior
+from pydantic_ai.models import check_allow_model_requests
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.usage import RequestUsage
 
@@ -212,6 +213,7 @@ class GoogleEmbeddingModel(EmbeddingModel):
     async def embed(
         self, inputs: str | Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
     ) -> EmbeddingResult:
+        check_allow_model_requests()
         inputs, settings = self.prepare_embed(inputs, settings)
         settings = cast(GoogleEmbeddingSettings, settings)
 
@@ -274,8 +276,9 @@ class GoogleEmbeddingModel(EmbeddingModel):
                     status_code=status_code,
                     model_name=self._model_name,
                     body=cast(object, e.details),  # pyright: ignore[reportUnknownMemberType]
+                    headers=dict(e.response.headers) if e.response is not None else None,  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
                 ) from e
-            raise  # pragma: no cover
+            raise
 
         embeddings: list[list[float]] = [emb.values for emb in (response.embeddings or []) if emb.values is not None]
 
@@ -292,6 +295,7 @@ class GoogleEmbeddingModel(EmbeddingModel):
         return _MAX_INPUT_TOKENS.get(self._model_name)
 
     async def count_tokens(self, text: str) -> int:
+        check_allow_model_requests()
         try:
             response = await self._client.aio.models.count_tokens(
                 model=self._model_name,
@@ -303,8 +307,9 @@ class GoogleEmbeddingModel(EmbeddingModel):
                     status_code=status_code,
                     model_name=self._model_name,
                     body=cast(object, e.details),  # pyright: ignore[reportUnknownMemberType]
+                    headers=dict(e.response.headers) if e.response is not None else None,  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
                 ) from e
-            raise  # pragma: no cover
+            raise
 
         if response.total_tokens is None:
             raise UnexpectedModelBehavior('Token counting returned no result')  # pragma: no cover
@@ -326,6 +331,7 @@ def _map_usage(
     if response.embeddings:  # pragma: no branch
         for emb in response.embeddings:
             if emb.statistics and emb.statistics.token_count:
-                total_tokens += int(emb.statistics.token_count)  # pragma: lax no cover -- requires vertexai
+                # Requires Vertex AI.
+                total_tokens += int(emb.statistics.token_count)  # pragma: lax no cover
 
     return RequestUsage(input_tokens=total_tokens)

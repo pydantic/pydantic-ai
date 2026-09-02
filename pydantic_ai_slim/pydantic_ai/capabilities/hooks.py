@@ -20,7 +20,6 @@ agent = Agent('openai:gpt-5', capabilities=[hooks])
 
 from __future__ import annotations
 
-import inspect
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from functools import cached_property
@@ -29,7 +28,8 @@ from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar, overload
 import anyio
 from pydantic import ValidationError
 
-from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai import _utils
+from pydantic_ai.exceptions import AgentRunError, ModelRetry
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
 from pydantic_ai.tools import AgentDepsT, DeferredToolRequests, DeferredToolResults, RunContext, ToolDefinition
 
@@ -61,7 +61,7 @@ _FuncT = TypeVar('_FuncT', bound=Callable[..., Any])
 # --- Timeout exception ---
 
 
-class HookTimeoutError(TimeoutError):
+class HookTimeoutError(AgentRunError, TimeoutError):
     """Raised when a hook function exceeds its configured timeout."""
 
     def __init__(self, hook_name: str, func_name: str, timeout: float):
@@ -129,11 +129,15 @@ class OnNodeRunErrorHookFunc(Protocol):
 
 class WrapRunEventStreamHookFunc(Protocol):
     """Protocol for [`wrap_run_event_stream`][pydantic_ai.capabilities.AbstractCapability.wrap_run_event_stream] hook functions."""
-    def __call__(self, ctx: RunContext[Any], /, *, stream: AsyncIterable[AgentStreamEvent]) -> AsyncIterable[AgentStreamEvent]: ...
+    def __call__(
+        self, ctx: RunContext[Any], /, *, stream: AsyncIterable[AgentStreamEvent]
+    ) -> AsyncIterable[AgentStreamEvent]: ...
 
 class OnEventHookFunc(Protocol):
     """Protocol for per-event hook functions (convenience over `wrap_run_event_stream`)."""
-    def __call__(self, ctx: RunContext[Any], event: AgentStreamEvent, /) -> AgentStreamEvent | Awaitable[AgentStreamEvent]: ...
+    def __call__(
+        self, ctx: RunContext[Any], event: AgentStreamEvent, /
+    ) -> AgentStreamEvent | Awaitable[AgentStreamEvent]: ...
 
 class BeforeModelRequestHookFunc(Protocol):
     """Protocol for [`before_model_request`][pydantic_ai.capabilities.AbstractCapability.before_model_request] hook functions."""
@@ -237,7 +241,7 @@ async def _call_entry(entry: _HookEntry[Any], hook_name: str, *args: Any, **kwar
     func = entry.func
     if entry.timeout is not None:
         try:
-            with anyio.fail_after(entry.timeout):
+            with anyio.fail_after(entry.timeout), _utils.abandon_threads_on_cancel():
                 return await _call_func(func, *args, **kwargs)
         except TimeoutError:
             raise HookTimeoutError(
@@ -249,11 +253,12 @@ async def _call_entry(entry: _HookEntry[Any], hook_name: str, *args: Any, **kwar
 
 
 async def _call_func(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
-    """Call a function, auto-wrapping sync functions."""
-    result = func(*args, **kwargs)
-    if inspect.isawaitable(result):
-        return await result
-    return result
+    """Call a function, running sync functions in a thread so they don't block the event loop."""
+    if _utils.is_async_callable(func):
+        return await func(*args, **kwargs)
+
+    # A plain `def` may still return an awaitable, which `run_in_executor` would leave un-awaited.
+    return await _utils.await_maybe(await _utils.run_in_executor(func, *args, **kwargs))
 
 
 def _filter_tool_entries(entries: list[_HookEntry[Any]], *, call: ToolCallPart) -> list[_HookEntry[Any]]:
@@ -849,8 +854,22 @@ class Hooks(AbstractCapability[AgentDepsT]):
         return self._registry.get(key, [])
 
     @property
-    def has_wrap_node_run(self) -> bool:
-        return bool(self._get('wrap_node_run'))
+    def _has_wrap_node_run(self) -> bool:
+        return type(self).wrap_node_run is not Hooks.wrap_node_run or bool(self._get('wrap_node_run'))
+
+    @property
+    def _has_on_node_run_error(self) -> bool:
+        return type(self).on_node_run_error is not Hooks.on_node_run_error or bool(self._get('on_node_run_error'))
+
+    @property
+    def _has_wrap_model_request(self) -> bool:
+        return type(self).wrap_model_request is not Hooks.wrap_model_request or bool(self._get('wrap_model_request'))
+
+    @property
+    def _has_on_model_request_error(self) -> bool:
+        return type(self).on_model_request_error is not Hooks.on_model_request_error or bool(
+            self._get('on_model_request_error')
+        )
 
     @property
     def has_wrap_run_event_stream(self) -> bool:
@@ -942,15 +961,21 @@ class Hooks(AbstractCapability[AgentDepsT]):
     async def wrap_run_event_stream(
         self, ctx: RunContext[AgentDepsT], *, stream: AsyncIterable[AgentStreamEvent]
     ) -> AsyncIterable[AgentStreamEvent]:
+        wrapped_streams = [stream]
         # First, wrap with per-event callbacks (innermost)
         event_entries = self._get('_on_event')
         if event_entries:
             stream = _event_callback_stream(ctx, stream, event_entries)
+            wrapped_streams.append(stream)
         # Then chain explicit stream wrappers (outermost)
         for entry in reversed(self._get('wrap_run_event_stream')):
             stream = entry.func(ctx, stream=stream)
-        async for event in stream:
-            yield event
+            wrapped_streams.append(stream)
+        try:
+            async for event in stream:
+                yield event
+        finally:
+            await _utils.aclose_all(reversed(wrapped_streams))
 
     async def before_model_request(
         self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext
@@ -1300,7 +1325,10 @@ async def _event_callback_stream(
     entries: list[_HookEntry[Any]],
 ) -> AsyncIterable[AgentStreamEvent]:
     """Wrap a stream with per-event callbacks that can observe or modify events."""
-    async for event in stream:
-        for entry in entries:
-            event = await _call_entry(entry, 'on_event', ctx, event)
-        yield event
+    try:
+        async for event in stream:
+            for entry in entries:
+                event = await _call_entry(entry, 'on_event', ctx, event)
+            yield event
+    finally:
+        await _utils.aclose_if_supported(stream)

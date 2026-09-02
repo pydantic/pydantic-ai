@@ -99,6 +99,10 @@ To demonstrate how Logfire can let you visualise the flow of a Pydantic AI run, 
 
 {{ video('a764aff5840534dc77eba7d028707bfa', 25) }}
 
+[Realtime (speech-to-speech) sessions](realtime/observability.md) are instrumented by the same
+`logfire.instrument_pydantic_ai()` call: a session appears as an agent run whose child spans mark
+each model response, tool call, and turn boundary as the live conversation unfolds.
+
 ### Monitoring Performance
 
 We can also query data with SQL in Logfire to monitor the performance of an application. Here's a real world example of using Logfire to monitor Pydantic AI runs inside Logfire itself:
@@ -110,7 +114,7 @@ We can also query data with SQL in Logfire to monitor the performance of an appl
 As per Hamel Husain's influential 2024 blog post ["Fuck You, Show Me The Prompt."](https://hamel.dev/blog/posts/prompt/)
 (bear with the capitalization, the point is valid), it's often useful to be able to view the raw HTTP requests and responses made to model providers.
 
-To observe raw HTTP requests made to model providers, you can use Logfire's [HTTPX instrumentation](https://logfire.pydantic.dev/docs/integrations/http-clients/httpx/) since all provider SDKs (except for [Bedrock](models/bedrock.md)) use the [HTTPX](https://www.python-httpx.org/) library internally:
+To observe raw HTTP requests made to model providers, you can use Logfire's [HTTPX instrumentation](https://logfire.pydantic.dev/docs/integrations/http-clients/httpx/). Provider SDKs use either `httpx` or [`httpx2`](https://httpx2.pydantic.dev/) internally, except for [Bedrock](models/bedrock.md), which uses boto3:
 
 
 ```py {title="with_logfire_instrument_httpx.py" hl_lines="7"}
@@ -128,7 +132,9 @@ print(result.output)
 #> The capital of France is Paris.
 ```
 
-1. See the [`logfire.instrument_httpx` docs][logfire.Logfire.instrument_httpx] more details, `capture_all=True` means both headers and body are captured for both the request and response.
+1. See the [`logfire.instrument_httpx` docs][logfire.Logfire.instrument_httpx] for more details. `capture_all=True` means both headers and body are captured for both the request and response.
+
+    `httpx2` instrumentation requires `opentelemetry-instrumentation-httpx>=0.65b0`, which the [`logfire` extra](install.md#slim-install) installs for you. If you pin OpenTelemetry yourself and end up below that version, `logfire.instrument_httpx()` reports the missing requirement and emits no `httpx2` spans.
 
 ![Logfire with HTTPX instrumentation](img/logfire-with-httpx.png)
 
@@ -246,6 +252,7 @@ The following providers have dedicated documentation on Pydantic AI:
 - [Laminar](https://docs.laminar.sh/tracing/integrations/pydantic-ai)
 - [Respan](https://respan.ai/docs/integrations/pydantic-ai)
 - [Raindrop](https://raindrop.ai/docs/integrations/pydantic-ai)
+- [Sentry](https://docs.sentry.io/platforms/python/integrations/pydantic-ai/)
 
 ## Advanced usage
 
@@ -289,6 +296,8 @@ Pydantic AI follows the [OpenTelemetry Semantic Conventions for Generative AI sy
 **The default is `version=5`**.
 
 Versions 2, 3, and 4 are deprecated compatibility formats. Passing one of these versions to [`InstrumentationSettings`][pydantic_ai.models.instrumented.InstrumentationSettings] emits a [`PydanticAIDeprecationWarning`][pydantic_ai.agent.PydanticAIDeprecationWarning]; use version 5 unless you are temporarily preserving an older telemetry pipeline.
+
+Version 6 is opt-in: it changes the role of messages you already receive, so pass it explicitly once your telemetry consumer is ready for the new role.
 
 #### Version 2 (deprecated)
 
@@ -334,6 +343,15 @@ Builds on version 4 with improved handling of deferred tool calls:
 
 - [`CallDeferred`][pydantic_ai.exceptions.CallDeferred] and [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] exceptions no longer record an exception event or set the span status to ERROR — the span is left as UNSET, since deferrals are control flow, not errors.
 
+#### Version 6 (opt-in)
+
+Builds on version 5 by giving tool results the message role the [GenAI semantic conventions](https://github.com/open-telemetry/semantic-conventions-genai/blob/main/model/gen-ai/gen-ai-input-messages.json) pair with the `tool_call_response` parts they carry:
+
+- Old (v2-5): a tool result is a `tool_call_response` part inside a `{"role": "user"}` message
+- New (v6): it moves to a `{"role": "tool"}` message
+
+This applies to tool returns and to retries that answer a tool call. A retry that answers nothing — output validation, a `ModelRetry` from a validator — stays on `user`, which is the role it reaches the model as. A request whose parts span both roles is emitted as consecutive messages in part order rather than one merged message.
+
 ---
 
 Note that the OpenTelemetry Semantic Conventions are still experimental and are likely to change.
@@ -358,6 +376,10 @@ Agent.instrument_all(instrumentation_settings)
 ```
 
 ### Excluding binary content
+
+When `include_binary_content=False`, Pydantic AI excludes binary file data, including images, audio, and documents, from telemetry for user prompts, model responses, tool returns, the agent's output, output-function arguments, and run and tool deferral metadata. The media type remains recorded everywhere. When a value is recorded as a file rather than a message part, its vendor metadata and identifier are recorded too; Pydantic AI derives the identifier from the content when you do not set one.
+
+Binary content is found inside dictionaries, lists and [`ToolReturn`][pydantic_ai.messages.ToolReturn]s, but not inside your own types: a [`BinaryContent`][pydantic_ai.messages.BinaryContent] held as a field of a model or dataclass you define is still recorded in full.
 
 ```python {title="excluding_binary_content.py"}
 from pydantic_ai import Agent, InstrumentationSettings
@@ -389,6 +411,24 @@ Agent.instrument_all(instrumentation_settings)
 ```
 
 This setting is particularly useful in production environments where compliance requirements or data sensitivity concerns make it necessary to limit what content is sent to your observability platform.
+
+### Excluding model request parameters
+
+By default, each model request span carries a `model_request_parameters` attribute that serializes the full [`ModelRequestParameters`][pydantic_ai.models.ModelRequestParameters], including the output configuration and every tool definition. Tools that carry large output schemas (some MCP toolsets, for example) can make this attribute big enough to strain span export and inflate memory use. Set `include_model_request_parameters=False` to omit it entirely:
+
+```python {title="excluding_model_request_parameters.py"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import Instrumentation
+from pydantic_ai.models.instrumented import InstrumentationSettings
+
+instrumentation_settings = InstrumentationSettings(include_model_request_parameters=False)
+
+agent = Agent('openai:gpt-5.2', capabilities=[Instrumentation(settings=instrumentation_settings)])
+# or to instrument all agents:
+Agent.instrument_all(instrumentation_settings)
+```
+
+The `gen_ai.tool.definitions` attribute (tool name, description, and parameters) is emitted regardless of this setting, so observability platforms that read the available tools from it are unaffected.
 
 ### Adding Custom Metadata
 

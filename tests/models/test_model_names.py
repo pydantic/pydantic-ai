@@ -15,12 +15,15 @@ from ..conftest import try_import
 with try_import() as imports_successful:
     from pydantic_ai.models.anthropic import DEPRECATED_ANTHROPIC_MODELS, AnthropicModelName
     from pydantic_ai.models.bedrock import BedrockModelName
+    from pydantic_ai.models.bedrock_mantle import BedrockMantleModelName
     from pydantic_ai.models.cohere import CohereModelName
+    from pydantic_ai.models.crusoe import CrusoeModelName
     from pydantic_ai.models.google import GoogleModelName
     from pydantic_ai.models.groq import GroqModelName
     from pydantic_ai.models.huggingface import HuggingFaceModelName
     from pydantic_ai.models.mistral import MistralModelName
     from pydantic_ai.models.openai import DEPRECATED_OPENAI_MODELS, OpenAIModelName
+    from pydantic_ai.models.snowflake import SnowflakeModelName
     from pydantic_ai.models.xai import XaiModelName
     from pydantic_ai.models.zai import ZaiModelName
     from pydantic_ai.providers.deepseek import DeepSeekModelName
@@ -28,11 +31,12 @@ with try_import() as imports_successful:
 
 if not imports_successful():  # pragma: lax no cover
     # Define placeholders so the module can be loaded for test collection
-    AnthropicModelName = BedrockModelName = CohereModelName = GoogleModelName = None
+    AnthropicModelName = BedrockModelName = BedrockMantleModelName = CohereModelName = GoogleModelName = None
     GroqModelName = HuggingFaceModelName = MistralModelName = OpenAIModelName = None
     DEPRECATED_ANTHROPIC_MODELS: frozenset[str] = frozenset()  # pyright: ignore[reportConstantRedefinition]
     DEPRECATED_OPENAI_MODELS: frozenset[str] = frozenset()  # pyright: ignore[reportConstantRedefinition]
-    DeepSeekModelName = XaiModelName = MoonshotAIModelName = ZaiModelName = None
+    CrusoeModelName = None
+    DeepSeekModelName = XaiModelName = MoonshotAIModelName = ZaiModelName = SnowflakeModelName = None
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='some model package was not installed'),
@@ -63,7 +67,9 @@ def vcr_config():  # pragma: lax no cover
 _PROVIDER_TO_MODEL_NAMES = {
     'anthropic': AnthropicModelName,
     'bedrock': BedrockModelName,
+    'bedrock-mantle': BedrockMantleModelName,
     'cohere': CohereModelName,
+    'crusoe': CrusoeModelName,
     'deepseek': DeepSeekModelName,
     'google': GoogleModelName,
     'google-cloud': GoogleModelName,
@@ -74,6 +80,7 @@ _PROVIDER_TO_MODEL_NAMES = {
     'moonshotai': MoonshotAIModelName,
     'openai': OpenAIModelName,
     'openai-chat': OpenAIModelName,
+    'snowflake': SnowflakeModelName,
     'zai': ZaiModelName,
 }
 
@@ -155,13 +162,17 @@ UNSUPPORTED_GATEWAY_MODEL_NAMES = frozenset(
         'gateway/google-cloud:gemini-2.0-flash',
         'gateway/google-cloud:gemini-2.0-flash-lite',
         'gateway/google-cloud:gemini-2.5-flash-preview-09-2025',
+        'gateway/google-cloud:gemini-3-pro-image-preview',
         'gateway/google-cloud:gemini-3-pro-preview',
+        'gateway/google-cloud:gemini-3.1-flash-image-preview',
         'gateway/google-cloud:gemini-flash-latest',
         'gateway/google-cloud:gemini-flash-lite-latest',
         'gateway/google:gemini-2.0-flash',
         'gateway/google:gemini-2.0-flash-lite',
         'gateway/google:gemini-2.5-flash-preview-09-2025',
+        'gateway/google:gemini-3-pro-image-preview',
         'gateway/google:gemini-3-pro-preview',
+        'gateway/google:gemini-3.1-flash-image-preview',
         'gateway/google:gemini-flash-latest',
         'gateway/google:gemini-flash-lite-latest',
         'gateway/groq:meta-llama/llama-prompt-guard-2-22m',
@@ -174,6 +185,8 @@ UNSUPPORTED_GATEWAY_MODEL_NAMES = frozenset(
         'gateway/groq:whisper-large-v3-turbo',
         'gateway/openai:chatgpt-4o-latest',
         'gateway/openai:codex-mini-latest',
+        'gateway/openai:computer-use-preview',
+        'gateway/openai:computer-use-preview-2025-03-11',
         'gateway/openai:gpt-3.5-turbo-0301',
         'gateway/openai:gpt-3.5-turbo-0613',
         'gateway/openai:gpt-3.5-turbo-16k-0613',
@@ -191,6 +204,11 @@ UNSUPPORTED_GATEWAY_MODEL_NAMES = frozenset(
         'gateway/openai:gpt-4o-audio-preview-2025-06-03',
         'gateway/openai:gpt-4o-mini-audio-preview',
         'gateway/openai:gpt-4o-mini-audio-preview-2024-12-17',
+        'gateway/openai:gpt-5-chat-latest',
+        'gateway/openai:gpt-5-codex',
+        'gateway/openai:gpt-5.1-chat-latest',
+        'gateway/openai:gpt-5.1-codex',
+        'gateway/openai:gpt-5.1-codex-max',
         'gateway/openai:gpt-5.1-mini',
         'gateway/openai:o1-mini',
         'gateway/openai:o1-mini-2024-09-12',
@@ -237,16 +255,19 @@ def test_known_model_names():  # pragma: lax no cover
 
     extra_names = ['test']
 
-    generated_names = sorted(all_generated_names + gateway_names + heroku_names + cerebras_names + extra_names)
+    # Sets, not sorted lists: an id an SDK-lag `Literal` bridges is generated twice once the SDK catches
+    # up and lists it too, and `KnownModelName` is a single flat `Literal`, which cannot repeat a member.
+    # Comparing lists would fail on that duplicate with both difference reports empty.
+    generated_names = set(all_generated_names + gateway_names + heroku_names + cerebras_names + extra_names)
 
-    known_names = sorted(known_model_names())
+    known_names = set(known_model_names())
 
     if generated_names != known_names:
         errors: list[str] = []
-        missing_names = set(generated_names) - set(known_names)
+        missing_names = generated_names - known_names
         if missing_names:
             errors.append(f'Missing names: {missing_names}')
-        extra_names = set(known_names) - set(generated_names)
+        extra_names = known_names - generated_names
         if extra_names:
             errors.append(f'Extra names: {extra_names}')
         raise AssertionError('\n'.join(errors))

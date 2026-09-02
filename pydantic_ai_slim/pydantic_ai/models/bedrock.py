@@ -3,18 +3,19 @@ from __future__ import annotations
 import functools
 import typing
 import warnings
-from collections.abc import AsyncGenerator, AsyncIterator, Generator, Iterable, Iterator, Mapping, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator, Iterable, Iterator, Mapping, Sequence
 from contextlib import asynccontextmanager, contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
-from datetime import datetime
-from functools import cached_property
+from datetime import datetime, timedelta
 from itertools import count
-from typing import TYPE_CHECKING, Any, Generic, Literal, cast, overload
+from threading import Lock
+from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar, cast, overload
 from urllib.parse import parse_qs, urlparse
 
 import anyio.to_thread
 from pydantic_core import to_json
-from typing_extensions import ParamSpec, assert_never
+from typing_extensions import ParamSpec, TypedDict, assert_never
 
 try:
     from botocore.client import BaseClient
@@ -44,10 +45,12 @@ from pydantic_ai import (
     NativeToolCallPart,
     NativeToolReturnPart,
     RetryPromptPart,
+    SpeechPart,
     SystemPromptPart,
     TextContent,
     TextPart,
     ThinkingPart,
+    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
     UploadedFile,
@@ -64,6 +67,10 @@ from pydantic_ai.models import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
+    _suggest_known_model_id_from_provider_error,  # pyright: ignore[reportPrivateUsage]
+    _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
+    _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
+    check_allow_model_requests,
     download_item,
 )
 from pydantic_ai.models._tool_choice import ResolvedToolChoice, resolve_tool_choice
@@ -116,14 +123,96 @@ if TYPE_CHECKING:
 
 
 @contextmanager
-def _map_api_errors(model_name: str) -> Generator[None]:
+def _map_api_errors(model_name: str, model_id_namespace: str = 'bedrock') -> Generator[None]:
     try:
         yield
     except ClientError as e:
-        status_code = e.response.get('ResponseMetadata', {}).get('HTTPStatusCode')
+        metadata = e.response.get('ResponseMetadata', {})
+        status_code = metadata.get('HTTPStatusCode')
         if isinstance(status_code, int):
-            raise ModelHTTPError(status_code=status_code, model_name=model_name, body=e.response) from e
+            suggested_model_id = None
+            error = e.response.get('Error')
+            if _utils.is_str_dict(error) and error.get('Message') == 'The provided model identifier is invalid.':
+                suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
+            raise ModelHTTPError(
+                status_code=status_code,
+                model_name=model_name,
+                body=e.response,
+                headers=metadata.get('HTTPHeaders'),
+                suggested_model_id=suggested_model_id,
+            ) from e
         raise ModelAPIError(model_name=model_name, message=str(e)) from e
+
+
+class _BotocoreRequestParams(TypedDict):
+    headers: dict[str, str]
+
+
+@dataclass
+class _ExtraHeadersState:
+    client_id: int
+    headers: dict[str, str]
+    claimed: bool = False
+
+
+_EXTRA_HEADERS_REGISTRATION_LOCK = Lock()
+_EXTRA_HEADERS_CONTEXT_KEY = 'pydantic_ai_extra_headers'
+_EXTRA_HEADERS_OPERATIONS = ('Converse', 'ConverseStream', 'CountTokens')
+_extra_headers_var: ContextVar[_ExtraHeadersState | None] = ContextVar('_extra_headers_var', default=None)
+_BedrockCallResult = TypeVar('_BedrockCallResult')
+
+
+def _claim_extra_headers(client_id: int, context: dict[str, Any], **_: Any) -> None:
+    if (active := _extra_headers_var.get()) and active.client_id == client_id and not active.claimed:
+        active.claimed = True
+        context[_EXTRA_HEADERS_CONTEXT_KEY] = active.headers
+
+
+def _inject_extra_headers(params: _BotocoreRequestParams, context: dict[str, Any], **_: Any) -> None:
+    extra_headers: dict[str, str] = context.pop(_EXTRA_HEADERS_CONTEXT_KEY, {})
+    headers = params['headers']
+    for key, value in extra_headers.items():
+        for existing_key in tuple(headers):
+            if existing_key.lower() == key.lower():
+                del headers[existing_key]
+        headers[key] = value
+
+
+def _register_extra_headers(client: BedrockRuntimeClient) -> None:
+    """Register request-scoped header handlers once per client."""
+    # botocore's first registration mutates an unsynchronized handler trie and lookup cache; serialize it so a
+    # concurrent pydantic-ai request can't emit against a half-updated cache.
+    with _EXTRA_HEADERS_REGISTRATION_LOCK:
+        for operation in _EXTRA_HEADERS_OPERATIONS:
+            client.meta.events.register_first(
+                f'provide-client-params.bedrock-runtime.{operation}',
+                functools.partial(_claim_extra_headers, id(client)),
+                unique_id=f'pydantic-ai-extra-headers-claim-{operation}',
+            )
+            client.meta.events.register_first(
+                f'before-call.bedrock-runtime.{operation}',
+                _inject_extra_headers,
+                unique_id=f'pydantic-ai-extra-headers-inject-{operation}',
+            )
+
+
+async def _call_bedrock(
+    client: BedrockRuntimeClient,
+    method: Callable[..., _BedrockCallResult],
+    params: Mapping[str, Any],
+    extra_headers: dict[str, str] | None,
+) -> _BedrockCallResult:
+    _register_extra_headers(client)
+    headers = dict(extra_headers or {})
+
+    def call() -> _BedrockCallResult:
+        context_token = _extra_headers_var.set(_ExtraHeadersState(id(client), headers))
+        try:
+            return method(**params)
+        finally:
+            _extra_headers_var.reset(context_token)
+
+    return await anyio.to_thread.run_sync(call)
 
 
 _SUPPORTED_IMAGE_FORMATS = ('jpeg', 'png', 'gif', 'webp')
@@ -228,6 +317,8 @@ LatestBedrockModelNames = Literal[
     'global.anthropic.claude-opus-4-7',
     'us.anthropic.claude-opus-4-8',
     'global.anthropic.claude-opus-4-8',
+    'us.anthropic.claude-opus-5',
+    'global.anthropic.claude-opus-5',
     'us.anthropic.claude-sonnet-5',
     'global.anthropic.claude-sonnet-5',
     'us.anthropic.claude-fable-5',
@@ -320,6 +411,7 @@ def _insert_cache_point_before_trailing_documents(
     cache_point: ContentBlockUnionTypeDef,
     *,
     raise_if_cannot_insert: bool = False,
+    replace_existing: bool = False,
 ) -> bool:
     """Insert a cache point before trailing document/video content.
 
@@ -332,6 +424,8 @@ def _insert_cache_point_before_trailing_documents(
         cache_point: The cache point block to insert.
         raise_if_cannot_insert: If True, raises UserError when cache point cannot be inserted
             (e.g., when the message contains only documents/videos). If False, silently skips.
+        replace_existing: If True, an existing cache point at the insertion position is
+            replaced (the latest marker wins). If False, it is kept and the new one skipped.
 
     Returns:
         True if a cache point was inserted, False otherwise.
@@ -349,9 +443,11 @@ def _insert_cache_point_before_trailing_documents(
             break
 
     if trailing_start is not None and trailing_start > 0:
-        # Skip if there's already a cache point at the insertion position
         prev_block = content[trailing_start - 1]
         if isinstance(prev_block, dict) and 'cachePoint' in prev_block:
+            if replace_existing:
+                content[trailing_start - 1] = cache_point
+                return True
             return False
         content.insert(trailing_start, cache_point)
         return True
@@ -367,7 +463,7 @@ def _insert_cache_point_before_trailing_documents(
                 'due to Bedrock API restrictions. '
                 'Add text content before or after your document or video to enable caching.'
             )
-        return False  # pragma: no cover
+        return False
 
 
 class BedrockModelSettings(ModelSettings, total=False):
@@ -375,6 +471,10 @@ class BedrockModelSettings(ModelSettings, total=False):
 
     See [the Bedrock Converse API docs](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_Converse.html#API_runtime_Converse_RequestSyntax) for a full list.
     See [the boto3 implementation](https://boto3.amazonaws.com/v1/documentation/api/latest/reference/services/bedrock-runtime/client/converse.html) of the Bedrock Converse API.
+
+    `extra_headers` are injected before the request is signed, so under SigV4 authentication they are covered by the
+    signature (except the few headers botocore never signs, e.g. `X-Amzn-Trace-Id`). Headers the AWS SDK computes
+    itself (e.g. `Authorization`, `User-Agent`, `X-Amz-Date`) are overwritten by botocore afterwards.
     """
 
     # ALL FIELDS MUST BE `bedrock_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
@@ -505,6 +605,12 @@ class BedrockConverseModel(Model[BaseClient]):
 
         super().__init__(settings=settings, profile=profile)
 
+        if self.profile.get('bedrock_supported_on_converse', True) is False:
+            raise UserError(
+                f'Model {model_name!r} is not served by the Bedrock Converse API. Use `BedrockMantleProvider` '
+                "(the `bedrock-mantle:` prefix) to access it through Bedrock Mantle's OpenAI-compatible API."
+            )
+
     @property
     def client(self) -> BedrockRuntimeClient:
         """The boto3 client used to make requests to the Bedrock Converse API.
@@ -537,11 +643,20 @@ class BedrockConverseModel(Model[BaseClient]):
         """The model provider."""
         return self._provider.name
 
-    @cached_property
-    def profile(self) -> BedrockModelProfile:
-        # The resolved profile dict may also carry cross-class fields (e.g. `anthropic_*` for Anthropic-on-Bedrock
-        # models) — read those with `cast` or `.get()`, since the narrowed type only exposes `bedrock_*` keys.
-        return cast(BedrockModelProfile, super().profile)
+    def resolve_prompt_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
+        """Resolve the longest retention requested by supported Bedrock cache settings."""
+        settings = merge_model_settings(self.settings, model_settings) or {}
+        return self._max_prompt_cache_retention(
+            settings.get('bedrock_cache_instructions')
+            if self.profile.get('bedrock_supports_prompt_caching', False)
+            else None,
+            settings.get('bedrock_cache_messages')
+            if self.profile.get('bedrock_supports_prompt_caching', False)
+            else None,
+            settings.get('bedrock_cache_tool_definitions')
+            if self.profile.get('bedrock_supports_tool_caching', False)
+            else None,
+        )
 
     @classmethod
     def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
@@ -565,6 +680,15 @@ class BedrockConverseModel(Model[BaseClient]):
                 raise UserError(
                     f'Bedrock does not support thinking and output tools at the same time. Use `output_type={suggested_output_type}(...)` instead.'
                 )
+
+        # Resolve 'auto' to the profile default here (a no-op if already resolved above) so the
+        # strict-forcing check below also applies when native mode is reached via the profile default
+        # rather than an explicit `NativeOutput(...)`; `super().prepare_request()` would otherwise only
+        # resolve it after `customize_request_parameters()` has already transformed the schema.
+        model_request_parameters = model_request_parameters.with_default_output_mode(
+            self.profile.get('default_structured_output_mode', 'tool')
+        )
+
         if (
             self.profile.get('supports_json_schema_output', False)
             and model_request_parameters.output_mode == 'native'
@@ -639,6 +763,7 @@ class BedrockConverseModel(Model[BaseClient]):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
+        check_allow_model_requests()
         model_settings, model_request_parameters = self.prepare_request(
             model_settings,
             model_request_parameters,
@@ -658,6 +783,7 @@ class BedrockConverseModel(Model[BaseClient]):
 
         Check the actual supported models on <https://docs.aws.amazon.com/bedrock/latest/userguide/count-tokens.html>
         """
+        check_allow_model_requests()
         model_settings, model_request_parameters = self.prepare_request(model_settings, model_request_parameters)
         settings = cast(BedrockModelSettings, model_settings or {})
         system_prompt, bedrock_messages = await self._map_messages(messages, model_request_parameters, settings)
@@ -681,8 +807,10 @@ class BedrockConverseModel(Model[BaseClient]):
             'modelId': remove_bedrock_geo_prefix(self.model_name),
             'input': {'converse': converse},
         }
-        with _map_api_errors(self.model_name):
-            response = await anyio.to_thread.run_sync(functools.partial(self.client.count_tokens, **params))
+        # One client object for both registration and the call, in case the property is reassigned mid-request.
+        client = self.client
+        with _map_api_errors(self.model_name, self._provider.model_id_namespace):
+            response = await _call_bedrock(client, client.count_tokens, params, settings.get('extra_headers'))
         return usage.RequestUsage(input_tokens=response['inputTokens'])
 
     @asynccontextmanager
@@ -693,6 +821,7 @@ class BedrockConverseModel(Model[BaseClient]):
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
     ) -> AsyncGenerator[StreamedResponse]:
+        check_allow_model_requests()
         model_settings, model_request_parameters = self.prepare_request(
             model_settings,
             model_request_parameters,
@@ -702,8 +831,10 @@ class BedrockConverseModel(Model[BaseClient]):
         yield BedrockStreamedResponse(
             model_request_parameters=model_request_parameters,
             _model_name=self.model_name,
+            _model_profile=cast(BedrockModelProfile, self.profile),
             _event_stream=response['stream'],
             _provider_name=self._provider.name,
+            _model_id_namespace=self._provider.model_id_namespace,
             _provider_url=self.base_url,
             _provider_response_id=response.get('ResponseMetadata', {}).get('RequestId', None),
         )
@@ -767,7 +898,9 @@ class BedrockConverseModel(Model[BaseClient]):
         u = _map_usage(response['usage'], self._provider.name, self.base_url, self.model_name)
         response_id = response.get('ResponseMetadata', {}).get('RequestId', None)
         raw_finish_reason = response['stopReason']
-        provider_details = {'finish_reason': raw_finish_reason}
+        provider_details: dict[str, Any] = {'finish_reason': raw_finish_reason}
+        if 'trace' in response:
+            provider_details['trace'] = response['trace']
         finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
 
         return ModelResponse(
@@ -914,13 +1047,15 @@ class BedrockConverseModel(Model[BaseClient]):
         ):
             params['additionalModelRequestFields'] = additional_model_requests_fields
 
-        with _map_api_errors(self.model_name):
+        # One client object for both registration and the call, in case the property is reassigned mid-request.
+        client = self.client
+        with _map_api_errors(self.model_name, self._provider.model_id_namespace):
             if stream:
-                model_response = await anyio.to_thread.run_sync(
-                    functools.partial(self.client.converse_stream, **params)
+                model_response = await _call_bedrock(
+                    client, client.converse_stream, params, settings.get('extra_headers')
                 )
             else:
-                model_response = await anyio.to_thread.run_sync(functools.partial(self.client.converse, **params))
+                model_response = await _call_bedrock(client, client.converse, params, settings.get('extra_headers'))
         return model_response
 
     @staticmethod
@@ -934,7 +1069,7 @@ class BedrockConverseModel(Model[BaseClient]):
             inference_config['maxTokens'] = max_tokens
         if (temperature := model_settings.get('temperature')) is not None:
             inference_config['temperature'] = temperature
-        if top_p := model_settings.get('top_p'):
+        if (top_p := model_settings.get('top_p')) is not None:
             inference_config['topP'] = top_p
         if stop_sequences := model_settings.get('stop_sequences'):
             inference_config['stopSequences'] = stop_sequences
@@ -947,9 +1082,9 @@ class BedrockConverseModel(Model[BaseClient]):
         model_settings: BedrockModelSettings | None,
     ) -> ToolConfigurationTypeDef | None:
         resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
-        tool_defs = model_request_parameters.tool_defs
+        tool_defs = model_request_parameters.declared_tool_defs
 
-        profile = self.profile
+        profile = cast(BedrockModelProfile, self.profile)
         supports = _support_tool_forcing(
             self.model_name, profile, model_settings, model_request_parameters, resolved_tool_choice
         )
@@ -1053,6 +1188,7 @@ class BedrockConverseModel(Model[BaseClient]):
                                 part,
                                 document_count,
                                 supports_prompt_caching=profile.get('bedrock_supports_prompt_caching', False),
+                                prior_messages=bedrock_messages,
                             )
                         )
                     elif isinstance(part, ToolReturnPart):
@@ -1063,7 +1199,22 @@ class BedrockConverseModel(Model[BaseClient]):
                         content_mode: Literal['str', 'jsonable'] = (
                             'str' if profile.get('bedrock_tool_result_format', 'text') == 'text' else 'jsonable'
                         )
-                        for item in part.content_items(mode=content_mode):
+
+                        # Two mutually exclusive ways to render a failed return, picked here so the loop
+                        # below stays free of per-item failure guards:
+                        # - No native error status: fold the failure into one wrapped `{'error': ...}` text
+                        #   block, then iterate only the files. Each file still gets its "See file X."
+                        #   reference below so the model can cross-reference the media with the result.
+                        # - Otherwise (success, or failed with `status='error'` set below): send every
+                        #   content item verbatim; the status field carries the failure signal unwrapped.
+                        items: Sequence[Any]
+                        if part.outcome == 'failed' and not supports_tool_result_status:
+                            tool_result_content.append({'text': part.model_response_str()})
+                            items = part.files
+                        else:
+                            items = part.content_items(mode=content_mode, wrap_if_error=False)
+
+                        for item in items:
                             if isinstance(item, UploadedFile):
                                 self._validate_uploaded_file_provider(item)
                                 if not item.file_id.startswith('s3://'):
@@ -1107,10 +1258,8 @@ class BedrockConverseModel(Model[BaseClient]):
                                         # The media can't share the `toolResult`'s turn; defer it to a later user turn.
                                         deferred_media_content.append(media_note)
                                         deferred_media_content.append(file_block)
-                            elif isinstance(item, str):
-                                tool_result_content.append({'text': item})
                             else:
-                                tool_result_content.append({'json': item})
+                                tool_result_content.append({'text': item} if isinstance(item, str) else {'json': item})
                         if not tool_result_content:
                             tool_result_content.append(
                                 {'text': str(part.content)} if content_mode == 'str' else {'json': part.content}
@@ -1121,7 +1270,7 @@ class BedrockConverseModel(Model[BaseClient]):
                             'content': tool_result_content,
                         }
                         if supports_tool_result_status:
-                            success_result['status'] = 'success'
+                            success_result['status'] = 'error' if part.outcome == 'failed' else 'success'
                         bedrock_messages.append(
                             {
                                 'role': 'user',
@@ -1141,6 +1290,11 @@ class BedrockConverseModel(Model[BaseClient]):
                             if supports_tool_result_status:
                                 error_result['status'] = 'error'
                             bedrock_messages.append({'role': 'user', 'content': [{'toolResult': error_result}]})
+                    elif isinstance(part, ToolAvailabilityDeltaPart):  # pragma: no cover
+                        raise _unsynthesized_tool_availability_delta_error()
+                    elif isinstance(part, SpeechPart):  # pragma: no cover
+                        # Unconverted realtime speech; `prepare_messages` turns these into `UserPromptPart`s in `Model.prepare_messages`.
+                        raise _unconverted_speech_part_error()
                     else:
                         assert_never(part)
             elif isinstance(message, ModelResponse):
@@ -1214,7 +1368,8 @@ class BedrockConverseModel(Model[BaseClient]):
         # `toolResult` block with other content: Anthropic rejects documents and video next to it, while
         # Llama and Mistral reject anything sharing the turn (the `toolResult` must be alone). When the
         # combined content isn't co-locatable (per `colocatable_content`), split the turns instead of
-        # merging. See #6081 and `bedrock_tool_result_colocatable_content`.
+        # merging. See https://github.com/pydantic/pydantic-ai/issues/6081 and `bedrock_tool_result_colocatable_content`.
+        # `cachePoint` blocks are cache markers, not content, so they never force a split.
         processed_messages: list[MessageUnionTypeDef] = []
         last_message: dict[str, Any] | None = None
         for current_message in bedrock_messages:
@@ -1226,7 +1381,9 @@ class BedrockConverseModel(Model[BaseClient]):
                 merged_content = [*last_message['content'], *current_message['content']]
                 has_tool_result = any('toolResult' in block for block in merged_content)
                 has_non_colocatable = any(
-                    'toolResult' not in block and next(iter(block)) not in colocatable_content
+                    'toolResult' not in block
+                    and 'cachePoint' not in block
+                    and next(iter(block)) not in colocatable_content
                     for block in merged_content
                 )
                 if has_tool_result and has_non_colocatable:
@@ -1318,6 +1475,39 @@ class BedrockConverseModel(Model[BaseClient]):
         return content
 
     @staticmethod
+    def _attach_cache_point_to_last_user_message(
+        messages: list[MessageUnionTypeDef], cache_point: ContentBlockUnionTypeDef
+    ) -> None:
+        """Attach a cache point to the end of the last user message in `messages`.
+
+        Used when a `CachePoint` is the first item of a part: everything the marker is
+        meant to cache lives in the messages already built, so the marker goes there.
+        If that message already ends with a cache point, the newest one replaces it,
+        matching the Anthropic mapper.
+
+        Raises:
+            UserError: If there is no prior user message to attach the cache point to.
+        """
+        content: list[Any] | None = next(
+            (
+                message['content']
+                for message in reversed(messages)
+                if message['role'] == 'user' and isinstance(message['content'], list) and message['content']
+            ),
+            None,
+        )
+        if content is None:
+            raise UserError(
+                'CachePoint cannot be the first content in a user message - there must be previous content to cache when using Bedrock. '
+                'To cache system instructions or tool definitions, use the `bedrock_cache_instructions` or `bedrock_cache_tool_definitions` settings instead.'
+            )
+        last_block = content[-1]
+        if isinstance(last_block, dict) and 'cachePoint' in last_block:
+            content[-1] = cache_point
+        else:
+            _insert_cache_point_before_trailing_documents(content, cache_point, replace_existing=True)
+
+    @staticmethod
     async def _map_file_to_content_block(
         file: ImageUrl | DocumentUrl | VideoUrl | BinaryContent,
         document_count: Iterator[int],
@@ -1360,6 +1550,7 @@ class BedrockConverseModel(Model[BaseClient]):
         document_count: Iterator[int],
         *,
         supports_prompt_caching: bool,
+        prior_messages: list[MessageUnionTypeDef],
     ) -> list[MessageUnionTypeDef]:
         content: list[ContentBlockUnionTypeDef] = []
         if isinstance(part.content, str):
@@ -1398,10 +1589,16 @@ class BedrockConverseModel(Model[BaseClient]):
                     if not supports_prompt_caching:
                         # Silently skip CachePoint for models that don't support prompt caching
                         continue
-                    if not content or 'cachePoint' in content[-1]:
+                    if not content:
+                        # A CachePoint means "cache everything before this point". This part has no
+                        # content yet, so everything before this point is the messages already built:
+                        # put the marker at the end of the last user message instead of raising.
+                        # See https://github.com/pydantic/pydantic-ai/issues/7004.
+                        self._attach_cache_point_to_last_user_message(prior_messages, self._get_cache_point(item.ttl))
+                        continue
+                    if 'cachePoint' in content[-1]:
                         raise UserError(
-                            'CachePoint cannot be the first content in a user message - there must be previous content to cache when using Bedrock. '
-                            'To cache system instructions or tool definitions, use the `bedrock_cache_instructions` or `bedrock_cache_tool_definitions` settings instead.'
+                            'CachePoint cannot be preceded by another CachePoint - there must be content between cache points when using Bedrock.'
                         )
                     _insert_cache_point_before_trailing_documents(
                         content,
@@ -1416,7 +1613,8 @@ class BedrockConverseModel(Model[BaseClient]):
         has_text = any('text' in block for block in content)
         if has_document and not has_text:
             content.insert(0, {'text': 'See attached document(s).'})
-        return [{'role': 'user', 'content': content}]
+        # A part that contained only a CachePoint has nothing left to send: emit no message.
+        return [{'role': 'user', 'content': content}] if content else []
 
     @staticmethod
     def _map_tool_call(t: ToolCallPart) -> ContentBlockOutputTypeDef:
@@ -1507,8 +1705,10 @@ class BedrockStreamedResponse(StreamedResponse):
     """Implementation of `StreamedResponse` for Bedrock models."""
 
     _model_name: BedrockModelName
+    _model_profile: BedrockModelProfile
     _event_stream: EventStream[ConverseStreamOutputTypeDef]
     _provider_name: str
+    _model_id_namespace: str
     _provider_url: str
     _timestamp: datetime = field(default_factory=_utils.now_utc)
     _provider_response_id: str | None = None
@@ -1520,7 +1720,7 @@ class BedrockStreamedResponse(StreamedResponse):
         await anyio.to_thread.run_sync(self._event_stream.close)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
-        with _map_api_errors(self._model_name):
+        with _map_api_errors(self._model_name, self._model_id_namespace):
             if self._provider_response_id is not None:
                 self.provider_response_id = self._provider_response_id
 
@@ -1537,13 +1737,17 @@ class BedrockStreamedResponse(StreamedResponse):
                         continue
                     case {'messageStop': message_stop}:
                         raw_finish_reason = message_stop['stopReason']
-                        self.provider_details = {'finish_reason': raw_finish_reason}
+                        self.provider_details = {**(self.provider_details or {}), 'finish_reason': raw_finish_reason}
                         self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
                     case {'metadata': metadata}:
                         if 'usage' in metadata:  # pragma: no branch
                             self._usage += _map_usage(
                                 metadata['usage'], self._provider_name, self._provider_url, self._model_name
                             )
+                        if 'trace' in metadata:
+                            # `messageStop` usually precedes `metadata`, but AWS documents no strict event
+                            # ordering, so merge rather than overwrite the finish reason.
+                            self.provider_details = {**(self.provider_details or {}), 'trace': metadata['trace']}
                     case {'contentBlockStart': content_block_start}:
                         index = content_block_start['contentBlockIndex']
                         start = content_block_start['start']
@@ -1607,7 +1811,13 @@ class BedrockStreamedResponse(StreamedResponse):
                                 ):
                                     yield event
                         if text := delta.get('text'):
-                            for event in self._parts_manager.handle_text_delta(vendor_part_id=index, content=text):
+                            for event in self._parts_manager.handle_text_delta(
+                                vendor_part_id=index,
+                                content=text,
+                                ignore_leading_whitespace=self._model_profile.get(
+                                    'ignore_streamed_leading_whitespace', False
+                                ),
+                            ):
                                 yield event
                         if 'toolUse' in delta:
                             tool_use = delta['toolUse']

@@ -170,10 +170,11 @@ Need deterministic, fast tests?
 | Mistral | `mistral:` | `mistral:mistral-large-latest` |
 | Cohere | `cohere:` | `cohere:command-r-plus-08-2024` |
 | AWS Bedrock | `bedrock:` | `bedrock:anthropic.claude-sonnet-4-6` |
+| AWS Bedrock Mantle | `bedrock-mantle:` | `bedrock-mantle:openai.gpt-oss-120b` |
 | Azure | `azure:` | `azure:gpt-5.2` |
 | OpenRouter | `openrouter:` | `openrouter:anthropic/claude-sonnet-4-6` |
 | xAI | `xai:` | `xai:grok-4.3` |
-| DeepSeek | `deepseek:` | `deepseek:deepseek-chat` |
+| DeepSeek | `deepseek:` | `deepseek:deepseek-v4-flash` |
 | Fireworks | `fireworks:` | `fireworks:accounts/fireworks/models/llama-v3p3-70b-instruct` |
 | Together | `together:` | `together:meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo` |
 | Ollama (local) | `ollama:` | `ollama:llama3.2` |
@@ -181,8 +182,10 @@ Need deterministic, fast tests?
 | Hugging Face | `huggingface:` | `huggingface:meta-llama/Llama-3.3-70B-Instruct` |
 | Cerebras | `cerebras:` | `cerebras:llama-4-scout-17b-16e-instruct` |
 | Heroku | `heroku:` | `heroku:claude-sonnet-4-6` |
+| Snowflake Cortex | `snowflake:` | `snowflake:claude-sonnet-4-6` |
+| Crusoe | `crusoe:` | `crusoe:zai/GLM-5.2` |
 
-**Additional prefixes:** `litellm:`, `nebius:`, `ovhcloud:`, `alibaba:`, `sambanova:`, `vercel:`, `moonshotai:`. For truly custom providers, subclass `Model` or use `OpenAIChatModel` with a custom `base_url`.
+**Additional prefixes:** `litellm:`, `nebius:`, `ovhcloud:`, `alibaba:`, `sambanova:`, `vercel:`, `moonshotai:`. For any other OpenAI-compatible endpoint, point `OpenAIChatModel` at it with `provider=OpenAIProvider(base_url=..., api_key=...)`. For anything that isn't OpenAI-compatible, subclass `Model`.
 
 ### Tool Decorator Comparison
 
@@ -198,6 +201,7 @@ Need deterministic, fast tests?
 |---|---|:---:|
 | `Thinking` | Model thinking/reasoning at configurable effort | Yes |
 | `Hooks` | Decorator-based lifecycle hook registration | No |
+| `RaiseContentFilterError` | Raises `ContentFilterError` for model responses with `finish_reason='content_filter'` | Yes |
 | `WebSearch` | Web search — native when supported, local fallback | Yes |
 | `WebFetch` | URL fetching — native when supported, custom fallback | Yes |
 | `ImageGeneration` | Image generation — native when supported, custom fallback | Yes |
@@ -217,6 +221,7 @@ Need deterministic, fast tests?
 | Writing a CLI tool, script, or Jupyter notebook (no async) | `agent.run_sync()` |
 | Streaming final text word-by-word to a UI | `agent.run_stream()` |
 | Synchronous streaming for CLI tools or scripts (no async) | `agent.run_stream_sync()` |
+| Delegating to another agent from a tool or output function | `await agent.run()` in an `async def` function; the sync run methods cannot be used inside an agent run |
 | Receiving an async iterable of typed events (tool calls, results, final output) | `agent.run_stream_events()` |
 | Inspecting or modifying state between agent steps, human-in-the-loop approval | `agent.iter()` |
 

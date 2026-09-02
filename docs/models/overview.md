@@ -9,10 +9,12 @@ Pydantic AI is model-agnostic and has built-in support for multiple model provid
 * [Bedrock](bedrock.md)
 * [Cerebras](cerebras.md)
 * [Cohere](cohere.md)
+* [Crusoe](crusoe.md)
 * [Groq](groq.md)
 * [Hugging Face](huggingface.md)
 * [Mistral](mistral.md)
 * [OpenRouter](openrouter.md)
+* [Snowflake Cortex](snowflake.md)
 * [Z.AI](zai.md)
 
 ## OpenAI-compatible Providers
@@ -23,7 +25,7 @@ In addition, many providers are compatible with the OpenAI API, and can be used 
 - [Azure AI Foundry](openai.md#azure-ai-foundry)
 - [DeepSeek](openai.md#deepseek)
 - [Fireworks AI](openai.md#fireworks-ai)
-- [GitHub Models](openai.md#github-models)
+- [GitHub Models](openai.md#github-models) (retired, deprecated)
 - [Heroku](openai.md#heroku-ai)
 - [LiteLLM](openai.md#litellm)
 - [Nebius AI Studio](openai.md#nebius-ai-studio)
@@ -67,7 +69,7 @@ When you instantiate an [`Agent`][pydantic_ai.Agent] with just a name formatted 
 Pydantic AI will automatically select the appropriate model class, provider, and profile.
 If you want to use a different provider or profile, you can instantiate a model class directly and pass in `provider` and/or `profile` arguments.
 
-### Inspecting a model's profile
+### Inspecting a model's profile {#inspecting-a-models-profile}
 
 A model's [`ModelProfile`][pydantic_ai.profiles.ModelProfile] also describes what the model can do. It is a `TypedDict`, so you read capability flags with normal dictionary access via `model.profile` — for example [`supports_tools`][pydantic_ai.profiles.ModelProfile.supports_tools], [`supports_json_schema_output`][pydantic_ai.profiles.ModelProfile.supports_json_schema_output], and [`supported_native_tools`][pydantic_ai.profiles.ModelProfile.supported_native_tools]. This is useful when you want to branch on a capability rather than discover a limitation at request time — for example checking whether a model supports tool calling, native JSON-schema output, or a specific native tool before relying on it:
 
@@ -87,7 +89,9 @@ print(WebSearchTool in profile['supported_native_tools'])
 ```
 
 `model.profile` is usually the fully *resolved* profile: keys from [`DEFAULT_PROFILE`][pydantic_ai.profiles.DEFAULT_PROFILE] are merged with the provider's defaults, so direct key access like `profile['supports_tools']` works. If you supply `profile=` as a callable (or otherwise have a partial profile dict), use `profile.get('supports_tools', DEFAULT_PROFILE['supports_tools'])` (after importing `DEFAULT_PROFILE`) to tolerate missing keys.
-Any [`Model`][pydantic_ai.models.Model] instance exposes its resolved profile the same way, so the same check works whether the model was selected automatically from a `<provider>:<model>` name or instantiated directly. Don't confuse this with [Capabilities](../capabilities.md), which are reusable bundles of tools, hooks, and settings you add to an agent — the profile describes what the underlying model itself supports.
+Individual model adapters expose their resolved profile the same way, so the same check works whether the model was selected automatically from a `<provider>:<model>` name or instantiated directly. A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] is different: it has no single profile because its candidate models may have different capabilities. Inspect the profile of each model in `fallback_model.models` instead. Don't confuse profiles with [Capabilities](../capabilities/overview.md), which are reusable bundles of tools, hooks, and settings you add to an agent — the profile describes what the underlying model itself supports.
+
+The profile also carries the model's [`context_window`][pydantic_ai.profiles.ModelProfile.context_window]: the maximum number of tokens it can handle in a single request, or `None` when unknown. Every model, including a `FallbackModel` and wrappers like [`InstrumentedModel`][pydantic_ai.models.instrumented.InstrumentedModel], exposes it as [`model.context_window`][pydantic_ai.models.AbstractModel.context_window]; a fallback model reports the smallest window among its candidates, so history that fits it fits whichever candidate answers. Inside a run, [`ctx.context_window_used`][pydantic_ai.tools.RunContext.context_window_used] reports the fraction in use, or `None` when it cannot be calculated. See [Compact when the context window fills](../message-history.md#compact-when-the-context-window-fills) for an example that handles this case.
 
 ## HTTP Client Lifecycle
 
@@ -192,6 +196,52 @@ attributes showing the queue depth and configured limits. The `name` parameter o
 
 <!-- TODO(Marcelo): We need to create a section in the docs about reliability. -->
 
+## Handling HTTP Errors
+
+When a provider returns a 4xx or 5xx response, Pydantic AI raises a
+[`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError]. The exception exposes the
+[`status_code`][pydantic_ai.exceptions.ModelHTTPError.status_code], the response
+[`body`][pydantic_ai.exceptions.ModelHTTPError.body], and the provider's
+**response headers** via the [`headers`][pydantic_ai.exceptions.ModelHTTPError.headers]
+attribute (a `dict[str, str]` with lowercase keys, or `None` for providers that don't
+surface headers, such as gRPC-based providers).
+
+When [OpenAI](openai.md), [Anthropic](anthropic.md), the [Google Gemini API](google.md),
+[Amazon Bedrock](bedrock.md), or [Groq](groq.md) reports that a requested model identifier is
+unavailable, Pydantic AI adds a close known match to the error message when one exists. The
+suggestion is also available as
+[`suggested_model_id`][pydantic_ai.exceptions.ModelHTTPError.suggested_model_id]. This is
+best-effort guidance after the provider rejects a request, not local validation: unknown model
+identifiers remain valid so custom deployments and newly released models continue to work.
+
+The motivating use case is propagating the `Retry-After` header from a 429 response to a
+caller's own HTTP client.  A convenience property
+[`retry_after`][pydantic_ai.exceptions.ModelHTTPError.retry_after] parses that header and
+returns the number of seconds to wait as a `float`, handling both the integer
+delta-seconds and HTTP-date formats:
+
+```python {title="handle_rate_limit.py" test="skip" lint="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.exceptions import ModelHTTPError
+
+agent = Agent('openai:gpt-5.2')
+
+try:
+    result = agent.run_sync('What is the capital of France?')
+except ModelHTTPError as exc:
+    if exc.status_code == 429:
+        wait = exc.retry_after  # float | None
+        raise MyRateLimitException(
+            'AI service is rate-limited. Try again shortly.',
+            retry_after=wait,
+        )
+    raise
+```
+
+!!! note
+    `headers` is `None` for errors synthesised from a non-HTTP source (e.g. xAI's
+    gRPC transport, or OpenRouter errors parsed from a 200-OK response body).
+
 ## Fallback Model
 
 You can use [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] to attempt multiple models
@@ -209,7 +259,7 @@ exception handlers, and response handlers — all of which can be sync or async.
 !!! note
     The provider SDKs on which Models are based (like OpenAI, Anthropic, etc.) often have built-in retry logic that can delay the `FallbackModel` from activating.
 
-    When using `FallbackModel`, it's recommended to disable provider SDK retries to ensure immediate fallback, for example by setting `max_retries=0` on a [custom OpenAI client](openai.md#custom-openai-client).
+    When using `FallbackModel`, it's recommended to disable provider SDK retries to ensure immediate fallback, for example by setting `max_retries=0` on a [custom OpenAI client](openai.md#custom-openai-client) or a [custom Anthropic client](anthropic.md#custom-http-client). See [The layers](../retries.md#the-layers) in the retries guide for the full retry map.
 
 In the following example, the agent first makes a request to the OpenAI model (which fails due to an invalid API key),
 and then falls back to the Anthropic model.
@@ -245,7 +295,7 @@ print(response.all_messages())
     ),
     ModelResponse(
         parts=[TextPart(content='The capital of France is Paris.')],
-        usage=RequestUsage(input_tokens=56, output_tokens=7),
+        usage=RequestUsage(cost=Decimal('0.000273'), input_tokens=56, output_tokens=7),
         model_name='claude-sonnet-4-5',
         timestamp=datetime.datetime(...),
         run_id='...',
@@ -372,6 +422,8 @@ The `fallback_on` parameter accepts:
 
 Handler type is auto-detected by inspecting type hints on the first parameter. If the first parameter is hinted as [`ModelResponse`][pydantic_ai.messages.ModelResponse], it's a response handler. Otherwise (including untyped handlers and lambdas), it's an exception handler.
 
+As the hints are resolved at runtime, every annotated type in the handler signature must be imported at runtime rather than only under `if TYPE_CHECKING:`. If any annotation can't be resolved, a [`UserError`][pydantic_ai.exceptions.UserError] is raised instead of the handler being silently treated as an exception handler.
+
 #### Finish Reason Example
 
 A simple use case is checking the model's finish reason — for example, falling back if the response was truncated due to length limits:
@@ -407,10 +459,29 @@ print(result.output)
     To keep exception-based fallback alongside a response handler, pass them together as a list — see the [mixed example below](#combining-handlers).
 
 !!! note
-    Note that Pydantic AI already handles some finish reasons automatically in the [agent loop](../agent.md):
-    responses with a `'length'` or `'content_filter'` finish reason raise exceptions (which `FallbackModel`
-    catches by default), and empty responses are retried. A response handler is useful for custom
-    checks beyond these built-in behaviors.
+    The [agent loop](../agent.md) only acts on a finish reason when the response has no actionable
+    output. A `'length'` finish reason on an empty or thinking-only response raises
+    [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior] (typically the model hit
+    the token limit mid-thinking), and an empty response with a `'content_filter'` finish reason raises
+    [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError]. Other empty or thinking-only
+    responses are re-prompted, up to the output retry limit. Non-empty responses are handled normally
+    regardless of finish reason — a tool call truncated mid-arguments is re-prompted like any other
+    invalid-arguments failure, and only once its retry budget is exhausted does it surface as
+    [`IncompleteToolCall`][pydantic_ai.exceptions.IncompleteToolCall] (a subclass of
+    `UnexpectedModelBehavior`).
+
+    All of these are raised from the agent loop, after `model.request()` has already returned
+    successfully, so no exception-based `fallback_on` can catch them — not the default
+    `fallback_on=(ModelAPIError,)` (which wouldn't match anyway, as `ContentFilterError` inherits from
+    `UnexpectedModelBehavior`, not [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError]), and not an
+    explicit `fallback_on=(ContentFilterError,)` either. To fall back on a bad finish reason instead,
+    use a response handler (see the [example above](#finish-reason-example)) that inspects
+    [`finish_reason`][pydantic_ai.messages.ModelResponse.finish_reason]: it rejects the response inside
+    `FallbackModel` before the agent loop sees it, so the next model is tried instead of an exception
+    being raised. Note that it rejects *every* response with that finish reason, including non-empty
+    ones the agent loop would have accepted. To instead raise on `content_filter` responses that still
+    carry partial or refusal text, add the
+    [`RaiseContentFilterError`][pydantic_ai.capabilities.RaiseContentFilterError] capability.
 
 #### Native Tool Failure Example
 

@@ -78,7 +78,7 @@ async def main():
     #> Final state: 1
 ```
 
-_(This example is complete, it can be run "as is" — you'll need to add `import asyncio; asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 ## Key Concepts
 
@@ -164,7 +164,7 @@ async def main():
     #> Items processed: 5
 ```
 
-_(This example is complete, it can be run "as is" — you'll need to add `import asyncio; asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 In this example:
 
@@ -240,7 +240,7 @@ async def main():
                 break
 ```
 
-_(This example is complete, it can be run "as is" — you'll need to add `import asyncio; asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 The [`GraphRun`][pydantic_graph.graph_builder.GraphRun] object provides:
 
@@ -321,6 +321,6 @@ Both APIs are fully supported and can even be integrated together when needed.
 ## Persistence and Resumability
 
 !!! info "No Native Persistence"
-    Unlike the [original Graph API](../../graph.md#state-persistence), the graph builder API does not include built-in state persistence. This is due to the [complexity of achieving consistent snapshotting with parallel execution](https://github.com/pydantic/pydantic-ai/issues/530#issuecomment-3504609992).
+    Unlike the [original Graph API](../../graph.md), the graph builder API does not include built-in state persistence. This is due to the [complexity of achieving consistent snapshotting with parallel execution](https://github.com/pydantic/pydantic-ai/issues/530#issuecomment-3504609992).
 
 For workflows that need to preserve progress across failures, restarts, or long-running operations, use one of the supported [durable execution](../../durable_execution/overview.md) solutions.

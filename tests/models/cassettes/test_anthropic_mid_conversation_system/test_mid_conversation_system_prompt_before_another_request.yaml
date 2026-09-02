@@ -1,0 +1,129 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '582'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: 'Review `def add(a, b): return a + b`.'
+          type: text
+        role: user
+      - content:
+        - text: Looks fine.
+          type: text
+        role: assistant
+      - content:
+        - text: Review it again.
+          type: text
+        role: user
+      - content:
+        - text: Review it once more.
+          type: text
+        role: user
+      - content:
+        - text: From now on, every suggestion must include explicit type annotations.
+          type: text
+        role: system
+      model: claude-opus-4-8
+      stream: false
+      system: You are a code reviewer.
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '1957'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-c77be7109dcafc5566b559e7d4aea491-a0ca9334ed1224d3-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      content:
+      - text: |-
+          Sure. Here's my review with explicit type annotations as requested:
+
+          ```python
+          def add(a: int, b: int) -> int:
+              return a + b
+          ```
+
+          A few notes on this suggestion:
+
+          - I've annotated `a` and `b` as `int` and the return as `int`, which covers the common case. But be aware this is a *narrowing* assumption--your original `def add(a, b)` would happily add floats, strings, lists, etc.
+
+          - If you want to preserve that generality while still being explicit, a couple of options:
+
+          ```python
+          from typing import TypeVar
+
+          T = TypeVar("T")
+
+          def add(a: T, b: T) -> T:
+              return a + b
+          ```
+
+          This says "both arguments are the same type, and the result is that type." It's honest about the fact that `add` works on more than just ints, though it doesn't actually constrain `T` to types that support `+`.
+
+          - For a stricter version that requires the `+` operator, you'd need a Protocol:
+
+          ```python
+          from typing import Protocol, TypeVar
+
+          class Addable(Protocol):
+              def __add__(self: "T", other: "T") -> "T": ...
+
+          T = TypeVar("T", bound="Addable")
+
+          def add(a: T, b: T) -> T:
+              return a + b
+          ```
+
+          This is more precise but arguably overkill for a one-line helper.
+
+          My recommendation: use the plain `int` version if this is genuinely numeric code, or the `TypeVar` version if it's meant to be generic. The Protocol approach is correct but usually more machinery than a trivial function warrants.
+        type: text
+      id: msg_011CdX6gsscnLah1aeFg2R5o
+      model: claude-opus-4-8
+      role: assistant
+      stop_details: null
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: global
+        input_tokens: 75
+        output_tokens: 492
+        output_tokens_details:
+          thinking_tokens: 0
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1

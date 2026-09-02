@@ -8,14 +8,14 @@
 
 Graph and finite state machine library.
 
-This library is developed as part of [Pydantic AI](https://ai.pydantic.dev), however it has no dependency
+This library is developed as part of [Pydantic AI](https://pydantic.dev/docs/ai/), however it has no dependency
 on `pydantic-ai` or related packages and can be considered as a pure graph-based state machine library. You may find it useful whether or not you're using Pydantic AI or even building with GenAI.
 
 As with Pydantic AI, this library prioritizes type safety and use of common Python syntax over esoteric, domain-specific use of Python syntax.
 
 `pydantic-graph` allows you to define graphs using standard Python syntax. In particular, edges are defined using the return type hint of nodes.
 
-Full documentation is available at [ai.pydantic.dev/graph](https://ai.pydantic.dev/graph).
+Full documentation is available at [pydantic.dev/docs/ai/graph](https://pydantic.dev/docs/ai/graph/graph/).
 
 Here's a basic example:
 

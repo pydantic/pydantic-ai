@@ -64,7 +64,11 @@
 <!-- rule:32 -->
 - Use `!r` format specifier for identifiers in error messages (e.g., `f'Tool {name!r}'` not `f'Tool `{name}`'`) — Provides consistent, unambiguous quoting that clearly delimits values and handles edge cases like empty strings or special characters.
 <!-- rule:353 -->
-- Fail fast on explicit user config conflicts; gracefully fallback on internal/auto setting conflicts — Catching user mistakes early with clear errors prevents debugging confusion, while internal fallbacks enable cross-provider compatibility and system resilience when constraints are automatically inferred or propagated
+- Fail fast on explicit user config conflicts without API-defined precedence — Clear errors prevent arbitrary overrides
+- Fall back gracefully on internal or automatic setting conflicts — Internal fallbacks enable cross-provider compatibility when constraints are inferred or propagated
+- Warn when API-defined precedence overrides an explicit user value — Documentation does not replace runtime feedback; warnings identify affected call sites, persist in logs and test suites, and make suppression explicit in source
+- Make override warnings actionable by naming the overridden value and what took precedence — Users must be able to change the input that triggered the warning
+- Emit an override warning only when code proves the user supplied the overridden value — False positives make warnings untrustworthy and train users to suppress real problems
 <!-- rule:337 -->
 - Inherit new exception types from existing base exceptions like `UnexpectedModelBehavior` when semantically appropriate — Maintains backward compatibility so user code catching parent exceptions continues to work when new exception types are introduced
 <!-- rule:320 -->
@@ -104,18 +108,15 @@
 - Remove tests when redundant, obsolete, or duplicative — each test should verify distinct, valuable behavior that currently exists — Reduces maintenance burden and keeps test suite focused on actual behavior; prevents false confidence from tests covering non-existent code paths or duplicating coverage without verifying edge cases
 <!-- rule:97 -->
 - Avoid `# pragma: no cover` — write tests instead. Only use for truly untestable code (defensive guards, platform branches, optional deps unavailable in CI) — Coverage pragmas hide gaps in test coverage; proper tests prevent regressions and document expected behavior, while pragmas should only mark code paths that cannot be executed in testing environments
+- Write nothing after a `# pragma: ...` marker on its line — no trailing prose, no second `#` comment (tooling directives like `# pyright: ignore[...]` are the exception). When the exclusion needs a rationale, put it on its own comment line above the statement — Keeps the marker itself machine-readable and uniform across the codebase, while the reason stays visible to the next reader
 
 ## Documentation
 
-<!-- rule:132 -->
-- Use latest/frontier models (e.g., `'gpt-5'` not `'gpt-4o'`) in docs and examples — Shows users current best practices and prevents outdated examples from becoming cargo-culted into production code
 <!-- rule:390 -->
 - Use provider-prefixed model identifiers (`{provider}:{model}`) and platform-specific formats (e.g., AWS Bedrock requires `us.anthropic.claude-{model}-{version}:0`) — Prevents misconfiguration and API errors by matching exact identifier formats required by each platform, ensures consistency across docs and code
 
 ## General
 
-<!-- rule:-2 -->
-- Use latest frontier models (e.g. `openai:gpt-5.2`, `anthropic:claude-opus-4-6`) in `docs/examples` — Outdated model references make our product look unmaintained and reduce user trust
 <!-- rule:449 -->
 - Use `make install` to regenerate lock files (e.g., `uv.lock`) after dependency changes — Ensures reproducible builds and keeps lock file diffs minimal. Update the package manager (uv, npm, pip-tools) to latest first and start from clean state. If diffs are unexpectedly large, reset to base branch and regenerate to isolate actual changes — prevents spurious conflicts and version drift.
 <!-- rule:717 -->
@@ -128,7 +129,7 @@
 Check these when working in specific areas:
 
 - **[Code Simplification & Idioms](code-simplification.md)**: When refactoring code for clarity or looking to simplify complex patterns
-- **[Documentation](documentation.md)**: When writing or updating documentation, comments, or docstrings
+- **[Documentation](documentation.md)**: When writing or reviewing documentation, comments, docstrings, examples, or other user-facing text
 - **[API Design & Interfaces](api-design.md)**: When designing or modifying public APIs, parameters, or class interfaces
 - **[Pydantic AI Slim Architecture](pydantic-ai-slim.md)**: When changing agents, tools, output, message history, providers, profiles, capabilities, toolsets, UI adapters, or durable execution
 <!-- /braindump -->

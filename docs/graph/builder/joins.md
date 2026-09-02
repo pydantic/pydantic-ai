@@ -53,7 +53,7 @@ async def main():
     #> [1, 4, 9, 16, 25]
 ```
 
-_(This example is complete, it can be run "as is" — you'll need to add `import asyncio; asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 ## Built-in Reducers
 
@@ -100,7 +100,7 @@ async def main():
     #> ['value-10', 'value-20', 'value-30']
 ```
 
-_(This example is complete, it can be run "as is" — you'll need to add `import asyncio; asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 ### `reduce_list_extend`
 
@@ -144,7 +144,7 @@ async def main():
     #> [0, 0, 0, 1, 1, 2]
 ```
 
-_(This example is complete, it can be run "as is" — you'll need to add `import asyncio; asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 ### `reduce_dict_update`
 
@@ -188,7 +188,7 @@ async def main():
     #> {'apple': 5, 'banana': 6, 'cherry': 6}
 ```
 
-_(This example is complete, it can be run "as is" — you'll need to add `import asyncio; asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 ### `reduce_null`
 
@@ -239,7 +239,7 @@ async def main():
     #> 15
 ```
 
-_(This example is complete, it can be run "as is" — you'll need to add `import asyncio; asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 ### `reduce_sum`
 
@@ -282,7 +282,7 @@ async def main():
     #> 100
 ```
 
-_(This example is complete, it can be run "as is" — you'll need to add `import asyncio; asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 ### `ReduceFirstValue`
 
@@ -332,10 +332,10 @@ async def main():
     print(result)
     #> Result from task 1
     print(f'Tasks completed: {state.tasks_completed}')
-    #> Tasks completed: 1
+    #> Tasks completed: ...
 ```
 
-_(This example is complete, it can be run "as is" — you'll need to add `import asyncio; asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 ## Custom Reducers
 
@@ -377,7 +377,7 @@ async def main():
     #> 50
 ```
 
-_(This example is complete, it can be run "as is" — you'll need to add `import asyncio; asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 ## Reducers with State Access
 
@@ -459,7 +459,7 @@ async def main():
     #> State total_sum: 275
 ```
 
-_(This example is complete, it can be run "as is" — you'll need to add `import asyncio; asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 ### Canceling Sibling Tasks
 
@@ -524,7 +524,7 @@ async def main():
     #> Searches completed: 3
 ```
 
-_(This example is complete, it can be run "as is" — you'll need to add `import asyncio; asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 Note that only 3 searches completed instead of all 5, because the reducer canceled the remaining tasks after finding a match.
 
@@ -599,7 +599,7 @@ async def main():
     #> Group B: [30, 60]
 ```
 
-_(This example is complete, it can be run "as is" — you'll need to add `import asyncio; asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 ## Customizing Join Nodes
 

@@ -24,11 +24,18 @@ carrier (`ReasoningEncryptedValueEvent`) is a separate `REASONING_*` event gated
 REASONING_VERSION = (0, 1, 13)
 """AG-UI version that introduced REASONING_* events (replacing THINKING_*)."""
 
-MULTIMODAL_VERSION = (0, 1, 15)
-"""AG-UI version that introduced typed multimodal input content (Image/Audio/Video/Document).
+REASONING_MESSAGE_ROLE_VERSION = (0, 1, 14)
+"""AG-UI version that changed `ReasoningMessageStartEvent.role` from `'assistant'` to `'reasoning'`.
 
-Also changed `ReasoningMessageStartEvent.role` from `'assistant'` to `'reasoning'`.
+The field is a `Literal`, so the value we emit has to match the *installed* model exactly or
+constructing the event raises — see `REASONING_MESSAGE_ROLE`.
 """
+
+MULTIMODAL_VERSION = (0, 1, 15)
+"""AG-UI version that introduced typed multimodal input content (Image/Audio/Video/Document)."""
+
+ACTIVITY_EVENTS_VERSION = (0, 1, 19)
+"""AG-UI version that introduced activity snapshot and delta events."""
 
 INTERRUPTS_VERSION = (0, 1, 19)
 """AG-UI version that introduced the interrupt-aware run lifecycle.
@@ -50,8 +57,14 @@ Keep this string stable — clients may persist `Interrupt.id` across page reloa
 FILE_ACTIVITY_TYPE: Final[str] = 'pydantic_ai_file'
 """Activity type for agent-generated files stored as AG-UI ActivityMessages."""
 
+COMPACTION_ACTIVITY_TYPE: Final[str] = 'pydantic_ai_compaction'
+"""Activity type for compaction parts stored as AG-UI ActivityMessages."""
+
 UPLOADED_FILE_ACTIVITY_TYPE: Final[str] = 'pydantic_ai_uploaded_file'
 """Activity type for uploaded files stored as AG-UI ActivityMessages."""
+
+TOOL_AVAILABILITY_DELTA_ACTIVITY_TYPE: Final[str] = 'pydantic_ai_tool_availability_delta'
+"""Activity type for tool availability changes stored as AG-UI ActivityMessages."""
 
 
 class FileActivityContent(TypedDict, total=False):
@@ -106,7 +119,7 @@ DEFAULT_AG_UI_VERSION: str = detect_ag_ui_version()
 """The default AG-UI version, auto-detected from the installed `ag-ui-protocol` package."""
 
 REASONING_MESSAGE_ROLE: str = (
-    'reasoning' if parse_ag_ui_version(DEFAULT_AG_UI_VERSION) >= MULTIMODAL_VERSION else 'assistant'
+    'reasoning' if parse_ag_ui_version(DEFAULT_AG_UI_VERSION) >= REASONING_MESSAGE_ROLE_VERSION else 'assistant'
 )
 """The correct `role` value for `ReasoningMessageStartEvent`, based on the installed SDK version."""
 
@@ -135,12 +148,14 @@ def tool_kind_encrypted_value(
 ) -> str | None:
     """Pack a part's `tool_kind` into an AG-UI `encrypted_value` blob, namespaced under `pydantic_ai`.
 
-    AG-UI has no generic per-tool metadata field, so we carry the `tool_kind` discriminator in
-    `encrypted_value` — the protocol's opaque, client-echoed state-continuity slot. Our payload is
-    nested under a `pydantic_ai` key so a genuine provider blob in the same slot (e.g. Google's
-    encrypted thinking on a tool call) is never read as our data. The claim is untrusted coming back
-    in: `parse_encrypted_tool_kind` returns it only when the key is present, and it degrades to a
-    plain part if it doesn't validate.
+    AG-UI documents `encrypted_value` for opaque, client-echoed reasoning continuity, and its
+    standard reducer can attach it to a message or tool call. AG-UI has no generic per-tool metadata
+    event, so we also use that reducer-compatible carrier for Pydantic AI continuity claims. This is
+    a namespaced compatibility mechanism, not a claim that the payload is encrypted reasoning. Our
+    payload is nested under a `pydantic_ai` key so a genuine provider blob in the same slot (e.g.
+    Google's encrypted thinking on a tool call) is never read as our data. The claim is untrusted
+    coming back in: `parse_encrypted_tool_kind` returns it only when the key is present, and it
+    degrades to a plain part if it doesn't validate.
 
     A non-`'success'` result outcome rides the same payload: a `ToolMessage` has no outcome slot,
     so without the claim a dump/load round-trip would upgrade a failed/denied/interrupted return to

@@ -7,13 +7,18 @@ from datetime import datetime
 from typing import Any, Literal, cast
 
 import pydantic_core
-from httpx import Timeout
 from pydantic import JsonValue
 from typing_extensions import assert_never
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils
 from .._run_context import RunContext
-from .._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc, number_to_datetime
+from .._utils import (
+    format_inlined_text_file as _format_inlined_text_file,
+    generate_tool_call_id as _generate_tool_call_id,
+    is_text_like_media_type as _is_text_like_media_type,
+    now_utc as _now_utc,
+    number_to_datetime,
+)
 from ..exceptions import ModelAPIError
 from ..messages import (
     AudioUrl,
@@ -32,10 +37,12 @@ from ..messages import (
     NativeToolCallPart,
     NativeToolReturnPart,
     RetryPromptPart,
+    SpeechPart,
     SystemPromptPart,
     TextContent,
     TextPart,
     ThinkingPart,
+    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
     UploadedFile,
@@ -45,13 +52,15 @@ from ..messages import (
 )
 from ..profiles import ModelProfileSpec
 from ..providers import Provider, infer_provider
-from ..settings import ModelSettings
+from ..settings import ModelSettings, ThinkingLevel
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
 from . import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
+    _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
+    _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
     get_user_agent,
@@ -65,7 +74,9 @@ try:
         AudioChunk as MistralAudioChunk,
         ChatCompletionChoiceFinishReason as MistralFinishReason,
         ChatCompletionRequestMessage as MistralMessages,
+        ChatCompletionRequestTool as MistralChatCompletionRequestTool,
         ChatCompletionResponse as MistralChatCompletionResponse,
+        ChatCompletionStreamRequestTool as MistralChatCompletionStreamRequestTool,
         CompletionChunk as MistralCompletionChunk,
         CompletionEvent as MistralCompletionEvent,
         ContentChunk as MistralContentChunk,
@@ -75,6 +86,7 @@ try:
         ImageURL as MistralImageURL,
         ImageURLChunk as MistralImageURLChunk,
         ReferenceChunk as MistralReferenceChunk,
+        ResponseFormatTypedDict as MistralResponseFormatTypedDict,
         TextChunk as MistralTextChunk,
         ThinkChunk as MistralThinkChunk,
         Tool as MistralTool,
@@ -100,6 +112,10 @@ except ImportError as e:  # pragma: lax no cover
         'you can use the `mistral` optional group — `pip install "pydantic-ai-slim[mistral]"`'
     ) from e
 
+# Below the guard on purpose: `mistralai` requires `httpx`, so without the extra the error above
+# is what users should see, not `ModuleNotFoundError: httpx`.
+from httpx import Timeout
+
 
 @contextmanager
 def _map_api_errors(model_name: str) -> Generator[None]:
@@ -107,7 +123,9 @@ def _map_api_errors(model_name: str) -> Generator[None]:
         yield
     except SDKError as e:
         if (status_code := e.status_code) >= 400:
-            raise ModelHTTPError(status_code=status_code, model_name=model_name, body=e.body) from e
+            raise ModelHTTPError(
+                status_code=status_code, model_name=model_name, body=e.body, headers=dict(e.headers)
+            ) from e
         raise ModelAPIError(model_name=model_name, message=e.message) from e  # pragma: lax no cover
 
 
@@ -132,13 +150,34 @@ _FINISH_REASON_MAP: dict[MistralFinishReason, FinishReason] = {
     'tool_calls': 'tool_call',
 }
 
+_MISTRAL_REASONING_EFFORT_MAP: dict[ThinkingLevel, Literal['none', 'high']] = {
+    True: 'high',
+    False: 'none',
+    'minimal': 'high',
+    'low': 'high',
+    'medium': 'high',
+    'high': 'high',
+    'xhigh': 'high',
+}
+"""Maps the unified `thinking` setting to Mistral's `reasoning_effort`.
+
+Mistral only exposes `'high'` (full thinking) and `'none'` (thinking suppressed), so every
+enabled level maps to `'high'`; only `thinking=False` maps to `'none'`. See
+https://docs.mistral.ai/capabilities/reasoning/.
+"""
+
 
 class MistralModelSettings(ModelSettings, total=False):
     """Settings used for a Mistral model request."""
 
     # ALL FIELDS MUST BE `mistral_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
 
-    # This class is a placeholder for any future mistral-specific settings
+    mistral_prompt_cache_key: str
+    """Used by Mistral to improve cache hit rates for similar requests, mirroring `openai_prompt_cache_key`.
+
+    See the [Mistral prompt caching documentation](https://docs.mistral.ai/studio-api/conversations/advanced/prompt-caching)
+    for more information.
+    """
 
 
 @dataclass(init=False)
@@ -257,7 +296,7 @@ class MistralModel(Model[Mistral]):
                 model=str(self._model_name),
                 messages=await self._map_messages(messages, model_request_parameters),
                 n=1,
-                tools=tools or UNSET,
+                tools=cast(list[MistralChatCompletionRequestTool], tools) if tools else UNSET,
                 tool_choice=tool_choice,
                 stream=False,
                 max_tokens=model_settings.get('max_tokens', UNSET),
@@ -268,6 +307,9 @@ class MistralModel(Model[Mistral]):
                 presence_penalty=model_settings.get('presence_penalty'),
                 frequency_penalty=model_settings.get('frequency_penalty'),
                 stop=model_settings.get('stop_sequences', None),
+                reasoning_effort=self._translate_thinking(model_request_parameters),
+                parallel_tool_calls=model_settings.get('parallel_tool_calls'),
+                prompt_cache_key=model_settings.get('mistral_prompt_cache_key', UNSET),
                 http_headers={'User-Agent': get_user_agent()},
             )
 
@@ -283,30 +325,14 @@ class MistralModel(Model[Mistral]):
         """Create a streaming completion request to the Mistral model."""
         response: MistralEventStreamAsync[MistralCompletionEvent] | None
         mistral_messages = await self._map_messages(messages, model_request_parameters)
+        reasoning_effort = self._translate_thinking(model_request_parameters)
 
         # TODO(Marcelo): We need to replace the current MistralAI client to use the beta client.
         # See https://docs.mistral.ai/agents/connectors/websearch/ to support web search.
         tools, tool_choice = self._get_tool_choice(model_request_parameters, model_settings)
 
-        if tools:
-            # Function Calling mode (with filtered tools)
-            response = await self.client.chat.stream_async(
-                model=str(self._model_name),
-                messages=mistral_messages,
-                n=1,
-                tools=tools,
-                tool_choice=tool_choice,
-                temperature=model_settings.get('temperature', UNSET),
-                top_p=model_settings.get('top_p', 1),
-                max_tokens=model_settings.get('max_tokens', UNSET),
-                timeout_ms=self._get_timeout_ms(model_settings.get('timeout')),
-                presence_penalty=model_settings.get('presence_penalty'),
-                frequency_penalty=model_settings.get('frequency_penalty'),
-                stop=model_settings.get('stop_sequences', None),
-                http_headers={'User-Agent': get_user_agent()},
-            )
-
-        elif model_request_parameters.output_tools:  # pragma: no cover
+        response_format: MistralResponseFormatTypedDict | None = None
+        if not tools and model_request_parameters.output_tools:  # pragma: no cover
             # this branch is dead code (output tool is being handled above)
             # leaving it in for the TODO (support NativeOutput properly)
             # TODO: Port to native "manual JSON" mode
@@ -314,32 +340,29 @@ class MistralModel(Model[Mistral]):
             parameters_json_schemas = [tool.parameters_json_schema for tool in model_request_parameters.output_tools]
             user_output_format_message = self._generate_user_output_format(parameters_json_schemas)
             mistral_messages.append(user_output_format_message)
+            response_format = {'type': 'json_object'}
 
-            response = await self.client.chat.stream_async(
-                model=str(self._model_name),
-                messages=mistral_messages,
-                response_format={
-                    'type': 'json_object'
-                },  # TODO: Should be able to use json_schema now: https://docs.mistral.ai/capabilities/structured-output/custom_structured_output/, https://github.com/mistralai/client-python/blob/bc4adf335968c8a272e1ab7da8461c9943d8e701/src/mistralai/extra/utils/response_format.py#L9
-                stream=True,
-                temperature=model_settings.get('temperature', UNSET),
-                top_p=model_settings.get('top_p', 1),
-                max_tokens=model_settings.get('max_tokens', UNSET),
-                timeout_ms=self._get_timeout_ms(model_settings.get('timeout')),
-                presence_penalty=model_settings.get('presence_penalty'),
-                frequency_penalty=model_settings.get('frequency_penalty'),
-                stop=model_settings.get('stop_sequences', None),
-                http_headers={'User-Agent': get_user_agent()},
-            )
-
-        else:
-            # Stream Mode (no tools at all)
-            response = await self.client.chat.stream_async(
-                model=str(self._model_name),
-                messages=mistral_messages,
-                stream=True,
-                http_headers={'User-Agent': get_user_agent()},
-            )
+        response = await self.client.chat.stream_async(
+            model=str(self._model_name),
+            messages=mistral_messages,
+            n=1 if tools else UNSET,
+            tools=cast(list[MistralChatCompletionStreamRequestTool], tools) if tools else UNSET,
+            tool_choice=tool_choice,
+            response_format=response_format,
+            stream=True,
+            temperature=model_settings.get('temperature', UNSET),
+            top_p=model_settings.get('top_p', 1 if tools or model_request_parameters.output_tools else None),
+            max_tokens=model_settings.get('max_tokens', UNSET),
+            timeout_ms=self._get_timeout_ms(model_settings.get('timeout')),
+            random_seed=model_settings.get('seed', UNSET),
+            presence_penalty=model_settings.get('presence_penalty'),
+            frequency_penalty=model_settings.get('frequency_penalty'),
+            stop=model_settings.get('stop_sequences', None),
+            reasoning_effort=reasoning_effort,
+            parallel_tool_calls=model_settings.get('parallel_tool_calls'),
+            prompt_cache_key=model_settings.get('mistral_prompt_cache_key', UNSET),
+            http_headers={'User-Agent': get_user_agent()},
+        )
         assert response, 'An unexpected empty response from Mistral.'
         return response
 
@@ -361,7 +384,7 @@ class MistralModel(Model[Mistral]):
         - "required": Forces tool use.
         """
         resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
-        tool_defs = model_request_parameters.tool_defs
+        tool_defs = model_request_parameters.declared_tool_defs
 
         tool_choice: MistralToolChoiceEnum
         if resolved_tool_choice == 'auto':
@@ -396,6 +419,8 @@ class MistralModel(Model[Mistral]):
         assert response.choices, 'Unexpected empty response choice.'
 
         choice = response.choices[0]
+        if choice.message is None:  # pragma: no cover
+            raise UnexpectedModelBehavior('Unexpected empty response message from Mistral')
         content = choice.message.content
         tool_calls = choice.message.tool_calls
 
@@ -544,6 +569,20 @@ class MistralModel(Model[Mistral]):
             return int(1000 * timeout)
         raise NotImplementedError('Timeout object is not yet supported for MistralModel.')
 
+    def _translate_thinking(
+        self,
+        model_request_parameters: ModelRequestParameters,
+    ) -> Literal['none', 'high'] | MistralUnset:
+        """Map the unified `thinking` setting to Mistral's `reasoning_effort`.
+
+        Only models with adjustable reasoning accept `reasoning_effort`; always-on models
+        (`magistral`) reason unconditionally and must not receive it.
+        """
+        thinking = model_request_parameters.thinking
+        if thinking is None or self.profile.get('thinking_always_enabled', False):
+            return UNSET
+        return _MISTRAL_REASONING_EFFORT_MAP[thinking]
+
     async def _map_user_message(self, message: ModelRequest) -> AsyncIterable[MistralMessages]:
         file_content: list[UserContent] = []
         for part in message.parts:
@@ -566,6 +605,11 @@ class MistralModel(Model[Mistral]):
                         tool_call_id=part.tool_call_id,
                         content=part.model_response(),
                     )
+            elif isinstance(part, ToolAvailabilityDeltaPart):  # pragma: no cover
+                raise _unsynthesized_tool_availability_delta_error()
+            elif isinstance(part, SpeechPart):  # pragma: no cover
+                # Unconverted realtime speech; `prepare_messages` turns these into `UserPromptPart`s in `Model.prepare_messages`.
+                raise _unconverted_speech_part_error()
             else:
                 assert_never(part)
         if file_content:
@@ -601,6 +645,9 @@ class MistralModel(Model[Mistral]):
                     elif isinstance(part, CompactionPart):  # pragma: no cover
                         # Compaction parts are not sent back to models that don't support compaction.
                         pass
+                    elif isinstance(part, SpeechPart):  # pragma: no cover
+                        # Unconverted realtime speech; `prepare_messages` turns these into `TextPart`s in `Model.prepare_messages`.
+                        raise _unconverted_speech_part_error()
                     else:
                         assert_never(part)
                 if thinking_chunks:
@@ -656,7 +703,17 @@ class MistralModel(Model[Mistral]):
                         image_url.detail = metadata.get('detail', 'auto')
                     content.append(MistralImageURLChunk(image_url=image_url, type='image_url'))
                 elif isinstance(item, BinaryContent):
-                    if item.is_image:
+                    if _is_text_like_media_type(item.media_type):
+                        content.append(
+                            MistralTextChunk(
+                                text=_format_inlined_text_file(
+                                    item.data.decode('utf-8'),
+                                    media_type=item.media_type,
+                                    identifier=item.identifier,
+                                )
+                            )
+                        )
+                    elif item.is_image:
                         image_url = MistralImageURL(url=item.data_uri)
                         if metadata := item.vendor_metadata:
                             image_url.detail = metadata.get('detail', 'auto')
@@ -665,10 +722,21 @@ class MistralModel(Model[Mistral]):
                         content.append(MistralDocumentURLChunk(document_url=item.data_uri, type='document_url'))
                     else:
                         raise NotImplementedError(
-                            'BinaryContent other than image or PDF is not supported in Mistral user prompts'
+                            'BinaryContent other than text-like, image, or PDF is not supported in Mistral user prompts'
                         )
                 elif isinstance(item, DocumentUrl):
-                    if item.media_type == 'application/pdf':
+                    if _is_text_like_media_type(item.media_type):
+                        downloaded_text = await download_item(item, data_format='text')
+                        content.append(
+                            MistralTextChunk(
+                                text=_format_inlined_text_file(
+                                    downloaded_text['data'],
+                                    media_type=item.media_type,
+                                    identifier=item.identifier,
+                                )
+                            )
+                        )
+                    elif item.media_type == 'application/pdf':
                         if item.force_download:
                             downloaded = await download_item(item, data_format='base64_uri')
                             content.append(
@@ -677,7 +745,9 @@ class MistralModel(Model[Mistral]):
                         else:
                             content.append(MistralDocumentURLChunk(document_url=item.url, type='document_url'))
                     else:
-                        raise NotImplementedError('DocumentUrl other than PDF is not supported in Mistral user prompts')
+                        raise NotImplementedError(
+                            'DocumentUrl other than text-like or PDF is not supported in Mistral user prompts'
+                        )
                 elif isinstance(item, AudioUrl):
                     raise NotImplementedError('AudioUrl is not supported in Mistral user prompts')
                 elif isinstance(item, VideoUrl):
@@ -797,17 +867,26 @@ class MistralStreamedResponse(StreamedResponse):
                 ):
                     continue
 
-                # Matches enabled by the widened numeric compatibility can also be incomplete numeric tokens:
-                # an integer can be the prefix of a decimal number, and an integral float can be followed by an
-                # exponent. Only emit these newly supported matches once the accumulated JSON is complete.
+                # Numeric tokens at the end of a partial document may be extended by the next chunk.
                 if not MistralStreamedResponse._validate_required_json_schema(
                     output_json, output_tool.parameters_json_schema, allow_widened_numeric_match=False
                 ):
                     try:
-                        # A successful complete parse of `text` is identical to `output_json`, so only
-                        # completeness is checked and the parsed value is discarded.
                         pydantic_core.from_json(text)
                     except ValueError:
+                        continue
+                elif text[-1:].isdigit():
+                    # Probe whether a decimal continuation would invalidate the schema.
+                    try:
+                        extended_json = cast(
+                            dict[str, JsonValue],
+                            pydantic_core.from_json(f'{text}.5', allow_partial='trailing-strings'),
+                        )
+                    except ValueError:
+                        continue
+                    if not MistralStreamedResponse._validate_required_json_schema(
+                        extended_json, output_tool.parameters_json_schema
+                    ):
                         continue
 
                 # The following part_id will be thrown away

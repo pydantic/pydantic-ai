@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterable, Callable, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from pydantic import ValidationError
 
-from pydantic_ai._instructions import AgentInstructions
+from pydantic_ai._instructions import AgentInstructions, SourcedInstruction, normalize_instructions
+from pydantic_ai._utils import aclose_all, replace_no_init
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
 from pydantic_ai.tools import (
@@ -21,6 +22,7 @@ from pydantic_ai.toolsets import AbstractToolset, AgentToolset
 
 from .abstract import (
     AbstractCapability,
+    AgentModel,
     AgentNode,
     CapabilityDescription,
     NodeResult,
@@ -37,8 +39,8 @@ from .abstract import (
 )
 
 if TYPE_CHECKING:
-    from pydantic_ai.agent.abstract import AgentModelSettings
-    from pydantic_ai.models import ModelRequestContext
+    from pydantic_ai.agent.abstract import AbstractAgent, AgentModelSettings
+    from pydantic_ai.models import KnownModelName, Model, ModelRequestContext, ModelResolutionContext
     from pydantic_ai.output import OutputContext
     from pydantic_ai.run import AgentRunResult
 
@@ -49,17 +51,30 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
 
     Analogous to [`WrapperToolset`][pydantic_ai.toolsets.WrapperToolset] for toolsets.
     Subclass and override specific methods to modify behavior while delegating the rest.
+
+    When the wrapped capability returns a fresh instance from
+    [`for_agent`][pydantic_ai.capabilities.AbstractCapability.for_agent] or
+    [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run], the wrapper is rebound
+    as a shallow copy holding the new `wrapped`: subclass state is carried over verbatim and
+    `__init__`/`__post_init__` are not re-run. Compute values derived from `wrapped` on
+    access (e.g. via a property) rather than caching them at construction, so they can't go
+    stale across a rebind.
     """
 
     wrapped: AbstractCapability[AgentDepsT]
 
     def __post_init__(self) -> None:
+        self.__adopt_wrapped_identity()
+
+    # Name-mangled deliberately: this upholds a base-class invariant on rebinds, so a
+    # subclass attribute of the same name must not be able to override it.
+    def __adopt_wrapped_identity(self) -> None:
         # A wrapper is transparent by default: with no explicit `id` of its own, it adopts
         # the wrapped capability's `id` and `defer_loading`. This is what lets a wrapper sit
         # over a deferred capability without losing its deferral or its place in the load
-        # catalog. `for_run` re-creates the wrapper via `replace()`, so this re-resolves
-        # against the post-`for_run` wrapped instance — e.g. one a `DynamicCapability`
-        # produced at run time, whose `id` only becomes known once the factory has run.
+        # catalog. `for_agent`/`for_run` re-run this on the rebound copy, so it re-resolves
+        # against the new wrapped instance — e.g. one a `DynamicCapability` produced at run
+        # time, whose `id` only becomes known once the factory has run.
         if self.id is None:
             self.id = self.wrapped.id
             self.defer_loading = self.wrapped.defer_loading
@@ -83,8 +98,29 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         return self.description if self.description is not None else self.wrapped.get_description()
 
     @property
-    def has_wrap_node_run(self) -> bool:
-        return type(self).wrap_node_run is not WrapperCapability.wrap_node_run or self.wrapped.has_wrap_node_run
+    def _has_wrap_node_run(self) -> bool:
+        return type(self).wrap_node_run is not WrapperCapability.wrap_node_run or self.wrapped._has_wrap_node_run
+
+    @property
+    def _has_on_node_run_error(self) -> bool:
+        return (
+            type(self).on_node_run_error is not WrapperCapability.on_node_run_error
+            or self.wrapped._has_on_node_run_error
+        )
+
+    @property
+    def _has_wrap_model_request(self) -> bool:
+        return (
+            type(self).wrap_model_request is not WrapperCapability.wrap_model_request
+            or self.wrapped._has_wrap_model_request
+        )
+
+    @property
+    def _has_on_model_request_error(self) -> bool:
+        return (
+            type(self).on_model_request_error is not WrapperCapability.on_model_request_error
+            or self.wrapped._has_on_model_request_error
+        )
 
     @property
     def has_wrap_run_event_stream(self) -> bool:
@@ -93,19 +129,63 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
             or self.wrapped.has_wrap_run_event_stream
         )
 
+    def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> AbstractCapability[AgentDepsT]:
+        new_wrapped = self.wrapped.for_agent(agent)
+        if new_wrapped is self.wrapped:
+            return self
+        new_self = replace_no_init(self, wrapped=new_wrapped)
+        new_self.__adopt_wrapped_identity()
+        return new_self
+
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
         new_wrapped = await self.wrapped.for_run(ctx)
         if new_wrapped is self.wrapped:
             return self
-        return replace(self, wrapped=new_wrapped)
+        new_self = replace_no_init(self, wrapped=new_wrapped)
+        new_self.__adopt_wrapped_identity()
+        return new_self
+
+    def _prepare_run_context(self, ctx: RunContext[AgentDepsT]) -> None:
+        self.wrapped._prepare_run_context(ctx)
+
+    def _validate_runtime_capabilities(
+        self, ctx: RunContext[AgentDepsT], capabilities: Sequence[AbstractCapability[AgentDepsT]]
+    ) -> None:
+        self.wrapped._validate_runtime_capabilities(ctx, capabilities)
 
     # --- Get methods ---
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
         return self.wrapped.get_instructions()
 
+    def _collect_instructions(self) -> list[SourcedInstruction[AgentDepsT]]:
+        if type(self).get_instructions is not WrapperCapability.get_instructions:
+            relayed = self.wrapped._collect_instructions()
+            return self._attribute_container_instructions(normalize_instructions(self.get_instructions()), relayed)
+        # Pass through the wrapped capability's own attribution: a wrapper adopts the id of the
+        # capability it wraps, but a wrapper over a container has none to adopt and would
+        # otherwise flatten every leaf's contribution into one unaddressable part.
+        return self.wrapped._collect_instructions()
+
     def get_model_settings(self) -> AgentModelSettings[AgentDepsT] | None:
         return self.wrapped.get_model_settings()
+
+    def get_model(self) -> AgentModel[AgentDepsT] | None:
+        return self.wrapped.get_model()
+
+    @property
+    def has_resolve_model_id(self) -> bool:
+        return (
+            type(self).resolve_model_id is not WrapperCapability.resolve_model_id or self.wrapped.has_resolve_model_id
+        )
+
+    async def resolve_model_id(
+        self,
+        ctx: ModelResolutionContext[AgentDepsT],
+        *,
+        model_id: KnownModelName | str,
+    ) -> Model | None:
+        return await self.wrapped.resolve_model_id(ctx, model_id=model_id)
 
     def get_toolset(self) -> AgentToolset[AgentDepsT] | None:
         return self.wrapped.get_toolset()
@@ -204,8 +284,12 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         *,
         stream: AsyncIterable[AgentStreamEvent],
     ) -> AsyncIterable[AgentStreamEvent]:
-        async for event in self.wrapped.wrap_run_event_stream(ctx, stream=stream):
-            yield event
+        wrapped_stream = self.wrapped.wrap_run_event_stream(ctx, stream=stream)
+        try:
+            async for event in wrapped_stream:
+                yield event
+        finally:
+            await aclose_all((wrapped_stream, stream))
 
     # --- Model request lifecycle hooks ---
 

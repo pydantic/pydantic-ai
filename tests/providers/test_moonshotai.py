@@ -1,6 +1,5 @@
 import re
 
-import httpx
 import pytest
 
 from pydantic_ai.exceptions import UserError
@@ -39,13 +38,6 @@ def test_moonshotai_provider_need_api_key(env: TestEnv) -> None:
         MoonshotAIProvider()
 
 
-def test_moonshotai_provider_pass_http_client() -> None:
-    """Test passing a custom HTTP client to MoonshotAI provider."""
-    http_client = httpx.AsyncClient()
-    provider = MoonshotAIProvider(http_client=http_client, api_key='api-key')
-    assert provider.client._client == http_client  # type: ignore[reportPrivateUsage]
-
-
 def test_moonshotai_pass_openai_client() -> None:
     """Test passing a custom OpenAI client to MoonshotAI provider."""
     openai_client = openai.AsyncOpenAI(api_key='api-key')
@@ -70,10 +62,14 @@ def test_moonshotai_model_profile():
 
 
 def test_moonshotai_model_profile_thinking():
+    # Unit (not VCR): these pin the profile flags resolved from the model id at model-build time, which
+    # the cassette doesn't exercise — it records the wire round-trip, not the resolved profile, and our
+    # matchers aren't body-sensitive, so a regression flipping a model's reasoning flags could still
+    # replay an existing recording green. A direct profile assertion is what catches it.
     provider = MoonshotAIProvider(api_key='api-key')
 
     # Reasoning models advertise thinking; it's always-on since Moonshot rejects reasoning_effort='none'.
-    for reasoning_model in ('kimi-k2.5', 'kimi-k2.6', 'kimi-k2.7-code', 'kimi-k2.7-code-highspeed'):
+    for reasoning_model in ('kimi-k2.5', 'kimi-k2.6', 'kimi-k2.7-code', 'kimi-k2.7-code-highspeed', 'kimi-k3'):
         profile = provider.model_profile(reasoning_model)
         assert profile is not None
         assert profile.get('supports_thinking') is True

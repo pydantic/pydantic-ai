@@ -14,6 +14,7 @@ from collections.abc import (
 )
 from concurrent.futures import Executor
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
+from dataclasses import dataclass
 from types import FrameType, TracebackType
 from typing import TYPE_CHECKING, Any, Generic, TypeAlias, cast, overload
 
@@ -35,14 +36,16 @@ from .. import (
     tool_manager,
     usage as _usage,
 )
+from .._cancel import CancellationToken, RunBinding, provide_run_binding
 from .._json_schema import JsonSchema
 from .._output import types_from_output_spec
-from .._template import TemplateStr
 from ..capabilities import AgentCapability
+from ..exceptions import RunCancelled
 from ..output import OutputDataT, OutputSpec
 from ..result import AgentStream, FinalResult, StreamedRunResult
 from ..run import AgentRun, AgentRunResult, AgentRunResultEvent
 from ..settings import ModelSettings
+from ..template import TemplateStr
 from ..tool_manager import ToolManager
 from ..tools import (
     AgentDepsT,
@@ -57,6 +60,18 @@ from ..toolsets import AbstractToolset
 if TYPE_CHECKING:
     from pydantic_ai.agent.spec import AgentSpec
     from pydantic_ai.capabilities import CombinedCapability
+    from pydantic_ai.models.instrumented import InstrumentationSettings
+    from pydantic_ai.realtime import (
+        AudioRetention,
+        KnownRealtimeModelName,
+        RealtimeClientSecret,
+        RealtimeModel,
+        RealtimeModelProfile,
+        RealtimeModelSettings,
+        RealtimeProviderSession,
+        RealtimeSession,
+        WebRTCAnswer,
+    )
 
 
 T = TypeVar('T')
@@ -66,13 +81,13 @@ RunOutputDataT = TypeVar('RunOutputDataT')
 """Type variable for the result data of a run where `output_type` was customized on the run call."""
 
 EventStreamHandler: TypeAlias = Callable[
-    [RunContext[AgentDepsT], AsyncIterable[_messages.AgentStreamEvent]], Awaitable[None]
+    [RunContext[AgentDepsT], 'AsyncIterable[_messages.AgentStreamEvent]'], Awaitable[None]
 ]
 """A function that receives agent [`RunContext`][pydantic_ai.tools.RunContext] and an async iterable of events from the model's streaming response and the agent's execution of tools."""
 
 EventStreamProcessor: TypeAlias = Callable[
-    [RunContext[AgentDepsT], AsyncIterable[_messages.AgentStreamEvent]],
-    AsyncIterator[_messages.AgentStreamEvent],
+    [RunContext[AgentDepsT], 'AsyncIterable[_messages.AgentStreamEvent]'],
+    'AsyncIterator[_messages.AgentStreamEvent]',
 ]
 """An async generator that receives agent [`RunContext`][pydantic_ai.tools.RunContext] and an async iterable of events and yields a potentially modified stream.
 
@@ -84,7 +99,7 @@ AgentMetadata = dict[str, Any] | Callable[[RunContext[AgentDepsT]], dict[str, An
 AgentInstructions = _instructions.AgentInstructions
 """Type alias for agent instructions — a string, `TemplateStr`, callable, or sequence thereof."""
 
-Instructions = AgentInstructions
+Instructions = AgentInstructions  # TODO(v3): remove the `Instructions` alias
 """Deprecated: use `AgentInstructions` instead."""
 
 AgentModelSettings = ModelSettings | Callable[[RunContext[AgentDepsT]], ModelSettings]
@@ -96,17 +111,14 @@ class AgentRetries(TypedDict, total=False):
 
     Pass to `Agent(retries=...)` as a dict to set different budgets per category.
 
-    `int` semantics differ by call site:
-
-    - At `Agent(retries=N)` construction time, an `int` sets both `tools` and `output`
-      to `N`.
-    - At `run()` / `iter()` / `override()` time, an `int` overrides only the `output`
-      budget. Tool retries cannot be overridden per run or via `override()` — passing
-      `retries={'tools': ...}` at those call sites raises a `UserError`, since the tool
-      manager is built once at agent construction.
+    A bare `int` is shorthand for setting both `tools` and `output` to that value — the same at
+    every call site (`Agent(retries=N)`, `run()`, `iter()`, `override()`, and a run-time `spec`).
+    To set only one budget, pass a dict, e.g. `retries={'tools': ...}` or `retries={'output': ...}`.
 
     Keys:
-        tools: Default number of retries for tool calls before raising an error.
+        tools: Default number of retries for tool calls before raising an error. Applies to function
+            tools, output tools, and MCP tools, unless a more specific per-tool or per-toolset limit
+            is set.
         output: Maximum number of retries for output validation. On the text path
             this is a global per-run budget; on the tool path it is the default
             per-tool `max_retries` for each output tool, overridable via
@@ -117,40 +129,56 @@ class AgentRetries(TypedDict, total=False):
     output: int
 
 
-_RunStreamEventsRunner: TypeAlias = Callable[[EventStreamHandler[Any]], Awaitable[AgentRunResult[Any]]]
+_RunStreamEventsRunner: TypeAlias = Callable[[EventStreamHandler[Any]], Awaitable[AgentRunResult[OutputDataT]]]
 """Starts the background agent run with the internal event-forwarding handler and returns its result."""
 
 
-class _RunStreamEventsIterator(AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]]):
+class AgentRunEvents(
+    Generic[OutputDataT], AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[OutputDataT]]
+):
     """The event iterator returned by [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events].
 
     Lazily starts a background `run()` task on the first `__anext__()` and forwards its events over a memory
     object stream, ending with a single trailing `AgentRunResultEvent` that carries the run's result. Entering
-    the context manager without iterating therefore never starts a run (#6162).
+    the context manager without iterating therefore never starts a run (https://github.com/pydantic/pydantic-ai/issues/6162).
 
     This is a hand-written iterator class rather than an `async def` generator on purpose: generator cleanup
     runs by throwing `GeneratorExit` into the suspended frame during finalization, which on Python 3.10/3.11
     can resume the frame under a different `Context` and raise the `pydantic_ai.current_run_context` token
-    error (#5132). Driving cleanup explicitly through `aclose()` keeps teardown in the caller's task and
+    error (https://github.com/pydantic/pydantic-ai/issues/5132). Driving cleanup explicitly through `aclose()` keeps teardown in the caller's task and
     context.
+
+    The handle can cancel the whole run and exposes its live messages and usage after iteration has
+    started. After successful completion, `result` contains the final run result.
+
+    `cancel()` and the state accessors (`all_messages()`, `new_messages()`, `usage`) require the run
+    to be driven through the standard [`Agent.iter()`][pydantic_ai.agent.Agent.iter] path, which binds
+    the run to this handle. The built-in `Agent` and the durable wrapper agents do this; a custom
+    [`AbstractAgent`][pydantic_ai.agent.AbstractAgent] subclass whose `run()`/`iter()` chain doesn't
+    consume that binding gets a `cancel()` that silently no-ops and state accessors that raise
+    `UserError`, even after iteration has started.
     """
 
-    def __init__(self, run_agent: _RunStreamEventsRunner) -> None:
+    def __init__(self, run_agent: _RunStreamEventsRunner[OutputDataT]) -> None:
         self._run_agent = run_agent
+        self._binding = RunBinding()
         self._receive_stream: (
-            MemoryObjectReceiveStream[_messages.AgentStreamEvent | AgentRunResultEvent[Any]] | None
+            MemoryObjectReceiveStream[_messages.AgentStreamEvent | AgentRunResultEvent[OutputDataT]] | None
         ) = None
-        self._task: asyncio.Task[AgentRunResult[Any]] | None = None
+        self._task: asyncio.Task[AgentRunResult[OutputDataT]] | None = None
         # Set once the trailing `AgentRunResultEvent` has been produced, so further `__anext__()` calls stop.
         self._result_yielded = False
         self._closed = False
 
-    def __aiter__(self) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]]:
+    def __aiter__(self) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[OutputDataT]]:
         return self
 
-    async def __anext__(self) -> _messages.AgentStreamEvent | AgentRunResultEvent[Any]:
+    async def __anext__(self) -> _messages.AgentStreamEvent | AgentRunResultEvent[OutputDataT]:
         if self._closed or self._result_yielded:
             raise StopAsyncIteration
+
+        if self._task is None and self._binding.cancellation.cancel_requested:
+            raise RunCancelled('The agent run was cancelled.')
 
         await self._ensure_started()
         assert self._receive_stream is not None
@@ -165,6 +193,72 @@ class _RunStreamEventsIterator(AsyncIterator[_messages.AgentStreamEvent | AgentR
             self._result_yielded = True
             result = await self._task
             return AgentRunResultEvent(result)
+
+    def cancel(self) -> None:
+        """Request cancellation of the whole run.
+
+        This method is idempotent, is a no-op after completion, and is safe to call from another
+        task (e.g. a TUI's key handler) or thread — the underlying controller marshals onto the
+        run's event loop, just like [`CancellationToken.cancel()`][pydantic_ai.CancellationToken.cancel].
+        It does not affect external cancellation of the consumer task. If iteration continues, cancellation surfaces as
+        [`RunCancelled`][pydantic_ai.exceptions.RunCancelled]; leaving the context instead performs
+        quiet teardown. Cancelling before the first iteration prevents the run from starting at
+        all; iterating afterwards raises `RunCancelled` with empty `messages`.
+        """
+        self._binding.cancellation.cancel()
+
+    def all_messages(self) -> list[_messages.ModelMessage]:
+        """Return all messages from the run, including messages supplied as history.
+
+        Raises `UserError` if accessed before the first iteration has started the run.
+        """
+        return self._agent_run().all_messages()
+
+    def new_messages(self) -> list[_messages.ModelMessage]:
+        """Return only messages created by the run.
+
+        Raises `UserError` if accessed before the first iteration has started the run.
+        """
+        return self._agent_run().new_messages()
+
+    @property
+    def usage(self) -> _usage.RunUsage:
+        """Return the run's current usage.
+
+        Raises `UserError` if accessed before the first iteration has started the run.
+        """
+        return self._agent_run().usage
+
+    @property
+    def result(self) -> AgentRunResult[OutputDataT] | None:
+        """Return the successful run result once complete, otherwise `None`."""
+        task = self._task
+        if task is not None and task.done() and not task.cancelled() and task.exception() is None:
+            return task.result()
+        return None
+
+    def _agent_run(self) -> AgentRun[Any, OutputDataT]:
+        agent_run = self._binding.agent_run
+        if agent_run is None:
+            raise exceptions.UserError('The run has not started; iterate the events first.')
+        return agent_run
+
+    def _attach_run_state(self, exc: BaseException) -> None:
+        """Attach the run's state to an external cancellation of the consumer task.
+
+        The background run's own `CancelledError` (carrying the state attached by the translation
+        funnel) is consumed by `aclose()`'s drain, so the state is rebuilt from the live run and
+        attached to the consumer's propagating exception for `RunCancelled.from_cancellation()`.
+        No-op if the run never started.
+        """
+        agent_run = self._binding.agent_run
+        if agent_run is None:
+            return
+        _agent_graph.run_cancelled_snapshot(
+            'The agent run was cancelled by an external asyncio cancellation.',
+            agent_run.ctx.state,
+            agent_run.ctx.deps,
+        )._attach_to(exc)  # pyright: ignore[reportPrivateUsage]
 
     async def aclose(self) -> None:
         """Cancel the background run (if started) and close the receive stream, idempotently."""
@@ -192,7 +286,7 @@ class _RunStreamEventsIterator(AsyncIterator[_messages.AgentStreamEvent | AgentR
         # Zero-buffer stream: the run blocks on `send` until this iterator pulls, giving natural backpressure
         # and keeping the run no more than one event ahead of the consumer.
         send_stream, receive_stream = anyio.create_memory_object_stream[
-            _messages.AgentStreamEvent | AgentRunResultEvent[Any]
+            _messages.AgentStreamEvent | AgentRunResultEvent[OutputDataT]
         ]()
         self._receive_stream = receive_stream
 
@@ -200,34 +294,38 @@ class _RunStreamEventsIterator(AsyncIterator[_messages.AgentStreamEvent | AgentR
             async for event in events:
                 await send_stream.send(event)
 
-        async def run_agent() -> AgentRunResult[Any]:
+        async def run_agent() -> AgentRunResult[OutputDataT]:
             # Closing the send stream on exit is what surfaces `EndOfStream` to the consumer once the run ends.
             async with send_stream:
-                return await self._run_agent(event_stream_handler)
+                with provide_run_binding(self._binding):
+                    result = await self._run_agent(event_stream_handler)
+                # This background task owns the run: if a step absorbed an external cancellation
+                # of this task, re-assert it here so a cancelled run never yields a normal
+                # `AgentRunResultEvent` to the consumer.
+                _utils.raise_if_cancelling()
+                return result
 
         self._task = asyncio.create_task(run_agent())
 
 
-class _RunStreamEventsContext(
-    AbstractAsyncContextManager[AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]]]
-):
+class _RunStreamEventsContext(Generic[OutputDataT], AbstractAsyncContextManager[AgentRunEvents[OutputDataT]]):
     """The async context manager returned by [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events].
 
-    Hands out a single `_RunStreamEventsIterator` on entry and closes it on exit, so an early `break` out of
+    Hands out a single `AgentRunEvents` on entry and closes it on exit, so an early `break` out of
     the event loop still cancels and drains the background run.
     """
 
-    def __init__(self, run_agent: _RunStreamEventsRunner) -> None:
+    def __init__(self, run_agent: _RunStreamEventsRunner[OutputDataT]) -> None:
         self._run_agent = run_agent
-        self._iterator: _RunStreamEventsIterator | None = None
+        self._iterator: AgentRunEvents[OutputDataT] | None = None
 
-    async def __aenter__(self) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]]:
+    async def __aenter__(self) -> AgentRunEvents[OutputDataT]:
         # Single-entry: re-entering would orphan a first iterator that had already started (and leak its
         # background task), so fail loudly instead of silently. `__aexit__` still cleans up the one live
         # iterator.
         if self._iterator is not None:
             raise RuntimeError('`run_stream_events()` context manager cannot be entered more than once')
-        self._iterator = _RunStreamEventsIterator(self._run_agent)
+        self._iterator = AgentRunEvents(self._run_agent)
         return self._iterator
 
     async def __aexit__(
@@ -238,6 +336,11 @@ class _RunStreamEventsContext(
     ) -> None:
         if self._iterator is not None:
             await self._iterator.aclose()
+            # An external cancellation of the consumer task keeps propagating as `CancelledError`;
+            # ride the run state along on it, mirroring the translation funnel's behavior for
+            # `run()`/`iter()`. Attached after `aclose()` so teardown-committed history is included.
+            if isinstance(exc_value, asyncio.CancelledError):
+                self._iterator._attach_run_state(exc_value)  # pyright: ignore[reportPrivateUsage]
 
 
 class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
@@ -299,6 +402,10 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         """The root capability of the agent, containing all registered capabilities."""
         raise NotImplementedError
 
+    def _get_validation_context(self) -> Any | Callable[[RunContext[AgentDepsT]], Any]:
+        """Return the agent's private validation-context specification."""
+        return None
+
     @property
     @abstractmethod
     def toolsets(self) -> Sequence[AbstractToolset[AgentDepsT]]:
@@ -321,7 +428,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         """Resolve the agent's configured system prompts into `SystemPromptPart`s.
 
         Returns a list suitable for prepending to a `ModelRequest`. Static strings and
-        runners decorated with [`@agent.system_prompt`][pydantic_ai.Agent.system_prompt]
+        runners decorated with [`@agent.system_prompt`][pydantic_ai.agent.Agent.system_prompt]
         are evaluated using a minimal `RunContext` built from the provided kwargs — useful
         when reconstructing a `message_history` that should carry the agent's configured
         system prompt (e.g. in UI adapters or after history compaction).
@@ -338,7 +445,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             usage: Optional usage to expose as `RunContext.usage`.
             model_settings: Optional settings to expose as `RunContext.model_settings`.
         """
-        return []  # pragma: no cover — concrete subclasses override this
+        # Concrete subclasses override this.
+        return []
 
     def output_json_schema(self, output_type: OutputSpec[OutputDataT | RunOutputDataT] | None = None) -> JsonSchema:
         """The output return JSON schema."""
@@ -371,11 +479,13 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
+        run_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        cancellation_token: CancellationToken | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -395,11 +505,13 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
+        run_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        cancellation_token: CancellationToken | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -418,11 +530,13 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
+        run_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        cancellation_token: CancellationToken | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -456,6 +570,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             message_history: History of the conversation so far.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
             conversation_id: ID of the conversation this run belongs to. Pass `'new'` to start a fresh conversation, ignoring any `conversation_id` already on `message_history`. If omitted, falls back to the most recent `conversation_id` on `message_history` or a freshly generated UUID7.
+            run_id: Optional ID for this agent run. Unlike `conversation_id`, never inherited from `message_history`. Passing an empty string, or a value that already appears on `message_history`, raises `UserError` because both break `new_messages()`; use `conversation_id` to correlate across turns or deferred-tool resume. If omitted, a fresh UUID7 is generated.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
@@ -463,18 +578,19 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 that receives [`RunContext`][pydantic_ai.tools.RunContext] and returns settings.
                 Callables are called before each model request, allowing dynamic per-step settings.
             usage_limits: Optional limits on model request count or token usage.
+            cancellation_token: Token used to cancel this run from another task or thread. Single-use:
+                mint a fresh token per run, as a reused (already-cancelled) token prevents the run from starting.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
-            retries: Override the agent-level retry budgets for this run. Pass an `int` to override the
-                output-validation budget (`AgentRetries(output=...)` equivalent), or an
-                [`AgentRetries`][pydantic_ai.AgentRetries] dict for finer control. Tool retries cannot
-                be overridden per run. See
+            retries: Override the agent-level retry budgets for this run. Pass an `int` to override both
+                the tool-retry and output budgets, or an [`AgentRetries`][pydantic_ai.AgentRetries] dict to
+                override just one (e.g. `retries={'tools': 3}`). See
                 [`Agent.__init__`][pydantic_ai.agent.Agent.__init__] for semantics of the two enforcement paths.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
-            event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools to use for this run.
-            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
+            event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools to use for this run. Under a durability capability, this per-run handler runs workflow-side; model events are replayed after each model request completes. For handler I/O inside the durable boundary, pass `event_stream_handler=` to the durability capability.
+            capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
@@ -491,11 +607,13 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             message_history=message_history,
             deferred_tool_results=deferred_tool_results,
             conversation_id=conversation_id,
+            run_id=run_id,
             model=model,
             instructions=instructions,
             deps=deps,
             model_settings=model_settings,
             usage_limits=usage_limits,
+            cancellation_token=cancellation_token,
             usage=usage,
             metadata=metadata,
             retries=retries,
@@ -503,11 +621,11 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             capabilities=capabilities,
             spec=spec,
         ) as agent_run:
-            # Drive via next() so capability hooks fire for each node.
-            # When event_stream_handler is set or a capability overrides wrap_run_event_stream,
-            # streaming must happen AFTER before_node_run (which may replace the node) and
-            # INSIDE wrap_node_run. We achieve this by passing a custom step function that
-            # streams before advancing the graph.
+            # Drive via next() so capability hooks fire for each node. `next()` already streams a
+            # node when a capability's `wrap_run_event_stream` needs its events; a `run()`-level
+            # `event_stream_handler` needs the stream handed to it as well, which takes a custom
+            # step function. Either way, streaming happens AFTER before_node_run (which may
+            # replace the node) and INSIDE wrap_node_run.
             _stream_step: (
                 Callable[
                     [_agent_graph.AgentNode[AgentDepsT, Any]],
@@ -515,25 +633,21 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 ]
                 | None
             ) = None
-            _needs_streaming = (
-                event_stream_handler is not None or agent_run.ctx.deps.root_capability.has_wrap_run_event_stream
-            )
-            if _needs_streaming:
-                _handler = event_stream_handler
+            if (_handler := event_stream_handler) is not None:
 
                 async def _stream_and_advance(
                     n: _agent_graph.AgentNode[AgentDepsT, Any],
                 ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
                     if self.is_model_request_node(n) or self.is_call_tools_node(n):
+                        # `node.stream()` applies the capability chain, so the handler sees the same
+                        # events a capability's `wrap_run_event_stream` yields.
                         async with n.stream(agent_run.ctx) as stream:
                             run_ctx = _agent_graph.build_run_context(agent_run.ctx)
-                            wrapped = agent_run.ctx.deps.root_capability.wrap_run_event_stream(run_ctx, stream=stream)
-                            if _handler is not None:
-                                await _handler(run_ctx, wrapped)
+                            await _handler(run_ctx, stream)
                             # If the handler returns normally, drain whatever it left unconsumed so the
                             # node can finish through any stream wrappers. Cancellation paths interrupt
                             # the handler and do not reach this drain.
-                            async for _ in wrapped:
+                            async for _ in stream:
                                 pass
                     return await agent_run._advance_graph(n)  # pyright: ignore[reportPrivateUsage]
 
@@ -561,11 +675,13 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
+        run_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        cancellation_token: CancellationToken | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -585,11 +701,13 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
+        run_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        cancellation_token: CancellationToken | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -608,11 +726,13 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
+        run_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        cancellation_token: CancellationToken | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -626,6 +746,11 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
 
         This is a convenience method that wraps [`self.run`][pydantic_ai.agent.AbstractAgent.run] with `loop.run_until_complete(...)`.
         You therefore can't use this method inside async code or if there's an active event loop.
+
+        This method cannot be used inside a synchronous tool, output function, or other function called
+        during an agent run. To delegate to another agent, make the function `async def` and
+        `await` [`self.run`][pydantic_ai.agent.AbstractAgent.run] instead. See
+        [Agent delegation](../multi-agent-applications.md#agent-delegation).
 
         Example:
         ```python
@@ -645,6 +770,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             message_history: History of the conversation so far.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
             conversation_id: ID of the conversation this run belongs to. Pass `'new'` to start a fresh conversation, ignoring any `conversation_id` already on `message_history`. If omitted, falls back to the most recent `conversation_id` on `message_history` or a freshly generated UUID7.
+            run_id: Optional ID for this agent run. Unlike `conversation_id`, never inherited from `message_history`. Passing an empty string, or a value that already appears on `message_history`, raises `UserError` because both break `new_messages()`; use `conversation_id` to correlate across turns or deferred-tool resume. If omitted, a fresh UUID7 is generated.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
@@ -652,23 +778,26 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 that receives [`RunContext`][pydantic_ai.tools.RunContext] and returns settings.
                 Callables are called before each model request, allowing dynamic per-step settings.
             usage_limits: Optional limits on model request count or token usage.
+            cancellation_token: Token used to cancel this run from another task or thread. Single-use:
+                mint a fresh token per run, as a reused (already-cancelled) token prevents the run from starting.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
-            retries: Override the agent-level retry budgets for this run. Pass an `int` to override the
-                output-validation budget (`AgentRetries(output=...)` equivalent), or an
-                [`AgentRetries`][pydantic_ai.AgentRetries] dict for finer control. Tool retries cannot
-                be overridden per run. See
+            retries: Override the agent-level retry budgets for this run. Pass an `int` to override both
+                the tool-retry and output budgets, or an [`AgentRetries`][pydantic_ai.AgentRetries] dict to
+                override just one (e.g. `retries={'tools': 3}`). See
                 [`Agent.__init__`][pydantic_ai.agent.Agent.__init__] for semantics of the two enforcement paths.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
-            event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools to use for this run.
-            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
+            event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools to use for this run. Under a durability capability, this per-run handler runs workflow-side; model events are replayed after each model request completes. For handler I/O inside the durable boundary, pass `event_stream_handler=` to the durability capability.
+            capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
             The result of the run.
         """
+        _utils.check_no_nested_sync_run()
+
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
 
@@ -679,11 +808,13 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 message_history=message_history,
                 deferred_tool_results=deferred_tool_results,
                 conversation_id=conversation_id,
+                run_id=run_id,
                 model=model,
                 instructions=instructions,
                 deps=deps,
                 model_settings=model_settings,
                 usage_limits=usage_limits,
+                cancellation_token=cancellation_token,
                 usage=usage,
                 metadata=metadata,
                 retries=retries,
@@ -704,11 +835,13 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
+        run_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        cancellation_token: CancellationToken | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -728,11 +861,13 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
+        run_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        cancellation_token: CancellationToken | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -752,11 +887,13 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
+        run_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        cancellation_token: CancellationToken | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -797,6 +934,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             message_history: History of the conversation so far.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
             conversation_id: ID of the conversation this run belongs to. Pass `'new'` to start a fresh conversation, ignoring any `conversation_id` already on `message_history`. If omitted, falls back to the most recent `conversation_id` on `message_history` or a freshly generated UUID7.
+            run_id: Optional ID for this agent run. Unlike `conversation_id`, never inherited from `message_history`. Passing an empty string, or a value that already appears on `message_history`, raises `UserError` because both break `new_messages()`; use `conversation_id` to correlate across turns or deferred-tool resume. If omitted, a fresh UUID7 is generated.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
@@ -804,20 +942,21 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 that receives [`RunContext`][pydantic_ai.tools.RunContext] and returns settings.
                 Callables are called before each model request, allowing dynamic per-step settings.
             usage_limits: Optional limits on model request count or token usage.
+            cancellation_token: Token used to cancel this run from another task or thread. Single-use:
+                mint a fresh token per run, as a reused (already-cancelled) token prevents the run from starting.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
-            retries: Override the agent-level retry budgets for this run. Pass an `int` to override the
-                output-validation budget (`AgentRetries(output=...)` equivalent), or an
-                [`AgentRetries`][pydantic_ai.AgentRetries] dict for finer control. Tool retries cannot
-                be overridden per run. See
+            retries: Override the agent-level retry budgets for this run. Pass an `int` to override both
+                the tool-retry and output budgets, or an [`AgentRetries`][pydantic_ai.AgentRetries] dict to
+                override just one (e.g. `retries={'tools': 3}`). See
                 [`Agent.__init__`][pydantic_ai.agent.Agent.__init__] for semantics of the two enforcement paths.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
-            event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools to use for this run.
+            event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools to use for this run. Under a durability capability, this per-run handler runs workflow-side; model events are replayed after each model request completes. For handler I/O inside the durable boundary, pass `event_stream_handler=` to the durability capability.
                 It will receive all the events up until the final result is found, which you can then read or stream from inside the context manager.
                 Note that it does _not_ receive any events after the final result is found.
-            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
+            capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
@@ -837,11 +976,13 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             message_history=message_history,
             deferred_tool_results=deferred_tool_results,
             conversation_id=conversation_id,
+            run_id=run_id,
             model=model,
             deps=deps,
             instructions=instructions,
             model_settings=model_settings,
             usage_limits=usage_limits,
+            cancellation_token=cancellation_token,
             usage=usage,
             metadata=metadata,
             retries=retries,
@@ -877,7 +1018,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
 
                         async def stream_to_final(
                             stream: AgentStream,
-                        ) -> AsyncIterator[_messages.ModelResponseStreamEvent]:
+                        ) -> AsyncIterator[_messages.AgentStreamEvent]:
                             nonlocal final_result_event
                             async for event in stream:
                                 yield event
@@ -885,13 +1026,15 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                                     final_result_event = event
                                     break
 
-                        wrapped = cap.wrap_run_event_stream(run_ctx, stream=stream_to_final(stream))
+                        # `node.stream()` applies the capability chain, so `stream_to_final` truncates
+                        # the handler's view at the final result without hiding later events from
+                        # capabilities: the rest of the stream still flows through them as it's consumed.
+                        truncated = stream_to_final(stream)
                         if event_stream_handler is not None:
-                            await event_stream_handler(run_ctx, wrapped)
+                            await event_stream_handler(run_ctx, truncated)
                         # Drain after the handler (same as the `run()` path) so the response is fully
-                        # built and any `wrap_run_event_stream` wrapper finalizes; cancellation/`break`
-                        # interrupt the handler and don't reach here.
-                        async for _ in wrapped:
+                        # built; cancellation/`break` interrupt the handler and don't reach here.
+                        async for _ in truncated:
                             pass
 
                         if final_result_event is not None:
@@ -960,13 +1103,11 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                             break
                 elif self.is_call_tools_node(node):
                     async with node.stream(agent_run.ctx) as stream:
-                        wrapped = cap.wrap_run_event_stream(run_ctx, stream=stream)
                         if event_stream_handler is not None:
-                            await event_stream_handler(run_ctx, wrapped)
-                        # Drain `wrapped` after the handler, same as the `ModelRequestNode` branch above:
-                        # `CallToolsNode.stream()` self-drains its own events, but `wrapped` is a separate
-                        # `wrap_run_event_stream` layer that must finalize here too, to match the `run()` path.
-                        async for _ in wrapped:
+                            await event_stream_handler(run_ctx, stream)
+                        # Drain after the handler, same as the `ModelRequestNode` branch above, so the
+                        # capability chain `node.stream()` wrapped around the node's events finalizes here.
+                        async for _ in stream:
                             pass
 
                 # Advance graph with remaining hooks (before_node_run already fired above).
@@ -1002,10 +1143,12 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
+        run_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        cancellation_token: CancellationToken | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -1025,10 +1168,12 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
+        run_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        cancellation_token: CancellationToken | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -1047,10 +1192,12 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
+        run_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        cancellation_token: CancellationToken | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -1066,6 +1213,10 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         running all of the agent's async work on the caller's event loop while keeping context-manager and
         iterator lifecycles in stable tasks.
         You therefore can't use this method inside async code or if there's an active event loop.
+
+        Like [`run_sync()`][pydantic_ai.agent.AbstractAgent.run_sync], this method cannot be used inside a
+        synchronous tool, output function, or other function called during an agent run. See
+        [Agent delegation](../multi-agent-applications.md#agent-delegation).
 
         The returned [`StreamedRunResultSync`][pydantic_ai.result.StreamedRunResultSync] is a synchronous
         context manager and should be used and closed on the thread where it was created. Use a `with` block
@@ -1100,31 +1251,35 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             message_history: History of the conversation so far.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
             conversation_id: ID of the conversation this run belongs to. Pass `'new'` to start a fresh conversation, ignoring any `conversation_id` already on `message_history`. If omitted, falls back to the most recent `conversation_id` on `message_history` or a freshly generated UUID7.
+            run_id: Optional ID for this agent run. Unlike `conversation_id`, never inherited from `message_history`. Passing an empty string, or a value that already appears on `message_history`, raises `UserError` because both break `new_messages()`; use `conversation_id` to correlate across turns or deferred-tool resume. If omitted, a fresh UUID7 is generated.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request, or a callable
                 that receives [`RunContext`][pydantic_ai.tools.RunContext] and returns settings.
                 Callables are called before each model request, allowing dynamic per-step settings.
             usage_limits: Optional limits on model request count or token usage.
+            cancellation_token: Token used to cancel this run from another task or thread. Single-use:
+                mint a fresh token per run, as a reused (already-cancelled) token prevents the run from starting.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
-            retries: Override the agent-level retry budgets for this run. Pass an `int` to override the
-                output-validation budget (`AgentRetries(output=...)` equivalent), or an
-                [`AgentRetries`][pydantic_ai.AgentRetries] dict for finer control. Tool retries cannot
-                be overridden per run. See
+            retries: Override the agent-level retry budgets for this run. Pass an `int` to override both
+                the tool-retry and output budgets, or an [`AgentRetries`][pydantic_ai.AgentRetries] dict to
+                override just one (e.g. `retries={'tools': 3}`). See
                 [`Agent.__init__`][pydantic_ai.agent.Agent.__init__] for semantics of the two enforcement paths.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
-            event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools to use for this run.
+            event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools to use for this run. Under a durability capability, this per-run handler runs workflow-side; model events are replayed after each model request completes. For handler I/O inside the durable boundary, pass `event_stream_handler=` to the durability capability.
                 It will receive all the events up until the final result is found, which you can then read or stream from inside the context manager.
                 Note that it does _not_ receive any events after the final result is found.
-            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
+            capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
             The result of the run.
         """
+        _utils.check_no_nested_sync_run()
+
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
 
@@ -1135,10 +1290,12 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 message_history=message_history,
                 deferred_tool_results=deferred_tool_results,
                 conversation_id=conversation_id,
+                run_id=run_id,
                 model=model,
                 deps=deps,
                 model_settings=model_settings,
                 usage_limits=usage_limits,
+                cancellation_token=cancellation_token,
                 usage=usage,
                 metadata=metadata,
                 retries=retries,
@@ -1159,11 +1316,13 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
+        run_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        cancellation_token: CancellationToken | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -1171,7 +1330,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
-    ) -> AbstractAsyncContextManager[AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[OutputDataT]]]: ...
+    ) -> AbstractAsyncContextManager[AgentRunEvents[OutputDataT]]: ...
 
     @overload
     def run_stream_events(
@@ -1182,11 +1341,13 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
+        run_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        cancellation_token: CancellationToken | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -1194,9 +1355,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
-    ) -> AbstractAsyncContextManager[
-        AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[RunOutputDataT]]
-    ]: ...
+    ) -> AbstractAsyncContextManager[AgentRunEvents[RunOutputDataT]]: ...
 
     def run_stream_events(
         self,
@@ -1206,11 +1365,13 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
+        run_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        cancellation_token: CancellationToken | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -1218,14 +1379,16 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
-    ) -> AbstractAsyncContextManager[AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]]]:
+    ) -> AbstractAsyncContextManager[AgentRunEvents[Any]]:
         """Run the agent with a user prompt in async mode and stream events from the run.
 
         This is a convenience method that wraps [`self.run`][pydantic_ai.agent.AbstractAgent.run] and
         uses the `event_stream_handler` kwarg to get a stream of events from the run.
 
-        The background run starts on the first iteration of the event stream, not on entering the
+        The background run starts on the first iteration of the event handle, not on entering the
         context manager, so entering and exiting without iterating never calls the model.
+
+        The handle can cancel the whole run and access its messages, usage, and completed result.
 
         Must be used as an async context manager so the background run task is deterministically
         cleaned up when the consumer stops iterating early.
@@ -1267,6 +1430,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             message_history: History of the conversation so far.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
             conversation_id: ID of the conversation this run belongs to. Pass `'new'` to start a fresh conversation, ignoring any `conversation_id` already on `message_history`. If omitted, falls back to the most recent `conversation_id` on `message_history` or a freshly generated UUID7.
+            run_id: Optional ID for this agent run. Unlike `conversation_id`, never inherited from `message_history`. Passing an empty string, or a value that already appears on `message_history`, raises `UserError` because both break `new_messages()`; use `conversation_id` to correlate across turns or deferred-tool resume. If omitted, a fresh UUID7 is generated.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
@@ -1274,22 +1438,23 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 that receives [`RunContext`][pydantic_ai.tools.RunContext] and returns settings.
                 Callables are called before each model request, allowing dynamic per-step settings.
             usage_limits: Optional limits on model request count or token usage.
+            cancellation_token: Token used to cancel this run from another task or thread. Single-use:
+                mint a fresh token per run, as a reused (already-cancelled) token prevents the run from starting.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
-            retries: Override the agent-level retry budgets for this run. Pass an `int` to override the
-                output-validation budget (`AgentRetries(output=...)` equivalent), or an
-                [`AgentRetries`][pydantic_ai.AgentRetries] dict for finer control. Tool retries cannot
-                be overridden per run. See
+            retries: Override the agent-level retry budgets for this run. Pass an `int` to override both
+                the tool-retry and output budgets, or an [`AgentRetries`][pydantic_ai.AgentRetries] dict to
+                override just one (e.g. `retries={'tools': 3}`). See
                 [`Agent.__init__`][pydantic_ai.agent.Agent.__init__] for semantics of the two enforcement paths.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
-            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
+            capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
-            An async context manager that yields an async iterator over `AgentStreamEvent`s ending with a final
-            `AgentRunResultEvent` carrying the run result.
+            An async context manager that yields an [`AgentRunEvents`][pydantic_ai.agent.AgentRunEvents]
+            handle over `AgentStreamEvent`s ending with a final `AgentRunResultEvent` carrying the run result.
         """
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
@@ -1301,11 +1466,13 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 message_history=message_history,
                 deferred_tool_results=deferred_tool_results,
                 conversation_id=conversation_id,
+                run_id=run_id,
                 model=model,
                 instructions=instructions,
                 deps=deps,
                 model_settings=model_settings,
                 usage_limits=usage_limits,
+                cancellation_token=cancellation_token,
                 usage=usage,
                 metadata=metadata,
                 retries=retries,
@@ -1327,11 +1494,13 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
+        run_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        cancellation_token: CancellationToken | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -1350,11 +1519,13 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
+        run_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        cancellation_token: CancellationToken | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -1374,11 +1545,13 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
+        run_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        cancellation_token: CancellationToken | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -1436,7 +1609,9 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 CallToolsNode(
                     model_response=ModelResponse(
                         parts=[TextPart(content='The capital of France is Paris.')],
-                        usage=RequestUsage(input_tokens=56, output_tokens=7),
+                        usage=RequestUsage(
+                            cost=Decimal('0.000196'), input_tokens=56, output_tokens=7
+                        ),
                         model_name='gpt-5.2',
                         timestamp=datetime.datetime(...),
                         run_id='...',
@@ -1457,6 +1632,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             message_history: History of the conversation so far.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
             conversation_id: ID of the conversation this run belongs to. Pass `'new'` to start a fresh conversation, ignoring any `conversation_id` already on `message_history`. If omitted, falls back to the most recent `conversation_id` on `message_history` or a freshly generated UUID7.
+            run_id: Optional ID for this agent run. Unlike `conversation_id`, never inherited from `message_history`. Passing an empty string, or a value that already appears on `message_history`, raises `UserError` because both break `new_messages()`; use `conversation_id` to correlate across turns or deferred-tool resume. If omitted, a fresh UUID7 is generated.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
@@ -1464,17 +1640,18 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 that receives [`RunContext`][pydantic_ai.tools.RunContext] and returns settings.
                 Callables are called before each model request, allowing dynamic per-step settings.
             usage_limits: Optional limits on model request count or token usage.
+            cancellation_token: Token used to cancel this run from another task or thread. Single-use:
+                mint a fresh token per run, as a reused (already-cancelled) token prevents the run from starting.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
-            retries: Override the agent-level retry budgets for this run. Pass an `int` to override the
-                output-validation budget (`AgentRetries(output=...)` equivalent), or an
-                [`AgentRetries`][pydantic_ai.AgentRetries] dict for finer control. Tool retries cannot
-                be overridden per run. See
+            retries: Override the agent-level retry budgets for this run. Pass an `int` to override both
+                the tool-retry and output budgets, or an [`AgentRetries`][pydantic_ai.AgentRetries] dict to
+                override just one (e.g. `retries={'tools': 3}`). See
                 [`Agent.__init__`][pydantic_ai.agent.Agent.__init__] for semantics of the two enforcement paths.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
-            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
+            capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
@@ -1495,6 +1672,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] | _utils.Unset = _utils.UNSET,
         native_tools: Sequence[AgentNativeTool[AgentDepsT]] | _utils.Unset = _utils.UNSET,
         instructions: _instructions.AgentInstructions[AgentDepsT] | _utils.Unset = _utils.UNSET,
+        metadata: AgentMetadata[AgentDepsT] | _utils.Unset = _utils.UNSET,
         model_settings: AgentModelSettings[AgentDepsT] | _utils.Unset = _utils.UNSET,
         retries: int | AgentRetries | _utils.Unset = _utils.UNSET,
         spec: dict[str, Any] | AgentSpec | None = None,
@@ -1512,16 +1690,178 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             tools: The tools to use instead of the tools registered with the agent.
             native_tools: The native tools to use instead of the agent's configured native tools.
             instructions: The instructions to use instead of the instructions registered with the agent.
+            metadata: The metadata to use instead of the metadata passed to the agent constructor. When set, any
+                per-run `metadata` argument is ignored.
             model_settings: The model settings to use instead of the model settings passed to the agent constructor.
                 When set, any per-run `model_settings` argument is ignored.
             retries: The retry budgets to use instead of the agent-level configuration. Pass an `int` to
-                override the output-validation budget, or an [`AgentRetries`][pydantic_ai.AgentRetries]
-                dict for finer control. When set, any per-run `retries` argument is ignored. Tool retries
-                cannot be overridden via `override()`.
+                override both the tool-retry and output budgets, or an [`AgentRetries`][pydantic_ai.AgentRetries]
+                dict to override just one (e.g. `retries={'tools': 3}`).
+                When set, any per-run `retries` argument is ignored.
             spec: Optional agent spec providing defaults for override.
         """
         raise NotImplementedError
         yield
+
+    def realtime(
+        self,
+        model: RealtimeModel | KnownRealtimeModelName | str,
+        *,
+        deps: AgentDepsT = None,
+        model_settings: RealtimeModelSettings | None = None,
+        instructions: _instructions.AgentInstructions[AgentDepsT] = None,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        usage: _usage.RunUsage | None = None,
+        usage_limits: _usage.UsageLimits | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
+        conversation_id: str | None = None,
+        run_id: str | None = None,
+        message_history: Sequence[_messages.ModelMessage] | None = None,
+    ) -> AgentRealtime[AgentDepsT]:
+        """Bind this agent's configuration to a realtime `model`, returning an accessor for realtime operations.
+
+        The returned [`AgentRealtime`][pydantic_ai.agent.AgentRealtime] carries the agent's realtime
+        configuration so that opening a session with [`session()`][pydantic_ai.agent.AgentRealtime.session]
+        reuses the same instructions, tools, capabilities, and run context without re-passing them.
+
+        These parameters mirror [`iter`][pydantic_ai.agent.AbstractAgent.iter]. Parameters specific to the
+        request-response graph — `output_type`, `retries`, `event_stream_handler`, `deferred_tool_results` —
+        do not apply; structured output should be delegated to a normal [`Agent`][pydantic_ai.Agent] (see the
+        realtime docs). Capabilities run `for_run` once when the session connects; their instructions,
+        toolsets, and native tools are applied. Tool hooks (`prepare_tools` and `before`/`after`/`wrap`/
+        `on_error` for `tool_validate` and `tool_execute`) run for each tool call. Run-, graph-,
+        model-request-, event-stream-, and output-stage hooks do not run.
+
+        ```python
+        from pydantic_ai import Agent
+        from pydantic_ai.realtime.openai import OpenAIRealtimeModel
+
+        agent = Agent(instructions='You are a helpful voice assistant.')
+
+        @agent.tool_plain
+        def get_weather(city: str) -> str:
+            return f'Sunny in {city}'
+
+        async def main():
+            model = OpenAIRealtimeModel('gpt-realtime')
+            async with agent.realtime(model).session() as session:
+                await session.send_audio(b'...')
+                async for _event in session:
+                    pass
+        ```
+
+        Args:
+            model: The realtime model to connect to.
+            deps: Dependencies passed to tool functions.
+            model_settings: Optional realtime settings overriding the model's defaults for the session.
+            instructions: Additional instructions for the session, combined with the agent's instructions.
+                Dynamic instruction functions (`@agent.instructions`) are evaluated once at connect time
+                (there is no per-request rebuild in a realtime session).
+            toolsets: Optional additional toolsets for the session, on top of the agent's.
+            capabilities: Optional additional capabilities for the session. Their `for_run`, setup
+                contributions, and tool-lifecycle hooks apply; run, model-request, graph, event-stream,
+                and output hooks are not invoked.
+            usage: Optional [`RunUsage`][pydantic_ai.usage.RunUsage] to accumulate token usage into;
+                exposed as `session.usage`. A fresh one is used when omitted.
+            usage_limits: Optional [`UsageLimits`][pydantic_ai.usage.UsageLimits]. Request, token, and
+                tool-call limits are enforced as usage accrues; a breach raises
+                [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded] from the session's
+                event iterator, matching how `run` / `iter` surface a usage limit.
+            metadata: Optional metadata set on the [`RunContext`][pydantic_ai.tools.RunContext] available
+                to tools and capabilities, and on the realtime session telemetry span.
+            conversation_id: Optional conversation id, set on the run context and the telemetry span so a
+                realtime session can be correlated with other runs. Session-built messages are stamped
+                with it as well, allowing a later standard run to resume the same conversation; seeded
+                messages are left unchanged.
+            run_id: Optional ID for this realtime session, which is one long-lived run covering every
+                exchange. Never inherited from `message_history`; passing an empty or previously used ID
+                raises `UserError`. If omitted, a fresh UUID7 is generated and stamped on session-built
+                messages, while seeded messages are left unchanged.
+            message_history: Prior conversation to seed the session with. Replayable text, transcripts,
+                thinking, tool rounds, images, and supported retained user audio are projected to the
+                provider's initial conversation items; unrepresentable content raises `UserError`. The
+                history is included in [`session.all_messages()`][pydantic_ai.realtime.RealtimeSession.all_messages]
+                (but not `new_messages()`). Hand off from a prior session or a standard
+                [`Agent.run`][pydantic_ai.agent.AbstractAgent.run] by passing its messages here.
+        """
+        # Infer the agent name from the calling frame like `run`/`iter` do, so an unnamed agent's
+        # realtime session span is labelled with the variable name (e.g. `agent`) rather than a
+        # generic fallback — the name is what backends use to tell agent runs apart.
+        if self.name is None:
+            self._infer_name(inspect.currentframe())
+        return AgentRealtime(
+            _agent=self,
+            _model=model,
+            _deps=deps,
+            _model_settings=model_settings,
+            _instructions=instructions,
+            _toolsets=toolsets,
+            _capabilities=capabilities,
+            _usage=usage,
+            _usage_limits=usage_limits,
+            _metadata=metadata,
+            _conversation_id=conversation_id,
+            _run_id=run_id,
+            _message_history=message_history,
+        )
+
+    @asynccontextmanager
+    async def _resolve_realtime_session(
+        self,
+        model: RealtimeModel | KnownRealtimeModelName | str,
+        *,
+        deps: AgentDepsT = None,
+        model_settings: RealtimeModelSettings | None = None,
+        instructions: _instructions.AgentInstructions[AgentDepsT] = None,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        usage: _usage.RunUsage | None = None,
+        usage_limits: _usage.UsageLimits | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
+        conversation_id: str | None = None,
+        run_id: str | None = None,
+        message_history: Sequence[_messages.ModelMessage] | None = None,
+        run_lifecycle: bool = False,
+    ) -> AsyncGenerator[_RealtimeSessionResolution[AgentDepsT]]:
+        """Resolve the agent configuration shared by realtime sessions and WebRTC signaling.
+
+        With `run_lifecycle`, the run-lifecycle hooks are dispatched around the resolved configuration
+        so they wrap the toolset — and the session the caller opens inside them — exactly as `iter`
+        does. Only `_open_realtime_session` asks for that: signaling only reads back the instructions
+        and tools a session would advertise, and is not itself a run.
+        """
+        raise NotImplementedError
+        yield
+
+    @asynccontextmanager
+    async def _open_realtime_session(
+        self,
+        model: RealtimeModel | KnownRealtimeModelName | str,
+        *,
+        deps: AgentDepsT = None,
+        model_settings: RealtimeModelSettings | None = None,
+        instructions: _instructions.AgentInstructions[AgentDepsT] = None,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        usage: _usage.RunUsage | None = None,
+        usage_limits: _usage.UsageLimits | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
+        conversation_id: str | None = None,
+        run_id: str | None = None,
+        message_history: Sequence[_messages.ModelMessage] | None = None,
+        audio_retention: AudioRetention = 'transcript_only',
+        retain_images_every_n: int = 1,
+        retain_images_max: int | None = 100,
+        provider_session: RealtimeProviderSession | None = None,
+    ) -> AsyncGenerator[RealtimeSession]:
+        """Worker behind [`AgentRealtime.session`][pydantic_ai.agent.AgentRealtime.session].
+
+        Implementations open the realtime session; not all agent implementations support realtime
+        sessions. Users go through [`realtime()`][pydantic_ai.agent.AbstractAgent.realtime].
+        """
+        raise NotImplementedError
+        yield  # pragma: no cover
 
     def _infer_name(self, function_frame: FrameType | None) -> None:
         """Infer the agent name from the call frame.
@@ -1584,7 +1924,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         ```
 
         For per-agent configuration, use the
-        [`ThreadExecutor`][pydantic_ai.capabilities.ThreadExecutor] capability instead.
+        [`UseThreadExecutor`][pydantic_ai.capabilities.UseThreadExecutor] capability instead.
 
         Args:
             executor: The executor to use for running sync functions.
@@ -1736,3 +2076,221 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 usage_limits=usage_limits,
             )
         )
+
+
+@dataclass
+class _RealtimeSessionLifecycle:
+    """Hand-off between the run-lifecycle hooks entered during resolution and the session they wrap.
+
+    The hooks are entered before the session exists — and a `wrap_run` that short-circuits means it
+    never will — so the session, and the result returned in its place, are handed back through this
+    mutable holder once `_open_realtime_session` has built them.
+    """
+
+    session: RealtimeSession | None = None
+    short_result: AgentRunResult[Any] | None = None
+
+
+@dataclass
+class _RealtimeSessionResolution(Generic[AgentDepsT]):
+    """The resolved inputs shared by `AgentRealtime.session()` and its WebRTC signaling methods."""
+
+    model: RealtimeModel
+    run_context: RunContext[AgentDepsT]
+    tool_manager: ToolManager[AgentDepsT]
+    model_request_parameters: models.ModelRequestParameters
+    model_settings: RealtimeModelSettings | None
+    instructions: str | None
+    """Kept as its own field because `ModelRequestParameters` carries no instructions (they live on the
+    request `ModelRequest`); the advertised tools, by contrast, are read straight off
+    `model_request_parameters.function_tools`."""
+    request_messages: list[_messages.ModelMessage]
+    model_profile: RealtimeModelProfile
+    instrumentation_settings: InstrumentationSettings | None
+    conversation_id: str
+    run_id: str
+    wrap_event_stream: (
+        Callable[[AsyncIterable[_messages.AgentStreamEvent]], AsyncIterable[_messages.AgentStreamEvent]] | None
+    ) = None
+    lifecycle: _RealtimeSessionLifecycle | None = None
+    """Set only when the caller asked for run-lifecycle hooks, i.e. by `_open_realtime_session`."""
+    short_circuited: bool = False
+    """A `wrap_run` hook returned a result without opening the session; nothing below was resolved."""
+
+
+class AgentRealtime(Generic[AgentDepsT]):
+    """An agent bound to a realtime model, returned by [`AbstractAgent.realtime`][pydantic_ai.agent.AbstractAgent.realtime].
+
+    Carries the agent's realtime configuration (mirroring the parameters of
+    [`iter`][pydantic_ai.agent.AbstractAgent.iter]) so that opening a session reuses the same
+    instructions, tools, capabilities, and run context without re-passing them. Construct it via
+    [`agent.realtime(model, ...)`][pydantic_ai.agent.AbstractAgent.realtime],
+    then open a session with [`session()`][pydantic_ai.agent.AgentRealtime.session].
+    """
+
+    def __init__(
+        self,
+        *,
+        _agent: AbstractAgent[AgentDepsT, Any],
+        _model: RealtimeModel | KnownRealtimeModelName | str,
+        _deps: AgentDepsT = None,
+        _model_settings: RealtimeModelSettings | None = None,
+        _instructions: _instructions.AgentInstructions[AgentDepsT] = None,
+        _toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        _capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        _usage: _usage.RunUsage | None = None,
+        _usage_limits: _usage.UsageLimits | None = None,
+        _metadata: AgentMetadata[AgentDepsT] | None = None,
+        _conversation_id: str | None = None,
+        _run_id: str | None = None,
+        _message_history: Sequence[_messages.ModelMessage] | None = None,
+    ) -> None:
+        self._agent = _agent
+        self._model = _model
+        self._deps = _deps
+        self._model_settings = _model_settings
+        self._instructions = _instructions
+        self._toolsets = _toolsets
+        self._capabilities = _capabilities
+        self._usage = _usage
+        self._usage_limits = _usage_limits
+        self._metadata = _metadata
+        self._conversation_id = _conversation_id
+        self._run_id = _run_id
+        self._message_history = _message_history
+
+    async def answer_webrtc_offer(self, sdp_offer: str) -> WebRTCAnswer:
+        """Resolve this agent's realtime configuration and relay a browser WebRTC SDP offer.
+
+        The resolved instructions and tool definitions are baked into the call, so the provider session
+        is fully configured before (or without) a server sideband attaching. If a sideband later attaches
+        with [`session(provider_session=...)`][pydantic_ai.agent.AgentRealtime.session], it resolves and
+        pushes the same configuration over the control channel again.
+
+        Resolution uses the same machinery as opening a session: dynamic `@agent.instructions` functions
+        and capability `for_run` hooks run, and toolsets are set up (including starting MCP servers) to list
+        their tools, then torn down. Bound `message_history` is not baked into the offer; a sideband session
+        seeds it when it attaches.
+
+        This delegates to
+        [`answer_webrtc_offer`][pydantic_ai.realtime.RealtimeModel.answer_webrtc_offer], which is implemented
+        by the OpenAI and Azure OpenAI realtime models. Other models raise
+        [`UserError`][pydantic_ai.exceptions.UserError]; branch on
+        [`supports_webrtc`][pydantic_ai.realtime.RealtimeModelProfile.supports_webrtc] to check up front.
+        """
+        async with self._agent._resolve_realtime_session(  # pyright: ignore[reportPrivateUsage]
+            self._model,
+            deps=self._deps,
+            model_settings=self._model_settings,
+            instructions=self._instructions,
+            toolsets=self._toolsets,
+            capabilities=self._capabilities,
+            usage=self._usage,
+            usage_limits=self._usage_limits,
+            metadata=self._metadata,
+            conversation_id=self._conversation_id,
+            run_id=self._run_id,
+            message_history=self._message_history,
+        ) as resolved:
+            return await resolved.model.answer_webrtc_offer(
+                sdp_offer,
+                instructions=resolved.instructions,
+                tools=resolved.model_request_parameters.function_tools,
+                model_settings=resolved.model_settings,
+            )
+
+    async def create_client_secret(self, *, expires_after_seconds: int | None = None) -> RealtimeClientSecret:
+        """Resolve this agent's realtime configuration and mint a browser client secret.
+
+        The resolved instructions and tool definitions are baked into the secret, so the provider session
+        is fully configured before (or without) a server sideband attaching. If a sideband later attaches
+        with [`session(provider_session=...)`][pydantic_ai.agent.AgentRealtime.session], it resolves and
+        pushes the same configuration over the control channel again.
+
+        Resolution uses the same machinery as opening a session: dynamic `@agent.instructions` functions
+        and capability `for_run` hooks run, and toolsets are set up (including starting MCP servers) to list
+        their tools, then torn down. Bound `message_history` is not baked into the secret; a sideband session
+        seeds it when it attaches.
+
+        This delegates to [`create_client_secret`][pydantic_ai.realtime.RealtimeModel.create_client_secret],
+        which is implemented by the OpenAI and Azure OpenAI realtime models. Other models raise
+        [`UserError`][pydantic_ai.exceptions.UserError]; branch on
+        [`supports_webrtc`][pydantic_ai.realtime.RealtimeModelProfile.supports_webrtc] to check up front.
+
+        Args:
+            expires_after_seconds: Requested lifetime of the client secret in seconds. The provider may
+                constrain the accepted value.
+        """
+        async with self._agent._resolve_realtime_session(  # pyright: ignore[reportPrivateUsage]
+            self._model,
+            deps=self._deps,
+            model_settings=self._model_settings,
+            instructions=self._instructions,
+            toolsets=self._toolsets,
+            capabilities=self._capabilities,
+            usage=self._usage,
+            usage_limits=self._usage_limits,
+            metadata=self._metadata,
+            conversation_id=self._conversation_id,
+            run_id=self._run_id,
+            message_history=self._message_history,
+        ) as resolved:
+            return await resolved.model.create_client_secret(
+                instructions=resolved.instructions,
+                tools=resolved.model_request_parameters.function_tools,
+                model_settings=resolved.model_settings,
+                expires_after_seconds=expires_after_seconds,
+            )
+
+    @asynccontextmanager
+    async def session(
+        self,
+        *,
+        audio_retention: AudioRetention = 'transcript_only',
+        retain_images_every_n: int = 1,
+        retain_images_max: int | None = 100,
+        provider_session: RealtimeProviderSession | None = None,
+    ) -> AsyncGenerator[RealtimeSession]:
+        """Open a realtime speech-to-speech session backed by the agent's tools.
+
+        The session connects to the bound realtime model and automatically executes tool calls using the
+        agent's registered tools, sending the results back to the model. See
+        [`Agent.realtime`][pydantic_ai.agent.Agent.realtime] for how `run`/`iter` features map to a
+        duplex session.
+
+        Args:
+            audio_retention: How much spoken audio the session retains in its history, on top of
+                transcripts. Defaults to `'transcript_only'` (drop audio bytes); see
+                [`AudioRetention`][pydantic_ai.realtime.AudioRetention].
+            retain_images_every_n: Keep one of every `N` images sent during the session in message
+                history. Defaults to `1` (keep every image); increase for high-rate camera/screen streams.
+            retain_images_max: Bound on how many images stay in message history; once exceeded, the
+                oldest retained image is evicted. Defaults to `100` so a long-running frame stream
+                can't grow memory without limit; `0` retains no images, `None` removes the bound.
+            provider_session: A [`RealtimeProviderSession`][pydantic_ai.realtime.RealtimeProviderSession] to attach a **sideband**
+                control session to, from
+                [`answer_webrtc_offer`][pydantic_ai.realtime.RealtimeModel.answer_webrtc_offer]. When set,
+                the browser exchanges audio with the provider directly over WebRTC and this session runs
+                only the control plane (instructions, tools, transcripts, history) — the audio methods
+                (`send_audio`/`commit_audio`/`clear_audio`) are unavailable and `audio_retention` must be
+                left at `'transcript_only'`. See the realtime docs for the full browser/WebRTC flow.
+        """
+        async with self._agent._open_realtime_session(  # pyright: ignore[reportPrivateUsage]
+            self._model,
+            deps=self._deps,
+            model_settings=self._model_settings,
+            instructions=self._instructions,
+            toolsets=self._toolsets,
+            capabilities=self._capabilities,
+            usage=self._usage,
+            usage_limits=self._usage_limits,
+            metadata=self._metadata,
+            conversation_id=self._conversation_id,
+            run_id=self._run_id,
+            message_history=self._message_history,
+            audio_retention=audio_retention,
+            retain_images_every_n=retain_images_every_n,
+            retain_images_max=retain_images_max,
+            provider_session=provider_session,
+        ) as session:
+            yield session

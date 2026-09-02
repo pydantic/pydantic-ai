@@ -1,0 +1,162 @@
+name: Semantic owner routing
+
+on:
+  # Polling only: issues become routable once triage applies a priority label
+  # (`p:1-highest` / `p:2-high`), so per-event routing has nothing to act on.
+  schedule:
+    - cron: '25 */6 * * *'
+    - cron: '40 7 * * *'
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      community_recovery:
+        description: Route up to three unassigned items ignored for two weeks despite community interactions
+        required: false
+        type: boolean
+        default: false
+    secrets:
+      PYDANTIC_AI_TRIAGE_SLACK_WEBHOOK_URL:
+        required: true
+      # Optional: callers without a Logfire project simply skip telemetry.
+      LOGFIRE_TRIAGE_WRITE_TOKEN:
+        required: false
+
+permissions: {}
+
+jobs:
+  select:
+    name: Select routing batch
+    if: github.repository == 'pydantic/pydantic-ai' || github.repository == 'pydantic/pydantic-ai-harness'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+    outputs:
+      should_route: ${{ steps.select.outputs.should_assign }}
+      routes: ${{ steps.select.outputs.routes }}
+    steps:
+      - name: Check out trusted routing policy
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          persist-credentials: false
+          sparse-checkout: |
+            .github/scripts/issue_pr_attention_monitor.py
+            .github/scripts/semantic_owner_router.py
+            .github/scripts/triage_models.py
+            .github/scripts/triage_telemetry.py
+          sparse-checkout-cone-mode: false
+      - name: Install pinned script dependencies
+        # pydantic is required (the typed boundary); logfire is telemetry and
+        # stays best-effort — a registry outage must not stop the GitHub write
+        # path. Exact pins keep a compromised new release away from jobs
+        # holding write-scoped tokens.
+        run: |
+          python3 -m pip install --quiet 'pydantic==2.13.4'
+          python3 -m pip install --quiet 'logfire==4.40.0' || echo "logfire unavailable; telemetry disabled"
+      - name: Select routing decisions
+        id: select
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          ROUTING_COMMUNITY_RECOVERY: ${{ github.event.schedule == '40 7 * * *' || inputs.community_recovery }}
+          LOGFIRE_TRIAGE_WRITE_TOKEN: ${{ secrets.LOGFIRE_TRIAGE_WRITE_TOKEN }}
+          # Self-hosted Logfire; resolves from the calling repository's
+          # variables, and empty keeps the token's own routing.
+          LOGFIRE_URL: ${{ vars.LOGFIRE_URL }}
+        run: python .github/scripts/semantic_owner_router.py select
+
+  route:
+    name: Notify intent and assign maintainer
+    needs: select
+    if: needs.select.outputs.should_route == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        route: ${{ fromJSON(needs.select.outputs.routes) }}
+    concurrency:
+      group: semantic-owner-${{ github.repository }}-${{ matrix.route.number }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      issues: write
+      # GitHub authorizes assignments by item type even though both use the Issues REST endpoint.
+      pull-requests: write
+    steps:
+      - name: Check out trusted routing policy
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          persist-credentials: false
+          sparse-checkout: |
+            .github/scripts/issue_pr_attention_monitor.py
+            .github/scripts/semantic_owner_router.py
+            .github/scripts/triage_models.py
+            .github/scripts/triage_telemetry.py
+          sparse-checkout-cone-mode: false
+      - name: Install pinned script dependencies
+        # pydantic is required (the typed boundary); logfire is telemetry and
+        # stays best-effort — a registry outage must not stop the GitHub write
+        # path. Exact pins keep a compromised new release away from jobs
+        # holding write-scoped tokens.
+        run: |
+          python3 -m pip install --quiet 'pydantic==2.13.4'
+          python3 -m pip install --quiet 'logfire==4.40.0' || echo "logfire unavailable; telemetry disabled"
+      - name: Revalidate and prepare canonical routing intent
+        id: prepare
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PYDANTIC_AI_TRIAGE_SLACK_MENTIONS: ${{ vars.PYDANTIC_AI_TRIAGE_SLACK_MENTIONS }}
+          ROUTE_NUMBER: ${{ matrix.route.number }}
+          ROUTE_OWNER: ${{ matrix.route.owner }}
+          ROUTE_EVIDENCE: ${{ matrix.route.evidence }}
+        run: >-
+          python .github/scripts/semantic_owner_router.py prepare
+          --number "$ROUTE_NUMBER"
+          --owner "$ROUTE_OWNER"
+          --evidence "$ROUTE_EVIDENCE"
+      - name: Send canonical routing intent
+        if: steps.prepare.outputs.should_notify == 'true'
+        uses: slackapi/slack-github-action@45a88b9581bfab2566dc881e2cd66d334e621e2c # v3.0.3
+        with:
+          errors: true
+          payload: ${{ steps.prepare.outputs.slack_payload }}
+          webhook: ${{ secrets.PYDANTIC_AI_TRIAGE_SLACK_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+      - name: Revalidate and assign
+        if: steps.prepare.outputs.should_notify == 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          ROUTE_NUMBER: ${{ matrix.route.number }}
+          ROUTE_OWNER: ${{ matrix.route.owner }}
+          ROUTE_EVIDENCE: ${{ matrix.route.evidence }}
+          LOGFIRE_TRIAGE_WRITE_TOKEN: ${{ secrets.LOGFIRE_TRIAGE_WRITE_TOKEN }}
+          LOGFIRE_URL: ${{ vars.LOGFIRE_URL }}
+        run: >-
+          python .github/scripts/semantic_owner_router.py assign
+          --number "$ROUTE_NUMBER"
+          --owner "$ROUTE_OWNER"
+          --evidence "$ROUTE_EVIDENCE"
+
+  alert:
+    name: Report routing failure
+    needs: [select, route]
+    if: ${{ always() && !cancelled() && contains(needs.*.result, 'failure') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions: {}
+    steps:
+      - name: Alert triage channel
+        uses: slackapi/slack-github-action@45a88b9581bfab2566dc881e2cd66d334e621e2c # v3.0.3
+        with:
+          webhook: ${{ secrets.PYDANTIC_AI_TRIAGE_SLACK_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+          errors: true
+          payload: >-
+            {"text":":rotating_light: Maintainer routing failed for ${{ github.repository }}. Inspect the canonical Actions run: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"}

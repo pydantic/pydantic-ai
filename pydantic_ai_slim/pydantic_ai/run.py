@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
+import asyncio
 import dataclasses
-import warnings
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from copy import deepcopy
 from datetime import datetime
@@ -75,7 +75,9 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             CallToolsNode(
                 model_response=ModelResponse(
                     parts=[TextPart(content='The capital of France is Paris.')],
-                    usage=RequestUsage(input_tokens=56, output_tokens=7),
+                    usage=RequestUsage(
+                        cost=Decimal('0.000196'), input_tokens=56, output_tokens=7
+                    ),
                     model_name='gpt-5.2',
                     timestamp=datetime.datetime(...),
                     run_id='...',
@@ -99,6 +101,10 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
     _result_override: AgentRunResult[OutputDataT] | None = dataclasses.field(default=None, repr=False, init=False)
     _node_error: BaseException | None = dataclasses.field(default=None, repr=False, init=False)
     """Stores the original exception from node execution, before context manager __aexit__ may transform it."""
+    _last_yielded_node: _agent_graph.AgentNode[AgentDepsT, OutputDataT] | End[FinalResult[OutputDataT]] | None = (
+        dataclasses.field(default=None, repr=False, init=False)
+    )
+    """The node most recently yielded by `__anext__`, run on the following iteration."""
 
     @overload
     def _traceparent(self, *, required: Literal[False]) -> str | None: ...
@@ -188,14 +194,6 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         self,
     ) -> AsyncIterator[_agent_graph.AgentNode[AgentDepsT, OutputDataT] | End[FinalResult[OutputDataT]]]:
         """Provide async-iteration over the nodes in the agent run."""
-        if self.ctx.deps.root_capability.has_wrap_node_run:
-            warnings.warn(
-                'A capability has `wrap_node_run` hooks, but bare `async for node in agent_run` '
-                'does not fire them. Use `agent_run.next(node)` to advance the run, or use '
-                '`agent.run()` which drives via `next()` automatically.',
-                UserWarning,
-                stacklevel=2,
-            )
         return self
 
     async def __anext__(
@@ -203,31 +201,48 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
     ) -> _agent_graph.AgentNode[AgentDepsT, OutputDataT] | End[FinalResult[OutputDataT]]:
         """Advance to the next node automatically based on the last returned node.
 
-        Note: this uses the graph run's internal iteration which does NOT call
-        node hooks (`before_node_run`, `wrap_node_run`, `after_node_run`,
-        `on_node_run_error`). Use `next()` for capability-hooked iteration, or
-        use `agent.run()` which drives via `next()` automatically.
+        Yields each node before it runs, ending with the [`End`][pydantic_graph.basenode.End] node.
+        Advancing goes through [`next()`][pydantic_ai.run.AgentRun.next], so capability hooks fire
+        exactly as they do for [`agent.run()`][pydantic_ai.agent.AbstractAgent.run].
         """
         if self._result_override is not None:
             raise StopAsyncIteration
-        try:
-            task = await anext(self._graph_run)
-        except BaseException as exc:
-            self._node_error = exc
-            raise
-        node = self._task_to_node(task)
-        if isinstance(node, End) and self._graph_run.state.pending_messages:
-            # `asap` messages drain in `before_model_request` (which fires either way), but
-            # `when_idle` messages and end-of-run redirects drain in `after_node_run`, which
-            # bare iteration skips. Reaching `End` with a non-empty queue means those were
-            # stranded — fail loudly rather than silently dropping the messages.
-            raise exceptions.UndrainedPendingMessagesError(
-                'The agent run ended with undrained pending messages enqueued via `enqueue`. '
-                'Bare `async for node in agent_run` does not drain `when_idle` messages or '
-                'end-of-run redirects, because they fire in `after_node_run`, which bare iteration '
-                'skips. Use `agent_run.next(node)` to advance the run, or `agent.run()` which drives '
-                'via `next()` automatically.'
-            )
+
+        previous = self._last_yielded_node
+        if isinstance(previous, End):
+            # The run already completed; a trailing `__anext__` (e.g. the one `async for` performs
+            # after yielding `End`) must stop cleanly even if `cancel()` was requested as the final
+            # step finished — cancelling an already-finished run is a no-op.
+            raise StopAsyncIteration
+
+        self.ctx.deps.cancellation.bind()
+        if self.ctx.deps.cancellation.cancel_requested:
+            # Honor a first-party cancellation (`cancel()` on this run, possibly from the caller's
+            # previous loop body) before yielding another node the caller would go on to run. The
+            # first node is yielded before it runs, so unlike `self.next(previous)` this boundary
+            # has no awaited step to carry the pending `task.cancel()`: yield to the event loop so
+            # it's delivered here on every Python version (`raise_if_cancelling` only re-asserts on
+            # 3.11+, and neither path awaits).
+            await asyncio.sleep(0)
+        _utils.raise_if_cancelling()
+
+        if previous is None:
+            # The first node hasn't run yet: yield it so the caller can inspect (or replace) it,
+            # and run it on the next iteration.
+            node = self.next_node
+        elif (current := self.next_node) is not previous:
+            # The loop body advanced the run itself, e.g. by calling `next()` on the node we just
+            # yielded. Running `previous` again here would execute it — and its hooks — a second
+            # time, so surface where the graph actually is instead.
+            node = current
+        else:
+            try:
+                node = await self.next(previous)
+            except BaseException as exc:
+                self._node_error = exc
+                raise
+
+        self._last_yielded_node = node
         return node
 
     def _task_to_node(
@@ -262,6 +277,37 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         else:
             self._graph_run.override_next([self._node_to_task(result)])
 
+    def _graph_pending_node(self) -> _agent_graph.AgentNode[AgentDepsT, Any] | None:
+        """The node the graph runner is pending on, or `None` if it isn't pointing at one.
+
+        Unlike `next_node` and `_task_to_node`, this never raises: an `ErrorMarker`, an `EndMarker`
+        or a shape it doesn't recognise all read as "no pending node".
+        """
+        task = self._graph_run.next_task
+        if isinstance(task, Sequence) and len(task) == 1:
+            node = task[0].inputs
+            if isinstance(node, BaseNode):  # pragma: no branch
+                base_node: BaseNode[  # pyright: ignore[reportUnknownVariableType]
+                    _agent_graph.GraphAgentState,
+                    _agent_graph.GraphAgentDeps[AgentDepsT, Any],
+                    FinalResult[Any],
+                ] = node
+                if _agent_graph.is_agent_node(base_node):  # pragma: no branch
+                    return base_node
+        return None
+
+    def _graph_reflects(self, result: _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]) -> bool:
+        """Whether the graph runner's own state already records `result` as the step's outcome.
+
+        False whenever the two have diverged, whatever the cause: the graph is still pending on the
+        node a hook short-circuited past, or holds an `ErrorMarker` for an error a hook handled, or
+        advanced to the handler's node while the hook returned something else.
+        """
+        if isinstance(result, End):
+            task = self._graph_run.next_task
+            return isinstance(task, EndMarker) and task.value is result.data
+        return self._graph_pending_node() is result
+
     async def _advance_graph(
         self,
         node: _agent_graph.AgentNode[AgentDepsT, Any],
@@ -289,14 +335,30 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         Used by both `_run_node_with_hooks` and directly by `run_stream()` which calls
         `before_node_run` separately (before streaming).
         """
+        self.ctx.deps.cancellation.bind()
         cap = self.ctx.deps.root_capability
         try:
-            result = await cap.wrap_node_run(run_context, node=node, handler=step_fn)
+            if cap._has_wrap_node_run:  # pyright: ignore[reportPrivateUsage]
+                result = await cap.wrap_node_run(run_context, node=node, handler=step_fn)
+            else:
+                result = await step_fn(node)
         except Exception as e:
+            if not cap._has_on_node_run_error:  # pyright: ignore[reportPrivateUsage]
+                raise
             result = await cap.on_node_run_error(run_context, node=node, error=e)
             # on_node_run_error recovered by returning a result.
             # The graph runner is in ErrorMarker state; update it to match.
             self._sync_graph_state(result)
+        else:
+            # `wrap_node_run` owns the outcome, but the graph runner only knows what the handler
+            # did: nothing at all if the hook short-circuited past it, an error the hook went on to
+            # swallow, or a step whose result the hook then replaced. Sync whenever they disagree,
+            # so `next_node` and `result` follow the hook rather than the graph.
+            if not self._graph_reflects(result):
+                self._sync_graph_state(result)
+        # If the step (or a hook wrapping it) absorbed an external cancellation, re-assert it
+        # before `after_node_run` fires; the step's messages are already recorded.
+        _utils.raise_if_cancelling()
         pre_hook_result = result
         result = await cap.after_node_run(run_context, node=node, result=result)
 
@@ -305,6 +367,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         if result is not pre_hook_result:
             self._sync_graph_state(result)
 
+        _utils.raise_if_cancelling()
         return result
 
     async def _run_node_with_hooks(
@@ -320,9 +383,17 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         Fires hooks in order: `before_node_run` → `wrap_node_run(step_fn)` → `after_node_run`,
         with `on_node_run_error` handling exceptions from `wrap_node_run`.
         """
+        # Bind before `before_node_run` awaits: when the run is driven from a different task than
+        # the previous step (manual `next()` from another task), the controller must target this
+        # driver so `cancel()` interrupts the hook, not the old task. `_wrap_and_advance` re-binds
+        # (idempotently) for the `run_stream()` path, which fires `before_node_run` separately.
+        self.ctx.deps.cancellation.bind()
         run_context = _agent_graph.build_run_context(self.ctx)
         cap = self.ctx.deps.root_capability
         node = await cap.before_node_run(run_context, node=node)
+        # A `before_node_run` hook that absorbed an external cancellation must not
+        # let the node itself start.
+        _utils.raise_if_cancelling()
         return await self._wrap_and_advance(run_context, node, step_fn)
 
     async def next(
@@ -376,7 +447,9 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                     CallToolsNode(
                         model_response=ModelResponse(
                             parts=[TextPart(content='The capital of France is Paris.')],
-                            usage=RequestUsage(input_tokens=56, output_tokens=7),
+                            usage=RequestUsage(
+                                cost=Decimal('0.000196'), input_tokens=56, output_tokens=7
+                            ),
                             model_name='gpt-5.2',
                             timestamp=datetime.datetime(...),
                             run_id='...',
@@ -399,7 +472,21 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         """
         # Note: It might be nice to expose a synchronous interface for iteration, but we shouldn't do it
         # on this class, or else IDEs won't warn you if you accidentally use `for` instead of `async for` to iterate.
-        return await self._run_node_with_hooks(node, self._advance_graph)
+        return await self._run_node_with_hooks(node, self._stream_and_advance)
+
+    async def _stream_and_advance(
+        self,
+        node: _agent_graph.AgentNode[AgentDepsT, Any],
+    ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
+        """Execute a single graph step, streaming the node first if capabilities need its events.
+
+        A capability that overrides `wrap_run_event_stream` only sees events if the node is
+        streamed, so streaming is enabled for it here the same way `agent.run()` enables it.
+        `node.stream()` applies the capability chain itself, so draining it is all that's needed.
+        """
+        if self.ctx.deps.root_capability.has_wrap_run_event_stream:
+            await _agent_graph.drain_node_event_stream(node, self.ctx)
+        return await self._advance_graph(node)
 
     @property
     def usage(self) -> _usage.RunUsage:
@@ -423,7 +510,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
 
     @property
     def pending_messages(self) -> list[PendingMessage]:
-        """Internal: live view of the queue mutated by `enqueue` and drained by [`PendingMessageDrainCapability`][pydantic_ai.capabilities._pending_messages.PendingMessageDrainCapability].
+        """Internal: live view of the queue mutated by `enqueue` and drained by the internal `PendingMessageDrainCapability`.
 
         Exposed for inspection / debugging; use [`enqueue`][pydantic_ai.run.AgentRun.enqueue] to add messages.
         """
@@ -433,7 +520,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         self,
         *content: EnqueueContent,
         priority: PendingMessagePriority = 'asap',
-    ) -> None:
+    ) -> str | None:
         """Enqueue content to be injected into the conversation.
 
         Designed to be called from the same event loop driving `agent.iter()`. If
@@ -444,7 +531,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         atomic against concurrent appends from a different thread.
 
         Args:
-            *content: One or more [`EnqueueContent`][pydantic_ai._enqueue.EnqueueContent] items.
+            *content: One or more [`EnqueueContent`][pydantic_ai.run.EnqueueContent] items.
                 Adjacent [`UserContent`][pydantic_ai.messages.UserContent] (a `str` or multi-modal
                 content like an [`ImageUrl`][pydantic_ai.messages.ImageUrl]) is gathered into one
                 [`UserPromptPart`][pydantic_ai.messages.UserPromptPart], and each
@@ -458,11 +545,48 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                 `'asap'` (default) — at the earliest opportunity (next model request,
                     or a redirect if the agent would otherwise end).
                 `'when_idle'` — only when the agent would otherwise end, after `'asap'` messages.
+
+        Returns:
+            The `enqueue_id` of the queued message, echoed on the
+            [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] emitted when it's
+            delivered, or `None` when there was nothing to enqueue (an empty call).
         """
         pending = PendingMessage.from_content(*content, priority=priority)
         if pending is None:
-            return
+            return None
         self._graph_run.state.pending_messages.append(pending)
+        return pending.enqueue_id
+
+    def cancel(self) -> None:
+        """Cancel the whole agent run.
+
+        The run stops what it is doing — the in-flight model request is torn down, in-flight tool
+        tasks are cancelled and drained, a suspended server-side job is best-effort cancelled — and
+        the code driving the run sees `asyncio.CancelledError`. When the `agent.iter()` context
+        exits, this becomes [`RunCancelled`][pydantic_ai.exceptions.RunCancelled] (including for
+        `agent.run()`, which wraps `iter()`). Everything that completed before the cancellation took
+        effect is preserved in message history.
+        [`RunCancelled.all_messages()`][pydantic_ai.exceptions.RunCancelled.all_messages] returns a
+        complete snapshot that can be passed to a new run as `message_history` to resume the
+        conversation.
+
+        Cancellation is terminal: capability hooks (`wrap_run`, `wrap_node_run`, `on_run_error`)
+        may observe it and clean up, but cannot recover the run into a successful result.
+
+        Unlike [`StreamedRunResult.cancel()`][pydantic_ai.result.StreamedRunResult.cancel], which
+        only stops the current model response and lets the run continue, this ends the run itself.
+
+        Safe to call from another task or thread (e.g. a TUI's key handler while the run is
+        awaited elsewhere). Idempotent; a no-op once the run has finished — where "finished" means
+        the `agent.iter()`/`agent.run()` context has exited. A `cancel()` issued inside the context
+        after the run has already produced its result (e.g. after iterating to `End`) is still
+        honored and surfaces as `RunCancelled` on exit, so that a hook running at context exit (like
+        `after_run`) can still cancel the run; only after the context has exited is `cancel()` a true
+        no-op. Externally cancelling the task running the agent (`asyncio.Task.cancel()`) remains
+        supported and keeps raising `asyncio.CancelledError` instead; when both happen, the external
+        cancellation wins.
+        """
+        self.ctx.deps.cancellation.cancel()
 
     def __repr__(self) -> str:  # pragma: no cover
         result = self._graph_run.output

@@ -8,9 +8,12 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol
 from pydantic_core import SchemaValidator
 from typing_extensions import Self
 
+from .._instructions import normalize_toolset_instruction_parts
 from .._run_context import AgentDepsT, RunContext
-from ..messages import InstructionPart
+from .._utils import gather
+from ..messages import InstructionPart, ToolsetInstructionSource
 from ..tools import ToolDefinition, ToolsPrepareFunc
+from ._instruction_collection import InstructionContribution, make_contribution
 
 if TYPE_CHECKING:
     from .approval_required import ApprovalRequiredToolset
@@ -21,6 +24,13 @@ if TYPE_CHECKING:
     from .prepared import PreparedToolset
     from .renamed import RenamedToolset
     from .set_metadata import SetMetadataToolset
+
+
+AGENT_TOOLSET_ID = '<agent>'
+"""The [`id`][pydantic_ai.toolsets.AbstractToolset.id] of the function toolset an agent builds for its own tools."""
+
+OUTPUT_TOOLSET_ID = '<output>'
+"""The [`id`][pydantic_ai.toolsets.AbstractToolset.id] of the toolset an agent builds for its output tools."""
 
 
 class SchemaValidatorProt(Protocol):
@@ -67,7 +77,9 @@ class ToolsetTool(Generic[AgentDepsT]):
     Called on every tool call, receiving the schema-validated arguments as keyword args.
     The function should have the same typed parameters as the tool function,
     with `RunContext` as the first argument.
-    Should raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] on failure, return `None` on success.
+    Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to ask the model to correct the arguments and
+    try again, or [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] to report a terminal failure the model
+    should adapt to instead of retrying. Return `None` on success.
     """
 
 
@@ -91,6 +103,10 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         If you're implementing a concrete implementation that users can instantiate more than once, you should let them optionally pass a custom ID to the constructor and return that here.
 
         A toolset needs to have an ID in order to be used in a durable execution environment like Temporal, in which case the ID will be used to identify the toolset's activities within the workflow.
+
+        IDs wrapped in angle brackets (`'<agent>'` for an agent's own function toolset, `'<output>'` for
+        its output tools) name a role the framework fills on the user's behalf rather than a registered
+        toolset. Don't return one from your own toolset.
         """
         raise NotImplementedError()
 
@@ -149,7 +165,7 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
 
         Simple implementations can return a plain `str`; advanced implementations can return
         [`InstructionPart`][pydantic_ai.messages.InstructionPart] objects to indicate whether
-        each instruction block is static or dynamic for caching purposes.
+        each instruction part is static or dynamic for caching purposes.
 
         Args:
             ctx: The run context for this agent run.
@@ -159,6 +175,78 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
             Plain `str` values are treated as dynamic instructions by default.
         """
         return None
+
+    async def _collect_instruction_contributions(
+        self, ctx: RunContext[AgentDepsT]
+    ) -> list[InstructionContribution[AgentDepsT]]:
+        """Collect contributions once, preserving the toolset that authored every relayed part.
+
+        A toolset that only passes its children along is walked; anything that speaks for itself is
+        asked once. That covers a leaf and a container whose subclass took `get_instructions` over
+        with the same path, because the difference between them is only what they own: a returned
+        key owned below is relayed unchanged and stays attributed to its owner, and everything else
+        is the caller's own text, resolved against the caller's own key.
+        """
+        if not self._authors_own_instructions():
+            return await self._collect_child_instruction_contributions(ctx)
+
+        result = await self.get_instructions(ctx)
+        sources_by_key = self._instruction_sources_by_key()
+        contributions: list[InstructionContribution[AgentDepsT]] = []
+        for part in normalize_toolset_instruction_parts(result):
+            # A key names the toolset that owns it, so a part arriving under one below this
+            # container is being relayed and stays attributed there. Everything else this container
+            # wrote itself, and is resolved against its own key like any other author's.
+            owner = (
+                sources_by_key.get(part.id.source)
+                if part.id is not None and isinstance(part.id.source, ToolsetInstructionSource)
+                else None
+            )
+            contributions.append(make_contribution(owner if owner is not None else self, part))
+        return contributions
+
+    async def _collect_child_instruction_contributions(
+        self, ctx: RunContext[AgentDepsT]
+    ) -> list[InstructionContribution[AgentDepsT]]:
+        """Gather child contributions without re-entering a container's public override check."""
+        child_contributions = await gather(
+            *(child._collect_instruction_contributions(ctx) for child in self._instruction_children())
+        )
+        return [contribution for contributions in child_contributions for contribution in contributions]
+
+    def _instruction_children(self) -> Sequence[AbstractToolset[AgentDepsT]]:
+        """The toolsets whose instruction contributions this one passes along."""
+        return ()
+
+    def _authors_own_instructions(self) -> bool:
+        """Whether `get_instructions` speaks for this toolset rather than aggregating its children.
+
+        True here because a toolset with nothing below it can only be speaking for itself. A
+        container overrides this to answer for the case that actually varies: whether a subclass has
+        taken the method over, or it is still the inherited implementation that just relays.
+        """
+        return True
+
+    def _instruction_source(self) -> ToolsetInstructionSource | None:
+        """Read this toolset's source without validating an id that contributes no instructions."""
+        if self.id is None or ':' in self.id:
+            return None
+        return ToolsetInstructionSource(self.id)
+
+    def _instruction_sources_by_key(self) -> dict[ToolsetInstructionSource, AbstractToolset[AgentDepsT]]:
+        """Map every source key at or below this toolset to the toolset that owns it.
+
+        Children are inserted first and the container is inserted last without overwriting them, so
+        a child remains the owner when a malformed tree repeats its key at a container boundary.
+        The duplicate contribution check reports the ambiguity if both sources actually contribute.
+        """
+        sources: dict[ToolsetInstructionSource, AbstractToolset[AgentDepsT]] = {}
+        for child in self._instruction_children():
+            for source_id, source in child._instruction_sources_by_key().items():
+                sources.setdefault(source_id, source)
+        if source := self._instruction_source():
+            sources.setdefault(source, self)
+        return sources
 
     @abstractmethod
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
@@ -242,7 +330,9 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         return ApprovalRequiredToolset(self, approval_required_func)
 
     def defer_loading(self, tool_names: Sequence[str] | None = None) -> DeferredLoadingToolset[AgentDepsT]:
-        """Returns a new toolset that marks tools for deferred loading, hiding them until discovered via tool search.
+        """Returns a new toolset that marks tools for deferred loading, hiding them until revealed.
+
+        Tool search, `load_capability` and another tool's `ToolReturn.tools` all reveal.
 
         See [toolset docs](../toolsets.md#deferred-loading) for more information.
 

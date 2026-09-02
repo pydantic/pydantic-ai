@@ -1,15 +1,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 from pydantic_ai.messages import ModelMessage, ModelRequest, SystemPromptPart
+from pydantic_ai.models import Model
 from pydantic_ai.tools import AgentDepsT, RunContext
 
 from .abstract import AbstractCapability
 
 if TYPE_CHECKING:
     from pydantic_ai.models import ModelRequestContext
+    from pydantic_ai.settings import ModelSettings
 
 
 @dataclass
@@ -51,15 +53,24 @@ class ReinjectSystemPrompt(AbstractCapability[AgentDepsT]):
             _strip_system_prompts(messages)
         elif _has_system_prompt(messages):
             return request_context
+        # `ctx.agent` is always set during an agent run.
         if ctx.agent is None:
-            return request_context  # pragma: no cover — ctx.agent is always set during an agent run
+            # `ctx.agent` is always set during an agent run.
+            return request_context  # pragma: no cover
+        # `ctx.model` is an `AbstractModel`, which is a regular `Model` on every path that makes
+        # model requests; fall back to the agent's configured model otherwise. The `cast` only
+        # pins `Model`'s client type parameter, which `isinstance` can't recover.
+        ctx_model = ctx.model
+        model = cast('Model[Any]', ctx_model) if isinstance(ctx_model, Model) else None
         sys_parts = await ctx.agent.system_prompt_parts(
             deps=ctx.deps,
-            model=ctx.model,
+            model=model,
             message_history=messages,
             prompt=ctx.prompt,
             usage=ctx.usage,
-            model_settings=ctx.model_settings,
+            # This hook only runs in the classic request pipeline, where `ctx.model_settings`
+            # never holds `RealtimeModelSettings`.
+            model_settings=cast('ModelSettings | None', ctx.model_settings),
         )
         if sys_parts:
             _prepend_to_first_request(messages, sys_parts)

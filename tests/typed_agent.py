@@ -286,7 +286,7 @@ if MYPY:
     two_scalars_output_agent = Agent[object, int | str](output_type=[int, str])
     assert_type(two_scalars_output_agent, Agent[object, int | str])
 
-    marker: ToolOutput[bool | tuple[str, int]] = ToolOutput(bool | tuple[str, int])  # type: ignore
+    marker: ToolOutput[bool | tuple[str, int]] = ToolOutput(bool | tuple[str, int])  # type: ignore[arg-type]
     complex_output_agent = Agent[object, Foo | Bar | Decimal | int | bool | tuple[str, int] | str | re.Pattern[str]](
         output_type=[str, Foo, Bar, foobar_ctx, ToolOutput[int](foobar_plain), marker, TextOutput(str_to_regex)]
     )
@@ -314,7 +314,7 @@ else:
     two_scalars_output_agent = Agent(output_type=[int, str])
     assert_type(two_scalars_output_agent, Agent[object, int | str])
 
-    marker: ToolOutput[bool | tuple[str, int]] = ToolOutput(bool | tuple[str, int])  # type: ignore
+    marker: ToolOutput[bool | tuple[str, int]] = ToolOutput(bool | tuple[str, int])  # type: ignore[arg-type]
     complex_output_agent = Agent(
         output_type=[str, Foo, Bar, foobar_ctx, ToolOutput(foobar_plain), marker, TextOutput(str_to_regex)]
     )

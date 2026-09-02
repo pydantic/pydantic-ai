@@ -20,7 +20,7 @@ you will need two command line windows.
 
 ### Pydantic AI AG-UI backend
 
-Setup your OpenAI API Key
+Set up your OpenAI API key:
 
 ```bash
 export OPENAI_API_KEY=<your api key>
@@ -42,13 +42,21 @@ Next run the AG-UI Dojo example frontend.
     git clone https://github.com/ag-ui-protocol/ag-ui.git
     ```
 
-2. Change into to the `ag-ui/typescript-sdk` directory
+2. Follow the [official instructions](https://github.com/ag-ui-protocol/ag-ui/tree/main/apps/dojo#development-setup) to install the prerequisites, then install dependencies and build the project from the repository root:
 
     ```shell
-    cd ag-ui/sdks/typescript
+    cd ag-ui
+    pnpm i
+    pnpm build --projects=demo-viewer
     ```
 
-3. Run the Dojo app following the [official instructions](https://github.com/ag-ui-protocol/ag-ui/tree/main/apps/dojo#development-setup)
+3. Change to the `apps/dojo` directory and run the Dojo app:
+
+    ```shell
+    cd apps/dojo
+    pnpm dev
+    ```
+
 4. Visit <http://localhost:3000/pydantic-ai>
 5. Select View `Pydantic AI` from the sidebar
 
@@ -86,7 +94,7 @@ Perform the following steps, waiting for the response of each step before contin
 4. Report how long the background set took by diffing the two times
 ```
 
-#### Agentic Chat - Code
+#### Agentic Chat - Code {#agentic-chat-code}
 
 ```snippet {path="/examples/pydantic_ai_examples/ag_ui/api/agentic_chat.py"}```
 
@@ -103,7 +111,7 @@ If you've [run the example](#running-the-example), you can view it at <http://lo
 Create a plan for breakfast and execute it
 ```
 
-#### Agentic Generative UI - Code
+#### Agentic Generative UI - Code {#agentic-generative-ui-code}
 
 ```snippet {path="/examples/pydantic_ai_examples/ag_ui/api/agentic_generative_ui.py"}```
 
@@ -122,7 +130,7 @@ plan and the user can approve it using checkboxes.
 Generate a list of steps for cleaning a car for me to review
 ```
 
-#### Human in the Loop - Code
+#### Human in the Loop - Code {#human-in-the-loop-code}
 
 ```snippet {path="/examples/pydantic_ai_examples/ag_ui/api/human_in_the_loop.py"}```
 
@@ -156,7 +164,7 @@ Agent prompt
 Help me complete my story about bruce the dog, is should be no longer than a sentence.
 ```
 
-#### Predictive State Updates - Code
+#### Predictive State Updates - Code {#predictive-state-updates-code}
 
 ```snippet {path="/examples/pydantic_ai_examples/ag_ui/api/predictive_state_updates.py"}```
 
@@ -179,13 +187,13 @@ If you've [run the example](#running-the-example), you can view it at <http://lo
 1. Customise the basic settings of your recipe
 2. Click `Improve with AI`
 
-#### Shared State - Code
+#### Shared State - Code {#shared-state-code}
 
 ```snippet {path="/examples/pydantic_ai_examples/ag_ui/api/shared_state.py"}```
 
 ### Tool Based Generative UI
 
-Demonstrates customised rendering for tool output with used confirmation.
+This example demonstrates customised rendering for tool output with user confirmation.
 
 If you've [run the example](#running-the-example), you can view it at <http://localhost:3000/pydantic-ai/feature/tool_based_generative_ui>.
 
@@ -199,6 +207,6 @@ If you've [run the example](#running-the-example), you can view it at <http://lo
 Generate a haiku about formula 1
 ```
 
-#### Tool Based Generative UI - Code
+#### Tool Based Generative UI - Code {#tool-based-generative-ui-code}
 
 ```snippet {path="/examples/pydantic_ai_examples/ag_ui/api/tool_based_generative_ui.py"}```

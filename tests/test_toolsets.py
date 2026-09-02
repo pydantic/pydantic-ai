@@ -32,19 +32,29 @@ from pydantic_ai import (
     capture_run_messages,
 )
 from pydantic_ai._run_context import RunContext
-from pydantic_ai.exceptions import ModelRetry, ToolRetryError, UnexpectedModelBehavior, UserError
+from pydantic_ai.capabilities import AbstractCapability, Capability
+from pydantic_ai.exceptions import (
+    CallDeferred,
+    ModelRetry,
+    ToolFailed,
+    ToolRetryError,
+    UnexpectedModelBehavior,
+    UserError,
+)
 from pydantic_ai.messages import (
+    InstructionId,
     InstructionPart,
     ModelRequest,
     ModelResponse,
     RetryPromptPart,
     TextPart,
     ToolReturnPart,
+    ToolsetInstructionSource,
     UserPromptPart,
 )
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tool_manager import ToolManager
-from pydantic_ai.tools import Tool, ToolDefinition
+from pydantic_ai.tools import DeferredToolResults, Tool, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.usage import RequestUsage, RunUsage
 
@@ -107,6 +117,26 @@ async def test_function_toolset_instructions():
     ctx = build_run_context(None)
     instructions = await toolset.get_instructions(ctx)
     assert instructions is None
+
+
+async def test_function_toolset_tool_for_tool_def_preserves_rename_and_retry_budget():
+    ctx = build_run_context(None, max_retries=5)
+    toolset = FunctionToolset[None]()
+
+    async def rename_tool(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition:
+        return replace(tool_def, name='renamed')
+
+    @toolset.tool_plain(prepare=rename_tool)
+    def original(value: int) -> int:
+        return value * 2
+
+    prepared_tool = (await toolset.get_tools(ctx))['renamed']
+    rebuilt_tool = toolset.tool_for_tool_def(prepared_tool.tool_def, ctx=ctx, original_name='original')
+
+    assert rebuilt_tool.tool_def.name == 'renamed'
+    assert rebuilt_tool.original_name == 'original'
+    assert prepared_tool.max_retries == rebuilt_tool.max_retries == 5
+    assert await toolset.call_tool('renamed', {'value': 3}, ctx, rebuilt_tool) == 6
 
 
 async def test_function_toolset():
@@ -686,6 +716,10 @@ async def test_context_manager_failed_initialization():
 
     server1 = MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']))
     server2 = AsyncMock()
+    # `CombinedToolset` reads each member's `id` when it is constructed, and an auto-created
+    # `AsyncMock` attribute would answer that with a coroutine. This server stands in for one that
+    # fails to initialize, so an unnamed toolset is the honest stand-in.
+    server2.id = None
     server2.__aenter__.side_effect = InitializationError
 
     toolset = CombinedToolset([server1, server2])
@@ -797,6 +831,102 @@ async def test_tool_manager_retry_logic():
         await another_tool_manager.handle_call(ToolCallPart(tool_name='failing_tool', args={'x': 1}))
 
 
+async def test_tool_manager_retry_count_survives_interleaved_successful_step():
+    """Retry counts carry over when a failed tool is skipped in an intervening step."""
+
+    @dataclass
+    class TestDeps:
+        pass
+
+    toolset = FunctionToolset[TestDeps](max_retries=2)
+    retry_values: list[int] = []
+
+    @toolset.tool
+    def failing_tool(ctx: RunContext[Any], x: int) -> int:
+        """A tool that always fails."""
+        retry_values.append(ctx.retry)
+        raise ModelRetry('This tool always fails')
+
+    @toolset.tool_plain
+    def other_tool(x: int) -> int:
+        """A tool that works."""
+        return x * 2
+
+    step_0_context = build_run_context(TestDeps())
+    step_0_tool_manager = await ToolManager[TestDeps](toolset).for_run_step(step_0_context)
+
+    with pytest.raises(ToolRetryError):
+        await step_0_tool_manager.handle_call(ToolCallPart(tool_name='failing_tool', args={'x': 1}))
+
+    step_1_context = build_run_context(TestDeps(), run_step=1)
+    step_1_tool_manager = await step_0_tool_manager.for_run_step(step_1_context)
+    assert step_1_tool_manager.ctx is not None
+    assert step_1_tool_manager.ctx.retries == {'failing_tool': 1}
+
+    result = await step_1_tool_manager.handle_call(ToolCallPart(tool_name='other_tool', args={'x': 3}))
+    assert result == 6
+
+    step_2_context = build_run_context(TestDeps(), run_step=2)
+    step_2_tool_manager = await step_1_tool_manager.for_run_step(step_2_context)
+    assert step_2_tool_manager.ctx is not None
+    assert step_2_tool_manager.ctx.retries == {'failing_tool': 1}
+
+    with pytest.raises(ToolRetryError):
+        await step_2_tool_manager.handle_call(ToolCallPart(tool_name='failing_tool', args={'x': 1}))
+
+    step_3_context = build_run_context(TestDeps(), run_step=3)
+    step_3_tool_manager = await step_2_tool_manager.for_run_step(step_3_context)
+    assert step_3_tool_manager.ctx is not None
+    assert step_3_tool_manager.ctx.retries == {'failing_tool': 2}
+
+    with pytest.raises(UnexpectedModelBehavior, match="Tool 'failing_tool' exceeded max retries count of 2"):
+        await step_3_tool_manager.handle_call(ToolCallPart(tool_name='failing_tool', args={'x': 1}))
+
+    assert retry_values == [0, 1, 2]
+
+
+async def test_tool_manager_retry_count_increments_when_same_tool_fails_and_succeeds_in_one_step():
+    """A tool that both fails and succeeds in a single step still counts the failure toward its retry budget.
+
+    Pins the parallel same-tool contract from #2311/#2317: within one step the failing call increments the
+    count (failure wins), rather than the successful call resetting it. A "success wins" rule — dropping any
+    tool that appears in `succeeded_tools` even when it also failed — would reintroduce the #6581 unbounded
+    loop for a model that pairs a succeeding and a failing call to the same tool on every step.
+    """
+
+    @dataclass
+    class TestDeps:
+        pass
+
+    toolset = FunctionToolset[TestDeps](max_retries=2)
+    calls = 0
+
+    @toolset.tool_plain
+    def flaky_tool(x: int) -> int:
+        """Fails on its first call in the step, succeeds on the second."""
+        nonlocal calls
+        calls += 1
+        if calls % 2 == 1:
+            raise ModelRetry('This call fails')
+        return x * 2
+
+    step_0_context = build_run_context(TestDeps())
+    step_0_tool_manager = await ToolManager[TestDeps](toolset).for_run_step(step_0_context)
+
+    # Same step: the tool fails once and succeeds once, landing in both failed_tools and succeeded_tools.
+    with pytest.raises(ToolRetryError):
+        await step_0_tool_manager.handle_call(ToolCallPart(tool_name='flaky_tool', args={'x': 1}))
+    assert await step_0_tool_manager.handle_call(ToolCallPart(tool_name='flaky_tool', args={'x': 3})) == 6
+    assert step_0_tool_manager.failed_tools == {'flaky_tool'}
+    assert step_0_tool_manager.succeeded_tools == {'flaky_tool'}
+
+    # Failure wins: the count carries forward as 1, not dropped by the same-step success.
+    step_1_context = build_run_context(TestDeps(), run_step=1)
+    step_1_tool_manager = await step_0_tool_manager.for_run_step(step_1_context)
+    assert step_1_tool_manager.ctx is not None
+    assert step_1_tool_manager.ctx.retries == {'flaky_tool': 1}
+
+
 async def test_handle_call_wrap_validation_errors_false():
     """`handle_call(wrap_validation_errors=False)` propagates raw errors and leaves retry-budget state untouched.
 
@@ -826,6 +956,9 @@ async def test_handle_call_wrap_validation_errors_false():
         )
         == 10
     )
+    # The raw-mode success leaves retry-budget state untouched: it is not recorded in
+    # succeeded_tools, so it can't reset a carried retry count in the next run step.
+    assert tool_manager.succeeded_tools == set()
 
     # Pydantic ValidationError on bad args propagates raw, not as ToolRetryError.
     with pytest.raises(ValidationError):
@@ -851,6 +984,78 @@ async def test_handle_call_wrap_validation_errors_false():
     with pytest.raises(ToolRetryError):
         await tool_manager.handle_call(ToolCallPart(tool_name='retrying', args={}))
     assert tool_manager.failed_tools == {'needs_int', 'retrying'}
+
+
+async def test_handle_call_raw_mode_propagates_tool_failed_from_body():
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool_plain
+    def failing() -> None:
+        raise ToolFailed('body failed')
+
+    tool_manager = await ToolManager[None](toolset).for_run_step(build_run_context(None))
+
+    with pytest.raises(ToolFailed, match='body failed'):
+        await tool_manager.handle_call(
+            ToolCallPart(tool_name='failing', args={}),
+            wrap_validation_errors=False,
+        )
+
+
+async def test_handle_call_raw_mode_propagates_deferred_tool_failed():
+    """A deferred handler result honors the same raw-error contract as an in-process failure."""
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool_plain
+    def failing_later() -> None:
+        raise CallDeferred
+
+    tool_manager = await ToolManager[None](toolset).for_run_step(build_run_context(None))
+    tool_manager.resolve_deferred_tool_calls = AsyncMock(
+        return_value=DeferredToolResults(calls={'call-1': ToolFailed('deferred failed')})
+    )
+
+    with pytest.raises(ToolFailed, match='deferred failed'):
+        await tool_manager.handle_call(
+            ToolCallPart(tool_name='failing_later', args={}, tool_call_id='call-1'),
+            wrap_validation_errors=False,
+        )
+
+
+@pytest.mark.parametrize('hook_name', ['execute', 'validate'])
+async def test_handle_call_raw_mode_propagates_tool_failed_from_hooks(hook_name: str):
+    class FailingCapability(AbstractCapability[None]):
+        async def before_tool_execute(
+            self, ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
+        ) -> dict[str, Any]:
+            if hook_name == 'execute':
+                raise ToolFailed('hook failed')
+            # Unreachable: the 'validate' hook fails before execute runs.
+            return args  # pragma: no cover
+
+        async def before_tool_validate(
+            self, ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: str | dict[str, Any]
+        ) -> str | dict[str, Any]:
+            if hook_name == 'validate':
+                raise ToolFailed('hook failed')
+            return args
+
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool_plain
+    def tool() -> str:
+        # Unreachable: a hook always fails before the tool body runs.
+        return 'ok'  # pragma: no cover
+
+    tool_manager = await ToolManager[None](toolset, root_capability=FailingCapability()).for_run_step(
+        build_run_context(None)
+    )
+
+    with pytest.raises(ToolFailed, match='hook failed'):
+        await tool_manager.handle_call(
+            ToolCallPart(tool_name='tool', args={}),
+            wrap_validation_errors=False,
+        )
 
 
 async def test_toolset_max_retries_inherits_from_agent():
@@ -889,6 +1094,13 @@ async def test_toolset_max_retries_inherits_from_agent():
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
+            ModelRequest(
+                parts=[],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+                state='interrupted',
+            ),
         ]
     )
 
@@ -913,7 +1125,15 @@ async def test_toolset_explicit_max_retries_overrides_agent():
     # Initial call + 2 retries = 3 attempts.
     assert len(attempts) == 3
     assert [type(m).__name__ for m in messages] == snapshot(
-        ['ModelRequest', 'ModelResponse', 'ModelRequest', 'ModelResponse', 'ModelRequest', 'ModelResponse']
+        [
+            'ModelRequest',
+            'ModelResponse',
+            'ModelRequest',
+            'ModelResponse',
+            'ModelRequest',
+            'ModelResponse',
+            'ModelRequest',
+        ]
     )
     retry_parts = [p for m in messages for p in getattr(m, 'parts', []) if isinstance(p, RetryPromptPart)]
     assert [p.content for p in retry_parts] == snapshot(['Always fails', 'Always fails'])
@@ -1028,7 +1248,7 @@ async def test_toolset_tool_max_retries_none_uses_tool_retries_not_output_retrie
     # retries=1 means initial call + 1 retry = 2 attempts, not 6 (which would be output_retries).
     assert len(attempts) == 2
     assert [type(m).__name__ for m in messages] == snapshot(
-        ['ModelRequest', 'ModelResponse', 'ModelRequest', 'ModelResponse']
+        ['ModelRequest', 'ModelResponse', 'ModelRequest', 'ModelResponse', 'ModelRequest']
     )
     retry_parts = [p for m in messages for p in getattr(m, 'parts', []) if isinstance(p, RetryPromptPart)]
     assert [p.content for p in retry_parts] == snapshot(['Always fails'])
@@ -1462,11 +1682,12 @@ async def test_wrapper_toolsets_delegate_instructions():
     """Test that wrapper toolsets properly delegate instructions calls."""
     base_instructions = 'Follow the base toolset instructions carefully.'
     base_toolset = MockToolsetWithInstructions(instructions=base_instructions)
+    expected = [InstructionPart(content=base_instructions, dynamic=True)]
     ctx = build_run_context(None)
 
     # Test PrefixedToolset delegation
     prefixed_toolset = base_toolset.prefixed('test')
-    assert await prefixed_toolset.get_instructions(ctx) == base_instructions
+    assert await prefixed_toolset.get_instructions(ctx) == expected
 
     # Test FilteredToolset delegation
     def allow_all_filter(ctx: RunContext[Any], tool_def: ToolDefinition) -> bool:
@@ -1474,16 +1695,16 @@ async def test_wrapper_toolsets_delegate_instructions():
 
     assert allow_all_filter(ctx, ToolDefinition(name='test', description='', parameters_json_schema={})) is True
     filtered_toolset = base_toolset.filtered(allow_all_filter)
-    assert await filtered_toolset.get_instructions(ctx) == base_instructions
+    assert await filtered_toolset.get_instructions(ctx) == expected
 
     # Test RenamedToolset delegation
     rename_map = {'old_name': 'new_name'}
     renamed_toolset = base_toolset.renamed(rename_map)
-    assert await renamed_toolset.get_instructions(ctx) == base_instructions
+    assert await renamed_toolset.get_instructions(ctx) == expected
 
     # Test ApprovalRequiredToolset delegation
     approval_toolset = base_toolset.approval_required()
-    assert await approval_toolset.get_instructions(ctx) == base_instructions
+    assert await approval_toolset.get_instructions(ctx) == expected
 
     # Test PreparedToolset delegation
     async def prepare_func(ctx: RunContext[Any], tools: list[ToolDefinition]) -> list[ToolDefinition]:
@@ -1491,7 +1712,16 @@ async def test_wrapper_toolsets_delegate_instructions():
 
     assert await prepare_func(ctx, []) == []
     prepared_toolset = base_toolset.prepared(prepare_func)
-    assert await prepared_toolset.get_instructions(ctx) == base_instructions
+    assert await prepared_toolset.get_instructions(ctx) == expected
+
+    # A wrapper has no id of its own, so it stamps the wrapped toolset's onto what it passes along.
+    identified_toolset = MockToolsetWithInstructions(instructions=base_instructions, id='base')
+    assert await identified_toolset.prefixed('test').get_instructions(ctx) == [
+        InstructionPart(content=base_instructions, dynamic=True, id=InstructionId(ToolsetInstructionSource('base')))
+    ]
+
+    # Nothing to delegate: no parts rather than an empty list.
+    assert await MockToolsetWithInstructions().prefixed('test').get_instructions(ctx) is None
 
 
 async def test_renamed_toolset_name_collision():
@@ -1536,9 +1766,15 @@ async def test_combined_toolset_instructions():
     combined = CombinedToolset([toolset1, toolset2, toolset3])
     ctx = build_run_context(None)
 
-    # CombinedToolset aggregates non-None instructions from all contained toolsets as a list
+    assert combined.id is None
+
+    # CombinedToolset aggregates non-None instructions from all contained toolsets as parts,
+    # each identified by the toolset that contributed it.
     instructions = await combined.get_instructions(ctx)
-    assert instructions == ['Instructions from toolset 1.', 'Instructions from toolset 2.']
+    assert instructions == [
+        InstructionPart(content=instructions1, dynamic=True, id=InstructionId(ToolsetInstructionSource('toolset1'))),
+        InstructionPart(content=instructions2, dynamic=True, id=InstructionId(ToolsetInstructionSource('toolset2'))),
+    ]
 
 
 async def test_combined_toolset_instructions_all_none():
@@ -1560,6 +1796,100 @@ async def test_combined_toolset_instructions_empty():
 
     instructions = await combined.get_instructions(ctx)
     assert instructions is None
+
+
+async def test_combined_toolset_collects_instructions_concurrently_in_child_order():
+    """Instruction collection starts all children together without changing their declared order."""
+    started: list[str] = []
+    all_started = anyio.Event()
+
+    class SynchronizingToolset(MockToolsetWithInstructions):
+        async def get_instructions(self, ctx: RunContext[object]) -> str:
+            assert self.custom_instructions is not None
+            started.append(self.custom_instructions)
+            if len(started) == 2:
+                all_started.set()
+            await all_started.wait()
+            return self.custom_instructions
+
+    combined = CombinedToolset(
+        [SynchronizingToolset('First.', id='first'), SynchronizingToolset('Second.', id='second')]
+    )
+
+    with anyio.fail_after(1):
+        instructions = await combined.get_instructions(build_run_context(None))
+
+    assert instructions == [
+        InstructionPart(content='First.', dynamic=True, id=InstructionId(ToolsetInstructionSource('first'))),
+        InstructionPart(content='Second.', dynamic=True, id=InstructionId(ToolsetInstructionSource('second'))),
+    ]
+
+
+async def test_combined_toolset_instruction_override_is_authoring_boundary():
+    """A subclass that authors instructions does not collect its children's instructions."""
+
+    class AuthoringCombinedToolset(CombinedToolset[object]):
+        async def get_instructions(self, ctx: RunContext[object]) -> str:
+            return 'Combined override.'
+
+    combined = AuthoringCombinedToolset([MockToolsetWithInstructions('Child.', id='child')])
+
+    assert await CombinedToolset([combined]).get_instructions(build_run_context(None)) == [
+        InstructionPart(content='Combined override.', dynamic=True)
+    ]
+
+
+async def test_toolset_ids_must_be_unique_when_they_key_instruction_parts():
+    """Distinct toolsets cannot share the id that addresses their instruction parts.
+
+    Raised as the blocks are keyed rather than when the agent is built, because that is where the
+    ambiguity is: a shared id costs nothing until both toolsets actually contribute a block, and a
+    toolset that never contributes one is left alone. That also covers the ids the framework
+    assigns itself — `durable_exec` legitimately puts two `'<agent>'` toolsets in one agent, and
+    neither carries instructions.
+    """
+    colliding = Agent(
+        TestModel(),
+        toolsets=[
+            FunctionToolset(id='same', instructions='From A.'),
+            FunctionToolset(id='same', instructions='From B.'),
+        ],
+    )
+    with pytest.raises(UserError, match=r"Two toolsets have the same `id` 'same' and both contribute instructions"):
+        await colliding.run('hello')
+
+    # A shared id with only one contributor addresses exactly one block, so nothing is ambiguous.
+    await Agent(
+        TestModel(), toolsets=[FunctionToolset(id='same'), FunctionToolset(id='same', instructions='Only one.')]
+    ).run('hello')
+
+    shared = FunctionToolset(id='shared', instructions='From the shared toolset.')
+    await Agent(TestModel(), toolsets=[shared, shared]).run('hello')
+
+
+async def test_toolset_ids_must_be_unique_behind_a_wrapper():
+    """A wrapper reports no `id` of its own, but the id it hides is still what keys its blocks.
+
+    A capability's contributed toolset always arrives inside a `CapabilityOwnedToolset`, so without
+    unwrapping, two capabilities could each contribute a toolset with the same `id` and produce two
+    instruction parts sharing one `toolset:<id>` key — the ambiguity this check exists to prevent.
+    """
+
+    class ToolsetCapability(Capability[Any]):
+        def __init__(self, instructions: str) -> None:
+            super().__init__()
+            self._toolset = FunctionToolset[Any](id='contributed', instructions=instructions)
+
+        def get_toolset(self) -> AbstractToolset[Any]:
+            return self._toolset
+
+    colliding = Agent(TestModel(), capabilities=[ToolsetCapability('From A.'), ToolsetCapability('From B.')])
+    with pytest.raises(UserError, match="Two toolsets have the same `id` 'contributed'"):
+        await colliding.run('hello')
+
+    # The same toolset reached through two different wrappers is one toolset, not a conflict.
+    shared = FunctionToolset[Any](id='shared', instructions='From the shared toolset.')
+    await Agent(TestModel(), toolsets=[shared.filtered(lambda ctx, tool_def: True), shared.prefixed('p')]).run('hello')
 
 
 def test_agent_toolset_decorator_id():
@@ -2052,7 +2382,7 @@ class StatefulToolset(AbstractToolset):
 
     @property
     def id(self) -> str | None:
-        return self._id  # pragma: no cover
+        return self._id
 
     async def for_run(self, ctx: RunContext) -> AbstractToolset:
         return StatefulToolset(call_count=0, id=self._id)
@@ -2078,6 +2408,9 @@ async def test_for_run_returns_fresh_instance():
     assert isinstance(run_toolset, StatefulToolset)
     assert run_toolset.call_count == 0
     assert original.call_count == 5  # original unchanged
+    # State resets, identity doesn't: the `id` keys the toolset's instruction parts and its
+    # durable-execution activities, so a per-run copy that dropped it would change both.
+    assert run_toolset.id == original.id == 'stateful'
 
 
 async def test_for_run_step_default_returns_self():
@@ -2333,7 +2666,7 @@ async def test_concurrent_runs_dont_share_state():
 
         @property
         def id(self) -> str | None:
-            return 'counting'  # pragma: no cover
+            return 'counting'
 
         async def for_run(self, ctx: RunContext) -> AbstractToolset:
             return CountingToolset()

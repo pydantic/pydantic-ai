@@ -28,6 +28,8 @@ Provider-adaptive capabilities to reach for first:
 - `ImageGeneration`
 - `MCP`
 
+For stricter safety handling, use `RaiseContentFilterError` to raise `ContentFilterError` whenever a model response has `finish_reason='content_filter'`, including responses with partial text.
+
 Use capabilities when the user wants behavior that should survive model/provider changes.
 
 ## Enable Thinking Across Providers
@@ -96,6 +98,12 @@ Important hook families:
 - tool-execution hooks
 - event-stream hooks
 
+From tool-validation and tool-execution hooks you can raise `ModelRetry` (the model should retry the call) or `ToolFailed` (the call is done and failed — the model sees the result and adapts, without consuming the retry budget) to redirect a tool call in one place instead of per tool.
+
+At wrap boundaries, `ModelRetry` is control flow and bypasses `on_model_request_error`, `on_tool_execute_error`, and `on_output_process_error`. `ToolFailed` bypasses only `on_tool_execute_error`; from model-request or output-process hooks it is an ordinary exception passed to the corresponding error hook.
+
+For deferrals (`ApprovalRequired`, `CallDeferred`), the rule is that a tool call can only be deferred once its arguments have been validated, since whoever resolves it is shown those arguments. So they are allowed from `after_tool_validate`, from `wrap_tool_validate` after `handler()` returns, and from every tool-execution hook — prefer `before_tool_execute`, since deferring after the tool body ran means its side effects happened and its result is discarded. Raising one from `before_tool_validate`, from `wrap_tool_validate` before `handler()`, or from `on_tool_validate_error` is a `UserError`. For a per-tool decision, use the tool's `args_validator` instead of a hook.
+
 Use hooks when the user wants observability, auditing, or light interception without adding a new abstraction.
 
 ## Build a Custom Capability
@@ -110,7 +118,73 @@ Reach for a custom capability when:
 
 Keep custom capabilities focused. If the user only needs one tool or one hook, do not introduce a capability.
 
+Give a capability an `id` when its instructions should be addressable. You declare `InstructionPart.name`; the framework issues `InstructionPart.id` as an `InstructionId`, whose source identifies the agent, toolset, or capability and whose optional name identifies one named part. It renders and serializes as `agent`, `toolset:<id>`, `capability:<id>`, or one of those followed by `:<name>`. Compare the structured source and name in Python; use `str(part.id)` only when a persisted string key is required. Naming a part whose source has no `id` of its own leaves `id` as `None`: the name still travels with the part, but nothing addresses it.
+
+### Isolate Mutable State Per Run
+
+Assume a capability instance may outlive and be reused across runs. By default, `for_run()` returns `self`, so every run uses that same instance. Mutating its fields from hooks, tools, dynamic callables, or other code executed during a run will therefore share state across sequential and concurrent runs.
+
+Before adding an instance field, classify it as immutable configuration, a deliberately shared concurrency-safe resource, or per-run state. If code executed during a run mutates per-run state, override `for_run()` to return a fresh instance. Do not mutate and return `self`, and do not rely on clearing shared state in `after_run()`; overlapping runs can still interfere, and `after_run()` is skipped when a run produces no result. Use `wrap_run()` with `try`/`finally` when external resources need cleanup on errors or cancellation.
+
+For dataclass capabilities, keep configuration in normal fields and declare per-run state with `init=False` so `dataclasses.replace()` preserves configuration while reinitializing the run state:
+
+```python
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass, field, replace
+from typing import Any
+
+from pydantic_ai import AgentRunResult, RunContext
+from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.models import ModelRequestContext
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class RequestCounter(AbstractCapability[Any]):
+    label: str
+    _requests: int = field(default=0, init=False, repr=False)
+
+    async def for_run(self, ctx: RunContext[Any]) -> RequestCounter:
+        return replace(self)
+
+    async def before_model_request(
+        self,
+        ctx: RunContext[Any],
+        request_context: ModelRequestContext,
+    ) -> ModelRequestContext:
+        self._requests += 1
+        return request_context
+
+    async def after_run(
+        self,
+        ctx: RunContext[Any],
+        *,
+        result: AgentRunResult[Any],
+    ) -> AgentRunResult[Any]:
+        logger.info('%s made %d model requests', self.label, self._requests)
+        return result
+```
+
+`replace()` is shallow: do not mutate nested mutable configuration from any code executed during a run. Make that data run-local too, or copy it explicitly in `for_run()`. Capabilities with no mutable per-run state can keep the default `for_run()` implementation.
+
 For every capability, consider whether `defer_loading=True` would improve the system by keeping instructions and tool schemas out of the eager context. Keep it eager only when the model benefits from that capability on most turns, when its hooks/settings must always apply, or when deferral would make capability selection unreliable.
+
+Use `for_agent(agent)` when a capability needs the agent's model, name, or toolsets. Return a bound copy instead of mutating the original so one capability instance can safely be attached to multiple agents. The returned copy supplies all subsequent `get_*` contributions and hooks. Binding sees the constructor model exactly as supplied, including an unresolved string; default model inference happens afterwards only if the bound tree has no `resolve_model_id()` hook and model checking was not deferred. `CombinedCapability` and `WrapperCapability` bind their children automatically. Static per-run capabilities bind once per run. A `CapabilityFunc` result also binds before its own `for_run()` runs, while a specialized run-bound value returned by another capability's `for_run()` is not rebound.
+
+## Select a Model Dynamically
+
+Implement `get_model()` when reusable policy should choose the model, or use `SelectModel(selector)` for the common callable-only case. Return a model or model ID for a static choice, or return a sync/async callable accepting `ModelSelectionContext` to choose before every request step. The context exposes the agent, run dependencies, lower-precedence configured model on step one (then the previous step's model), step number, messages, and accumulated usage. Keep `get_model()` cheap; put I/O in an async selector. Static choices are resolved once per run, while a selector runs once per new logical request step and not again for same-step continuation. A model-less agent can be bootstrapped by a selector because the callable is first evaluated during run setup, after dependencies and history are available.
+
+Explicit `run(model=...)`, run-spec, and `agent.override(model=...)` choices win and skip capability selection. Later capabilities override earlier model contributions. Same-step continuation remains pinned to its selected model; pass an explicit model when resuming a suspended provider-side request in another run.
+
+Keep selection separate from construction. Use the `resolve_model_id()` hook, or the `ResolveModelId` convenience capability, when tenant, region, credentials, or another dependency controls how a selected string becomes a `Model` instance. Resolution uses the first non-`None` result in capability order; model selection uses the last non-`None` contribution.
+
+Bootstrap strings use the post-`for_agent`, pre-`for_run` resolver chain. If `for_run()` replaces the capability, strings selected for step one and later use the replacement's resolver chain. Return a `FallbackModel` as the selected model when request failures, rather than routing policy, should trigger fallback.
+
+Both hooks are eager: deferred capabilities do not select or resolve models. Run-spec capabilities can bootstrap a model-less agent, but `CapabilityFunc` and `for_run()` need an existing model to construct their `RunContext`; they can replace it starting on step one. Do not use adaptive selection with durable execution yet, and pass an explicit model when resuming a selector-backed suspended request in another run.
 
 ## Defer Capability Loading
 

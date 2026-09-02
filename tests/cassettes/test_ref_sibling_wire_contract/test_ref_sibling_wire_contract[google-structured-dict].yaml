@@ -1,0 +1,99 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '747'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: 'Record this person: Ada Lovelace, who lives at 12 Baker Street in London.'
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      toolConfig:
+        functionCallingConfig:
+          mode: ANY
+      tools:
+      - functionDeclarations:
+        - description: The final response which ends this conversation
+          name: final_result
+          parameters_json_schema:
+            properties:
+              address:
+                default: null
+                description: 'pyai-ref-sibling-sentinel: primary mailing address'
+                properties:
+                  city:
+                    type: string
+                  street:
+                    type: string
+                required:
+                - street
+                - city
+                type: object
+              name:
+                description: The person full name
+                type: string
+            required:
+            - name
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '1200'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=1284
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - functionCall:
+              args:
+                address:
+                  city: London
+                  street: 12 Baker Street
+                name: Ada Lovelace
+              name: final_result
+            thoughtSignature: CrwDARFNMg+GWhZyeEjBIhhzRZFhD+yIV91eb+ZdYWRYxTadvuGsGTuNGHH5qIoIDjn1ilF3A0R9oBQBnCMvm0Cxx+PIB8mx9w8vrETdDIli8RX1YuomorXCCihzLoTD/2WTaXPBe6KrhSNQSzgCoU4KnC8YGPK2BhrsylgdIlFtPbFKwSAuqO3fyWEsUzi5cCNisEfo+AZZdwUKpljlowzQp5rrdrgWu+IXSf0xxGmrBfC9AnQoQu9NHFp8SZlnZa4+9d3t9uIWqxvJfXX/B8qtJdyNf6mgsihcYguBXEVzRex4f/dqMNSM+/gwcV+fyBJ6V2y0P2f2yQJ5VLq+CzbxRM5Unplx03EArxNJPjOEu9cCbZEeuICYh37cwwL7PnqGABCITFXHfHGCk0s+QYRjJhy8dZ0//zIkFp+3UqUs/ffVdlbPcUJN3DsXL6ZtNh9XltIAtjrwfk39k4SQ2Ix2uCLxcjmv5kTghsy065DvwJTqSnBIHAsgZiCjjW01vmkGtnuMBcJmjUmEVDI9cLWTAdW6rqQ53SSSvdEfdOIFjqLP6sQl/1zkpkAtnMfAgGvpRi6ZVNa3Mg1V0A7H
+          role: model
+        finishMessage: Model generated function call(s).
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: W81gar6JN_K1qtsP4-zLsQs
+      usageMetadata:
+        candidatesTokenCount: 34
+        promptTokenCount: 154
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 154
+        serviceTier: standard
+        thoughtsTokenCount: 117
+        totalTokenCount: 305
+    status:
+      code: 200
+      message: OK
+version: 1
