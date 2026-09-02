@@ -29,7 +29,13 @@ from pydantic_ai.durable_exec._toolset import DurableToolsetBase, validation_con
 from pydantic_ai.durable_exec._utils import StreamedActivityResult, disable_threads, managed_model_scope
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelResponse
-from pydantic_ai.models import CompletedStreamedResponse, Model, ModelRequestParameters, infer_model
+from pydantic_ai.models import (
+    CompletedStreamedResponse,
+    Model,
+    ModelRequestContext,
+    ModelRequestParameters,
+    infer_model,
+)
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, ToolsetTool, WrapperToolset
@@ -98,6 +104,15 @@ IMAGE_OUTPUT_UNSUPPORTED_MESSAGE = (
 """Shared by the capability and the deprecated `TemporalModel`, which reject image output identically."""
 
 
+ContinueAsNewArgs = Callable[[RunContext[AgentDepsT]], Mapping[str, Any]]
+"""Callable that builds the keyword arguments for `temporalio.workflow.continue_as_new()`.
+
+It receives the run's [`RunContext`][pydantic_ai.tools.RunContext], including the current
+`messages`, `usage`, and `usage_limits`, and returns the keyword arguments passed to
+`workflow.continue_as_new(**kwargs)`.
+"""
+
+
 @dataclass(init=False, kw_only=True)
 class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
     """Capability that makes an agent durable by routing I/O through Temporal activities.
@@ -145,6 +160,9 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
     activity_config: ActivityConfig
     """Base Temporal activity config used for all activities."""
 
+    continue_as_new_args: ContinueAsNewArgs[AgentDepsT] | None
+    """Callable that builds the `workflow.continue_as_new()` kwargs, or `None` to disable continuation."""
+
     def __init__(
         self,
         *,
@@ -157,6 +175,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         event_stream_handler_activity_config: ActivityConfig | None = None,
         toolset_activity_config: dict[str, ActivityConfig] | None = None,
         run_context_type: type[TemporalRunContext[AgentDepsT]] = TemporalRunContext[AgentDepsT],
+        continue_as_new_args: ContinueAsNewArgs[AgentDepsT] | None = None,
     ):
         """Create a TemporalDurability capability.
 
@@ -196,6 +215,11 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                 merged on top of the base config.
             run_context_type: The `TemporalRunContext` subclass for run context
                 serialization/deserialization.
+            continue_as_new_args: Optional callable invoked just before each model
+                request when running inside a workflow and
+                `workflow.info().is_continue_as_new_suggested()` is true. It receives
+                the run's `RunContext` and returns the keyword arguments for
+                `workflow.continue_as_new(**kwargs)`. `None` disables continuation.
 
         Note:
             Per-tool activity config (custom timeouts, retry policies, or disabling
@@ -212,6 +236,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         """
         super().__init__(models=models, event_stream_handler=event_stream_handler, name=name)
         self.run_context_type = run_context_type
+        self.continue_as_new_args = continue_as_new_args
         self._deps_type = deps_type
 
         # An unknown key, or a value Temporal's own types don't accept, would only fail when the
@@ -477,6 +502,22 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         if self.in_durable_context and isinstance(error, PydanticSerializationError):
             raise serialization_user_error(error) from error
         raise error
+
+    async def before_model_request(
+        self,
+        ctx: RunContext[AgentDepsT],
+        request_context: ModelRequestContext,
+    ) -> ModelRequestContext:
+        """Continue the workflow as new when Temporal suggests it and arguments are configured."""
+        if (
+            not self.in_durable_context
+            or self.continue_as_new_args is None
+            or not workflow.info().is_continue_as_new_suggested()
+        ):
+            return request_context
+
+        kwargs = self.continue_as_new_args(ctx)
+        workflow.continue_as_new(**kwargs)
 
     def _model_request_parameter_transport(self, result_type: object) -> _ModelRequestTransport:
         if result_type is StreamedActivityResult:
