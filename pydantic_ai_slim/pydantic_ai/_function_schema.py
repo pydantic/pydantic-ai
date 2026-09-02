@@ -184,9 +184,6 @@ def function_schema(  # noqa: C901
 
         field_name = p.name
 
-        if require_parameter_descriptions and field_name not in field_descriptions:
-            missing_param_descriptions.add(field_name)
-
         if p.kind == Parameter.VAR_KEYWORD:
             var_kwargs_schema = gen_schema.generate_schema(annotation)
         else:
@@ -202,6 +199,9 @@ def function_schema(  # noqa: C901
                 field_info = FieldInfo.from_annotated_attribute(annotation, p.default)
             if field_info.description is None:
                 field_info.description = field_descriptions.get(field_name)
+
+            if require_parameter_descriptions and field_info.description is None:
+                missing_param_descriptions.add(field_name)
 
             fields[field_name] = td_schema = gen_schema._generate_td_field_schema(  # pyright: ignore[reportPrivateUsage]
                 field_name,

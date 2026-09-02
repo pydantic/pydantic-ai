@@ -1120,6 +1120,22 @@ def test_enforce_parameter_descriptions_noraise() -> None:
     agent.tool(require_parameter_descriptions=True)(complete_parameter_descriptions_docstring)
 
 
+def test_enforce_parameter_descriptions_accepts_annotated_field_description() -> None:
+    toolset = FunctionToolset(require_parameter_descriptions=True)
+
+    @toolset.tool_plain
+    def add(value: Annotated[int, Field(description='The value to add')]) -> int:
+        return value
+
+    tool = toolset.tools['add']
+    assert tool.tool_def.parameters_json_schema == {
+        'additionalProperties': False,
+        'properties': {'value': {'description': 'The value to add', 'type': 'integer'}},
+        'required': ['value'],
+        'type': 'object',
+    }
+
+
 def test_json_schema_required_parameters():
     agent = Agent(FunctionModel(get_json_schema))
 
