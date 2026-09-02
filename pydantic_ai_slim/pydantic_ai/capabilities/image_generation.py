@@ -5,7 +5,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Literal, get_args
 
-from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
+from pydantic_ai.exceptions import ContentFilterError, ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.images import (
     ImageDimensions,
     ImageGenerationAspectRatio,
@@ -14,7 +14,7 @@ from pydantic_ai.images import (
     ImageGenerator,
 )
 from pydantic_ai.messages import BinaryImage
-from pydantic_ai.models import KnownModelName, Model
+from pydantic_ai.models import AbstractModel, KnownModelName, Model
 from pydantic_ai.native_tools import (
     SUPPORTED_NATIVE_TOOLS,
     ImageAspectRatio,
@@ -59,7 +59,14 @@ class _DirectImageGenerationTool:
                 stacklevel=2,
             )
 
-        result = await self.generator.generate(prompt, settings=self.settings)
+        try:
+            result = await self.generator.generate(prompt, settings=self.settings)
+        except ContentFilterError as e:
+            # Same conversion as the `fallback_model` subagent path, so the capability fails the
+            # same way on both fallbacks: the outer model gets to rephrase, and no exception escapes
+            # the tool call for a durable engine to retry against an error class its non-retryable
+            # list doesn't name. `ImageGenerator.generate` itself still raises `ContentFilterError`.
+            raise ModelRetry(str(e)) from e
         if len(result.images) != 1:
             raise UnexpectedModelBehavior(
                 f'Direct image generation fallback returned {len(result.images)} images; expected exactly one. '
@@ -84,6 +91,10 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
     using `ImageGenerationSettings`. Other fields configure the native
     `ImageGenerationTool`; configure provider-specific direct settings on an explicit
     `ImageGenerator` or `ImageGenerationModel`.
+
+    When passing a custom `native` instance, its settings are also used for the `fallback_model`
+    subagent, and its `aspect_ratio` for the direct fallback; capability-level fields override any
+    `native` instance settings.
     """
 
     fallback_model: ImageGenerationFallbackModel
@@ -253,7 +264,7 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         # The native tool's kwargs are collected once for the default native tool and again for the
         # `fallback_model` subagent's copy, so the notice lives here to fire exactly once.
         ignored: list[str] = []
-        if self.native is True or (self.local is None and self.fallback_model is not None):
+        if self.native is not False or (self.local is None and self.fallback_model is not None):
             _, ignored = self._native_geometry()
         super().__post_init__()
         if ignored:
@@ -282,7 +293,7 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         output_format: Literal['png', 'webp', 'jpeg'] | None = None,
         quality: Literal['low', 'medium', 'high', 'auto'] | None = None,
         size: ImageSize | None = None,
-        dimensions: ImageDimensions | None = None,
+        dimensions: ImageDimensions | list[int] | None = None,
         aspect_ratio: ImageGenerationAspectRatio | None = None,
         id: str | None = None,
         defer_loading: bool = False,
@@ -320,15 +331,6 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
             description=description,
         )
 
-    def _direct_image_settings(self) -> ImageGenerationSettings:
-        """Collect portable settings for direct image generation."""
-        settings: ImageGenerationSettings = {}
-        if self.dimensions is not None:
-            settings['dimensions'] = self.dimensions
-        if self.aspect_ratio is not None:
-            settings['aspect_ratio'] = self.aspect_ratio
-        return settings
-
     def _direct_only_geometry(self) -> list[str]:
         """Geometry settings the native tool has no way to express."""
         direct_only: list[str] = []
@@ -342,7 +344,7 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         """The geometry settings the native tool can express, and the ones it can't.
 
         `dimensions` and `aspect_ratio` are only reported as ignored when no direct generator is
-        configured, since `_direct_image_settings` forwards both. `size` has no direct counterpart,
+        configured, since `_direct_local_tool` forwards both. `size` has no direct counterpart,
         so it is dropped whichever path runs.
 
         That suppression is a construction-time approximation: this runs from `__post_init__`, before
@@ -432,10 +434,21 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
                 UserWarning,
                 stacklevel=stacklevel,
             )
+        settings: ImageGenerationSettings = {}
+        if self.dimensions is not None:
+            settings['dimensions'] = self.dimensions
+        # A custom `native` instance is the base and capability-level fields override it, the same
+        # precedence `_resolved_native` gives the `fallback_model` subagent. `dimensions` and `size`
+        # have no counterpart on the other side of that merge.
+        aspect_ratio = self.aspect_ratio
+        if aspect_ratio is None and isinstance(self.native, ImageGenerationTool):
+            aspect_ratio = self.native.aspect_ratio
+        if aspect_ratio is not None:
+            settings['aspect_ratio'] = aspect_ratio
         return Tool[Any](
             _DirectImageGenerationTool(
                 generator=generator,
-                settings=self._direct_image_settings(),
+                settings=settings,
                 action=self.action,
                 image_model=self.image_model,
             ).__call__,
@@ -475,17 +488,24 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         async def _warn_when_native_supersedes_direct(
             ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]
         ) -> list[ToolDefinition]:
+            # Read through `__dict__` because a run context rehydrated across a durable boundary
+            # (`TemporalRunContext` inside an activity, where a `DynamicCapability` re-resolves this
+            # toolset) deliberately doesn't carry the live model and raises on attribute access.
             # `ctx.model` is an `AbstractModel`, and only a regular `Model` carries the profile that
             # says whether the native tool supersedes the generator.
-            model = ctx.model
+            model: AbstractModel | None = ctx.__dict__.get('model')
             if isinstance(model, Model) and ImageGenerationTool in model.profile.get(
                 'supported_native_tools', SUPPORTED_NATIVE_TOOLS
             ):
                 warnings.warn(
-                    f'The `ImageGeneration` native tool supersedes the direct generator on {ctx.model.model_name}, '
+                    f'The `ImageGeneration` native tool supersedes the direct generator on {model.model_name}, '
                     f'so direct-only setting(s) go unapplied: {", ".join(direct_only)}. '
                     'Pass `native=False` to guarantee them.',
                     UserWarning,
+                    # Every frame between here and user code is framework toolset plumbing of
+                    # unbounded depth, so this attributes to the immediate caller rather than
+                    # misreporting an arbitrary internal frame as the user's.
+                    stacklevel=2,
                 )
             return tool_defs
 

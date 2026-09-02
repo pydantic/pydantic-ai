@@ -7,10 +7,9 @@ from __future__ import annotations
 
 import inspect
 import re
-import warnings
 from collections.abc import Sequence
 from dataclasses import replace
-from typing import Any
+from typing import Any, Literal
 
 import pytest
 
@@ -48,9 +47,11 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.native_tools import (
+    AbstractNativeTool,
     ImageGenerationTool,
 )
 from pydantic_ai.profiles import ModelProfile
+from pydantic_ai.toolsets.prepared import PreparedToolset
 from pydantic_ai.usage import RequestUsage
 
 from ._inline_snapshot import snapshot
@@ -58,6 +59,9 @@ from .conftest import IsDatetime, IsInstance, IsStr, iter_message_parts, try_imp
 
 with try_import() as logfire_imports_successful:
     from logfire.testing import CaptureLogfire
+
+with try_import() as temporal_imports_successful:
+    from pydantic_ai.durable_exec.temporal import TemporalRunContext
 
 
 class TestImageGenerationCapability:
@@ -131,6 +135,28 @@ class TestImageGenerationCapability:
 
         assert isinstance(cap.local, Tool)
         assert cap.get_toolset() is not None
+
+    def test_image_generation_direct_model_name_warns_for_native_only_settings(self):
+        """The `local='provider:model'` arm drops native-only settings, and blames the caller's line.
+
+        The `stacklevel` that produces that attribution is a literal counted through four framework
+        frames, so the warning's own `filename` is what pins it.
+        """
+        with pytest.warns(UserWarning, match='ignored native-tool setting.*quality') as recorded:
+            ImageGeneration(native=False, local='openai:gpt-image-1.5', quality='high')
+
+        assert [warning.filename for warning in recorded] == [__file__]
+
+    def test_image_generation_from_spec_warns_for_native_only_settings(self):
+        """A spec-loaded string `local` drops the same settings, one frame short of the caller.
+
+        `from_spec` adds a frame the `stacklevel` literals don't count, so the warning lands on the
+        capability module itself rather than on the spec's loader.
+        """
+        with pytest.warns(UserWarning, match='ignored native-tool setting.*quality') as recorded:
+            ImageGeneration.from_spec(native=False, local='openai:gpt-image-1.5', quality='high')
+
+        assert [warning.filename for warning in recorded] == [inspect.getsourcefile(ImageGeneration)]
 
     async def test_image_generation_direct_fallback(self, allow_model_requests: None):
         """The direct fallback applies portable settings and warns for native-only settings."""
@@ -391,6 +417,24 @@ class TestImageGenerationCapability:
         assert result.output == 'native path'
         assert image_model.last_settings is None
 
+    @pytest.mark.skipif(not temporal_imports_successful(), reason='temporalio not installed')
+    async def test_image_generation_native_supersedes_warning_tolerates_durable_run_context(self):
+        """The prepare function is re-run activity-side, where the live model didn't cross the boundary.
+
+        A `DynamicCapability` re-resolves this toolset inside the activity, so reading `ctx.model`
+        there would raise `UserError` on a `TemporalRunContext` — the native-vs-direct routing this
+        warning describes was already decided in the workflow process.
+        """
+        capability = ImageGeneration(
+            native=ImageGenerationTool(), local=ImageGenerator(TestImageGenerationModel()), dimensions=(1280, 720)
+        )
+        toolset = capability.get_toolset()
+        assert isinstance(toolset, PreparedToolset)
+
+        prepared = toolset.prepare_func(TemporalRunContext(deps=None, run_id='run', run_step=1), [])
+        assert inspect.isawaitable(prepared)
+        assert await prepared == []
+
     async def test_image_generation_callable_native_does_not_warn_about_direct_only_geometry(
         self, allow_model_requests: None
     ):
@@ -416,9 +460,7 @@ class TestImageGenerationCapability:
             ],
         )
 
-        with warnings.catch_warnings():
-            warnings.simplefilter('error')
-            result = await agent.run('Generate an image')
+        result = await agent.run('Generate an image')
 
         assert result.output == 'local path'
 
@@ -439,9 +481,7 @@ class TestImageGenerationCapability:
             capabilities=[ImageGeneration(local=ImageGenerator(image_model), dimensions=(1280, 720))],
         )
 
-        with warnings.catch_warnings():
-            warnings.simplefilter('error')
-            result = await agent.run('Generate an image')
+        result = await agent.run('Generate an image')
 
         assert result.output == 'done'
         assert image_model.last_settings == {'dimensions': (1280, 720)}
@@ -484,9 +524,7 @@ class TestImageGenerationCapability:
         capability = ImageGeneration(local=ImageGenerator(image_model), aspect_ratio='16:9')
         agent = Agent(outer_model, capabilities=[capability])
 
-        with warnings.catch_warnings():
-            warnings.simplefilter('error')
-            result = await agent.run('Generate an image')
+        result = await agent.run('Generate an image')
 
         assert result.output == 'native path'
         native_tool = capability.get_native_tools()[0]
@@ -560,6 +598,29 @@ class TestImageGenerationCapability:
         assert tool.aspect_ratio is None
 
     @pytest.mark.parametrize(
+        ('kwargs', 'ignored'),
+        [
+            ({'dimensions': (1280, 720)}, 'dimensions'),
+            ({'aspect_ratio': '2:1'}, 'aspect_ratio'),
+        ],
+    )
+    @pytest.mark.parametrize('native_form', ['instance', 'callable'])
+    def test_image_generation_non_default_native_ignores_direct_only_geometry(
+        self, native_form: Literal['instance', 'callable'], kwargs: dict[str, Any], ignored: str
+    ):
+        """A custom or dynamic `native` drops direct-only geometry exactly as `native=True` does.
+
+        The native tool has no way to express either setting whichever form built it, and without a
+        direct generator nothing else will, so the byte-identical configuration cannot be silent
+        just because `native` was spelled as an instance or a factory.
+        """
+        with pytest.warns(UserWarning, match=f'ignored direct-only setting.*{ignored}'):
+            if native_form == 'instance':
+                ImageGeneration(native=ImageGenerationTool(quality='high'), **kwargs)
+            else:
+                ImageGeneration(native=lambda ctx: None, **kwargs)
+
+    @pytest.mark.parametrize(
         'kwargs',
         [
             {'dimensions': (1280, 720)},
@@ -573,13 +634,11 @@ class TestImageGenerationCapability:
         but warning about it is wrong when `local` is a direct generator that honors them. Both cases
         use a value outside the native vocabulary so they take the non-native branch.
 
-        `size` is deliberately absent: `_direct_image_settings` forwards only `dimensions` and
+        `size` is deliberately absent: the direct fallback carries only `dimensions` and
         `aspect_ratio`, so a non-native `size` really is dropped by both paths and still warns.
         """
-        with warnings.catch_warnings():
-            warnings.simplefilter('error')
-            cap = ImageGeneration(local=ImageGenerator(TestImageGenerationModel()), **kwargs)
-            builtins = cap.get_native_tools()
+        cap = ImageGeneration(local=ImageGenerator(TestImageGenerationModel()), **kwargs)
+        builtins = cap.get_native_tools()
 
         assert len(builtins) == 1
         tool = builtins[0]
@@ -600,6 +659,51 @@ class TestImageGenerationCapability:
         # The local fallback should exist and contain the merged config
         assert isinstance(cap.local, Tool)
         assert cap.get_toolset() is not None
+
+    async def test_image_generation_custom_native_ratio_reaches_both_fallbacks(self, allow_model_requests: None):
+        """A custom `native` instance's `aspect_ratio` is the base for the direct fallback too.
+
+        The `fallback_model` subagent has merged custom-native settings since the capability shipped;
+        the direct fallback has to honor the same instance, or the identical configuration produces
+        differently shaped images depending on which fallback is configured. Capability-level fields
+        still override it on both paths, which is the precedence the class docstring states.
+        """
+        native = ImageGenerationTool(aspect_ratio='16:9')
+
+        def outer_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if any(isinstance(p, ToolReturnPart) for m in messages if isinstance(m, ModelRequest) for p in m.parts):
+                return ModelResponse(parts=[TextPart(content='done')])
+            return ModelResponse(parts=[ToolCallPart(tool_name='generate_image', args={'prompt': 'tiny robot'})])
+
+        outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
+
+        direct_model = TestImageGenerationModel()
+        direct_agent = Agent(
+            outer_model, capabilities=[ImageGeneration(native=native, local=ImageGenerator(direct_model))]
+        )
+        await direct_agent.run('Generate an image')
+        assert direct_model.last_settings == snapshot({'aspect_ratio': '16:9'})
+
+        overridden_model = TestImageGenerationModel()
+        overridden_agent = Agent(
+            outer_model,
+            capabilities=[ImageGeneration(native=native, local=ImageGenerator(overridden_model), aspect_ratio='4:3')],
+        )
+        await overridden_agent.run('Generate an image')
+        assert overridden_model.last_settings == snapshot({'aspect_ratio': '4:3'})
+
+        subagent_native_tools: list[AbstractNativeTool] = []
+
+        def inner_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            subagent_native_tools.extend(info.model_request_parameters.native_tools)
+            return ModelResponse(
+                parts=[FilePart(content=BinaryImage(data=b'\x89PNG\r\n\x1a\n', media_type='image/png'))]
+            )
+
+        inner_model = FunctionModel(inner_model_fn, profile=ModelProfile(supports_image_output=True))
+        subagent_agent = Agent(outer_model, capabilities=[ImageGeneration(native=native, fallback_model=inner_model)])
+        await subagent_agent.run('Generate an image')
+        assert subagent_native_tools == snapshot([ImageGenerationTool(aspect_ratio='16:9')])
 
     def test_image_generation_callable_native_with_fallback(self):
         """When native is a callable, the fallback local tool still gets created."""
@@ -710,27 +814,59 @@ class TestImageGenerationCapability:
         with pytest.raises(UserError, match="'gpt-image-1' is a dedicated image generation model"):
             await agent.run('Generate a test image')
 
-    async def test_image_generation_subagent_content_filter_error_is_not_retried(self, allow_model_requests: None):
-        """A moderation block aborts the run rather than becoming a retry prompt.
+    @pytest.mark.parametrize('fallback', ['subagent', 'direct'])
+    async def test_image_generation_content_filter_error_becomes_model_retry(
+        self, fallback: Literal['subagent', 'direct'], allow_model_requests: None
+    ):
+        """Both fallbacks turn a moderation block into a retry prompt for the outer model.
 
-        `ContentFilterError` subclasses `UnexpectedModelBehavior`, so it would otherwise be swallowed
-        by the retry mapping below; a provider refusal is deterministic and rephrasing is the caller's
-        decision, matching how the agent loop treats a `content_filter` finish reason.
+        The outer model is the one that wrote the prompt, so rephrasing is its move to make. Keeping
+        the conversion on both paths also means neither capability tool ever lets the exception out:
+        a durable engine matches non-retryable errors by class name, and `ContentFilterError` is not
+        on that list, so an escape would leave the tool activity retrying a deterministic refusal.
+        `ImageGenerator.generate` called directly still raises `ContentFilterError`.
         """
 
         def blocked_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             raise ContentFilterError('image generation was blocked for content moderation')
 
-        inner_model = FunctionModel(blocked_model_fn, profile=ModelProfile(supports_image_output=True))
+        class BlockedImageGenerationModel(TestImageGenerationModel):
+            async def generate(
+                self,
+                prompt: str,
+                *,
+                images: Sequence[ImageGenerationInput] | None = None,
+                settings: ImageGenerationSettings | None = None,
+            ) -> ImageGenerationResult:
+                raise ContentFilterError('image generation was blocked for content moderation')
+
+        capability: ImageGeneration[object] = (
+            ImageGeneration(
+                fallback_model=FunctionModel(blocked_model_fn, profile=ModelProfile(supports_image_output=True))
+            )
+            if fallback == 'subagent'
+            else ImageGeneration(native=False, local=BlockedImageGenerationModel())
+        )
+
+        call_count = 0
 
         def outer_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            return ModelResponse(parts=[ToolCallPart(tool_name='generate_image', args='{"prompt": "test"}')])
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return ModelResponse(parts=[ToolCallPart(tool_name='generate_image', args='{"prompt": "test"}')])
+            return ModelResponse(parts=[TextPart(content='gave up')])
 
         outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
-        agent = Agent(outer_model, capabilities=[ImageGeneration(fallback_model=inner_model)])
+        agent = Agent(outer_model, capabilities=[capability])
 
-        with pytest.raises(ContentFilterError, match='blocked for content moderation'):
-            await agent.run('Generate a test image')
+        result = await agent.run('Generate a test image')
+
+        assert result.output == 'gave up'
+        retry_prompts = list(iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart))
+        assert [part.content for part in retry_prompts] == snapshot(
+            ['image generation was blocked for content moderation']
+        )
 
     async def test_image_generation_subagent_error_becomes_model_retry(self, allow_model_requests: None):
         """UnexpectedModelBehavior from subagent becomes a retry prompt to the outer model."""
@@ -809,6 +945,10 @@ class TestImageGenerationCapability:
             ('openai-responses', 'gpt-image-1-mini', 'openai-responses:gpt-5.4'),
             ('google', 'imagen-3.0-generate-002', 'google:gemini-3-pro-image'),
             ('google', 'imagen-3.0-fast-generate-001', 'google:gemini-3-pro-image'),
+            # xAI has no conversational model that carries the `ImageGenerationTool`, so the
+            # suggested alternative crosses providers; `local=` is the way to stay on xAI.
+            ('xai', 'grok-imagine-image', 'openai-responses:gpt-5.5'),
+            ('xai', 'grok-imagine-image-quality', 'openai-responses:gpt-5.5'),
         ],
     )
     def test_image_generation_rejects_image_only_model(self, provider: str, model_name: str, suggestion: str):

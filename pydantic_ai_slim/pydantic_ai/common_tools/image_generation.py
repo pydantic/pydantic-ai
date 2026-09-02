@@ -7,7 +7,7 @@ from typing import Any
 
 from pydantic_ai.agent import Agent
 from pydantic_ai.capabilities import NativeTool
-from pydantic_ai.exceptions import ContentFilterError, ModelRetry, UnexpectedModelBehavior, UserError
+from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import BinaryImage
 from pydantic_ai.models import KnownModelName, Model, parse_model_id
 from pydantic_ai.native_tools import ImageGenerationTool
@@ -44,6 +44,15 @@ _IMAGE_ONLY_MODELS: dict[str, str] = {
     'dall-e-2': 'openai-responses:gpt-5.4',
     'imagen-3.0-generate-002': 'google:gemini-3-pro-image',
     'imagen-3.0-fast-generate-001': 'google:gemini-3-pro-image',
+    # xAI has no conversational model that supports the `ImageGenerationTool`, so the Grok Imagine
+    # family's suggested alternative crosses providers; `local='xai:grok-imagine-image'` is the way
+    # to stay on xAI, which the error's first sentence points at.
+    'grok-imagine-image': 'openai-responses:gpt-5.5',
+    'grok-imagine-image-2026-03-02': 'openai-responses:gpt-5.5',
+    'grok-imagine-image-quality': 'openai-responses:gpt-5.5',
+    'grok-imagine-image-quality-20260403': 'openai-responses:gpt-5.5',
+    'grok-imagine-image-quality-latest': 'openai-responses:gpt-5.5',
+    'grok-imagine-image-pro': 'openai-responses:gpt-5.5',
 }
 
 
@@ -104,11 +113,11 @@ class ImageGenerationSubagentTool:
         )
         try:
             result = await agent.run(prompt)
-        except ContentFilterError:
-            # A moderation block is a deterministic refusal, so it stays run-fatal as everywhere else;
-            # only the retryable `UnexpectedModelBehavior` cases below become a `ModelRetry`.
-            raise
         except UnexpectedModelBehavior as e:
+            # `ContentFilterError` is an `UnexpectedModelBehavior`, so a moderation block becomes a
+            # retry prompt too. Nothing the subagent raises escapes the tool call, which is what
+            # keeps a durable engine from retrying the tool activity against an error class its
+            # non-retryable list doesn't name.
             raise ModelRetry(str(e)) from e
         return result.output
 
