@@ -26,7 +26,7 @@ from typing_extensions import Self, TypeAliasType, TypedDict, deprecated
 from typing_inspection.introspection import get_literal_values
 
 from .. import _utils
-from .._genai_prices import lookup_context_window, preload_pricing_data
+from .._genai_prices import lookup_context_window, lookup_model_context_window, preload_pricing_data
 from .._http import DEFAULT_HTTP_TIMEOUT as DEFAULT_HTTP_TIMEOUT, legacy_httpx
 from .._json_schema import JsonSchemaTransformer
 from .._output import StructuredTextOutputSchema
@@ -885,18 +885,6 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         """The resolved profile's [`context_window`][pydantic_ai.profiles.ModelProfile.context_window]."""
         return self.profile.get('context_window')
 
-    def _get_resolved_context_window(self) -> int | None:
-        """Look up an unset profile context window from genai-prices."""
-        try:
-            base_url = self.base_url
-        except (AttributeError, UserError):
-            # `base_url` may raise `UserError` (e.g. HuggingFace without one) or not be available
-            # yet when `profile` is first resolved inside a subclass `__init__` (e.g. Bedrock Mantle,
-            # whose client — which `base_url` reads — is only set after the profile is consulted).
-            base_url = None
-
-        return lookup_context_window(self.model_name, provider_api_url=base_url, provider_name=self.system)
-
     @cached_property
     def profile(self) -> ModelProfile:
         """The model profile.
@@ -927,7 +915,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             user is not None and not callable(user) and 'context_window' in user
         )
         if not context_window_set:
-            context_window = self._get_resolved_context_window()
+            context_window = lookup_model_context_window(self)
             if context_window is not None:
                 resolved = merge_profile(resolved, ModelProfile(context_window=context_window))
 

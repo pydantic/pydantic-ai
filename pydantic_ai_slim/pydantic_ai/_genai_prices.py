@@ -11,11 +11,13 @@ from genai_prices import calc_price
 from genai_prices.data_snapshot import get_snapshot
 
 from ._warnings import CostCalculationFailedWarning
+from .exceptions import UserError
 
 if TYPE_CHECKING:
     from genai_prices.types import PriceCalculation
 
     from .messages import ModelResponse
+    from .models._abstract import AbstractModel
     from .usage import RequestUsage, RunUsage
 
 
@@ -67,6 +69,20 @@ def lookup_context_window(
             continue
         return model_info.context_window
     return None
+
+
+def lookup_model_context_window(model: AbstractModel) -> int | None:
+    """[`lookup_context_window`][pydantic_ai._genai_prices.lookup_context_window] for a model instance.
+
+    Uses the model's `model_name`, `system`, and `base_url`. `base_url` may raise `UserError` (e.g.
+    HuggingFace without one) or `AttributeError` when the profile is first resolved inside a subclass
+    `__init__` before the client it reads exists (e.g. Bedrock Mantle); either just means no URL to match on.
+    """
+    try:
+        base_url = model.base_url
+    except (AttributeError, UserError):
+        base_url = None
+    return lookup_context_window(model.model_name, provider_api_url=base_url, provider_name=model.system)
 
 
 def calculate_price_for_usage(

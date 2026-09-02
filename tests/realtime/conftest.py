@@ -37,6 +37,7 @@ with try_import() as azure_imports_successful:
     from pydantic_ai.providers.azure import AzureProvider
 
 if TYPE_CHECKING:
+    from pydantic_ai.models import AbstractModel
     from pydantic_ai.providers import Provider
 
 CASSETTES_DIR = Path(__file__).parent / 'cassettes'
@@ -434,9 +435,7 @@ def no_genai_prices_context_window(monkeypatch: pytest.MonkeyPatch) -> None:
     `tests/realtime/test_openai.py` covers the fill itself.
     """
 
-    def unknown_window(
-        model_name: str, *, provider_api_url: str | None = None, provider_name: str | None = None
-    ) -> None:
+    def unknown_window(model: AbstractModel) -> None:
         return None
 
-    monkeypatch.setattr('pydantic_ai.realtime.model.lookup_context_window', unknown_window)
+    monkeypatch.setattr('pydantic_ai.realtime.model.lookup_model_context_window', unknown_window)
