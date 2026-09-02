@@ -330,23 +330,12 @@ class SandboxBackend(Protocol):
 
     @property
     def provider(self) -> str:
-        """Short identifier of the backing implementation (e.g. `'docker'`, `'local'`).
-
-        Together with `sandbox_id`, this is the identity carried by
-        [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef]; capabilities use it to recognize
-        their own refs in [`get_sandbox`][pydantic_ai.capabilities.AbstractCapability.get_sandbox].
-        Credentials and other worker-side configuration stay on the capability rather than in
-        the identity.
-        """
+        """Short identifier of the backing implementation (e.g. `'docker'`, `'local'`)."""
         ...
 
     @property
     def sandbox_id(self) -> str:
-        """The implementation's stable identifier for this sandbox, unique per provider.
-
-        Together with `provider`, this is the durable identity carried by
-        [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef]. On its own it is not globally unique.
-        """
+        """The implementation's stable identifier for this sandbox, carried by [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef]."""
         ...
 
     async def run(

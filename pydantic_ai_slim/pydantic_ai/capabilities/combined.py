@@ -16,7 +16,6 @@ from pydantic_ai._instructions import (
 from pydantic_ai._utils import aclose_all, gather, replace_no_init
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
-from pydantic_ai.sandboxes import SandboxBackend, SandboxRef
 from pydantic_ai.settings import ModelSettings, merge_model_settings
 from pydantic_ai.tools import (
     AgentDepsT,
@@ -368,28 +367,6 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                 wrapped = result
                 any_wrapped = True
         return wrapped if any_wrapped else None
-
-    @property
-    def _has_sandbox_hooks(self) -> bool:
-        return any(capability._has_sandbox_hooks for capability in self.capabilities)
-
-    @property
-    def _has_get_sandbox(self) -> bool:
-        return any(capability._has_get_sandbox for capability in self.capabilities)
-
-    async def get_sandbox(self, ctx: RunContext[AgentDepsT], ref: SandboxRef | None) -> SandboxBackend | None:
-        # Reversed for legacy refs resolved outside normal run setup. Agent runs validate that
-        # exactly one active capability provides sandbox hooks before connecting a ref.
-        # Deferred capabilities are skipped: their contributions are inert until loaded.
-        # `acquire_sandbox`/`release_sandbox` deliberately have no combined dispatch — the run
-        # resolves them through `resolve_run_sandbox`, which keeps the supplier's identity.
-        for capability in reversed(self.capabilities):
-            if capability.defer_loading is True:
-                continue
-            backend = await capability.get_sandbox(ctx, ref)
-            if backend is not None:
-                return backend
-        return None
 
     # --- Tool preparation hooks ---
 

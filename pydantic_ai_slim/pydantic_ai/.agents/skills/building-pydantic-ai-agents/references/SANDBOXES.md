@@ -48,7 +48,8 @@ restrictions, output limits, and path rules in the tool layer.
 
 Tools always call the same `ctx.sandbox` methods. `fs` needs a backend with
 `SupportsFilesystem`, while `start()` needs `SupportsStart`; unsupported operations raise
-`NotImplementedError`.
+`NotImplementedError`. `ctx.sandbox.attached` is `False` only when the run has no sandbox at all,
+for tools that fall back to another path.
 
 Backends raise `SandboxTimeoutError` when a command exceeds its deadline and
 `SandboxUnavailableError` when retrying against the same environment cannot succeed.
@@ -81,21 +82,16 @@ class MySandboxCapability(AbstractCapability[Any]):
     async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
         """Acquire for this run by provisioning, checking out, or selecting."""
         sandbox = await self.client.create(idempotency_key=ctx.run_id)
-        return SandboxRef(provider='docker', sandbox_id=sandbox.sandbox_id)
+        return SandboxRef(sandbox_id=sandbox.sandbox_id)
 
-    async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef | None) -> SandboxBackend | None:
-        """Connect, never create. With no ref, an implementation may return an already-live backend."""
-        if ref is None or ref.provider != 'docker':
-            return None
+    async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
+        """Connect, never create."""
         return await self.client.connect(ref.sandbox_id)
 
     async def release_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
         """Release after the run, including failure. This may destroy, check in, or do nothing."""
         await self.client.destroy(ref.sandbox_id)
 ```
-
-For durable execution, construct the capability with a stable ID, for example
-`MySandboxCapability(client, id='my-sandbox')`, so workers can route the ref back to it.
 
 Choose the lifecycle that matches the application:
 
@@ -106,8 +102,8 @@ Choose the lifecycle that matches the application:
 - For a sandbox provisioned elsewhere, implement `get_sandbox` to connect its `SandboxRef`; the
   caller owns its lifecycle.
 
-Exactly one active capability may define sandbox hooks. Deferred capabilities cannot provide the
-run sandbox because selection happens before they load.
+Exactly one capability may return a ref from `acquire_sandbox`, and exactly one may connect a given
+ref; more raises `UserError`. Deferred capabilities take no part until loaded.
 
 Each `get_sandbox` call returns a fresh detachable connection. Pydantic AI caches it for the
 current run or durable I/O unit, then closes it with `terminate=False` when supported. A live
@@ -125,13 +121,12 @@ blocking commands and file changes. When a capability manages the backend, apply
 
 ## Durable execution
 
-Only serializable sandbox routing information crosses a durable boundary: a `SandboxRef`, or the
-stable capability ID for a provider that connects with `get_sandbox(ctx, None)`. Tools still call
-`ctx.sandbox` normally, and the worker reconnects on first use.
+Only the `SandboxRef` crosses a durable boundary. Tools still call `ctx.sandbox` normally, and the
+worker reconnects on first use.
 
-Pass `SandboxRef(provider=..., sandbox_id=...)` through `sandbox=` when the environment is
-provisioned elsewhere and outlives the run. The agent must have a capability that recognizes the
-reference. Do not pass a live backend or `LocalSandbox` into a durable run.
+Pass `SandboxRef(sandbox_id=...)` through `sandbox=` when the environment is provisioned elsewhere
+and outlives the run. The agent must have a capability whose `get_sandbox` connects it. Do not pass
+a live backend or `LocalSandbox` into a durable run.
 
 Capability author rules:
 

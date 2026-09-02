@@ -198,20 +198,7 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
     async def acquire_sandbox(self, ctx: RunContext[AgentDepsT]) -> SandboxRef | None:
         return await self.wrapped.acquire_sandbox(ctx)
 
-    @property
-    def _has_sandbox_hooks(self) -> bool:
-        wrapper_type = type(self)
-        return self.wrapped._has_sandbox_hooks or (
-            wrapper_type.acquire_sandbox is not WrapperCapability.acquire_sandbox
-            or wrapper_type.get_sandbox is not WrapperCapability.get_sandbox
-            or wrapper_type.release_sandbox is not WrapperCapability.release_sandbox
-        )
-
-    @property
-    def _has_get_sandbox(self) -> bool:
-        return self.wrapped._has_get_sandbox or type(self).get_sandbox is not WrapperCapability.get_sandbox
-
-    async def get_sandbox(self, ctx: RunContext[AgentDepsT], ref: SandboxRef | None) -> SandboxBackend | None:
+    async def get_sandbox(self, ctx: RunContext[AgentDepsT], ref: SandboxRef) -> SandboxBackend | None:
         return await self.wrapped.get_sandbox(ctx, ref)
 
     async def release_sandbox(self, ctx: RunContext[AgentDepsT], ref: SandboxRef) -> None:

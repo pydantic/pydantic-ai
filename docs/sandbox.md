@@ -115,11 +115,9 @@ class MySandboxCapability(AbstractCapability[Any]):
 
     async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
         sandbox = await self.client.create(idempotency_key=ctx.run_id)
-        return SandboxRef(provider='docker', sandbox_id=sandbox.sandbox_id)
+        return SandboxRef(sandbox_id=sandbox.sandbox_id)
 
-    async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef | None) -> SandboxBackend | None:
-        if ref is None or ref.provider != 'docker':
-            return None  # this implementation requires an acquired or caller-provided ref
+    async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
         # Re-open only: raise if the environment expired. Never create a replacement here.
         return await self.client.connect(ref.sandbox_id)
 
@@ -157,6 +155,9 @@ spans two runs.
 Pass [`UnavailableSandbox`][pydantic_ai.sandboxes.UnavailableSandbox] as
 `sandbox=UnavailableSandbox(reason='Local execution is disabled by application policy.')` to
 prevent capabilities from attaching a sandbox and give attempted operations a useful error.
+A tool that can also work without a sandbox can check
+[`ctx.sandbox.attached`][pydantic_ai.sandboxes.Sandbox.attached], which is `False` only when the
+run has no sandbox at all.
 
 ### Making a sandbox read-only
 
@@ -242,11 +243,9 @@ backend works without registration when it implements the relevant protocols.
 ## Durable execution
 
 Tools still use `ctx.sandbox` unchanged under [Temporal](durable_execution/temporal.md),
-[DBOS](durable_execution/dbos.md), and [Prefect](durable_execution/prefect.md). Only serializable
-sandbox routing information crosses the durable boundary: either a
-[`SandboxRef`][pydantic_ai.sandboxes.SandboxRef], or its stable capability ID when
-`get_sandbox(ctx, None)` connects a provider-configured environment. The worker reconnects when a
-durable activity, step, or task uses the sandbox.
+[DBOS](durable_execution/dbos.md), and [Prefect](durable_execution/prefect.md). Only the
+[`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] crosses the durable boundary; the worker reconnects
+through `get_sandbox` when a durable activity, step, or task uses the sandbox.
 
 Use the lifecycle capability [shown above](#manage-sandboxes-automatically) for a sandbox owned by
 one run. If the sandbox is provisioned elsewhere and should outlive the run, pass its reference
@@ -255,7 +254,7 @@ instead:
 ```python
 from pydantic_ai import SandboxRef
 
-sandbox = SandboxRef(provider='docker', sandbox_id='sandbox-123')
+sandbox = SandboxRef(sandbox_id='sandbox-123')
 ```
 
 Pass that value through `sandbox=`. The agent must also have a capability whose `get_sandbox` can

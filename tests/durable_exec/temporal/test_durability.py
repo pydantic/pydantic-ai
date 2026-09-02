@@ -81,6 +81,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.run import AgentRunResult
+from pydantic_ai.sandboxes import SandboxRef
 from pydantic_ai.tools import DeferredToolRequests, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.toolsets.external import TOOL_SCHEMA_VALIDATOR
@@ -1166,6 +1167,53 @@ async def test_durability_validates_only_resolved_runtime_capability_layers():
 
         with pytest.raises(UserError, match='Capabilities added per-run inside a Temporal workflow'):
             await agent.run('hello', capabilities=[extra_factory])
+
+
+async def test_durability_runs_sandbox_lifecycle_as_activities(monkeypatch: pytest.MonkeyPatch):
+    """A capability's `acquire_sandbox` and `release_sandbox` dispatch as activities inside a workflow."""
+
+    class _SkipRequest(AbstractCapability[None]):
+        async def before_model_request(
+            self, ctx: RunContext[None], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            raise SkipModelRequest(ModelResponse(parts=[TextPart(content='skipped')]))
+
+    class SandboxSupplier(AbstractCapability[None]):
+        id = 'sandbox'
+
+        def __init__(self) -> None:
+            self.events: list[str] = []
+
+        async def acquire_sandbox(self, ctx: RunContext[None]) -> SandboxRef:
+            self.events.append('acquire')
+            return SandboxRef(sandbox_id='temporal-sandbox')
+
+        async def release_sandbox(self, ctx: RunContext[None], ref: SandboxRef) -> None:
+            self.events.append(f'release:{ref.sandbox_id}')
+
+    supplier = SandboxSupplier()
+    agent = Agent(
+        TestModel(),
+        name='sandbox_lifecycle',
+        deps_type=type(None),
+        capabilities=[_SkipRequest(), TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG), supplier],
+    )
+    dispatched: list[str] = []
+
+    async def execute_activity(activity: Any, args: Any, **config: Any) -> Any:
+        dispatched.append(ActivityDefinition.must_from_callable(activity).name or '')  # pyright: ignore[reportUnknownMemberType]
+        return await activity(*args)
+
+    monkeypatch.setattr('pydantic_ai.durable_exec.temporal._operation_backend.execute_activity', execute_activity)
+    with patch('pydantic_ai.durable_exec.temporal._durability.workflow.in_workflow', return_value=True):
+        result = await agent.run('hello')
+
+    assert result.output == 'skipped'
+    assert dispatched == [
+        'agent__sandbox_lifecycle__capability__sandbox__acquire_sandbox',
+        'agent__sandbox_lifecycle__capability__sandbox__release_sandbox',
+    ]
+    assert supplier.events == ['acquire', 'release:temporal-sandbox']
 
 
 # --- get_serialization_name returns None ---

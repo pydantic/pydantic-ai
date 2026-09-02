@@ -197,7 +197,7 @@ async def test_durable_sandbox_release_failure_propagates() -> None:
         id = 'sandbox'
 
         async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
-            return SandboxRef(provider='fake', sandbox_id='durable-sandbox')
+            return SandboxRef(sandbox_id='durable-sandbox')
 
         async def release_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
             raise RuntimeError('control plane unavailable')
@@ -216,7 +216,7 @@ async def test_wrapped_sandbox_provider_lifecycle_uses_durable_dispatch() -> Non
 
         async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
             self.events.append('acquire')
-            return SandboxRef(provider='fake', sandbox_id='wrapped')
+            return SandboxRef(sandbox_id='wrapped')
 
         async def release_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
             self.events.append('release')
@@ -247,6 +247,20 @@ async def test_durability_rejects_live_sandbox_in_durable_context() -> None:
 
     with pytest.raises(UserError, match=r'live sandbox backend.*Pass a `SandboxRef`'):
         await agent.run('go', sandbox=RecordingSandboxBackend('live'))
+
+
+async def test_durability_forbids_connecting_sandbox_ref_in_durable_context() -> None:
+    """Inside the durable container only the ref crosses; connecting there is workflow-side I/O."""
+    from ..sandbox_fakes import ConnectOnlySandboxCapability
+
+    agent = Agent(TestModel(), name='ref_sandbox', capabilities=[ConnectOnlySandboxCapability(), RecordingDurability()])
+
+    @agent.tool
+    async def probe(ctx: RunContext[Any]) -> str:
+        return (await ctx.sandbox.run(['true'])).stdout  # pragma: no cover
+
+    with pytest.raises(UserError, match=r'`ctx.sandbox` cannot connect inside recording journal code'):
+        await agent.run('go', sandbox=SandboxRef(sandbox_id='outside'))
 
 
 async def test_durability_allows_live_sandbox_outside_durable_context() -> None:

@@ -9,7 +9,6 @@ from pydantic import BaseModel
 
 from pydantic_ai import ToolsetTool
 from pydantic_ai._utils import TOOL_CALL_ID_PREFIX
-from pydantic_ai.sandboxes import SandboxRef, UnavailableSandbox
 from pydantic_ai.tools import RunContext, ToolDefinition
 
 _NON_SERIALIZABLE = '<non-serializable>'
@@ -141,16 +140,9 @@ def _replace_run_context(
                 'usage_limits': value.usage_limits,
             }
             # Sandbox identity forks the key because tools can produce environment-specific
-            # results. Reading durable identity must not connect a deferred sandbox.
-            sandbox_identity = value.sandbox._durable_identity()  # pyright: ignore[reportPrivateUsage]
-            if sandbox_identity is None:
-                projected['sandbox_provider'] = value.sandbox._durable_capability_id()  # pyright: ignore[reportPrivateUsage]
-            elif not isinstance(sandbox_identity, UnavailableSandbox):
-                projected['sandbox'] = (
-                    value.sandbox.provider,
-                    value.sandbox.sandbox_id,
-                    sandbox_identity.capability_id if isinstance(sandbox_identity, SandboxRef) else None,
-                )
+            # results. `sandbox_id` is known without connecting a deferred sandbox.
+            if value.sandbox.attached:
+                projected['sandbox'] = value.sandbox.sandbox_id
             inputs[key] = projected
 
     return inputs

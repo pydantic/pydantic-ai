@@ -16,7 +16,7 @@ import pytest
 from pydantic_ai import Agent, ReadOnlySandbox, RunContext, UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
-from pydantic_ai.sandboxes import LocalSandbox, Sandbox, SupportsFilesystem, SupportsStart
+from pydantic_ai.sandboxes import LocalSandbox, Sandbox, SandboxRef, SupportsFilesystem, SupportsStart
 
 from .sandbox_fakes import FakeSandboxResult, RecordingSandboxBackend
 
@@ -158,7 +158,7 @@ async def test_connection_close_forwards_detach_but_blocks_termination():
     async def connect(_: Any) -> ReadOnlySandbox:
         return read_only
 
-    sandbox = Sandbox._from_provider('fake', connect)  # pyright: ignore[reportPrivateUsage]
+    sandbox = Sandbox._from_ref(SandboxRef(sandbox_id='fake'), connect)  # pyright: ignore[reportPrivateUsage]
     assert await sandbox.working_dir() == '/workspace'
     await sandbox._close_connected_backend()  # pyright: ignore[reportPrivateUsage]
 
@@ -179,7 +179,7 @@ async def test_connection_close_ignores_unrelated_incompatible_close_method():
     async def connect(_: Any) -> ReadOnlySandbox:
         return read_only
 
-    sandbox = Sandbox._from_provider('fake', connect)  # pyright: ignore[reportPrivateUsage]
+    sandbox = Sandbox._from_ref(SandboxRef(sandbox_id='fake'), connect)  # pyright: ignore[reportPrivateUsage]
     await sandbox.working_dir()
     await sandbox._close_connected_backend()  # pyright: ignore[reportPrivateUsage]
 

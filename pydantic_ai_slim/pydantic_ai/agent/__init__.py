@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, cast, overloa
 
 import anyio
 from opentelemetry.trace import NoOpTracer
+from pydantic.alias_generators import to_snake
 from pydantic.json_schema import GenerateJsonSchema
 from typing_extensions import Self, TypeIs, TypeVar
 
@@ -64,15 +65,14 @@ from ..capabilities import (
     ModelSelector,
     ToolSearch as ToolSearchCap,
 )
-from ..capabilities._durable_operation import invoke_durable_operation
 from ..capabilities._dynamic import wrap_capability_funcs
 from ..capabilities._ordering import find_capability, has_capability_type
 from ..capabilities._pending_messages import PendingMessageDrainCapability
 from ..capabilities._sandbox import (
-    capabilities_by_id,
-    find_sandbox_ref_connector,
-    resolve_run_sandbox,
-    resolve_sandbox_ref,
+    acquire_run_sandbox,
+    active_leaves,
+    connect_sandbox_ref,
+    release_run_sandbox,
 )
 from ..capabilities.abstract import leaf_capabilities
 from ..capabilities.combined import bind_capabilities_tier
@@ -1614,80 +1614,33 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 sandbox=Sandbox.wrap(default_sandbox_backend()),
             )
 
-            async def _connect_sandbox_ref(ref: SandboxRef) -> SandboxBackend:
-                try:
-                    backend = await resolve_sandbox_ref(bootstrap_capability, initial_ctx, ref)
-                except exceptions.UserError:
-                    raise
-                except Exception as error:
-                    raise exceptions.UserError(
-                        f'Failed to connect to sandbox {ref.sandbox_id!r} for provider {ref.provider!r}.'
-                    ) from error
-                if backend is None:
-                    raise exceptions.UserError(
-                        f'No capability recognizes the sandbox reference for provider {ref.provider!r} '
-                        f'(sandbox {ref.sandbox_id!r}). Attach a capability whose `get_sandbox` can connect to it.'
-                    )
-                return backend
-
             async def _close_sandbox_connection(facade: Sandbox) -> None:
                 with anyio.CancelScope(shield=True):
                     await facade._close_connected_backend()  # pyright: ignore[reportPrivateUsage]
 
-            # The run's sandbox: an explicit `sandbox=` argument wins, otherwise the sole sandbox-providing
-            # capability acquires one, otherwise operations explain how to attach one. Resolved before
-            # `for_run` so every hook sees the final `ctx.sandbox`; release and connection close are
-            # pushed on `stack` first so they run after the run's own teardown.
+            # The run's sandbox: an explicit `sandbox=` argument wins, otherwise the one capability that
+            # acquires one, otherwise operations explain how to attach one. Resolved before `for_run` so
+            # every hook sees the final `ctx.sandbox`; release and connection close are pushed on `stack`
+            # first so they run after the run's own teardown.
             if isinstance(sandbox, SandboxRef):
-                find_sandbox_ref_connector(bootstrap_capability, sandbox)
-                sandbox_facade = Sandbox._from_ref(sandbox, _connect_sandbox_ref)  # pyright: ignore[reportPrivateUsage]
+                connectors = active_leaves(bootstrap_capability)
+                sandbox_facade = Sandbox._from_ref(  # pyright: ignore[reportPrivateUsage]
+                    sandbox, lambda ref: connect_sandbox_ref(connectors, initial_ctx, ref)
+                )
                 stack.push_async_callback(_close_sandbox_connection, sandbox_facade)
             elif sandbox is not None:
                 sandbox_facade = Sandbox.wrap(sandbox)
             else:
                 sandbox_facade = initial_ctx.sandbox
-                supplied = await resolve_run_sandbox(bootstrap_capability, initial_ctx)
-                if supplied is not None:
-                    sandbox_supplier, sandbox_capability_id, sandbox_ref = supplied
-                    if sandbox_ref is not None:
-                        sandbox_facade = Sandbox._from_ref(  # pyright: ignore[reportPrivateUsage]
-                            sandbox_ref, _connect_sandbox_ref
-                        )
-                    elif sandbox_supplier._has_get_sandbox:  # pyright: ignore[reportPrivateUsage]
-
-                        async def _resolve_provider_sandbox(ref: SandboxRef | None) -> SandboxBackend:
-                            assert ref is None
-                            try:
-                                backend = await sandbox_supplier.get_sandbox(initial_ctx, None)
-                            except Exception as error:
-                                raise exceptions.UserError(
-                                    f'Capability {sandbox_capability_id!r} failed to connect its sandbox.'
-                                ) from error
-                            if backend is None:
-                                raise exceptions.UserError(
-                                    f'Capability {sandbox_capability_id!r} provides sandbox hooks but its '
-                                    '`get_sandbox` hook returned `None` without a `SandboxRef`.'
-                                )
-                            return backend
-
-                        sandbox_facade = Sandbox._from_provider(sandbox_capability_id, _resolve_provider_sandbox)  # pyright: ignore[reportPrivateUsage]
-
-                    async def _release_run_sandbox(supplier: AbstractCapability[AgentDepsT], ref: SandboxRef) -> None:
-                        with anyio.CancelScope(shield=True):
-                            await invoke_durable_operation(
-                                supplier,
-                                'release_sandbox',
-                                initial_ctx,
-                                supplier.release_sandbox,
-                                (initial_ctx, ref),
-                                {},
-                            )
-
-                    if sandbox_ref is not None:
-                        stack.push_async_callback(_release_run_sandbox, sandbox_supplier, sandbox_ref)
-                    if sandbox_ref is not None or sandbox_supplier._has_get_sandbox:  # pyright: ignore[reportPrivateUsage]
-                        # Detach the live connection before releasing ownership of the environment.
-                        stack.push_async_callback(_close_sandbox_connection, sandbox_facade)
+                acquired = await acquire_run_sandbox(bootstrap_capability, initial_ctx)
+                if acquired is not None:
+                    supplier, sandbox_ref = acquired
+                    sandbox_facade = Sandbox._from_ref(  # pyright: ignore[reportPrivateUsage]
+                        sandbox_ref, lambda ref: connect_sandbox_ref([supplier], initial_ctx, ref)
+                    )
+                    stack.push_async_callback(release_run_sandbox, supplier, initial_ctx, sandbox_ref)
+                    # Detach the live connection before releasing ownership of the environment.
+                    stack.push_async_callback(_close_sandbox_connection, sandbox_facade)
             initial_ctx.sandbox = sandbox_facade
 
             # Resolve run metadata up front so capability and toolset `for_run` hooks
@@ -4238,8 +4191,22 @@ def _build_run_capabilities(capability: AbstractCapability[AgentDepsT]) -> dict[
     capabilities: list[AbstractCapability[AgentDepsT]] = []
     capability.apply(capabilities.append)
 
-    _validate_capability_ids(capabilities)
-    return capabilities_by_id(capability)
+    explicit_ids = _validate_capability_ids(capabilities)
+
+    by_id: dict[str, AbstractCapability[AgentDepsT]] = {}
+    for cap in capabilities:
+        capability_id = cap.id
+        if capability_id is None:
+            base_id = to_snake(type(cap).__name__)
+            capability_id = base_id
+            suffix = 2
+            while capability_id in by_id or capability_id in explicit_ids:
+                capability_id = f'{base_id}_{suffix}'
+                suffix += 1
+
+        by_id[capability_id] = cap
+
+    return by_id
 
 
 def _validate_spec(

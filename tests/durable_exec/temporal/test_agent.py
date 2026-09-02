@@ -2739,7 +2739,7 @@ def test_temporal_run_context_ignores_empty_sandbox_state():
 async def test_temporal_run_context_reconnects_sandbox_ref_through_agent():
     connector = ConnectOnlySandboxCapability()
     agent = Agent(TestModel(), capabilities=[connector])
-    ref = SandboxRef(provider='fake', sandbox_id='temporal-ref', capability_id=connector.id)
+    ref = SandboxRef(sandbox_id='temporal-ref')
 
     async def unused_resolver(_ref: SandboxRef) -> SandboxBackend:
         raise AssertionError  # pragma: no cover
@@ -2754,7 +2754,7 @@ async def test_temporal_run_context_reconnects_sandbox_ref_through_agent():
 
 
 async def test_temporal_run_context_ref_without_agent_cannot_connect():
-    ref = SandboxRef(provider='fake', sandbox_id='orphan')
+    ref = SandboxRef(sandbox_id='orphan')
 
     async def unused_resolver(_ref: SandboxRef) -> SandboxBackend:
         raise AssertionError  # pragma: no cover
@@ -2774,7 +2774,7 @@ async def test_temporal_run_context_ref_without_agent_cannot_connect():
 @pytest.mark.parametrize('failure', ['decline', 'user', 'runtime'])
 async def test_temporal_run_context_ref_connection_failures_are_typed(failure: str):
     class Connector(Capability[Any]):
-        async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef | None) -> SandboxBackend | None:
+        async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
             if failure == 'decline':
                 return None
             if failure == 'user':
@@ -2783,7 +2783,7 @@ async def test_temporal_run_context_ref_connection_failures_are_typed(failure: s
 
     connector = Connector(id='connector')
     agent = Agent(TestModel(), capabilities=[connector])
-    ref = SandboxRef(provider='fake', sandbox_id='broken', capability_id='connector')
+    ref = SandboxRef(sandbox_id='broken')
 
     async def unused_resolver(_ref: SandboxRef) -> SandboxBackend:
         raise AssertionError  # pragma: no cover
@@ -2796,12 +2796,14 @@ async def test_temporal_run_context_ref_connection_failures_are_typed(failure: s
         agent=agent,
     )
 
-    match = 'specific failure' if failure == 'user' else 'recognizes' if failure == 'decline' else 'Failed to connect'
+    match = {'decline': 'No capability can connect', 'user': 'specific failure', 'runtime': 'Failed to connect'}[
+        failure
+    ]
     with pytest.raises(UserError, match=match):
         await reconstructed.sandbox.run(['true'])
 
 
-async def test_temporal_run_context_reconnects_provider_only_sandbox():
+async def test_temporal_run_context_closes_reconnected_sandbox_when_scope_is_cancelled():
     class ClosableBackend(RecordingSandboxBackend):
         def __init__(self) -> None:
             super().__init__('provider-only')
@@ -2814,16 +2816,16 @@ async def test_temporal_run_context_reconnects_provider_only_sandbox():
     backend = ClosableBackend()
 
     class Provider(Capability[Any]):
-        async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef | None) -> SandboxBackend | None:
+        async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
             return backend
 
     provider = Provider(id='provider')
     agent = Agent(TestModel(), capabilities=[provider])
 
-    async def unused_resolver(_ref: SandboxRef | None) -> SandboxBackend:
+    async def unused_resolver(_ref: SandboxRef) -> SandboxBackend:
         raise AssertionError  # pragma: no cover
 
-    sandbox = Sandbox._from_provider('provider', unused_resolver)  # pyright: ignore[reportPrivateUsage]
+    sandbox = Sandbox._from_ref(SandboxRef(sandbox_id='provider-only'), unused_resolver)  # pyright: ignore[reportPrivateUsage]
     with anyio.CancelScope() as cancel_scope:
         async with activity_sandbox_connection_scope():
             reconstructed = deserialize_run_context(
@@ -2850,7 +2852,7 @@ async def test_temporal_activity_closes_deferred_sandbox_connections():
     backend = ClosableBackend()
 
     class Provider(Capability[Any]):
-        async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef | None) -> SandboxBackend | None:
+        async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
             return backend
 
     async def use_sandbox(ctx: RunContext[None]) -> str:
@@ -2872,10 +2874,10 @@ async def test_temporal_activity_closes_deferred_sandbox_connections():
         type(None),
     ]
 
-    async def unused_resolver(_ref: SandboxRef | None) -> SandboxBackend:
+    async def unused_resolver(_ref: SandboxRef) -> SandboxBackend:
         raise AssertionError  # pragma: no cover
 
-    sandbox = Sandbox._from_provider('provider', unused_resolver)  # pyright: ignore[reportPrivateUsage]
+    sandbox = Sandbox._from_ref(SandboxRef(sandbox_id='provider-only'), unused_resolver)  # pyright: ignore[reportPrivateUsage]
 
     @asynccontextmanager
     async def no_heartbeating():
@@ -2909,15 +2911,15 @@ async def test_temporal_activity_sandbox_close_error_does_not_mask_handler_error
     backend = FailingCloseBackend()
 
     class Provider(Capability[Any]):
-        async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef | None) -> SandboxBackend | None:
+        async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
             return backend
 
     agent = Agent(TestModel(), capabilities=[Provider(id='provider')])
 
-    async def unused_resolver(_ref: SandboxRef | None) -> SandboxBackend:
+    async def unused_resolver(_ref: SandboxRef) -> SandboxBackend:
         raise AssertionError  # pragma: no cover
 
-    sandbox = Sandbox._from_provider('provider', unused_resolver)  # pyright: ignore[reportPrivateUsage]
+    sandbox = Sandbox._from_ref(SandboxRef(sandbox_id='provider-only'), unused_resolver)  # pyright: ignore[reportPrivateUsage]
     with pytest.raises(ValueError, match='handler failed'):
         async with activity_sandbox_connection_scope():
             reconstructed = deserialize_run_context(
@@ -2946,15 +2948,15 @@ async def test_temporal_activity_sandbox_close_attempts_all_and_raises_first_err
     backends = iter([FailingCloseBackend('first'), FailingCloseBackend('second')])
 
     class Provider(Capability[Any]):
-        async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef | None) -> SandboxBackend | None:
+        async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
             return next(backends)
 
     agent = Agent(TestModel(), capabilities=[Provider(id='provider')])
 
-    async def unused_resolver(_ref: SandboxRef | None) -> SandboxBackend:
+    async def unused_resolver(_ref: SandboxRef) -> SandboxBackend:
         raise AssertionError  # pragma: no cover
 
-    sandbox = Sandbox._from_provider('provider', unused_resolver)  # pyright: ignore[reportPrivateUsage]
+    sandbox = Sandbox._from_ref(SandboxRef(sandbox_id='provider-only'), unused_resolver)  # pyright: ignore[reportPrivateUsage]
     with pytest.raises(RuntimeError, match='second close failed'):
         async with activity_sandbox_connection_scope():
             for _ in range(2):
@@ -2967,40 +2969,6 @@ async def test_temporal_activity_sandbox_close_attempts_all_and_raises_first_err
                 await reconstructed.sandbox.run(['true'])
 
     assert close_order == ['second', 'first']
-
-
-@pytest.mark.parametrize('failure', ['no_agent', 'decline', 'user', 'runtime'])
-async def test_temporal_run_context_provider_connection_failures_are_typed(failure: str):
-    class Provider(Capability[Any]):
-        async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef | None) -> SandboxBackend | None:
-            if failure == 'decline':
-                return None
-            if failure == 'user':
-                raise UserError('specific provider failure')
-            raise RuntimeError('provider transport failure')
-
-    provider = Provider(id='provider')
-    agent = None if failure == 'no_agent' else Agent(TestModel(), capabilities=[provider])
-
-    async def unused_resolver(_ref: SandboxRef | None) -> SandboxBackend:
-        raise AssertionError  # pragma: no cover
-
-    sandbox = Sandbox._from_provider('provider', unused_resolver)  # pyright: ignore[reportPrivateUsage]
-    reconstructed = deserialize_run_context(
-        TemporalRunContext,
-        TemporalRunContext.serialize_run_context(_sandbox_context(sandbox)),
-        deps=None,
-        agent=agent,
-    )
-
-    match = {
-        'no_agent': 'no agent is attached',
-        'decline': 'returned `None`',
-        'user': 'specific provider failure',
-        'runtime': 'failed to connect',
-    }[failure]
-    with pytest.raises(UserError, match=match):
-        await reconstructed.sandbox.run(['true'])
 
 
 run_id_test_agent = Agent(TestModel(custom_output_text='ok'), name='run_id_test_agent')

@@ -63,7 +63,7 @@ class RecordingSandboxBackend:
 
 
 class ConnectOnlySandboxCapability(AbstractCapability[Any]):
-    """Recognizes `'fake'` refs and connects to them; never provisions anything.
+    """Connects to any ref; never provisions anything.
 
     The connect-only shape of the lifecycle hooks: only `get_sandbox` is overridden, so this
     capability serves `SandboxRef` run arguments (and refs provisioned elsewhere) without ever
@@ -79,9 +79,7 @@ class ConnectOnlySandboxCapability(AbstractCapability[Any]):
         self.sandbox_ids.clear()
         self.backends.clear()
 
-    async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef | None) -> SandboxBackend | None:
-        if ref is None or ref.provider != 'fake':
-            return None
+    async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
         self.sandbox_ids.append(ref.sandbox_id)
         backend = RecordingSandboxBackend(ref.sandbox_id)
         self.backends.append(backend)
@@ -112,11 +110,9 @@ class AcquireOnlySandboxCapability(AbstractCapability[Any]):
         self._created += 1
         sandbox_id = f'created-{self._created}'
         self.events.append(f'acquire:{sandbox_id}')
-        return SandboxRef(provider='fake', sandbox_id=sandbox_id)
+        return SandboxRef(sandbox_id=sandbox_id)
 
-    async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef | None) -> SandboxBackend | None:
-        if ref is None or ref.provider != 'fake':
-            return None
+    async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
         self.events.append(f'connect:{ref.sandbox_id}')
         backend = RecordingSandboxBackend(ref.sandbox_id)
         self.backends.append(backend)
@@ -157,4 +153,4 @@ class SandboxContributingCapability(AbstractCapability[Any]):
     """Capability whose sandbox contribution is rejected before anything is provisioned."""
 
     async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
-        return SandboxRef(provider='fake', sandbox_id='fake-sandbox')  # pragma: no cover
+        return SandboxRef(sandbox_id='fake-sandbox')  # pragma: no cover

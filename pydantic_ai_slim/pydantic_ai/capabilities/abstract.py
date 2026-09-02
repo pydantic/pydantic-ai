@@ -541,74 +541,32 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
     @base_hook_durable_operation('acquire_sandbox')
     async def acquire_sandbox(self, ctx: RunContext[AgentDepsT]) -> SandboxRef | None:
-        """Acquire this run's sandbox and return its serializable identity.
+        """Return the identity of this run's sandbox, creating or reusing an environment, or `None` to not contribute.
 
-        Invoked once in a non-durable run, or recorded once in a durable run's logical history, before any hook sees
-        [`ctx.sandbox`][pydantic_ai.tools.RunContext.sandbox], and only when no `sandbox=` run
-        argument was passed. Exactly one active capability may define sandbox hooks; ambiguity
-        raises before acquisition begins.
-        Acquisition may provision a new sandbox, check one out from a pool, or select a warm
-        environment. Return `None`, without side effects, to not contribute.
-
-        The run holds only the returned [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef]; the
-        live connection goes through
-        [`get_sandbox`][pydantic_ai.capabilities.AbstractCapability.get_sandbox]. Durable
-        engines run this hook inside a durable unit: replays reuse the recorded ref instead of
-        calling again, but the unit itself may retry after a crash, so provisioning should be
-        idempotent — create-or-reuse keyed by
-        [`ctx.run_id`][pydantic_ai.tools.RunContext.run_id] rather than create-always.
+        Called once at run start, before any hook sees [`ctx.sandbox`][pydantic_ai.tools.RunContext.sandbox],
+        and skipped when a `sandbox=` run argument was passed. Exactly one capability may return a ref.
+        Durable engines record it in a durable unit that may retry after a crash, so make it idempotent:
+        create-or-reuse keyed by [`ctx.run_id`][pydantic_ai.tools.RunContext.run_id].
         """
         return None
 
-    async def get_sandbox(self, ctx: RunContext[AgentDepsT], ref: SandboxRef | None) -> SandboxBackend | None:
-        """Return a live [`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend]: connect, never create.
+    async def get_sandbox(self, ctx: RunContext[AgentDepsT], ref: SandboxRef) -> SandboxBackend | None:
+        """Connect to the sandbox identified by `ref` and return a live backend; never create one.
 
-        When `ref` is present, return `None` if this capability doesn't recognize it (typically
-        by checking `ref.provider`). When `ref` is `None`, the capability is the run's sole
-        sandbox provider and may return a backend connection whose information
-        comes from its configuration or `ctx.deps`, without implementing
-        [`acquire_sandbox`][pydantic_ai.capabilities.AbstractCapability.acquire_sandbox] or
-        [`release_sandbox`][pydantic_ai.capabilities.AbstractCapability.release_sandbox].
-        The returned backend is a run-scoped connection handle: after the run, Pydantic AI calls
-        `close(terminate=False)` when the backend supports it. Return a fresh detachable handle
-        on every call. To share one caller-owned live backend object across runs, pass it through
-        `sandbox=` instead. May be called any number of times, in any process that holds this
-        capability, so credentials and clients belong here rather than on the ref. Must fail when
-        the sandbox no longer exists instead of silently provisioning a replacement. Inside a
-        durable unit, `ctx` is the engine's restricted run context: `ctx.deps` is always available.
-
-        Unlike `acquire_sandbox` and `release_sandbox`, this hook is deliberately *not* a durable
-        operation: a live connection cannot be recorded into or replayed from durable history, so
-        durable engines call it worker-side, inside whatever durable unit needs the sandbox.
+        Return `None` if this capability cannot serve `ref`. Return a fresh handle on every call; the run
+        closes it with `close(terminate=False)` when the backend supports it. Fail if the sandbox is gone.
+        Never a durable operation: a live handle cannot be replayed, so durable engines call this inside
+        each durable unit, with the engine's restricted `ctx` (`ctx.deps` is always available).
         """
         return None
-
-    @property
-    def _has_sandbox_hooks(self) -> bool:
-        """Whether this capability declares any part of the sandbox provider interface."""
-        capability_type = type(self)
-        return (
-            capability_type.acquire_sandbox is not AbstractCapability.acquire_sandbox
-            or capability_type.get_sandbox is not AbstractCapability.get_sandbox
-            or capability_type.release_sandbox is not AbstractCapability.release_sandbox
-        )
-
-    @property
-    def _has_get_sandbox(self) -> bool:
-        """Whether this capability can provide a live sandbox without an acquired ref."""
-        return type(self).get_sandbox is not AbstractCapability.get_sandbox
 
     @base_hook_durable_operation('release_sandbox')
     async def release_sandbox(self, ctx: RunContext[AgentDepsT], ref: SandboxRef) -> None:
-        """Release the run's ownership of the sandbox identified by `ref`.
+        """Release the run's ownership of `ref`: destroy it, return it to a pool, or do nothing.
 
-        Recorded once in the logical run history after the run ends (also on failure), only on the capability whose
-        [`acquire_sandbox`][pydantic_ai.capabilities.AbstractCapability.acquire_sandbox] produced
-        `ref`, and never for a `sandbox=` run argument. A durable engine may physically retry the
-        operation, so it must be idempotent. Releasing may destroy the sandbox, return it to a pool,
-        decrement a reference count, or do nothing for a warm environment. The platform's idle
-        timeout is the backstop for paths that can never run this hook. The inherited no-op suits
-        warm or externally managed sandboxes.
+        Called after the run ends, success or failure, only on the capability whose `acquire_sandbox`
+        returned `ref`, and never for a `sandbox=` run argument. Durable engines may retry it, so make it
+        idempotent.
         """
 
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:

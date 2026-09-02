@@ -4533,7 +4533,7 @@ async def test_dbos_durability_runs_sandbox_lifecycle_in_steps(dbos: DBOS) -> No
 
         async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
             self.in_step.append(DBOS.step_id is not None)
-            return SandboxRef(provider='test', sandbox_id=ctx.run_id or 'run')
+            return SandboxRef(sandbox_id=ctx.run_id or 'run')
 
         async def release_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
             self.in_step.append(DBOS.step_id is not None)

@@ -599,10 +599,18 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         if cancellation is not None and cancellation.has_token:
             raise cancellation_token_unsupported_error(self.engine_name)
         # A live sandbox backend is likewise a same-process handle: only a `SandboxRef` (or the
-        # framework's unavailable placeholder) can be carried across the durable boundary.
+        # framework's unavailable placeholder) can be carried across the durable boundary, and a
+        # ref must not connect in {container} code either — durable units reconnect it themselves.
         sandbox = ctx.__dict__.get('sandbox')
-        identity = sandbox._durable_identity() if isinstance(sandbox, Sandbox) else None  # pyright: ignore[reportPrivateUsage]
-        if identity is not None and not isinstance(identity, (SandboxRef, UnavailableSandbox)):
+        if not isinstance(sandbox, Sandbox):
+            return
+        identity = sandbox._durable_identity()  # pyright: ignore[reportPrivateUsage]
+        if isinstance(identity, SandboxRef):
+            sandbox._forbid_connection(  # pyright: ignore[reportPrivateUsage]
+                f'`ctx.sandbox` cannot connect inside {self.engine_name} {self.durable_container_noun} code. '
+                'Use it from tools or other durable units, which reconnect it through `get_sandbox`.'
+            )
+        elif not isinstance(identity, UnavailableSandbox):
             raise UserError(
                 f'A live sandbox backend cannot be passed to an agent run inside {self.engine_name} durable '
                 f'{self.durable_container_noun}. Pass a `SandboxRef` instead.'

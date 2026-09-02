@@ -3,41 +3,26 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any, cast
 
-from pydantic_ai.capabilities import AbstractCapability, AgentCapability
+from pydantic_ai.capabilities import AbstractCapability, AgentCapability, WrapperCapability
+from pydantic_ai.capabilities._sandbox import active_leaves
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.sandboxes import SandboxBackend, SandboxRef, UnavailableSandbox
 
 
-def _sandbox_suppliers(capability: AbstractCapability[Any]) -> list[AbstractCapability[Any]]:
-    """The capabilities in the tree that declare sandbox provider hooks, in chain order.
-
-    Wrapper forwarding represents the wrapped provider once, and the durability capability's own
-    routing does not count as a contribution. The check is static: a provider produced at run time
-    by a dynamic capability function is not visible here.
-    """
-    suppliers: list[AbstractCapability[Any]] = []
-    seen: set[int] = set()
-
-    def visit(leaf: AbstractCapability[Any]) -> None:
-        if leaf.defer_loading is True or id(leaf) in seen:
-            return
-        seen.add(id(leaf))
-        if leaf._has_sandbox_hooks:  # pyright: ignore[reportPrivateUsage]
-            suppliers.append(leaf)
-
-    capability.apply(visit)
-    return suppliers
+def _supplies_sandbox(capability: AbstractCapability[Any]) -> bool:
+    if isinstance(capability, WrapperCapability):
+        return _supplies_sandbox(capability.wrapped)
+    return type(capability).acquire_sandbox is not AbstractCapability.acquire_sandbox
 
 
 def contributes_sandbox(capability: AbstractCapability[Any]) -> bool:
-    """Whether the capability tree contains a sandbox provider.
+    """Whether the capability tree statically declares a sandbox supplier.
 
-    The deprecated durable-agent wrappers reject sandbox-contributing capabilities up front:
-    running the supplier's lifecycle hooks would be I/O in workflow code, and the wrappers
-    have no way to route it into a durable unit. Generic contributed-operation dispatch is
-    deliberately absent from these deprecated wrappers.
+    The deprecated durable-agent wrappers reject sandbox-supplying capabilities up front: running
+    `acquire_sandbox` would be I/O in workflow code, and the wrappers have no way to route it into a
+    durable unit. A supplier produced at run time by a capability function is not visible here.
     """
-    return bool(_sandbox_suppliers(capability))
+    return any(_supplies_sandbox(leaf) for leaf in active_leaves(capability))
 
 
 def sandbox_contribution_error(*, run_location: str, sandbox_constraint: str) -> str:
