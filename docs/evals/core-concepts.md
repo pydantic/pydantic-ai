@@ -424,7 +424,7 @@ The [`EvaluationReport`][pydantic_evals.reporting.EvaluationReport] contains:
 
 ### ReportCase
 
-Each successfulcase result contains:
+Each successful case result contains:
 
 **Case data:**
 
