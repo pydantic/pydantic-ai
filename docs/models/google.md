@@ -382,8 +382,9 @@ Construct [`GoogleImageGenerationModel`][pydantic_ai.images.google.GoogleImageGe
 explicitly.
 
 The direct adapter accepts inline images and downloadable image URLs on both APIs. Google Files API URIs represented as
-[`UploadedFile`][pydantic_ai.messages.UploadedFile] are specific to the Gemini API, so their `provider_name` must be
-`google`; Vertex file URIs (`gs://`) are not accepted as reference inputs. See the
+[`UploadedFile`][pydantic_ai.messages.UploadedFile] are specific to the Gemini Developer API, so they are only accepted
+on the `google:` route and Vertex AI rejects them with a [`UserError`][pydantic_ai.exceptions.UserError]; Vertex file
+URIs (`gs://`) are not accepted as reference inputs either. See the
 [image-generation guide](../image-generation.md) for the common API and geometry behavior. The adapter requests an
 image-only response because [`ImageGenerator`][pydantic_ai.images.ImageGenerator] returns generated images rather than
 Gemini's optional conversational text.

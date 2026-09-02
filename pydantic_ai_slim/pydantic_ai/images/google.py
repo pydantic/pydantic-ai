@@ -208,6 +208,11 @@ class GoogleImageGenerationModel(ImageGenerationModel):
             part = PartDict(inline_data=BlobDict(data=image.data, mime_type=image.media_type))
         elif isinstance(image, UploadedFile):
             self._validate_uploaded_file_provider(image)
+            if self.system == 'google-cloud':
+                raise UserError(
+                    'Google Files API URIs are specific to the Gemini Developer API, so `UploadedFile` cannot be '
+                    'used with Google Cloud (Vertex AI). Pass reference images as `BinaryImage` or `ImageUrl` instead.'
+                )
             if not image.file_id.startswith('https://'):
                 raise UserError(
                     'Google image generation requires `UploadedFile.file_id` to be a Google Files API URI '

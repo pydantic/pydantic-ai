@@ -54,8 +54,6 @@ from .exceptions import (
 from .format_prompt import format_as_xml
 from .images import (
     GeneratedImage,
-    ImageDimensions,
-    ImageGenerationAspectRatio,
     ImageGenerationModel,
     ImageGenerationResult,
     ImageGenerationSettings,
@@ -215,10 +213,8 @@ __all__ = (
     'ImageGenerator',
     'ImageGenerationModel',
     'ImageGenerationSettings',
-    'ImageGenerationAspectRatio',
     'ImageGenerationResult',
     'GeneratedImage',
-    'ImageDimensions',
     # concurrency
     'AbstractConcurrencyLimiter',
     'AnyConcurrencyLimit',

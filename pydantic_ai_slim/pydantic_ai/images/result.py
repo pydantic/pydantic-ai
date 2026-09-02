@@ -81,7 +81,12 @@ class ImageGenerationResult:
 
     @property
     def image(self) -> BinaryImage:
-        """The first generated image. Use `images` when the request asked for more than one."""
+        """The first generated image. Use `images` when the request asked for more than one.
+
+        A result always holds at least one image: the
+        [`ImageGenerationModel.generate`][pydantic_ai.images.ImageGenerationModel.generate] contract
+        requires an implementation with nothing to return to raise instead of returning an empty result.
+        """
         return self.images[0].content
 
     def cost(self) -> genai_types.PriceCalculation:

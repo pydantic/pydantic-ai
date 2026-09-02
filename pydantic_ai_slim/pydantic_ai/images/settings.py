@@ -2,9 +2,6 @@ from typing import Literal, TypeAlias
 
 from typing_extensions import TypedDict
 
-ImageOutputFormat = Literal['png', 'webp', 'jpeg']
-"""Generated image output formats used by providers that support format selection."""
-
 ImageDimensions: TypeAlias = tuple[int, int]
 """Exact output image dimensions as `(width, height)` in pixels.
 

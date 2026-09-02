@@ -18,7 +18,7 @@ from ._openai_geometry import resolve_openai_geometry
 from ._validation import validate_image_count, warn_image_generation_settings
 from .base import ImageGenerationInput, ImageGenerationModel
 from .result import GeneratedImage, ImageGenerationResult
-from .settings import ImageGenerationSettings, ImageOutputFormat
+from .settings import ImageGenerationSettings
 
 try:
     from openai import APIConnectionError, APIStatusError, AsyncOpenAI
@@ -42,6 +42,15 @@ They diverge from the GPT Image contract in every dimension this adapter encodes
 `response_format='url'` (this adapter requires base64 bytes), have their own size sets, cap `n` at 1
 for `dall-e-3`, and use a `standard`/`hd` quality vocabulary. Rejecting them by name keeps the error
 actionable while leaving unrecognized future models to fall through to the provider.
+"""
+
+
+ImageOutputFormat = Literal['png', 'webp', 'jpeg']
+"""The image formats OpenAI's image endpoints accept as a requested output format.
+
+This types the `openai_output_format` request setting. It does not describe
+[`GeneratedImage.output_format`][pydantic_ai.images.GeneratedImage], which is a plain `str | None`
+because Google and xAI report no format field and Pydantic AI derives one from the response media type.
 """
 
 

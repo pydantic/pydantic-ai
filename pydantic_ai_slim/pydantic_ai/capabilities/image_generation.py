@@ -66,7 +66,7 @@ class _DirectImageGenerationTool:
                 'If the generator asks for more than one image per call through a provider-specific '
                 'image count setting, call `ImageGenerator.generate()` directly instead.'
             )
-        return result.images[0].content
+        return result.image
 
 
 @dataclass(init=False)

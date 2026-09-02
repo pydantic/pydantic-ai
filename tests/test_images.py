@@ -1138,6 +1138,27 @@ async def test_google_image_generation_rejects_invalid_uploaded_file(uploaded_fi
 
 
 @pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
+async def test_google_cloud_image_generation_rejects_uploaded_file():
+    """Vertex AI has no Files API, so an `UploadedFile` reference is rejected instead of forwarded.
+
+    The provider check in `ImageGenerationModel` only compares `provider_name` against `system`, so a
+    file labelled `'google-cloud'` passes it and would otherwise be sent as a `fileData` part that
+    Vertex cannot resolve. The provider table in `docs/image-generation.md` marks `UploadedFile` ❌ for
+    Google Cloud; this is what makes that mark true.
+    """
+    provider = GoogleCloudProvider(api_key='test-api-key')
+    model = GoogleImageGenerationModel('gemini-3.1-flash-image', provider=provider)
+    uploaded_file = UploadedFile(
+        file_id='https://generativelanguage.googleapis.com/v1beta/files/abc123',
+        provider_name='google-cloud',
+        media_type='image/png',
+    )
+
+    with pytest.raises(UserError, match='Google Files API URIs are specific to the Gemini Developer API'):
+        await model.generate('edit this image', images=[uploaded_file])
+
+
+@pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
 async def test_google_image_generation_no_image_finish_reason():
     """A benign `NO_IMAGE` no-output raises `UnexpectedModelBehavior` naming the finish reason, not a filter error.
 
@@ -1424,8 +1445,9 @@ def test_google_image_generation_ignores_non_image_output_format():
 async def test_google_image_generation_status_error():
     """A Gemini 4xx surfaces as `ModelHTTPError` keeping the status, body, and `retry-after`.
 
-    Not a VCR test because a provider error response cannot be provoked on demand, so the body is
-    fixed from Google's documented error format.
+    Not a VCR test because a 400 is easy to provoke but its `retry-after` header and structured error
+    body are not: both depend on Google's live quota state, and a recording would pin whatever that
+    happened to be. The response here is fixed from Google's documented error format instead.
     """
 
     def handle_request(request: httpx2.Request) -> httpx2.Response:
@@ -1659,6 +1681,9 @@ async def test_google_cloud_image_generation_vcr(
 
     assert len(result.images) == 1
     generated_image = result.images[0]
+    # The media type is read off the response's `mimeType`, so the magic bytes are what keep the
+    # assertion from certifying the provider's own echo.
+    assert generated_image.content.data[:8] == b'\x89PNG\r\n\x1a\n'
     assert generated_image.content.media_type == snapshot('image/png')
     assert generated_image.output_format == snapshot('png')
     assert result.model_name == snapshot('gemini-3.1-flash-image')
@@ -1669,6 +1694,7 @@ async def test_google_cloud_image_generation_vcr(
     assert result.provider_details == snapshot(
         {'finish_reason': 'STOP', 'timestamp': IsDatetime(), 'traffic_type': 'ON_DEMAND'}
     )
+    assert result.provider_response_id
 
 
 @pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
@@ -1697,6 +1723,7 @@ async def test_google_cloud_image_edit_vcr(
 
     assert len(result.images) == 1
     edited_image = result.images[0]
+    assert edited_image.content.data[:8] == b'\x89PNG\r\n\x1a\n'
     assert edited_image.content.media_type == snapshot('image/png')
     assert edited_image.output_format == snapshot('png')
     assert result.model_name == snapshot('gemini-3.1-flash-image')
@@ -1707,6 +1734,7 @@ async def test_google_cloud_image_edit_vcr(
     assert result.provider_details == snapshot(
         {'finish_reason': 'STOP', 'timestamp': IsDatetime(), 'traffic_type': 'ON_DEMAND'}
     )
+    assert result.provider_response_id
 
 
 def _xai_image_responses(*data: bytes, respect_moderation: bool = True) -> list[XaiImageResponse]:
@@ -2353,8 +2381,10 @@ async def test_xai_image_generation_maps_grpc_status_to_http(status_name: str, e
 
     Reference: `_GRPC_STATUS_TO_HTTP` in `pydantic_ai.images.xai`.
 
-    Not a VCR test because gRPC never reaches the HTTP transport VCR patches, and these statuses
-    cannot be provoked on demand, so each is fixed from the codes xAI documents.
+    Not a VCR test because gRPC never reaches the HTTP transport VCR patches, and the proto cassette
+    recorder in `tests/models/xai_proto_cassettes.py` stores request/response protobuf pairs, so an
+    `RpcError` — which carries no response proto — has nothing to record. Each status is fixed from the
+    codes xAI documents.
     """
     status_code = grpc.StatusCode[status_name]
 
@@ -3270,8 +3300,9 @@ async def test_openai_image_edit_rejects_unsupported_image_format(openai_mock_cl
 async def test_openai_image_edit_status_error(openai_mock_client: AsyncMock):
     """A 5xx on the edit endpoint surfaces as `ModelHTTPError` with the status and body preserved.
 
-    Not a VCR test because a provider error response cannot be provoked on demand, so the body is
-    fixed from OpenAI's documented error format.
+    Not a VCR test because a deliberate 500 from the edit endpoint is not reproducible on demand, and
+    the structured error body a recording would capture depends on which OpenAI failure produced it. The
+    body here is fixed from OpenAI's documented error format instead.
     """
     openai_mock_client.images.edit.side_effect = APIStatusError(
         'test error',
@@ -3353,8 +3384,9 @@ async def test_openai_image_generation_moderation_blocked(openai_mock_client: As
 
     See https://developers.openai.com/api/docs/guides/image-generation#content-moderation.
 
-    Not a VCR test because a moderation block cannot be provoked on demand, so the response is fixed
-    from OpenAI's documented error format.
+    Not a VCR test because provoking a real block means committing a policy-violating prompt to the
+    repository, which the recorded request body would carry verbatim. The response is fixed from
+    OpenAI's documented error format instead.
     """
     moderation_body = {
         'error': {

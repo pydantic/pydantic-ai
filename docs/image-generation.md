@@ -146,9 +146,9 @@ family's enumerated sizes, and xAI takes an enumeration with no member for some 
 [`UserError`][pydantic_ai.exceptions.UserError] for a ratio they cannot express, rather than dropping it and billing you
 for the model's default shape.
 
-`dimensions` splits along the same wire shapes: OpenAI's `size` is a plain pixel string, so a shape Pydantic AI has no
-table for still travels for OpenAI to judge, while Google and xAI send a ratio plus a size tier, so a shape outside the
-selected model's table has no wire representation at all and raises
+`dimensions` splits along the same wire shapes: OpenAI's `size` is a plain pixel string, so a shape for a model
+Pydantic AI has no table for still travels for OpenAI to judge, while Google and xAI send a ratio plus a size tier, so a
+shape outside the selected model's table has no wire representation at all and raises
 [`UserError`][pydantic_ai.exceptions.UserError] before the request.
 
 An OpenAI model Pydantic AI does not recognize — a GPT Image release newer than your Pydantic AI version — accepts any
