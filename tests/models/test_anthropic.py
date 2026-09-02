@@ -13568,6 +13568,35 @@ async def test_anthropic_contentless_compaction_does_not_trim(allow_model_reques
     )
 
 
+async def test_anthropic_empty_summary_compaction_does_not_trim(allow_model_requests: None):
+    """An empty summary stands in for nothing, so it is as much a no-op as a missing one."""
+    response = completion_message([BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=5, output_tokens=1))
+    mock_client = MockAnthropic.create_mock(response)
+    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    messages: list[ModelMessage] = [
+        ModelRequest.user_text_prompt('keep before empty boundary'),
+        ModelResponse(
+            parts=[CompactionPart(content='', provider_name='anthropic'), TextPart(content='keep text')],
+            provider_name='anthropic',
+        ),
+        ModelRequest.user_text_prompt('keep tail'),
+    ]
+
+    await model.request(messages, None, ModelRequestParameters())
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs['messages'] == snapshot(
+        [
+            {'role': 'user', 'content': [{'text': 'keep before empty boundary', 'type': 'text'}]},
+            {
+                'role': 'assistant',
+                'content': [{'content': '', 'type': 'compaction'}, {'text': 'keep text', 'type': 'text'}],
+            },
+            {'role': 'user', 'content': [{'text': 'keep tail', 'type': 'text'}]},
+        ]
+    )
+
+
 async def test_anthropic_without_compaction_maps_unchanged(allow_model_requests: None):
     response = completion_message([BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=5, output_tokens=1))
     mock_client = MockAnthropic.create_mock(response)
