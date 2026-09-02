@@ -258,7 +258,7 @@ Events describing the model's response:
 | [`PartEndEvent`][pydantic_ai.messages.PartEndEvent] | A part is complete | depends on the part | depends on the part |
 | [`FinalResultEvent`][pydantic_ai.messages.FinalResultEvent] | The response is recognized as producing the run's output | - | - |
 
-What a part event becomes on the wire depends on the part it carries: text parts become the protocol's text events, [thinking](capabilities/thinking.md) parts its reasoning events, tool call parts its tool-input events, and [native tool](native-tools.md) returns its tool-output events. A [`PartDeltaEvent`][pydantic_ai.messages.PartDeltaEvent] carries a [`TextPartDelta`][pydantic_ai.messages.TextPartDelta], [`ThinkingPartDelta`][pydantic_ai.messages.ThinkingPartDelta], or [`ToolCallPartDelta`][pydantic_ai.messages.ToolCallPartDelta] saying what changed.
+What a part event becomes on the wire depends on the part it carries: text parts become the protocol's text events, [thinking](capabilities/thinking.md) parts its reasoning events, tool call parts its tool-input events, and [native tool](native-tools.md) returns its tool-output events. A [`PartDeltaEvent`][pydantic_ai.messages.PartDeltaEvent] carries a [`TextPartDelta`][pydantic_ai.messages.TextPartDelta], [`ThinkingPartDelta`][pydantic_ai.messages.ThinkingPartDelta], [`ToolCallPartDelta`][pydantic_ai.messages.ToolCallPartDelta], or, during a [realtime session](realtime/audio.md), a [`SpeechPartDelta`][pydantic_ai.messages.SpeechPartDelta], saying what changed.
 
 Events describing tool execution:
 
@@ -268,7 +268,7 @@ Events describing tool execution:
 | [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent] | A function tool returned or asked the model to retry | `TOOL_CALL_RESULT` | `tool-output-*` |
 | [`OutputToolCallEvent`][pydantic_ai.messages.OutputToolCallEvent] | The [output tool](output.md#tool-output) is called | - | `tool-input-available` |
 | [`OutputToolResultEvent`][pydantic_ai.messages.OutputToolResultEvent] | The output tool produced its result | `TOOL_CALL_RESULT` | `tool-output-*` |
-| [`ToolAvailabilityDeltaEvent`][pydantic_ai.messages.ToolAvailabilityDeltaEvent] | Tools were [revealed](tools-advanced.md) partway through the run | `ACTIVITY_SNAPSHOT` | data chunk |
+| [`ToolAvailabilityDeltaEvent`][pydantic_ai.messages.ToolAvailabilityDeltaEvent] | Tools were [revealed](tools-advanced.md) partway through the run | `ACTIVITY_SNAPSHOT`, on `ag-ui-protocol >= 0.1.19` | data chunk |
 | [`DeferredToolRequestsEvent`][pydantic_ai.messages.DeferredToolRequestsEvent] | A batch of calls needs [approval or external execution](deferred-tools.md) | at run end | at run end |
 | [`DeferredToolResultsEvent`][pydantic_ai.messages.DeferredToolResultsEvent] | A handler resolved deferred calls within the run | - | - |
 
@@ -297,13 +297,7 @@ During a realtime session, the same handler stream can also contain realtime-onl
 
 The example below shows how to stream events and text output. You can also [stream structured output](#streaming-structured-output).
 
-!!! note
-    The `run_stream()` and `run_stream_sync()` methods will consider the first output that matches the [output type](output.md#structured-output) (which could be text, an [output tool](output.md#tool-output) call, or a [deferred](deferred-tools.md) tool call) to be the final output of the agent run, even when the model generates (additional) tool calls after this "final" output.
-
-	These "dangling" tool calls will not be executed unless the agent's [`end_strategy`][pydantic_ai.agent.Agent.end_strategy] is set to `'graceful'` or `'exhaustive'`, and even then their results will not be sent back to the model as the agent run will already be considered completed. In short, if the model returns both tool calls and text, and the agent's output type is `str`, **the tool calls will not run** in streaming mode with the default setting.
-
-    If you want to always keep running the agent when it performs tool calls, and stream all events from the model's streaming response and the agent's execution of tools,
-    use [`agent.run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] or [`agent.iter()`][pydantic_ai.agent.AbstractAgent.iter] instead, as described below.
+Remember that `run_stream()` [stops at the first final output](#choosing), so tool calls the model makes alongside that output do not run. Use [`run_stream_events()`](#streaming-all-events) or [`iter()`](#streaming-all-events-and-output) when the whole graph must run.
 
 ```python {title="run_stream_event_stream_handler.py"}
 import asyncio
