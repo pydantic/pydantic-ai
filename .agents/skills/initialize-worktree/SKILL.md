@@ -147,8 +147,7 @@ Ask: 'Based on my research, I assess this as [simple/complex]. [1-2 sentence rea
 
 ## Notes
 
-- PR feedback is inspected with the `pr-review-feedback` helpers and handled through the tracked
-  push lifecycle, or by `/pr-orchestrator` from the manager
+- PR feedback is handled with `/address-feedback`, then carried through the tracked push lifecycle
 - Always create a plan regardless of complexity. Complex plan-only PRs commit repo-root `PLAN.md`;
   simple implementation work keeps its plan under ignored `.claude/plans/`.
 - For the PR body, follow the tracked `pushing-commits-to-the-repo` skill and root `AGENTS.md`.
