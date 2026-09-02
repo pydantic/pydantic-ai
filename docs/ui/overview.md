@@ -4,7 +4,7 @@ If you're building a chat app or other interactive frontend for an AI agent, you
 
 While your frontend could use Pydantic AI's [`ModelRequest`][pydantic_ai.messages.ModelRequest] and [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent] directly, you'll typically want to use a UI event stream protocol that's natively supported by your frontend framework.
 
-To push data of your own to the frontend mid-run, like a progress update from a long-running tool, emit a [custom event](../agent.md#custom-events): both protocols below forward it as their own custom-data event, unless its class is declared `ui=False` for events you only want server-side.
+To push data of your own to the frontend mid-run, like a progress update from a long-running tool, emit a [custom event](../streaming.md#custom-events): both protocols below forward it as their own custom-data event, unless its class is declared `ui=False` for events you only want server-side.
 
 Pydantic AI natively supports two UI event stream protocols:
 

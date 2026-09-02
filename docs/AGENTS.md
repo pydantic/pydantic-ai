@@ -18,6 +18,7 @@ Follow the general [documentation guidance](../agent_docs/documentation.md). The
 - Put example-level exclusions on the fence, such as `{test="skip" lint="skip"}`, rather than adding tooling suppressions to pedagogical code.
 - Combine parameter variations when one example plus notes preserves every meaningful difference. Split examples when use cases, prerequisites, or constraints differ.
 - Use examples that demonstrate a credible user task or decision without introducing complexity unrelated to the feature.
+- Give an example that needs a `CustomEvent` or `CapabilityEvent` its own event class rather than pointing `requires=` at another example that defines one. The required example is re-executed in the importing example's namespace while event names are registered process-globally, so the class collides with its own registration, and the resulting `TypeError` is reported against the required example rather than the one that added `requires=`.
 
 ## Review
 

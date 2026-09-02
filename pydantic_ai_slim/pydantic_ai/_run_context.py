@@ -612,7 +612,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
         """Emit a custom or capability event into the current run's event stream.
 
         Application code emits an instance of an application-defined
-        [`CustomEvent` subclass](../agent.md#custom-events) with typed payload fields.
+        [`CustomEvent` subclass](../streaming.md#custom-events) with typed payload fields.
         Capability hooks and capability-contributed tools instead emit a typed
         [`CapabilityEvent`][pydantic_ai.messages.CapabilityEvent].
 

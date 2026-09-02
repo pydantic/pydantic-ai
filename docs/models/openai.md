@@ -392,7 +392,7 @@ For lower-level use cases, you can call [`compact_messages`][pydantic_ai.models.
 
 Models that support it label each assistant message with a `phase`: `commentary` for the preamble the model writes while it works, and `final_answer` for the answer itself. Pydantic AI surfaces it as `'phase'` in [`TextPart.provider_details`][pydantic_ai.messages.TextPart.provider_details], and on models known to accept the field it also sends it back on the next request so the model keeps the distinction across turns.
 
-When [streaming](../agent.md#streaming-all-events), the phase is set on the [`PartStartEvent`][pydantic_ai.messages.PartStartEvent] that opens each text part (including its first content chunk), so you can route commentary and the final answer differently as they're generated. Prefer [`run_stream_events`][pydantic_ai.agent.AbstractAgent.run_stream_events] for this: [`run_stream`][pydantic_ai.agent.AbstractAgent.run_stream] treats the first text part as the final output, which is often `commentary` on models that emit a preamble.
+When [streaming](../streaming.md#streaming-all-events), the phase is set on the [`PartStartEvent`][pydantic_ai.messages.PartStartEvent] that opens each text part (including its first content chunk), so you can route commentary and the final answer differently as they're generated. Prefer [`run_stream_events`][pydantic_ai.agent.AbstractAgent.run_stream_events] for this: [`run_stream`][pydantic_ai.agent.AbstractAgent.run_stream] treats the first text part as the final output, which is often `commentary` on models that emit a preamble.
 
 ```python {title="openai_phase.py"}
 from pydantic_ai import Agent, PartDeltaEvent, PartStartEvent, TextPart, TextPartDelta
