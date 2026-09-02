@@ -629,6 +629,23 @@ def test_bedrock_anthropic_claude_sonnet_4_5():
 
 
 @pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
+@pytest.mark.parametrize(
+    'model_id',
+    [
+        'us.anthropic.claude-fable-5-1',
+        'global.anthropic.claude-fable-5-1',
+        'us.anthropic.claude-fable-5-1-20260115-v1:0',
+    ],
+)
+def test_bedrock_anthropic_fable_5_1_binds_through_the_id_split(model_id: str):
+    """The binding flag is a `startswith` on the bare id, so it rests on the geo/version split."""
+    profile = BedrockProvider.model_profile(model_id)
+    assert profile is not None
+    assert profile.get('anthropic_binds_thinking_blocks') is True
+    assert profile.get('anthropic_supports_forced_tool_choice') is False
+
+
+@pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
 def test_bedrock_anthropic_with_geo_prefix():
     profile = BedrockProvider.model_profile('us.anthropic.claude-haiku-4-5-20251001-v1:0')
     assert _normalize(profile) == snapshot(

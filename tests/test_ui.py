@@ -2137,6 +2137,9 @@ def test_sanitize_messages_keeps_dangling_native_tool_calls():
     )
 
     with warnings.catch_warnings(record=True) as caught_warnings:
+        # Scoped to the warning these tests own rather than `simplefilter('error')`: that form
+        # overrode the suite's intentional `ResourceWarning` ignores, so delayed event-loop GC
+        # failed whichever test happened to collect it.
         warnings.filterwarnings('always', message=r'Client-submitted history ended with unresolved tool call')
         sanitized = adapter.sanitize_messages(adapter.messages)
     assert not caught_warnings

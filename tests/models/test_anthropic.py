@@ -176,6 +176,9 @@ with try_import() as imports_successful:
 
     MockAnthropicMessage = BetaMessage | Exception
     MockRawMessageStreamEvent = BetaRawMessageStreamEvent | Exception
+    # One call's worth of a multi-call stream mock: the events it yields, or the error
+    # `create()` raises instead of returning a stream at all.
+    MockRawMessageStream = Sequence[MockRawMessageStreamEvent] | Exception
 
 if not imports_successful():  # pragma: lax no cover
     AsyncAnthropicBedrock = AsyncAnthropicBedrockMantle = AsyncAnthropicVertex = AsyncAnthropicFoundry = None
@@ -266,7 +269,7 @@ async def test_anthropic_read_error_is_raised_when_not_cancelled():
 @dataclass
 class MockAnthropic:
     messages_: MockAnthropicMessage | Sequence[MockAnthropicMessage] | None = None
-    stream: Sequence[MockRawMessageStreamEvent] | Sequence[Sequence[MockRawMessageStreamEvent]] | None = None
+    stream: Sequence[MockRawMessageStreamEvent] | Sequence[MockRawMessageStream] | None = None
     index = 0
     chat_completion_kwargs: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
     base_url: str = 'https://api.anthropic.com'
@@ -285,7 +288,7 @@ class MockAnthropic:
 
     @classmethod
     def create_stream_mock(
-        cls, stream: Sequence[MockRawMessageStreamEvent] | Sequence[Sequence[MockRawMessageStreamEvent]]
+        cls, stream: Sequence[MockRawMessageStreamEvent] | Sequence[MockRawMessageStream]
     ) -> AsyncAnthropic:
         return cast(AsyncAnthropic, cls(stream=stream))
 
@@ -296,10 +299,14 @@ class MockAnthropic:
 
         if stream:
             assert self.stream is not None, 'you can only use `stream=True` if `stream` is provided'
-            if isinstance(self.stream[0], Sequence):
-                response = MockAsyncStream(iter(cast(list[MockRawMessageStreamEvent], self.stream[self.index])))
-            else:
-                response = MockAsyncStream(iter(cast(list[MockRawMessageStreamEvent], self.stream)))
+            if isinstance(self.stream[0], Sequence | Exception):
+                queued = self.stream[self.index]
+                self.index += 1
+                # The real SDK raises a request error out of `create()` itself, before any event is
+                # iterated, so a queued exception has to surface here rather than from the stream.
+                raise_if_exception(queued)
+                return MockAsyncStream(iter(cast(list[MockRawMessageStreamEvent], queued)))
+            response = MockAsyncStream(iter(cast(list[MockRawMessageStreamEvent], self.stream)))
             self.index += 1
             return response
 

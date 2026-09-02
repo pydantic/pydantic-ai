@@ -688,7 +688,7 @@ class TestAnthropicThinkingOutputToolsConflict:
     """Tool Output resolves to a forced `tool_choice`, which Anthropic rejects alongside extended
     thinking but accepts alongside adaptive thinking, so only the former switches the output mode.
 
-    The exception is a model that rejects forcing outright (`claude-fable-5`, `claude-mythos-5`):
+    The exception is a model that rejects forcing outright (`claude-fable-5-1`, `claude-mythos-5-1`):
     there, Tool Output could only fall back to a soft `tool_choice='auto'` the model may ignore, so
     adaptive thinking keeps switching away from it too.
 

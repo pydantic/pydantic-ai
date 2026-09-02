@@ -141,6 +141,29 @@ async def test_anthropic_retries_a_stale_thinking_block_with_drop_block(allow_mo
     assert _THINKING_BINDING_BETA in retried['betas']
 
 
+async def test_anthropic_retries_a_stale_thinking_block_streamed(allow_model_requests: None):
+    """The retry covers streamed requests too: the SDK raises the 400 out of `create()`, before any event."""
+    mock_client = MockAnthropic.create_stream_mock(
+        [
+            stale_thinking_block_error(),
+            dropped_thinking_stream(start_transformation=dropped_thinking_transformation()),
+        ]
+    )
+    m = AnthropicModel('claude-fable-5-1', provider=AnthropicProvider(anthropic_client=mock_client))
+
+    with pytest.warns(AnthropicStaleThinkingBlockWarning, match='rejected a replayed thinking block'):
+        async with Agent(m).run_stream('What is 2+2?') as result:
+            assert await result.get_output() == '4'
+
+    first, retried = get_mock_chat_completion_kwargs(mock_client)
+    assert first.get('extra_body') is None
+    assert retried['thinking'] is OMIT
+    assert retried['extra_body'] == snapshot(
+        {'thinking': {'block_binding': {'prefix_mismatch_behavior': 'drop_block'}}}
+    )
+    assert _THINKING_BINDING_BETA in retried['betas']
+
+
 async def test_anthropic_retry_carries_the_configured_thinking_forward(allow_model_requests: None):
     """The retry keeps the caller's own `thinking` config; only `block_binding` is added to it."""
     mock_client = MockAnthropic.create_mock(
@@ -402,7 +425,7 @@ def dropped_thinking_transformation(path: str = 'messages.1.content.0') -> BetaT
 
 def dropped_thinking_stream(
     start_transformation: BetaThinkingDroppedInputTransformation | None = None,
-    delta_transformation: BetaThinkingDroppedInputTransformation | None = None,
+    delta_transformations: list[BetaThinkingDroppedInputTransformation] | None = None,
 ) -> list[BetaRawMessageStreamEvent]:
     return [
         BetaRawMessageStartEvent(
@@ -426,7 +449,7 @@ def dropped_thinking_stream(
             type='message_delta',
             delta=Delta(stop_reason='end_turn'),
             usage=BetaMessageDeltaUsage(input_tokens=5, output_tokens=1),
-            input_transformations=[delta_transformation] if delta_transformation else None,
+            input_transformations=delta_transformations or None,
         ),
         BetaRawMessageStopEvent(type='message_stop'),
     ]
@@ -483,12 +506,44 @@ async def test_anthropic_records_dropped_thinking_blocks_streamed(allow_model_re
     )
 
 
-async def test_anthropic_records_dropped_thinking_blocks_from_every_stream_event(allow_model_requests: None):
-    """`message_delta` types the field too, so a report arriving there is appended, not dropped."""
+async def test_anthropic_dropped_thinking_blocks_from_message_delta_replace_message_start(
+    allow_model_requests: None,
+):
+    """A `message_delta` report means a mid-stream model fallback, so its array replaces `message_start`'s."""
     mock_client = MockAnthropic.create_stream_mock(
         dropped_thinking_stream(
             start_transformation=dropped_thinking_transformation(),
-            delta_transformation=dropped_thinking_transformation('messages.3.content.0'),
+            delta_transformations=[dropped_thinking_transformation('messages.3.content.0')],
+        )
+    )
+    m = AnthropicModel('claude-fable-5-1', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    async with agent.run_stream('What is 2+2?') as result:
+        await result.get_output()
+
+    response = message(result.all_messages(), ModelResponse, index=-1)
+    assert response.provider_details == snapshot(
+        {
+            'finish_reason': 'end_turn',
+            'input_transformations': [
+                {'path': 'messages.3.content.0', 'reason': 'prefix_binding_mismatch', 'type': 'thinking_dropped'},
+            ],
+        }
+    )
+
+
+async def test_anthropic_dropped_thinking_blocks_from_message_delta_are_not_duplicated(
+    allow_model_requests: None,
+):
+    """The serving model's array repeats the request-side entries `message_start` already reported."""
+    mock_client = MockAnthropic.create_stream_mock(
+        dropped_thinking_stream(
+            start_transformation=dropped_thinking_transformation(),
+            delta_transformations=[
+                dropped_thinking_transformation(),
+                dropped_thinking_transformation('messages.3.content.0'),
+            ],
         )
     )
     m = AnthropicModel('claude-fable-5-1', provider=AnthropicProvider(anthropic_client=mock_client))
