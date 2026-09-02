@@ -1308,6 +1308,12 @@ class GoogleModel(Model[Client]):
             vendor_metadata = dict(file.vendor_metadata)  # copy to avoid mutating user dict
             if 'media_resolution' in vendor_metadata:
                 part_dict['media_resolution'] = vendor_metadata.pop('media_resolution')
+            # `media_processing` is likewise a per-Part field. `'AGENTIC'` lets the model navigate
+            # long video/audio itself, fetching segments and transcripts as it needs them, instead
+            # of consuming a fixed sampling of the whole file, see
+            # https://ai.google.dev/gemini-api/docs/video-understanding#agentic-video-understanding
+            if 'media_processing' in vendor_metadata:
+                part_dict['media_processing'] = vendor_metadata.pop('media_processing')
             # The remaining keys map to `video_metadata`, which only applies to video parts.
             if vendor_metadata and isinstance(file, (BinaryContent, VideoUrl, UploadedFile)):
                 part_dict['video_metadata'] = VideoMetadataDict(**vendor_metadata)
@@ -1376,6 +1382,7 @@ class GeminiStreamedResponse(StreamedResponse):
     _code_execution_tool_call_id: str | None = field(default=None, init=False)
     _has_content_filter: bool = field(default=False, init=False)
     _has_tool_invocations: bool = field(default=False, init=False)
+    _media_processing_call_id: str | None = field(default=None, init=False)
     # Empty file_search returns whose contexts are still to arrive in `grounding_metadata` (see
     # `_fill_empty_file_search_return_content`). Each is reserved in the parts manager keyed by its
     # `tool_call_id`, with its `PartStartEvent` deferred until it's filled — or until the stream ends.
@@ -1570,6 +1577,11 @@ class GeminiStreamedResponse(StreamedResponse):
                         part = self._map_code_execution_result(part.code_execution_result)
                         part.provider_details = provider_details
                         yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=part)
+                    elif _is_bare_thought_signature(part):
+                        step, self._media_processing_call_id = _map_media_processing_step(
+                            part, self._media_processing_call_id, self.provider_name
+                        )
+                        yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=step)
                     else:
                         assert part.function_response is not None, f'Unexpected part: {part}'  # pragma: no cover
 
@@ -1804,6 +1816,10 @@ def _native_tool_call_part_dict(
         return None
     if item.tool_name == CodeExecutionTool.kind:
         return _attach_signature({'executable_code': cast(ExecutableCodeDict, item.args_as_dict())}, signature)
+    if item.tool_name == MEDIA_PROCESSING_TOOL_NAME:
+        # Agentic media processing steps exist only inside the turn that produced them and their
+        # signatures are rejected on replay; see `MEDIA_PROCESSING_TOOL_NAME`.
+        return None
     tool_type = _NATIVE_TOOL_NAME_TO_TOOL_TYPE.get(item.tool_name)
     if tool_type is None:  # pragma: no cover
         raise UnexpectedModelBehavior(f'Unknown native tool name: {item.tool_name!r}')
@@ -1829,6 +1845,10 @@ def _native_tool_return_part_dict(
             {'code_execution_result': cast(CodeExecutionResultDict, item.content)},  # pyright: ignore[reportUnknownMemberType]
             signature,
         )
+    if item.tool_name == MEDIA_PROCESSING_TOOL_NAME:
+        # Agentic media processing steps exist only inside the turn that produced them and their
+        # signatures are rejected on replay; see `MEDIA_PROCESSING_TOOL_NAME`.
+        return None
     tool_type = _NATIVE_TOOL_NAME_TO_TOOL_TYPE.get(item.tool_name)
     if tool_type is None:  # pragma: no cover
         raise UnexpectedModelBehavior(f'Unknown native tool name: {item.tool_name!r}')
@@ -1857,6 +1877,54 @@ def _can_echo_server_side_tool_part(tool_call_id: str, *, supports_tool_combinat
     if not supports_tool_combination:
         return False
     return not tool_call_id.startswith('pyd_ai_')
+
+
+MEDIA_PROCESSING_TOOL_NAME = 'media_processing'
+"""`tool_name` of the native tool parts that represent agentic media processing steps.
+
+With `media_processing='AGENTIC'` on a video/audio Part, the model fetches the segments and
+transcript ranges it needs itself. Each fetch is reported as two Parts carrying only a
+`thought_signature` (a `processing_call` and its `processing_result`, in Google's terms) and is
+surfaced as a `NativeToolCallPart`/`NativeToolReturnPart` pair with this name, like other
+provider-executed tools. The API exposes neither the segment requested nor its content, so
+`args` and `content` are `None`. The pair is never sent back to the model: those signatures are
+rejected with `400 Invalid thought signature` if replayed, and only the turn's final Part's
+signature round-trips.
+"""
+
+
+def _is_bare_thought_signature(part: Part) -> bool:
+    """Whether `part` carries a `thought_signature` and nothing else: an agentic media processing step."""
+    return bool(part.thought_signature) and not part.model_dump(exclude_none=True, exclude={'thought_signature'})
+
+
+def _map_media_processing_step(
+    part: Part, pending_call_id: str | None, provider_name: str
+) -> tuple[NativeToolCallPart | NativeToolReturnPart, str | None]:
+    """Map one bare-signature Part to the call or the return half of a `media_processing` pair.
+
+    Steps arrive in even counts, call then result; a trailing unpaired call is kept as a call.
+    Returns the part and the `tool_call_id` still awaiting its return, if any.
+    """
+    assert part.thought_signature is not None
+    provider_details = {'thought_signature': base64.b64encode(part.thought_signature).decode('utf-8')}
+    if pending_call_id is None:
+        tool_call_id = _utils.generate_tool_call_id()
+        call = NativeToolCallPart(
+            tool_name=MEDIA_PROCESSING_TOOL_NAME,
+            tool_call_id=tool_call_id,
+            provider_name=provider_name,
+            provider_details=provider_details,
+        )
+        return call, tool_call_id
+    result = NativeToolReturnPart(
+        tool_name=MEDIA_PROCESSING_TOOL_NAME,
+        content=None,
+        tool_call_id=pending_call_id,
+        provider_name=provider_name,
+        provider_details=provider_details,
+    )
+    return result, None
 
 
 def _process_part(
@@ -1946,7 +2014,12 @@ def _process_response_from_parts(
 
     item: ModelResponsePart | None = None
     code_execution_tool_call_id: str | None = None
+    media_processing_call_id: str | None = None
     for part in parts:
+        if _is_bare_thought_signature(part):
+            step, media_processing_call_id = _map_media_processing_step(part, media_processing_call_id, provider_name)
+            items.append(step)
+            continue
         item, code_execution_tool_call_id = _process_part(part, code_execution_tool_call_id, provider_name)
         if item is not None:
             if isinstance(item, NativeToolReturnPart):

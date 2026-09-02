@@ -18,6 +18,7 @@ import pytest
 from pytest_mock import MockerFixture
 
 from pydantic_ai import (
+    AudioUrl,
     BinaryContent,
     DocumentUrl,
     ImageUrl,
@@ -169,6 +170,129 @@ async def test_media_resolution_forwarding(
     """`vendor_metadata['media_resolution']` is lifted to the per-Part `media_resolution`
     field for every file type, remaining keys still route to `video_metadata`, and the
     user's `vendor_metadata` dict is never mutated (the mapper works on a copy).
+    """
+    model = vertex_mapping_model if case.google_cloud else mapping_model
+
+    original_vendor_metadata = deepcopy(case.content.vendor_metadata)
+
+    content = await model._map_user_prompt(UserPromptPart(content=[case.content]))  # pyright: ignore[reportPrivateUsage]
+
+    assert content == [case.expected]
+    assert case.content.vendor_metadata == original_vendor_metadata
+
+
+# =============================================================================
+# Per-Part `media_processing` forwarding via `vendor_metadata`
+# =============================================================================
+
+
+@dataclass
+class MediaProcessingCase:
+    id: str
+    content: BinaryContent | VideoUrl | AudioUrl | UploadedFile
+    expected: dict[str, object]
+    google_cloud: bool = False
+    """When True, run against the Vertex-backed model (needed for gs:// URIs)."""
+
+
+MEDIA_PROCESSING_CASES = [
+    MediaProcessingCase(
+        id='binary_media_processing_only',
+        content=BinaryContent(
+            data=b'\x00\x00\x00\x00',
+            media_type='video/mp4',
+            vendor_metadata={'media_processing': 'AGENTIC'},
+        ),
+        expected={
+            'inline_data': {'data': b'\x00\x00\x00\x00', 'mime_type': 'video/mp4'},
+            'media_processing': 'AGENTIC',
+        },
+    ),
+    MediaProcessingCase(
+        id='binary_media_processing_with_resolution_and_video_metadata',
+        content=BinaryContent(
+            data=b'\x00\x00\x00\x00',
+            media_type='video/mp4',
+            vendor_metadata={
+                'media_processing': 'AGENTIC',
+                'media_resolution': {'level': 'MEDIA_RESOLUTION_LOW'},
+                'start_offset': '2s',
+                'end_offset': '10s',
+            },
+        ),
+        expected={
+            'inline_data': {'data': b'\x00\x00\x00\x00', 'mime_type': 'video/mp4'},
+            'media_resolution': {'level': 'MEDIA_RESOLUTION_LOW'},
+            'media_processing': 'AGENTIC',
+            'video_metadata': {'start_offset': '2s', 'end_offset': '10s'},
+        },
+    ),
+    MediaProcessingCase(
+        id='binary_static_processing_explicit',
+        content=BinaryContent(
+            data=b'\x00\x00\x00\x00',
+            media_type='video/mp4',
+            vendor_metadata={'media_processing': 'STATIC', 'fps': 2.0},
+        ),
+        expected={
+            'inline_data': {'data': b'\x00\x00\x00\x00', 'mime_type': 'video/mp4'},
+            'media_processing': 'STATIC',
+            'video_metadata': {'fps': 2.0},
+        },
+    ),
+    MediaProcessingCase(
+        id='gcs_video_url_media_processing',
+        content=VideoUrl(
+            url='gs://bucket/lecture.mp4',
+            vendor_metadata={'media_processing': 'AGENTIC'},
+        ),
+        expected={
+            'file_data': {'file_uri': 'gs://bucket/lecture.mp4', 'mime_type': 'video/mp4'},
+            'media_processing': 'AGENTIC',
+        },
+        google_cloud=True,
+    ),
+    MediaProcessingCase(
+        id='gcs_audio_url_media_processing',
+        content=AudioUrl(
+            url='gs://bucket/podcast.mp3',
+            vendor_metadata={'media_processing': 'AGENTIC'},
+        ),
+        expected={
+            'file_data': {'file_uri': 'gs://bucket/podcast.mp3', 'mime_type': 'audio/mpeg'},
+            'media_processing': 'AGENTIC',
+        },
+        google_cloud=True,
+    ),
+    MediaProcessingCase(
+        id='uploaded_file_media_processing_and_video_metadata',
+        content=UploadedFile(
+            file_id='https://generativelanguage.googleapis.com/v1beta/files/video123',
+            provider_name='google',
+            media_type='video/mp4',
+            vendor_metadata={'media_processing': 'AGENTIC', 'start_offset': '10s', 'end_offset': '30s'},
+        ),
+        expected={
+            'file_data': {
+                'file_uri': 'https://generativelanguage.googleapis.com/v1beta/files/video123',
+                'mime_type': 'video/mp4',
+            },
+            'media_processing': 'AGENTIC',
+            'video_metadata': {'start_offset': '10s', 'end_offset': '30s'},
+        },
+    ),
+]
+
+
+@pytest.mark.parametrize('case', [pytest.param(c, id=c.id) for c in MEDIA_PROCESSING_CASES])
+async def test_media_processing_forwarding(
+    case: MediaProcessingCase, mapping_model: GoogleModel, vertex_mapping_model: GoogleModel
+):
+    """`vendor_metadata['media_processing']` is lifted to the per-Part `media_processing`
+    field (`'AGENTIC'` enables agentic video understanding, where the model fetches segments
+    and transcripts itself), it composes with `media_resolution` and the `video_metadata`
+    keys, and the user's `vendor_metadata` dict is never mutated. The value is forwarded
+    verbatim: which models and media types accept it is the API's call, not the client's.
     """
     model = vertex_mapping_model if case.google_cloud else mapping_model
 
