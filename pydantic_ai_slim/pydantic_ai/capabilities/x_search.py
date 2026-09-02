@@ -14,7 +14,7 @@ from pydantic_ai.toolsets import AbstractToolset
 from .native_or_local import NativeOrLocalTool
 
 if TYPE_CHECKING:
-    from pydantic_ai.common_tools.x_search import XSearchFallbackModel
+    from pydantic_ai.common_tools.x_search import XSearchFallbackModel, XSearchNativeTool
 
 
 @dataclass(init=False)
@@ -155,8 +155,6 @@ class XSearch(NativeOrLocalTool[AgentDepsT]):
             return False
         return self.allowed_x_handles is not None or self.excluded_x_handles is not None
 
-    def _resolved_native(
-        self,
-    ) -> XSearchTool | Callable[[RunContext[AgentDepsT]], Awaitable[XSearchTool] | XSearchTool]:
+    def _resolved_native(self) -> XSearchNativeTool[AgentDepsT]:
         """Get the XSearchTool for the fallback, with capability-level overrides applied."""
         return self._resolve_native_with_overrides(XSearchTool, self._xsearch_kwargs())

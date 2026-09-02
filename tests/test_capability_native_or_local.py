@@ -82,6 +82,8 @@ from .capability_models import (
 )
 from .conftest import IsDatetime, IsInstance, IsStr, iter_message_parts, try_import
 
+_REQUEST_BODY_ADAPTER = TypeAdapter(dict[str, Any])
+
 with try_import() as openai_imports:
     from pydantic_ai.models.openai import OpenAIResponsesModel
     from pydantic_ai.providers.openai import OpenAIProvider
@@ -247,19 +249,6 @@ class TestXSearchCapability:
         """XSearch(native=False, allowed_x_handles=...) without fallback_model → UserError."""
         with pytest.raises(UserError, match='constraint fields require the native tool'):
             XSearch(native=False, allowed_x_handles=['handle1'])
-
-    def test_xsearch_resolved_native_merges_overrides(self):
-        """Capability-level kwargs override fields on a passed native instance."""
-        base = XSearchTool(allowed_x_handles=['a'], enable_image_understanding=True)
-        cap = XSearch(native=base, from_date=datetime(2024, 1, 1), enable_image_understanding=False)
-        resolved = cap._resolved_native()  # pyright: ignore[reportPrivateUsage]
-        assert resolved == snapshot(
-            XSearchTool(
-                allowed_x_handles=['a'],
-                from_date=datetime(2024, 1, 1),
-                enable_image_understanding=False,
-            )
-        )
 
     def test_xsearch_fallback_model_and_local_conflict(self):
         """XSearch(fallback_model=..., local=func) raises UserError."""
@@ -671,7 +660,11 @@ class TestImageGenerationCapability:
         assert tool.aspect_ratio == '16:9'
 
     def test_image_generation_fallback_merges_custom_native_with_overrides(self):
-        """Custom native tool settings are merged with capability-level overrides for the fallback."""
+        """A custom native instance produces a local fallback tool.
+
+        What that fallback is actually handed is asserted through `agent.run` by
+        `tests/test_fallback_native_factory.py::test_instance_native_config_is_merged_for_fallback`.
+        """
         from pydantic_ai.tools import Tool
 
         custom_native = ImageGenerationTool(quality='high', size='1024x1024')
@@ -680,7 +673,6 @@ class TestImageGenerationCapability:
             fallback_model='openai-responses:gpt-5.4',
             output_format='jpeg',  # capability-level override
         )
-        # The local fallback should exist and contain the merged config
         assert isinstance(cap.local, Tool)
         assert cap.get_toolset() is not None
 
@@ -890,10 +882,10 @@ class TestImageGenerationCapability:
         """The fallback subagent sends factory-produced native config with capability overrides."""
         from pydantic_ai.messages import BinaryImage
 
-        captured_request: dict[str, Any] = {}
+        sent_bodies: list[dict[str, Any]] = []
 
         async def capture_request(request: httpx2.Request) -> None:
-            captured_request.update(TypeAdapter(dict[str, Any]).validate_json(request.content))
+            sent_bodies.append(_REQUEST_BODY_ADAPTER.validate_json(request.content))
 
         def native_factory(ctx: RunContext[Any]) -> ImageGenerationTool:
             return ImageGenerationTool(quality='low')
@@ -931,7 +923,12 @@ class TestImageGenerationCapability:
             result = await agent.run('Generate an image of a cute baby sea otter')
 
         assert result.output == 'Here is the generated image.'
-        assert captured_request['tools'] == snapshot(
+        assert len(sent_bodies) == 1
+        generated_image = next(iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)).content
+        assert isinstance(generated_image, BinaryImage)
+        # The format the provider actually returned, pinned here rather than only in the cassette.
+        assert generated_image.media_type == 'image/png'
+        assert sent_bodies[0]['tools'] == snapshot(
             [
                 {
                     'type': 'image_generation',

@@ -13,7 +13,7 @@ from pydantic_ai.toolsets import AbstractToolset
 from .native_or_local import NativeOrLocalTool
 
 if TYPE_CHECKING:
-    from pydantic_ai.common_tools.image_generation import ImageGenerationFallbackModel
+    from pydantic_ai.common_tools.image_generation import ImageGenerationFallbackModel, ImageGenerationNativeTool
 
 
 @dataclass(init=False)
@@ -189,9 +189,7 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
     def _native_unique_id(self) -> str:
         return ImageGenerationTool.kind
 
-    def _resolved_native(
-        self,
-    ) -> ImageGenerationTool | Callable[[RunContext[AgentDepsT]], Awaitable[ImageGenerationTool] | ImageGenerationTool]:
+    def _resolved_native(self) -> ImageGenerationNativeTool[AgentDepsT]:
         """Get the ImageGenerationTool for the fallback, with capability-level overrides applied."""
         return self._resolve_native_with_overrides(ImageGenerationTool, self._image_gen_kwargs())
 

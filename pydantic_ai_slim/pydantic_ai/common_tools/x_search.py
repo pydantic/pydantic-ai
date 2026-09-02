@@ -7,7 +7,7 @@ from typing import Any, TypeAlias
 from pydantic_ai._utils import await_maybe
 from pydantic_ai.agent import Agent
 from pydantic_ai.capabilities import NativeTool
-from pydantic_ai.capabilities.native_or_local import _resolve_native_tool  # pyright: ignore[reportPrivateUsage]
+from pydantic_ai.capabilities._native_resolution import resolve_native_tool
 from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.native_tools import XSearchTool
@@ -26,18 +26,17 @@ strings are resolved to a model at call time.
 XSearchFallbackModel = Model | KnownModelName | str | XSearchFallbackModelFunc | None
 """Type for the fallback model: a model, model name, factory callable, or None."""
 
-XSearchNativeTool: TypeAlias = (
-    XSearchTool
-    | Callable[
-        [RunContext[AgentDepsT]],
-        Awaitable[XSearchTool | None] | XSearchTool | None,
-    ]
-)
+XSearchNativeTool: TypeAlias = XSearchTool | Callable[[RunContext[AgentDepsT]], Awaitable[XSearchTool] | XSearchTool]
 """Type for the native tool: an `XSearchTool` instance, or a callable resolving one from the run context.
 
-The callable resolves on each model request, and again with the same outer context when the
-fallback subagent runs. Returning `None` omits the tool on the native path; the subagent has
-already been invoked and cannot omit, so it raises
+The callable resolves once per fallback subagent invocation, from that tool call's
+[`RunContext`][pydantic_ai.tools.RunContext]. It belongs to the same run and carries the same
+`deps` as the resolution on the native path, but it is not the same context: `tool_call_id` and
+`tool_name` name the fallback tool call rather than being `None`, and `messages` holds the run so
+far. Read `ctx.deps` for configuration that has to match across both.
+
+Unlike the capability-level `native=` parameter, this callable may not return `None`: omitting the
+tool is meaningless once the subagent has been invoked, so returning `None` anyway raises
 [`UserError`][pydantic_ai.exceptions.UserError] rather than enabling a default `XSearchTool`.
 """
 
@@ -79,7 +78,7 @@ class XSearchSubagentTool:
         if callable(model):
             model = await await_maybe(model(ctx))
 
-        native_tool = await _resolve_native_tool(XSearchTool, self.native_tool, ctx)
+        native_tool = await resolve_native_tool(XSearchTool, self.native_tool, ctx)
 
         agent = Agent(
             model,

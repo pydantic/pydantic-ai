@@ -4,49 +4,17 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
 from typing import Any, TypeVar, cast
 
-from pydantic_ai._utils import await_maybe
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.native_tools import AbstractNativeTool
-from pydantic_ai.tools import AgentDepsT, AgentNativeTool, NativeToolFunc, RunContext, Tool, ToolDefinition
+from pydantic_ai.tools import AgentDepsT, AgentNativeTool, RunContext, Tool, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.toolsets.prepared import PreparedToolset
 
+from ._native_resolution import resolve_native_tool
 from .abstract import AbstractCapability
 
 _NativeToolT = TypeVar('_NativeToolT', bound=AbstractNativeTool)
-
-
-async def _resolve_native_tool(
-    tool_cls: type[_NativeToolT],
-    native_tool: AbstractNativeTool | NativeToolFunc[AgentDepsT] | None,
-    ctx: RunContext[AgentDepsT],
-) -> _NativeToolT:
-    """Resolve a native tool instance or factory, raising if it doesn't yield a `tool_cls`.
-
-    A factory returning `None` means "omit this tool" on the native path
-    ([`NativeToolFunc`][pydantic_ai.tools.NativeToolFunc]). The fallback subagent cannot omit
-    once it has already been invoked, so it raises [`UserError`][pydantic_ai.exceptions.UserError]
-    rather than enabling the default tool.
-
-    `tool_cls` comes first so the return type is solved from it rather than from `native_tool`,
-    which is what lets callers use the result as a `tool_cls` without re-asserting.
-
-    KEEP IN SYNC with the graph's resolution in `_prepare_request_parameters`, except for `None`:
-    the native path omits the tool for that step, while the already-invoked fallback subagent
-    cannot, so it raises.
-    """
-    if callable(native_tool) and not isinstance(native_tool, tool_cls):
-        native_tool = await await_maybe(native_tool(ctx))
-    if native_tool is None:
-        raise UserError(
-            f'`{tool_cls.__name__}` native tool factory returned `None`, but the already-invoked '
-            '`fallback_model` subagent cannot omit the tool. '
-            f'Return a `{tool_cls.__name__}` instance, or drop `fallback_model` so that `None` omits the tool.'
-        )
-    if not isinstance(native_tool, tool_cls):
-        raise UserError(f'Native tool must resolve to a `{tool_cls.__name__}` instance, got {native_tool!r}')
-    return native_tool
 
 
 @dataclass(init=False)
@@ -240,6 +208,11 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
         so its resolved result is overridden the same way). `True` never arrives — `__post_init__`
         has already resolved it to an instance. A factory that returns `None` raises `UserError`
         rather than substituting a default instance, and anything else raises too.
+
+        Only the `fallback_model` path reaches here: `__post_init__` calls `_default_local()`, which
+        returns early when `fallback_model` is unset, so a capability configured without one never
+        runs this check. Validating in `__post_init__` instead would reject configurations that
+        construct fine today for users who never opted into a fallback subagent.
         """
         if isinstance(self.native, tool_cls):
             return replace(self.native, **overrides) if overrides else self.native
@@ -250,12 +223,12 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
         native_factory = self.native
         if not callable(native_factory):
             raise UserError(
-                f'{type(self).__name__}: `native` must be a `{tool_cls.__name__}` instance, a callable, '
-                f'`True`, or `False`, not {native_factory!r}'
+                f'{type(self).__name__}: `native` must be `True`, `False`, a callable, or an instance of '
+                f'`{tool_cls.__name__}`, not {native_factory!r}'
             )
 
         async def resolve_native(ctx: RunContext[AgentDepsT]) -> _NativeToolT:
-            native_tool = await _resolve_native_tool(tool_cls, native_factory, ctx)
+            native_tool = await resolve_native_tool(tool_cls, native_factory, ctx)
             return replace(native_tool, **overrides) if overrides else native_tool
 
         return resolve_native
