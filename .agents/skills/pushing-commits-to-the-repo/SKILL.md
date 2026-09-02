@@ -10,7 +10,7 @@ Pushing starts a loop; it does not end the task. **Work stops only when CI is gr
 hosted review has finished on the current HEAD, AND no comment is left unresolved.**
 
 Lifecycle: implement → targeted verification → commit → independent pre-push review → remediate
-and re-review → push → full CI and coverage → hosted reviewers → final metadata check.
+and re-review within budget → push → full CI and coverage → hosted reviewers → final metadata check.
 
 ## When you open the PR
 
@@ -83,7 +83,7 @@ reviewers own that separate boundary. Every fresh reviewer here runs under the s
 
 - Capture three immutable commits: `policy-base-sha` is the fetched current target-branch tip whose
   instructions are authoritative; `merge-base-sha` delimits the branch diff; `candidate-head-sha`
-  is the exact commit proposed for push.
+  is the exact commit proposed for the current review.
 - From the stable policy-base checkout, the implementing agent prepares the review bundle: task or
   issue, full PR discussion including thread state, relevant settled maintainer decisions with their
   sources, relevant authoritative documentation, completed verification, and the exact
@@ -133,7 +133,7 @@ metadata review does not count against this budget.
 
 Stop after a review returns no findings. After the third review, remediate its findings and run the
 relevant local checks. Do not dispatch a fourth review. Continue with the push, CI, and hosted
-review.
+review. This is the only exception to requiring a pre-push review of the exact pushed SHA.
 
 Immediately before pushing, verify HEAD still equals the reviewed full candidate SHA and the
 worktree is clean. After third-review remediation, verify HEAD equals the locally checked
