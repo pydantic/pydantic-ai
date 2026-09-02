@@ -33,7 +33,7 @@ def instrument_image_generation_model(
         if instrument is True:
             instrument = InstrumentationSettings()
 
-        model = InstrumentedImageGenerationModel(model, instrument)
+        model = InstrumentedImageGenerationModel(model, options=instrument)
 
     return model
 
@@ -48,6 +48,7 @@ class InstrumentedImageGenerationModel(WrapperImageGenerationModel):
     def __init__(
         self,
         wrapped: ImageGenerationModel | str,
+        *,
         options: InstrumentationSettings | None = None,
     ) -> None:
         super().__init__(wrapped)
