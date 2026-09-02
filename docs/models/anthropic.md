@@ -616,7 +616,7 @@ warnings.simplefilter('ignore', AnthropicStaleThinkingBlockWarning)
 
 There is no third behavior: `prefix_mismatch_behavior` is either `'error'` or `'drop_block'`. Passing `None` is how you ask for Anthropic's account default explicitly, which keeps the block only where the check isn't enforced.
 
-Models that don't bind thinking blocks are unaffected: their requests carry no `block_binding` and no binding beta, and a 400 from them is never retried. Anthropic documents **Claude Mythos 5.1** as not running this check, so it is not marked either.
+Models that don't bind thinking blocks are unaffected *by default*: with no explicit `block_binding`, their requests carry neither the field nor the binding beta, and a 400 from them is never retried. Setting `block_binding` yourself puts both on the wire for any model — the beta follows the field, not the profile flag — and such a request is never retried either. Anthropic documents **Claude Mythos 5.1** as not running this check, so it is not marked either.
 
 ## Message Compaction
 

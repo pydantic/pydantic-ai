@@ -5040,13 +5040,21 @@ async def test_anthropic_fable_5_1_replays_a_stale_thinking_block_on_a_legacy_ac
 
 @_STALE_THINKING_BLOCK_PREFIX_CHANGE
 @pytest.mark.vcr()
-async def test_anthropic_fable_5_1_drops_a_stale_thinking_block(allow_model_requests: None, anthropic_api_key: str):
+async def test_anthropic_fable_5_1_drops_a_stale_thinking_block(
+    allow_model_requests: None, anthropic_api_key: str, request_capture: RequestCapture
+):
     """Asking for `drop_block` drops the stale block and lets the run continue.
 
     This is the shape Pydantic AI retries with after Anthropic rejects a replay, and the shape a
     caller sets to skip that rejected request altogether.
+
+    The response half alone would not pin the claim: the default matchers ignore the request body,
+    so the recorded `thinking_dropped` replays even if the setting stopped reaching the wire. The
+    outbound body and the beta header are what tie the transformation to what we actually sent.
     """
-    m = AnthropicModel('claude-fable-5-1', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = AnthropicModel(
+        'claude-fable-5-1', provider=AnthropicProvider(api_key=anthropic_api_key, http_client=request_capture.client)
+    )
     history = await stale_thinking_block_history(m)
 
     settings = AnthropicModelSettings(
@@ -5066,6 +5074,11 @@ async def test_anthropic_fable_5_1_drops_a_stale_thinking_block(allow_model_requ
             ],
         }
     )
+    dropping_request = request_capture.bodies('/v1/messages')[-1]
+    assert dropping_request['thinking'] == snapshot(
+        {'type': 'adaptive', 'block_binding': {'prefix_mismatch_behavior': 'drop_block'}}
+    )
+    assert 'thinking-binding-controls-2026-08-01' in request_capture.headers[-1]['anthropic-beta']
 
 
 @_STALE_THINKING_BLOCK_PREFIX_CHANGE
