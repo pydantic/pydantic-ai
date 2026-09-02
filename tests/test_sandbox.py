@@ -1438,10 +1438,7 @@ async def test_capability_sandbox_tears_down_when_toolset_entry_fails():
 
 
 async def test_failing_release_propagates():
-    """An in-process release failure surfaces to the caller, exactly like a toolset exit
-    error; durable engines make their own call (Temporal logs instead, because the platform
-    idle timeout is the backstop and the run's work is already done).
-    """
+    """A release failure surfaces to the caller, exactly like a toolset exit error."""
     from .sandbox_fakes import FailingReleaseSandboxCapability
 
     failing = FailingReleaseSandboxCapability()

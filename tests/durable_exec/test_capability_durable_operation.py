@@ -190,7 +190,9 @@ class ReplayingDurability(RecordingDurability):
     replay_capability_operations = True
 
 
-async def test_durable_sandbox_release_failure_is_logged_and_swallowed(caplog: pytest.LogCaptureFixture) -> None:
+async def test_durable_sandbox_release_failure_propagates() -> None:
+    """A durable release failure surfaces like any other failed durable operation."""
+
     class FailingRelease(AbstractCapability[Any]):
         id = 'sandbox'
 
@@ -200,13 +202,9 @@ async def test_durable_sandbox_release_failure_is_logged_and_swallowed(caplog: p
         async def release_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
             raise RuntimeError('control plane unavailable')
 
-    with caplog.at_level('WARNING'):
-        result = await Agent(
-            TestModel(), name='durable_release', capabilities=[FailingRelease(), RecordingDurability()]
-        ).run('go')
-
-    assert result.output == 'success (no tool calls)'
-    assert 'platform idle timeout must reap it' in caplog.text
+    agent = Agent(TestModel(), name='durable_release', capabilities=[FailingRelease(), RecordingDurability()])
+    with pytest.raises(RuntimeError, match='control plane unavailable'):
+        await agent.run('go')
 
 
 async def test_wrapped_sandbox_provider_lifecycle_uses_durable_dispatch() -> None:

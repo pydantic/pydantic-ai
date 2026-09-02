@@ -5,7 +5,6 @@ import contextvars
 import dataclasses
 import functools
 import inspect
-import logging
 import warnings
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Awaitable, Callable, Generator, Sequence
 from contextlib import (
@@ -65,7 +64,7 @@ from ..capabilities import (
     ModelSelector,
     ToolSearch as ToolSearchCap,
 )
-from ..capabilities._durable_operation import active_durable_operation, invoke_durable_operation
+from ..capabilities._durable_operation import invoke_durable_operation
 from ..capabilities._dynamic import wrap_capability_funcs
 from ..capabilities._ordering import find_capability, has_capability_type
 from ..capabilities._pending_messages import PendingMessageDrainCapability
@@ -134,8 +133,6 @@ from .abstract import (
 )
 from .spec import AgentSpec, get_capability_registry
 from .wrapper import WrapperAgent
-
-logger = logging.getLogger('pydantic_ai.agent')
 
 if TYPE_CHECKING:
     from starlette.applications import Starlette
@@ -1746,26 +1743,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
                     async def _release_run_sandbox(supplier: AbstractCapability[AgentDepsT], ref: SandboxRef) -> None:
                         with anyio.CancelScope(shield=True):
-                            durable = active_durable_operation(supplier, 'release_sandbox', initial_ctx) is not None
-                            try:
-                                await invoke_durable_operation(
-                                    supplier,
-                                    'release_sandbox',
-                                    initial_ctx,
-                                    supplier.release_sandbox,
-                                    (initial_ctx, ref),
-                                    {},
-                                )
-                            except Exception:
-                                if not durable:
-                                    raise
-                                logger.warning(
-                                    'Failed to release sandbox %r for provider %r after durable retries; '
-                                    'the platform idle timeout must reap it.',
-                                    ref.sandbox_id,
-                                    ref.provider,
-                                    exc_info=True,
-                                )
+                            await invoke_durable_operation(
+                                supplier,
+                                'release_sandbox',
+                                initial_ctx,
+                                supplier.release_sandbox,
+                                (initial_ctx, ref),
+                                {},
+                            )
 
                     if sandbox_ref is not None:
                         preparation_stack.push_async_callback(_release_run_sandbox, sandbox_supplier, sandbox_ref)
