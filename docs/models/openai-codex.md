@@ -50,10 +50,11 @@ Passing `credentials` keeps them in memory only, so the next process has to log 
 
 ## Persisting credentials
 
-The provider refreshes expired tokens automatically, and refresh tokens are single-use, so the stored copy has to keep up. Give the provider an [`OpenAICodexCredentialSource`][pydantic_ai.providers.openai_codex.OpenAICodexCredentialSource] and it calls `load()` on first use and `save()` after every refresh:
+The provider refreshes expired tokens automatically, and refresh tokens are single-use, so the stored copy has to keep up. Give the provider an [`OpenAICodexCredentialSource`][pydantic_ai.providers.openai_codex.OpenAICodexCredentialSource] and it calls `load()` on first use and `save()` after every refresh. Run the login flow only when the store is empty:
 
-```python
+```python {title="codex_persist.py" test="skip - opens a browser and requires user login"}
 import json
+import webbrowser
 from dataclasses import asdict
 from pathlib import Path
 
@@ -62,6 +63,7 @@ from pydantic_ai.models.openai import OpenAIResponsesModel
 from pydantic_ai.providers.openai_codex import (
     OpenAICodexCredentials,
     OpenAICodexCredentialSource,
+    OpenAICodexOAuthFlow,
     OpenAICodexProvider,
 )
 
@@ -78,12 +80,17 @@ class FileCredentialSource(OpenAICodexCredentialSource):
 
 
 source = FileCredentialSource(Path('codex-credentials.json'))
+if not source.path.exists():
+    flow = OpenAICodexOAuthFlow()
+    webbrowser.open(flow.authorization_url())
+    await source.save(await flow.exchange_code_from_callback())
+
 provider = OpenAICodexProvider(credential_source=source)
 agent = Agent(OpenAIResponsesModel('gpt-5.6-luna', provider=provider))
 ...
 ```
 
-Seed the store with the credentials from the login flow above, and keep it wherever your app keeps secrets, not in `~/.codex`, which belongs to the Codex CLI.
+Keep the file wherever your app keeps secrets, not in `~/.codex`, which belongs to the Codex CLI.
 
 If `save()` raises, the refreshed credentials stay live in memory and a [`CredentialsPersistenceError`][pydantic_ai.providers.openai_codex.CredentialsPersistenceError] is raised. Both it and [`CredentialsRefreshError`][pydantic_ai.providers.openai_codex.CredentialsRefreshError] subclass [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], so a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] treats an unusable login like any other provider failure.
 
