@@ -221,7 +221,7 @@ For complete details on serialization with custom evaluators, see [Dataset Seria
 
 Pydantic Evals allows you to generate test datasets using LLMs with [`generate_dataset`][pydantic_evals.generation.generate_dataset].
 
-Datasets can be generated in either JSON or YAML format, in both cases a JSON schema file is generated alongside the dataset and referenced in the dataset, so you should get type checking and auto-completion in your editor.
+Generate datasets as JSON or YAML. For either format, Pydantic Evals writes a JSON Schema alongside the dataset and references it from the file. Supported editors can then provide type checking and autocomplete.
 
 ```python {title="generate_dataset_example.py"}
 from __future__ import annotations
@@ -312,7 +312,7 @@ async def main():
 4. Call [`generate_dataset`][pydantic_evals.generation.generate_dataset] to create a [`Dataset`][pydantic_evals.dataset.Dataset] with 2 cases confirming to the schema.
 5. Save the dataset to a YAML file, this will also write `questions_cases_schema.json` with the schema JSON schema for `questions_cases.yaml` to make editing easier. The magic `yaml-language-server` comment is supported by at least vscode, jetbrains/pycharm (more details [here](https://github.com/redhat-developer/yaml-language-server#using-inlined-schema)).
 
-_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main(answer))` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 You can also write datasets as JSON files:
 
@@ -386,9 +386,9 @@ async def main():
 ```
 
 1. Generate the [`Dataset`][pydantic_evals.dataset.Dataset] exactly as above.
-2. Save the dataset to a JSON file, this will also write `questions_cases_schema.json` with the JSON schema for `questions_cases.json`. This time the `$schema` key is included in the JSON file to define the schema for IDEs to use while you edit the file, there's no formal spec for this, but it works in vscode and pycharm and is discussed at length in [json-schema-org/json-schema-spec#828](https://github.com/json-schema-org/json-schema-spec/issues/828).
+2. Save the dataset to a JSON file. This also writes `questions_cases_schema.json`, the JSON Schema for `questions_cases.json`. The `$schema` key tells editors which schema to use while you edit the file. Although this is not a formal specification, it works in VS Code and PyCharm; see [the discussion](https://github.com/json-schema-org/json-schema-spec/issues/828).
 
-_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main(answer))` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 ## Type-Safe Datasets
 
