@@ -63,6 +63,15 @@ Classify each hit:
 
 If `rg` output looks mangled (unicode/regex artifacts), drop to `grep -n` — don't push past garbled output.
 
+## Step 3b — Pair the genai-prices entry
+
+Cost and `context_window` do not live in this repo. Both come from `pydantic/genai-prices` through
+`_genai_prices.py`, and `Model.profile` only consults it when nothing else set `context_window`, so a
+new id has neither until genai-prices ships an entry and this repo's lock picks up that release.
+Until then, for that id: `ModelResponse.cost()` raises `LookupError`, `RunContext.context_window_used`
+is `None`, and a `cost_limit` cannot be enforced — the run warns `CostNotFoundWarning` at the end
+instead. Open the genai-prices PR alongside the model add and link the two.
+
 ## Step 4 — SDK pin check
 
 Snapshot/enumeration tests in this repo often tie `KnownModelName` to a literal set defined in the provider SDK. **The provider SDK frequently lags the model release by days.**
