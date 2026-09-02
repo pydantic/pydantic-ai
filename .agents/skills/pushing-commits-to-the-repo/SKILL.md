@@ -170,12 +170,14 @@ if the head changes, capture the new SHA and restart the loop.
    - **Same-repository PR:** require the `CI Review` terminal outcome to identify the captured SHA.
    - **Fork PR:** `CI Review` deliberately skips without leaving a head check. First apply the
      agent-config guard from `.github/workflows/bots.yml` to the captured base-to-head diff. If the
-     PR changes `AGENTS.md`, `CLAUDE.md`, `CLAUDE.local.md`, `.mcp.json`, `.claude/`, `.agents/`, or
-     `agent_docs/`, do not apply `douwebot`: its security guard will refuse the review. Escalate for
-     explicit maintainer review; the gate remains unsatisfied until that lands. Otherwise apply the
-     `douwebot` label, do not push or touch review threads while it is present, require the triggered
-     run to succeed, and verify that the PR head still equals the captured SHA after the label is
-     removed. A failure comment leaves the gate unsatisfied.
+     PR changes an `AGENTS.md` or `CLAUDE.md` at any depth, `CLAUDE.local.md`, `.mcp.json`,
+     `.claude/`, `.agents/`, or `agent_docs/`, check whether the PR author has write or admin access.
+     Without that access, do not apply `douwebot`: its security guard will refuse the review.
+     Escalate for explicit maintainer review; the gate remains unsatisfied until that lands. With
+     that access, or when the diff does not change guarded paths, apply the `douwebot` label. Do not
+     push or touch review threads while the label is present. Require the triggered run to succeed,
+     and verify that the PR head still equals the captured SHA after the label is removed. A failure
+     comment leaves the gate unsatisfied.
    Recheck that the live head is unchanged. Do not substitute another named reviewer. Any valid
    finding and push restarts the lifecycle. A human request remains blocking until that human
    re-reviews or a maintainer dismisses it; do not dismiss a human request. Missing, stale, or failed
@@ -194,6 +196,40 @@ if the head changes, capture the new SHA and restart the loop.
 6. Wait for every applicable current-HEAD check to reach an accepted terminal state; classify any
    documented skip explicitly. Repeat until CI is green, the required hosted review covers the
    current HEAD, no applicable check is pending or failing, and no comment is outstanding.
+
+## When the loop completes — consider a deep `douwebot` review
+
+The repo has two standards reviewers, and they are independent:
+
+- **`CI Review`** runs automatically once the `CI` workflow succeeds on the PR's current head. It
+  owns the `APPROVE`/`REQUEST_CHANGES` verdict and has the more rigorous process — severity scale,
+  sub-agent fan-out, per-finding verification.
+- **`douwebot`** runs only when the `douwebot` label is applied, on a stronger model. It posts
+  inline comments and no verdict, and it deletes the label when it finishes, so each application
+  buys exactly one review of the diff as it stands at that moment.
+
+Applying the label adds a second opinion; it does not suppress or replace `CI Review`.
+
+Once the loop above has terminated — CI green, every comment triaged — decide whether to apply it
+before handing the PR back or requesting merge:
+
+- **Apply it last, not early.** It won't re-run on later pushes, so a deep review of a
+  still-moving PR is wasted money.
+- **Use judgment on whether it's warranted.** Skip it when you're highly confident there's nothing
+  left to catch (typo fixes, dependency bumps, mechanical chores). Apply it for substantive
+  changes: new features, behavior changes, public API surface, non-trivial bug fixes — and
+  user-facing docs, where it catches things like examples using outdated models. In between, weigh
+  cost against risk; smaller PRs are cheaper to review, so lean toward applying when unsure.
+- **How:** `gh pr edit <number> --add-label douwebot`. This requires triage permission on the repo
+  (Pydantic team members and their agents). If it fails, quote the actual error — don't skip it
+  based on an assumed lack of permission.
+- **Known refusal:** the job fails without reviewing if the PR touches an `AGENTS.md` or `CLAUDE.md`
+  at any depth, `CLAUDE.local.md`, `.mcp.json`, or anything under `.claude/`, `.agents/` or
+  `agent_docs/` — a security guard against a PR editing the reviewer's own instructions. The guard
+  is skipped for an author with write or admin access on the repo. Don't apply the label to a PR the
+  guard covers; the red check is the guard working.
+- **Afterwards, re-enter the loop.** The review posts comments that need the same triage as any
+  other.
 
 ## Before handing the PR back
 

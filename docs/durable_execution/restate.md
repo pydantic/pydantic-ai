@@ -44,7 +44,7 @@ A durable agent has three building blocks:
       [External APIs, services, databases, etc.]
 ```
 
-See the [Restate documentation](https://docs.restate.dev/ai/patterns/durable-agents) for more information.
+See [Restate's durable-agent documentation](https://docs.restate.dev/ai/patterns/durable-agents).
 
 ## Durable Agent
 
