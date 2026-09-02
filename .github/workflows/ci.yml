@@ -26,8 +26,90 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  classify:
+    name: classify changes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      docs_only: ${{ steps.classify.outputs.docs_only }}
+      pyright_changed: ${{ steps.classify.outputs.pyright_changed }}
+    steps:
+      - name: Classify pull request changes
+        id: classify
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          run_all_checks() {
+            echo 'docs_only=false' >> "$GITHUB_OUTPUT"
+            echo 'pyright_changed=true' >> "$GITHUB_OUTPUT"
+          }
+
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            run_all_checks
+            exit 0
+          fi
+
+          if ! total=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq '.changed_files'); then
+            echo '::warning::Could not read the PR changed-file count; running full CI.'
+            run_all_checks
+            exit 0
+          fi
+          if ! gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files" \
+            --jq '.[] | [.filename, (.previous_filename // "")] | @tsv' > "$RUNNER_TEMP/changed-files.txt"; then
+            echo '::warning::Could not list the PR changed files; running full CI.'
+            run_all_checks
+            exit 0
+          fi
+
+          mapfile -t changed_files < "$RUNNER_TEMP/changed-files.txt"
+          if [ "$total" -eq 0 ] || [ "${#changed_files[@]}" -ne "$total" ]; then
+            echo "::warning::Expected $total changed files, received ${#changed_files[@]}; running full CI."
+            run_all_checks
+            exit 0
+          fi
+
+          is_docs_markdown() {
+            case "$1" in
+              README.md|docs/*.md|examples/*.md) ;;
+              *) return 1 ;;
+            esac
+            case "$1" in
+              AGENTS.md|CLAUDE.md|*/AGENTS.md|*/CLAUDE.md) return 1 ;;
+            esac
+          }
+
+          is_pyright_input() {
+            # All Python/stub files conservatively cover Pyright's include and import graph;
+            # the remaining paths change its command, configuration, dependencies, or this gate.
+            case "$1" in
+              *.py|*.pyi|*/py.typed|py.typed|pyproject.toml|*/pyproject.toml|uv.lock|uv.toml|*/uv.toml|pyrightconfig*.json|Makefile|.pre-commit-config.yaml|.github/workflows/ci.yml) ;;
+              *) return 1 ;;
+            esac
+          }
+
+          docs_only=true
+          pyright_changed=false
+          for changed_file in "${changed_files[@]}"; do
+            IFS=$'\t' read -r filename previous_filename <<< "$changed_file"
+            if ! is_docs_markdown "$filename" || \
+              { [ -n "$previous_filename" ] && ! is_docs_markdown "$previous_filename"; }; then
+              docs_only=false
+            fi
+            if is_pyright_input "$filename" || \
+              { [ -n "$previous_filename" ] && is_pyright_input "$previous_filename"; }; then
+              pyright_changed=true
+            fi
+          done
+          echo "docs_only=$docs_only" >> "$GITHUB_OUTPUT"
+          echo "pyright_changed=$pyright_changed" >> "$GITHUB_OUTPUT"
+
   quality:
     name: quality checks
+    needs: classify
+    if: needs.classify.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     # `pull-requests: read` is for the lock-regeneration guard's PR file listing. Reading
     # it works today on `contents: read` alone only because this repo is public; declaring
@@ -139,7 +221,7 @@ jobs:
         with:
           extra_args: --all-files --verbose
         env:
-          SKIP: no-commit-to-branch
+          SKIP: ${{ needs.classify.outputs.pyright_changed == 'true' && 'no-commit-to-branch' || 'no-commit-to-branch,typecheck' }}
           # pre-commit hooks shell out via `uv run`; without this they would
           # re-sync the venv and drop the out-of-band harness install above.
           UV_NO_SYNC: "1"
@@ -170,6 +252,8 @@ jobs:
 
   # mypy and quality checks are a bit slower than other jobs, so we run them separately
   mypy:
+    needs: classify
+    if: needs.classify.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -212,8 +296,49 @@ jobs:
           args: --no-progress --offline --include-fragments --config .github/workflows/lychee.toml './docs/**/*.md' './*.md' './examples/**/*.md'
           fail: true
 
+  # Documentation examples are runtime-checked on one representative Python version. A
+  # version-specific miss is low-impact and easy to repair, while multiplying this job across
+  # the support matrix would recreate much of the CI cost this reduced path avoids.
+  docs-only:
+    name: docs-only checks on Python 3.13
+    needs: classify
+    if: needs.classify.outputs.docs_only == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CI: true
+      # Match the all-extras cells in the full matrix: optional SDKs make blocking-call
+      # detection noisy, while the dedicated 3.13 non-all-extras cells still cover it.
+      BLOCKBUSTER_ENABLED: false
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          python-version: "3.13"
+          enable-cache: true
+          cache-suffix: docs-only
+
+      - name: Install documentation test dependencies
+        run: uv sync --all-extras --no-extra mcp-tasks --all-packages
+
+      - name: Check Markdown files
+        uses: pre-commit/action@2c7b3805fd2a0fd8c1884dcaebf91fc102a13ecd # v3.0.1
+        with:
+          extra_args: --all-files --verbose
+        env:
+          SKIP: no-commit-to-branch,format,lint,typecheck,check-cassettes
+          UV_NO_SYNC: "1"
+
+      - name: Test documentation snippets
+        run: uv run --no-sync pytest tests/test_examples.py -n logical --dist=loadgroup
+
   test:
     name: test on ${{ matrix.python-version }} (${{ matrix.install.name }})
+    needs: classify
+    if: needs.classify.outputs.docs_only != 'true'
     # Route the all-extras cells to Ubicloud 8-core runners on same-repo PRs and pushes, or when
     # opted in via the 'ci:fast' label; the other install variants stay on `ubuntu-latest`.
     # Use 'ci:slow' label to force standard GitHub runners (e.g. during Ubicloud outages)
@@ -251,7 +376,14 @@ jobs:
             command: "--all-extras --no-extra mcp-tasks"
     env:
       CI: true
-      COVERAGE_PROCESS_START: ./pyproject.toml
+      # Coverage adds roughly 50% to test execution before Python 3.14. Collect every install shape on
+      # 3.14, where coverage uses the faster sys.monitoring core, plus the 3.10 all-extras endpoint for
+      # version-specific branches. The other cells still run every applicable test without duplicate coverage.
+      COLLECT_COVERAGE: >-
+        ${{
+          matrix.python-version == '3.14'
+          || (matrix.python-version == '3.10' && matrix.install.name == 'all-extras')
+        }}
       # Rebenchmark all-extras after https://github.com/cbornet/blockbuster/pull/61 is released
       # in a compatible version; enable it if the job stays within seven minutes.
       BLOCKBUSTER_ENABLED: ${{ matrix.python-version == '3.13' && matrix.install.name != 'all-extras' }}
@@ -330,9 +462,18 @@ jobs:
       # they form would otherwise be the critical-path floor of the all-extras cells -- the
       # other install variants skip the suites at module level, for want of the engine packages.
       # Its `lowest` leg proves the minimum `temporalio`/`dbos`/`prefect` bounds.
-      - run: >-
-          uv run ${{ matrix.install.command }} coverage run -m pytest --durations=100 -n logical --dist=loadgroup
-          --ignore=tests/durable_exec
+      - name: run tests
+        shell: bash
+        run: |
+          if [[ "$COLLECT_COVERAGE" == "true" ]]; then
+            export COVERAGE_PROCESS_START=./pyproject.toml
+            runner=(coverage run -m pytest)
+          else
+            unset COVERAGE_PROCESS_START
+            runner=(pytest)
+          fi
+          uv run ${{ matrix.install.command }} "${runner[@]}" --durations=100 -n logical --dist=loadgroup \
+            --ignore=tests/durable_exec
         env:
           COVERAGE_FILE: .coverage/.coverage.${{ matrix.python-version }}-${{ matrix.install.name }}
 
@@ -340,11 +481,13 @@ jobs:
       # combine work runs in parallel across the matrix instead of serially in the `coverage`
       # job, which would otherwise merge hundreds of files on the critical path.
       - name: combine coverage files
+        if: env.COLLECT_COVERAGE == 'true'
         run: uv run ${{ matrix.install.command }} coverage combine
         env:
           COVERAGE_FILE: .coverage/.coverage.${{ matrix.python-version }}-${{ matrix.install.name }}
 
       - name: store coverage files
+        if: env.COLLECT_COVERAGE == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: coverage-${{ matrix.python-version }}-${{ matrix.install.name }}
@@ -365,6 +508,8 @@ jobs:
   # (`temporalio`, `dbos`, `prefect`) are proven: `test-lowest-versions` skips this directory.
   test-durable-exec:
     name: test durable-exec on ${{ matrix.python-version }} (${{ matrix.resolution }})
+    needs: classify
+    if: needs.classify.outputs.docs_only != 'true'
     # Ubicloud 4-core runners, gated like the `test` job above minus its all-extras clause:
     # same-repo PRs, pushes, or the 'ci:fast' label, with 'ci:slow' forcing GitHub runners.
     runs-on: >-
@@ -386,7 +531,12 @@ jobs:
         resolution: [locked, lowest]
     env:
       CI: true
-      COVERAGE_PROCESS_START: ./pyproject.toml
+      # Python 3.10 and 3.14 cover version endpoints; both 3.12 resolutions cover Temporal dependency branches.
+      COLLECT_COVERAGE: >-
+        ${{
+          matrix.python-version == '3.12'
+          || ((matrix.python-version == '3.10' || matrix.python-version == '3.14') && matrix.resolution == 'locked')
+        }}
       # Blocking detection already runs in the Python 3.13 slim, evals, and standard jobs.
       BLOCKBUSTER_ENABLED: false
       # Disables Temporal's workflow deadlock detector (temporalio reads this to set the
@@ -432,15 +582,24 @@ jobs:
       # the module-level `try_import` skip-gating (logfire, mcp, openai, anthropic, ...)
       # behaves identically and coverage combination stays complete. The lowest leg was
       # synced above, so `--no-sync` there keeps its resolution.
-      - run: >-
-          uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-extras --no-extra mcp-tasks' }}
-          coverage run -m pytest --durations=20 -n logical --dist=loadgroup
-          tests/durable_exec
+      - name: run tests
+        shell: bash
+        run: |
+          if [[ "$COLLECT_COVERAGE" == "true" ]]; then
+            export COVERAGE_PROCESS_START=./pyproject.toml
+            runner=(coverage run -m pytest)
+          else
+            unset COVERAGE_PROCESS_START
+            runner=(pytest)
+          fi
+          uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-extras --no-extra mcp-tasks' }} \
+            "${runner[@]}" --durations=20 -n logical --dist=loadgroup tests/durable_exec
         env:
           COVERAGE_FILE: .coverage/.coverage.${{ matrix.python-version }}-durable-exec-${{ matrix.resolution }}
 
       # See the matching step in the `test` job.
       - name: combine coverage files
+        if: env.COLLECT_COVERAGE == 'true'
         run: >-
           uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-extras --no-extra mcp-tasks' }}
           coverage combine
@@ -448,6 +607,7 @@ jobs:
           COVERAGE_FILE: .coverage/.coverage.${{ matrix.python-version }}-durable-exec-${{ matrix.resolution }}
 
       - name: store coverage files
+        if: env.COLLECT_COVERAGE == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: coverage-${{ matrix.python-version }}-durable-exec-${{ matrix.resolution }}
@@ -456,6 +616,8 @@ jobs:
 
   test-lowest-versions:
     name: test on ${{ matrix.python-version }} (lowest-versions)
+    needs: classify
+    if: needs.classify.outputs.docs_only != 'true'
     # Use Ubicloud 8-core runners on same-repo PRs and pushes, or opted in via 'ci:fast' label
     # Use 'ci:slow' label to force standard GitHub runners (e.g. during Ubicloud outages)
     # See the note on the `test` job for why push/tag runs need their own clause.
@@ -477,7 +639,8 @@ jobs:
         python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
     env:
       CI: true
-      COVERAGE_PROCESS_START: ./pyproject.toml
+      # Python 3.14's sys.monitoring coverage core is substantially cheaper than the legacy tracer.
+      COLLECT_COVERAGE: ${{ matrix.python-version == '3.14' }}
       # Blocking detection already runs in the Python 3.13 slim, evals, and standard jobs;
       # repeating its stack-inspection overhead here pushes lowest-version jobs past the CI budget.
       BLOCKBUSTER_ENABLED: false
@@ -538,19 +701,30 @@ jobs:
       # `-n logical` (see note on the `test` job).
       # The durable-execution suites run in `test-durable-exec` (its `lowest` leg covers
       # this resolution), keeping their grouped xdist chains off this job's critical path.
-      - run: >-
-          uv run --no-sync coverage run -m pytest --durations=100 -n logical --dist=loadgroup
-          --ignore=tests/durable_exec
+      - name: run tests
+        shell: bash
+        run: |
+          if [[ "$COLLECT_COVERAGE" == "true" ]]; then
+            export COVERAGE_PROCESS_START=./pyproject.toml
+            runner=(coverage run -m pytest)
+          else
+            unset COVERAGE_PROCESS_START
+            runner=(pytest)
+          fi
+          uv run --no-sync "${runner[@]}" --durations=100 -n logical --dist=loadgroup \
+            --ignore=tests/durable_exec
         env:
           COVERAGE_FILE: .coverage/.coverage.${{matrix.python-version}}-lowest-versions
 
       # See the matching step in the `test` job.
       - name: combine coverage files
+        if: env.COLLECT_COVERAGE == 'true'
         run: uv run --no-sync coverage combine
         env:
           COVERAGE_FILE: .coverage/.coverage.${{matrix.python-version}}-lowest-versions
 
       - name: store coverage files
+        if: env.COLLECT_COVERAGE == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: coverage-${{ matrix.python-version }}-lowest-versions
@@ -559,6 +733,8 @@ jobs:
 
   test-temporal-latest:
     name: test Temporal latest on Python 3.10
+    needs: classify
+    if: needs.classify.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -583,6 +759,8 @@ jobs:
 
   test-examples:
     name: test examples on ${{ matrix.python-version }}
+    needs: classify
+    if: needs.classify.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     strategy:
@@ -606,6 +784,8 @@ jobs:
 
   test-fastmcp-4:
     name: test FastMCP 4 compatibility
+    needs: classify
+    if: needs.classify.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
@@ -646,6 +826,7 @@ jobs:
           coverage run -m pytest
           tests/test_mcp.py
           tests/models/test_mcp_sampling.py
+          tests/test_conftest.py
         env:
           COVERAGE_FILE: .coverage/.coverage.fastmcp-4
 
@@ -675,7 +856,8 @@ jobs:
 
   coverage:
     runs-on: ubuntu-latest
-    needs: [test, test-durable-exec, test-lowest-versions, test-fastmcp-4]
+    needs: [classify, test, test-durable-exec, test-lowest-versions, test-fastmcp-4]
+    if: needs.classify.outputs.docs_only != 'true'
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -705,9 +887,11 @@ jobs:
   check:
     if: always()
     needs:
+      - classify
       - quality
       - mypy
       - docs-assets
+      - docs-only
       - test
       - test-durable-exec
       - test-lowest-versions
@@ -722,10 +906,14 @@ jobs:
       - name: Decide whether the needed jobs succeeded or failed
         uses: re-actors/alls-green@05ac9388f0aebcb5727afa17fcccfecd6f8ec5fe # release/v1
         with:
-          # The canary runs on tag refs only, so it is skipped on every PR and `main` push.
-          # Allowing the skip keeps this branch-protection check green there; a skip is all
-          # that's forgiven, so on a tag the canary still has to pass.
-          allowed-skips: latest-versions-canary
+          # The canary runs on tag refs only, and `docs-only` runs only for Markdown-only PRs.
+          # Full CI jobs may skip only when the classifier selected that reduced PR path.
+          allowed-skips: >-
+            ${{
+              needs.classify.outputs.docs_only == 'true'
+              && 'quality,mypy,test,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,latest-versions-canary,coverage'
+              || 'docs-only,latest-versions-canary'
+            }}
           jobs: ${{ toJSON(needs) }}
 
   # Note: this should match the `deploy-docs-manual` job in manually-deploy-docs.yml

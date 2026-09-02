@@ -407,7 +407,7 @@ All evaluators receive an [`EvaluatorContext`][pydantic_evals.evaluators.Evaluat
 - `ctx.expected_output` - Expected output (if provided)
 - `ctx.metadata` - Case metadata (if provided)
 - `ctx.duration` - Task execution time (seconds)
-- `ctx.span_tree` - OpenTelemetry spans (if logfire configured)
+- `ctx.span_tree` - OpenTelemetry spans (if Logfire is configured)
 - `ctx.metrics` - Custom metrics dict
 - `ctx.attributes` - Custom attributes dict
 

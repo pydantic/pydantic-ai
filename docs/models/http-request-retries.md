@@ -374,6 +374,12 @@ For more advanced retry configurations, refer to the [tenacity documentation](ht
 
 ## Provider-Specific Retry Behavior
 
+### Provider SDK Retries Are Invisible to Your Transport {#provider-sdk-retries}
+
+A retrying transport sits *below* the provider SDK's own HTTP client, so the SDK's retry policy remains in force above it. The two layers stack rather than replacing each other; see [Provider SDK retries](../retries.md#provider-sdk-retries) for the layer map and [Retry multiplication](../retries.md#retry-multiplication) for the arithmetic.
+
+The recipes in this guide configure only the transport layer. Configure the SDK layer on the provider-specific pages for [OpenAI](openai.md#custom-openai-client), [Anthropic](anthropic.md#custom-http-client), [Google](google.md#http-retries), [Groq](groq.md#sdk-retries), and [Cohere](cohere.md#sdk-retries).
+
 ### AWS Bedrock
 
 The AWS Bedrock provider uses boto3's built-in retry mechanisms instead of `httpx2`. To configure retries for Bedrock, use boto3's `Config`:
