@@ -7,11 +7,11 @@ Pydantic AI natively supports the [Vercel AI Data Stream Protocol](https://ai-sd
 
 ## Usage
 
-The [`VercelAIAdapter`][pydantic_ai.ui.vercel_ai.VercelAIAdapter] class is responsible for transforming agent run input received from the frontend into arguments for [`Agent.run_stream_events()`](../agent.md#running-agents), running the agent, and then transforming Pydantic AI events into Vercel AI events. The event stream transformation is handled by the [`VercelAIEventStream`][pydantic_ai.ui.vercel_ai.VercelAIEventStream] class, but you typically won't use this directly.
+The [`VercelAIAdapter`][pydantic_ai.ui.vercel_ai.VercelAIAdapter] class is responsible for transforming agent run input received from the frontend into arguments for [`Agent.run_stream_events()`](../agent.md#running-agents), running the agent, and then transforming Pydantic AI events into Vercel AI events. The event stream transformation is handled by the [`VercelAIEventStream`][pydantic_ai.ui.vercel_ai.VercelAIEventStream] class, which you typically won't use directly unless the agent's events reach you outside the request that serves the frontend, as covered in ["Encoding events without a request"](./overview.md#encoding-events-without-a-request).
 
 If you're using a Starlette-based web framework like FastAPI, you can use the [`VercelAIAdapter.dispatch_request()`][pydantic_ai.ui.UIAdapter.dispatch_request] class method from an endpoint function to directly handle a request and return a streaming response of Vercel AI events. This is demonstrated in the next section.
 
-If you're using a web framework not based on Starlette (e.g. Django or Flask) or need fine-grained control over the input or output, you can create a `VercelAIAdapter` instance and directly use its methods. This is demonstrated in "Advanced Usage" section below.
+If you're using a web framework not based on Starlette (e.g. Django or Flask) or need fine-grained control over the input or output, you can create a `VercelAIAdapter` instance and directly use its methods. This is demonstrated in the "Advanced Usage" section below.
 
 ### Usage with Starlette/FastAPI
 
@@ -53,10 +53,14 @@ If you're using a web framework not based on Starlette (e.g. Django or Flask) or
 When a run ends in [first-party cancellation](../agent.md#cancelling-a-run) — `ctx.cancel()` from a tool, `AgentRun.cancel()`, or a [`CancellationToken`][pydantic_ai.CancellationToken] your server wires to a cancel endpoint — the adapter emits a Vercel `abort` chunk. [`useChat`](https://ai-sdk.dev/docs/reference/ai-sdk-ui/use-chat) keeps the partial message and reports `isAbort` to `onFinish` instead of entering an error state. Pass an `on_cancel` callback to persist the resumable message history, as shown in the example below.
 
 !!! note "Client disconnects are external cancellation"
-    Calling `stop()` on the client aborts the browser's request, which the server sees as a *disconnect*, not a first-party cancellation. That tears the run down as an external `asyncio.CancelledError` (see [why cancellation arrives in two shapes](../agent.md#cancelling-a-run)), so no `abort` chunk is emitted and `on_cancel` does not fire — and the client has disconnected anyway. To get the `abort` chunk and run `on_cancel` on a stop gesture, keep the stream connected and cancel the run *first-party*: give the run a [`CancellationToken`][pydantic_ai.CancellationToken] and expose a separate endpoint (e.g. `POST /chat/{id}/cancel`) that calls `token.cancel()`.
+    Calling `stop()` on the client aborts the browser's request, which the server sees as a *disconnect*, not a first-party cancellation. That tears the run down as an external `asyncio.CancelledError` (see [the two kinds of cancellation](../agent.md#cancelling-a-run)), so no `abort` chunk is emitted and `on_cancel` does not fire — and the client has disconnected anyway. To get the `abort` chunk and run `on_cancel` on a stop gesture, keep the stream connected and cancel the run *first-party*: give the run a [`CancellationToken`][pydantic_ai.CancellationToken] and expose a separate endpoint (e.g. `POST /chat/{id}/cancel`) that calls `token.cancel()`.
+
+!!! note
+    The in-memory token registry below requires a single server process or sticky routing. In a multi-worker deployment, route the cancel request to the worker that owns the run using shared coordination such as a message broker.
 
 ```py {title="run_stream.py"}
 import json
+from collections.abc import AsyncIterator
 from http import HTTPStatus
 
 from fastapi import FastAPI
@@ -64,7 +68,7 @@ from fastapi.requests import Request
 from fastapi.responses import Response, StreamingResponse
 from pydantic import ValidationError
 
-from pydantic_ai import Agent, RunCancelled
+from pydantic_ai import Agent, CancellationToken, RunCancelled
 from pydantic_ai.ui import SSE_CONTENT_TYPE
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 
@@ -72,14 +76,16 @@ agent = Agent('openai:gpt-5.2')
 
 app = FastAPI()
 
+cancellation_tokens: dict[str, CancellationToken] = {}
+
 
 async def on_cancel(cancelled: RunCancelled) -> None:
     messages = cancelled.all_messages()  # (1)!
     print(f'cancelled after {len(messages)} messages')
 
 
-@app.post('/chat')
-async def chat(request: Request) -> Response:
+@app.post('/chat/{chat_id}')
+async def chat(chat_id: str, request: Request) -> Response:
     accept = request.headers.get('accept', SSE_CONTENT_TYPE)
     try:
         run_input = VercelAIAdapter.build_run_input(await request.body())
@@ -91,10 +97,27 @@ async def chat(request: Request) -> Response:
         )
 
     adapter = VercelAIAdapter(agent=agent, run_input=run_input, accept=accept)
-    event_stream = adapter.run_stream(on_cancel=on_cancel)
+    cancellation_token = CancellationToken()
+    cancellation_tokens[chat_id] = cancellation_token
+    event_stream = adapter.run_stream(
+        cancellation_token=cancellation_token, on_cancel=on_cancel
+    )
 
-    sse_event_stream = adapter.encode_stream(event_stream)
-    return StreamingResponse(sse_event_stream, media_type=accept)
+    async def encode_stream() -> AsyncIterator[str]:
+        try:
+            async for event in adapter.encode_stream(event_stream):
+                yield event
+        finally:
+            if cancellation_tokens.get(chat_id) is cancellation_token:
+                cancellation_tokens.pop(chat_id, None)
+
+    return StreamingResponse(encode_stream(), media_type=accept)
+
+
+@app.post('/chat/{chat_id}/cancel', status_code=HTTPStatus.NO_CONTENT)
+async def cancel_chat(chat_id: str) -> None:
+    if token := cancellation_tokens.get(chat_id):
+        token.cancel()
 ```
 
 1. The resumable history to persist -- pass it as `message_history` to a later run to resume the conversation.
@@ -157,6 +180,10 @@ When streaming, the timestamp is also emitted as a Vercel AI `message-metadata` 
 ## Trust model
 
 Vercel AI's request `messages` array is fully client-controlled, and the protocol round-trips approval responses and tool results through the message history. The [`VercelAIAdapter`][pydantic_ai.ui.vercel_ai.VercelAIAdapter] applies defaults to strip untrusted parts before the agent runs — see [Trust model for client-submitted messages](./overview.md#trust-model-for-client-submitted-messages) in the UI adapter overview, which covers system prompts, file URL schemes, uploaded files ([`allow_uploaded_files`][pydantic_ai.ui.UIAdapter.allow_uploaded_files]), and unresolved tool calls. Those defaults don't make client-submitted history authentic — see [Trust boundary for client-supplied history](../message-history.md#trust-boundary-for-client-supplied-history).
+
+## Compaction
+
+[`CompactionPart`][pydantic_ai.messages.CompactionPart]s round-trip through Vercel AI data parts (`data-compaction`), so [compacted](../capabilities/compaction.md) conversations keep working when a frontend such as `useChat` holds the message history. A compaction item submitted by the frontend is honored — the conversation stays compacted — with two caveats. First, it is never trusted to stand in for the system prompt: whichever prompt applies per [System prompts and instructions](#system-prompts-and-instructions) still reaches the model on every request. Second, if the run also receives server-side `message_history` (the [server-side persistence pattern](./overview.md#trust-model-for-client-submitted-messages)), frontend compaction items are ignored — everything before a compaction item is hidden from the model, so honoring one from the frontend would let it hide the server's stored history. See [Client-held history](../capabilities/compaction.md#client-held-history) for the trade-offs and the recommended server-side pattern.
 
 ## Tool Approval
 

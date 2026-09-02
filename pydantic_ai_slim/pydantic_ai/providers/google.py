@@ -2,14 +2,21 @@ from __future__ import annotations as _annotations
 
 import os
 from abc import ABC, abstractmethod
-from typing import Literal, overload
-
-import httpx
+from typing import TYPE_CHECKING, Literal, overload
 
 from pydantic_ai import ModelProfile
-from pydantic_ai.models import DEFAULT_HTTP_TIMEOUT, create_async_http_client, get_user_agent
-from pydantic_ai.profiles.google import google_model_profile
+from pydantic_ai._http import (
+    DEFAULT_HTTP_TIMEOUT,
+    AsyncHTTPClient,
+    create_async_httpx2_client,
+    warn_if_legacy_httpx_client,
+)
+from pydantic_ai.models import get_user_agent
+from pydantic_ai.profiles.google import google_model_profile, google_realtime_model_profile
 from pydantic_ai.providers import Provider, missing_api_key_error
+
+if TYPE_CHECKING:
+    from pydantic_ai.realtime import RealtimeModelProfile
 
 try:
     from google.genai.client import Client
@@ -46,10 +53,14 @@ class BaseGoogleProvider(Provider[Client], ABC):
     def model_profile(model_name: str) -> ModelProfile | None:
         return google_model_profile(model_name)
 
+    @staticmethod
+    def realtime_model_profile(model_name: str) -> RealtimeModelProfile:
+        return google_realtime_model_profile(model_name)
+
     def _build_http_options(
         self,
         *,
-        http_client: httpx.AsyncClient | None,
+        http_client: AsyncHTTPClient | None,
         base_url: str | None,
         retry_options: HttpRetryOptions | None = None,
     ) -> HttpOptions:
@@ -59,9 +70,13 @@ class BaseGoogleProvider(Provider[Client], ABC):
         ownership wiring consistent.
         """
         if http_client is None:
-            http_client = create_async_http_client()
+            http_client = create_async_httpx2_client()
             self._own_http_client = http_client
-            self._http_client_factory = create_async_http_client
+            self._http_client_factory = create_async_httpx2_client
+        else:
+            # 3 frames up from the helper: this method, the provider `__init__` calling it, and the
+            # user's `GoogleProvider(...)` call, which is where the warning should land.
+            warn_if_legacy_httpx_client(http_client, consumer='Google providers', stacklevel=3)
         # google-genai's `HttpOptions.timeout` defaults to None, which makes the SDK pass
         # `timeout=None` to httpx and override any timeout on the supplied client. Pin the timeout
         # here (ms) so requests actually time out.
@@ -75,7 +90,7 @@ class BaseGoogleProvider(Provider[Client], ABC):
             retry_options=retry_options,
         )
 
-    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
+    def _set_http_client(self, http_client: AsyncHTTPClient) -> None:
         api_client = self._client._api_client  # pyright: ignore[reportPrivateUsage]
         api_client._async_httpx_client = http_client  # pyright: ignore[reportPrivateUsage]
         api_client._http_options.httpx_async_client = http_client  # pyright: ignore[reportPrivateUsage]
@@ -94,7 +109,7 @@ class GoogleProvider(BaseGoogleProvider):
         self,
         *,
         api_key: str,
-        http_client: httpx.AsyncClient | None = None,
+        http_client: AsyncHTTPClient | None = None,
         base_url: str | None = None,
         retry_options: HttpRetryOptions | None = None,
     ) -> None: ...
@@ -107,7 +122,7 @@ class GoogleProvider(BaseGoogleProvider):
         *,
         api_key: str | None = None,
         client: Client | None = None,
-        http_client: httpx.AsyncClient | None = None,
+        http_client: AsyncHTTPClient | None = None,
         base_url: str | None = None,
         retry_options: HttpRetryOptions | None = None,
     ) -> None:
@@ -116,8 +131,11 @@ class GoogleProvider(BaseGoogleProvider):
         Args:
             api_key: The [API key](https://ai.google.dev/gemini-api/docs/api-key) to
                 use for authentication. It can also be set via the `GOOGLE_API_KEY` environment variable.
-            client: A pre-initialized client to use.
-            http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
+            client: A pre-initialized client to use. Stored as-is, so a client built for Google Cloud
+                (`Client(vertexai=True, ...)`, or its current spelling `Client(enterprise=True, ...)`)
+                is used on that transport even though `name` stays `'google'`. `GoogleModel` reads the
+                transport off the client rather than the provider name, so it routes correctly either way.
+            http_client: An existing `httpx2.AsyncClient` or legacy `httpx.AsyncClient` to use for making HTTP requests.
             base_url: The base URL for the Gemini API.
             retry_options: HTTP retry options for transient errors (429, 5xx, etc.).
                 See `google.genai.types.HttpRetryOptions` for available fields.

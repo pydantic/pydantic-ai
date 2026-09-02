@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import Literal
 
-import httpx
 import pytest
+from genai_prices.data_snapshot import get_snapshot
 from inline_snapshot import snapshot
 from typing_extensions import assert_never
 
@@ -116,13 +116,6 @@ def test_bedrock_mantle_model_uses_interface_client() -> None:
     assert gpt_oss_model.client is chat_model.client
 
 
-def test_bedrock_mantle_accepts_http_client() -> None:
-    http_client = httpx.AsyncClient()
-    provider = BedrockMantleProvider(http_client=http_client)
-
-    assert provider.client._client is http_client  # pyright: ignore[reportPrivateUsage]
-
-
 def test_bedrock_mantle_requires_region_or_base_url(env: TestEnv) -> None:
     env.remove('AWS_DEFAULT_REGION')
     env.remove('AWS_REGION')
@@ -231,7 +224,9 @@ def test_gateway_bedrock_remains_on_converse() -> None:
 def test_bedrock_mantle_profiles() -> None:
     # #6517: the vendor `openai.` prefix is stripped, so the OpenAI profile is resolved correctly and
     # GPT-5.6 keeps its real capabilities (phase / reasoning / image output).
-    assert infer_model_profile('bedrock-mantle:openai.gpt-5.6-luna') == snapshot(
+    profile = infer_model_profile('bedrock-mantle:openai.gpt-5.6-luna')
+    context_window = profile.pop('context_window')
+    assert profile == snapshot(
         {
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'supports_json_schema_output': True,
@@ -256,6 +251,11 @@ def test_bedrock_mantle_profiles() -> None:
             'supported_native_tools': frozenset(),
         }
     )
+    # Compare against a direct genai-prices query so the test doesn't pin a data value.
+    _, model_info = get_snapshot().find_provider_model(
+        'openai.gpt-5.6-luna', provider=None, provider_id='bedrock-mantle', provider_api_url=None
+    )
+    assert context_window == model_info.context_window
     # Every GPT-5.x model on Mantle's `/openai/v1` Responses endpoint resets tool-call IDs across
     # separate responses (verified live on 5.5 and 5.6), so response-scoping keys on the interface,
     # not the model version.

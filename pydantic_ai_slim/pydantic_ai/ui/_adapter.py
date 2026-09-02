@@ -21,15 +21,17 @@ from typing import (
 from pydantic import BaseModel, TypeAdapter, ValidationError
 from typing_extensions import Self, TypeVar
 
-from pydantic_ai import DeferredToolRequests, DeferredToolResults, _instructions
+from pydantic_ai import CancellationToken, DeferredToolRequests, DeferredToolResults, _instructions
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.agent.abstract import AgentMetadata
 from pydantic_ai.capabilities import AbstractCapability, ReinjectSystemPrompt
 from pydantic_ai.messages import (
+    CompactionPart,
     ForceDownloadMode,
     ModelMessage,
     ToolAvailabilityDeltaPart,
+    _drop_compaction_parts,  # pyright: ignore[reportPrivateUsage]
     sanitize_messages,
 )
 from pydantic_ai.models import KnownModelName, Model
@@ -100,6 +102,47 @@ def resolve_allow_uploaded_files(
         stacklevel=stacklevel,
     )
     return preserve_file_data
+
+
+_COMPACTION_PART_ADAPTER = TypeAdapter(CompactionPart)
+
+
+def compaction_payload(part: CompactionPart) -> dict[str, Any]:
+    """Serialize a compaction part as a UI payload, omitting fields whose value is `None`.
+
+    The payload is faithful — `provider_details` travels verbatim, provenance stamp included.
+    Trust is enforced on the load side: client-submitted messages pass through
+    [`sanitize_messages`][pydantic_ai.messages.sanitize_messages], which strips the stamp.
+    """
+    return {
+        key: value
+        for key, value in {
+            'content': part.content,
+            'id': part.id,
+            'provider_name': part.provider_name,
+            'provider_details': part.provider_details,
+        }.items()
+        if value is not None
+    }
+
+
+def compaction_part_from_payload(payload: Mapping[str, Any]) -> CompactionPart | None:
+    """Build a [`CompactionPart`][pydantic_ai.messages.CompactionPart] from a UI payload.
+
+    Like `tool_availability_delta_from_payload`, validation here is shape hygiene at the UI
+    boundary, not a security gate: malformed data returns `None` and the part is skipped, rather
+    than raising out of `load_messages` and taking the whole request with it. Skipping — instead of
+    degrading to an empty part — is deliberate: even an empty `CompactionPart` acts as a visibility
+    boundary for [`post_compaction_window`][pydantic_ai.messages.post_compaction_window] (which
+    ignores `provider_name`), resetting derived state like tool discovery, so it would not be
+    inert. The cost is that a corrupted-in-transit valid boundary un-compacts the conversation —
+    acceptable, since the protocol history still holds the plaintext messages and the window merely
+    re-inflates until the next compaction.
+    """
+    try:
+        return _COMPACTION_PART_ADAPTER.validate_python(payload)
+    except ValidationError:
+        return None
 
 
 def tool_availability_delta_from_payload(payload: Mapping[str, Any]) -> ToolAvailabilityDeltaPart:
@@ -440,6 +483,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: UsageLimits | None = None,
+        cancellation_token: CancellationToken | None = None,
         usage: RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -460,12 +504,13 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
+            cancellation_token: Optional token for cancelling this run from another task.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
-            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
+            capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
                 Use `capabilities=[NativeTool(...)]` to add provider-side native tools per request.
         """
         if deferred_tool_results is None:
@@ -474,6 +519,10 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             conversation_id = self.conversation_id
 
         frontend_messages = self.sanitize_messages(self.messages, deferred_tool_results=deferred_tool_results)
+        if message_history:
+            # A client-supplied compaction part would trim the trusted server-side history off the
+            # wire, so only the server's own boundaries are honored. See `_drop_compaction_parts`.
+            frontend_messages = _drop_compaction_parts(frontend_messages)
         message_history = [*(message_history or []), *frontend_messages]
 
         toolset = self.toolset
@@ -509,6 +558,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 deferred_tool_results=deferred_tool_results,
                 conversation_id=conversation_id,
                 run_id=run_id,
+                cancellation_token=cancellation_token,
                 model=model,
                 deps=deps,
                 model_settings=model_settings,
@@ -538,6 +588,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: UsageLimits | None = None,
+        cancellation_token: CancellationToken | None = None,
         usage: RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -560,12 +611,13 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
+            cancellation_token: Optional token for cancelling this run from another task.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
-            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
+            capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
                 Use `capabilities=[NativeTool(...)]` to add provider-side native tools per request.
             on_complete: Optional callback function called when the agent run completes successfully.
                 The callback receives the completed [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] and can optionally yield additional protocol-specific events.
@@ -579,6 +631,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 deferred_tool_results=deferred_tool_results,
                 conversation_id=conversation_id,
                 run_id=run_id,
+                cancellation_token=cancellation_token,
                 model=model,
                 instructions=instructions,
                 deps=deps,
@@ -610,6 +663,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         output_type: OutputSpec[Any] | None = None,
         model_settings: ModelSettings | None = None,
         usage_limits: UsageLimits | None = None,
+        cancellation_token: CancellationToken | None = None,
         usage: RunUsage | None = None,
         metadata: AgentMetadata[DispatchDepsT] | None = None,
         infer_name: bool = True,
@@ -642,12 +696,13 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
+            cancellation_token: Optional token for cancelling this run from another task.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
-            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
+            capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
                 Use `capabilities=[NativeTool(...)]` to add provider-side native tools per request.
             on_complete: Optional callback function called when the agent run completes successfully.
                 The callback receives the completed [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] and can optionally yield additional protocol-specific events.
@@ -709,6 +764,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 deferred_tool_results=deferred_tool_results,
                 conversation_id=conversation_id,
                 run_id=run_id,
+                cancellation_token=cancellation_token,
                 deps=deps,
                 output_type=output_type,
                 model=model,

@@ -7,6 +7,7 @@ and blocks 'required' and list[str] values before they reach the model-specific 
 
 from __future__ import annotations
 
+import re
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -17,12 +18,14 @@ from pydantic_ai.messages import ModelRequest
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models._tool_choice import resolve_tool_choice
 from pydantic_ai.native_tools import CodeExecutionTool, WebSearchTool
-from pydantic_ai.settings import ModelSettings, ToolChoice, ToolOrOutput
+from pydantic_ai.settings import ModelSettings, ThinkingLevel, ToolChoice, ToolOrOutput
 from pydantic_ai.tools import ToolDefinition
 
 from ..conftest import try_import
 
 with try_import() as anthropic_available:
+    from anthropic.types.beta import BetaToolChoiceParam
+
     from pydantic_ai.models.anthropic import (
         AnthropicModel,
         AnthropicModelSettings,
@@ -39,11 +42,18 @@ with try_import() as bedrock_available:
     from pydantic_ai.providers.bedrock import BedrockModelProfile, BedrockProvider
 
 with try_import() as openai_available:
-    from pydantic_ai.models.openai import OpenAIChatModel
+    from pydantic_ai.models.openai import (
+        OpenAIChatModel,
+        OpenAIChatModelSettings,
+        OpenAIResponsesModel,
+        OpenAIResponsesModelSettings,
+    )
     from pydantic_ai.profiles.openai import OpenAIModelProfile
     from pydantic_ai.providers.openai import OpenAIProvider
 
 with try_import() as google_available:
+    from google.genai import Client
+
     from pydantic_ai.models.google import GoogleModel
     from pydantic_ai.providers.google import GoogleProvider
 
@@ -248,13 +258,13 @@ RAISES_CASES = [
         id='list_all_invalid',
         tool_choice=['x', 'y'],
         params_kwargs={'function_tools': [make_tool('a'), make_tool('b')], 'allow_text_output': True},
-        match=r'Invalid tool names in `tool_choice`:.*Available tools:',
+        match=r'Invalid tool names in `tool_choice`:.*Known tools:',
     ),
     dict(
         id='list_invalid_no_function_tools',
         tool_choice=['x'],
         params_kwargs={'function_tools': [], 'allow_text_output': True},
-        match=r'Invalid tool names.*Available tools: none',
+        match=r'Invalid tool names.*Known tools: none',
     ),
     dict(
         id='tool_or_output_all_invalid',
@@ -264,7 +274,7 @@ RAISES_CASES = [
             'output_tools': [make_tool('final_result')],
             'allow_text_output': True,
         },
-        match=r'Invalid tool names in `tool_choice`:.*Available function tools:',
+        match=r'Invalid tool names in `tool_choice`:.*Known function tools:',
     ),
     dict(
         id='single_withheld',
@@ -384,7 +394,7 @@ WARNS_CASES = [
         id='list_partial_invalid',
         tool_choice=['a', 'typo'],
         params_kwargs={'function_tools': [make_tool('a'), make_tool('b')], 'allow_text_output': True},
-        match=r"Some tools.*'typo'.*Available tools: \['a', 'b'\]",
+        match=r"Some tools.*'typo'.*Known tools: \['a', 'b'\]",
         expected_mode='required',
         expected_tools={'a', 'typo'},
     ),
@@ -396,7 +406,7 @@ WARNS_CASES = [
             'output_tools': [make_tool('final_result')],
             'allow_text_output': True,
         },
-        match=r"Some tools.*'typo'.*Available function tools: \['a', 'b'\]",
+        match=r"Some tools.*'typo'.*Known function tools: \['a', 'b'\]",
         expected_mode='auto',
         expected_tools={'a', 'final_result', 'typo'},
     ),
@@ -437,7 +447,7 @@ async def test_thinking_with_forced_tool_choice_raises(
             'anthropic_thinking': {'type': 'enabled', 'budget_tokens': 1024},
             'tool_choice': tool_choice,
         }
-        match = 'Anthropic does not support .* with thinking mode'
+        match = 'Anthropic does not support .* with extended thinking'
     else:  # bedrock
         mock_client = MagicMock()
         provider = BedrockProvider(bedrock_client=mock_client)
@@ -522,39 +532,111 @@ def test_support_tool_forcing_implicit_resolution(provider_name: str, resolved_t
 
 @skip_if_no_anthropic
 @pytest.mark.parametrize(
-    'settings,expected',
+    'settings,params_thinking,expected',
     [
         pytest.param(
             {'anthropic_thinking': {'type': 'disabled'}},
+            None,
             True,
             id='disabled_thinking_allows_forcing',
         ),
         pytest.param(
             {'thinking': True},
+            None,
             False,
             id='unified_thinking_blocks_forcing',
         ),
         pytest.param(
             {'thinking': 'high'},
+            None,
             False,
             id='unified_thinking_effort_blocks_forcing',
         ),
         pytest.param(
             {'thinking': False},
+            None,
             True,
             id='unified_thinking_false_allows_forcing',
         ),
         pytest.param(
+            {'anthropic_thinking': {'type': 'adaptive'}},
+            None,
+            True,
+            id='provider_specific_adaptive_allows_forcing',
+        ),
+        pytest.param(
             {'anthropic_thinking': {'type': 'enabled', 'budget_tokens': 1024}, 'thinking': False},
+            None,
             False,
             id='provider_specific_takes_precedence',
         ),
+        pytest.param(
+            {'anthropic_thinking': {'type': 'disabled'}},
+            'high',
+            True,
+            id='provider_specific_disabled_takes_precedence_over_params_thinking',
+        ),
     ],
 )
-def test_support_tool_forcing_thinking_detection(settings: Any, expected: bool):
-    """Thinking detection checks anthropic_thinking, unified thinking field, and `params.thinking`."""
-    result = anthropic_support_tool_forcing(settings, ModelRequestParameters(), 'required')
+def test_support_tool_forcing_thinking_detection(settings: Any, params_thinking: ThinkingLevel | None, expected: bool):
+    """Thinking detection checks anthropic_thinking, unified thinking field, and `params.thinking`.
+
+    `anthropic_thinking` wins over both unified sources, matching `_translate_thinking`: with an
+    explicit `{'type': 'disabled'}` the wire payload really does disable thinking, so forcing stays
+    available even though `Model.prepare_request` moved a unified `thinking` into `params.thinking`.
+    """
+    result = anthropic_support_tool_forcing(settings, ModelRequestParameters(thinking=params_thinking), 'required')
     assert result is expected
+
+
+@skip_if_no_anthropic
+@pytest.mark.parametrize(
+    'supports_adaptive_thinking,expected',
+    [
+        pytest.param(True, True, id='adaptive_profile_unified_thinking_allows_forcing'),
+        pytest.param(False, False, id='non_adaptive_profile_unified_thinking_blocks_forcing'),
+    ],
+)
+def test_support_tool_forcing_adaptive_profile_mapping(supports_adaptive_thinking: bool, expected: bool):
+    """Unified thinking maps to adaptive (compatible with forcing) on adaptive-capable profiles and
+    to extended thinking (incompatible) otherwise."""
+    settings: AnthropicModelSettings = {'thinking': 'high'}
+    result = anthropic_support_tool_forcing(
+        settings, ModelRequestParameters(), 'required', supports_adaptive_thinking=supports_adaptive_thinking
+    )
+    assert result is expected
+
+
+@skip_if_no_anthropic
+def test_support_tool_forcing_suggests_adaptive_thinking_when_the_model_supports_it():
+    """On an adaptive-capable model, explicit extended thinking still blocks forcing — but the error
+    points at the mode that doesn't."""
+    settings: AnthropicModelSettings = {
+        'anthropic_thinking': {'type': 'enabled', 'budget_tokens': 1024},
+        'tool_choice': 'required',
+    }
+    with pytest.raises(
+        UserError,
+        match=re.escape(
+            'Anthropic does not support forcing specific tools with extended thinking. Disable '
+            "thinking or use `tool_choice='auto'`. Alternatively, `anthropic_thinking={'type': "
+            "'adaptive'}` supports forcing."
+        ),
+    ):
+        anthropic_support_tool_forcing(settings, ModelRequestParameters(), 'required', supports_adaptive_thinking=True)
+
+
+@skip_if_no_anthropic
+def test_support_tool_forcing_rejects_unsupported_model_with_adaptive_thinking():
+    """Models with supports_forced_tool_choice=False reject explicit forcing even with adaptive thinking."""
+    settings: AnthropicModelSettings = {
+        'anthropic_thinking': {'type': 'adaptive'},
+        'tool_choice': 'required',
+    }
+    with pytest.raises(UserError, match='Anthropic does not support forcing specific tools for this model'):
+        anthropic_support_tool_forcing(
+            settings, ModelRequestParameters(), 'required', supports_forced_tool_choice=False
+        )
 
 
 @pytest.mark.parametrize(
@@ -695,8 +777,7 @@ def test_bedrock_prepare_request_thinking_auto_output_mode(supports_json_schema:
 @skip_if_no_google
 def test_google_auto_tuple_filters_tool_defs():
     """When resolve_tool_choice returns ('auto', [...]), Google filters tool_defs to only include allowed tools."""
-    mock_client = MagicMock()
-    provider = GoogleProvider(client=mock_client)
+    provider = GoogleProvider(client=Client(vertexai=False, api_key='mock-api-key'))
     m = GoogleModel('gemini-2.0-flash', provider=provider)
     params = ModelRequestParameters(
         function_tools=[make_tool('func')],
@@ -715,7 +796,7 @@ def test_google_auto_tuple_filters_tool_defs():
 
 @skip_if_no_google
 def test_google_allowed_function_names_ignore_unavailable_tools():
-    m = GoogleModel('gemini-2.0-flash', provider=GoogleProvider(client=MagicMock()))
+    m = GoogleModel('gemini-2.0-flash', provider=GoogleProvider(client=Client(vertexai=False, api_key='mock-api-key')))
     params = ModelRequestParameters(function_tools=[make_tool('get_time')], allow_text_output=False)
 
     with pytest.warns(UserWarning, match='not currently available'):
@@ -770,7 +851,7 @@ def test_google_native_tool_only_omits_function_calling_config(case: dict[str, A
     Asserted on the request shape directly rather than via VCR: a cassette replay can't catch a
     malformed request, since it replays a recorded response without re-validating against the API.
     """
-    m = GoogleModel(case['model'], provider=GoogleProvider(client=MagicMock()))
+    m = GoogleModel(case['model'], provider=GoogleProvider(client=Client(vertexai=False, api_key='mock-api-key')))
 
     _, tool_config, _ = m._get_tool_config(case['request_parameters'], {})  # pyright: ignore[reportPrivateUsage]
 
@@ -827,6 +908,43 @@ async def test_anthropic_fallback_single_tool_with_thinking_filters_tool_defs(al
     assert tool_names == {'tool_a'}
 
 
+@skip_if_no_anthropic
+@pytest.mark.parametrize(
+    'model_name,expected_tool_choice,expected_tool_names',
+    [
+        pytest.param(
+            'claude-opus-4-6',
+            {'type': 'tool', 'name': 'tool_a'},
+            {'tool_a', 'tool_b'},
+            id='adaptive_profile_keeps_forcing',
+        ),
+        pytest.param('claude-sonnet-4-5', {'type': 'auto'}, {'tool_a'}, id='non_adaptive_profile_falls_back'),
+    ],
+)
+async def test_anthropic_single_tool_forcing_under_unified_thinking(
+    allow_model_requests: None,
+    model_name: str,
+    expected_tool_choice: BetaToolChoiceParam,
+    expected_tool_names: set[str],
+):
+    """Unified thinking decides the single-tool branch through the profile's adaptive flag.
+
+    `Model.prepare_request` strips a unified `thinking` into `params.thinking` (simulated here). It
+    maps to adaptive thinking — which accepts forcing — on an adaptive-capable profile, and to
+    extended thinking on the rest, where the resolved choice softens to `auto` with filtered tools.
+    """
+    m = AnthropicModel(model_name, provider=AnthropicProvider(api_key='test-key'))
+    settings: AnthropicModelSettings = {'tool_choice': ToolOrOutput(function_tools=['tool_a'])}
+    params = ModelRequestParameters(
+        function_tools=[make_tool('tool_a'), make_tool('tool_b')], allow_text_output=False, thinking='high'
+    )
+
+    tools, tool_choice = m._prepare_tools_and_tool_choice(settings, params)  # pyright: ignore[reportPrivateUsage]
+    assert tool_choice == expected_tool_choice
+    tool_names = {t['name'] for t in tools if isinstance(t, dict) and 'name' in t}
+    assert tool_names == expected_tool_names
+
+
 # Models that reject a forced `tool_choice` outright, even without thinking (unlike other Anthropic models).
 NO_FORCING_ANTHROPIC_MODELS = ['claude-fable-5', 'claude-mythos-5', 'claude-mythos-preview']
 
@@ -868,7 +986,7 @@ async def test_openai_chat_fallback_single_tool_filters_tool_defs(allow_model_re
     provider = OpenAIProvider(openai_client=mock_client)
     profile = OpenAIModelProfile(openai_supports_tool_choice_required=False)
     m = OpenAIChatModel('gpt-4o-mini', provider=provider, profile=profile)
-    params = ModelRequestParameters(function_tools=[make_tool('tool_a'), make_tool('tool_b')], allow_text_output=False)
+    params = ModelRequestParameters(function_tools=[make_tool('tool_a'), make_tool('tool_b')], allow_text_output=True)
 
     tools, tool_choice = m._get_tool_choice(  # pyright: ignore[reportPrivateUsage]
         {'tool_choice': ToolOrOutput(function_tools=['tool_a'])}, params
@@ -880,13 +998,11 @@ async def test_openai_chat_fallback_single_tool_filters_tool_defs(allow_model_re
 @skip_if_no_openai
 async def test_openai_responses_fallback_single_tool_uses_allowed_tools(allow_model_requests: None):
     """`ToolOrOutput` single function tool on a no-forcing Responses model uses `allowed_tools` to preserve cache."""
-    from pydantic_ai.models.openai import OpenAIResponsesModel
-
     mock_client = MagicMock()
     provider = OpenAIProvider(openai_client=mock_client)
     profile = OpenAIModelProfile(openai_supports_tool_choice_required=False)
     m = OpenAIResponsesModel('gpt-4o-mini', provider=provider, profile=profile)
-    params = ModelRequestParameters(function_tools=[make_tool('tool_a'), make_tool('tool_b')], allow_text_output=False)
+    params = ModelRequestParameters(function_tools=[make_tool('tool_a'), make_tool('tool_b')], allow_text_output=True)
 
     tools, tool_choice = m._get_responses_tool_choice(  # pyright: ignore[reportPrivateUsage]
         {'tool_choice': ToolOrOutput(function_tools=['tool_a'])}, params
@@ -896,6 +1012,150 @@ async def test_openai_responses_fallback_single_tool_uses_allowed_tools(allow_mo
     assert tool_choice['mode'] == 'auto'
     assert tool_choice['tools'] == [{'type': 'function', 'name': 'tool_a'}]
     assert {t['name'] for t in tools} == {'tool_a', 'tool_b'}
+
+
+def thinking_conditional_profile() -> OpenAIModelProfile:
+    """A DeepSeek-shaped profile: forcing is fine, but not while thinking is on, and thinking is the default."""
+    return OpenAIModelProfile(
+        openai_supports_forced_tool_choice_with_thinking=False,
+        openai_reasoning_enabled_by_default=True,
+    )
+
+
+@skip_if_no_openai
+@pytest.mark.parametrize(
+    'settings,thinking,expected_tool_choice',
+    [
+        pytest.param({}, None, 'auto', id='thinking_on_by_default'),
+        pytest.param({'openai_reasoning_effort': 'none'}, None, 'required', id='effort_none'),
+        pytest.param({'openai_reasoning_effort': 'high'}, None, 'auto', id='effort_high'),
+        pytest.param({}, False, 'required', id='thinking_disabled'),
+        pytest.param({}, 'low', 'auto', id='thinking_low'),
+    ],
+)
+async def test_openai_chat_forcing_follows_thinking_state(
+    allow_model_requests: None,
+    settings: OpenAIChatModelSettings,
+    thinking: ThinkingLevel | None,
+    expected_tool_choice: str,
+):
+    """`openai_supports_forced_tool_choice_with_thinking=False` is evaluated per request, not per model.
+
+    DeepSeek's V4 models reject a forced tool choice only while thinking is on, so forcing must survive
+    whenever the request turns thinking off.
+    """
+    m = OpenAIChatModel(
+        'stub', provider=OpenAIProvider(openai_client=MagicMock()), profile=thinking_conditional_profile()
+    )
+    params = ModelRequestParameters(function_tools=[make_tool('tool_a')], allow_text_output=False, thinking=thinking)
+
+    _, tool_choice = m._get_tool_choice(settings, params)  # pyright: ignore[reportPrivateUsage]
+    assert tool_choice == expected_tool_choice
+
+
+@skip_if_no_openai
+@pytest.mark.parametrize(
+    'thinking,expected_tool_choice',
+    [pytest.param(None, 'auto', id='thinking_on'), pytest.param(False, 'required', id='thinking_off')],
+)
+async def test_openai_responses_forcing_follows_thinking_state(
+    allow_model_requests: None, thinking: ThinkingLevel | None, expected_tool_choice: str
+):
+    """The Responses API path reads the same flag, since DeepSeek rejects forcing on both endpoints."""
+    m = OpenAIResponsesModel(
+        'stub', provider=OpenAIProvider(openai_client=MagicMock()), profile=thinking_conditional_profile()
+    )
+    params = ModelRequestParameters(function_tools=[make_tool('tool_a')], allow_text_output=False, thinking=thinking)
+
+    _, tool_choice = m._get_responses_tool_choice({}, params)  # pyright: ignore[reportPrivateUsage]
+    assert tool_choice == expected_tool_choice
+
+
+@skip_if_no_openai
+@pytest.mark.parametrize('tool_choice', ['required', ['tool_a']], ids=['required', 'list'])
+async def test_openai_explicit_forcing_with_thinking_raises(allow_model_requests: None, tool_choice: ToolChoice):
+    """An explicit forcing request can't be silently downgraded, so it raises while thinking is on."""
+    m = OpenAIChatModel(
+        'stub', provider=OpenAIProvider(openai_client=MagicMock()), profile=thinking_conditional_profile()
+    )
+    params = ModelRequestParameters(function_tools=[make_tool('tool_a')], allow_text_output=True)
+    settings: OpenAIChatModelSettings = {'tool_choice': tool_choice}
+
+    with pytest.raises(UserError, match=r'does not support forcing tool use while thinking is enabled'):
+        m._get_tool_choice(settings, params)  # pyright: ignore[reportPrivateUsage]
+
+
+@skip_if_no_openai
+async def test_openai_tool_or_output_forcing_with_thinking_raises(allow_model_requests: None):
+    """`ToolOrOutput` without direct output resolves to required mode, so it can't be silently downgraded."""
+    m = OpenAIChatModel(
+        'stub', provider=OpenAIProvider(openai_client=MagicMock()), profile=thinking_conditional_profile()
+    )
+    params = ModelRequestParameters(function_tools=[make_tool('tool_a')], allow_text_output=False)
+    settings: OpenAIChatModelSettings = {'tool_choice': ToolOrOutput(function_tools=['tool_a'])}
+
+    with pytest.raises(UserError, match=r'does not support forcing tool use while thinking is enabled'):
+        m._get_tool_choice(settings, params)  # pyright: ignore[reportPrivateUsage]
+
+
+@skip_if_no_openai
+@pytest.mark.parametrize('tool_choice', ['required', ['tool_a']], ids=['required', 'list'])
+async def test_openai_responses_explicit_forcing_with_thinking_raises(
+    allow_model_requests: None, tool_choice: ToolChoice
+):
+    """An explicit forcing request can't be silently downgraded on the Responses API path either."""
+    m = OpenAIResponsesModel(
+        'stub', provider=OpenAIProvider(openai_client=MagicMock()), profile=thinking_conditional_profile()
+    )
+    params = ModelRequestParameters(function_tools=[make_tool('tool_a')], allow_text_output=False)
+
+    with pytest.raises(UserError, match=r'does not support forcing tool use while thinking is enabled'):
+        m._get_responses_tool_choice({'tool_choice': tool_choice}, params)  # pyright: ignore[reportPrivateUsage]
+
+
+@skip_if_no_openai
+async def test_openai_tool_or_output_forcing_without_required_support_raises(allow_model_requests: None):
+    """`ToolOrOutput` without direct output is explicit forcing, so unsupported models reject it."""
+    m = OpenAIChatModel(
+        'stub',
+        provider=OpenAIProvider(openai_client=MagicMock()),
+        profile=OpenAIModelProfile(openai_supports_tool_choice_required=False),
+    )
+    params = ModelRequestParameters(function_tools=[make_tool('tool_a')], allow_text_output=False)
+    settings: OpenAIChatModelSettings = {'tool_choice': ToolOrOutput(function_tools=['tool_a'])}
+
+    with pytest.raises(UserError, match=r'does not support forcing tool use\.$'):
+        m._get_tool_choice(settings, params)  # pyright: ignore[reportPrivateUsage]
+
+
+@skip_if_no_openai
+async def test_openai_responses_tool_or_output_forcing_without_required_support_raises(
+    allow_model_requests: None,
+):
+    """`ToolOrOutput` without direct output is explicit forcing, so unsupported models reject it (Responses API)."""
+    m = OpenAIResponsesModel(
+        'stub',
+        provider=OpenAIProvider(openai_client=MagicMock()),
+        profile=OpenAIModelProfile(openai_supports_tool_choice_required=False),
+    )
+    params = ModelRequestParameters(function_tools=[make_tool('tool_a')], allow_text_output=False)
+    settings: OpenAIResponsesModelSettings = {'tool_choice': ToolOrOutput(function_tools=['tool_a'])}
+
+    with pytest.raises(UserError, match=r'does not support forcing tool use\.$'):
+        m._get_responses_tool_choice(settings, params)  # pyright: ignore[reportPrivateUsage]
+
+
+@skip_if_no_openai
+async def test_openai_explicit_forcing_without_thinking_allowed(allow_model_requests: None):
+    """The same explicit request goes through once thinking is off."""
+    m = OpenAIChatModel(
+        'stub', provider=OpenAIProvider(openai_client=MagicMock()), profile=thinking_conditional_profile()
+    )
+    params = ModelRequestParameters(function_tools=[make_tool('tool_a')], allow_text_output=True, thinking=False)
+    settings: OpenAIChatModelSettings = {'tool_choice': 'required'}
+
+    _, tool_choice = m._get_tool_choice(settings, params)  # pyright: ignore[reportPrivateUsage]
+    assert tool_choice == 'required'
 
 
 @skip_if_no_xai

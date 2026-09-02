@@ -14,7 +14,7 @@ from pydantic import ValidationError
 from typing_extensions import Self
 
 from . import _utils, exceptions, messages as _messages, models
-from ._cost import best_effort_price
+from ._genai_prices import best_effort_price
 from ._output import (
     OutputDataT_inv,
     OutputSchema,
@@ -156,7 +156,9 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 yield text
 
     async def cancel(self) -> None:
-        """Cancel the stream, stopping token generation and closing the underlying connection.
+        """Cancel local stream consumption and request provider shutdown.
+
+        Whether this stops remote generation or closes the underlying transport depends on the provider SDK.
 
         This stops only the current model response; the run continues. To end the whole run,
         use [`AgentRun.cancel()`][pydantic_ai.run.AgentRun.cancel] or
@@ -778,7 +780,9 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             await self._on_complete()
 
     async def cancel(self) -> None:
-        """Cancel the stream, stopping token generation and closing the underlying connection.
+        """Cancel local stream consumption and request provider shutdown.
+
+        Whether this stops remote generation or closes the underlying transport depends on the provider SDK.
 
         The interrupted response state is recorded in the message history so that
         `all_messages()` includes it.

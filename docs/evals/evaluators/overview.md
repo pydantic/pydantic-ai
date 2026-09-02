@@ -4,7 +4,7 @@ Evaluators are the core of Pydantic Evals. They analyze task outputs and provide
 
 ## When to Use Different Evaluators
 
-### Deterministic Checks (Fast & Reliable)
+### Deterministic Checks (Fast & Reliable) {#deterministic-checks-fast-reliable}
 
 Use deterministic evaluators when you can define exact rules:
 
@@ -36,7 +36,7 @@ Use deterministic evaluators when you can define exact rules:
 - Performance requirements (latency, token counts)
 - Behavioral checks (which tools were called, which code paths executed)
 
-### LLM-as-a-Judge (Flexible & Nuanced)
+### LLM-as-a-Judge (Flexible & Nuanced) {#llm-as-a-judge-flexible-nuanced}
 
 Use [`LLMJudge`][pydantic_evals.evaluators.LLMJudge] when evaluation requires understanding or judgment:
 
@@ -407,7 +407,7 @@ All evaluators receive an [`EvaluatorContext`][pydantic_evals.evaluators.Evaluat
 - `ctx.expected_output` - Expected output (if provided)
 - `ctx.metadata` - Case metadata (if provided)
 - `ctx.duration` - Task execution time (seconds)
-- `ctx.span_tree` - OpenTelemetry spans (if logfire configured)
+- `ctx.span_tree` - OpenTelemetry spans (if Logfire is configured)
 - `ctx.metrics` - Custom metrics dict
 - `ctx.attributes` - Custom attributes dict
 

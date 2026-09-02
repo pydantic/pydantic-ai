@@ -120,6 +120,18 @@ def test_unless_native_no_fallback_raises_error():
         model.prepare_request(None, params)
 
 
+def test_unless_native_optional_does_not_excuse_a_required_sibling():
+    """One instance being `optional` doesn't excuse another that merely shares its `unique_id`."""
+    from pydantic_ai.models import ModelRequestParameters
+    from pydantic_ai.models.function import FunctionModel
+    from pydantic_ai.profiles import ModelProfile
+
+    model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # pyright: ignore[reportArgumentType]
+    params = ModelRequestParameters(native_tools=[WebSearchTool(optional=True), WebSearchTool()])
+    with pytest.raises(UserError, match='not supported by this model'):
+        model.prepare_request(None, params)
+
+
 def test_unless_native_multiple_fallbacks_for_same_builtin():
     """Multiple fallback tools for the same builtin are all removed when builtin is supported."""
     from pydantic_ai.models import ModelRequestParameters

@@ -109,22 +109,25 @@ Initial request:
 - capability-owned tools are hidden but never searchable, so when every deferred tool is capability-owned no tool search is advertised at all — not the provider's and not the local `search_tools` function. Anthropic pre-advertises those capability-only definitions with `defer_loading=True`; OpenAI Responses leaves them out of `tools` and reveals them through `additional_tools`
 - adding a standalone `defer_loading=True` tool restores search for that searchable tool. Capability-owned tools stay off the wire until reveal; on Anthropic the revealed definition is appended with `defer_loading=True` beside its `tool_addition`. Search stays fully native — server-executed strategies included — because there is nothing hidden on the wire for a query to surface
 - the deferred-capability catalog steers the model to load a capability rather than search for its tools, but only in runs that actually have a search surface (a searchable standalone deferred tool); capability-only runs get catalog wording with no mention of searching
-- non-deferred capabilities are treated as already loaded
+- non-deferred capabilities are **active** without ever being loaded: `loaded` means the model called
+  `load_capability`, `active` means the contributions are in force. `ctx.active_capability_ids` is
+  non-deferred ∪ loaded, so an always-on capability is in it while never appearing in
+  `ctx.loaded_capability_ids`
 - the framework adds `load_capability` if any deferred capability exists
 
 When `load_capability` succeeds:
 
 - the call is typed as a capability-load message part
 - the return may include resolved capability instructions and owned toolset instructions
-- the capability id is added to `ctx.available_capability_ids`
-- tools owned by the loaded capability become visible on later steps
+- the capability id appears in `ctx.active_capability_ids` from the *next* step onwards, not within the step that loaded it — both sets are derived from message history before each model request
+- tools owned by the loaded capability become visible, and callable, on later steps
 - `load_capability` remains visible so the tool set stays stable
 
 Use `ctx.is_tool_available(tool_def)` when a wrapping toolset needs to decide whether a definition it holds is currently visible. The definition form remains reliable inside `get_tools`; the name form looks in the current resolved `ctx.tools` snapshot and is intended for model-request hooks and tool execution.
 
 Message history matters. Loaded capability state is reconstructed from matching `LoadCapabilityCallPart` and `LoadCapabilityReturnPart` pairs, while revealed function-tool state is reconstructed from `ToolAvailabilityDeltaPart` entries. A history processor must preserve the deltas or the complete capability-load pairs from which Pydantic AI can reconstruct them. If it removes both representations, those tools become hidden again.
 
-A `CompactionPart` resets both forms of derived state at its exact position. Capability tools loaded before the boundary become hidden until the capability is loaded again; the tools remain callable if the model emits a valid call.
+A `CompactionPart` resets both forms of prospective derived state at its exact position, so future requests load and reveal capability tools again. For a call in the response currently being dispatched, pre-boundary evidence still counts when the serving provider did not honor that boundary on the request wire; otherwise a call without visible load evidence is refused with a "not available yet" retry naming the capability to load.
 
 ## Dynamic Descriptions and Instructions
 

@@ -79,6 +79,18 @@ class ModelProfile(TypedDict, total=False):
     supports_image_output: bool
     """Whether the model supports image output. Default: `False`."""
 
+    supports_audio_input: bool
+    """Whether the model supports audio in user messages. Default: `False`.
+
+    Used when converting `SpeechPart`s from realtime session history in
+    `Model.prepare_messages`: if `True`, retained audio is sent to the model as `BinaryContent`;
+    otherwise the transcript text is used.
+
+    No shipping profile sets this to `True` yet, so retained realtime audio is currently always
+    forwarded as transcript text on handoff; enabling it needs per-model-family verification that the
+    provider accepts audio in user messages.
+    """
+
     supports_inline_system_prompts: bool
     """Whether the provider's API accepts `SystemPromptPart`s inline at any position. Default: `False`.
 
@@ -141,6 +153,14 @@ class ModelProfile(TypedDict, total=False):
 
     supported_native_tools: frozenset[type[AbstractNativeTool]]
     """The set of native tool types that this model/profile supports. Default: `SUPPORTED_NATIVE_TOOLS` (all)."""
+
+    context_window: int | None
+    """The maximum number of tokens the model can handle in a single request, input and output combined. Default: `None` (unknown).
+
+    When no profile layer sets this, `Model.profile` fills it in from
+    [genai-prices](https://github.com/pydantic/genai-prices) data if the model is known there.
+    Set it explicitly for custom or local models, e.g. `profile={'context_window': 128_000}`.
+    """
 
     tool_deferral_mode: ToolDeferralMode | None
     """When the provider permits a `tools` entry whose schema is withheld. Default: `None`.
@@ -208,6 +228,7 @@ DEFAULT_PROFILE: ModelProfile = {
     'supports_json_schema_output': False,
     'supports_json_object_output': False,
     'supports_image_output': False,
+    'supports_audio_input': False,
     'default_structured_output_mode': 'tool',
     'prompted_output_template': DEFAULT_PROMPTED_OUTPUT_TEMPLATE,
     'native_output_requires_schema_in_instructions': False,
@@ -217,6 +238,7 @@ DEFAULT_PROFILE: ModelProfile = {
     'thinking_tags': DEFAULT_THINKING_TAGS,
     'ignore_streamed_leading_whitespace': False,
     'supported_native_tools': SUPPORTED_NATIVE_TOOLS,
+    'context_window': None,
     'tool_deferral_mode': None,
     'tool_addition_mode': None,
 }

@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from .._json_schema import JsonSchema, JsonSchemaTransformer
 from ..exceptions import UserError
@@ -17,6 +17,9 @@ from ..native_tools import (
 from ..native_tools._tool_search import ToolSearchTool
 from ..settings import ThinkingLevel
 from . import ModelProfile
+
+if TYPE_CHECKING:
+    from ..realtime.profiles import RealtimeModelProfile
 
 _OPENAI_BASE_BUILTINS = frozenset(
     {WebSearchTool, CodeExecutionTool, FileSearchTool, MCPServerTool, ImageGenerationTool}
@@ -200,6 +203,16 @@ class OpenAIModelProfile(ModelProfile, total=False):
     openai_supports_tool_choice_required: bool
     """Whether the provider accepts the value `tool_choice='required'` in the request payload. Default: `True`."""
 
+    openai_supports_forced_tool_choice_with_thinking: bool
+    """Whether the provider accepts a forced `tool_choice` while thinking is enabled for this request. Default: `True`.
+
+    Unlike `openai_supports_tool_choice_required`, which is a fixed property of the model, this is evaluated
+    per request against the effective thinking state. DeepSeek's V4 models accept `tool_choice='required'` and
+    named-function forcing only while thinking is off, rejecting them otherwise with
+    `Thinking mode does not support this tool_choice`. When this is `False` and thinking is active, a resolved
+    `required` tool choice falls back to `auto`, and an explicit `tool_choice='required'` (or an explicit list
+    of tools) raises a `UserError`."""
+
     openai_system_prompt_role: OpenAISystemPromptRole | None
     """The role to use for the system prompt message. If not provided, defaults to `'system'`."""
 
@@ -280,13 +293,37 @@ class OpenAIModelProfile(ModelProfile, total=False):
     See https://github.com/pydantic/pydantic-ai/issues/3245 for more details.
     """
 
+    openai_responses_supports_json_schema_output: bool
+    """Whether the Responses API accepts `text.format` of type `json_schema` for this model. Default: `False`.
+
+    Only needed when the Responses API is more capable than Chat Completions for the same model, as with
+    DeepSeek, whose Chat Completions endpoint rejects `response_format` of type `json_schema` with
+    `This response_format type is unavailable now` while its Responses endpoint honors the schema. When set,
+    `OpenAIResponsesModel` enables `supports_json_schema_output` on its resolved profile, so
+    [`NativeOutput`][pydantic_ai.output.NativeOutput] becomes available on the Responses API alone."""
+
     openai_responses_tool_call_ids_are_response_scoped: bool
     """Whether Responses API tool call IDs are only unique within one response. Default: `False`.
 
     When enabled, response IDs are incorporated into tool call IDs as responses are ingested so
     normalized message history keeps the history-wide uniqueness required by Pydantic AI. The qualified
-    `response_id:tool_call_id` form is replayed unchanged, so the Responses endpoint must accept
-    colon-containing tool call IDs in follow-up requests.
+    `response_id:tool_call_id` form is restored to the original provider tool call ID when history is
+    replayed.
+    """
+
+    openai_responses_supports_interleaved_function_calls: bool
+    """Whether the Responses API accepts function calls interleaved with other assistant items in one
+    assistant turn. Default: `True`.
+
+    [DeepSeek's Responses endpoint](https://api-docs.deepseek.com/guides/responses_api) merges each
+    function call into the assistant message next to it, so an assistant item between two calls
+    splits them into separate messages that each carry an unanswered call
+    ([#7430](https://github.com/pydantic/pydantic-ai/issues/7430)). When this is `False`, such a turn
+    has its calls moved to the end before the request goes out; the message history you hold is
+    unchanged.
+
+    Reordering is best-effort: a turn carrying a native or compaction item, or a call still waiting
+    on its result, is sent in its original order.
     """
 
     openai_supports_phase: bool
@@ -392,6 +429,31 @@ def openai_model_profile(model_name: str) -> ModelProfile:
         openai_supports_minimal_reasoning_effort=not model_name.startswith('gpt-5.6'),
         supported_native_tools=supported_native_tools,
     )
+
+
+def openai_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
+    """Get the realtime model profile for an OpenAI realtime model."""
+    return {
+        'supports_image_input': True,
+        'supports_manual_turn_control': True,
+        'supports_interruption': True,
+        'supports_output_truncation': True,
+        'supports_session_seeding': True,
+        'supports_webrtc': True,
+        'supports_seeding_images': True,
+        'supports_seeding_audio': True,
+        # The realtime models keep talking while a tool call is outstanding — they're tuned to
+        # emit filler ("let me check that") rather than going silent — so there's no per-tool
+        # wire flag to set, unlike Gemini. The session already runs tools in the background and
+        # defers `response.create` while a response is active, so this is true end to end.
+        'supports_async_tool_calls': True,
+        'emits_input_speech_events': True,
+        'audio_input_sample_rate': 24000,
+        'audio_output_sample_rate': 24000,
+        # Reasoning effort is only accepted by the `gpt-realtime-2*` reasoning models; the GA
+        # `gpt-realtime` rejects it ("Unsupported option for this model").
+        'supports_thinking': model_name.startswith('gpt-realtime-2'),
+    }
 
 
 _STRICT_INCOMPATIBLE_KEYS = [

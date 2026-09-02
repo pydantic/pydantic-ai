@@ -118,7 +118,7 @@ async def test_openai_tool_call_roundtrip_wire_stable(
         pytest.param(_vercel_roundtrip, id='vercel'),
         pytest.param(
             _ag_ui_roundtrip_latest,
-            id='ag_ui-0_1_13',
+            id='ag_ui-0_1_11',
             marks=pytest.mark.skipif(
                 not ag_ui_reasoning_successful(), reason='ag-ui-protocol < 0.1.11 (no ReasoningMessage)'
             ),
