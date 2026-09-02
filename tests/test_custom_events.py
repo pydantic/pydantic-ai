@@ -8,7 +8,7 @@ import textwrap
 import warnings
 from collections.abc import AsyncIterable, AsyncIterator
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, ClassVar
 
 import pydantic
 import pytest
@@ -386,6 +386,64 @@ def test_envelope_field_shadowing_rejected():
         @dataclass(kw_only=True)
         class ShadowingEvent(CustomEvent):  # pyright: ignore[reportUnusedClass]
             data: Any = None
+
+
+def test_ui_flag_defaults_to_forwarding_and_is_inherited():
+    """`ui` defaults to `True`, `ui=False` opts out, and subclasses inherit the setting."""
+
+    @dataclass(kw_only=True)
+    class ForwardedEvent(CustomEvent):
+        pass
+
+    @dataclass(kw_only=True)
+    class InternalEvent(CustomEvent, ui=False):
+        pass
+
+    @dataclass(kw_only=True)
+    class InternalChildEvent(InternalEvent, name='internal_child'):
+        pass
+
+    assert ForwardedEvent.ui is True
+    assert InternalEvent(name='internal').ui is False
+    assert InternalChildEvent.ui is False
+    # Opting one class out must not move the default for every other event.
+    assert CustomEvent.ui is True
+    assert ForwardedEvent.ui is True
+
+
+def test_ui_flag_is_not_serialized():
+    """`ui` is a class-level setting, so it never appears on the wire, and survives a round trip."""
+
+    @dataclass(kw_only=True)
+    class RoundTrippedInternalEvent(CustomEvent, name='round_tripped_internal', ui=False):
+        done: int
+
+    adapter = pydantic.TypeAdapter[AgentStreamEvent](AgentStreamEvent)
+    dumped = adapter.dump_python(RoundTrippedInternalEvent(done=1), mode='json')
+    assert 'ui' not in dumped
+    restored = adapter.validate_python(dumped)
+    assert isinstance(restored, RoundTrippedInternalEvent)
+    assert restored.ui is False
+
+
+def test_ui_attribute_shadowing_rejected():
+    """A `ui` attribute would decide its own event's forwarding, so declaring one is rejected.
+
+    Pyright independently rejects the payload-field spelling as an incompatible override, hence the
+    ignore below. It accepts the `ClassVar` one, which is exactly why the runtime check has to cover
+    both: static typing catches only half of this.
+    """
+    with pytest.raises(TypeError, match='declares a `ui` attribute'):
+
+        @dataclass(kw_only=True)
+        class UiShadowingEvent(CustomEvent):  # pyright: ignore[reportUnusedClass]
+            ui: str = ''  # pyright: ignore[reportIncompatibleVariableOverride]
+
+    with pytest.raises(TypeError, match='declares a `ui` attribute'):
+
+        @dataclass(kw_only=True)
+        class UiClassVarShadowingEvent(CustomEvent):  # pyright: ignore[reportUnusedClass]
+            ui: ClassVar[bool] = False
 
 
 def test_slotted_event_class():

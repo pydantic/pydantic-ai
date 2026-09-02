@@ -4975,6 +4975,48 @@ async def test_typed_custom_event_maps_to_ag_ui_custom_event():
     )
 
 
+async def test_custom_event_with_ui_false_is_not_forwarded():
+    """A `CustomEvent` subclass declared `ui=False` never reaches the frontend."""
+
+    @dataclass(kw_only=True)
+    class AgUiInternalEvent(PydanticAICustomEvent, name='ag_ui_internal', ui=False):
+        done: int
+
+    @dataclass(kw_only=True)
+    class AgUiShownEvent(PydanticAICustomEvent, name='ag_ui_shown'):
+        done: int
+
+    async def event_generator():
+        yield AgUiInternalEvent(done=1)
+        yield AgUiShownEvent(done=2)
+
+    run_input = create_input(UserMessage(id='msg_1', content='go'))
+    event_stream = AGUIEventStream(run_input=run_input)
+    events = [
+        json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    assert events == snapshot(
+        [
+            {
+                'type': 'RUN_STARTED',
+                'timestamp': IsInt(),
+                'threadId': (thread_id := IsSameStr()),
+                'runId': (run_id := IsSameStr()),
+            },
+            {'type': 'CUSTOM', 'timestamp': IsInt(), 'name': 'ag_ui_shown', 'value': {'done': 2}},
+            {
+                'type': 'RUN_FINISHED',
+                'timestamp': IsInt(),
+                'threadId': thread_id,
+                'runId': run_id,
+                **run_finished_outcome(),
+            },
+        ]
+    )
+
+
 async def test_custom_event_passes_through_ag_ui_base_event():
     """A `CustomEvent` whose payload is an AG-UI event is passed through verbatim."""
 

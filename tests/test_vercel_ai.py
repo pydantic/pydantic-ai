@@ -1837,6 +1837,39 @@ async def test_typed_custom_event_maps_to_data_chunk():
     )
 
 
+async def test_custom_event_with_ui_false_is_not_forwarded():
+    """A `CustomEvent` subclass declared `ui=False` never reaches the frontend."""
+
+    @dataclass(kw_only=True)
+    class VercelInternalEvent(CustomEvent, name='vercel_internal', ui=False):
+        done: int
+
+    @dataclass(kw_only=True)
+    class VercelShownEvent(CustomEvent, name='vercel_shown'):
+        done: int
+
+    async def event_generator():
+        yield VercelInternalEvent(done=1)
+        yield VercelShownEvent(done=2)
+
+    request = SubmitMessage(id='foo', messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='go')])])
+    event_stream = VercelAIEventStream(run_input=request)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'data-vercel_shown', 'data': {'done': 2}},
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+            '[DONE]',
+        ]
+    )
+
+
 async def test_custom_event_passes_through_data_chunk():
     """A `CustomEvent` whose payload is already a data-carrying chunk is passed through verbatim."""
 

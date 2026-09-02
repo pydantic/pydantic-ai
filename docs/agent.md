@@ -403,6 +403,22 @@ Event names share one application-wide registry, and defining a second class wit
 
 UI adapters get the frontend payload by calling [`CustomEvent.to_payload()`][pydantic_ai.messages.CustomEvent.to_payload], which defaults to the event's own fields; override it when the UI should receive a different payload.
 
+Custom events are forwarded to the frontend by default, as the application that emits them is also the one serving that frontend. An event that exists only for server-side consumers — metrics, an audit log, an `event_stream_handler` of your own — opts out with `ui=False`, and then reaches every in-process consumer while the [AG-UI](ui/ag-ui.md) and [Vercel AI](ui/vercel-ai.md) adapters skip it:
+
+```python {title="internal_custom_event.py" noqa="F841"}
+from dataclasses import dataclass
+
+from pydantic_ai import CustomEvent
+
+
+@dataclass(kw_only=True)
+class IndexProgressEvent(CustomEvent, ui=False):
+    done: int
+    total: int
+```
+
+Subclasses inherit the setting, and because the check happens before the protocol-specific handler, adapters for other protocols honor it too. The flag lives on the class rather than on the wire, so an event deserialized where its defining module hasn't been imported arrives as an `UnknownCustomEvent` and is forwarded; import the module that defines your events in the process that serves the frontend. To send a *different* payload rather than nothing, override `to_payload()` instead — returning `None` from it sends an event with a null payload, which is how you send a name-only signal.
+
 ### Iterating Over an Agent's Graph
 
 Under the hood, each `Agent` in Pydantic AI uses **pydantic-graph** to manage its execution flow. **pydantic-graph** is a generic, type-centric library for building and running finite state machines in Python. It doesn't actually depend on Pydantic AI — you can use it standalone for workflows that have nothing to do with GenAI — but Pydantic AI makes use of it to orchestrate the handling of model requests and model responses in an agent's run.

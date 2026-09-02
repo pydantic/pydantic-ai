@@ -4540,6 +4540,36 @@ class CustomEvent:
     _registered_name: ClassVar[str | None] = None
     """The name this class is registered under; `None` on the base class and unregistered subclasses."""
 
+    ui: ClassVar[bool] = True
+    """Whether [UI event streams](../ui/overview.md) forward this event class to the frontend.
+
+    Custom events are application-owned, so they are forwarded by default: the application decided both
+    to emit the event and to serve that frontend. Set `ui=False` as a class argument on an event that
+    exists only for server-side consumers -- metrics, audit logs, an `event_stream_handler` of your own:
+
+    ```python
+    from dataclasses import dataclass
+
+    from pydantic_ai import CustomEvent
+
+
+    @dataclass(kw_only=True)
+    class IndexProgressEvent(CustomEvent, ui=False):
+        done: int
+        total: int
+    ```
+
+    It still reaches every in-process consumer; only the UI adapters skip it. Subclasses inherit the
+    setting, and because the check happens before the protocol-specific handler, third-party adapters
+    honor it too. An event that needs a different payload for the frontend rather than no payload at
+    all should override [`to_payload()`][pydantic_ai.messages.CustomEvent.to_payload] instead.
+
+    The flag lives on the class rather than on the wire, so an event deserialized in a process that
+    hasn't imported its defining module arrives as an
+    [`UnknownCustomEvent`][pydantic_ai.messages.UnknownCustomEvent] and is forwarded. Import the module
+    that defines your events in the process that serves the frontend.
+    """
+
     def __post_init__(self) -> None:
         if type(self) is CustomEvent:
             raise TypeError('`CustomEvent` is a base class; define a dataclass subclass with typed payload fields.')
@@ -4557,11 +4587,15 @@ class CustomEvent:
                 f'override `name` per instance (got {self.name!r}).'
             )
 
-    def __init_subclass__(cls, *, name: str | None = None, _register: bool = True, **kwargs: Any) -> None:
+    def __init_subclass__(
+        cls, *, name: str | None = None, ui: bool | None = None, _register: bool = True, **kwargs: Any
+    ) -> None:
         super().__init_subclass__(**kwargs)
         # A subclass-defined `__post_init__` replaces the generated initializer's only call to the
         # family guards; keep them running regardless of whether it calls `super().__post_init__()`.
         _guard_post_init(cls, CustomEvent.__post_init__)
+        if ui is not None:
+            cls.ui = ui
         if not _register:
             return
         # `@dataclass(slots=True)` recreates the class, re-invoking registration without the
@@ -4586,6 +4620,15 @@ class CustomEvent:
         if shadowed := _shadowed_envelope_fields(cls, CUSTOM_EVENT_ENVELOPE_FIELDS - {'name'}):
             raise TypeError(
                 f'Custom event {cls.__qualname__} declares field(s) reserved for the event envelope: {shadowed}.'
+            )
+        if _shadowed_envelope_fields(cls, frozenset({'ui'})):
+            # Annotating `ui` at all is rejected, payload field or `ClassVar` alike: a payload field
+            # would silently decide its own event's forwarding, and allowing only the `ClassVar`
+            # spelling would leave two ways to say the same thing with no way to tell them apart here.
+            raise TypeError(
+                f'Custom event {cls.__qualname__} declares a `ui` attribute, which would shadow the flag '
+                f'that decides whether UI adapters forward the event. Rename the field, and set the flag '
+                f'as a class argument: `class {cls.__name__}(CustomEvent, ui=False)`.'
             )
         # A durable runtime that re-executes application modules in isolation keeps the class the
         # host registered, so both sides hold the class they imported; see `event_family_schema`.
