@@ -406,7 +406,7 @@ def test_infer_model_profile_matches_provider(model_id: str, provider_path: str,
     profile = infer_model_profile(model_id)
     provider_profile = provider_class.model_profile(model_name)
     assert provider_profile is not None
-    assert all(key in profile and profile[key] == value for key, value in provider_profile.items())
+    assert {key: value for key, value in profile.items() if key != 'context_window'} == provider_profile
 
 
 def test_infer_model_profile_respects_explicit_unknown_context_window():

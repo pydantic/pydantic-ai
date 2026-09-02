@@ -699,7 +699,7 @@ loop all deliver enqueued messages.
       loop first — e.g. `loop.call_soon_threadsafe(agent_run.enqueue, msg)`. The
       drain isn't atomic against concurrent cross-thread appends.
 
-## Processing Message History {#processing-message-history}
+## Processing Message History
 
 Sometimes you may want to modify the message history before it's sent to the model. This could be for privacy
 reasons (filtering out sensitive information), to save costs on tokens, to give less context to the LLM, or
@@ -908,7 +908,7 @@ agent = Agent(
 
 Treat `None` as unknown, not as an empty context window. It is returned before the first model response and when the model's window or response usage is unknown. The example leaves history unchanged in these cases. A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] measures against the smallest window among its candidates, so compaction happens early enough for whichever candidate answers.
 
-Pydantic AI fills known window sizes from [genai-prices](https://github.com/pydantic/genai-prices). For a custom or local model, set the size explicitly with `profile={'context_window': 128_000}` — see [Inspecting a model's profile](models/overview.md#inspecting-a-models-profile).
+Pydantic AI fills the window size from [genai-prices](https://github.com/pydantic/genai-prices) where its data records one. For a custom or local model, or one genai-prices doesn't cover yet, set the size explicitly with `profile={'context_window': 128_000}` — see [Inspecting a model's profile](models/overview.md#inspecting-a-models-profile).
 
 ### Testing History Processors
 

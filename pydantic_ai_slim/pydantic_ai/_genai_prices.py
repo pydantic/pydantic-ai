@@ -1,4 +1,4 @@
-"""All interaction with [genai-prices](https://github.com/pydantic/genai-prices): best-effort response cost calculation, usage extraction support, and model metadata lookups (context window)."""
+"""Shared [genai-prices](https://github.com/pydantic/genai-prices) helpers: best-effort cost calculation, the provider lookup order used for usage extraction, and the context window lookup."""
 
 from __future__ import annotations
 

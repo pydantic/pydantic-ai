@@ -1251,7 +1251,9 @@ def test_temporal_model_context_window_follows_active_model():
         assert temporal_model.context_window == 1000
 
     with temporal_model.using_model('openai:gpt-5'):
+        # An unregistered model ID resolves through profile inference, not the wrapped default's window.
         assert temporal_model.context_window == infer_model_profile('openai:gpt-5').get('context_window')
+        assert temporal_model.context_window not in (None, 100)
 
 
 def test_temporal_model_model_id_follows_active_model():
