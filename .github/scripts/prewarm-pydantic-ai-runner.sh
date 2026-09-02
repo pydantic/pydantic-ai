@@ -22,5 +22,11 @@ if [ -z "${uv_bin}" ]; then
   exit 0
 fi
 echo "[harness-prewarm] using uv=${uv_bin} cache=${UV_CACHE_DIR}"
-"${uv_bin}" sync --script "${runner}" \
+# --frozen: install exactly what the lock pins, and never rewrite it. Without it
+# `uv sync --script` re-resolves and writes `pydantic-ai-runner.lock`, which
+# leaves the workspace dirty and makes the later `git checkout` of the PR head
+# abort ("Your local changes ... would be overwritten by checkout"). It also
+# warmed the cache with re-resolved versions the sandboxed `uv run --script`
+# then ignores in favour of the locked ones.
+"${uv_bin}" sync --script "${runner}" --frozen \
   || echo "::warning::harness uv pre-warm failed; agent will install under the firewall"
