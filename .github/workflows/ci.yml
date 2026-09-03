@@ -925,10 +925,12 @@ jobs:
             }}
           jobs: ${{ toJSON(needs) }}
 
+  # `check` may succeed with intentionally skipped ancestors, so downstream jobs must override
+  # GitHub's default success check and inspect the result of their direct dependency.
   # Note: this should match the `deploy-docs-manual` job in manually-deploy-docs.yml
   deploy-docs:
     needs: [check]
-    if: success() && startsWith(github.ref, 'refs/tags/')
+    if: ${{ !cancelled() && github.ref_type == 'tag' && needs.check.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - name: Generate app token
@@ -956,7 +958,7 @@ jobs:
   release-build:
     name: build release artifacts
     needs: [check]
-    if: success() && startsWith(github.ref, 'refs/tags/')
+    if: ${{ !cancelled() && github.ref_type == 'tag' && needs.check.result == 'success' }}
     runs-on: ubuntu-latest
 
     outputs:
@@ -998,7 +1000,7 @@ jobs:
   release:
     name: publish to PyPI
     needs: [release-build]
-    if: success() && startsWith(github.ref, 'refs/tags/')
+    if: ${{ !cancelled() && github.ref_type == 'tag' && needs.release-build.result == 'success' }}
     runs-on: ubuntu-latest
 
     environment:
@@ -1026,7 +1028,7 @@ jobs:
   send-tweet:
     name: Send tweet
     needs: [release]
-    if: needs.release.result == 'success'
+    if: ${{ !cancelled() && needs.release.result == 'success' }}
     runs-on: ubuntu-latest
 
     steps:
