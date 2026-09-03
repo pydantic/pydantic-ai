@@ -21,7 +21,7 @@ from typing import (
 from pydantic import BaseModel, TypeAdapter, ValidationError
 from typing_extensions import Self, TypeVar
 
-from pydantic_ai import DeferredToolRequests, DeferredToolResults, _instructions
+from pydantic_ai import CancellationToken, DeferredToolRequests, DeferredToolResults, _instructions
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.agent.abstract import AgentMetadata
@@ -532,6 +532,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: UsageLimits | None = None,
+        cancellation_token: CancellationToken | None = None,
         usage: RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -552,6 +553,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
+            cancellation_token: Optional token for cancelling this run from another task.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
@@ -594,7 +596,12 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
 
         run_capabilities: list[AbstractCapability[AgentDepsT]] = []
         if self.manage_system_prompt == 'server':
-            run_capabilities.append(ReinjectSystemPrompt(replace_existing=True))
+            # `id=None` opts this adapter-owned instance out of the fixed default `id`, so it never
+            # occupies the `reinject_system_prompt` slot a user's own reinjector may hold. Keeping the
+            # default here would make a user reinjector supplied for this run a hard duplicate-id
+            # error, and silently supersede an agent-level one. Server mode stays authoritative
+            # either way: this instance always runs, deriving a distinct id when it has to.
+            run_capabilities.append(ReinjectSystemPrompt(replace_existing=True, id=None))
         if capabilities:
             run_capabilities.extend(capabilities)
 
@@ -605,6 +612,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 deferred_tool_results=deferred_tool_results,
                 conversation_id=conversation_id,
                 run_id=run_id,
+                cancellation_token=cancellation_token,
                 model=model,
                 deps=deps,
                 model_settings=model_settings,
@@ -634,6 +642,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: UsageLimits | None = None,
+        cancellation_token: CancellationToken | None = None,
         usage: RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -656,6 +665,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
+            cancellation_token: Optional token for cancelling this run from another task.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
@@ -675,6 +685,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 deferred_tool_results=deferred_tool_results,
                 conversation_id=conversation_id,
                 run_id=run_id,
+                cancellation_token=cancellation_token,
                 model=model,
                 instructions=instructions,
                 deps=deps,
@@ -706,6 +717,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         output_type: OutputSpec[Any] | None = None,
         model_settings: ModelSettings | None = None,
         usage_limits: UsageLimits | None = None,
+        cancellation_token: CancellationToken | None = None,
         usage: RunUsage | None = None,
         metadata: AgentMetadata[DispatchDepsT] | None = None,
         infer_name: bool = True,
@@ -738,6 +750,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
+            cancellation_token: Optional token for cancelling this run from another task.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
@@ -805,6 +818,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 deferred_tool_results=deferred_tool_results,
                 conversation_id=conversation_id,
                 run_id=run_id,
+                cancellation_token=cancellation_token,
                 deps=deps,
                 output_type=output_type,
                 model=model,

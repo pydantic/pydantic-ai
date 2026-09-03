@@ -184,7 +184,7 @@ async def main():
 5. Define a tool on the delegate agent that uses the dependencies to make an HTTP request.
 6. Usage now includes 4 requests — 2 from the calling agent and 2 from the delegate agent.
 
-_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 This example shows how even a fairly simple agent delegation can lead to a complex control flow:
 
@@ -333,7 +333,7 @@ async def main():  # (7)!
 6. Define a function to find the user's seat preference, which asks the user for their seat preference and then calls the agent to extract the seat preference.
 7. Now that we've put our logic for running each agent into separate functions, our main app becomes very simple.
 
-_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 The control flow for this example can be summarised as follows:
 

@@ -11,7 +11,7 @@ The [`VercelAIAdapter`][pydantic_ai.ui.vercel_ai.VercelAIAdapter] class is respo
 
 If you're using a Starlette-based web framework like FastAPI, you can use the [`VercelAIAdapter.dispatch_request()`][pydantic_ai.ui.UIAdapter.dispatch_request] class method from an endpoint function to directly handle a request and return a streaming response of Vercel AI events. This is demonstrated in the next section.
 
-If you're using a web framework not based on Starlette (e.g. Django or Flask) or need fine-grained control over the input or output, you can create a `VercelAIAdapter` instance and directly use its methods. This is demonstrated in "Advanced Usage" section below.
+If you're using a web framework not based on Starlette (e.g. Django or Flask) or need fine-grained control over the input or output, you can create a `VercelAIAdapter` instance and directly use its methods. This is demonstrated in the "Advanced Usage" section below.
 
 ### Usage with Starlette/FastAPI
 
@@ -55,8 +55,12 @@ When a run ends in [first-party cancellation](../agent.md#cancelling-a-run) — 
 !!! note "Client disconnects are external cancellation"
     Calling `stop()` on the client aborts the browser's request, which the server sees as a *disconnect*, not a first-party cancellation. That tears the run down as an external `asyncio.CancelledError` (see [the two kinds of cancellation](../agent.md#cancelling-a-run)), so no `abort` chunk is emitted and `on_cancel` does not fire — and the client has disconnected anyway. To get the `abort` chunk and run `on_cancel` on a stop gesture, keep the stream connected and cancel the run *first-party*: give the run a [`CancellationToken`][pydantic_ai.CancellationToken] and expose a separate endpoint (e.g. `POST /chat/{id}/cancel`) that calls `token.cancel()`.
 
+!!! note
+    The in-memory token registry below requires a single server process or sticky routing. In a multi-worker deployment, route the cancel request to the worker that owns the run using shared coordination such as a message broker.
+
 ```py {title="run_stream.py"}
 import json
+from collections.abc import AsyncIterator
 from http import HTTPStatus
 
 from fastapi import FastAPI
@@ -64,7 +68,7 @@ from fastapi.requests import Request
 from fastapi.responses import Response, StreamingResponse
 from pydantic import ValidationError
 
-from pydantic_ai import Agent, RunCancelled
+from pydantic_ai import Agent, CancellationToken, RunCancelled
 from pydantic_ai.ui import SSE_CONTENT_TYPE
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 
@@ -72,14 +76,16 @@ agent = Agent('openai:gpt-5.2')
 
 app = FastAPI()
 
+cancellation_tokens: dict[str, CancellationToken] = {}
+
 
 async def on_cancel(cancelled: RunCancelled) -> None:
     messages = cancelled.all_messages()  # (1)!
     print(f'cancelled after {len(messages)} messages')
 
 
-@app.post('/chat')
-async def chat(request: Request) -> Response:
+@app.post('/chat/{chat_id}')
+async def chat(chat_id: str, request: Request) -> Response:
     accept = request.headers.get('accept', SSE_CONTENT_TYPE)
     try:
         run_input = VercelAIAdapter.build_run_input(await request.body())
@@ -91,24 +97,91 @@ async def chat(request: Request) -> Response:
         )
 
     adapter = VercelAIAdapter(agent=agent, run_input=run_input, accept=accept)
-    event_stream = adapter.run_stream(on_cancel=on_cancel)
+    cancellation_token = CancellationToken()
+    cancellation_tokens[chat_id] = cancellation_token
+    event_stream = adapter.run_stream(
+        cancellation_token=cancellation_token, on_cancel=on_cancel
+    )
 
-    sse_event_stream = adapter.encode_stream(event_stream)
-    return StreamingResponse(sse_event_stream, media_type=accept)
+    async def encode_stream() -> AsyncIterator[str]:
+        try:
+            async for event in adapter.encode_stream(event_stream):
+                yield event
+        finally:
+            if cancellation_tokens.get(chat_id) is cancellation_token:
+                cancellation_tokens.pop(chat_id, None)
+
+    return StreamingResponse(encode_stream(), media_type=accept)
+
+
+@app.post('/chat/{chat_id}/cancel', status_code=HTTPStatus.NO_CONTENT)
+async def cancel_chat(chat_id: str) -> None:
+    if token := cancellation_tokens.get(chat_id):
+        token.cancel()
 ```
 
 1. The resumable history to persist -- pass it as `message_history` to a later run to resume the conversation.
 
 ### Data Chunks
 
-Pydantic AI tools can send [Vercel AI data stream chunks](https://ai-sdk.dev/docs/ai-sdk-ui/stream-protocol#data-stream-protocol) by returning a
+To send data to the client while a run is in progress — for example progress updates from a long-running tool — emit a [`CustomEvent`](../agent.md#custom-events) via [`ctx.emit()`][pydantic_ai.tools.RunContext.emit]:
+
+```python {title="vercel_ai_custom_events.py"}
+from dataclasses import dataclass
+
+from pydantic_ai import Agent, CustomEvent, RunContext
+
+agent = Agent('openai:gpt-5.2')
+
+
+@dataclass(kw_only=True)
+class FileUploadProgressEvent(CustomEvent):
+    done: int
+    total: int
+
+
+@agent.tool
+async def upload_files(ctx: RunContext, total: int) -> str:
+    for done in range(1, total + 1):
+        # Do a unit of work, then tell the frontend how far along we are.
+        await ctx.emit(FileUploadProgressEvent(done=done, total=total))
+    return f'Uploaded {total} files'
+```
+
+Each event reaches the client as a [`DataChunk`][pydantic_ai.ui.vercel_ai.response_types.DataChunk] with `type` set to `data-{name}` and the result of [`to_payload()`][pydantic_ai.messages.CustomEvent.to_payload] as its `data` — here, `type='data-file_upload_progress'` and `data={'done': 1, 'total': 3}`. Chunks arrive as the events are emitted, while the tool is still running.
+
+The `data` shape is the same whether or not the event was emitted from inside a tool call, so a frontend written against one shape doesn't break when the same event class is later emitted from somewhere else. Override [`to_payload()`][pydantic_ai.messages.CustomEvent.to_payload] to control the shape — to name the fields the way the frontend expects, or to put the tool attribution on the wire:
+
+```python {title="vercel_ai_custom_event_payload.py"}
+from dataclasses import dataclass
+from typing import Any
+
+from pydantic_ai import CustomEvent
+
+
+@dataclass(kw_only=True)
+class FileUploadPhaseEvent(CustomEvent):
+    done: int
+    total: int
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            'completed': self.done,
+            'total': self.total,
+            'toolCallId': self.tool_call_id,
+        }
+```
+
+Returning a data-carrying chunk (see below) from `to_payload()` sends that chunk verbatim instead. An event class declared [`ui=False`](../agent.md#custom-events) is never forwarded, so events meant only for server-side consumers stay off the wire; nor is an event whose class this process never imported, since its opt-out travels on the class rather than the wire.
+
+Pydantic AI tools can also attach [Vercel AI data stream chunks](https://ai-sdk.dev/docs/ai-sdk-ui/stream-protocol#data-stream-protocol) to a **tool result**, by returning a
 [`ToolReturn`](../tools-advanced.md#advanced-tool-returns) object with a data-carrying chunk
 (or a list of chunks) as `metadata`.
 The supported chunk types are [`DataChunk`][pydantic_ai.ui.vercel_ai.response_types.DataChunk],
 [`SourceUrlChunk`][pydantic_ai.ui.vercel_ai.response_types.SourceUrlChunk],
 [`SourceDocumentChunk`][pydantic_ai.ui.vercel_ai.response_types.SourceDocumentChunk],
 and [`FileChunk`][pydantic_ai.ui.vercel_ai.response_types.FileChunk].
-This is useful for attaching structured data to the frontend alongside the tool result, such as source URLs or custom data payloads.
+Unlike emitted events, these are part of the message and survive a message-history round-trip, which is what you want for data the frontend must be able to rebuild, such as the source URLs behind an answer; the trade-off is that they are sent when the tool returns rather than while it runs.
 
 ```python {title="vercel_ai_tool_chunks.py"}
 from pydantic_ai import Agent, ToolReturn

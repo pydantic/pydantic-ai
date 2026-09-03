@@ -203,6 +203,7 @@ def test_anthropic_claude_sonnet_4_6():
             'anthropic_supports_effort': True,
             'anthropic_default_code_execution_tool_version': '20260120',
             'anthropic_supports_forced_tool_choice': True,
+            'anthropic_binds_thinking_blocks': False,
             'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
             'tool_deferral_mode': 'standalone',
         }
@@ -232,6 +233,7 @@ def test_anthropic_claude_opus_4_7():
             'anthropic_default_code_execution_tool_version': '20260120',
             'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
             'anthropic_supports_forced_tool_choice': True,
+            'anthropic_binds_thinking_blocks': False,
             'anthropic_supports_task_budgets': True,
             'tool_deferral_mode': 'standalone',
         }
@@ -249,6 +251,7 @@ def test_anthropic_claude_haiku_4_5():
             'thinking_tags': ('<thinking>', '</thinking>'),
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'anthropic_supports_forced_tool_choice': True,
+            'anthropic_binds_thinking_blocks': False,
             'supported_native_tools': frozenset(
                 {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
             ),
@@ -268,6 +271,7 @@ def test_anthropic_claude_3_5_sonnet_legacy():
             'thinking_tags': ('<thinking>', '</thinking>'),
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'anthropic_supports_forced_tool_choice': True,
+            'anthropic_binds_thinking_blocks': False,
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, MCPServerTool, MemoryTool, WebFetchTool, WebSearchTool}
             ),
@@ -556,6 +560,8 @@ def test_deepseek_provider_deepseek_chat():
             'openai_chat_thinking_field': 'reasoning_content',
             'openai_chat_send_back_thinking_parts': 'field',
             'openai_responses_supports_interleaved_function_calls': False,
+            'openai_supports_forced_tool_choice_with_thinking': True,
+            'openai_responses_supports_json_schema_output': True,
         }
     )
 
@@ -576,6 +582,9 @@ def test_deepseek_provider_deepseek_reasoner():
             'openai_chat_send_back_thinking_parts': 'field',
             'openai_responses_supports_interleaved_function_calls': False,
             'openai_supports_tool_choice_required': False,
+            'openai_supports_forced_tool_choice_with_thinking': True,
+            'openai_reasoning_enabled_by_default': True,
+            'openai_responses_supports_json_schema_output': True,
         }
     )
 
@@ -610,12 +619,30 @@ def test_bedrock_anthropic_claude_sonnet_4_5():
             'bedrock_supports_tool_caching': True,
             'bedrock_supported_media_kinds_in_tool_returns': frozenset({'document', 'image'}),
             'anthropic_supports_forced_tool_choice': True,
+            'anthropic_binds_thinking_blocks': False,
             'bedrock_thinking_variant': 'anthropic',
             'tool_deferral_mode': 'standalone',
             'json_schema_transformer': BedrockJsonSchemaTransformer,
             'bedrock_supports_strict_tool_definition': True,
         }
     )
+
+
+@pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
+@pytest.mark.parametrize(
+    'model_id',
+    [
+        'us.anthropic.claude-fable-5-1',
+        'global.anthropic.claude-fable-5-1',
+        'us.anthropic.claude-fable-5-1-20260115-v1:0',
+    ],
+)
+def test_bedrock_anthropic_fable_5_1_binds_through_the_id_split(model_id: str):
+    """The binding flag is a `startswith` on the bare id, so it rests on the geo/version split."""
+    profile = BedrockProvider.model_profile(model_id)
+    assert profile is not None
+    assert profile.get('anthropic_binds_thinking_blocks') is True
+    assert profile.get('anthropic_supports_forced_tool_choice') is False
 
 
 @pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
@@ -639,6 +666,7 @@ def test_bedrock_anthropic_with_geo_prefix():
             'bedrock_supported_media_kinds_in_tool_returns': frozenset({'document', 'image'}),
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'anthropic_supports_forced_tool_choice': True,
+            'anthropic_binds_thinking_blocks': False,
             'bedrock_thinking_variant': 'anthropic',
             'tool_deferral_mode': 'standalone',
             'json_schema_transformer': BedrockJsonSchemaTransformer,
@@ -668,6 +696,7 @@ def test_bedrock_anthropic_legacy_claude_3():
             'bedrock_supported_media_kinds_in_tool_returns': frozenset({'document', 'image'}),
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'anthropic_supports_forced_tool_choice': True,
+            'anthropic_binds_thinking_blocks': False,
             'bedrock_thinking_variant': 'anthropic',
             'json_schema_transformer': BedrockJsonSchemaTransformer,
             'bedrock_supports_strict_tool_definition': False,
@@ -870,6 +899,7 @@ def test_openrouter_anthropic_claude_sonnet_4_6():
             'anthropic_default_code_execution_tool_version': '20260120',
             'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
             'anthropic_supports_forced_tool_choice': True,
+            'anthropic_binds_thinking_blocks': False,
             'tool_deferral_mode': 'standalone',
             'openai_chat_thinking_field': 'reasoning',
             'openai_chat_send_back_thinking_parts': 'field',
@@ -1387,6 +1417,67 @@ def test_ollama_unknown_falls_back_to_overlay_only():
 
 
 # =============================================================================
+# vLLM — three-layer merge, Hugging Face repo IDs, single-system-message merge
+# =============================================================================
+
+
+def test_vllm_gpt_oss_hf_namespace():
+    from pydantic_ai.providers.vllm import VLLMProvider
+
+    profile = VLLMProvider.model_profile('openai/gpt-oss-20b')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'supports_inline_system_prompts': True,
+            'supported_native_tools': frozenset(
+                {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
+            ),
+            'openai_supports_tool_choice_required': False,
+            'ignore_streamed_leading_whitespace': True,
+            'openai_chat_supports_document_input': False,
+            'openai_chat_supports_multiple_system_messages': False,
+            'native_output_requires_schema_in_instructions': True,
+        }
+    )
+
+
+def test_vllm_qwen_hf_namespace():
+    from pydantic_ai.providers.vllm import VLLMProvider
+
+    profile = VLLMProvider.model_profile('Qwen/Qwen3-32B')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'ignore_streamed_leading_whitespace': True,
+            'supports_thinking': True,
+            'openai_chat_supports_document_input': False,
+            'openai_chat_supports_multiple_system_messages': False,
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'native_output_requires_schema_in_instructions': True,
+        }
+    )
+
+
+def test_vllm_unknown_falls_back_to_overlay_only():
+    from pydantic_ai.providers.vllm import VLLMProvider
+
+    profile = VLLMProvider.model_profile('some-unknown-model')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'openai_chat_supports_document_input': False,
+            'openai_chat_supports_multiple_system_messages': False,
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'native_output_requires_schema_in_instructions': True,
+        }
+    )
+
+
+# =============================================================================
 # Cerebras — three-layer merge with reasoning detection
 # =============================================================================
 
@@ -1552,6 +1643,7 @@ def test_anthropic_unknown_model_returns_some_profile():
             'thinking_tags': ('<thinking>', '</thinking>'),
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'anthropic_supports_forced_tool_choice': True,
+            'anthropic_binds_thinking_blocks': False,
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, MCPServerTool, MemoryTool, WebFetchTool, WebSearchTool}
             ),
@@ -1670,6 +1762,7 @@ def test_vercel_anthropic_claude_sonnet():
             'anthropic_default_code_execution_tool_version': '20260120',
             'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
             'anthropic_supports_forced_tool_choice': True,
+            'anthropic_binds_thinking_blocks': False,
             'supported_native_tools': frozenset(
                 {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
             ),
@@ -1788,6 +1881,7 @@ def test_heroku_returns_openai_transformer():
             'anthropic_default_code_execution_tool_version': '20260120',
             'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
             'anthropic_supports_forced_tool_choice': True,
+            'anthropic_binds_thinking_blocks': False,
             'supported_native_tools': frozenset(
                 {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
             ),
@@ -1993,6 +2087,7 @@ def test_huggingface_unknown_provider_returns_none():
         ('claude-opus-5', True),
         ('claude-opus-4-8', True),
         ('claude-fable-5', True),
+        ('claude-fable-5-1', True),
         # Serves the `system` role but rejects tool deltas — the two capabilities are independent.
         ('claude-sonnet-5', False),
         ('claude-sonnet-4-6', False),

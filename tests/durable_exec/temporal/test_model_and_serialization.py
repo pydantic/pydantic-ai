@@ -49,7 +49,13 @@ from pydantic_ai.direct import model_request_stream
 from pydantic_ai.exceptions import (
     UserError,
 )
-from pydantic_ai.messages import UploadedFile
+from pydantic_ai.messages import (
+    CUSTOM_EVENT_TYPES,
+    CapabilityEvent,
+    CustomEvent,
+    UnknownCustomEvent,
+    UploadedFile,
+)
 from pydantic_ai.models import (
     CompletedStreamedResponse,
     ModelRequestParameters,
@@ -64,6 +70,7 @@ from pydantic_ai.profiles import DEFAULT_PROFILE, ModelProfile
 from pydantic_ai.tools import ToolDefinition
 
 from ..._inline_snapshot import snapshot
+from ...model_lifecycle_utils import LifecycleTrackingModel
 
 try:
     import temporalio.api.common.v1
@@ -79,7 +86,7 @@ try:
         PayloadCodec,
         StorageDriver,
     )
-    from temporalio.testing import ActivityEnvironment, WorkflowEnvironment
+    from temporalio.testing import ActivityEnvironment
     from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
     from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner
     from temporalio.workflow import ActivityConfig
@@ -111,7 +118,8 @@ except ImportError:  # pragma: lax no cover
     pytest.skip('temporal not installed', allow_module_level=True)
 
 
-# On 3.14 pytest skips at collection before importing this module, so the branch is unmeasured there.
+# The 3.14 durable-exec CI leg takes this skip; every other leg falls through. `lax` rather than
+# plain because which of the two arms a run measures depends on its Python version.
 if sys.version_info >= (3, 14):  # pragma: lax no cover
     pytest.skip(
         'temporalio sandbox is incompatible with Python 3.14: '
@@ -757,7 +765,10 @@ def test_temporal_run_context_serialization_is_exhaustive():
         'validation_context',  # arbitrary user object with no serialization contract
         'model_settings',  # only set for model requests, which receive it as their own typed activity param
         '_mcp_tool_defs_cache',  # run-local cache read/written in workflow code; never needed inside an activity
-        '_event_stream_buffer',  # run-local event buffer drained in workflow code; a public emit surface for activities is a follow-up
+        '_event_stream_buffer',  # live run event buffer, unreachable from an activity (`emit` raises there)
+        '_pending_immediate_dispatches',  # live workflow-side event deduplication state
+        '_event_stream_replacements',  # live workflow-side legacy-replacement state applied at stream position
+        '_capability',  # live capability instance used only while dispatching workflow-side hooks
         'realtime_session',  # live RealtimeSession, not serializable; realtime sessions don't run inside Temporal activities
         '_cancellation',  # runtime-only controller holding a live asyncio task reference; cannot cross the activity boundary
         '_durable_operations',  # workflow-side callables cannot cross the activity boundary; worker dispatch is pre-registered
@@ -775,6 +786,98 @@ def test_temporal_run_context_serialization_is_exhaustive():
         f'Uncategorized `RunContext` fields: {uncategorized}. Add each to '
         '`TemporalRunContext.serialize_run_context` or to `intentionally_unserialized` (with a reason).'
     )
+
+
+@dataclass
+class TemporalProgressEvent(CustomEvent, name='temporal_progress'):
+    pass
+
+
+@dataclass(kw_only=True)
+class TemporalCapabilityProgressEvent(CapabilityEvent, namespace='temporal_test', name='progress'):
+    pass
+
+
+async def test_temporal_run_context_rejects_emit_event():
+    """Emitting a custom event from a tool (inside an activity) raises a clear error.
+
+    Tools run inside activities where the run context is rebuilt without the run's event stream, so
+    `emit` can't reach it and must fail loudly rather than silently drop the event.
+    """
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), run_id='run-123')
+    serialized = TemporalRunContext.serialize_run_context(ctx)
+    reconstructed = TemporalRunContext.deserialize_run_context(serialized, deps=None)
+
+    with pytest.raises(
+        UserError, match='Emitting events from a tool or event stream handler is not supported under Temporal yet'
+    ):
+        await reconstructed.emit(TemporalProgressEvent())
+
+
+async def test_temporal_run_context_rejects_emit_capability_event():
+    """A capability's own tool runs in an activity too, so its `CapabilityEvent` is rejected as well."""
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), run_id='run-123')
+    reconstructed = TemporalRunContext.deserialize_run_context(TemporalRunContext.serialize_run_context(ctx), deps=None)
+
+    with pytest.raises(UserError, match='includes a capability emitting a `CapabilityEvent` from one of its own tools'):
+        await reconstructed.emit(TemporalCapabilityProgressEvent())
+
+
+async def test_payload_converter_rebuilds_adapter_when_an_event_class_registers_late() -> None:
+    """An adapter built before an event class was imported doesn't outlive its registration.
+
+    `event_family_schema` snapshots the registry, so a memoized adapter over a hint containing
+    `AgentStreamEvent` would keep decoding a later-registered class's events as `UnknownCustomEvent`
+    for the life of the worker, making decoding depend on import order.
+    """
+    temporal_payload_converter._type_adapter.cache_clear()  # pyright: ignore[reportPrivateUsage]
+    temporal_payload_converter.type_adapter(AgentStreamEvent)  # primed before the class below exists
+
+    @dataclass(kw_only=True)
+    class LateEvent(CustomEvent, name='temporal_late_registration'):
+        done: int
+
+    try:
+        payload = TypeAdapter[AgentStreamEvent](AgentStreamEvent).dump_python(LateEvent(done=1), mode='json')
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+            decoded = temporal_payload_converter.type_adapter(AgentStreamEvent).validate_python(payload)
+        assert isinstance(decoded, LateEvent)
+        assert decoded.done == 1
+    finally:
+        CUSTOM_EVENT_TYPES.pop('temporal_late_registration', None)
+
+
+async def test_unknown_custom_event_recovers_across_workers() -> None:
+    """A worker without the defining module keeps the payload intact for one that has it.
+
+    This is the documented cross-worker contract: an event that reaches a worker before (or without)
+    its module being imported degrades to `UnknownCustomEvent` rather than failing, and re-serializes
+    to the same wire bytes so the next hop recovers the typed event.
+    """
+
+    @dataclass(kw_only=True)
+    class CrossWorkerEvent(CustomEvent, name='temporal_cross_worker'):
+        step: str
+
+    emitting_worker = TypeAdapter[AgentStreamEvent](AgentStreamEvent)
+    wire = emitting_worker.dump_json(CrossWorkerEvent(step='one'))
+
+    CUSTOM_EVENT_TYPES.pop('temporal_cross_worker')
+    unaware_worker = TypeAdapter[AgentStreamEvent](AgentStreamEvent)
+    with pytest.warns(UserWarning, match="Unknown event name 'temporal_cross_worker'"):
+        degraded = unaware_worker.validate_json(wire)
+    assert isinstance(degraded, UnknownCustomEvent)
+    assert degraded.data == {'step': 'one'}
+    forwarded = unaware_worker.dump_json(degraded)
+
+    CUSTOM_EVENT_TYPES['temporal_cross_worker'] = CrossWorkerEvent
+    try:
+        recovered = TypeAdapter[AgentStreamEvent](AgentStreamEvent).validate_json(forwarded)
+        assert isinstance(recovered, CrossWorkerEvent)
+        assert recovered.step == 'one'
+    finally:
+        CUSTOM_EVENT_TYPES.pop('temporal_cross_worker', None)
 
 
 # Multi-Model Support Tests
@@ -1229,6 +1332,31 @@ def test_temporal_model_base_url_follows_active_model():
         assert temporal_model.base_url is None
 
 
+def test_temporal_model_context_window_follows_active_model():
+    """`context_window` resolves through `using_model()` like `profile` does.
+
+    Forwarding the wrapped default's would have `RunContext.context_window_used` measure a run on
+    the active model against the default model's window.
+    """
+    temporal_model = TemporalModel(
+        TestModel(model_name='default-model', profile={'context_window': 100}),
+        activity_name_prefix='test__context_window',
+        activity_config={'start_to_close_timeout': timedelta(seconds=60)},
+        deps_type=type(None),
+        models={'alt': TestModel(model_name='alt-model', profile={'context_window': 1000})},
+    )
+
+    assert temporal_model.context_window == 100
+
+    with temporal_model.using_model('alt'):
+        assert temporal_model.context_window == 1000
+
+    with temporal_model.using_model('openai:gpt-5'):
+        # An unregistered model ID resolves through profile inference, not the wrapped default's window.
+        assert temporal_model.context_window == infer_model_profile('openai:gpt-5').get('context_window')
+        assert temporal_model.context_window not in (None, 100)
+
+
 def test_temporal_model_model_id_follows_active_model():
     """`model_id` resolves through `using_model()` rather than reporting the wrapped default's.
 
@@ -1288,6 +1416,139 @@ async def test_temporal_model_request_outside_workflow():
 
     # Verify response comes from the wrapped TestModel
     assert any(isinstance(part, TextPart) and part.content == 'Direct model response' for part in response.parts)
+
+
+async def test_temporal_activities_manage_inferred_model_lifecycle(monkeypatch: pytest.MonkeyPatch) -> None:
+    events: list[str] = []
+
+    class TrackingModel(LifecycleTrackingModel):
+        def request_stream(self, *args: Any, **kwargs: Any) -> Any:
+            events.append('stream')
+            return super().request_stream(*args, **kwargs)
+
+        async def cancel_suspended_response(self, response: ModelResponse) -> None:
+            events.append('cancel')
+
+    async def handle_stream(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        events.append('handler')
+
+    temporal_model = TemporalModel(
+        TestModel(),
+        activity_name_prefix='test__inferred_lifecycle',
+        activity_config={'start_to_close_timeout': timedelta(seconds=60)},
+        deps_type=object,
+        event_stream_handler=handle_stream,
+    )
+
+    def infer_tracking_model(model_id: str, ctx: RunContext[object] | None) -> TrackingModel:
+        return TrackingModel(events, include_exit_exception=False)
+
+    monkeypatch.setattr(temporal_model, '_infer_model', infer_tracking_model)
+    deps = object()
+    ctx = RunContext[object](deps=deps, model=TestModel(), usage=RunUsage(), run_id='inferred-lifecycle')
+    params = _RequestParams(
+        messages=[ModelRequest.user_text_prompt('hello')],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+        serialized_run_context=TemporalRunContext.serialize_run_context(ctx),
+        model_id='rebuilt',
+    )
+
+    await ActivityEnvironment().run(temporal_model.request_activity, params, deps)
+    await ActivityEnvironment().run(
+        temporal_model.request_stream_activity,
+        params,
+        deps,  # pyright: ignore[reportArgumentType]
+    )
+    await ActivityEnvironment().run(
+        temporal_model.cancel_suspended_response_activity,
+        _ModelCancelParams(
+            response=ModelResponse(parts=[TextPart('paused')], state='suspended'),
+            model_id='rebuilt',
+            serialized_run_context=params.serialized_run_context,
+            deps=deps,
+        ),
+    )
+
+    assert events == [
+        'enter',
+        'request',
+        'exit',
+        'enter',
+        'stream',
+        'handler',
+        'exit',
+        'enter',
+        'cancel',
+        'exit',
+    ]
+
+
+async def test_temporal_activity_does_not_manage_registered_models() -> None:
+    class TrackingModel(LifecycleTrackingModel):
+        def request_stream(self, *args: Any, **kwargs: Any) -> Any:
+            self.events.append('stream')
+            return super().request_stream(*args, **kwargs)
+
+        async def cancel_suspended_response(self, response: ModelResponse) -> None:
+            self.events.append('cancel')
+
+    async def handle_stream(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        pass
+
+    events: list[str] = []
+    default = TrackingModel(events, include_exit_exception=False, custom_output_text='default')
+    registered = TrackingModel(events, include_exit_exception=False, custom_output_text='registered')
+    temporal_model = TemporalModel(
+        default,
+        activity_name_prefix='test__registered_lifecycle',
+        activity_config={'start_to_close_timeout': timedelta(seconds=60)},
+        deps_type=object,
+        models={'registered': registered},
+        event_stream_handler=handle_stream,
+    )
+    deps = object()
+    ctx = RunContext[object](deps=deps, model=default, usage=RunUsage(), run_id='registered-lifecycle')
+    params = _RequestParams(
+        messages=[ModelRequest.user_text_prompt('hello')],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+        serialized_run_context=TemporalRunContext.serialize_run_context(ctx),
+    )
+
+    # A `model_id` of `None` resolves to the agent default, which is registered too, so it must not
+    # be entered either.
+    await ActivityEnvironment().run(temporal_model.request_activity, params, deps)
+    assert events == ['request']
+
+    events = []
+    default.events = events
+    registered.events = events
+    params.model_id = 'registered'
+    await ActivityEnvironment().run(temporal_model.request_activity, params, deps)
+    assert events == ['request']
+
+    events = []
+    registered.events = events
+    await ActivityEnvironment().run(
+        temporal_model.request_stream_activity,
+        params,
+        deps,  # pyright: ignore[reportArgumentType]
+    )
+    assert events == ['stream']
+
+    events = []
+    registered.events = events
+    await ActivityEnvironment().run(
+        temporal_model.cancel_suspended_response_activity,
+        _ModelCancelParams(
+            response=ModelResponse(parts=[TextPart('paused')], state='suspended'),
+            model_id='registered',
+            serialized_run_context=params.serialized_run_context,
+            deps=deps,
+        ),
+    )
+    assert events == ['cancel']
 
 
 async def test_temporal_model_cancel_suspended_response_outside_workflow():
@@ -1634,12 +1895,12 @@ async def test_pydantic_ai_payload_converter_reuses_more_than_128_type_adapters(
     hints = [type(f'Result{i}', (BaseModel,), {'__annotations__': {'v': int}}) for i in range(129)]
 
     for hint in hints:
-        temporal_payload_converter._type_adapter(hint)  # pyright: ignore[reportPrivateUsage]
+        temporal_payload_converter.type_adapter(hint)
 
     misses_after_warmup = temporal_payload_converter._type_adapter.cache_info().misses  # pyright: ignore[reportPrivateUsage]
     for _ in range(3):
         for hint in hints:
-            temporal_payload_converter._type_adapter(hint)  # pyright: ignore[reportPrivateUsage]
+            temporal_payload_converter.type_adapter(hint)
 
     assert temporal_payload_converter._type_adapter.cache_info().misses == misses_after_warmup  # pyright: ignore[reportPrivateUsage]
 
@@ -1720,10 +1981,8 @@ def test_pydantic_ai_plugin_passes_pydantic_monty_through_sandbox() -> None:
     assert 'pydantic_monty' in configured_runner.restrictions.passthrough_modules
 
 
-async def test_pydantic_ai_plugin_runs_workflow_in_sandbox(
-    temporal_env: WorkflowEnvironment, temporal_port: int
-) -> None:
-    client = await Client.connect(f'localhost:{temporal_port}')
+async def test_pydantic_ai_plugin_runs_workflow_in_sandbox(temporal_target: str) -> None:
+    client = await Client.connect(temporal_target)
     async with Worker(
         client,
         task_queue=TASK_QUEUE,

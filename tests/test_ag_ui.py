@@ -23,7 +23,9 @@ from pydantic_ai import (
     BinaryContent,
     BinaryImage,
     CachePoint,
+    CapabilityEvent,
     CompactionPart,
+    CustomEvent as PydanticAICustomEvent,
     DocumentUrl,
     FilePart,
     FunctionToolCallEvent,
@@ -282,6 +284,7 @@ def test_emitted_event_surface_is_pinned() -> None:
     """
     assert _constructed_ag_ui_event_names() == snapshot(
         {
+            'AGUICustomEvent',
             'ActivitySnapshotEvent',
             'ReasoningEncryptedValueEvent',
             'ReasoningEndEvent',
@@ -313,7 +316,7 @@ async def run_and_collect_events(
     *run_inputs: RunAgentInput,
     deps: AgentDepsT = None,
     on_complete: OnCompleteFunc[BaseEvent] | None = None,
-    ag_ui_version: Literal['0.1.10', '0.1.13'] = '0.1.10',
+    ag_ui_version: Literal['0.1.10', '0.1.11'] = '0.1.10',
 ) -> list[dict[str, Any]]:
     events = list[dict[str, Any]]()
     for run_input in run_inputs:
@@ -683,7 +686,17 @@ async def test_run_stream_error_closes_open_native_tool_call() -> None:
     tool_start = next(e for e in events if e['type'] == 'TOOL_CALL_START')
     tool_end = next(e for e in events if e['type'] == 'TOOL_CALL_END')
     assert tool_end['toolCallId'] == tool_start['toolCallId']
-    assert event_types == snapshot(['RUN_STARTED', 'TOOL_CALL_START', 'TOOL_CALL_ARGS', 'TOOL_CALL_END', 'RUN_ERROR'])
+    assert event_types == snapshot(
+        [
+            'RUN_STARTED',
+            'TEXT_MESSAGE_START',
+            'TEXT_MESSAGE_END',
+            'TOOL_CALL_START',
+            'TOOL_CALL_ARGS',
+            'TOOL_CALL_END',
+            'RUN_ERROR',
+        ]
+    )
 
 
 async def test_run_stream_error_closes_open_tool_call() -> None:
@@ -722,7 +735,17 @@ async def test_run_stream_error_closes_open_tool_call() -> None:
     tool_start = next(e for e in events if e['type'] == 'TOOL_CALL_START')
     tool_end = next(e for e in events if e['type'] == 'TOOL_CALL_END')
     assert tool_end['toolCallId'] == tool_start['toolCallId']
-    assert event_types == snapshot(['RUN_STARTED', 'TOOL_CALL_START', 'TOOL_CALL_ARGS', 'TOOL_CALL_END', 'RUN_ERROR'])
+    assert event_types == snapshot(
+        [
+            'RUN_STARTED',
+            'TEXT_MESSAGE_START',
+            'TEXT_MESSAGE_END',
+            'TOOL_CALL_START',
+            'TOOL_CALL_ARGS',
+            'TOOL_CALL_END',
+            'RUN_ERROR',
+        ]
+    )
 
 
 async def test_multiple_messages() -> None:
@@ -858,11 +881,18 @@ async def test_tool_ag_ui() -> None:
                 'runId': (run_id := IsSameStr()),
             },
             {
+                'type': 'TEXT_MESSAGE_START',
+                'timestamp': IsInt(),
+                'messageId': (parent_message_id := IsSameStr()),
+                'role': 'assistant',
+            },
+            {'type': 'TEXT_MESSAGE_END', 'timestamp': IsInt(), 'messageId': parent_message_id},
+            {
                 'type': 'TOOL_CALL_START',
                 'timestamp': IsInt(),
                 'toolCallId': (tool_call_id := IsSameStr()),
                 'toolCallName': 'get_weather',
-                'parentMessageId': IsStr(),
+                'parentMessageId': parent_message_id,
             },
             {
                 'type': 'TOOL_CALL_ARGS',
@@ -1001,11 +1031,18 @@ async def test_tool_ag_ui_multiple() -> None:
                 'runId': (run_id := IsSameStr()),
             },
             {
+                'type': 'TEXT_MESSAGE_START',
+                'timestamp': IsInt(),
+                'messageId': (parent_message_id := IsSameStr()),
+                'role': 'assistant',
+            },
+            {'type': 'TEXT_MESSAGE_END', 'timestamp': IsInt(), 'messageId': parent_message_id},
+            {
                 'type': 'TOOL_CALL_START',
                 'timestamp': IsInt(),
                 'toolCallId': (tool_call_id := IsSameStr()),
                 'toolCallName': 'get_weather',
-                'parentMessageId': (parent_message_id := IsSameStr()),
+                'parentMessageId': parent_message_id,
             },
             {
                 'type': 'TOOL_CALL_ARGS',
@@ -1062,6 +1099,303 @@ async def test_tool_ag_ui_multiple() -> None:
             },
         ]
     )
+
+
+async def test_tool_only_response_announces_its_assistant_message() -> None:
+    """A response that opens with a tool call announces the message its tool calls parent to.
+
+    Before [#7527](https://github.com/pydantic/pydantic-ai/issues/7527) `parentMessageId` named a
+    message no event had started, so a client rebuilding history from the event stream alone had
+    nothing to attach the tool call to.
+
+    The announcement leaves the reconstructed message set unchanged: the pinned reducer's
+    `resolveOrCreateAssistantMessage` created that assistant message from `TOOL_CALL_START` alone
+    (case 3), and now resolves the announced one instead (case 1):
+    https://github.com/ag-ui-protocol/ag-ui/blob/11f03fa65c4fa22a8637d3f6e06e77d8c1b9ae78/sdks/typescript/packages/client/src/apply/default.ts
+    """
+
+    async def local_weather(location: str) -> str:
+        """Get the weather for a location."""
+        return f'Sunny in {location}'
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        if len(messages) == 1:
+            yield {0: DeltaToolCall(name='local_weather', json_args='{"location": "Paris"}')}
+        else:
+            yield 'Sunny in Paris'
+
+    agent = Agent(
+        model=FunctionModel(stream_function=stream_function),
+        tools=[local_weather],
+    )
+
+    run_input = create_input(
+        UserMessage(
+            id='msg_1',
+            content='What is the weather in Paris?',
+        ),
+    )
+    events = await run_and_collect_events(agent, run_input)
+
+    assert events == snapshot(
+        [
+            {
+                'type': 'RUN_STARTED',
+                'timestamp': IsInt(),
+                'threadId': (thread_id := IsSameStr()),
+                'runId': (run_id := IsSameStr()),
+            },
+            {
+                'type': 'TEXT_MESSAGE_START',
+                'timestamp': IsInt(),
+                'messageId': (message_id := IsSameStr()),
+                'role': 'assistant',
+            },
+            {'type': 'TEXT_MESSAGE_END', 'timestamp': IsInt(), 'messageId': message_id},
+            {
+                'type': 'TOOL_CALL_START',
+                'timestamp': IsInt(),
+                'toolCallId': (tool_call_id := IsSameStr()),
+                'toolCallName': 'local_weather',
+                'parentMessageId': message_id,
+            },
+            {
+                'type': 'TOOL_CALL_ARGS',
+                'timestamp': IsInt(),
+                'toolCallId': tool_call_id,
+                'delta': '{"location": "Paris"}',
+            },
+            {'type': 'TOOL_CALL_END', 'timestamp': IsInt(), 'toolCallId': tool_call_id},
+            {
+                'type': 'TOOL_CALL_RESULT',
+                'timestamp': IsInt(),
+                'messageId': IsStr(),
+                'toolCallId': tool_call_id,
+                'content': 'Sunny in Paris',
+                'role': 'tool',
+            },
+            {
+                'type': 'TEXT_MESSAGE_START',
+                'timestamp': IsInt(),
+                'messageId': (text_message_id := IsSameStr()),
+                'role': 'assistant',
+            },
+            {
+                'type': 'TEXT_MESSAGE_CONTENT',
+                'timestamp': IsInt(),
+                'messageId': text_message_id,
+                'delta': 'Sunny in Paris',
+            },
+            {'type': 'TEXT_MESSAGE_END', 'timestamp': IsInt(), 'messageId': text_message_id},
+            {
+                'type': 'RUN_FINISHED',
+                'timestamp': IsInt(),
+                'threadId': thread_id,
+                'runId': run_id,
+            },
+        ]
+    )
+
+    assert message_id != text_message_id
+
+    # The announced message replays as client history without contributing a part: `load_messages`
+    # skips its empty `content`, so the reconstructed response is the tool call alone. Relaxing that
+    # guard would put an empty `TextPart` in every tool-only response's reloaded history.
+    announced_id = next(event['messageId'] for event in events if event['type'] == 'TEXT_MESSAGE_START')
+    tool_call_start = next(event for event in events if event['type'] == 'TOOL_CALL_START')
+    replayed = AGUIAdapter.load_messages(
+        [
+            AssistantMessage(
+                id=announced_id,
+                content='',
+                tool_calls=[
+                    ToolCall(
+                        id=tool_call_start['toolCallId'],
+                        function=FunctionCall(name=tool_call_start['toolCallName'], arguments='{"location": "Paris"}'),
+                    )
+                ],
+            )
+        ]
+    )
+    assert [part for message in replayed for part in message.parts] == snapshot(
+        [
+            ToolCallPart(
+                tool_name='local_weather',
+                args='{"location": "Paris"}',
+                tool_call_id=tool_call_start['toolCallId'],
+            )
+        ]
+    )
+
+
+async def test_text_between_tool_calls_starts_a_new_parent_message() -> None:
+    """Text between two tool calls opens a new assistant message for the later call to parent.
+
+    This pins the composed path the "Assistant message identity" section of `docs/ui/ag-ui.md`
+    documents: text appearing after a tool call starts a new message, and any later tool calls
+    attach to that one instead of the message announced for the first call. The boundaries the
+    stream produces are checked against `AGUIAdapter.dump_messages` for the equivalent
+    `ModelResponse`, so streamed and frontend-loaded histories split text and tool calls
+    identically. That equivalence covers this split only: `dump_messages` also flushes on
+    reasoning, file and compaction parts, which the stream does not split on.
+
+    Fed through `transform_stream` rather than an `Agent` because a `StreamFunctionDef` yields
+    all text or all `DeltaToolCalls`, never a mix, so a tool call either side of a text part
+    inside one response cannot be expressed as a `FunctionModel` stream function.
+    """
+
+    async def event_generator():
+        yield PartStartEvent(index=0, part=ToolCallPart(tool_name='tool_a', args='{}', tool_call_id='call_0'))
+        yield PartEndEvent(
+            index=0, part=ToolCallPart(tool_name='tool_a', args='{}', tool_call_id='call_0'), next_part_kind='text'
+        )
+
+        yield PartStartEvent(index=1, part=TextPart(content='Note this. '), previous_part_kind='tool-call')
+        yield PartEndEvent(index=1, part=TextPart(content='Note this. '), next_part_kind='tool-call')
+
+        yield PartStartEvent(
+            index=2,
+            part=ToolCallPart(tool_name='tool_b', args='{}', tool_call_id='call_1'),
+            previous_part_kind='text',
+        )
+        yield PartEndEvent(
+            index=2, part=ToolCallPart(tool_name='tool_b', args='{}', tool_call_id='call_1'), next_part_kind=None
+        )
+
+        yield FunctionToolCallEvent(
+            part=ToolCallPart(tool_name='tool_a', args='{}', tool_call_id='call_0'),
+            args_valid=True,
+        )
+        yield FunctionToolCallEvent(
+            part=ToolCallPart(tool_name='tool_b', args='{}', tool_call_id='call_1'),
+            args_valid=True,
+        )
+
+        yield FunctionToolResultEvent(
+            part=ToolReturnPart(tool_name='tool_a', tool_call_id='call_0', content='A result')
+        )
+        yield FunctionToolResultEvent(
+            part=ToolReturnPart(tool_name='tool_b', tool_call_id='call_1', content='B result')
+        )
+
+    run_input = create_input(
+        UserMessage(
+            id='msg_1',
+            content='Call tool_a, add a note, then call tool_b',
+        ),
+    )
+    event_stream = AGUIEventStream(run_input=run_input)
+    events = [
+        json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    assert events == snapshot(
+        [
+            {
+                'type': 'RUN_STARTED',
+                'timestamp': IsInt(),
+                'threadId': (thread_id := IsSameStr()),
+                'runId': (run_id := IsSameStr()),
+            },
+            {
+                'type': 'TEXT_MESSAGE_START',
+                'timestamp': IsInt(),
+                'messageId': (first_message_id := IsSameStr()),
+                'role': 'assistant',
+            },
+            {'type': 'TEXT_MESSAGE_END', 'timestamp': IsInt(), 'messageId': first_message_id},
+            {
+                'type': 'TOOL_CALL_START',
+                'timestamp': IsInt(),
+                'toolCallId': 'call_0',
+                'toolCallName': 'tool_a',
+                'parentMessageId': first_message_id,
+            },
+            {'type': 'TOOL_CALL_ARGS', 'timestamp': IsInt(), 'toolCallId': 'call_0', 'delta': '{}'},
+            {'type': 'TOOL_CALL_END', 'timestamp': IsInt(), 'toolCallId': 'call_0'},
+            {
+                'type': 'TEXT_MESSAGE_START',
+                'timestamp': IsInt(),
+                'messageId': (second_message_id := IsSameStr()),
+                'role': 'assistant',
+            },
+            {
+                'type': 'TEXT_MESSAGE_CONTENT',
+                'timestamp': IsInt(),
+                'messageId': second_message_id,
+                'delta': 'Note this. ',
+            },
+            {'type': 'TEXT_MESSAGE_END', 'timestamp': IsInt(), 'messageId': second_message_id},
+            {
+                'type': 'TOOL_CALL_START',
+                'timestamp': IsInt(),
+                'toolCallId': 'call_1',
+                'toolCallName': 'tool_b',
+                'parentMessageId': second_message_id,
+            },
+            {'type': 'TOOL_CALL_ARGS', 'timestamp': IsInt(), 'toolCallId': 'call_1', 'delta': '{}'},
+            {'type': 'TOOL_CALL_END', 'timestamp': IsInt(), 'toolCallId': 'call_1'},
+            {
+                'type': 'TOOL_CALL_RESULT',
+                'timestamp': IsInt(),
+                'messageId': IsStr(),
+                'toolCallId': 'call_0',
+                'content': 'A result',
+                'role': 'tool',
+            },
+            {
+                'type': 'TOOL_CALL_RESULT',
+                'timestamp': IsInt(),
+                'messageId': IsStr(),
+                'toolCallId': 'call_1',
+                'content': 'B result',
+                'role': 'tool',
+            },
+            {
+                'type': 'RUN_FINISHED',
+                'timestamp': IsInt(),
+                'threadId': thread_id,
+                'runId': run_id,
+                **run_finished_outcome(),
+            },
+        ]
+    )
+
+    announced_ids = [event['messageId'] for event in events if event['type'] == 'TEXT_MESSAGE_START']
+    streamed_boundaries = [
+        (
+            ''.join(
+                event['delta']
+                for event in events
+                if event['type'] == 'TEXT_MESSAGE_CONTENT' and event['messageId'] == message_id
+            ),
+            [
+                event['toolCallId']
+                for event in events
+                if event['type'] == 'TOOL_CALL_START' and event['parentMessageId'] == message_id
+            ],
+        )
+        for message_id in announced_ids
+    ]
+    assert streamed_boundaries == snapshot([('', ['call_0']), ('Note this. ', ['call_1'])])
+    equivalent_response = ModelResponse(
+        parts=[
+            ToolCallPart(tool_name='tool_a', args='{}', tool_call_id='call_0'),
+            TextPart(content='Note this. '),
+            ToolCallPart(tool_name='tool_b', args='{}', tool_call_id='call_1'),
+        ]
+    )
+    # `content or ''` normalizes one asymmetry the announcement creates: `dump_messages` gives the
+    # tool-only message `content=None`, while announcing it makes a client materialize `content=''`.
+    # Both carry no text, and `load_messages` skips either, so the boundaries are what's compared.
+    assert streamed_boundaries == [
+        (message.content or '', [tool_call.id for tool_call in message.tool_calls or []])
+        for message in AGUIAdapter.dump_messages([equivalent_response])
+        if isinstance(message, AssistantMessage)
+    ]
 
 
 async def test_tool_ag_ui_parts() -> None:
@@ -1129,11 +1463,18 @@ async def test_tool_ag_ui_parts() -> None:
                 'runId': (run_id := IsSameStr()),
             },
             {
+                'type': 'TEXT_MESSAGE_START',
+                'timestamp': IsInt(),
+                'messageId': (parent_message_id := IsSameStr()),
+                'role': 'assistant',
+            },
+            {'type': 'TEXT_MESSAGE_END', 'timestamp': IsInt(), 'messageId': parent_message_id},
+            {
                 'type': 'TOOL_CALL_START',
                 'timestamp': IsInt(),
                 'toolCallId': (tool_call_id := IsSameStr()),
                 'toolCallName': 'get_weather',
-                'parentMessageId': IsStr(),
+                'parentMessageId': parent_message_id,
             },
             {
                 'type': 'TOOL_CALL_ARGS',
@@ -1241,11 +1582,18 @@ async def test_tool_local_single_event() -> None:
                 'runId': (run_id := IsSameStr()),
             },
             {
+                'type': 'TEXT_MESSAGE_START',
+                'timestamp': IsInt(),
+                'messageId': (parent_message_id := IsSameStr()),
+                'role': 'assistant',
+            },
+            {'type': 'TEXT_MESSAGE_END', 'timestamp': IsInt(), 'messageId': parent_message_id},
+            {
                 'type': 'TOOL_CALL_START',
                 'timestamp': IsInt(),
                 'toolCallId': (tool_call_id := IsSameStr()),
                 'toolCallName': 'send_snapshot',
-                'parentMessageId': IsStr(),
+                'parentMessageId': parent_message_id,
             },
             {'type': 'TOOL_CALL_ARGS', 'timestamp': IsInt(), 'toolCallId': tool_call_id, 'delta': '{}'},
             {'type': 'TOOL_CALL_END', 'timestamp': IsInt(), 'toolCallId': tool_call_id},
@@ -1320,11 +1668,18 @@ async def test_tool_local_multiple_events() -> None:
                 'runId': (run_id := IsSameStr()),
             },
             {
+                'type': 'TEXT_MESSAGE_START',
+                'timestamp': IsInt(),
+                'messageId': (parent_message_id := IsSameStr()),
+                'role': 'assistant',
+            },
+            {'type': 'TEXT_MESSAGE_END', 'timestamp': IsInt(), 'messageId': parent_message_id},
+            {
                 'type': 'TOOL_CALL_START',
                 'timestamp': IsInt(),
                 'toolCallId': (tool_call_id := IsSameStr()),
                 'toolCallName': 'send_custom',
-                'parentMessageId': IsStr(),
+                'parentMessageId': parent_message_id,
             },
             {'type': 'TOOL_CALL_ARGS', 'timestamp': IsInt(), 'toolCallId': tool_call_id, 'delta': '{}'},
             {'type': 'TOOL_CALL_END', 'timestamp': IsInt(), 'toolCallId': tool_call_id},
@@ -1398,11 +1753,18 @@ async def test_tool_local_parts() -> None:
                 'runId': (run_id := IsSameStr()),
             },
             {
+                'type': 'TEXT_MESSAGE_START',
+                'timestamp': IsInt(),
+                'messageId': (parent_message_id := IsSameStr()),
+                'role': 'assistant',
+            },
+            {'type': 'TEXT_MESSAGE_END', 'timestamp': IsInt(), 'messageId': parent_message_id},
+            {
                 'type': 'TOOL_CALL_START',
                 'timestamp': IsInt(),
                 'toolCallId': (tool_call_id := IsSameStr()),
                 'toolCallName': 'current_time',
-                'parentMessageId': IsStr(),
+                'parentMessageId': parent_message_id,
             },
             {'type': 'TOOL_CALL_ARGS', 'timestamp': IsInt(), 'toolCallId': tool_call_id, 'delta': '{}'},
             {'type': 'TOOL_CALL_END', 'timestamp': IsInt(), 'toolCallId': tool_call_id},
@@ -1463,11 +1825,18 @@ async def test_output_tool() -> None:
                 'runId': (run_id := IsSameStr()),
             },
             {
+                'type': 'TEXT_MESSAGE_START',
+                'timestamp': IsInt(),
+                'messageId': (parent_message_id := IsSameStr()),
+                'role': 'assistant',
+            },
+            {'type': 'TEXT_MESSAGE_END', 'timestamp': IsInt(), 'messageId': parent_message_id},
+            {
                 'type': 'TOOL_CALL_START',
                 'timestamp': IsInt(),
                 'toolCallId': (tool_call_id := IsSameStr()),
                 'toolCallName': 'final_result',
-                'parentMessageId': IsStr(),
+                'parentMessageId': parent_message_id,
             },
             {
                 'type': 'TOOL_CALL_ARGS',
@@ -1530,11 +1899,18 @@ async def test_output_type_pydantic_model_event_sequence() -> None:
                 'runId': (run_id := IsSameStr()),
             },
             {
+                'type': 'TEXT_MESSAGE_START',
+                'timestamp': IsInt(),
+                'messageId': (parent_message_id := IsSameStr()),
+                'role': 'assistant',
+            },
+            {'type': 'TEXT_MESSAGE_END', 'timestamp': IsInt(), 'messageId': parent_message_id},
+            {
                 'type': 'TOOL_CALL_START',
                 'timestamp': IsInt(),
                 'toolCallId': (tool_call_id := IsSameStr()),
                 'toolCallName': 'final_result',
-                'parentMessageId': IsStr(),
+                'parentMessageId': parent_message_id,
             },
             {
                 'type': 'TOOL_CALL_ARGS',
@@ -1657,7 +2033,7 @@ async def test_thinking() -> None:
     )
 
 
-@requires_ag_ui('0.1.13')
+@requires_ag_ui('0.1.11')
 async def test_thinking_with_signature() -> None:
     """Test that ReasoningEncryptedValueEvent is emitted with thinking metadata."""
 
@@ -1673,7 +2049,7 @@ async def test_thinking_with_signature() -> None:
         UserMessage(id='msg_1', content='Think about something'),
     )
 
-    events = await run_and_collect_events(agent, run_input, ag_ui_version='0.1.13')
+    events = await run_and_collect_events(agent, run_input, ag_ui_version='0.1.11')
 
     assert events == snapshot(
         [
@@ -1723,7 +2099,7 @@ async def test_thinking_with_signature() -> None:
     )
 
 
-@requires_ag_ui('0.1.13')
+@requires_ag_ui('0.1.11')
 async def test_thinking_consecutive_signatures() -> None:
     """Test that consecutive ThinkingParts each preserve their own metadata via separate REASONING blocks."""
 
@@ -1741,7 +2117,7 @@ async def test_thinking_consecutive_signatures() -> None:
         UserMessage(id='msg_1', content='Think deeply'),
     )
 
-    events = await run_and_collect_events(agent, run_input, ag_ui_version='0.1.13')
+    events = await run_and_collect_events(agent, run_input, ag_ui_version='0.1.11')
 
     assert events == snapshot(
         [
@@ -1864,11 +2240,11 @@ def test_reasoning_message_thinking_roundtrip() -> None:
     )
 
 
-@requires_ag_ui('0.1.13')
+@requires_ag_ui('0.1.11')
 async def test_reasoning_events_with_all_metadata() -> None:
     """Test that REASONING_* events emit encryptedValue with all metadata fields."""
     run_input = create_input(UserMessage(id='msg_1', content='test'))
-    event_stream = AGUIEventStream(run_input, accept=SSE_CONTENT_TYPE, ag_ui_version='0.1.13')
+    event_stream = AGUIEventStream(run_input, accept=SSE_CONTENT_TYPE, ag_ui_version='0.1.11')
 
     part = ThinkingPart(
         content='Thinking content',
@@ -2018,7 +2394,7 @@ def test_dump_load_roundtrip_thinking() -> None:
         ),
     ]
 
-    ag_ui_msgs = AGUIAdapter.dump_messages(original, ag_ui_version='0.1.13')
+    ag_ui_msgs = AGUIAdapter.dump_messages(original, ag_ui_version='0.1.11')
     reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
     _sync_timestamps(original, reloaded)
 
@@ -2109,7 +2485,7 @@ def test_dump_load_roundtrip_load_capability_invalid_args() -> None:
         ModelResponse(parts=[LoadCapabilityCallPart(tool_call_id='load-foobar', args='{"id": "foobar"}')]),
     ]
 
-    ag_ui_msgs = AGUIAdapter.dump_messages(original, ag_ui_version='0.1.13')
+    ag_ui_msgs = AGUIAdapter.dump_messages(original, ag_ui_version='0.1.11')
     reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
 
     reloaded_call = message_part(reloaded, LoadCapabilityCallPart)
@@ -2183,7 +2559,7 @@ def test_dump_omits_encrypted_value_without_tool_kind() -> None:
         ModelRequest(parts=[ToolReturnPart(tool_name='regular', tool_call_id='c1', content='ok')]),
     ]
 
-    ag_ui_msgs = AGUIAdapter.dump_messages(original, ag_ui_version='0.1.13')
+    ag_ui_msgs = AGUIAdapter.dump_messages(original, ag_ui_version='0.1.11')
 
     assistant_msg = ag_ui_msgs[0]
     assert isinstance(assistant_msg, AssistantMessage)
@@ -2209,7 +2585,7 @@ def test_dump_load_roundtrip_native_tool_search() -> None:
         ),
     ]
 
-    ag_ui_msgs = AGUIAdapter.dump_messages(original, ag_ui_version='0.1.13')
+    ag_ui_msgs = AGUIAdapter.dump_messages(original, ag_ui_version='0.1.11')
     reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
 
     assert parse_discovered_tools(reloaded) == {'refund_tool'}
@@ -2256,7 +2632,7 @@ def test_dump_load_roundtrip_non_success_outcome(
         ),
     ]
 
-    ag_ui_msgs = AGUIAdapter.dump_messages(original, ag_ui_version='0.1.13')
+    ag_ui_msgs = AGUIAdapter.dump_messages(original, ag_ui_version='0.1.11')
     tool_msg = next(msg for msg in ag_ui_msgs if isinstance(msg, ToolMessage))
     assert tool_msg.encrypted_value == f'{{"pydantic_ai": {{"outcome": "{outcome}"}}}}'
     assert tool_msg.error == (
@@ -2307,7 +2683,7 @@ def test_dump_load_roundtrip_native_tool_return_outcome() -> None:
         ),
     ]
 
-    reloaded = AGUIAdapter.load_messages(AGUIAdapter.dump_messages(original, ag_ui_version='0.1.13'))
+    reloaded = AGUIAdapter.load_messages(AGUIAdapter.dump_messages(original, ag_ui_version='0.1.11'))
     reloaded_return = next(iter_message_parts(reloaded, ModelResponse, NativeToolReturnPart))
     assert reloaded_return.outcome == 'failed'
 
@@ -2469,15 +2845,15 @@ def test_load_malformed_builtin_tool_call_id_degrades_to_plain() -> None:
     assert type(loaded[1].parts[0]) is ToolReturnPart
 
 
-@pytest.mark.parametrize('ag_ui_version', ['0.1.10', pytest.param('0.1.13', marks=requires_ag_ui('0.1.13'))])
+@pytest.mark.parametrize('ag_ui_version', ['0.1.10', pytest.param('0.1.11', marks=requires_ag_ui('0.1.11'))])
 async def test_run_stream_load_capability_tool_kind_encrypted_value(
-    ag_ui_version: Literal['0.1.10', '0.1.13'],
+    ag_ui_version: Literal['0.1.10', '0.1.11'],
 ) -> None:
     """Streamed `load_capability` calls carry `tool_kind` via `REASONING_ENCRYPTED_VALUE`.
 
     Clients build their `ToolCall` history from streamed events, echoing this back as
     `encrypted_value` — without it, streaming-built histories reload as plain parts.
-    The event doesn't exist before 0.1.13, so it's skipped there.
+    The event doesn't exist before 0.1.11, so it's skipped there.
     """
 
     async def stream_function(
@@ -2519,7 +2895,7 @@ async def test_run_stream_load_capability_tool_kind_encrypted_value(
             'toolCallName': 'load_capability',
             'parentMessageId': IsStr(),
         },
-        *([encrypted_value_event] if ag_ui_version == '0.1.13' else []),
+        *([encrypted_value_event] if ag_ui_version == '0.1.11' else []),
         {'type': 'TOOL_CALL_ARGS', 'timestamp': IsInt(), 'toolCallId': 'load-1', 'delta': '{"id": "refunds"}'},
         {'type': 'TOOL_CALL_END', 'timestamp': IsInt(), 'toolCallId': 'load-1'},
         {
@@ -2534,9 +2910,9 @@ async def test_run_stream_load_capability_tool_kind_encrypted_value(
     assert tool_events == expected
 
 
-@pytest.mark.parametrize('ag_ui_version', ['0.1.10', pytest.param('0.1.13', marks=requires_ag_ui('0.1.13'))])
+@pytest.mark.parametrize('ag_ui_version', ['0.1.10', pytest.param('0.1.11', marks=requires_ag_ui('0.1.11'))])
 async def test_run_stream_native_tool_search_tool_kind_encrypted_value(
-    ag_ui_version: Literal['0.1.10', '0.1.13'],
+    ag_ui_version: Literal['0.1.10', '0.1.11'],
 ) -> None:
     """Streamed native `tool_search` calls carry `tool_kind` via `REASONING_ENCRYPTED_VALUE`.
 
@@ -2544,7 +2920,7 @@ async def test_run_stream_native_tool_search_tool_kind_encrypted_value(
     (`provider_executed`) streaming path, which is a distinct code path. Clients build their
     `ToolCall` history from streamed events, echoing this back as `encrypted_value` — without
     it, streaming-built histories reload as plain parts and `parse_discovered_tools()` is empty
-    on resume. The event doesn't exist before 0.1.13, so it's skipped there.
+    on resume. The event doesn't exist before 0.1.11, so it's skipped there.
     """
 
     async def stream_function(
@@ -2588,7 +2964,7 @@ async def test_run_stream_native_tool_search_tool_kind_encrypted_value(
             'toolCallName': 'tool_search',
             'parentMessageId': IsStr(),
         },
-        *([encrypted_value_event] if ag_ui_version == '0.1.13' else []),
+        *([encrypted_value_event] if ag_ui_version == '0.1.11' else []),
         {'type': 'TOOL_CALL_ARGS', 'timestamp': IsInt(), 'toolCallId': builtin_id, 'delta': '{"queries": ["refund"]}'},
         {'type': 'TOOL_CALL_END', 'timestamp': IsInt(), 'toolCallId': builtin_id},
         {
@@ -2617,7 +2993,7 @@ def test_dump_load_roundtrip_multiple_thinking_parts() -> None:
         ),
     ]
 
-    ag_ui_msgs = AGUIAdapter.dump_messages(original, ag_ui_version='0.1.13')
+    ag_ui_msgs = AGUIAdapter.dump_messages(original, ag_ui_version='0.1.11')
     reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
     _sync_timestamps(original, reloaded)
 
@@ -3057,7 +3433,7 @@ def test_dump_load_roundtrip_interleaved_text_and_tools() -> None:
     )
 
 
-@requires_ag_ui('0.1.13')
+@requires_ag_ui('0.1.11')
 async def test_reasoning_events_empty_content_with_metadata() -> None:
     """Test REASONING_* events for ThinkingPart with no content but with metadata.
 
@@ -3065,7 +3441,7 @@ async def test_reasoning_events_empty_content_with_metadata() -> None:
     (no content was streamed) but encrypted metadata is present — e.g. redacted thinking.
     """
     run_input = create_input(UserMessage(id='msg_1', content='test'))
-    event_stream = AGUIEventStream(run_input, accept=SSE_CONTENT_TYPE, ag_ui_version='0.1.13')
+    event_stream = AGUIEventStream(run_input, accept=SSE_CONTENT_TYPE, ag_ui_version='0.1.11')
 
     part = ThinkingPart(
         content='',
@@ -3103,7 +3479,7 @@ async def test_thinking_roundtrip_anthropic(allow_model_requests: None, anthropi
     result = await agent.run('What is 1+1? Reply in one word.')
     original = result.all_messages()
 
-    ag_ui_msgs = AGUIAdapter.dump_messages(original, ag_ui_version='0.1.13')
+    ag_ui_msgs = AGUIAdapter.dump_messages(original, ag_ui_version='0.1.11')
     reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
     _sync_timestamps(original, reloaded)
 
@@ -3215,11 +3591,18 @@ async def test_tool_local_then_ag_ui() -> None:
                 'runId': (run_id := IsSameStr()),
             },
             {
+                'type': 'TEXT_MESSAGE_START',
+                'timestamp': IsInt(),
+                'messageId': (parent_message_id := IsSameStr()),
+                'role': 'assistant',
+            },
+            {'type': 'TEXT_MESSAGE_END', 'timestamp': IsInt(), 'messageId': parent_message_id},
+            {
                 'type': 'TOOL_CALL_START',
                 'timestamp': IsInt(),
                 'toolCallId': (first_tool_call_id := IsSameStr()),
                 'toolCallName': 'current_time',
-                'parentMessageId': (parent_message_id := IsSameStr()),
+                'parentMessageId': parent_message_id,
             },
             {'type': 'TOOL_CALL_ARGS', 'timestamp': IsInt(), 'toolCallId': first_tool_call_id, 'delta': '{}'},
             {'type': 'TOOL_CALL_END', 'timestamp': IsInt(), 'toolCallId': first_tool_call_id},
@@ -3459,11 +3842,18 @@ async def test_concurrent_runs() -> None:
                 'runId': (run_id := IsSameStr()),
             },
             {
+                'type': 'TEXT_MESSAGE_START',
+                'timestamp': IsInt(),
+                'messageId': (parent_message_id := IsSameStr()),
+                'role': 'assistant',
+            },
+            {'type': 'TEXT_MESSAGE_END', 'timestamp': IsInt(), 'messageId': parent_message_id},
+            {
                 'type': 'TOOL_CALL_START',
                 'timestamp': IsInt(),
                 'toolCallId': (tool_call_id := IsSameStr()),
                 'toolCallName': 'get_state',
-                'parentMessageId': IsStr(),
+                'parentMessageId': parent_message_id,
             },
             {'type': 'TOOL_CALL_END', 'timestamp': IsInt(), 'toolCallId': tool_call_id},
             {
@@ -4107,11 +4497,18 @@ async def test_builtin_tool_call() -> None:
                 'runId': (run_id := IsSameStr()),
             },
             {
+                'type': 'TEXT_MESSAGE_START',
+                'timestamp': IsInt(),
+                'messageId': (parent_message_id := IsSameStr()),
+                'role': 'assistant',
+            },
+            {'type': 'TEXT_MESSAGE_END', 'timestamp': IsInt(), 'messageId': parent_message_id},
+            {
                 'type': 'TOOL_CALL_START',
                 'timestamp': IsInt(),
                 'toolCallId': 'pyd_ai_builtin|function|search_1',
                 'toolCallName': 'web_search',
-                'parentMessageId': (parent_message_id := IsSameStr()),
+                'parentMessageId': parent_message_id,
             },
             {
                 'type': 'TOOL_CALL_ARGS',
@@ -4422,6 +4819,238 @@ async def test_file_part_emits_no_ag_ui_event():
     )
 
 
+@dataclass(kw_only=True)
+class AgUiProgressEvent(PydanticAICustomEvent, name='ag_ui_progress'):
+    payload: Any = None
+
+
+@dataclass(kw_only=True)
+class AgUiPassthroughEvent(PydanticAICustomEvent, name='ag_ui_passthrough'):
+    """Overrides `to_payload` so an AG-UI event payload is passed through to the frontend verbatim."""
+
+    event: Any = None
+
+    def to_payload(self) -> Any:
+        return self.event
+
+
+async def test_custom_event_maps_to_ag_ui_custom_event():
+    """A `CustomEvent` maps to an AG-UI `CustomEvent`, nesting `tool_call_id` alongside the payload when set."""
+
+    async def event_generator():
+        yield AgUiProgressEvent(payload={'pct': 50})
+        yield AgUiProgressEvent(payload={'pct': 100}, tool_call_id='call_1')
+
+    run_input = create_input(UserMessage(id='msg_1', content='go'))
+    event_stream = AGUIEventStream(run_input=run_input)
+    events = [
+        json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    assert events == snapshot(
+        [
+            {
+                'type': 'RUN_STARTED',
+                'timestamp': IsInt(),
+                'threadId': (thread_id := IsSameStr()),
+                'runId': (run_id := IsSameStr()),
+            },
+            {'type': 'CUSTOM', 'timestamp': IsInt(), 'name': 'ag_ui_progress', 'value': {'payload': {'pct': 50}}},
+            # Same value shape whether or not the event was emitted from inside a tool call: a
+            # frontend reading `value.<field>` must not fork on the emission site.
+            {'type': 'CUSTOM', 'timestamp': IsInt(), 'name': 'ag_ui_progress', 'value': {'payload': {'pct': 100}}},
+            {
+                'type': 'RUN_FINISHED',
+                'timestamp': IsInt(),
+                'threadId': thread_id,
+                'runId': run_id,
+                **run_finished_outcome(),
+            },
+        ]
+    )
+
+
+async def test_capability_event_is_not_forwarded():
+    """Capability coordination events are dropped by the AG-UI adapter by default."""
+
+    @dataclass(kw_only=True)
+    class AgUiCapabilityEvent(CapabilityEvent, namespace='ag_ui_test'):
+        value: int
+
+    async def event_generator():
+        yield AgUiCapabilityEvent(value=1, capability_id='test')
+
+    run_input = create_input(UserMessage(id='msg_1', content='go'))
+    event_stream = AGUIEventStream(run_input=run_input)
+    events = [
+        json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+    assert events == snapshot(
+        [
+            {
+                'type': 'RUN_STARTED',
+                'timestamp': IsInt(),
+                'threadId': (thread_id := IsSameStr()),
+                'runId': (run_id := IsSameStr()),
+            },
+            {
+                'type': 'RUN_FINISHED',
+                'timestamp': IsInt(),
+                'threadId': thread_id,
+                'runId': run_id,
+                **run_finished_outcome(),
+            },
+        ]
+    )
+
+
+async def test_capability_event_forwarded_by_subclass_override():
+    """A protocol adapter subclass can forward capability events by overriding `handle_capability_event`."""
+
+    @dataclass(kw_only=True)
+    class AgUiForwardedEvent(CapabilityEvent, namespace='ag_ui_forwarded'):
+        value: int
+
+    class ForwardingStream(AGUIEventStream[Any]):
+        async def handle_capability_event(self, event: CapabilityEvent) -> AsyncIterator[BaseEvent]:
+            yield CustomEvent(type=EventType.CUSTOM, name=event.kind, value={'capability_id': event.capability_id})
+
+    async def event_generator():
+        yield AgUiForwardedEvent(value=1, capability_id='test')
+
+    run_input = create_input(UserMessage(id='msg_1', content='go'))
+    event_stream = ForwardingStream(run_input=run_input)
+    events = [
+        json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+    assert [event for event in events if event['type'] == 'CUSTOM'] == snapshot(
+        [
+            {
+                'type': 'CUSTOM',
+                'timestamp': IsInt(),
+                'name': 'ag_ui_forwarded.ag_ui_forwarded',
+                'value': {'capability_id': 'test'},
+            }
+        ]
+    )
+
+
+async def test_typed_custom_event_maps_to_ag_ui_custom_event():
+    """A typed `CustomEvent` subclass maps its own fields as the AG-UI `CustomEvent` value."""
+
+    @dataclass(kw_only=True)
+    class AgUiSyncEvent(PydanticAICustomEvent, name='ag_ui_sync'):
+        done: int
+        total: int
+
+    async def event_generator():
+        yield AgUiSyncEvent(done=3, total=9)
+
+    run_input = create_input(UserMessage(id='msg_1', content='go'))
+    event_stream = AGUIEventStream(run_input=run_input)
+    events = [
+        json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    assert events == snapshot(
+        [
+            {
+                'type': 'RUN_STARTED',
+                'timestamp': IsInt(),
+                'threadId': (thread_id := IsSameStr()),
+                'runId': (run_id := IsSameStr()),
+            },
+            {'type': 'CUSTOM', 'timestamp': IsInt(), 'name': 'ag_ui_sync', 'value': {'done': 3, 'total': 9}},
+            {
+                'type': 'RUN_FINISHED',
+                'timestamp': IsInt(),
+                'threadId': thread_id,
+                'runId': run_id,
+                **run_finished_outcome(),
+            },
+        ]
+    )
+
+
+async def test_custom_event_with_ui_false_is_not_forwarded():
+    """A `CustomEvent` subclass declared `ui=False` never reaches the frontend."""
+
+    @dataclass(kw_only=True)
+    class AgUiInternalEvent(PydanticAICustomEvent, name='ag_ui_internal', ui=False):
+        done: int
+
+    @dataclass(kw_only=True)
+    class AgUiShownEvent(PydanticAICustomEvent, name='ag_ui_shown'):
+        done: int
+
+    async def event_generator():
+        yield AgUiInternalEvent(done=1)
+        yield AgUiShownEvent(done=2)
+
+    run_input = create_input(UserMessage(id='msg_1', content='go'))
+    event_stream = AGUIEventStream(run_input=run_input)
+    events = [
+        json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    assert events == snapshot(
+        [
+            {
+                'type': 'RUN_STARTED',
+                'timestamp': IsInt(),
+                'threadId': (thread_id := IsSameStr()),
+                'runId': (run_id := IsSameStr()),
+            },
+            {'type': 'CUSTOM', 'timestamp': IsInt(), 'name': 'ag_ui_shown', 'value': {'done': 2}},
+            {
+                'type': 'RUN_FINISHED',
+                'timestamp': IsInt(),
+                'threadId': thread_id,
+                'runId': run_id,
+                **run_finished_outcome(),
+            },
+        ]
+    )
+
+
+async def test_custom_event_passes_through_ag_ui_base_event():
+    """A `CustomEvent` whose payload is an AG-UI event is passed through verbatim."""
+
+    async def event_generator():
+        yield AgUiPassthroughEvent(event=StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot={'key': 'value'}))
+
+    run_input = create_input(UserMessage(id='msg_1', content='go'))
+    event_stream = AGUIEventStream(run_input=run_input)
+    events = [
+        json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    assert events == snapshot(
+        [
+            {
+                'type': 'RUN_STARTED',
+                'timestamp': IsInt(),
+                'threadId': (thread_id := IsSameStr()),
+                'runId': (run_id := IsSameStr()),
+            },
+            {'type': 'STATE_SNAPSHOT', 'timestamp': IsInt(), 'snapshot': {'key': 'value'}},
+            {
+                'type': 'RUN_FINISHED',
+                'timestamp': IsInt(),
+                'threadId': thread_id,
+                'runId': run_id,
+                **run_finished_outcome(),
+            },
+        ]
+    )
+
+
 async def test_event_stream_multiple_responses_with_tool_calls():
     async def event_generator():
         yield PartStartEvent(index=0, part=TextPart(content='Hello'))
@@ -4592,11 +5221,18 @@ async def test_event_stream_multiple_responses_with_tool_calls():
                 'role': 'tool',
             },
             {
+                'type': 'TEXT_MESSAGE_START',
+                'timestamp': IsInt(),
+                'messageId': (new_message_id := IsSameStr()),
+                'role': 'assistant',
+            },
+            {'type': 'TEXT_MESSAGE_END', 'timestamp': IsInt(), 'messageId': new_message_id},
+            {
                 'type': 'TOOL_CALL_START',
                 'timestamp': IsInt(),
                 'toolCallId': 'tool_call_3',
                 'toolCallName': 'tool_call_3',
-                'parentMessageId': (new_message_id := IsSameStr()),
+                'parentMessageId': new_message_id,
             },
             {'type': 'TOOL_CALL_ARGS', 'timestamp': IsInt(), 'toolCallId': 'tool_call_3', 'delta': '{}'},
             {
@@ -4703,9 +5339,13 @@ async def test_agent_multiple_responses_use_distinct_parent_message_ids() -> Non
     assert identity_events == snapshot(
         [
             {
+                'type': 'TEXT_MESSAGE_START',
+                'messageId': (first_response := IsSameStr()),
+            },
+            {
                 'type': 'TOOL_CALL_START',
                 'toolCallId': 'call-1',
-                'parentMessageId': IsStr(),
+                'parentMessageId': first_response,
             },
             {
                 'type': 'TOOL_CALL_RESULT',
@@ -4713,9 +5353,13 @@ async def test_agent_multiple_responses_use_distinct_parent_message_ids() -> Non
                 'messageId': IsStr(),
             },
             {
+                'type': 'TEXT_MESSAGE_START',
+                'messageId': (second_response := IsSameStr()),
+            },
+            {
                 'type': 'TOOL_CALL_START',
                 'toolCallId': 'call-2',
-                'parentMessageId': IsStr(),
+                'parentMessageId': second_response,
             },
             {
                 'type': 'TOOL_CALL_RESULT',
@@ -4729,10 +5373,10 @@ async def test_agent_multiple_responses_use_distinct_parent_message_ids() -> Non
         ]
     )
     emitted_ids = {
-        'first_response': identity_events[0]['parentMessageId'],
-        'first_result': identity_events[1]['messageId'],
-        'second_response': identity_events[2]['parentMessageId'],
-        'final_response': identity_events[4]['messageId'],
+        'first_response': identity_events[0]['messageId'],
+        'first_result': identity_events[2]['messageId'],
+        'second_response': identity_events[3]['messageId'],
+        'final_response': identity_events[6]['messageId'],
     }
     assert len(set(emitted_ids.values())) == 4
 
@@ -4836,11 +5480,18 @@ async def test_tool_call_start_args_are_emitted_raw():
                 'runId': (run_id := IsSameStr()),
             },
             {
+                'type': 'TEXT_MESSAGE_START',
+                'timestamp': IsInt(),
+                'messageId': (parent_message_id := IsSameStr()),
+                'role': 'assistant',
+            },
+            {'type': 'TEXT_MESSAGE_END', 'timestamp': IsInt(), 'messageId': parent_message_id},
+            {
                 'type': 'TOOL_CALL_START',
                 'timestamp': IsInt(),
                 'toolCallId': 'call_1',
                 'toolCallName': 'fragmented',
-                'parentMessageId': (parent_message_id := IsSameStr()),
+                'parentMessageId': parent_message_id,
             },
             {'type': 'TOOL_CALL_ARGS', 'timestamp': IsInt(), 'toolCallId': 'call_1', 'delta': '{"query": '},
             {'type': 'TOOL_CALL_ARGS', 'timestamp': IsInt(), 'toolCallId': 'call_1', 'delta': '"hello"}'},
@@ -5262,16 +5913,16 @@ def test_load_messages_builtin_tool_return_json_content_rehydrates() -> None:
     [
         pytest.param('0.1.10', snapshot([]), id='v010-drops-thinking'),
         pytest.param(
-            '0.1.13',
+            '0.1.11',
             snapshot(
                 [{'content': 'Deep thoughts...', 'encrypted_value': '{"signature": "sig_xyz"}', 'role': 'reasoning'}]
             ),
-            id='v013-includes-reasoning',
+            id='v011-includes-reasoning',
         ),
     ],
 )
 def test_dump_messages_thinking_version_gated(version: str, expected_reasoning: list[Any]) -> None:
-    """Test that dump_messages drops ThinkingPart at <0.1.13 and emits ReasoningMessage at >=0.1.13."""
+    """Test that dump_messages drops ThinkingPart at <0.1.11 and emits ReasoningMessage at >=0.1.11."""
     messages: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Think about this')]),
         ModelResponse(
@@ -5392,10 +6043,14 @@ async def test_stream_tool_return_files_roundtrip_to_history() -> None:
 def _client_messages_from_tool_events(events: list[dict[str, Any]]) -> list[Message]:
     """Build the client tool history needed to round-trip tool-result metadata.
 
-    The pinned reducer creates a content-only `ToolMessage` for `TOOL_CALL_RESULT`:
-    https://github.com/ag-ui-protocol/ag-ui/blob/11f03fa65c4fa22a8637d3f6e06e77d8c1b9ae78/sdks/typescript/packages/client/src/apply/default.ts#L439-L506
-    It then attaches `REASONING_ENCRYPTED_VALUE(subtype='message')` by message ID:
-    https://github.com/ag-ui-protocol/ag-ui/blob/11f03fa65c4fa22a8637d3f6e06e77d8c1b9ae78/sdks/typescript/packages/client/src/apply/default.ts#L1130-L1174
+    The assistant message carries `content=''` because the stream announces it with a
+    `TEXT_MESSAGE_START`, which the reducer materializes as `{id, role, content: ''}` before
+    resolving the tool call onto it. Building it without `content` would model the branch the
+    reducer took before that announcement existed.
+
+    The pinned reducer's `TOOL_CALL_RESULT` branch creates a content-only `ToolMessage`, and its
+    `REASONING_ENCRYPTED_VALUE` branch then attaches `subtype='message'` data by message ID:
+    https://github.com/ag-ui-protocol/ag-ui/blob/11f03fa65c4fa22a8637d3f6e06e77d8c1b9ae78/sdks/typescript/packages/client/src/apply/default.ts
     """
     start = next(event for event in events if event['type'] == 'TOOL_CALL_START')
     result = next(event for event in events if event['type'] == 'TOOL_CALL_RESULT')
@@ -5422,17 +6077,17 @@ def _client_messages_from_tool_events(events: list[dict[str, Any]]) -> list[Mess
         ):
             tool_message.encrypted_value = event['encryptedValue']
 
-    return [AssistantMessage(id=start['parentMessageId'], tool_calls=[tool_call]), tool_message]
+    return [AssistantMessage(id=start['parentMessageId'], content='', tool_calls=[tool_call]), tool_message]
 
 
 @pytest.mark.parametrize(
     'ag_ui_version,expected_outcome',
-    [('0.1.10', 'success'), pytest.param('0.1.13', 'failed', marks=requires_ag_ui('0.1.13'))],
+    [('0.1.10', 'success'), pytest.param('0.1.11', 'failed', marks=requires_ag_ui('0.1.11'))],
 )
 async def test_stream_tool_failed_outcome_roundtrip(
-    ag_ui_version: Literal['0.1.10', '0.1.13'], expected_outcome: Literal['success', 'failed']
+    ag_ui_version: Literal['0.1.10', '0.1.11'], expected_outcome: Literal['success', 'failed']
 ) -> None:
-    """A live function `ToolFailed` survives the event -> client history -> load round-trip on 0.1.13.
+    """A live function `ToolFailed` survives the event -> client history -> load round-trip on 0.1.11.
 
     Regression for https://github.com/pydantic/pydantic-ai/pull/5585 and
     https://github.com/pydantic/pydantic-ai/issues/5870. The legacy protocol has no message metadata
@@ -5467,12 +6122,12 @@ async def test_stream_tool_failed_outcome_roundtrip(
 
 @pytest.mark.parametrize(
     'ag_ui_version,expected_outcome',
-    [('0.1.10', 'success'), pytest.param('0.1.13', 'failed', marks=requires_ag_ui('0.1.13'))],
+    [('0.1.10', 'success'), pytest.param('0.1.11', 'failed', marks=requires_ag_ui('0.1.11'))],
 )
 async def test_stream_failed_builtin_tool_return_outcome_roundtrip(
-    ag_ui_version: Literal['0.1.10', '0.1.13'], expected_outcome: Literal['success', 'failed']
+    ag_ui_version: Literal['0.1.10', '0.1.11'], expected_outcome: Literal['success', 'failed']
 ) -> None:
-    """A streamed failed builtin return uses the same 0.1.13 message metadata carrier as #5585.
+    """A streamed failed builtin return uses the same 0.1.11 message metadata carrier as #5585.
 
     This covers the provider-executed path from https://github.com/pydantic/pydantic-ai/issues/5870;
     the legacy content-only result intentionally reloads as `outcome='success'`.
@@ -5552,11 +6207,62 @@ async def test_thinking_events_v010_empty_content() -> None:
     assert events == []
 
 
-@requires_ag_ui('0.1.13')
-async def test_thinking_delta_v013() -> None:
-    """Test v0.1.13 REASONING_* events emitted via handle_thinking_delta."""
+@pytest.mark.parametrize(
+    'ag_ui_version,expected_types',
+    [
+        (
+            '0.1.10',
+            snapshot(
+                [
+                    'THINKING_START',
+                    'THINKING_TEXT_MESSAGE_START',
+                    'THINKING_TEXT_MESSAGE_CONTENT',
+                    'THINKING_TEXT_MESSAGE_END',
+                    'THINKING_END',
+                ]
+            ),
+        ),
+        pytest.param(
+            '0.1.11',
+            snapshot(
+                [
+                    'REASONING_START',
+                    'REASONING_MESSAGE_START',
+                    'REASONING_MESSAGE_CONTENT',
+                    'REASONING_MESSAGE_END',
+                    'REASONING_ENCRYPTED_VALUE',
+                    'REASONING_END',
+                ]
+            ),
+            marks=requires_ag_ui('0.1.11'),
+        ),
+    ],
+)
+async def test_thinking_event_family_boundary(
+    ag_ui_version: Literal['0.1.10', '0.1.11'], expected_types: list[str]
+) -> None:
+    """The event family switches at exactly `REASONING_VERSION`; these are the versions either side of it.
+
+    Every other test here pins one version and asserts one family, so none of them says where the
+    boundary *is*. That gap is how `REASONING_VERSION` sat at 0.1.13 for months while the whole
+    `REASONING_*` surface had shipped in 0.1.11 — see #7140. It also shows what 0.1.11 was missing:
+    `REASONING_ENCRYPTED_VALUE` is the only carrier for the signature, and `THINKING_*` has none.
+    """
     run_input = create_input(UserMessage(id='msg_1', content='test'))
-    event_stream = AGUIEventStream(run_input, accept=SSE_CONTENT_TYPE, ag_ui_version='0.1.13')
+    event_stream = AGUIEventStream(run_input, accept=SSE_CONTENT_TYPE, ag_ui_version=ag_ui_version)
+
+    part = ThinkingPart(content='Some thoughts', signature='sig_abc')
+    events = [e async for e in event_stream.handle_thinking_start(part)]
+    events.extend([e async for e in event_stream.handle_thinking_end(part)])
+
+    assert [e.model_dump()['type'] for e in events] == expected_types
+
+
+@requires_ag_ui('0.1.11')
+async def test_thinking_delta_v011() -> None:
+    """Test v0.1.11 REASONING_* events emitted via handle_thinking_delta."""
+    run_input = create_input(UserMessage(id='msg_1', content='test'))
+    event_stream = AGUIEventStream(run_input, accept=SSE_CONTENT_TYPE, ag_ui_version='0.1.11')
 
     start_part = ThinkingPart(content='')
     events: list[BaseEvent] = [e async for e in event_stream.handle_thinking_start(start_part)]
@@ -5574,11 +6280,11 @@ async def test_thinking_delta_v013() -> None:
     )
 
 
-@requires_ag_ui('0.1.13')
-async def test_thinking_end_v013_no_content_no_metadata() -> None:
-    """Test v0.1.13 early return when ThinkingPart has no content and no encrypted metadata."""
+@requires_ag_ui('0.1.11')
+async def test_thinking_end_v011_no_content_no_metadata() -> None:
+    """Test v0.1.11 early return when ThinkingPart has no content and no encrypted metadata."""
     run_input = create_input(UserMessage(id='msg_1', content='test'))
-    event_stream = AGUIEventStream(run_input, accept=SSE_CONTENT_TYPE, ag_ui_version='0.1.13')
+    event_stream = AGUIEventStream(run_input, accept=SSE_CONTENT_TYPE, ag_ui_version='0.1.11')
 
     part = ThinkingPart(content='')
 
@@ -5588,11 +6294,11 @@ async def test_thinking_end_v013_no_content_no_metadata() -> None:
     assert events == []
 
 
-@requires_ag_ui('0.1.13')
-async def test_thinking_delta_v013_after_content_start() -> None:
-    """Test v0.1.13 delta skips START/MESSAGE_START when reasoning already started."""
+@requires_ag_ui('0.1.11')
+async def test_thinking_delta_v011_after_content_start() -> None:
+    """Test v0.1.11 delta skips START/MESSAGE_START when reasoning already started."""
     run_input = create_input(UserMessage(id='msg_1', content='test'))
-    event_stream = AGUIEventStream(run_input, accept=SSE_CONTENT_TYPE, ag_ui_version='0.1.13')
+    event_stream = AGUIEventStream(run_input, accept=SSE_CONTENT_TYPE, ag_ui_version='0.1.11')
 
     start_part = ThinkingPart(content='initial')
     events = [e async for e in event_stream.handle_thinking_start(start_part)]
@@ -5648,11 +6354,11 @@ async def test_thinking_end_v010_with_content() -> None:
     )
 
 
-@requires_ag_ui('0.1.13')
-async def test_thinking_end_v013_no_encrypted_metadata() -> None:
-    """Test v0.1.13 end skips encrypted_value event when part has no signature or metadata."""
+@requires_ag_ui('0.1.11')
+async def test_thinking_end_v011_no_encrypted_metadata() -> None:
+    """Test v0.1.11 end skips encrypted_value event when part has no signature or metadata."""
     run_input = create_input(UserMessage(id='msg_1', content='test'))
-    event_stream = AGUIEventStream(run_input, accept=SSE_CONTENT_TYPE, ag_ui_version='0.1.13')
+    event_stream = AGUIEventStream(run_input, accept=SSE_CONTENT_TYPE, ag_ui_version='0.1.11')
 
     part = ThinkingPart(content='text')
     events = [e async for e in event_stream.handle_thinking_start(part)]
@@ -5674,11 +6380,11 @@ async def test_thinking_end_v013_no_encrypted_metadata() -> None:
 # region: Coverage — encrypted_metadata branch gap
 
 
-@requires_ag_ui('0.1.13')
+@requires_ag_ui('0.1.11')
 async def test_thinking_encrypted_metadata_partial_fields() -> None:
     """Test thinking_encrypted_metadata with signature but no provider_name."""
     run_input = create_input(UserMessage(id='msg_1', content='test'))
-    event_stream = AGUIEventStream(run_input, accept=SSE_CONTENT_TYPE, ag_ui_version='0.1.13')
+    event_stream = AGUIEventStream(run_input, accept=SSE_CONTENT_TYPE, ag_ui_version='0.1.11')
 
     part = ThinkingPart(content='Thoughts', signature='sig_only')
 
@@ -6602,7 +7308,7 @@ def test_build_run_input_reports_remaining_errors_after_skipping() -> None:
     )
 
 
-@requires_ag_ui('0.1.13')
+@requires_ag_ui('0.1.11')
 def test_reasoning_message_start_role_matches_installed_model() -> None:
     """The `role` we put on `ReasoningMessageStartEvent` must be the literal the install accepts.
 
@@ -7447,7 +8153,7 @@ async def test_run_finished_no_outcome_when_sdk_lacks_interrupts(monkeypatch: py
     assert 'outcome' not in run_finished
 
 
-@requires_ag_ui('0.1.13')
+@requires_ag_ui('0.1.11')
 async def test_run_cancelled_finishes_without_error_or_outcome() -> None:
     agent = Agent(model=TestModel())
 
@@ -7464,6 +8170,8 @@ async def test_run_cancelled_finishes_without_error_or_outcome() -> None:
     assert event_types == snapshot(
         [
             'RUN_STARTED',
+            'TEXT_MESSAGE_START',
+            'TEXT_MESSAGE_END',
             'TOOL_CALL_START',
             'TOOL_CALL_ARGS',
             'TOOL_CALL_END',

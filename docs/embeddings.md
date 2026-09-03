@@ -36,7 +36,7 @@ async def main():
     #> Embedded 3 documents
 ```
 
-_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 !!! tip "Queries vs Documents"
     Some embedding models optimize differently for queries and documents. Use
@@ -75,7 +75,7 @@ async def main():
     #> Cost: $0.000000
 ```
 
-_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 ## Choosing a model
 
@@ -184,7 +184,7 @@ async def main():
     #> 1536
 ```
 
-_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 See [OpenAI's embedding models](https://platform.openai.com/docs/guides/embeddings) for available models.
 
@@ -208,7 +208,7 @@ async def main():
     #> 256
 ```
 
-_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 #### OpenAI-Compatible Providers {#openai-compatible}
 
@@ -252,7 +252,10 @@ from pydantic_ai import Embedder
 
 embedder = Embedder('azure:text-embedding-3-small')
 embedder = Embedder('ollama:nomic-embed-text')
+embedder = Embedder('vllm:intfloat/e5-mistral-7b-instruct')
 ```
+
+The `vllm:` shorthand uses `VLLM_BASE_URL` and, for authenticated servers, `VLLM_API_KEY`. The server must be running an [embedding model supported by vLLM](https://docs.vllm.ai/en/stable/serving/online_serving/openai_compatible_server/#embeddings-api).
 
 See [OpenAI-compatible Models](models/openai.md#openai-compatible-models) for the full list of supported providers.
 
@@ -290,7 +293,7 @@ async def main():
     #> 3072
 ```
 
-_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 See the [Google Embeddings documentation](https://ai.google.dev/gemini-api/docs/embeddings) for available models.
 
@@ -336,7 +339,7 @@ async def main():
     #> 768
 ```
 
-_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 #### Task Conditioning
 
@@ -411,7 +414,7 @@ async def main():
     #> 1024
 ```
 
-_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 See the [Cohere Embed documentation](https://docs.cohere.com/docs/cohere-embed) for available models.
 
@@ -467,7 +470,7 @@ async def main():
     #> 1024
 ```
 
-_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 See the [VoyageAI Embeddings documentation](https://docs.voyageai.com/docs/embeddings) for available models.
 
@@ -716,7 +719,7 @@ async def main():
     #> 768
 ```
 
-_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 [`lightonai/DenseOn`](https://huggingface.co/lightonai/DenseOn) is a strong recent 149M-parameter general-purpose model that encodes queries and documents asymmetrically: [`embed_query()`][pydantic_ai.embeddings.Embedder.embed_query] and [`embed_documents()`][pydantic_ai.embeddings.Embedder.embed_documents] automatically apply the model's `query:` / `document:` prompts. See the [Sentence Transformers pretrained models](https://www.sbert.net/docs/sentence_transformer/pretrained_models.html) documentation and the [MTEB leaderboard](https://huggingface.co/spaces/mteb/leaderboard) for more options; see also [Choosing a model](#choosing-a-model) above.
 
@@ -791,7 +794,7 @@ async def main():
     #> 256
 ```
 
-_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 ## Token Counting
 
@@ -817,7 +820,7 @@ async def main():
     #> Max tokens: 1024
 ```
 
-_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 ## Testing
 
@@ -844,7 +847,7 @@ async def test_my_rag_system():
 
 Setting [`ALLOW_MODEL_REQUESTS`][pydantic_ai.models.ALLOW_MODEL_REQUESTS] to `False` also blocks embedding requests, so an embedder you forgot to override raises instead of quietly calling the provider. [`TestEmbeddingModel`][pydantic_ai.embeddings.TestEmbeddingModel] and [`SentenceTransformerEmbeddingModel`][pydantic_ai.embeddings.sentence_transformers.SentenceTransformerEmbeddingModel] are unaffected, as neither reaches a provider.
 
-This covers [`count_tokens()`][pydantic_ai.embeddings.Embedder.count_tokens] as well, but only where tokenization happens server-side: Google and Cohere count tokens through an API call and are blocked, while OpenAI tokenizes locally with `tiktoken` and is not.
+This also covers [`count_tokens()`][pydantic_ai.embeddings.Embedder.count_tokens], but only when tokenization happens server-side: Google and Cohere count tokens through an API call and are blocked, while OpenAI tokenizes locally with `tiktoken`, so its token counting is not blocked.
 
 ## Instrumentation
 
