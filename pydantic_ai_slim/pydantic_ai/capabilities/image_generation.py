@@ -102,8 +102,9 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
     support it, pass an `ImageGenerator` or `ImageGenerationModel` to `local` to use
     the direct image generation API as a fallback.
 
-    The existing `fallback_model` path delegates to a subagent running an
-    image-capable conversational model and is preserved for backwards compatibility.
+    The `fallback_model` path is the other way to cover such a model: it runs an additional
+    agent on an image-capable conversational model, so the image comes from that model's
+    native `ImageGenerationTool`. Use it when you want those native tool semantics.
 
     Portable `dimensions` and `aspect_ratio` settings are applied to the direct fallback
     using `ImageGenerationSettings`. Other fields configure the native
@@ -535,7 +536,7 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         return kwargs, ignored
 
     def _image_gen_kwargs(self) -> dict[str, Any]:
-        """Collect settings supported by the legacy `ImageGenerationTool` path."""
+        """Collect settings supported by the native `ImageGenerationTool` path."""
         kwargs: dict[str, Any] = {}
         if self.background is not None:
             kwargs['background'] = self.background

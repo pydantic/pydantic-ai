@@ -201,7 +201,7 @@ From simple typed data extraction to complex, long-running multi-agent collabora
 
 === "Image generation"
 
-    Ask for an image and make it the run's typed [output](output.md):
+    Generate an image with a dedicated image model, no agent run required:
 
     ```bash
     uv add pydantic-ai
@@ -210,14 +210,14 @@ From simple typed data extraction to complex, long-running multi-agent collabora
     ```python {title="logo_generation.py"}
     from pathlib import Path
 
-    from pydantic_ai import Agent, BinaryImage
+    from pydantic_ai import ImageGenerator
 
-    agent = Agent('openai:gpt-5.6-sol', output_type=BinaryImage)
-    result = agent.run_sync('Generate a minimalist logo for a coffee shop called Extract.')
-    Path('logo.png').write_bytes(result.output.data)
+    generator = ImageGenerator('openai:gpt-image-2')
+    result = generator.generate_sync('A minimalist logo for a coffee shop called Extract.')
+    Path('logo.png').write_bytes(result.image.data)
     ```
 
-    [Provider-native generation](native-tools.md#image-generation-tool) on models that support it (like this one), a [subagent fallback](capabilities/image-generation.md) you can configure for the rest, and a [standalone image API](image-generation.md) for when your application decides.
+    That [standalone image API](image-generation.md) is for when your application decides; when an agent run decides, there is [provider-native generation](native-tools.md#image-generation-tool) with `output_type=BinaryImage` for a typed image [output](output.md#image-output), and the [`ImageGeneration` capability](capabilities/image-generation.md) with its fallbacks for models that generate no images of their own.
 
     **Build this →** [Image Generation](image-generation.md)
 

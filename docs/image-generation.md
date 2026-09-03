@@ -44,31 +44,26 @@ See [Providers](#providers) for the install group and environment variable each 
 
 ## Choosing a model
 
-Every [`KnownImageGenerationModelName`][pydantic_ai.images.KnownImageGenerationModelName] is listed below. Any other
-model name the provider accepts also works: an unrecognized name is passed through, so a newly released model needs no
-Pydantic AI release. The exceptions are `dall-e-2` and `dall-e-3`, which are
-[rejected on construction](#output-geometry). Check the
-[OpenAI](https://developers.openai.com/api/docs/guides/image-generation),
-[Gemini](https://ai.google.dev/gemini-api/docs/image-generation), and
-[xAI](https://docs.x.ai/developers/model-capabilities/images/generation) documentation for what each model costs and
-does best.
+Three model families generate images:
 
-| Provider | Models |
-| --- | --- |
-| OpenAI | `openai:gpt-image-2`, `openai:gpt-image-1.5`, `openai:gpt-image-1`, `openai:gpt-image-1-mini` |
-| Google Gemini API | `google:gemini-3.1-flash-image`, `google:gemini-3.1-flash-lite-image`, `google:gemini-3-pro-image`, `google:gemini-2.5-flash-image` |
-| Google Cloud (Vertex AI) | The same four Gemini models under the `google-cloud:` prefix, or `gateway/google:` through the [Pydantic AI Gateway](gateway.md) |
-| xAI | `xai:grok-imagine-image`, `xai:grok-imagine-image-2.0`, `xai:grok-imagine-image-quality` |
+- OpenAI's GPT Image family through the
+  [Images API](https://developers.openai.com/api/docs/guides/image-generation), under the `openai:` prefix. `dall-e-2`
+  and `dall-e-3` are the exception: they are [rejected](#output-geometry) with
+  [`UserError`][pydantic_ai.exceptions.UserError] as soon as the model is resolved.
+- Google's [Gemini image models](https://ai.google.dev/gemini-api/docs/image-generation), under `google:` on the Gemini
+  Developer API and under `google-cloud:` on Vertex AI, or `gateway/google:` through the
+  [Pydantic AI Gateway](gateway.md).
+- xAI's [Grok Imagine image models](https://docs.x.ai/developers/model-capabilities/images/generation), under the `xai:`
+  prefix.
 
-Some listed names are already on their providers' retirement clocks: OpenAI shuts down `gpt-image-1` on 2026-10-23 and
-`gpt-image-1.5` and `gpt-image-1-mini` on 2026-12-01, Google shuts down `gemini-2.5-flash-image` on 2026-10-02, and from
-2026-11-02 xAI redirects `grok-imagine-image-quality` to `grok-imagine-image-2.0` at its `low` quality rate. They stay
-listed because they still resolve today; for new work prefer `gpt-image-2`, the Gemini 3.1 image models, and
-`grok-imagine-image-2.0`.
+The provider validates the model name, so any current model in one of those families works, including one released after
+the Pydantic AI version you are on. [`KnownImageGenerationModelName`][pydantic_ai.images.KnownImageGenerationModelName]
+carries the names Pydantic AI recognizes for autocompletion; any other name is passed through unchanged. Check each
+provider's documentation for what its models cost and do best.
 
-The exact shapes each family can produce differ, so check
-[Canonical Dimensions for `aspect_ratio`](#canonical-dimensions-for-aspect_ratio) before committing to a model for a
-fixed layout.
+The exact shapes each family can produce differ, and the portable geometry settings are mapped per model, so check
+[Output Geometry](#output-geometry) and [Canonical Dimensions for `aspect_ratio`](#canonical-dimensions-for-aspect_ratio)
+before committing to a model for a fixed layout.
 
 ## Editing Images
 

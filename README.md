@@ -187,7 +187,7 @@ class ResearchWorkflow(PydanticAIWorkflow):
 
 ### Image generation
 
-Ask for an image and make it the run's typed [output](https://pydantic.dev/docs/ai/core-concepts/output/):
+Generate an image with a dedicated image model, no agent run required:
 
 ```bash
 uv add pydantic-ai
@@ -196,14 +196,14 @@ uv add pydantic-ai
 ```python
 from pathlib import Path
 
-from pydantic_ai import Agent, BinaryImage
+from pydantic_ai import ImageGenerator
 
-agent = Agent('openai:gpt-5.6-sol', output_type=BinaryImage)
-result = agent.run_sync('Generate a minimalist logo for a coffee shop called Extract.')
-Path('logo.png').write_bytes(result.output.data)
+generator = ImageGenerator('openai:gpt-image-2')
+result = generator.generate_sync('A minimalist logo for a coffee shop called Extract.')
+Path('logo.png').write_bytes(result.image.data)
 ```
 
-[Provider-native generation](https://pydantic.dev/docs/ai/tools-toolsets/native-tools/#image-generation-tool) on models that support it (like this one), a [subagent fallback](https://pydantic.dev/docs/ai/capabilities/image-generation/) you can configure for the rest, and a [standalone image API](https://pydantic.dev/docs/ai/guides/image-generation/) for when your application decides.
+That [standalone image API](https://pydantic.dev/docs/ai/guides/image-generation/) is for when your application decides; when an agent run decides, there is [provider-native generation](https://pydantic.dev/docs/ai/tools-toolsets/native-tools/#image-generation-tool) with `output_type=BinaryImage` for a typed image [output](https://pydantic.dev/docs/ai/core-concepts/output/#image-output), and the [`ImageGeneration` capability](https://pydantic.dev/docs/ai/capabilities/image-generation/) with its fallbacks for models that generate no images of their own.
 
 **Build this →** [Image Generation](https://pydantic.dev/docs/ai/guides/image-generation/)
 
