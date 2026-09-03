@@ -65,7 +65,7 @@ class _DirectImageGenerationTool:
 
     async def __call__(self, prompt: str) -> BinaryImage:
         if self.action == 'edit':
-            # `_validate_direct_settings` already rejected this at construction when
+            # `ImageGeneration.__post_init__` already rejected this at construction when
             # `native=False`. With native enabled the native tool can honor the edit, so whether it
             # is unserviceable is only known once the model has dropped the native tool and called
             # this one instead.
@@ -127,12 +127,14 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
     ) = None
     """Configure the local fallback tool.
 
-    Adds two shapes to the ones [`NativeOrLocalTool`][pydantic_ai.capabilities.NativeOrLocalTool]
-    accepts: an [`ImageGenerator`][pydantic_ai.images.ImageGenerator] or an
+    Besides the `Tool`, toolset and callable shapes
+    [`NativeOrLocalTool`][pydantic_ai.capabilities.NativeOrLocalTool] accepts, takes an
+    [`ImageGenerator`][pydantic_ai.images.ImageGenerator] or an
     [`ImageGenerationModel`][pydantic_ai.images.ImageGenerationModel], which generate through the
-    direct image API and which a `'provider:model'` string also resolves to. Either is kept as
-    declared; the `generate_image` tool is derived from it and the capability's settings each time
-    the toolset is requested.
+    direct image API, or a `'provider:model'` string that resolves to an `ImageGenerator`. Any other
+    string and `local=True` raise `UserError`: there is no named local strategy. The generator is
+    kept as declared; the `generate_image` tool is derived from it and the capability's settings
+    each time the toolset is requested.
     """
 
     fallback_model: ImageGenerationFallbackModel
@@ -337,7 +339,33 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
             self.local = ImageGenerator(self.local)  # pyright: ignore[reportIncompatibleVariableOverride]
 
         if self._has_direct_generator:
-            self._validate_direct_settings()
+            # Reject at construction what only the direct generator could have served.
+            #
+            # The direct model rejects the geometry pair on every `generate` call, but a pair the
+            # user set on the capability himself is already decided here, so it fails at construction
+            # rather than at the first `generate_image` call. Ungated by `native`: whichever path a
+            # request takes, the settings the generator would carry are contradictory.
+            if self.dimensions is not None and self.aspect_ratio is not None:
+                raise UserError(DIMENSIONS_ASPECT_RATIO_CONFLICT)
+            # `native=False` is the one configuration whose routing is settled here: the direct
+            # generator is the only implementation, so an `action='edit'` it cannot serve and the
+            # native-only settings it cannot apply are both decidable now. Everywhere else the native
+            # tool is built too, carries every one of those settings, and supersedes the generator per
+            # request in `models.resolve_request_tools` — reporting them as dropped would be wrong for
+            # exactly the configurations that apply them. The request that does drop them warns
+            # instead, from the prepare function `get_toolset` installs.
+            # `_DirectImageGenerationTool.__call__` still rejects the edit action, at the point where
+            # the direct tool is provably the one running.
+            if self.native is False:
+                if self.action == 'edit':
+                    raise UserError(_EDIT_ACTION_UNSUPPORTED)
+                if native_only := self._native_only_settings():
+                    # user → `__init__` → here → `warn`; `from_spec` adds a frame and so lands one short.
+                    warnings.warn(
+                        _NATIVE_ONLY_SETTINGS_DROPPED.format(settings=', '.join(native_only)),
+                        UserWarning,
+                        stacklevel=3,
+                    )
 
         # The native tool's kwargs are collected once for the default native tool and again for the
         # `fallback_model` subagent's copy, so the notice lives here to fire exactly once.
@@ -348,7 +376,7 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
             # `native=False` with a local tool of the user's own: no native tool is built and the
             # tool the capability didn't build carries no settings, so the geometry the native tool
             # could never express has nothing left to apply it. `size` and the other native-only
-            # settings are the direct generator's to report, from `_validate_direct_settings`.
+            # settings are the direct generator's to report, from the block above.
             ignored = self._direct_only_geometry()
         super().__post_init__()
         if ignored:
@@ -545,38 +573,6 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         # `__post_init__` turns a `'provider:model'` string into an `ImageGenerator` and rejects
         # every other string, so only `local=True` reaches the base's strategy hook.
         raise UserError(self._unsupported_local(name))
-
-    def _validate_direct_settings(self) -> None:
-        """Reject at construction what only the direct generator could have served.
-
-        `native=False` is the one configuration whose routing is settled here: the direct generator
-        is the only implementation, so an `action='edit'` it cannot serve and the native-only
-        settings it cannot apply are both decidable at construction. Everywhere else the native tool
-        is built too, carries every one of those settings, and supersedes the generator per request
-        in `models.resolve_request_tools` — reporting them as dropped would be wrong for exactly
-        the configurations that apply them. The request that does drop them warns instead, from the
-        prepare function `get_toolset` installs. `_DirectImageGenerationTool.__call__` still rejects
-        the edit action, at the point where the direct tool is provably the one running.
-
-        Split out of `__post_init__` only to keep that method under the complexity limit.
-        """
-        # The direct model rejects the pair on every `generate` call, but a pair the user set on the
-        # capability himself is already decided here, so it fails at construction rather than at the
-        # first `generate_image` call. Ungated by `native`: whichever path a request takes, the
-        # settings the generator would carry are contradictory.
-        if self.dimensions is not None and self.aspect_ratio is not None:
-            raise UserError(DIMENSIONS_ASPECT_RATIO_CONFLICT)
-        if self.native is False:
-            if self.action == 'edit':
-                raise UserError(_EDIT_ACTION_UNSUPPORTED)
-            if ignored := self._native_only_settings():
-                # user → `__init__` → `__post_init__` → here → `warn`; `from_spec` adds a frame and
-                # so lands one short.
-                warnings.warn(
-                    _NATIVE_ONLY_SETTINGS_DROPPED.format(settings=', '.join(ignored)),
-                    UserWarning,
-                    stacklevel=4,
-                )
 
     def _direct_local_tool(self, generator: ImageGenerator | ImageGenerationModel) -> Tool[Any]:
         """Build the `generate_image` tool from the capability's current settings.
