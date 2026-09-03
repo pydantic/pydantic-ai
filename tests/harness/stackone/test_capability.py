@@ -59,6 +59,31 @@ class TestStackOne:
         with pytest.raises(UserError, match='STACKONE_API_KEY'):
             Agent(TestModel(), capabilities=[StackOne(account_id='45320')])
 
+    def test_two_accounts_stay_two_capabilities(self):
+        """One account is one provider connection, so the account is what names the capability.
+
+        A fixed `'stackone'` id would make these two merge into one, and one linked account would
+        silently drop out of the agent -- the failure mode a shared id is supposed to prevent.
+        """
+        first = StackOne(account_id='45320', api_key='key')
+        second = StackOne(account_id='99811', api_key='key')
+        assert (first.id, second.id) == ('stackone-45320', 'stackone-99811')
+
+        agent = Agent(TestModel(), capabilities=[first, second])
+        ids = [capability.id for capability in agent._root_capability.capabilities]  # pyright: ignore[reportPrivateUsage]
+        assert 'stackone-45320' in ids and 'stackone-99811' in ids
+
+    def test_two_of_one_account_are_a_collision(self):
+        """Two capabilities on the same connection are a mistake, not a configuration to merge."""
+        with pytest.raises(UserError, match="Capability id 'stackone-45320' is used by multiple capabilities"):
+            Agent(
+                TestModel(),
+                capabilities=[
+                    StackOne(account_id='45320', api_key='key'),
+                    StackOne(account_id='45320', api_key='key'),
+                ],
+            )
+
     def test_api_key_from_environment(self, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setenv('STACKONE_API_KEY', 'env-key')
         assert StackOne(account_id='45320').get_toolset() is not None
@@ -159,6 +184,8 @@ capabilities:
         assert tool_call_names(result.all_messages()) == {'bamboohr_list_employees'}
 
     async def test_deferred_loading_uses_stable_default_id(self, stackone_server: FastMCP):
+        # The default id names the linked account, so an agent can reach two of them.
+        capability_id = 'stackone-45320'
         seen_revealed: list[bool] = []
         seen_instructions: list[str] = []
 
@@ -169,7 +196,7 @@ capabilities:
             seen_revealed.append(revealed)
             seen_instructions.append(info.instructions or '')
             if not revealed:
-                return ModelResponse(parts=[ToolCallPart(tool_name='load_capability', args={'id': 'stackone'})])
+                return ModelResponse(parts=[ToolCallPart(tool_name='load_capability', args={'id': capability_id})])
             return ModelResponse(parts=[TextPart('done')])
 
         capability = StackOne(
@@ -179,6 +206,7 @@ capabilities:
             actions=['*_list_*'],
             defer_loading=True,
         )
+        assert capability.id == capability_id
         agent = Agent(FunctionModel(model_fn), capabilities=[capability])
         result = await agent.run('list employees')
 

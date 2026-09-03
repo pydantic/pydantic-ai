@@ -17,7 +17,7 @@ from pydantic_ai_harness.stackone._toolset import (
     validate_configuration,
 )
 
-_DEFAULT_ID = 'stackone'
+_ID_PREFIX = 'stackone'
 _DEFAULT_DESCRIPTION = 'Use actions from a linked business application through StackOne.'
 _INDIVIDUAL_INSTRUCTIONS = (
     "The StackOne tools operate on the user's linked SaaS account (HRIS, ATS, CRM, and more). "
@@ -45,8 +45,14 @@ class StackOne(AbstractCapability[AgentDepsT]):
 
     _: KW_ONLY
 
-    id: str | None = _DEFAULT_ID
-    """Stable capability and toolset ID. Override it when one agent uses several StackOne accounts."""
+    id: str | None = None
+    """Stable capability and toolset ID, derived from `account_id` when not given.
+
+    One account is one provider connection, so the account is what identifies this capability --
+    the same way an MCP server is identified by its URL. Deriving it rather than fixing it to
+    `'stackone'` is what lets one agent reach two linked accounts: their ids differ, so they stay
+    two capabilities. Two under the *same* account are a mistake, and collide.
+    """
 
     description: str | None = _DEFAULT_DESCRIPTION
     """Routing description used when the capability is loaded on demand."""
@@ -81,6 +87,7 @@ class StackOne(AbstractCapability[AgentDepsT]):
 
     def __post_init__(self) -> None:
         self.tool_mode, self.actions = validate_configuration(self.tool_mode, self.actions)
+        self.id = self._derived_id()
 
     def get_toolset(self) -> StackOneToolset[AgentDepsT]:
         """Build the StackOne toolset."""
@@ -92,8 +99,12 @@ class StackOne(AbstractCapability[AgentDepsT]):
             tool_mode=self.tool_mode,
             metadata=self.metadata,
             client=self.client,
-            id=self.id or _DEFAULT_ID,
+            id=self._derived_id(),
         )
+
+    def _derived_id(self) -> str:
+        """This capability's `id`, falling back to the one the account names."""
+        return self.id if self.id is not None else f'{_ID_PREFIX}-{self.account_id}'
 
     def get_instructions(self) -> str | None:
         """StackOne usage guidance; the underlying MCP toolset provides none itself."""
@@ -107,7 +118,7 @@ class StackOne(AbstractCapability[AgentDepsT]):
         cls,
         account_id: str,
         *,
-        id: str | None = _DEFAULT_ID,
+        id: str | None = None,
         description: str | None = _DEFAULT_DESCRIPTION,
         defer_loading: bool = False,
         api_key: str | None = None,

@@ -8,6 +8,8 @@ from pathlib import Path
 import pytest
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities.abstract import leaf_capabilities
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import InstructionPart, LoadCapabilityReturnPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
@@ -96,6 +98,34 @@ class TestSkills:
         leaves = _leaves(Skills(library))
 
         assert [leaf.defer_loading for leaf in leaves] == [True]
+
+    async def test_two_libraries_both_stay_reachable(self, tmp_path: Path) -> None:
+        """`Skills` needs no default `id`, because the leaves it makes already carry one.
+
+        It is a factory rather than a configuration: each selected skill becomes its own deferred
+        capability named after the skill. Two libraries therefore contribute disjoint sets that
+        both stay loadable, where merging the two `Skills` capabilities would drop a library.
+        """
+        first, second = tmp_path / 'first', tmp_path / 'second'
+        _write_skill(first, 'alpha', body='Alpha directions.')
+        _write_skill(second, 'beta', body='Beta directions.')
+
+        agent = Agent(TestModel(), capabilities=[Skills(first), Skills(second)])
+        loadable = {
+            leaf.id
+            for leaf in leaf_capabilities(agent._root_capability)
+            if leaf.defer_loading  # pyright: ignore[reportPrivateUsage]
+        }
+        assert {'alpha', 'beta'} <= loadable
+
+    def test_two_libraries_sharing_a_skill_name_collide(self, tmp_path: Path) -> None:
+        """Two skills claiming one name is ambiguous, and says so rather than picking one."""
+        first, second = tmp_path / 'first', tmp_path / 'second'
+        _write_skill(first, 'shared')
+        _write_skill(second, 'shared')
+
+        with pytest.raises(UserError, match="Capability id 'shared' is used by multiple capabilities"):
+            Agent(TestModel(), capabilities=[Skills(first), Skills(second)])
 
     def test_include_exposes_only_selected_skills(self, tmp_path: Path) -> None:
         library = tmp_path / 'skills'

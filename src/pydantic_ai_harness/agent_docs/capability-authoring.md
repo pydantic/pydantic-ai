@@ -168,6 +168,81 @@ Before treating a capability as done, check how it composes with:
 `CodeMode` is a useful reference for wrapper-toolset composition, tool
 selection, `ToolSearch` interaction, public docs, and test depth.
 
+### Deciding What Two Of It Mean
+
+Every capability answers "what if an agent has two of me?", and the answer is
+the default `id` written in the class body -- there is no separate policy to
+declare. Pydantic AI reads it: a class-declared `id` means two are one
+configuration stated twice, and it merges them field by field; no default `id`
+means two are two, kept apart under derived ids. `combine` only needs
+overriding when the field-by-field merge cannot express the answer, such as a
+budget that should take the *smaller* of two values.
+
+Pick by asking what the capability's toolset registers:
+
+- **Fixed tool names** (`read_file`, `run_command`, `write_memory`) --
+  declare a default `id`, *unless* the capability's configuration is an access
+  boundary. Two of them could never coexist anyway; they collided on the tool
+  name. Declaring the id turns that late, confusing toolset error into a merge,
+  which is what lets two packaged harnesses that each carry the capability
+  compose.
+- **Fixed tool names, but the configuration is an access boundary**
+  (`FileSystem` allow/deny patterns, `Shell` command lists) -- the default merge
+  is the wrong answer, because unioning two allow-lists *widens* what the agent
+  can reach, and neither author asked for the other's paths. Either leave the
+  capability anonymous, so two of it keep colliding on the tool name and the
+  user has to choose, or declare a default `id` **and** write a `combine` that
+  narrows rather than unions. Do not take the default and hope.
+- **Names derived from a resource** -- derive the `id` from the same thing, the
+  way `StackOne` uses `stackone-{account_id}` and Pydantic AI's `MCP` uses its
+  URL. Two resources stay two capabilities; two of one resource collide, which
+  is the right answer for a mistake.
+- **Neither: hooks, guards, observers** -- no default `id`. Several per agent
+  is the normal shape, and `CombinedCapability` chains them.
+
+### An `id` Is Not A Namespace
+
+A derived `id` keeps two capabilities apart. It does not keep their *tools*
+apart, and the two are easy to conflate.
+
+`StackOne(account_id='a')` and `StackOne(account_id='b')` get the ids
+`stackone-a` and `stackone-b`, so both survive to the run -- but the tool names
+come from StackOne's server, and two accounts on the same provider list the same
+ones. The run then fails on the tool name, not the id:
+
+```
+UserError: StackOneToolset 'stackone-b' defines a tool whose name conflicts with
+existing tool from StackOneToolset: 'bamboohr_list_employees'
+```
+
+The `id` is the capability's identity: it names the durable operation, keys the
+instructions, and is what `load_capability` asks for. Namespacing tools is a
+separate job, and Pydantic AI has a capability for it:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import PrefixTools
+
+from pydantic_ai_harness import StackOne
+
+agent = Agent(
+    'openai:gpt-5.6-sol',
+    capabilities=[
+        PrefixTools(StackOne(account_id='hr-account'), prefix='hr'),
+        PrefixTools(StackOne(account_id='crm-account'), prefix='crm'),
+    ],
+)
+```
+
+The model then sees `hr_bamboohr_list_employees` and
+`crm_bamboohr_list_employees`, and each routes to its own account.
+
+Record the choice in `tests/test_capability_combine.py`;
+`test_every_capability_declares_a_combine_policy` fails until you do. Write the
+reason from what the capability actually does, not from what would be
+convenient: a reason like "one per rooted directory" is wrong if the toolset's
+fixed tool names make two unreachable.
+
 ## CI And Dependency Footprint
 
 Most capabilities add a package extra and a test module, which is cheap. Some

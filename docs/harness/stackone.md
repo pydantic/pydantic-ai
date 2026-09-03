@@ -93,15 +93,51 @@ Passing `actions` selects `individual` mode automatically. Explicitly combining 
 In `search_execute` mode, action IDs are returned by the search tool at runtime and should not be guessed. In
 `individual` mode, all selected tool schemas are sent to the model, so filter large action sets with `actions`.
 
-To keep StackOne tools out of the model context until they are needed, pass `defer_loading=True`. The capability uses
-`id='stackone'` by default so it can be loaded on demand. Give each instance a distinct `id` when one agent uses
-multiple StackOne accounts:
+To keep StackOne tools out of the model context until they are needed, pass `defer_loading=True`. The capability needs
+an `id` to be loaded on demand, and derives one from the linked account -- `StackOne(account_id='45320')` is
+`stackone-45320` -- so one agent can reach several accounts without naming each one:
 
 ```python
 from pydantic_ai_harness import StackOne
 
 StackOne(account_id='your-linked-account-id', defer_loading=True)
 ```
+
+Two capabilities on the *same* account share that id and are rejected at agent construction, which is what you want:
+one linked account is one connection. Pass an explicit `id=` if you need to override the derived one.
+
+### Two accounts on one agent
+
+Distinct ids keep the two capabilities apart, but they do not rename their tools. StackOne's server
+names the tools after the connector and action (`bamboohr_list_employees`), so two accounts on the
+same provider list the same names and the run fails on the tool name rather than the id:
+
+```
+UserError: StackOneToolset 'stackone-crm-account' defines a tool whose name conflicts with
+existing tool from StackOneToolset: 'bamboohr_list_employees'
+```
+
+Namespace them with [`PrefixTools`](https://pydantic.dev/docs/ai/capabilities/overview/), which is
+what it is for:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import PrefixTools
+
+from pydantic_ai_harness import StackOne
+
+agent = Agent(
+    'openai:gpt-5.6-sol',
+    capabilities=[
+        PrefixTools(StackOne(account_id='hr-account'), prefix='hr'),
+        PrefixTools(StackOne(account_id='crm-account'), prefix='crm'),
+    ],
+)
+```
+
+The model sees `hr_bamboohr_list_employees` and `crm_bamboohr_list_employees`, and each routes to
+its own linked account. Two accounts on *different* providers list different tool names already, so
+they need no prefix.
 
 ### Bound large tool results
 
