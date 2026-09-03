@@ -728,17 +728,46 @@ async def test_sandbox_ref_wins_over_sandbox_supplier():
 
 
 async def test_multiple_ref_connectors_are_rejected():
-    first = ConnectOnlySandboxCapability()
-    last = ConnectOnlySandboxCapability()
+    class FirstConnector(ConnectOnlySandboxCapability):
+        id = 'first_connector'
+
+    class LastConnector(ConnectOnlySandboxCapability):
+        id = 'last_connector'
+
+    first = FirstConnector()
+    last = LastConnector()
     agent = make_connecting_probe_agent([], capabilities=[first, WrapperCapability(wrapped=last)])
     with pytest.raises(
         UserError,
         match=r'Several capabilities can resolve sandbox refs '
-        r'\(connect_only_sandbox_capability, wrapper_capability\)',
+        r'\(first_connector, last_connector\)',
     ):
         await agent.run('go', sandbox=SandboxRef(sandbox_id='fake-1'))
     assert first.sandbox_ids == []
     assert last.sandbox_ids == []
+
+
+async def test_repeated_default_id_sandbox_capabilities_combine():
+    @dataclass
+    class DefaultSandboxCapability(AbstractCapability[Any]):
+        id: str | None = 'default_sandbox'
+        name: str = 'default'
+        resolved: list[str] = field(default_factory=lambda: list[str](), compare=False)
+
+        def resolve_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
+            self.resolved.append(ref.sandbox_id)
+            return FakeSandbox(self.name)
+
+    first = DefaultSandboxCapability(name='first')
+    last = DefaultSandboxCapability(name='last')
+    seen: list[str] = []
+    agent = make_probe_agent(seen, capabilities=[first, last])
+
+    await agent.run('go', sandbox=SandboxRef(sandbox_id='provided'))
+
+    assert first.resolved == []
+    assert last.resolved == ['provided']
+    assert seen == ['provided']
 
 
 def test_contributes_sandbox_detection():
@@ -908,15 +937,15 @@ async def test_sandbox_lifecycle_brackets_the_run(run_mode: str) -> None:
     ]
 
 
-async def test_duplicate_per_run_capability_ids_fail_and_release():
+async def test_run_capability_overrides_agent_capability_and_releases_sandbox():
     creator = LifecycleSandboxCapability()
     creator.id = 'duplicate'
     decliner = DecliningSandboxCapability()
     decliner.id = 'duplicate'
     agent = Agent(TestModel(), capabilities=[creator])
 
-    with pytest.raises(UserError, match=r"Capability id 'duplicate' is used by multiple capabilities"):
-        await agent.run('go', capabilities=[decliner])
+    result = await agent.run('go', capabilities=[decliner])
+    assert result.output == 'success (no tool calls)'
     assert creator.events == ['acquire:created-1', 'connect:created-1', 'release:created-1']
 
 

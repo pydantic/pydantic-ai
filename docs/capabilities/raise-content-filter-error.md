@@ -29,4 +29,6 @@ except ContentFilterError as exc:
 
 _(This example is complete, it can be run "as is")_
 
+It declares a default `id` of `'raise_content_filter_error'`, so two instances merge instead of raising a duplicate-id error — see [building custom capabilities](custom.md) for the merge rules.
+
 By default, Pydantic AI only raises [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError] when a `content_filter` response is *empty*: if the provider returns partial text or refusal text alongside `finish_reason='content_filter'`, that text becomes ordinary agent output and no error is raised (see [finish reason handling](../models/overview.md#finish-reason-example)). This capability extends the check to *every* `content_filter` response, so partial and refusal text raise too. When it raises, the full [`ModelResponse`][pydantic_ai.messages.ModelResponse] is serialized into [`ContentFilterError.body`][pydantic_ai.exceptions.UnexpectedModelBehavior.body] so the partial text remains inspectable.

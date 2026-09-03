@@ -65,6 +65,13 @@ from pydantic_ai.toolsets import FunctionToolset
 pytestmark = pytest.mark.anyio
 
 
+@pytest.fixture(autouse=True)
+def blockbuster_excluded_modules() -> tuple[str, ...]:
+    """`WebSearch` imports its DuckDuckGo fallback the first time one resolves a local strategy,
+    and Python's import machinery reads the filesystem to do it."""
+    return ('pydantic_ai.common_tools.duckduckgo',)
+
+
 class _Connection(RealtimeConnection):
     """Replays a fixed list of events (a lone `ResponseDone` by default) so the session drains."""
 

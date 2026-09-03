@@ -47,6 +47,11 @@ if TYPE_CHECKING:
     from pydantic_ai.run import AgentRunResult
 
 
+def _registers_children(wrapped: AbstractCapability[Any], collected: Sequence[AbstractCapability[Any]]) -> bool:
+    """Whether `collected` -- what `wrapped.apply` yielded -- is more than `wrapped` itself."""
+    return len(collected) != 1 or collected[0] is not wrapped
+
+
 @dataclass
 class WrapperCapability(AbstractCapability[AgentDepsT]):
     """A capability that wraps another capability and delegates all methods.
@@ -83,14 +88,46 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
 
     def apply(self, visitor: Callable[[AbstractCapability[AgentDepsT]], None]) -> None:
         visitor(self)
-        # A wrapper over a leaf capability is the registered proxy for that leaf. A wrapper
-        # over a container still needs the container's leaves registered for child-owned hooks
-        # and toolsets to resolve their capability ids.
+        # Collected once and replayed rather than walking the subtree twice: two walks per level
+        # turns a chain of `n` wrappers into `2**n` traversals, so a stack of `prefix_tools()`
+        # calls stops resolving in any reasonable time. One walk per level keeps the cost of the
+        # chain linear in its depth.
         wrapped_capabilities: list[AbstractCapability[AgentDepsT]] = []
         self.wrapped.apply(wrapped_capabilities.append)
-        if len(wrapped_capabilities) != 1 or wrapped_capabilities[0] is not self.wrapped:
+        if _registers_children(self.wrapped, wrapped_capabilities):
             for capability in wrapped_capabilities:
                 visitor(capability)
+
+    def visit_and_replace(
+        self, visitor: Callable[[AbstractCapability[AgentDepsT]], AbstractCapability[AgentDepsT] | None]
+    ) -> AbstractCapability[AgentDepsT] | None:
+        """Visit the wrapper first; a replaced or removed wrapper takes its subtree with it.
+
+        When the wrapper survives, the visit descends into `wrapped` and this wrapper is rebuilt
+        around whatever remains; see
+        [`AbstractCapability.visit_and_replace`][pydantic_ai.capabilities.AbstractCapability.visit_and_replace]
+        for the tree-walking contract.
+        """
+        replacement = visitor(self)
+        if replacement is not self:
+            # The wrapper is what's registered for the subtree, so replacing or removing it takes
+            # the subtree with it — visiting children the caller just discarded would be pointless.
+            return replacement
+        # A wrapper over a leaf capability is the registered proxy for that leaf: if the wrapped
+        # subtree registers nothing of its own, there is nothing beneath this wrapper to visit.
+        wrapped_capabilities: list[AbstractCapability[AgentDepsT]] = []
+        self.wrapped.apply(wrapped_capabilities.append)
+        if not _registers_children(self.wrapped, wrapped_capabilities):
+            return self
+        new_wrapped = self.wrapped.visit_and_replace(visitor)
+        if new_wrapped is None:
+            # `wrapped` is required, and a wrapper whose subtree is gone has nothing left to modify.
+            return None
+        if new_wrapped is self.wrapped:
+            return self
+        new_self = replace_no_init(self, wrapped=new_wrapped)
+        new_self.__adopt_wrapped_identity()
+        return new_self
 
     @classmethod
     def get_serialization_name(cls) -> str | None:

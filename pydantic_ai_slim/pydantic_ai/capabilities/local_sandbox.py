@@ -29,11 +29,11 @@ class LocalSandbox(AbstractCapability[AgentDepsT]):
 
     `root` is the host directory exposed to the run. When omitted, each run gets the deterministic
     system-temp path `pydantic-ai-sandbox-<run_id>`, which is removed on release. Under durable
-    execution, it requires an explicit stable `id`, like every capability declaring a durable
-    operation, and assumes every durable unit runs on one host because local filesystems are not
+    execution, it assumes every durable unit runs on one host because local filesystems are not
     shared between workers.
     """
 
+    id: str | None = 'local_sandbox'
     root: Path | None = None
 
     def __post_init__(self) -> None:

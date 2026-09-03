@@ -612,7 +612,7 @@ def test_local_sandbox_capability_declines_foreign_ref():
     assert capability.resolve_sandbox(ctx, SandboxRef(sandbox_id='remote:123')) is None
 
 
-async def test_local_sandbox_without_id_routes_through_nested_combined(tmp_path: Path):
+async def test_local_sandbox_default_id_combines_and_routes_through_nested_combined(tmp_path: Path):
     class DecliningWrapper(WrapperCapability[Any]):
         async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef | None:
             return None
@@ -644,6 +644,6 @@ async def test_local_sandbox_without_id_routes_through_nested_combined(tmp_path:
 
     await agent.run('go')
 
-    expected = SandboxRef(sandbox_id=f'local:{(tmp_path / "active").as_posix()}', capability_id='local_sandbox_2')
+    expected = SandboxRef(sandbox_id=f'local:{(tmp_path / "active").as_posix()}', capability_id='local_sandbox')
     assert refs == [expected]
     assert active.released == [expected]
