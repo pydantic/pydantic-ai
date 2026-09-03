@@ -571,6 +571,18 @@ def test_generic_alias_metadata_is_not_capability_configuration() -> None:
     assert merged.replace_existing is True
 
 
+def test_durable_operation_bindings_are_not_capability_configuration() -> None:
+    """Bindings added when a capability is reused by durable agents are runtime bookkeeping."""
+
+    first = ReinjectSystemPrompt(replace_existing=False)
+    first._get_durable_operation_bindings()  # pyright: ignore[reportPrivateUsage]
+
+    merged = ReinjectSystemPrompt.combine([first, ReinjectSystemPrompt(replace_existing=True)])
+
+    assert isinstance(merged, ReinjectSystemPrompt)
+    assert merged.replace_existing is True
+
+
 def test_a_field_whose_equality_raises_takes_the_later_value() -> None:
     """Values that cannot be compared are not mergeable, so the later one wins.
 
@@ -872,6 +884,25 @@ async def test_reusing_one_capability_object_across_layers_does_not_combine() ->
     await agent.run('hi', capabilities=[shared])
 
     assert Counting.combine_calls == 0
+
+
+def test_a_sorted_run_wrapper_keeps_its_reused_capability_occurrence() -> None:
+    """Layer provenance follows a retained wrapper branch when ordering moves it in the tree."""
+
+    shared = Thinking(effort='low')
+    run_wrapper = WrapperCapability(
+        wrapped=CombinedCapability([shared, _Positioned(outermost=True)]),
+    )
+    tree = CombinedCapability([shared, run_wrapper])
+
+    combined = _combine_duplicate_capabilities(tree, [[shared], [run_wrapper]])
+
+    assert isinstance(combined, CombinedCapability)
+    assert not any(capability is shared for capability in combined.capabilities)
+    surviving_wrapper = next(
+        capability for capability in combined.capabilities if isinstance(capability, WrapperCapability)
+    )
+    assert shared in leaf_capabilities(surviving_wrapper)
 
 
 async def test_a_session_level_instrumentation_supersedes_the_agent_level_one() -> None:

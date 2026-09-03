@@ -62,8 +62,10 @@ def merge_capability_fields(
     for capability in capabilities:
         # Configuration no field declares (a plain class keeping its state in plain attributes)
         # cannot be merged, so refuse rather than silently keep only the last instance's.
-        # Generic aliases attach typing metadata after initialization; it is not capability state.
-        invisible = set(vars(capability)) - field_names - {'__orig_class__'}
+        # Generic aliases and durable integrations attach runtime bookkeeping after initialization;
+        # neither is capability configuration.
+        runtime_attributes = {'__orig_class__', '_pydantic_ai_durable_operation_bindings'}
+        invisible = set(vars(capability)) - field_names - runtime_attributes
         if invisible:
             cls_name = type(merged).__name__
             raise UserError(
