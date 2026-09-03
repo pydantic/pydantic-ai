@@ -124,6 +124,24 @@ Error generating schema for test_tool_ctx_second.<locals>.invalid_tool:
     )
 
 
+def test_tool_ctx_last():
+    agent = Agent(TestModel())
+
+    with pytest.raises(UserError) as exc_info:
+
+        @agent.tool  # pyright: ignore[reportArgumentType]
+        def invalid_tool(first: int, last: str, ctx: RunContext) -> str:  # pragma: no cover
+            return f'{first} {last}'
+
+    assert str(exc_info.value) == snapshot(
+        """\
+Error generating schema for test_tool_ctx_last.<locals>.invalid_tool:
+  First parameter of tools that take context must be annotated with RunContext[...]
+  RunContext annotations can only be used as the first argument\
+"""
+    )
+
+
 async def google_style_docstring(foo: int, bar: str) -> str:  # pragma: no cover
     """Do foobar stuff, a lot.
 
@@ -4801,10 +4819,10 @@ def test_return_schema_self_unbound():
 
     from typing_extensions import Self
 
-    from pydantic_ai._function_schema import _extract_return_schema_type
+    from pydantic_ai._function_schema import extract_return_schema_type
 
     # Pass Self directly as the annotation — no need for a real function with Self return
-    result = _extract_return_schema_type(Self, lambda: None)
+    result = extract_return_schema_type(Self, lambda: None)
     assert result is Any
 
 

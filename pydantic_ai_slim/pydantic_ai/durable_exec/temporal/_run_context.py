@@ -1,13 +1,14 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, overload
 
 from pydantic import TypeAdapter
 from typing_extensions import TypeVar
 
-from pydantic_ai._run_context import AnchoredEvidence
+from pydantic_ai._run_context import AnchoredEvidence, CapabilityEventT, CustomEventT
 from pydantic_ai.durable_exec._toolset import EnqueueGuard, enqueue_not_supported_message
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.messages import CapabilityEvent, CustomEvent
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage, UsageLimits
 
@@ -46,7 +47,15 @@ _REHYDRATORS: tuple[tuple[str, type[Any], TypeAdapter[Any]], ...] = (
 # the property override below), or falls back to `discovered_tool_names` without one.
 # `realtime_session` is a live session object that cannot cross the boundary, and its contract
 # already makes `None` mean "not available here".
-_NONE_UNLESS_ATTACHED = ('agent', 'root_capability', 'pending_messages', 'tool_manager', 'realtime_session')
+_NONE_UNLESS_ATTACHED = (
+    'agent',
+    'root_capability',
+    'pending_messages',
+    'tool_manager',
+    'realtime_session',
+    '_durable_operations',
+    '_run_capabilities_by_id',
+)
 
 # Defaulted rather than guarded when a payload doesn't carry it. Unlike the guarded fields, the
 # dataclass default can't be mistaken for real run state here: empty means "no anchored evidence",
@@ -109,6 +118,11 @@ class TemporalRunContext(RunContext[AgentDepsT]):
             )
         return super().__getattribute__(name)
 
+    def _expose_field(self, name: str) -> None:
+        """Mark a framework-attached field as readable after deserialization."""
+        instance_fields = object.__getattribute__(self, '__dataclass_fields__')
+        instance_fields[name] = RunContext.__dataclass_fields__[name]
+
     @property
     def available_tool_names(self) -> set[str]:
         """The availability snapshot serialized at activity dispatch time.
@@ -152,6 +166,32 @@ class TemporalRunContext(RunContext[AgentDepsT]):
         if (snapshot := self.__dict__.get('_deferred_capability_ids')) is not None:
             return snapshot
         return super()._deferred_capability_ids
+
+    @overload
+    async def emit(self, event: CustomEventT, /) -> CustomEventT: ...
+
+    @overload
+    async def emit(self, event: CapabilityEventT, /) -> CapabilityEventT: ...
+
+    async def emit(self, event: CustomEvent | CapabilityEvent, /) -> CustomEvent | CapabilityEvent:
+        """Reject `emit` from inside a Temporal activity.
+
+        Tools and event stream handlers run inside activities where the run's event stream isn't
+        reachable, so events emitted there can't currently flow back into the stream; raising beats
+        silently dropping them. This covers a capability's own tools emitting a `CapabilityEvent`,
+        which run in activities like any other tool. Events emitted workflow-side (e.g. from
+        capability hooks) work as usual.
+
+        Lifting this needs a transport from the activity back to the workflow and a decision on what
+        a retried attempt's events mean; tracked in https://github.com/pydantic/pydantic-ai/issues/7971.
+        """
+        raise UserError(
+            'Emitting events from a tool or event stream handler is not supported under Temporal yet, as '
+            'they run inside activities that cannot reach the run event stream. This includes a capability '
+            'emitting a `CapabilityEvent` from one of its own tools. Emit events from capability hooks, '
+            'which run in the workflow, instead. Tracked in '
+            'https://github.com/pydantic/pydantic-ai/issues/7971.'
+        )
 
     @classmethod
     def serialize_run_context(cls, ctx: RunContext[Any]) -> dict[str, Any]:

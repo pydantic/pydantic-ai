@@ -3899,12 +3899,9 @@ async def test_google_image_generation_auto_size_raises_error(google_provider: G
         model._get_native_tools(params)  # pyright: ignore[reportPrivateUsage]
 
 
-async def test_google_image_generation_tool_output_format(
-    mocker: MockerFixture, google_provider: GoogleProvider
-) -> None:
+async def test_google_image_generation_tool_output_format(vertex_client_google_provider: GoogleProvider) -> None:
     """Test that ImageGenerationTool.output_format is mapped to ImageConfigDict.output_mime_type on Vertex AI."""
-    model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
-    mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-cloud')
+    model = GoogleModel('gemini-3-pro-image-preview', provider=vertex_client_google_provider)
     params = ModelRequestParameters(native_tools=[ImageGenerationTool(output_format='png')])
 
     tools, image_config = model._get_native_tools(params)  # pyright: ignore[reportPrivateUsage]
@@ -3913,11 +3910,10 @@ async def test_google_image_generation_tool_output_format(
 
 
 async def test_google_image_generation_tool_unsupported_format_raises_error(
-    mocker: MockerFixture, google_provider: GoogleProvider
+    vertex_client_google_provider: GoogleProvider,
 ) -> None:
     """Test that unsupported output_format values raise an error on Vertex AI."""
-    model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
-    mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-cloud')
+    model = GoogleModel('gemini-3-pro-image-preview', provider=vertex_client_google_provider)
     # 'gif' is not supported by Google
     params = ModelRequestParameters(native_tools=[ImageGenerationTool(output_format='gif')])  # pyright: ignore[reportArgumentType]
 
@@ -3926,11 +3922,10 @@ async def test_google_image_generation_tool_unsupported_format_raises_error(
 
 
 async def test_google_image_generation_tool_output_compression(
-    mocker: MockerFixture, google_provider: GoogleProvider
+    vertex_client_google_provider: GoogleProvider,
 ) -> None:
     """Test that ImageGenerationTool.output_compression is mapped to ImageConfigDict.output_compression_quality on Vertex AI."""
-    model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
-    mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-cloud')
+    model = GoogleModel('gemini-3-pro-image-preview', provider=vertex_client_google_provider)
 
     # Test explicit value
     params = ModelRequestParameters(native_tools=[ImageGenerationTool(output_compression=85)])
@@ -3945,11 +3940,10 @@ async def test_google_image_generation_tool_output_compression(
 
 
 async def test_google_image_generation_tool_compression_validation(
-    mocker: MockerFixture, google_provider: GoogleProvider
+    vertex_client_google_provider: GoogleProvider,
 ) -> None:
     """Test compression validation on Vertex AI: range and JPEG-only."""
-    model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
-    mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-cloud')
+    model = GoogleModel('gemini-3-pro-image-preview', provider=vertex_client_google_provider)
 
     # Invalid range: > 100
     with pytest.raises(UserError, match='`output_compression` must be between 0 and 100'):
@@ -4011,10 +4005,9 @@ async def test_google_vertexai_image_generation_with_output_format(
     assert result.output.media_type == 'image/jpeg'
 
 
-async def test_google_image_generation_tool_all_fields(mocker: MockerFixture, google_provider: GoogleProvider) -> None:
+async def test_google_image_generation_tool_all_fields(vertex_client_google_provider: GoogleProvider) -> None:
     """Test that all ImageGenerationTool fields are mapped correctly on Vertex AI."""
-    model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
-    mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-cloud')
+    model = GoogleModel('gemini-3-pro-image-preview', provider=vertex_client_google_provider)
     params = ModelRequestParameters(
         native_tools=[ImageGenerationTool(aspect_ratio='16:9', size='2K', output_format='jpeg', output_compression=90)]
     )
@@ -4030,15 +4023,19 @@ async def test_google_image_generation_tool_all_fields(mocker: MockerFixture, go
 
 
 def test_google_vertex_skips_include_server_side_tool_invocations(
-    mocker: MockerFixture, google_provider: GoogleProvider
+    vertex_client_google_provider: GoogleProvider,
 ) -> None:
     """Vertex rejects `include_server_side_tool_invocations`, so it must not be set on Gemini 3+ via Vertex.
+
+    The model is built the way #6792 reports: a
+    Vertex-backed `genai.Client` wrapped in `GoogleProvider`, whose `system` stays `'google'` —
+    the transport, not the provider name, must drive the skip.
 
     Not a VCR test: the field is dropped before the request is sent, and our cassette matchers don't
     inspect the request body, so a recording would stay green if it were reintroduced.
     """
-    model = GoogleModel('gemini-3-pro-preview', provider=google_provider)
-    mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-cloud')
+    model = GoogleModel('gemini-3-pro-preview', provider=vertex_client_google_provider)
+    assert model.system == 'google'
     # A function tool is included so `tool_config` is non-empty on both paths; the only field that
     # should differ is `include_server_side_tool_invocations`.
     params = ModelRequestParameters(function_tools=[ToolDefinition(name='search')], native_tools=[WebSearchTool()])

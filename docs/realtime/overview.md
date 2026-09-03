@@ -34,7 +34,6 @@ import contextlib
 from collections.abc import AsyncIterator
 
 from pydantic_ai import Agent
-from pydantic_ai.realtime import RealtimeSession
 
 agent = Agent(instructions='You take reservations for The Terrace. Keep replies short.')
 
@@ -45,8 +44,8 @@ async def check_availability(day: str, party_size: int) -> str:
     return f'One table for {party_size} is free at 7 pm {day}.'
 
 
-async def stream_microphone(session: RealtimeSession) -> None:
-    ...  # capture signed 16-bit mono PCM chunks and `await session.send_audio(chunk)`
+async def microphone_chunks() -> AsyncIterator[bytes]:
+    yield b'...'  # capture signed 16-bit mono PCM chunks from your microphone
 
 
 async def play_audio(chunks: AsyncIterator[bytes]) -> None:
@@ -56,7 +55,7 @@ async def play_audio(chunks: AsyncIterator[bytes]) -> None:
 
 async def main():
     async with agent.realtime('openai:gpt-realtime').session() as session:
-        microphone = asyncio.create_task(stream_microphone(session))
+        microphone = asyncio.create_task(session.send_audio(microphone_chunks()))
         speaker = asyncio.create_task(play_audio(session.stream_audio()))
 
         async for part in session.stream_transcripts():
@@ -84,7 +83,7 @@ which depend on your audio stack)_
 Capture and play at the sample rates the model expects — they're reported by the model's profile
 and can differ between input and output (see [Provider support](#provider-support) below). The
 [voice assistant example](../examples/realtime-voice.md) fills the placeholders in with
-`sounddevice` for a runnable microphone-and-speaker loop; the
+[`listentome`](https://github.com/Kludex/listentome) for a runnable microphone-and-speaker loop; the
 [text-to-audio example](../examples/realtime-text-to-audio.md) skips audio input entirely by
 sending a text prompt and saving the spoken reply to a WAV file.
 
@@ -268,4 +267,4 @@ fit for a product, two alternatives sit outside it:
 | History processors do not transform `message_history` before realtime seeding; [preprocess it](capabilities.md#seeded-history-is-not-processed) before opening the session when filtering or redaction is required. | [#7299](https://github.com/pydantic/pydantic-ai/issues/7299) |
 | Interactive human-in-the-loop tool approval is not supported: a [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] handler resolves approvals [from policy, immediately](tools.md#deferred-and-approval-required-tools). | [#7301](https://github.com/pydantic/pydantic-ai/issues/7301) |
 | [`RunContext.enqueue()`][pydantic_ai.tools.RunContext.enqueue] accepts [one plain-text prompt per call](tools.md#enqueuing-prompts-from-tools), unlike its [standard-run form](../message-history.md#injecting-messages-mid-run). | [#7300](https://github.com/pydantic/pydantic-ai/issues/7300) |
-| Gemini Live tool results are JSON-only: binary content attached to a [tool return](tools.md#function-tools) raises rather than being delivered. | [#7362](https://github.com/pydantic/pydantic-ai/issues/7362) |
+| Gemini Live tool results are JSON-only: binary content attached to a [tool return](tools.md#function-tools) raises. | [#7362](https://github.com/pydantic/pydantic-ai/issues/7362) |

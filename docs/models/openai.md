@@ -63,6 +63,8 @@ agent = Agent(model)
 
 `OpenAIProvider` also accepts a custom `AsyncOpenAI` client via the `openai_client` parameter, so you can customise the `organization`, `project`, `base_url` etc. as defined in the [OpenAI API docs](https://platform.openai.com/docs/api-reference).
 
+The client retries failed requests on its own, independently of the agent's retry budgets. It defaults to `max_retries=2`, so one model request can reach the network up to three times. It honors the `x-should-retry` response header; without that header, it retries status 408, 409, 429 or 5xx, plus timeouts and connection errors, but not other 4xx responses such as 400 or 401. Set `max_retries=0` to keep the retry policy in your transport alone. See [Retry multiplication](../retries.md#retry-multiplication) for how the layers stack.
+
 ```python {title="custom_openai_client.py"}
 from openai import AsyncOpenAI
 
@@ -416,7 +418,7 @@ async def main():
                     print(event.delta.content_delta)
 ```
 
-_(This example is complete, it can be run "as is" -- you'll need to add `asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 A `'phase'` key appears in `provider_details` whenever the model labels its output, but it is only sent back on models that [`OpenAIModelProfile.openai_supports_phase`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_supports_phase] marks as accepting it. On every other model the label is surfaced to you and dropped from follow-up requests.
 
@@ -488,7 +490,7 @@ agent = Agent(model)
 ```
 
 Various providers also have their own provider classes so that you don't need to specify the base URL yourself and you can use the standard `<PROVIDER>_API_KEY` environment variable to set the API key.
-When a provider has its own provider class, you can use the `Agent("<provider>:<model>")` shorthand, e.g. `Agent("deepseek:deepseek-chat")` or `Agent("moonshotai:kimi-k2-0711-preview")`, instead of building the `OpenAIChatModel` explicitly. Similarly, you can pass the provider name as a string to the `provider` argument on `OpenAIChatModel` instead of instantiating the provider class explicitly.
+When a provider has its own provider class, you can use the `Agent("<provider>:<model>")` shorthand, e.g. `Agent("deepseek:deepseek-v4-flash")` or `Agent("moonshotai:kimi-k2-0711-preview")`, instead of building the `OpenAIChatModel` explicitly. Similarly, you can pass the provider name as a string to the `provider` argument on `OpenAIChatModel` instead of instantiating the provider class explicitly.
 
 ### Model Profile
 
@@ -518,6 +520,16 @@ model = OpenAIChatModel(
 agent = Agent(model)
 ```
 
+#### Detect incomplete streamed responses
+
+Some OpenAI-compatible APIs can close a Chat Completions stream cleanly without a terminal
+`finish_reason`, making a partial response look complete. If your provider guarantees that complete
+streams include a finish reason, set
+[`openai_chat_streaming_requires_finish_reason=True`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_chat_streaming_requires_finish_reason]
+in the model profile. Pydantic AI will then raise [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError]
+when the stream reaches EOF without one. The option defaults to `False` because some compatible APIs
+do not guarantee the field.
+
 #### Models that accept only one leading system message
 
 Some models are served with a chat template (applied server-side, for example by [vLLM](https://docs.vllm.ai/), [LiteLLM](#litellm), or TGI) that accepts only a single system message at the start of the conversation and rejects additional ones. Sending more than one fails with a `400` error such as `System message must be at the beginning.` or `Conversation roles must alternate ...`, seen with some newer Qwen, Mistral, Gemma, and Command-R models. It's easy to hit without intending to, since more than one leading system message can be produced in several ways.
@@ -533,7 +545,7 @@ You can then set the `DEEPSEEK_API_KEY` environment variable and use [`DeepSeekP
 ```python
 from pydantic_ai import Agent
 
-agent = Agent('deepseek:deepseek-chat')
+agent = Agent('deepseek:deepseek-v4-flash')
 ...
 ```
 
@@ -545,7 +557,7 @@ from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.deepseek import DeepSeekProvider
 
 model = OpenAIChatModel(
-    'deepseek-chat',
+    'deepseek-v4-flash',
     provider=DeepSeekProvider(api_key='your-deepseek-api-key'),
 )
 agent = Agent(model)
@@ -563,7 +575,7 @@ from pydantic_ai.providers.deepseek import DeepSeekProvider
 
 custom_http_client = AsyncClient(timeout=30)
 model = OpenAIChatModel(
-    'deepseek-chat',
+    'deepseek-v4-flash',
     provider=DeepSeekProvider(
         api_key='your-deepseek-api-key', http_client=custom_http_client
     ),
@@ -574,7 +586,30 @@ agent = Agent(model)
 
 OpenAI-compatible providers also accept a legacy `httpx.AsyncClient` during Pydantic AI v2, but emit a deprecation warning. Use `httpx2.AsyncClient` for new code; legacy HTTPX client support will be removed in Pydantic AI v3.
 
-As an alternative to the Chat Completions API shown above, DeepSeek also serves an OpenAI-compatible [Responses API](#responses-api-features), [currently for the `deepseek-v4-flash` model only](https://api-docs.deepseek.com/guides/responses_api). Use it by pairing [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] with [`DeepSeekProvider`][pydantic_ai.providers.deepseek.DeepSeekProvider]:
+DeepSeek's V4 models think by default, and DeepSeek rejects a forced tool choice while thinking is on, answering `Thinking mode does not support this tool_choice`. Pydantic AI therefore sends `tool_choice='auto'` on those requests, which leaves the model free to answer in prose instead of calling the output tool — on `deepseek-v4-pro` that costs a retry often enough to exhaust the retry budget. Turn thinking off when you need [structured output](../output.md) to be reliable, and forcing is used again:
+
+```python
+from pydantic import BaseModel
+
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel, OpenAIChatModelSettings
+
+
+class Answer(BaseModel):
+    text: str
+
+
+agent = Agent(
+    OpenAIChatModel('deepseek-v4-pro', provider='deepseek'),
+    output_type=Answer,
+    model_settings=OpenAIChatModelSettings(thinking=False),
+)
+...
+```
+
+Passing `tool_choice='required'` explicitly while thinking is on raises a [`UserError`][pydantic_ai.exceptions.UserError] rather than failing at the API.
+
+As an alternative to the Chat Completions API shown above, DeepSeek also serves an OpenAI-compatible [Responses API](#responses-api-features) for [both V4 models](https://api-docs.deepseek.com/guides/responses_api). Use it by pairing [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] with [`DeepSeekProvider`][pydantic_ai.providers.deepseek.DeepSeekProvider]:
 
 ```python
 from pydantic_ai import Agent
@@ -596,6 +631,7 @@ DeepSeek [documents](https://api-docs.deepseek.com/guides/responses_api) which p
 - Of the [native tools](../native-tools.md), DeepSeek runs only [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool]; it ignores the others instead of reporting an error.
 - Image and document inputs are replaced with placeholder text rather than rejected.
 - Reasoning is configured with `openai_reasoning_effort` (or the unified [`thinking`](../capabilities/thinking.md) setting); `openai_reasoning_summary` is accepted but produces no summary.
+- [`NativeOutput`][pydantic_ai.output.NativeOutput] is available here but not on Chat Completions: DeepSeek honors a strict JSON Schema on the Responses API, while its Chat Completions endpoint rejects one with `This response_format type is unavailable now`.
 
 The one difference Pydantic AI handles for you: DeepSeek merges each function call into its adjacent assistant message. Replaying a turn that interleaves calls with thinking or text would therefore create separate messages with unanswered calls, which DeepSeek rejects with `No tool output found for tool call ...`. Pydantic AI moves the calls after the other items when building the request. This reorders only the request; your [message history](../message-history.md) is unchanged.
 
@@ -886,6 +922,8 @@ agent = Agent(model)
 ...
 ```
 
+`deepseek-ai/DeepSeek-V4-*` models reject a forced tool choice while thinking is on, and thinking is their default. Pydantic AI therefore never forces tool choice for those models on Together: explicit `tool_choice='required'` or a tool list raises a [`UserError`][pydantic_ai.exceptions.UserError], and resolved output-tool forcing is sent as `tool_choice='auto'`; unlike with [`DeepSeekProvider`][pydantic_ai.providers.deepseek.DeepSeekProvider], the restriction is unconditional because whether Together honors DeepSeek's thinking toggle is unverified.
+
 ### Heroku AI
 
 To use [Heroku AI](https://www.heroku.com/ai), first create an API key.
@@ -948,6 +986,44 @@ print(result.output)
     `openai_chat_supports_multiple_system_messages=False` on its profile. See
     [Models that accept only one leading system message](#models-that-accept-only-one-leading-system-message)
     for details.
+
+### vLLM
+
+[vLLM](https://docs.vllm.ai/) is a high-throughput inference server with an OpenAI-compatible API. Connect with [`VLLMProvider`][pydantic_ai.providers.vllm.VLLMProvider], setting `base_url` directly or through `VLLM_BASE_URL`. For authenticated servers, set `api_key` or `VLLM_API_KEY`.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.vllm import VLLMProvider
+
+model = OpenAIChatModel(
+    'Qwen/Qwen3.8-27B',
+    provider=VLLMProvider(base_url='http://localhost:8000/v1'),
+)
+agent = Agent(model)
+
+result = agent.run_sync('What is the capital of France?')
+print(result.output)
+#> The capital of France is Paris.
+```
+
+With those environment variables set, you can instead reference the provider by name:
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent('vllm:Qwen/Qwen3.8-27B')
+
+result = agent.run_sync('What is the capital of France?')
+print(result.output)
+#> The capital of France is Paris.
+```
+
+!!! note "Tool calling requires server configuration"
+    For agents that let the model decide whether to call a tool, start vLLM with `--enable-auto-tool-choice` and select the model-specific parser with `--tool-call-parser`. See the [vLLM tool calling guide](https://docs.vllm.ai/en/stable/features/tool_calling/) for supported models and parser values.
+
+!!! note "Multiple system messages are merged by default"
+    Some vLLM chat templates reject multiple leading system messages, so `VLLMProvider` merges them by default. To opt out, pass an [`OpenAIModelProfile`][pydantic_ai.profiles.openai.OpenAIModelProfile] with `openai_chat_supports_multiple_system_messages=True`. See [Models that accept only one leading system message](#models-that-accept-only-one-leading-system-message).
 
 ### Nebius AI Studio
 

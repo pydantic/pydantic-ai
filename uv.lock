@@ -22,11 +22,12 @@ exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for 
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
+listentome = false
 logfire = false
 pydantic-settings = false
 pydantic-handlebars = false
 genai-prices = false
-anthropic = "2026-08-20T19:58:59Z"
+anthropic = "2026-09-01T17:37:11Z"
 pydantic-extra-types = false
 pydantic-core = false
 pydantic = false
@@ -320,7 +321,7 @@ wheels = [
 
 [[package]]
 name = "anthropic"
-version = "1.0.0"
+version = "1.3.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -331,9 +332,9 @@ dependencies = [
     { name = "sniffio" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/25/aa/4978e58035bd6c638c7b483450a68b7ef2d732ab78885e27bb9db0cff1a2/anthropic-1.0.0.tar.gz", hash = "sha256:42be3c97604af7252c5898413aee076ace6c46e9bca0d0d90ceb77c7d3719027", size = 1077769, upload-time = "2026-08-20T19:59:00.565Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/b4/50/463166f02179ab279edb61de1589a6f69cb3838d6a2fb6f2c92a3f8042f1/anthropic-1.3.0.tar.gz", hash = "sha256:6873492a77ede8849a161ab1bc78bc9a1e492a006d0b5bb4c57ac77845df838a", size = 1148177, upload-time = "2026-09-01T17:37:10.392Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ad/5b/db4a854aebf5d33a5ab714c46af6eb85ee44f390ed29b7b325c00b9f11ed/anthropic-1.0.0-py3-none-any.whl", hash = "sha256:32dd52e9e1d774393b27182f451398ba4262287a4d0eab30887f89f1481b3ae4", size = 1171725, upload-time = "2026-08-20T19:58:58.725Z" },
+    { url = "https://files.pythonhosted.org/packages/2c/5d/7863a9961d320c23787c7b594956afe4e878f9c0ae2376b11a20e416791d/anthropic-1.3.0-py3-none-any.whl", hash = "sha256:e7e7dbebf9f3c84a23954ab989378af6ae10a4d1804c81e9fea4b5ced695ce75", size = 1296959, upload-time = "2026-09-01T17:37:08.525Z" },
 ]
 
 [[package]]
@@ -1006,15 +1007,6 @@ wheels = [
 ]
 
 [[package]]
-name = "chardet"
-version = "5.2.0"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/f3/0d/f7b6ab21ec75897ed80c17d79b15951a719226b9fababf1e40ea74d69079/chardet-5.2.0.tar.gz", hash = "sha256:1b3b6ff479a8c414bc3fa2c0852995695c4a026dcd6d0633b2dd092ca39c1cf7", size = 2069618, upload-time = "2023-08-01T19:23:02.662Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/38/6f/f5fbc992a329ee4e0f288c1fe0e2ad9485ed064cac731ed2fe47dcc38cbf/chardet-5.2.0-py3-none-any.whl", hash = "sha256:e1cf59446890a00105fe7b7912492ea04b6e6f06d4b742b2c788469e34c82970", size = 199385, upload-time = "2023-08-01T19:23:00.661Z" },
-]
-
-[[package]]
 name = "charset-normalizer"
 version = "3.4.4"
 source = { registry = "https://pypi.org/simple" }
@@ -1529,21 +1521,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/84/75/b78198620640d394bc435c17bb49db18419afdd6cfa3ed8bcfe14034ec80/devtools-0.12.2.tar.gz", hash = "sha256:efceab184cb35e3a11fa8e602cc4fadacaa2e859e920fc6f87bf130b69885507", size = 75005, upload-time = "2023-09-03T16:57:00.679Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/d1/ae/afb1487556e2dc827a17097aac8158a25b433a345386f0e249f6d2694ccb/devtools-0.12.2-py3-none-any.whl", hash = "sha256:c366e3de1df4cdd635f1ad8cbcd3af01a384d7abda71900e68d43b04eb6aaca7", size = 19411, upload-time = "2023-09-03T16:56:59.049Z" },
-]
-
-[[package]]
-name = "diff-cover"
-version = "10.3.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "chardet" },
-    { name = "jinja2" },
-    { name = "pluggy" },
-    { name = "pygments" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/35/21/057e816125c162662d2a2cc2ebcd72dd333e78e51678298d07dd3146011a/diff_cover-10.3.0.tar.gz", hash = "sha256:474dbc63e815fbb7567d7b7ca5b104123e96129f25426ebdbc9a1bdbb935b2c6", size = 106546, upload-time = "2026-05-30T14:17:14.32Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/83/0a/a96e57a7a3fca419cd5ceff0d13dee2166520fa67103fb82624ad64700fb/diff_cover-10.3.0-py3-none-any.whl", hash = "sha256:2e47d5ab3868d1e92131c11f364f3f4a8583c97123d3bbc6b6cc8ce0a4cc2202", size = 58989, upload-time = "2026-05-30T14:17:12.858Z" },
 ]
 
 [[package]]
@@ -2130,15 +2107,15 @@ wheels = [
 
 [[package]]
 name = "genai-prices"
-version = "0.1.4"
+version = "0.1.6"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "httpx2" },
     { name = "pydantic" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/1e/e3/23f4be7d5626878a6297c728f5f8db83bd9b135da481935d4c1bb82efc21/genai_prices-0.1.4.tar.gz", hash = "sha256:f3b8a0bf0c21b01f5af3ca42babcab2f17728bf3c602f87f42b72d1d2bf61d98", size = 94678, upload-time = "2026-08-19T23:53:25.527Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/1a/16/e5a507d42c0eb629b48ebe6c278f2d8c3f929bb6b28f18108bdd66d8ae12/genai_prices-0.1.6.tar.gz", hash = "sha256:802c1e4cc3ed5e70a09083b83af441a58d91f62e12768f7f1b6b26c98a33fcac", size = 111810, upload-time = "2026-09-02T14:53:54.895Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/e6/54/911961e926a4c4ea30bf1fa0bf9d8ffc5c9ac5ed6a3f77b3d9e0ab5bb9a5/genai_prices-0.1.4-py3-none-any.whl", hash = "sha256:1d1b01cc7ab1adfa17c3a1121f4c13990bd0a4377640ecd37ebfde5836768240", size = 99160, upload-time = "2026-08-19T23:53:24.52Z" },
+    { url = "https://files.pythonhosted.org/packages/48/a1/43fa2a4c5557cd977e83eecec265b0b77b726b0c7b9f2f180b46c6fdb458/genai_prices-0.1.6-py3-none-any.whl", hash = "sha256:35ac8043dbcf2958488129413bfecba7304fe12a68ad4a78c5b0d15281e82814", size = 118834, upload-time = "2026-09-02T14:53:53.758Z" },
 ]
 
 [[package]]
@@ -3204,6 +3181,20 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/15/1f/dc6771a52592a4451be6effa200cbfc9cec61e4393d3033d81a9d307961d/librt-0.11.0-cp314-cp314t-win32.whl", hash = "sha256:2b481d846ac894c4e8403c5fd0e87c5d11d6499e404b474602508a224ff531c8", size = 103562, upload-time = "2026-05-10T18:17:03.99Z" },
     { url = "https://files.pythonhosted.org/packages/62/4a/7d1415567027286a75ba1093ec4aca11f073e0f559c530cf3e0a757ad55c/librt-0.11.0-cp314-cp314t-win_amd64.whl", hash = "sha256:28edb433edde181112a908c78907af28f964eabc15f4dd16c9d66c834302677c", size = 124327, upload-time = "2026-05-10T18:17:05.465Z" },
     { url = "https://files.pythonhosted.org/packages/ce/62/b40b382fa0c66fee1478073eb8db352a4a6beda4a1adccf1df911d8c289c/librt-0.11.0-cp314-cp314t-win_arm64.whl", hash = "sha256:dee008f20b542e3cd162ba338a7f9ec0f6d23d395f66fe8aeeec3c9d067ea253", size = 102572, upload-time = "2026-05-10T18:17:06.809Z" },
+]
+
+[[package]]
+name = "listentome"
+version = "0.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "anyio" },
+    { name = "cffi" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/af/50/b7041034d6c6af1e1373f1ea3505ddfa500b62dc63f147fed8dfcbb0970b/listentome-0.1.0.tar.gz", hash = "sha256:0dfb5db8da7d1999c019785c0c3b81d3ad4949d925214772c6601f3a167acb7c", size = 67471, upload-time = "2026-08-27T19:40:45.425Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/06/f9/8cf1fd057313335d946e7755dd29b2c22bc98df5c3313652c443b4886149/listentome-0.1.0-py3-none-any.whl", hash = "sha256:b656247c13c408d05db8051e8dcea4ba4caf96cb11f392aab5fda0fe186c0619", size = 10638, upload-time = "2026-08-27T19:40:46.155Z" },
 ]
 
 [[package]]
@@ -5330,6 +5321,9 @@ xai-realtime = [
 ]
 
 [package.dev-dependencies]
+coverage = [
+    { name = "strict-no-cover" },
+]
 dev = [
     { name = "anyio" },
     { name = "asgi-lifespan" },
@@ -5338,7 +5332,6 @@ dev = [
     { name = "brotli" },
     { name = "coverage", extra = ["toml"], marker = "extra == 'group-11-pydantic-ai-dev'" },
     { name = "devtools" },
-    { name = "diff-cover" },
     { name = "dirty-equals" },
     { name = "duckduckgo-search" },
     { name = "exa-py" },
@@ -5357,7 +5350,6 @@ dev = [
     { name = "pytest-pretty" },
     { name = "pytest-recording" },
     { name = "pytest-xdist" },
-    { name = "strict-no-cover" },
     { name = "tavily-python" },
 ]
 lint = [
@@ -5401,6 +5393,7 @@ requires-dist = [
 provides-extras = ["ag-ui", "bedrock", "bedrock-mantle", "cohere", "dbos", "duckduckgo", "exa", "examples", "google-realtime", "groq", "huggingface", "mcp-tasks", "mistral", "openai-realtime", "openrouter", "prefect", "realtime", "retries", "sentence-transformers", "spec", "tavily", "temporal", "ui", "voyageai", "web-fetch", "xai", "xai-realtime"]
 
 [package.metadata.requires-dev]
+coverage = [{ name = "strict-no-cover", git = "https://github.com/pydantic/strict-no-cover.git?rev=6c644106e03138abae01d8d60105d4a7ad4916a1" }]
 dev = [
     { name = "anyio", specifier = ">=4.7.0" },
     { name = "asgi-lifespan", specifier = ">=2.1.0" },
@@ -5409,7 +5402,6 @@ dev = [
     { name = "brotli", specifier = ">=1.2.0" },
     { name = "coverage", extras = ["toml"], specifier = ">=7.10.7" },
     { name = "devtools", specifier = ">=0.12.2" },
-    { name = "diff-cover", specifier = ">=9.2.0" },
     { name = "dirty-equals", specifier = ">=0.9.0" },
     { name = "duckduckgo-search", specifier = ">=7.0.0" },
     { name = "exa-py", specifier = ">=2.0.0" },
@@ -5428,7 +5420,6 @@ dev = [
     { name = "pytest-pretty", specifier = ">=1.3.0" },
     { name = "pytest-recording", specifier = ">=0.13.2" },
     { name = "pytest-xdist", specifier = ">=3.6.1" },
-    { name = "strict-no-cover", git = "https://github.com/pydantic/strict-no-cover.git?rev=7fc59da2c4dff919db2095a0f0e47101b657131d" },
     { name = "tavily-python", specifier = ">=0.5.0" },
 ]
 lint = [
@@ -5448,6 +5439,7 @@ dependencies = [
     { name = "duckdb" },
     { name = "fastapi" },
     { name = "gradio" },
+    { name = "listentome" },
     { name = "logfire", extra = ["asyncpg", "fastapi", "httpx", "sqlite3"] },
     { name = "mcp", version = "1.28.1", source = { registry = "https://pypi.org/simple" }, extra = ["cli"], marker = "extra == 'group-11-pydantic-ai-dev'" },
     { name = "mcp", version = "2.0.0", source = { registry = "https://pypi.org/simple" }, extra = ["cli"], marker = "extra == 'extra-11-pydantic-ai-mcp-tasks' or extra == 'extra-16-pydantic-ai-slim-mcp-tasks' or extra != 'group-11-pydantic-ai-dev'" },
@@ -5459,7 +5451,6 @@ dependencies = [
     { name = "python-dotenv" },
     { name = "python-multipart" },
     { name = "rich" },
-    { name = "sounddevice" },
     { name = "twelvelabs" },
     { name = "uvicorn" },
 ]
@@ -5472,6 +5463,7 @@ requires-dist = [
     { name = "duckdb", specifier = ">=1.4.2" },
     { name = "fastapi", specifier = ">=0.117.0" },
     { name = "gradio", specifier = ">=6.7.0" },
+    { name = "listentome", specifier = ">=0.1.0" },
     { name = "logfire", extras = ["asyncpg", "fastapi", "httpx", "sqlite3"], specifier = ">=3.14.1" },
     { name = "mcp", extras = ["cli"], specifier = ">=1.28.1" },
     { name = "modal", specifier = ">=1.0.4" },
@@ -5482,7 +5474,6 @@ requires-dist = [
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "python-multipart", specifier = ">=0.0.17" },
     { name = "rich", specifier = ">=13.9.2" },
-    { name = "sounddevice", specifier = ">=0.5.0" },
     { name = "twelvelabs", specifier = ">=1.2.8" },
     { name = "uvicorn", specifier = ">=0.32.0" },
 ]
@@ -5643,7 +5634,7 @@ zai = [
 [package.metadata]
 requires-dist = [
     { name = "ag-ui-protocol", marker = "extra == 'ag-ui'", specifier = ">=0.1.10" },
-    { name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=1.0.0" },
+    { name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=1.3.0" },
     { name = "anyio", specifier = ">=4.7.0" },
     { name = "argcomplete", marker = "extra == 'cli'", specifier = ">=3.5.0" },
     { name = "boto3", marker = "extra == 'bedrock'", specifier = ">=1.42.63" },
@@ -5656,7 +5647,7 @@ requires-dist = [
     { name = "fastmcp-slim", extras = ["client"], marker = "extra == 'mcp'", specifier = ">=3.3.0,<5" },
     { name = "fastmcp-slim", extras = ["client"], marker = "extra == 'mcp-tasks'", specifier = ">=4.0.0b1,<5" },
     { name = "fastmcp-tasks", marker = "extra == 'mcp-tasks'", specifier = ">=4.0.0b1,<5" },
-    { name = "genai-prices", specifier = ">=0.1.4" },
+    { name = "genai-prices", specifier = ">=0.1.6" },
     { name = "google-genai", marker = "extra == 'google'", specifier = ">=2.18.0" },
     { name = "google-genai", marker = "extra == 'google-realtime'", specifier = ">=2.18.0" },
     { name = "griffelib", specifier = ">=2.0" },
@@ -7149,22 +7140,6 @@ wheels = [
 ]
 
 [[package]]
-name = "sounddevice"
-version = "0.5.5"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "cffi" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/2a/f9/2592608737553638fca98e21e54bfec40bf577bb98a61b2770c912aab25e/sounddevice-0.5.5.tar.gz", hash = "sha256:22487b65198cb5bf2208755105b524f78ad173e5ab6b445bdab1c989f6698df3", size = 143191, upload-time = "2026-01-23T18:36:43.529Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/1e/0a/478e441fd049002cf308520c0d62dd8333e7c6cc8d997f0dda07b9fbcc46/sounddevice-0.5.5-py3-none-any.whl", hash = "sha256:30ff99f6c107f49d25ad16a45cacd8d91c25a1bcdd3e81a206b921a3a6405b1f", size = 32807, upload-time = "2026-01-23T18:36:35.649Z" },
-    { url = "https://files.pythonhosted.org/packages/56/f9/c037c35f6d0b6bc3bc7bfb314f1d6f1f9a341328ef47cd63fc4f850a7b27/sounddevice-0.5.5-py3-none-macosx_10_6_x86_64.macosx_10_6_universal2.whl", hash = "sha256:05eb9fd6c54c38d67741441c19164c0dae8ce80453af2d8c4ad2e7823d15b722", size = 108557, upload-time = "2026-01-23T18:36:37.41Z" },
-    { url = "https://files.pythonhosted.org/packages/88/a1/d19dd9889cd4bce2e233c4fac007cd8daaf5b9fe6e6a5d432cf17be0b807/sounddevice-0.5.5-py3-none-win32.whl", hash = "sha256:1234cc9b4c9df97b6cbe748146ae0ec64dd7d6e44739e8e42eaa5b595313a103", size = 317765, upload-time = "2026-01-23T18:36:39.047Z" },
-    { url = "https://files.pythonhosted.org/packages/c3/0e/002ed7c4c1c2ab69031f78989d3b789fee3a7fba9e586eb2b81688bf4961/sounddevice-0.5.5-py3-none-win_amd64.whl", hash = "sha256:cfc6b2c49fb7f555591c78cb8ecf48d6a637fd5b6e1db5fec6ed9365d64b3519", size = 365324, upload-time = "2026-01-23T18:36:40.496Z" },
-    { url = "https://files.pythonhosted.org/packages/4e/39/a61d4b83a7746b70d23d9173be688c0c6bfc7173772344b7442c2c155497/sounddevice-0.5.5-py3-none-win_arm64.whl", hash = "sha256:3861901ddd8230d2e0e8ae62ac320cdd4c688d81df89da036dcb812f757bb3e6", size = 317115, upload-time = "2026-01-23T18:36:42.235Z" },
-]
-
-[[package]]
 name = "soupsieve"
 version = "2.8.4"
 source = { registry = "https://pypi.org/simple" }
@@ -7256,9 +7231,9 @@ wheels = [
 [[package]]
 name = "strict-no-cover"
 version = "0.1.1"
-source = { git = "https://github.com/pydantic/strict-no-cover.git?rev=7fc59da2c4dff919db2095a0f0e47101b657131d#7fc59da2c4dff919db2095a0f0e47101b657131d" }
+source = { git = "https://github.com/pydantic/strict-no-cover.git?rev=6c644106e03138abae01d8d60105d4a7ad4916a1#6c644106e03138abae01d8d60105d4a7ad4916a1" }
 dependencies = [
-    { name = "pydantic" },
+    { name = "coverage" },
 ]
 
 [[package]]
