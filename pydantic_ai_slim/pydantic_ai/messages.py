@@ -1323,8 +1323,8 @@ cancellation). Shared between the agent graph's history repair and the UI adapte
 so both synthesize the same `outcome='interrupted'` return."""
 
 
-def _tool_result_provenance_tags(tool_name: str, tool_call_id: str) -> tuple[str, str]:
-    """The open and close tags framing tool-produced media that has to travel on the user channel.
+def _tool_result_provenance_tags(tool_name: str, tool_call_id: str, file_identifier: str) -> tuple[str, str]:
+    """The open and close tags framing one tool-produced file that has to travel on the user channel.
 
     A provider whose tool result channel is text-only can only deliver a tool's multimodal output on
     the user channel — the same one the end user's own uploads travel on — which leaves the model
@@ -1333,12 +1333,17 @@ def _tool_result_provenance_tags(tool_name: str, tool_call_id: str) -> tuple[str
     presented at user trust level. `Model.prepare_messages` frames a `SystemPromptPart` a provider
     can't send natively as `<system>...</system>` for the same reason.
 
+    Each file is framed on its own so that `file_id` carries the same identifier the tool result text
+    cross-references as "See file <identifier>.", which one set of tags around a whole call's files
+    could not name.
+
     They identify rather than prove. This is prompt text like any other, so a tool can emit the
     closing tag and a user can type the opening one; the attribute values are escaped, and a provider
     that accepts media in its tool result channel sends it there and never renders these at all.
     """
     return (
-        f'<tool_result tool_name="{html.escape(tool_name)}" tool_call_id="{html.escape(tool_call_id)}">',
+        f'<tool_result tool_name="{html.escape(tool_name)}" tool_call_id="{html.escape(tool_call_id)}"'
+        f' file_id="{html.escape(file_identifier)}">',
         '</tool_result>',
     )
 
@@ -1566,9 +1571,9 @@ class BaseToolReturnPart:
 
         For providers whose tool result API only accepts text. Multimodal files are referenced
         by identifier in the tool result text ('See file {id}.') and included in full in the
-        returned file content list ('This is file {id}:' followed by the file).
+        returned file content list.
 
-        The files are framed by `_tool_result_provenance_tags` so the model can tell them from the
+        Each file is framed by `_tool_result_provenance_tags` so the model can tell it from the
         user's own uploads, which travel on the same channel.
 
         Args:
@@ -1580,18 +1585,15 @@ class BaseToolReturnPart:
             return self.model_response_str(wrap_if_error=wrap_if_error), []
 
         tool_content_parts: list[str] = []
-        open_tag, close_tag = _tool_result_provenance_tags(self.tool_name, self.tool_call_id)
-        file_content: list[UserContent] = [open_tag]
+        file_content: list[UserContent] = []
 
         for item in self.content_items(mode='str', wrap_if_error=False):
             if is_multi_modal_content(item):
                 tool_content_parts.append(f'See file {item.identifier}.')
-                file_content.append(f'This is file {item.identifier}:')
-                file_content.append(item)
+                open_tag, close_tag = _tool_result_provenance_tags(self.tool_name, self.tool_call_id, item.identifier)
+                file_content.extend([open_tag, item, close_tag])
             elif isinstance(item, str):  # pragma: no branch
                 tool_content_parts.append(item)
-
-        file_content.append(close_tag)
 
         if wrap_if_error and self.outcome == 'failed':
             error = {'error': self.model_response_str(wrap_if_error=False)}

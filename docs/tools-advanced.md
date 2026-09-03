@@ -75,13 +75,12 @@ Whether a file can travel inside the tool result depends on the model **and** th
 To keep the model from reading a tool's output as something the user attached, a file taking the user channel is framed with the call it came from:
 
 ```text
-<tool_result tool_name="get_photo" tool_call_id="call_9cQx">
-This is file d9a13f:
+<tool_result tool_name="get_photo" tool_call_id="call_9cQx" file_id="d9a13f">
 [the image]
 </tool_result>
 ```
 
-The tool result itself carries `See file d9a13f.` in place of the file, so the model can match each file to the call that produced it even when several tools return media in the same step. Realtime sessions frame tool-produced files the same way. This mirrors how a mid-conversation [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] is framed as `<system>...</system>` for a model whose API has no place to put one.
+The tool result itself carries `See file d9a13f.` in place of the file, and each file gets its own tags, so the model can match every file to the call that produced it even when several tools return media in the same step. Realtime sessions frame tool-produced files the same way. This mirrors how a mid-conversation [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] is framed as `<system>...</system>` for a model whose API has no place to put one.
 
 The framing is applied while the request is built and is never stored: the file stays on the [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] in your message history, so the same history replayed against a model that takes files natively puts them in the tool result with no framing at all.
 

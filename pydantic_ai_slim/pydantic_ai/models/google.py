@@ -1207,9 +1207,9 @@ class GoogleModel(Model[Client]):
         Returns the `function_response` part and, separately, any files this model can't carry
         inside it. For Gemini 3+ models with supported MIME types, files are sent inside
         `function_response.parts` for efficiency and the second element is empty. Unsupported types
-        fall back to ordinary parts framed by `_tool_result_provenance_tags`; the caller emits those
-        after every `function_response` in the request, which is why they carry the framing rather
-        than relying on sitting next to the call they belong to.
+        fall back to ordinary parts, each framed by `_tool_result_provenance_tags`; the caller emits
+        those after every `function_response` in the request, which is why they carry the framing
+        rather than relying on sitting next to the call they belong to.
         See: https://ai.google.dev/gemini-api/docs/function-calling?example=meeting#multimodal
         """
         supported_mime_types = self.profile.get('google_supported_mime_types_in_tool_returns', ())
@@ -1224,9 +1224,9 @@ class GoogleModel(Model[Client]):
                 function_response_parts.append(fr_part)
             else:
                 fallback_refs.append(f'See file {file.identifier}.')
-                fallback_parts.append({'text': f'This is file {file.identifier}:'})
+                open_tag, close_tag = _tool_result_provenance_tags(part.tool_name, part.tool_call_id, file.identifier)
                 file_part = await self._map_file_to_part(file)
-                fallback_parts.append(file_part)
+                fallback_parts.extend([{'text': open_tag}, file_part, {'text': close_tag}])
 
         if part.outcome == 'failed':
             # Google's function-response schema prescribes an `error` key (mirroring the `output` key
@@ -1249,12 +1249,7 @@ class GoogleModel(Model[Client]):
         if function_response_parts:
             function_response_dict['parts'] = function_response_parts
 
-        framed_fallback_parts: list[PartDict] = []
-        if fallback_parts:
-            open_tag, close_tag = _tool_result_provenance_tags(part.tool_name, part.tool_call_id)
-            framed_fallback_parts = [{'text': open_tag}, *fallback_parts, {'text': close_tag}]
-
-        return {'function_response': function_response_dict}, framed_fallback_parts
+        return {'function_response': function_response_dict}, fallback_parts
 
     def _validate_uploaded_file(self, file: UploadedFile) -> tuple[str, str]:
         """Validate an `UploadedFile` and return (`file_uri`, `mime_type`).

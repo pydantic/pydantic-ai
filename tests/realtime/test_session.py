@@ -1412,8 +1412,7 @@ async def test_tool_returning_a_file_frames_it_with_its_call() -> None:
                 tool_call_id='tc_1',
                 output='See file radar.',
                 content=[
-                    '<tool_result tool_name="get_weather" tool_call_id="tc_1">',
-                    'This is file radar:',
+                    '<tool_result tool_name="get_weather" tool_call_id="tc_1" file_id="radar">',
                     BinaryImage(data=b'png', media_type='image/png', identifier='radar'),
                     '</tool_result>',
                 ],

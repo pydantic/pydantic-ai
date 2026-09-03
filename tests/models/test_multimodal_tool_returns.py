@@ -22,6 +22,7 @@ from typing import Any, Literal, cast
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from mistralai.client.models import TextChunk
 from typing_extensions import assert_never
 
 from pydantic_ai import Agent, BinaryContent, BinaryImage
@@ -839,8 +840,7 @@ async def test_non_pdf_document_url_mistral() -> None:
             AssistantMessage(content=[TextChunk(text='OK')]),
             UserMessage(
                 content=[
-                    TextChunk(text='<tool_result tool_name="get_file" tool_call_id="call1">'),
-                    TextChunk(text='This is file fb8964:'),
+                    TextChunk(text='<tool_result tool_name="get_file" tool_call_id="call1" file_id="fb8964">'),
                     TextChunk(
                         text="""\
 -----BEGIN FILE id="fb8964" type="text/plain"-----
@@ -1127,12 +1127,16 @@ TOOL_MEDIA_WIRE_CASES: list[ToolMediaWireCase] = [
                 {
                     'role': 'user',
                     'content': [
-                        {'text': '<tool_result tool_name="get_photo" tool_call_id="photo1">', 'type': 'text'},
-                        {'text': 'This is file photo:', 'type': 'text'},
+                        {
+                            'text': '<tool_result tool_name="get_photo" tool_call_id="photo1" file_id="photo">',
+                            'type': 'text',
+                        },
                         {'image_url': {'url': 'data:image/png;base64,cG5nLWJ5dGVz'}, 'type': 'image_url'},
                         {'text': '</tool_result>', 'type': 'text'},
-                        {'text': '<tool_result tool_name="get_photo" tool_call_id="photo2">', 'type': 'text'},
-                        {'text': 'This is file photo:', 'type': 'text'},
+                        {
+                            'text': '<tool_result tool_name="get_photo" tool_call_id="photo2" file_id="photo">',
+                            'type': 'text',
+                        },
                         {'image_url': {'url': 'data:image/png;base64,cG5nLWJ5dGVz'}, 'type': 'image_url'},
                         {'text': '</tool_result>', 'type': 'text'},
                     ],
@@ -1160,12 +1164,16 @@ TOOL_MEDIA_WIRE_CASES: list[ToolMediaWireCase] = [
                 {
                     'role': 'user',
                     'content': [
-                        {'text': '<tool_result tool_name="get_photo" tool_call_id="photo1">', 'type': 'text'},
-                        {'text': 'This is file photo:', 'type': 'text'},
+                        {
+                            'text': '<tool_result tool_name="get_photo" tool_call_id="photo1" file_id="photo">',
+                            'type': 'text',
+                        },
                         {'image_url': {'url': 'data:image/png;base64,cG5nLWJ5dGVz'}, 'type': 'image_url'},
                         {'text': '</tool_result>', 'type': 'text'},
-                        {'text': '<tool_result tool_name="get_photo" tool_call_id="photo2">', 'type': 'text'},
-                        {'text': 'This is file photo:', 'type': 'text'},
+                        {
+                            'text': '<tool_result tool_name="get_photo" tool_call_id="photo2" file_id="photo">',
+                            'type': 'text',
+                        },
                         {'image_url': {'url': 'data:image/png;base64,cG5nLWJ5dGVz'}, 'type': 'image_url'},
                         {'text': '</tool_result>', 'type': 'text'},
                     ],
@@ -1205,12 +1213,16 @@ TOOL_MEDIA_WIRE_CASES: list[ToolMediaWireCase] = [
                 {'role': 'assistant', 'content': [{'text': 'OK', 'type': 'text'}], 'prefix': False},
                 {
                     'content': [
-                        {'text': '<tool_result tool_name="get_photo" tool_call_id="photo1">', 'type': 'text'},
-                        {'text': 'This is file photo:', 'type': 'text'},
+                        {
+                            'text': '<tool_result tool_name="get_photo" tool_call_id="photo1" file_id="photo">',
+                            'type': 'text',
+                        },
                         {'image_url': {'url': 'data:image/png;base64,cG5nLWJ5dGVz'}, 'type': 'image_url'},
                         {'text': '</tool_result>', 'type': 'text'},
-                        {'text': '<tool_result tool_name="get_photo" tool_call_id="photo2">', 'type': 'text'},
-                        {'text': 'This is file photo:', 'type': 'text'},
+                        {
+                            'text': '<tool_result tool_name="get_photo" tool_call_id="photo2" file_id="photo">',
+                            'type': 'text',
+                        },
                         {'image_url': {'url': 'data:image/png;base64,cG5nLWJ5dGVz'}, 'type': 'image_url'},
                         {'text': '</tool_result>', 'type': 'text'},
                     ],
@@ -1250,17 +1262,15 @@ TOOL_MEDIA_WIRE_CASES: list[ToolMediaWireCase] = [
                         {
                             'type': 'text',
                             'image_url': None,
-                            'text': '<tool_result tool_name="get_photo" tool_call_id="photo1">',
+                            'text': '<tool_result tool_name="get_photo" tool_call_id="photo1" file_id="photo">',
                         },
-                        {'type': 'text', 'image_url': None, 'text': 'This is file photo:'},
                         {'type': 'image_url', 'image_url': {'url': 'data:image/png;base64,cG5nLWJ5dGVz'}, 'text': None},
                         {'type': 'text', 'image_url': None, 'text': '</tool_result>'},
                         {
                             'type': 'text',
                             'image_url': None,
-                            'text': '<tool_result tool_name="get_photo" tool_call_id="photo2">',
+                            'text': '<tool_result tool_name="get_photo" tool_call_id="photo2" file_id="photo">',
                         },
-                        {'type': 'text', 'image_url': None, 'text': 'This is file photo:'},
                         {'type': 'image_url', 'image_url': {'url': 'data:image/png;base64,cG5nLWJ5dGVz'}, 'text': None},
                         {'type': 'text', 'image_url': None, 'text': '</tool_result>'},
                     ],
@@ -1306,12 +1316,10 @@ TOOL_MEDIA_WIRE_CASES: list[ToolMediaWireCase] = [
                 },
                 {
                     'content': [
-                        {'text': '<tool_result tool_name="get_photo" tool_call_id="photo1">'},
-                        {'text': 'This is file photo:'},
+                        {'text': '<tool_result tool_name="get_photo" tool_call_id="photo1" file_id="photo">'},
                         {'image_url': {'image_url': 'data:image/png;base64,cG5nLWJ5dGVz', 'detail': 'DETAIL_AUTO'}},
                         {'text': '</tool_result>'},
-                        {'text': '<tool_result tool_name="get_photo" tool_call_id="photo2">'},
-                        {'text': 'This is file photo:'},
+                        {'text': '<tool_result tool_name="get_photo" tool_call_id="photo2" file_id="photo">'},
                         {'image_url': {'image_url': 'data:image/png;base64,cG5nLWJ5dGVz', 'detail': 'DETAIL_AUTO'}},
                         {'text': '</tool_result>'},
                     ],
@@ -1360,12 +1368,10 @@ TOOL_MEDIA_WIRE_CASES: list[ToolMediaWireCase] = [
                 {
                     'role': 'user',
                     'parts': [
-                        {'text': '<tool_result tool_name="get_photo" tool_call_id="photo1">'},
-                        {'text': 'This is file photo:'},
+                        {'text': '<tool_result tool_name="get_photo" tool_call_id="photo1" file_id="photo">'},
                         {'inline_data': {'data': b'png-bytes', 'mime_type': 'image/png'}},
                         {'text': '</tool_result>'},
-                        {'text': '<tool_result tool_name="get_photo" tool_call_id="photo2">'},
-                        {'text': 'This is file photo:'},
+                        {'text': '<tool_result tool_name="get_photo" tool_call_id="photo2" file_id="photo">'},
                         {'inline_data': {'data': b'png-bytes', 'mime_type': 'image/png'}},
                         {'text': '</tool_result>'},
                     ],
@@ -1454,9 +1460,9 @@ async def test_tool_media_is_framed_with_its_originating_call(case: ToolMediaWir
     """Tool-returned media reaches the model attributed to the call that produced it, or not at all.
 
     Where the tool result channel is text-only the image travels on the user channel framed by its
-    `tool_name` and `tool_call_id`; where the channel takes files it goes inside the tool result and
-    nothing is framed. Two calls to one tool return the same image, so the framing's `tool_call_id`
-    is what keeps the two attachments distinct.
+    `tool_name`, `tool_call_id` and `file_id`; where the channel takes files it goes inside the tool
+    result and nothing is framed. Two calls to one tool return the same image under the same
+    identifier, so the framing's `tool_call_id` is what keeps the two attachments distinct.
 
     The framing is built with the request and never stored, so the history is unchanged afterwards
     and the same history renders either way depending only on which model it is sent to.
@@ -1474,7 +1480,8 @@ async def test_tool_media_is_framed_with_its_originating_call(case: ToolMediaWir
     # the property in a form it cannot rewrite.
     rendered = str(wire)
     for tool_call_id in ('photo1', 'photo2'):
-        assert (f'<tool_result tool_name="get_photo" tool_call_id="{tool_call_id}">' in rendered) is case.framed
+        open_tag = f'<tool_result tool_name="get_photo" tool_call_id="{tool_call_id}" file_id="{_PHOTO.identifier}">'
+        assert (open_tag in rendered) is case.framed
     assert ('</tool_result>' in rendered) is case.framed
 
 
