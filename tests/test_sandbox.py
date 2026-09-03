@@ -13,7 +13,7 @@ import pytest
 
 from pydantic_ai import Agent, RunContext, UserError
 from pydantic_ai.agent import WrapperAgent
-from pydantic_ai.capabilities import AbstractCapability, CombinedCapability, WrapperCapability
+from pydantic_ai.capabilities import AbstractCapability, CombinedCapability, WrapperCapability, durable_operation
 from pydantic_ai.durable_exec._sandbox import contributes_sandbox, guard_workflow_sandbox
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -550,6 +550,10 @@ class SandboxCapability(AbstractCapability[Any]):
     events: list[str] = field(default_factory=lambda: [])
     backend: FakeSandbox | None = field(default=None, init=False)
 
+    def __post_init__(self) -> None:
+        if self.id is None:
+            self.id = self.name
+
     async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
         self.events.append(f'{self.name}:acquire')
         self.backend = FakeSandbox(self.name)
@@ -598,6 +602,8 @@ async def test_capability_connection_is_detached_without_terminating_sandbox(san
     close_calls: list[bool] = []
 
     class Connector(AbstractCapability[Any]):
+        id = 'connector'
+
         async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
             return SandboxRef(sandbox_id='fake-connected')
 
@@ -623,6 +629,8 @@ async def test_capability_sandbox_filesystem_serves_every_operation():
     connected: list[str] = []
 
     class Connector(AbstractCapability[Any]):
+        id = 'connector'
+
         async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
             return SandboxRef(sandbox_id=backend.sandbox_id)
 
@@ -728,16 +736,24 @@ async def test_multiple_ref_connectors_are_rejected():
 
 def test_contributes_sandbox_detection():
     class ConfiguredSandbox(AbstractCapability[Any]):
-        def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
+        async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
             return SandboxRef(sandbox_id='configured')
+
+    class DurableSandbox(ConfiguredSandbox):
+        @durable_operation('acquire_sandbox')
+        async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
+            return await super().acquire_sandbox(ctx)
 
     assert contributes_sandbox(ConnectOnlySandboxCapability()) is False
     assert contributes_sandbox(ConfiguredSandbox()) is False
     assert contributes_sandbox(WrapperCapability(wrapped=ConfiguredSandbox())) is False
-    assert contributes_sandbox(WrapperCapability(wrapped=SandboxCapability())) is True
-    assert contributes_sandbox(SandboxCapability(id='deferred-sandbox', defer_loading=True)) is False
-    assert contributes_sandbox(CombinedCapability([SandboxCapability(), ConnectOnlySandboxCapability()])) is True
-    supplier = SandboxCapability()
+    assert contributes_sandbox(WrapperCapability(wrapped=DurableSandbox())) is True
+    deferred = DurableSandbox()
+    deferred.id = 'deferred-sandbox'
+    deferred.defer_loading = True
+    assert contributes_sandbox(deferred) is False
+    assert contributes_sandbox(CombinedCapability([DurableSandbox(), ConnectOnlySandboxCapability()])) is True
+    supplier = DurableSandbox()
     assert contributes_sandbox(CombinedCapability([supplier, WrapperCapability(wrapped=supplier)])) is True
 
 
@@ -831,6 +847,8 @@ async def test_sandbox_lifecycle_brackets_the_run(run_mode: str) -> None:
 
     @dataclass
     class OrderingSandboxCapability(AbstractCapability[Any]):
+        id: str | None = 'ordering'
+
         async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
             events.append('acquire_sandbox')
             return SandboxRef(sandbox_id='lifecycle')
@@ -914,6 +932,8 @@ async def test_acquired_sandbox_connection_failure_is_explained(failure: str):
 
     @dataclass
     class OwnedButUnreachable(AbstractCapability[Any]):
+        id: str | None = 'owner'
+
         async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
             return SandboxRef(sandbox_id='owned')
 
@@ -926,7 +946,7 @@ async def test_acquired_sandbox_connection_failure_is_explained(failure: str):
     expected = (
         "Failed to connect to sandbox 'owned'."
         if failure == 'raise'
-        else "No capability can connect to sandbox 'owned'"
+        else "No capability with id 'owner' is attached to this agent to connect sandbox 'owned'"
     )
     with pytest.raises(UserError, match=re.escape(expected)) as exc_info:
         await agent.run('go')
@@ -934,10 +954,15 @@ async def test_acquired_sandbox_connection_failure_is_explained(failure: str):
 
 
 def test_durable_workflow_sandbox_guard():
+    class DurableSupplier(AcquireOnlySandboxCapability):
+        @durable_operation('acquire_sandbox')
+        async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
+            return await super().acquire_sandbox(ctx)
+
     with pytest.raises(UserError, match='contribution'):
         guard_workflow_sandbox(
             None,
-            [AcquireOnlySandboxCapability()],
+            [DurableSupplier()],
             static_contributes_sandbox=False,
             contribution_error='contribution blocked',
             live_error='live blocked',
@@ -1062,8 +1087,7 @@ async def test_wrapper_sandbox_uses_middleware_order_and_keeps_ref():
         label: str
 
         def get_wrapper_sandbox(self, ctx: RunContext[Any], sandbox: Sandbox) -> Sandbox:
-            # Deliberately omit the ref: Agent restores identity on replacement facades.
-            return Sandbox(MiddlewareBackend(self.label, sandbox.backend))
+            return Sandbox(MiddlewareBackend(self.label, sandbox.backend), ref=sandbox.ref)
 
     connector = ConnectOnlySandboxCapability()
     agent = Agent(_tool_call_then_text(), capabilities=[Middleware('first'), Middleware('second'), connector])
@@ -1082,26 +1106,82 @@ async def test_wrapper_sandbox_uses_middleware_order_and_keeps_ref():
     assert events == ['first:before', 'second:before', 'second:after', 'first:after']
 
 
-@pytest.mark.parametrize('release_fails', [False, True])
-async def test_multiple_sandbox_suppliers_are_released_and_rejected(release_fails: bool):
-    """Every acquired sandbox is released before the ambiguity error; a failed release rides
-    along as its cause rather than replacing it."""
-    release_error = RuntimeError('release failed')
+async def test_first_sandbox_supplier_wins_and_later_supplier_is_not_asked():
+    first = SandboxCapability(name='first')
+    last = SandboxCapability(name='last')
+    seen: list[str] = []
 
-    @dataclass
-    class MaybeFailingRelease(SandboxCapability):
+    await make_probe_agent(seen, capabilities=[first, last]).run('go')
+
+    assert seen == ['first']
+    assert first.events == ['first:acquire', 'first:connect', 'first:release']
+    assert last.events == []
+
+
+async def test_declining_sandbox_supplier_falls_through_to_next_supplier():
+    decliner = DecliningSandboxCapability()
+    winner = SandboxCapability(name='winner')
+    seen: list[str] = []
+
+    await make_probe_agent(seen, capabilities=[decliner, winner]).run('go')
+
+    assert decliner.acquire_calls == 1
+    assert seen == ['winner']
+    assert winner.events == ['winner:acquire', 'winner:connect', 'winner:release']
+
+
+async def test_acquired_sandbox_ref_is_stamped_and_released_only_by_winner():
+    received: list[SandboxRef] = []
+
+    class Winner(SandboxCapability):
         async def release_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
+            received.append(ref)
             await super().release_sandbox(ctx, ref)
-            if release_fails:
-                raise release_error
 
-    first = MaybeFailingRelease(name='first')
-    last = MaybeFailingRelease(name='last')
-    with pytest.raises(UserError, match=r'Exactly one capability may supply the run sandbox') as exc_info:
-        await make_probe_agent([], capabilities=[first, last]).run('go')
-    assert first.events == ['first:acquire', 'first:release']
-    assert last.events == ['last:acquire', 'last:release']
-    assert exc_info.value.__cause__ is (release_error if release_fails else None)
+    winner = Winner(name='winner')
+    await make_probe_agent([], capabilities=[winner]).run('go')
+
+    assert received == [SandboxRef(sandbox_id='fake-winner', capability_id='winner')]
+
+
+async def test_wrapper_around_sandbox_supplier_preserves_routing_identity():
+    supplier = SandboxCapability(name='wrapped-supplier')
+    wrapper = WrapperCapability(wrapped=supplier)
+
+    await make_probe_agent([], capabilities=[wrapper]).run('go')
+
+    assert wrapper.id == 'wrapped-supplier'
+    assert supplier.events == ['wrapped-supplier:acquire', 'wrapped-supplier:connect', 'wrapped-supplier:release']
+
+
+async def test_stamped_sandbox_ref_with_unknown_capability_id_names_it():
+    with pytest.raises(
+        UserError,
+        match=re.escape("No capability with id 'missing' is attached to this agent to connect sandbox 'orphan'"),
+    ):
+        await make_probe_agent([]).run('go', sandbox=SandboxRef(sandbox_id='orphan', capability_id='missing'))
+
+
+async def test_sandbox_argument_rejects_capability_with_lifecycle_guidance():
+    capability = SandboxCapability()
+    with pytest.raises(
+        UserError,
+        match=re.escape(
+            '`sandbox=` takes a `SandboxRef` or a `SandboxBackend`, not a capability. '
+            'Pass `SandboxCapability` through `capabilities=[...]` so Pydantic AI can manage its lifecycle.'
+        ),
+    ):
+        await make_probe_agent([]).run('go', sandbox=capability)  # pyright: ignore[reportArgumentType]
+
+
+async def test_wrapper_sandbox_must_preserve_ref():
+    class DropsRef(AbstractCapability[Any]):
+        def get_wrapper_sandbox(self, ctx: RunContext[Any], sandbox: Sandbox) -> Sandbox:
+            return Sandbox(sandbox.backend)
+
+    agent = make_probe_agent([], capabilities=[DropsRef(), ConnectOnlySandboxCapability()])
+    with pytest.raises(UserError, match=r"DropsRef\.get_wrapper_sandbox must preserve the sandbox's `ref`"):
+        await agent.run('go', sandbox=SandboxRef(sandbox_id='wrapped'))
 
 
 async def test_capability_without_sandbox_does_not_mask_supplier():
@@ -1124,6 +1204,8 @@ async def test_warm_sandbox_shared_across_runs():
 
     @dataclass
     class WarmSandboxCapability(AbstractCapability[Any]):
+        id: str | None = 'warm'
+
         async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
             return SandboxRef(sandbox_id=warm.sandbox_id)
 

@@ -5,6 +5,7 @@ from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, cast
 
 from pydantic import ValidationError
+from pydantic.alias_generators import to_snake
 
 from pydantic_ai._instructions import (
     AgentInstruction,
@@ -14,9 +15,9 @@ from pydantic_ai._instructions import (
     validate_instruction_id_segment,
 )
 from pydantic_ai._utils import aclose_all, gather, replace_no_init
-from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
-from pydantic_ai.sandboxes import Sandbox
+from pydantic_ai.sandboxes import Sandbox, SandboxBackend, SandboxRef
 from pydantic_ai.settings import ModelSettings, merge_model_settings
 from pydantic_ai.tools import (
     AgentDepsT,
@@ -47,6 +48,23 @@ if TYPE_CHECKING:
     from pydantic_ai.result import FinalResult
     from pydantic_ai.run import AgentRunResult
     from pydantic_graph import End
+
+
+def effective_capability_ids(capabilities: Sequence[AbstractCapability[Any]]) -> list[str]:
+    """Return explicit or run-local derived IDs for capabilities in list order."""
+    explicit_ids = {capability.id for capability in capabilities if capability.id is not None}
+    result: list[str] = []
+    for capability in capabilities:
+        capability_id = capability.id
+        if capability_id is None:
+            base_id = to_snake(type(capability).__name__)
+            capability_id = base_id
+            suffix = 2
+            while capability_id in result or capability_id in explicit_ids:
+                capability_id = f'{base_id}_{suffix}'
+                suffix += 1
+        result.append(capability_id)
+    return result
 
 
 @dataclass
@@ -369,15 +387,63 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                 any_wrapped = True
         return wrapped if any_wrapped else None
 
+    def _sandbox_capability_ids(self) -> dict[int, str]:
+        """Return the same run-local IDs used for capabilities without an explicit `id`."""
+        return dict(zip(map(id, self.capabilities), effective_capability_ids(self.capabilities)))
+
+    async def acquire_sandbox(self, ctx: RunContext[AgentDepsT]) -> SandboxRef | None:
+        capability_ids = self._sandbox_capability_ids()
+        for capability in self.capabilities:
+            if capability.defer_loading is not True and (ref := await capability.acquire_sandbox(ctx)) is not None:
+                return replace(ref, capability_id=capability_ids[id(capability)]) if ref.capability_id is None else ref
+        return None
+
+    def get_sandbox(self, ctx: RunContext[AgentDepsT], ref: SandboxRef) -> SandboxBackend | None:
+        connected: list[SandboxBackend] = []
+        capability_ids = self._sandbox_capability_ids()
+        for capability in self.capabilities:
+            if capability.defer_loading is True:
+                continue
+            if ref.capability_id is not None and not (
+                capability_ids[id(capability)] == ref.capability_id or isinstance(capability, CombinedCapability)
+            ):
+                continue
+            if (backend := capability.get_sandbox(ctx, ref)) is not None:
+                connected.append(backend)
+                if ref.capability_id is not None:
+                    return backend
+        if len(connected) > 1:
+            raise UserError(f'Exactly one capability may connect to sandbox {ref.sandbox_id!r}; {len(connected)} did.')
+        return connected[0] if connected else None
+
     def get_wrapper_sandbox(self, ctx: RunContext[AgentDepsT], sandbox: Sandbox) -> Sandbox | None:
         wrapped = sandbox
         any_wrapped = False
         for capability in reversed(self.capabilities):
             result = capability.get_wrapper_sandbox(ctx, wrapped)
             if result is not None:
+                if result.ref is not sandbox.ref:
+                    raise UserError(
+                        f"{type(capability).__name__}.get_wrapper_sandbox must preserve the sandbox's `ref`; "
+                        'return `Sandbox(WrappedBackend(sandbox.backend), ref=sandbox.ref)`.'
+                    )
                 wrapped = result
                 any_wrapped = True
         return wrapped if any_wrapped else None
+
+    async def release_sandbox(self, ctx: RunContext[AgentDepsT], ref: SandboxRef) -> None:
+        if ref.capability_id is None:
+            raise UserError(
+                f'Sandbox ref {ref.sandbox_id!r} without a `capability_id` cannot be released because no capability acquired it.'
+            )
+        capability_ids = self._sandbox_capability_ids()
+        for capability in self.capabilities:
+            if capability.defer_loading is not True and (
+                capability_ids[id(capability)] == ref.capability_id or isinstance(capability, CombinedCapability)
+            ):
+                await capability.release_sandbox(ctx, ref)
+                if capability_ids[id(capability)] == ref.capability_id:
+                    return
 
     # --- Tool preparation hooks ---
 

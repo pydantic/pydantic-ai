@@ -17,14 +17,12 @@ from pydantic_ai._function_schema import (
 from pydantic_ai._run_context import get_current_run_context
 from pydantic_ai.capabilities._durable_operation import (
     DurableOperationMarker,
-    base_hook_durable_operation as base_hook_durable_operation,
     get_durable_operation_marker,
     invoke_durable_operation,
     set_durable_operation_marker,
     validate_operation_name as _validate_operation_name,
 )
 from pydantic_ai.capabilities.abstract import AbstractCapability, leaf_capabilities
-from pydantic_ai.capabilities.wrapper import WrapperCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
@@ -39,7 +37,7 @@ ResultT = TypeVar('ResultT')
 P = ParamSpec('P')
 A = TypeVar('A', bound=Awaitable[Any])
 
-_SYNC_NEVER_DURABLE_HOOKS = frozenset({'get_toolset', 'get_wrapper_toolset', 'get_wrapper_sandbox'})
+_SYNC_NEVER_DURABLE_HOOKS = frozenset({'get_toolset', 'get_wrapper_toolset', 'get_sandbox', 'get_wrapper_sandbox'})
 """Sync hooks marked so collection can report why they cannot be durable.
 
 The decorator still attaches a marker to these sync hooks so binding raises the specific
@@ -262,56 +260,14 @@ def durable_operation(name: str) -> Callable[[Callable[P, A]], Callable[P, A]]:
     return decorate
 
 
-def _async_base_hook_override(
-    capability: AbstractCapability[Any], method_name: str, base_member: object
-) -> Callable[..., Awaitable[Any]] | None:
-    member = getattr(type(capability), method_name)
-    if member is base_member:
-        return None
-    wrapped_member: object | None = None
-    if isinstance(capability, WrapperCapability) and member is getattr(WrapperCapability, method_name, None):
-        wrapped = capability.wrapped
-        wrapper_member = getattr(WrapperCapability, method_name, None)
-        while isinstance(wrapped, WrapperCapability) and getattr(type(wrapped), method_name, None) is wrapper_member:
-            wrapped = wrapped.wrapped
-        wrapped_member = getattr(type(wrapped), method_name, None)
-        if wrapped_member is base_member:
-            return None
-        if inspect.iscoroutinefunction(wrapped_member):
-
-            @wraps(wrapped_member)
-            async def wrapper_handler(self: WrapperCapability[Any], *args: Any, **kwargs: Any) -> Any:
-                result = member.__get__(self, type(self))(*args, **kwargs)
-                return await result if inspect.isawaitable(result) else result
-
-            return wrapper_handler
-    if not inspect.iscoroutinefunction(wrapped_member or member):
-        return None
-    return cast(Callable[..., Awaitable[Any]], member)
-
-
 def collect_capability_operations(
     capability: AbstractCapability[Any],
 ) -> dict[str, CapabilityMethodDeclaration]:
-    """Collect durable declarations with a two-phase MRO scan.
-
-    The first phase finds overridden base hooks marked durable. The second finds directly marked
-    methods, validates never-durable hooks and duplicate names, then builds typed declarations.
-    """
+    """Collect directly marked durable declarations from a capability."""
     handlers: dict[str, Callable[..., Awaitable[Any]]] = {}
-    for base in type(capability).__mro__[1:]:
-        for method_name, base_member in vars(base).items():
-            marker = get_durable_operation_marker(base_member)
-            if marker is None or not marker.base_hook:
-                continue
-            if member := _async_base_hook_override(capability, method_name, base_member):
-                handlers[marker.name] = member
-
     for method_name, member in inspect.getmembers(type(capability)):
         marker = get_durable_operation_marker(member)
         if marker is None:
-            continue
-        if marker.base_hook and member is marker.function:
             continue
         if reason := _NEVER_DURABLE_HOOKS.get(method_name):
             raise UserError(reason)

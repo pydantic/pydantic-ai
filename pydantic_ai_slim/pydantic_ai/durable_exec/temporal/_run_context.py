@@ -12,7 +12,7 @@ from typing_extensions import TypeVar
 
 from pydantic_ai._run_context import AnchoredEvidence
 from pydantic_ai._utils import is_str_dict
-from pydantic_ai.capabilities._sandbox import active_leaves, connect_sandbox_ref
+from pydantic_ai.capabilities._sandbox import connect_sandbox_ref
 from pydantic_ai.durable_exec._toolset import EnqueueGuard, enqueue_not_supported_message
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.sandboxes import Sandbox, SandboxRef, UnavailableSandbox
@@ -266,7 +266,7 @@ class TemporalRunContext(RunContext[AgentDepsT]):
         if (ref := ctx.sandbox.ref) is not None:
             serialized['_sandbox_state'] = {
                 'sandbox_id': ref.sandbox_id,
-                'capability_id': ctx.sandbox._supplier_id,  # pyright: ignore[reportPrivateUsage]
+                'capability_id': ref.capability_id,
             }
         elif isinstance(ctx.sandbox.backend, UnavailableSandbox):
             serialized['_sandbox_state'] = {'unavailable_reason': ctx.sandbox.backend.reason}
@@ -321,29 +321,18 @@ def _restore_sandbox(
     sandbox_id = sandbox_state.get('sandbox_id')
     unavailable_reason = sandbox_state.get('unavailable_reason')
     if isinstance(sandbox_id, str):
-        ref = SandboxRef(sandbox_id=sandbox_id)
+        capability_id = sandbox_state.get('capability_id')
+        ref = SandboxRef(
+            sandbox_id=sandbox_id,
+            capability_id=capability_id if isinstance(capability_id, str) else None,
+        )
         if agent is None:
             raise UserError(
                 f'Cannot connect to sandbox {ref.sandbox_id!r}: no agent is attached to this Temporal '
                 'activity, so there is no capability chain to resolve the reference through.'
             )
-        leaves = active_leaves(agent.root_capability)
-        capability_id = sandbox_state.get('capability_id')
-        if isinstance(capability_id, str):
-            supplier = next((leaf for leaf in leaves if leaf.id == capability_id), None)
-            if supplier is None:
-                raise UserError(
-                    f'Cannot connect to sandbox {ref.sandbox_id!r}: capability {capability_id!r} is not attached.'
-                )
-            backend = supplier.get_sandbox(ctx, ref)
-            if backend is None:
-                raise UserError(
-                    f'Cannot connect to sandbox {ref.sandbox_id!r}: capability {capability_id!r} returned `None`.'
-                )
-        else:
-            backend = connect_sandbox_ref(leaves, ctx, ref)
+        backend = connect_sandbox_ref(agent.root_capability, ctx, ref)
         facade = Sandbox(backend, ref=ref)
-        facade._supplier_id = capability_id if isinstance(capability_id, str) else None  # pyright: ignore[reportPrivateUsage]
         ctx.__dict__['_sandbox'] = facade
     elif isinstance(unavailable_reason, str):
         ctx.__dict__['_sandbox_unavailable_reason'] = unavailable_reason

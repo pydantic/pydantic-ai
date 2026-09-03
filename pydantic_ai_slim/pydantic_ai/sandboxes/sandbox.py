@@ -65,7 +65,6 @@ class Sandbox:
     def __init__(self, backend: SandboxBackend, *, ref: SandboxRef | None = None):
         self._backend = backend
         self._ref = ref
-        self._supplier_id: str | None = None
         self._backend_closed = False
         self._working_dir: str | None = None
 

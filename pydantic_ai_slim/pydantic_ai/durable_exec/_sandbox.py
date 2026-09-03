@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import inspect
 from collections.abc import Sequence
 from typing import Any, cast
 
 from pydantic_ai.capabilities import AbstractCapability, AgentCapability, WrapperCapability
-from pydantic_ai.capabilities._sandbox import active_leaves
+from pydantic_ai.capabilities._durable_operation import get_durable_operation_marker
+from pydantic_ai.capabilities.abstract import leaf_capabilities
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.sandboxes import SandboxBackend, SandboxRef, UnavailableSandbox
 
@@ -21,20 +21,21 @@ class WorkflowSandboxGuard(UnavailableSandbox):
 def _supplies_sandbox(capability: AbstractCapability[Any]) -> bool:
     if isinstance(capability, WrapperCapability):
         return _supplies_sandbox(capability.wrapped)
-    return type(capability).acquire_sandbox is not AbstractCapability.acquire_sandbox and inspect.iscoroutinefunction(
-        capability.acquire_sandbox
+    return any(
+        get_durable_operation_marker(getattr(type(capability), hook)) is not None
+        for hook in ('acquire_sandbox', 'release_sandbox')
     )
 
 
 def contributes_sandbox(capability: AbstractCapability[Any]) -> bool:
-    """Whether the capability tree statically declares an async sandbox supplier.
+    """Whether the capability tree marks a sandbox lifecycle hook as a durable operation.
 
     The deprecated durable-agent wrappers reject sandbox-supplying capabilities up front: an
-    async `acquire_sandbox` performs I/O and the wrappers have no way to route it into a durable
-    unit. A sync override is allowed because its contract forbids I/O and requires deterministic output.
-    A supplier produced at run time by a capability function is not visible here.
+    `acquire_sandbox` or `release_sandbox` marked with `@durable_operation` performs I/O and the
+    wrappers have no way to route it into a durable unit. A supplier produced at run time by a
+    capability function is not visible here.
     """
-    return any(_supplies_sandbox(leaf) for leaf in active_leaves(capability))
+    return any(_supplies_sandbox(leaf) for leaf in leaf_capabilities(capability) if leaf.defer_loading is not True)
 
 
 def sandbox_contribution_error(*, run_location: str, sandbox_constraint: str) -> str:
@@ -59,6 +60,11 @@ def guard_workflow_sandbox(
     contribution_error: str,
     live_error: str,
 ) -> SandboxRef | UnavailableSandbox | None:
+    if isinstance(sandbox, AbstractCapability):
+        raise UserError(
+            '`sandbox=` takes a `SandboxRef` or a `SandboxBackend`, not a capability. '
+            f'Pass `{type(sandbox).__name__}` through `capabilities=[...]` so Pydantic AI can manage its lifecycle.'
+        )
     if sandbox is None and (
         static_contributes_sandbox
         or any(

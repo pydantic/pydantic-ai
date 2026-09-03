@@ -26,7 +26,6 @@ from pydantic_ai.durable_exec._capability_operation import (
     CapabilityOperationParams,
     CapabilityOperationResult,
     ModelRequestContextProjection,
-    base_hook_durable_operation,
     call_declaration,
     collect_capability_operations,
     recover_capability,
@@ -176,12 +175,14 @@ async def test_durable_sandbox_release_failure_propagates() -> None:
     class FailingRelease(AbstractCapability[Any]):
         id = 'sandbox'
 
+        @durable_operation('acquire_sandbox')
         async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
             return SandboxRef(sandbox_id='durable-sandbox')
 
         def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> RecordingSandboxBackend:
             return RecordingSandboxBackend(ref.sandbox_id)
 
+        @durable_operation('release_sandbox')
         async def release_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
             raise RuntimeError('control plane unavailable')
 
@@ -190,7 +191,7 @@ async def test_durable_sandbox_release_failure_propagates() -> None:
         await agent.run('go')
 
 
-async def test_wrapped_sandbox_provider_lifecycle_uses_durable_dispatch() -> None:
+async def test_decorated_sandbox_lifecycle_uses_durable_dispatch_through_wrappers() -> None:
     from ..sandbox_fakes import RecordingSandboxBackend
 
     class SandboxProvider(AbstractCapability[Any]):
@@ -199,6 +200,7 @@ async def test_wrapped_sandbox_provider_lifecycle_uses_durable_dispatch() -> Non
         def __init__(self) -> None:
             self.events: list[str] = []
 
+        @durable_operation('acquire_sandbox')
         async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
             self.events.append('acquire')
             return SandboxRef(sandbox_id='wrapped')
@@ -206,6 +208,7 @@ async def test_wrapped_sandbox_provider_lifecycle_uses_durable_dispatch() -> Non
         def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> RecordingSandboxBackend:
             return RecordingSandboxBackend(ref.sandbox_id)
 
+        @durable_operation('release_sandbox')
         async def release_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
             self.events.append('release')
 
@@ -226,6 +229,43 @@ async def test_wrapped_sandbox_provider_lifecycle_uses_durable_dispatch() -> Non
         'wrapped_sandbox__capability__sandbox.release_sandbox',
     ]
     assert provider.events == ['acquire', 'release']
+    assert ('sandbox', 'acquire_sandbox') in durability._bound_capability_operations  # pyright: ignore[reportPrivateUsage]
+    assert ('sandbox', 'release_sandbox') in durability._bound_capability_operations  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_undecorated_async_sandbox_lifecycle_runs_inline() -> None:
+    from ..sandbox_fakes import RecordingSandboxBackend
+
+    class SandboxProvider(AbstractCapability[Any]):
+        id = 'inline'
+
+        async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
+            return SandboxRef(sandbox_id='inline')
+
+        def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> RecordingSandboxBackend:
+            return RecordingSandboxBackend(ref.sandbox_id)
+
+        async def release_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
+            pass
+
+    agent = Agent(TestModel(), name='inline_sandbox', capabilities=[SandboxProvider(), RecordingDurability()])
+    await agent.run('go')
+
+    durability = RecordingDurability.from_agent(agent)
+    assert durability is not None
+    assert ('inline', 'acquire_sandbox') not in durability._bound_capability_operations  # pyright: ignore[reportPrivateUsage]
+    assert ('inline', 'release_sandbox') not in durability._bound_capability_operations  # pyright: ignore[reportPrivateUsage]
+    assert not any('__capability__inline.' in name for name, _ in durability.calls)
+
+
+def test_decorated_sandbox_lifecycle_requires_explicit_id() -> None:
+    class MissingId(AbstractCapability[Any]):
+        @durable_operation('acquire_sandbox')
+        async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef | None:
+            return None
+
+    with pytest.raises(UserError, match='needs an explicit `id` because persisted operation identity'):
+        Agent(TestModel(), name='missing_sandbox_id', capabilities=[MissingId(), RecordingDurability()])
 
 
 async def test_local_sandbox_only_dispatches_async_release() -> None:
@@ -927,6 +967,7 @@ def test_duplicate_operation_names_fail_during_agent_construction() -> None:
     [
         'get_toolset',
         'get_wrapper_toolset',
+        'get_sandbox',
         'get_wrapper_sandbox',
         'wrap_run',
         'wrap_node_run',
@@ -939,7 +980,7 @@ def test_duplicate_operation_names_fail_during_agent_construction() -> None:
     ],
 )
 def test_never_durable_hooks_fail_at_bind(hook: str) -> None:
-    if hook in ('get_toolset', 'get_wrapper_toolset', 'get_wrapper_sandbox'):
+    if hook in ('get_toolset', 'get_wrapper_toolset', 'get_sandbox', 'get_wrapper_sandbox'):
 
         def sync_invalid(self: AbstractCapability[Any], *args: Any, **kwargs: Any) -> None:
             return None
@@ -958,71 +999,6 @@ def test_never_durable_hooks_fail_at_bind(hook: str) -> None:
     capability_type = type('Invalid', (AbstractCapability,), {'id': 'invalid', hook: decorated})
     with pytest.raises(UserError, match=f'`{hook}`'):
         Agent(TestModel(), name='invalid', capabilities=[capability_type(), RecordingDurability()])
-
-
-def test_base_hook_override_is_automatically_registered() -> None:
-    class TierOneBase(AbstractCapability[Any]):
-        # Registration, not execution, is the behavior under test.
-        @base_hook_durable_operation('provision')
-        async def provision(self, ctx: RunContext[Any]) -> str: ...  # pragma: no branch
-
-    class TierOne(TierOneBase):
-        id = 'base_hook'
-
-        # Automatic registration inspects this override without dispatching it.
-        async def provision(self, ctx: RunContext[Any]) -> str: ...  # pragma: no branch
-
-    agent = Agent(TestModel(), name='base_hook', capabilities=[TierOne(), RecordingDurability()])
-    durability = RecordingDurability.from_agent(agent)
-    assert durability is not None
-    assert ('base_hook', 'provision') in durability._bound_capability_operations  # pyright: ignore[reportPrivateUsage]
-
-
-def test_sync_base_hook_override_is_not_registered() -> None:
-    class TierOneBase(AbstractCapability[Any]):
-        @base_hook_durable_operation('provision')
-        def provision(self, ctx: RunContext[Any]) -> str | Awaitable[str]: ...  # pragma: no branch
-
-    class TierOne(TierOneBase):
-        id = 'base_hook'
-
-        def provision(self, ctx: RunContext[Any]) -> str:
-            return 'configured'
-
-    capability = TierOne()
-    assert collect_capability_operations(capability) == {}
-
-    agent = Agent(TestModel(), name='base_hook', capabilities=[capability, RecordingDurability()])
-    durability = RecordingDurability.from_agent(agent)
-    assert durability is not None
-    assert ('base_hook', 'provision') not in durability._bound_capability_operations  # pyright: ignore[reportPrivateUsage]
-
-
-async def test_inherited_base_hook_hook_is_not_registered_or_dispatched() -> None:
-    class TierOneBase(AbstractCapability[Any]):
-        def __init__(self) -> None:
-            self.provisioned = False
-
-        @base_hook_durable_operation('provision')
-        async def provision(self, ctx: RunContext[Any]) -> None:
-            self.provisioned = True
-
-    class TierOne(TierOneBase):
-        id = 'base_hook'
-
-        async def before_run(self, ctx: RunContext[Any]) -> None:
-            await self.provision(ctx)
-
-    capability = TierOne()
-    assert collect_capability_operations(capability) == {}
-
-    agent = Agent(TestModel(), name='base_hook', capabilities=[capability, RecordingDurability()])
-    await agent.run('test')
-
-    durability = RecordingDurability.from_agent(agent)
-    assert durability is not None
-    assert capability.provisioned
-    assert not any('__capability__' in name for name, _ in durability.calls)
 
 
 @requires_temporal
@@ -1249,23 +1225,6 @@ def test_sync_non_hook_operation_is_rejected_by_decorator() -> None:
 
     with pytest.raises(TypeError, match='can only decorate async methods'):
         durable_operation('operation')(operation)  # pyright: ignore[reportArgumentType]
-
-
-def test_base_hook_base_and_duplicate_override_paths() -> None:
-    class Base(AbstractCapability[Any]):
-        # Collection behavior is tested without dispatching any of these declarations.
-        @base_hook_durable_operation('operation')
-        async def operation(self, ctx: RunContext[Any]) -> str: ...  # pragma: no branch
-
-        sentinel = True
-
-    assert collect_capability_operations(Base()) == {}
-
-    class Override(Base):
-        # Collection inspects this override without dispatching it.
-        async def operation(self, ctx: RunContext[Any]) -> str: ...  # pragma: no branch
-
-    assert set(collect_capability_operations(Override())) == {'operation'}
 
 
 async def test_run_context_is_located_from_the_schema() -> None:

@@ -307,7 +307,12 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         self._capability_declarations = {}
         backend = self.get_durable_operation_backend()
         durability_ref = ref(self)
+        capabilities: list[AbstractCapability[Any]] = []
         for capability in leaf_capabilities(agent.root_capability):
+            while isinstance(capability, WrapperCapability) and not collect_capability_operations(capability):
+                capability = capability.wrapped
+            capabilities.append(capability)
+        for capability in capabilities:
             declarations = collect_capability_operations(capability)
             if not declarations:
                 continue
@@ -335,6 +340,10 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                         run_context=params.run_context, arguments=validated, model_id=params.model_id
                     )
                     recovered = await recover_capability(params.run_context, capability_id=capability_id)
+                    while isinstance(
+                        recovered, WrapperCapability
+                    ) and operation_name not in collect_capability_operations(recovered):
+                        recovered = recovered.wrapped
                     if declaration.model_request_parameter is not None:
                         projection = cast(
                             ModelRequestContextProjection,

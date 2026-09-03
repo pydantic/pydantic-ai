@@ -12,6 +12,7 @@ from pydantic_ai.sandboxes import LocalSandboxBackend, SandboxBackend, SandboxRe
 from pydantic_ai.tools import AgentDepsT, RunContext
 
 from .abstract import AbstractCapability
+from .durable_operation import durable_operation
 
 __all__ = ('LocalSandbox',)
 
@@ -27,8 +28,10 @@ class LocalSandbox(AbstractCapability[AgentDepsT]):
         only for trusted development and tests, never for untrusted model-generated commands.
 
     `root` is the host directory exposed to the run. When omitted, each run gets the deterministic
-    system-temp path `pydantic-ai-sandbox-<run_id>`, which is removed on release. Durable engines
-    require an explicit stable `id`, as for every capability with an async lifecycle hook.
+    system-temp path `pydantic-ai-sandbox-<run_id>`, which is removed on release. Under durable
+    execution, it requires an explicit stable `id`, like every capability declaring a durable
+    operation, and assumes every durable unit runs on one host because local filesystems are not
+    shared between workers.
     """
 
     root: Path | None = None
@@ -42,7 +45,7 @@ class LocalSandbox(AbstractCapability[AgentDepsT]):
             return self.root
         return Path(tempfile.gettempdir()) / f'pydantic-ai-sandbox-{ctx.run_id}'
 
-    def acquire_sandbox(self, ctx: RunContext[AgentDepsT]) -> SandboxRef:
+    async def acquire_sandbox(self, ctx: RunContext[AgentDepsT]) -> SandboxRef:
         return SandboxRef(sandbox_id=f'{_LOCAL_PREFIX}{self._path(ctx).as_posix()}')
 
     def get_sandbox(self, ctx: RunContext[AgentDepsT], ref: SandboxRef) -> SandboxBackend | None:
@@ -50,6 +53,7 @@ class LocalSandbox(AbstractCapability[AgentDepsT]):
             return None
         return LocalSandboxBackend(root=Path(ref.sandbox_id.removeprefix(_LOCAL_PREFIX)))
 
+    @durable_operation('release_sandbox')
     async def release_sandbox(self, ctx: RunContext[AgentDepsT], ref: SandboxRef) -> None:
         if self.root is None:
             path = Path(ref.sandbox_id.removeprefix(_LOCAL_PREFIX))

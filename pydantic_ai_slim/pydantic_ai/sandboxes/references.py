@@ -17,3 +17,10 @@ class SandboxRef:
 
     sandbox_id: str
     """The backend's stable identifier for the environment."""
+
+    capability_id: str | None = None
+    """The `id` of the capability whose `acquire_sandbox` produced this ref.
+
+    The framework stamps this field and uses it to route `get_sandbox` and `release_sandbox`
+    back to that capability. Capabilities do not set it. A caller-constructed ref may leave it `None`.
+    """

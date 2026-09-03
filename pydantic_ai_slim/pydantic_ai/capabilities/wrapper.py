@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
+from collections.abc import AsyncIterable, Callable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -195,8 +195,8 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
         return self.wrapped.get_wrapper_toolset(toolset)
 
-    def acquire_sandbox(self, ctx: RunContext[AgentDepsT]) -> SandboxRef | None | Awaitable[SandboxRef | None]:
-        return self.wrapped.acquire_sandbox(ctx)
+    async def acquire_sandbox(self, ctx: RunContext[AgentDepsT]) -> SandboxRef | None:
+        return await self.wrapped.acquire_sandbox(ctx)
 
     def get_sandbox(self, ctx: RunContext[AgentDepsT], ref: SandboxRef) -> SandboxBackend | None:
         return self.wrapped.get_sandbox(ctx, ref)
@@ -204,8 +204,8 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
     def get_wrapper_sandbox(self, ctx: RunContext[AgentDepsT], sandbox: Sandbox) -> Sandbox | None:
         return self.wrapped.get_wrapper_sandbox(ctx, sandbox)
 
-    def release_sandbox(self, ctx: RunContext[AgentDepsT], ref: SandboxRef) -> None | Awaitable[None]:
-        return self.wrapped.release_sandbox(ctx, ref)
+    async def release_sandbox(self, ctx: RunContext[AgentDepsT], ref: SandboxRef) -> None:
+        return await self.wrapped.release_sandbox(ctx, ref)
 
     async def prepare_tools(
         self,

@@ -564,7 +564,7 @@ async def test_local_sandbox_capability_run_end_to_end(tmp_path: Path):
             return ModelResponse(parts=[ToolCallPart('execute', {})])
         return ModelResponse(parts=[TextPart('done')])
 
-    agent: Agent = Agent(FunctionModel(model_func), capabilities=[LocalSandbox(root=tmp_path)])
+    agent: Agent = Agent(FunctionModel(model_func), capabilities=[LocalSandbox(id='local', root=tmp_path)])
     working_dirs: list[str] = []
 
     @agent.tool
@@ -584,7 +584,7 @@ async def test_local_sandbox_capability_removes_per_run_root():
             return ModelResponse(parts=[ToolCallPart('record_root', {})])
         return ModelResponse(parts=[TextPart('done')])
 
-    agent: Agent = Agent(FunctionModel(model_func), capabilities=[LocalSandbox()])
+    agent: Agent = Agent(FunctionModel(model_func), capabilities=[LocalSandbox(id='local')])
     roots: list[Path] = []
 
     @agent.tool

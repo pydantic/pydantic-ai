@@ -38,8 +38,6 @@ from pydantic_ai.tools import (
 )
 from pydantic_ai.toolsets import AbstractToolset, AgentToolset
 
-from ._durable_operation import base_hook_durable_operation
-
 if TYPE_CHECKING:
     from pydantic_ai import _agent_graph
     from pydantic_ai.agent.abstract import AbstractAgent, AgentModelSettings
@@ -539,18 +537,17 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """Return native tools to register with the agent."""
         return []
 
-    @base_hook_durable_operation('acquire_sandbox')
-    def acquire_sandbox(self, ctx: RunContext[AgentDepsT]) -> SandboxRef | None | Awaitable[SandboxRef | None]:
+    async def acquire_sandbox(self, ctx: RunContext[AgentDepsT]) -> SandboxRef | None:
         """Return the identity of this run's sandbox, or `None` to not contribute.
 
         Called once at run start, before any hook sees [`ctx.sandbox`][pydantic_ai.tools.RunContext.sandbox],
-        and skipped when a `sandbox=` run argument was passed. Exactly one capability may return a ref.
+        and skipped when a `sandbox=` run argument was passed. Capabilities are asked in list order;
+        the first one that returns a ref wins, and later capabilities are not asked.
 
-        Override this as `async def` when acquisition needs I/O, such as provisioning or checking out
-        from a pool. Under a durability capability, async overrides run as durable units and must be
-        idempotent keyed by [`ctx.run_id`][pydantic_ai.tools.RunContext.run_id]. Override it as `def`
-        when the ref is known without I/O, such as the local machine or an SSH host from configuration.
-        Sync overrides run inline, are never durable units, must be deterministic, and must not perform I/O.
+        Decorate an override with `@durable_operation('acquire_sandbox')` when it performs I/O,
+        such as provisioning or checking out from a pool, so durability capabilities run it as a
+        durable unit. Durable acquisition must be idempotent keyed by
+        [`ctx.run_id`][pydantic_ai.tools.RunContext.run_id].
         """
         return None
 
@@ -580,16 +577,14 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """
         return None
 
-    @base_hook_durable_operation('release_sandbox')
-    def release_sandbox(self, ctx: RunContext[AgentDepsT], ref: SandboxRef) -> None | Awaitable[None]:
+    async def release_sandbox(self, ctx: RunContext[AgentDepsT], ref: SandboxRef) -> None:
         """Release the run's ownership of `ref`: destroy it, return it to a pool, or do nothing.
 
         Called after the run ends, success or failure, only on the capability whose `acquire_sandbox`
-        returned `ref`, and never for a `sandbox=` run argument. Override this as `async def` when release
-        needs I/O, such as destroying the environment or returning it to a pool. Under a durability
-        capability, async overrides run as durable units and must be idempotent keyed by `ctx.run_id`.
-        Override it as `def` only when no I/O is needed; sync overrides run inline, are never durable units,
-        and must be deterministic.
+        returned `ref`, and never for a `sandbox=` run argument. Decorate an override with
+        `@durable_operation('release_sandbox')` when it performs I/O, such as destroying the
+        environment or returning it to a pool, so durability capabilities run it as a durable unit.
+        Durable release must be idempotent keyed by `ctx.run_id`.
         """
         return None
 

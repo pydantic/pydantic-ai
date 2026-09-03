@@ -57,6 +57,7 @@ from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities import (
     Capability,
     ProcessHistory,
+    durable_operation,
 )
 from pydantic_ai.exceptions import (
     ApprovalRequired,
@@ -1536,26 +1537,27 @@ async def test_agent_without_model():
         TemporalAgent(Agent(name='test_agent'))  # pyright: ignore[reportDeprecated]
 
 
-async def test_temporal_agent_allows_sync_sandbox_supplier_and_rejects_async_supplier():
-    class SyncSupplier(Capability[Any]):
-        def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
-            return SandboxRef(sandbox_id='sync')
-
-        def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> RecordingSandboxBackend:
-            return RecordingSandboxBackend(ref.sandbox_id)
-
-    class AsyncSupplier(Capability[Any]):
+async def test_temporal_agent_allows_inline_sandbox_supplier_and_rejects_durable_supplier():
+    class InlineSupplier(Capability[Any]):
         async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
-            return SandboxRef(sandbox_id='async')
+            return SandboxRef(sandbox_id='inline')
 
         def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> RecordingSandboxBackend:
             return RecordingSandboxBackend(ref.sandbox_id)
 
-    sync_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
-        Agent(TestModel(), name='sync_sandbox_supplier', capabilities=[SyncSupplier(id='supplier')])
+    class DurableSupplier(Capability[Any]):
+        @durable_operation('acquire_sandbox')
+        async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
+            return SandboxRef(sandbox_id='durable')
+
+        def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> RecordingSandboxBackend:
+            return RecordingSandboxBackend(ref.sandbox_id)
+
+    inline_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
+        Agent(TestModel(), name='inline_sandbox_supplier', capabilities=[InlineSupplier(id='supplier')])
     )
-    async_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
-        Agent(TestModel(), name='async_sandbox_supplier', capabilities=[AsyncSupplier(id='supplier')])
+    durable_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
+        Agent(TestModel(), name='durable_sandbox_supplier', capabilities=[DurableSupplier(id='supplier')])
     )
 
     run_result = object()
@@ -1563,9 +1565,9 @@ async def test_temporal_agent_allows_sync_sandbox_supplier_and_rejects_async_sup
         patch('pydantic_ai.durable_exec.temporal._agent.workflow.in_workflow', return_value=True),
         patch('pydantic_ai.agent.abstract.AbstractAgent.run', new=AsyncMock(return_value=run_result)),
     ):
-        assert await sync_agent.run('hello') is run_result
+        assert await inline_agent.run('hello') is run_result
         with pytest.raises(UserError, match='supplies a sandbox'):
-            await async_agent.run('hello')
+            await durable_agent.run('hello')
 
 
 async def test_temporal_agent():
@@ -2788,17 +2790,19 @@ async def test_temporal_run_context_reconnects_through_serialized_supplier_only(
     supplier = ConnectOnlySandboxCapability()
     supplier.id = 'supplier'
     agent = Agent(TestModel(), capabilities=[first, supplier])
-    sandbox = ref_sandbox(SandboxRef(sandbox_id='owned'))
-    sandbox._supplier_id = supplier.id  # pyright: ignore[reportPrivateUsage]
+    sandbox = ref_sandbox(SandboxRef(sandbox_id='owned', capability_id=supplier.id))
+    serialized = TemporalRunContext.serialize_run_context(_sandbox_context(sandbox))
+
+    assert serialized['_sandbox_state'] == {'sandbox_id': 'owned', 'capability_id': 'supplier'}
 
     reconstructed = deserialize_run_context(
         TemporalRunContext,
-        TemporalRunContext.serialize_run_context(_sandbox_context(sandbox)),
+        serialized,
         deps=None,
         agent=agent,
     )
 
-    assert reconstructed.sandbox.ref == SandboxRef(sandbox_id='owned')
+    assert reconstructed.sandbox.ref == SandboxRef(sandbox_id='owned', capability_id='supplier')
     assert reconstructed.sandbox.backend is supplier.backends[0]
     assert first.sandbox_ids == []
     assert supplier.sandbox_ids == ['owned']
