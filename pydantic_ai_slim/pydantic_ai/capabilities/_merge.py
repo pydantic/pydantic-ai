@@ -53,23 +53,38 @@ def merge_capability_fields(
     needs a numeric budget to take the *smaller* value rather than the later one — overrides
     `combine` itself.
 
-    Configuration outside those fields is a harder limit: a plain class keeps its state in plain
-    attributes the fields never declare, so this refuses rather than silently keep only the last
-    instance's. Such a class declares its configuration as dataclass fields, or overrides `combine`.
+    An attribute no field declares is a harder limit, and is refused. The table above is what the
+    merge promises, and its first row is the load-bearing one: a value only one side states
+    survives. That cannot hold for an attribute the merge cannot enumerate -- `replace_no_init`
+    copies the last instance, so such an attribute silently takes the last value even where an
+    earlier instance was the only one to state it. Refusing says so instead.
+
+    A leading underscore exempts an attribute from that check, but only because internal state is
+    not this function's business -- it is not a way to get derived state merged. Nothing here
+    re-runs `__post_init__` (`replace_no_init` exists precisely to skip it), so `_count = len(...)`
+    keeps the last instance's value while the field it counts holds the union. A capability with
+    state derived from a merged field recomputes it in its own `combine`, the way
+    `NativeOrLocalTool` rebuilds its native tool.
     """
     merged = capabilities[-1]
     field_names = {field.name for field in dataclasses.fields(merged)}
     for capability in capabilities:
-        # Configuration no field declares (a plain class keeping its state in plain attributes)
-        # cannot be merged, so refuse rather than silently keep only the last instance's.
-        invisible = {name for name in vars(capability) if not name.startswith('_')} - field_names
-        if invisible:
+        # Not "cannot be merged" -- `replace_no_init` copies the last instance, so an undeclared
+        # attribute does get *a* value. What it cannot get is the promise above: a value only an
+        # earlier instance stated would be dropped rather than survive. Refuse rather than let that
+        # differ silently from every declared field.
+        undeclared = {name for name in vars(capability) if not name.startswith('_')} - field_names
+        if undeclared:
             cls_name = type(merged).__name__
+            names = ', '.join(sorted(undeclared))
             raise UserError(
                 f'Capability id {merged.id!r} is used by multiple {cls_name} capabilities, but {cls_name} '
-                f'stores {", ".join(sorted(invisible))} outside dataclass fields, where the merge cannot see '
-                'it -- one instance would silently win and the rest would be dropped. Declare the '
-                'configuration as dataclass fields, or override `combine` to merge it yourself.'
+                f'sets {names} outside its dataclass fields. Merging keeps a value only one of them states, '
+                'and cannot do that for an attribute it cannot enumerate -- the last instance would win '
+                f'silently. Declare {names} as dataclass fields to have them merged; or, for state derived '
+                'from other fields, override `combine` to recompute it after merging, since this does not '
+                're-run `__post_init__`. A leading underscore only silences this check, and leaves state '
+                "derived from a merged field holding the last instance's value."
             )
     changes: dict[str, Any] = {}
     for field in dataclasses.fields(merged):
