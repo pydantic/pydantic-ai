@@ -11311,6 +11311,7 @@ def test_retry_feedback_after_user_content_hoists_above_it():
         ['RetryFeedbackPart', 'UserPromptPart']
     )
 
+
 async def test_retried_tool_return_error_text_carries_no_instruction_framing():
     """A retry's `errorText` is the feedback itself.
 

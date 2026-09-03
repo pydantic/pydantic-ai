@@ -803,18 +803,10 @@ def _error_channel_model(provider: str, anthropic_api_key: str, gemini_api_key: 
     """The three models with a native tool-result error channel, built here rather than taken from
     the shared `model` fixture, whose Google entry pins a model id the API has since retired."""
     if provider == 'anthropic':
-        from pydantic_ai.models.anthropic import AnthropicModel
-        from pydantic_ai.providers.anthropic import AnthropicProvider
-
         return AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     elif provider == 'google':
-        from pydantic_ai.models.google import GoogleModel
-        from pydantic_ai.providers.google import GoogleProvider
-
         return GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key=gemini_api_key))
     else:
-        from pydantic_ai.models.bedrock import BedrockConverseModel
-
         return BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
 
 
@@ -824,7 +816,14 @@ def _model_call_bodies(vcr: Cassette) -> list[Any]:
 
 
 @pytest.mark.vcr
-@pytest.mark.parametrize('provider', ['anthropic', 'google', 'bedrock'])
+@pytest.mark.parametrize(
+    'provider',
+    [
+        pytest.param('anthropic', marks=anthropic_installed),
+        pytest.param('google', marks=google_installed),
+        pytest.param('bedrock', marks=bedrock_installed),
+    ],
+)
 async def test_a_retried_tool_return_takes_the_provider_native_error_channel(
     allow_model_requests: None,
     provider: str,
