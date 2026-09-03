@@ -20,13 +20,14 @@ bounded rather than growing without limit: the microphone stream and the session
 each drop their oldest blocks if their consumer falls behind, so a machine that stutters glitches
 instead of ending the call.
 
-Barge-in itself is handled by the provider — the model stops as soon as the user speaks. What the
-example adds is the one fact the session can't see: how much audio the device actually consumed.
-It counts the bytes each completed `write()` played and hands the running total to
-[`interrupt(played_bytes=...)`][pydantic_ai.realtime.RealtimeSession.interrupt], which does the
-rest — dropping the buffered audio the user will never hear, truncating the provider's transcript
-to what was really heard, and doing nothing at all when the previous reply was heard in full (the
-speech-start event also fires on ordinary turns where nothing is playing).
+Barge-in costs the example no code at all: because playback is a single device-paced
+[`stream_audio()`][pydantic_ai.realtime.RealtimeSession.stream_audio] loop, the session can track
+the playback position itself, so [`handle_barge_in=True`][pydantic_ai.realtime.AgentRealtime.session]
+does the whole thing — dropping the buffered audio the user will never hear, truncating the
+provider's transcript to what was really heard, and staying out of the way on an ordinary turn
+where the previous reply was heard in full. Playback loops the session can't follow, and triggers
+you'd rather own yourself, take the manual paths in
+[the barge-in guide](../realtime/turns.md#barge-in) instead.
 
 ## Running the Example
 

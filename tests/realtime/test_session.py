@@ -1278,6 +1278,31 @@ class _GatedRealtimeConnection(FakeRealtimeConnection):
             yield event
 
 
+class _CancelGatedRealtimeConnection(FakeRealtimeConnection):
+    """Replay one batch, then replay a second only once the session has sent `CancelResponse`.
+
+    A real provider keeps generating for a moment after a cancel goes out, so the audio already in
+    flight arrives *after* it — the ordering a test of straggler suppression needs.
+    """
+
+    def __init__(self, first: list[RealtimeCodecEvent], after_cancel: list[RealtimeCodecEvent], **kwargs: Any) -> None:
+        super().__init__(first, **kwargs)
+        self._after_cancel = after_cancel
+        self.cancelled = asyncio.Event()
+
+    async def send(self, content: RealtimeInput) -> None:
+        await super().send(content)
+        if isinstance(content, CancelResponse):
+            self.cancelled.set()
+
+    async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+        for event in self._events:
+            yield event
+        await self.cancelled.wait()
+        for event in self._after_cancel:
+            yield event
+
+
 # 100 ms per chunk at the default 24 kHz mono PCM16 output rate, so byte positions map to round
 # millisecond counts (4800 bytes == 100 ms).
 _CHUNK = 4800
@@ -1434,11 +1459,12 @@ async def test_interrupt_played_bytes_cancels_a_response_before_its_first_audio(
 
     Everything emitted has been heard, so there is nothing to cut off — but the next response has
     started and is about to speak over the user, which returning `False` would leave running. Only
-    the truncation is skipped: it is what would discard part of the reply the user did hear.
+    the truncation is skipped: it is what would discard part of the reply the user did hear. Audio
+    the cancelled reply had already generated must not reach the playback stream either.
     """
-    conn = _GatedRealtimeConnection(
-        [AudioDelta(b'a' * _CHUNK), ResponseDone()],
-        [OutputTranscript(text='Sure, one moment')],  # the next reply, still before its first audio
+    conn = _CancelGatedRealtimeConnection(
+        [AudioDelta(b'a' * _CHUNK), ResponseDone(), OutputTranscript(text='Sure, one moment')],
+        [AudioDelta(b'z' * _CHUNK), ResponseDone(interrupted=True)],  # in flight past the cancel
     )
     session = RealtimeSession(conn, _noop_runner)
 
@@ -1446,7 +1472,6 @@ async def test_interrupt_played_bytes_cancels_a_response_before_its_first_audio(
         stream = session.stream_audio()
         assert await anext(stream) == b'a' * _CHUNK
 
-        conn.release.set()
         async for event in session:  # pragma: no branch
             if (
                 isinstance(event, PartDeltaEvent)
@@ -1457,6 +1482,58 @@ async def test_interrupt_played_bytes_cancels_a_response_before_its_first_audio(
 
         assert await session.interrupt(played_bytes=_CHUNK) is True
         assert conn.sent == [CancelResponse()]
+        # The straggler belongs to the reply that was stopped before it spoke: it is erased, so the
+        # stream ends without ever playing it.
+        assert [chunk async for chunk in stream] == []
+
+
+async def test_interrupt_played_bytes_skips_the_cancel_while_the_server_interrupts_on_speech() -> None:
+    """The manual barge-in call obeys the same client-cancel rule as `handle_barge_in=True`.
+
+    Reacting to the speech-start event with `interrupt(played_bytes=...)` on a provider whose VAD
+    already cancels the response server-side must truncate only: a client cancel racing the
+    server's own can be applied to the *next* response and silence the reply to the barge-in. The
+    sibling test below pins that an interruption raised outside a speech segment still cancels,
+    since nothing else is stopping the response then.
+    """
+    conn = _GatedRealtimeConnection(
+        [AudioDelta(b'a' * _CHUNK), AudioDelta(b'b' * _CHUNK)],
+        [RealtimeInputSpeechStartEvent()],
+        interrupts_response_on_speech=True,
+    )
+    session = RealtimeSession(conn, _noop_runner)
+
+    async with session:
+        stream = session.stream_audio()
+        assert await anext(stream) == b'a' * _CHUNK  # `b` stays buffered and unheard
+
+        conn.release.set()
+        async for event in session:  # pragma: no branch
+            if isinstance(event, RealtimeInputSpeechStartEvent):
+                break
+
+        assert await session.interrupt(played_bytes=0) is True
+        assert conn.sent == [TruncateOutput(audio_end_ms=0)]
+
+
+async def test_interrupt_played_bytes_cancels_outside_a_speech_segment() -> None:
+    """An interruption the app raises itself still cancels, even on a VAD that interrupts on speech.
+
+    The flag says the provider stops the response *when the user speaks over it*; a stop button or
+    a tool cutting the model off is not that, and skipping the cancel there would leave the
+    response running.
+    """
+    conn = BlockingRealtimeConnection(
+        [AudioDelta(b'a' * _CHUNK), AudioDelta(b'b' * _CHUNK)], interrupts_response_on_speech=True
+    )
+    session = RealtimeSession(conn, _noop_runner)
+
+    async with session:
+        stream = session.stream_audio()
+        assert await anext(stream) == b'a' * _CHUNK  # `b` stays buffered and unheard
+
+        assert await session.interrupt(played_bytes=0) is True
+        assert conn.sent == [TruncateOutput(audio_end_ms=0), CancelResponse()]
 
 
 async def test_interrupt_played_bytes_leaves_drops_ahead_of_the_device_out_of_the_playhead() -> None:

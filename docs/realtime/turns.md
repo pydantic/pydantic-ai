@@ -99,6 +99,12 @@ count actual device consumption yourself and pass that. This handler covers the 
 report speech onset; on Gemini, which interrupts itself and leaves only the local flush to do,
 prefer `handle_barge_in=True`, which performs that flush for you.
 
+Interrupting while the provider has a speech segment open sends only the truncation on the models
+whose own turn detection cancels the response being spoken over (OpenAI and Azure OpenAI by
+default, and xAI): a second, client-side cancel racing the provider's can be applied to the *next*
+response and silence the reply to the barge-in. An interruption you raise outside a speech segment
+— a stop button, a tool cutting the model off — still cancels, since nothing else is stopping it.
+
 Finally, when playback doesn't drain a single session-long `stream_audio()` iterator — several
 consumers, a playback layer that buffers ahead of the device, or a transport where the session
 never touches the audio — keep your own accounting and pass `played_ms` (or nothing). `Speaker`
