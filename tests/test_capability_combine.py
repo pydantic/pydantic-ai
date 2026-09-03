@@ -839,15 +839,15 @@ async def test_a_session_level_instrumentation_supersedes_the_agent_level_one() 
 
         @property
         def model_name(self) -> str:
-            return 'stub_realtime'
+            return 'stub_realtime'  # pragma: no cover
 
         @property
         def system(self) -> str:
-            return 'stub-realtime'
+            return 'stub-realtime'  # pragma: no cover
 
         @property
         def name(self) -> str:
-            return 'stub_realtime'
+            return 'stub_realtime'  # pragma: no cover
 
         @property
         def profile(self) -> RealtimeModelProfile:
