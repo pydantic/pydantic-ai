@@ -117,6 +117,13 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
     def visit_and_replace(
         self, visitor: Callable[[AbstractCapability[AgentDepsT]], AbstractCapability[AgentDepsT] | None]
     ) -> AbstractCapability[AgentDepsT] | None:
+        """Visit the wrapper first; a replaced or removed wrapper takes its subtree with it.
+
+        When the wrapper survives, the visit descends into `wrapped` and this wrapper is rebuilt
+        around whatever remains; see
+        [`AbstractCapability.visit_and_replace`][pydantic_ai.capabilities.AbstractCapability.visit_and_replace]
+        for the tree-walking contract.
+        """
         replacement = visitor(self)
         if replacement is not self:
             # The wrapper is what's registered for the subtree, so replacing or removing it takes

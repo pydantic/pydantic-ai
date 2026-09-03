@@ -177,6 +177,13 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     def visit_and_replace(
         self, visitor: Callable[[AbstractCapability[AgentDepsT]], AbstractCapability[AgentDepsT] | None]
     ) -> AbstractCapability[AgentDepsT] | None:
+        """Visit each child and rebuild the container from the survivors.
+
+        A child the visitor removed is reported to `_rebound` so the composition view drops it
+        too; see
+        [`AbstractCapability.visit_and_replace`][pydantic_ai.capabilities.AbstractCapability.visit_and_replace]
+        for the tree-walking contract.
+        """
         new_caps: list[AbstractCapability[AgentDepsT]] = []
         # `_rebound` needs to know which children were removed, not just which survived, so the
         # composition view can drop them too; a positional pairing can't express a removal.

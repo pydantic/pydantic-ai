@@ -31,6 +31,8 @@ Override [`combine`][pydantic_ai.capabilities.AbstractCapability.combine] only w
 
 To keep two rather than resolving them, pass a distinct `id` to each, or `id=None` to opt back into the derived-and-disambiguated ids. An `id` you pass to a capability that declares no default is a name you chose, so passing the same one twice is reported as a collision rather than merged.
 
+One limit: for a capability that contributes a [native tool](../native-tools.md), these escapes do not dissolve the native tool's own `id`. Two differently-configured duplicates of a `WebSearch` still raise the native-tool-id conflict whether you give the capabilities distinct `id`s or `id=None` — only identical configurations avoid it.
+
 ```python {title="custom_capability_plain.py"}
 from typing import Any
 
