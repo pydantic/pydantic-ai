@@ -150,6 +150,8 @@ Each agent instance must have a unique `name` so Prefect can correctly identify 
 
 Toolsets that implement their own tool listing and calling (i.e. [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset], [`MCPToolset`][pydantic_ai.mcp.MCPToolset], and [`DynamicToolset`][pydantic_ai.toolsets.DynamicToolset]) must have a unique [`id`][pydantic_ai.toolsets.AbstractToolset.id] set, which is used to identify their tasks within the flow.
 
+A [custom toolset](../toolsets.md#building-a-custom-toolset) subclassing [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset] isn't one of those types, so its own `get_tools()` and `call_tool()` run in flow code rather than in a task. That's fine if they perform no I/O and are deterministic. If they do perform I/O, implement the toolset as a [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset] subclass instead, or return it from a dynamic toolset or a [`DynamicCapability`][pydantic_ai.capabilities.DynamicCapability], whose tool listing and tool calls both run inside tasks. See [Custom toolsets and durable execution](../toolsets.md#custom-toolsets-and-durable-execution).
+
 ### Capabilities at Runtime
 
 Unlike Temporal and DBOS, Prefect creates a task per call rather than registering its durable units up front, so [capabilities](../capabilities/overview.md) passed to `agent.run(capabilities=[...])` inside a flow are accepted. A capability that contributes an executing toolset is still rejected, by the same guard that rejects `run(toolsets=...)`: the toolset arrives after the agent's toolsets were wrapped. Attach those at agent construction time.
