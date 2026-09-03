@@ -908,6 +908,9 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
 
         Note: The round-trip `dump_messages` -> `load_messages` is not fully lossless:
 
+        - `ModelRequest.metadata` and top-level `ModelResponse.provider_details` are lost. AG-UI has
+          no trusted message-level carrier for framework or provider state; general client-controlled
+          metadata must not be restored as server-side state.
         - `TextPart.id`, `.provider_name`, `.provider_details` are lost.
         - `ToolCallPart.id`, `.provider_name`, `.provider_details` are lost.
         - `ToolCallPart.args` and `NativeToolCallPart.args` that don't parse as a JSON object are

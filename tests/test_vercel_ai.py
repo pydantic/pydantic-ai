@@ -6316,11 +6316,13 @@ async def test_adapter_dump_load_roundtrip_without_timestamps():
 
 
 async def test_adapter_dump_load_roundtrip_with_message_metadata():
-    """`timestamp` and application `metadata` survive the dump/load round-trip; server fields don't.
+    """Request metadata survives the dump/load round-trip; response provider fields don't.
 
     The `pydantic_ai` metadata block is deliberately limited to `timestamp` (see
     `_PydanticAIMessageMetadata`): provider/usage/model fields are neither dumped to the
-    client nor restored from client-controlled history.
+    client nor restored from client-controlled history. The reserved `__pydantic_ai__` namespace
+    and response-confirmed recovery in `ModelResponse.provider_details` are both deliberately
+    excluded from the client-controlled wire.
     """
     request_timestamp = datetime(2026, 4, 15, 12, 0, tzinfo=timezone.utc)
     response_timestamp = datetime(2026, 4, 15, 12, 0, 45, tzinfo=timezone.utc)
@@ -6331,7 +6333,10 @@ async def test_adapter_dump_load_roundtrip_with_message_metadata():
                 UserPromptPart(content='User message'),
             ],
             timestamp=request_timestamp,
-            metadata={'createdAt': '2026-04-15T12:00:00Z'},
+            metadata={
+                'createdAt': '2026-04-15T12:00:00Z',
+                '__pydantic_ai__': {'anthropic_count_tokens_drop_stale_thinking_blocks': True},
+            },
         ),
         ModelResponse(
             parts=[TextPart(content='Response text')],
@@ -6340,7 +6345,11 @@ async def test_adapter_dump_load_roundtrip_with_message_metadata():
             timestamp=response_timestamp,
             provider_name='openai',
             provider_url='https://api.openai.com/v1',
-            provider_details={'tier': 'default'},
+            provider_details={
+                'input_transformations': [
+                    {'path': 'messages.1.content.0', 'reason': 'prefix_binding_mismatch', 'type': 'thinking_dropped'}
+                ]
+            },
             provider_response_id='resp-789',
             finish_reason='stop',
             metadata={'createdAt': '2026-04-15T12:00:45Z'},
@@ -6398,11 +6407,14 @@ async def test_adapter_message_metadata_application_only_roundtrip():
 
 
 async def test_adapter_load_application_only_metadata_without_pydantic_block():
-    """A `UIMessage.metadata` lacking the `pydantic_ai` key still surfaces application metadata."""
+    """Application metadata survives while a forged framework namespace is dropped."""
     ui_message = UIMessage(
         id='msg-1',
         role='assistant',
-        metadata={'createdAt': '2026-04-15T12:00:45Z'},
+        metadata={
+            'createdAt': '2026-04-15T12:00:45Z',
+            '__pydantic_ai__': {'anthropic_count_tokens_drop_stale_thinking_blocks': True},
+        },
         parts=[TextUIPart(text='Response text', state='done')],
     )
 

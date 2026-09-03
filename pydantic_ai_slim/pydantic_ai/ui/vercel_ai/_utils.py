@@ -50,6 +50,7 @@ COMPACTION_DATA_TYPE = 'data-compaction'
 """Data chunk type for compaction parts."""
 
 PROVIDER_METADATA_KEY = 'pydantic_ai'
+_INTERNAL_METADATA_KEY = '__pydantic_ai__'
 
 
 class _PydanticAIMessageMetadata(BaseModel):
@@ -127,7 +128,11 @@ def dump_message_metadata(message: ModelMessage) -> dict[str, Any]:
     `UIMessage.metadata` is typed as `unknown` since AI SDK v5, so older frontends will
     silently ignore the field rather than reject the message.
     """
-    metadata = dict(message.metadata) if message.metadata else {}
+    metadata = (
+        {key: value for key, value in message.metadata.items() if key != _INTERNAL_METADATA_KEY}
+        if message.metadata
+        else {}
+    )
 
     pydantic_metadata = _PydanticAIMessageMetadata(timestamp=message.timestamp)
     if pydantic_metadata_dump := pydantic_metadata.model_dump(mode='json', exclude_defaults=True):
@@ -148,7 +153,9 @@ def apply_message_metadata(message: ModelMessage, metadata: object) -> None:
         return
 
     raw_pydantic_metadata = metadata.get(PROVIDER_METADATA_KEY)
-    if application_metadata := {k: v for k, v in metadata.items() if k != PROVIDER_METADATA_KEY}:
+    if application_metadata := {
+        key: value for key, value in metadata.items() if key not in (PROVIDER_METADATA_KEY, _INTERNAL_METADATA_KEY)
+    }:
         message.metadata = application_metadata
 
     if not is_str_dict(raw_pydantic_metadata):
