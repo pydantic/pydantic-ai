@@ -33,8 +33,10 @@ In addition, many providers are compatible with the OpenAI API, and can be used 
 - [OVHcloud AI Endpoints](openai.md#ovhcloud-ai-endpoints)
 - [Perplexity](openai.md#perplexity)
 - [SambaNova](openai.md#sambanova)
+- [SGLang](openai.md#sglang)
 - [Together AI](openai.md#together-ai)
 - [Vercel AI Gateway](openai.md#vercel-ai-gateway)
+- [vLLM](openai.md#vllm)
 
 Pydantic AI also comes with [`TestModel`](../api/models/test.md) and [`FunctionModel`](../api/models/function.md)
 for testing and development.

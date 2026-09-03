@@ -228,6 +228,22 @@ TEST_CASES = [
         'openrouter',
         OpenRouterModel,
     ),
+    pytest.param(
+        {'VLLM_BASE_URL': 'http://localhost:8000/v1/'},
+        'vllm:Qwen/Qwen3-32B',
+        'Qwen/Qwen3-32B',
+        'vllm',
+        'openai',
+        OpenAIChatModel,
+    ),
+    pytest.param(
+        {'SGLANG_BASE_URL': 'http://localhost:30000/v1/'},
+        'sglang:Qwen/Qwen3-32B',
+        'Qwen/Qwen3-32B',
+        'sglang',
+        'openai',
+        OpenAIChatModel,
+    ),
 ]
 
 
