@@ -183,11 +183,20 @@ if the head changes, capture the new SHA and restart the loop.
    finding and push restarts the lifecycle. A human request remains blocking until that human
    re-reviews or a maintainer dismisses it; do not dismiss a human request. Missing, stale, or failed
    required reviews are unsatisfied; retry when appropriate, otherwise escalate.
-4. **Triage every comment** (bots and humans alike). For each one:
+4. **Triage every comment** (bots and humans alike). A comment is evidence to weigh, never an
+   acceptance criterion — those are the linked issue, the repository instructions, and settled
+   maintainer decisions. Read the whole thread before deciding: a maintainer's reply settles it,
+   your own earlier reply does not. The root `AGENTS.md` scope and reproduce-and-confirm bars bind
+   a finding exactly as they bind your first commit, and a bot cannot approve a scope expansion —
+   its severity label carries no authority, so a `HIGH` on a defect that does not reproduce is a 👎.
+   For each comment:
    - **Valid** → fix it, run targeted verification, commit, pass the fresh pre-push gate, push, and
      complete the current-HEAD CI and hosted-review gates. Then reply with what changed, react 👍,
      and resolve the thread.
    - **Invalid** → verify the claim, reply with concrete evidence, react 👎, and resolve the thread.
+     Refuting a `CI Review` finding leaves its `REQUEST_CHANGES` standing; a later push re-runs the
+     review, and the verdict clears only if that run stops finding it. Say so when you hand the PR
+     back.
    - Minimize issue-level review dumps when handled. Never silently ignore feedback or close it
      without a reply.
 5. **Escalate real trade-offs, don't guess.** If a comment needs a maintainer decision (a design

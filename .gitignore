@@ -102,9 +102,6 @@ AGENTS.override.md
 !.claude/skills/poweruser-feature-audit
 !.claude/skills/pushing-commits-to-the-repo
 !.claude/skills/refresh-issue-brief
-!.claude/skills/address-feedback/
-.claude/skills/address-feedback/*
-!.claude/skills/address-feedback/SKILL.md
 !.claude/skills/pre-push-review/
 .claude/skills/pre-push-review/*
 !.claude/skills/pre-push-review/SKILL.md
