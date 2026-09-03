@@ -18,7 +18,7 @@ import base64
 import json
 import os
 from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Mapping
-from dataclasses import KW_ONLY, dataclass
+from dataclasses import KW_ONLY, dataclass, field
 from datetime import datetime, timedelta, timezone
 from functools import cached_property
 from pathlib import Path
@@ -108,11 +108,14 @@ class CredentialsPersistenceError(_CredentialsError):
 
 @dataclass
 class OpenAICodexCredentials:
-    """Codex subscription credentials."""
+    """Codex subscription credentials.
+
+    The tokens are excluded from `repr` so a logged or traceback-embedded instance does not leak them.
+    """
 
     _: KW_ONLY
-    access_token: str
-    refresh_token: str
+    access_token: str = field(repr=False)
+    refresh_token: str = field(repr=False)
     account_id: str
 
     @classmethod

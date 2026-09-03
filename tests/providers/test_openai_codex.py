@@ -18,6 +18,7 @@ import pickle
 import socket
 import time
 from collections.abc import AsyncIterator
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
@@ -123,6 +124,15 @@ def test_credentials_from_codex_cli_auth():
     assert creds.account_id == 'acc'
     assert creds.access_token == 'super-secret-access'
     assert creds.refresh_token == 'super-secret-refresh'
+
+
+def test_credentials_repr_hides_tokens():
+    """A logged instance must not leak reusable subscription credentials."""
+    creds = OpenAICodexCredentials(
+        access_token='super-secret-access', refresh_token='super-secret-refresh', account_id='acc'
+    )
+    assert repr(creds) == "OpenAICodexCredentials(account_id='acc')"
+    assert asdict(creds)['refresh_token'] == 'super-secret-refresh'  # persistence round-trip is unaffected
 
 
 @pytest.mark.parametrize(
@@ -816,10 +826,18 @@ def test_authorization_url_extra_params_add_and_override():
     assert 'id_token_add_organizations=true' in url  # untouched default survives
 
 
-def test_authorization_url_rejects_identity_overrides():
+def test_authorization_url_rejects_flow_bound_overrides():
+    """Overriding what the flow validates or exchanges against would yield an unusable code."""
     flow = OpenAICodexOAuthFlow()
-    with pytest.raises(UserError, match='cannot override client_id, redirect_uri'):
-        flow.authorization_url(extra_params={'client_id': 'other', 'redirect_uri': 'https://example.com/cb'})
+    with pytest.raises(UserError, match='cannot override client_id, code_challenge, redirect_uri, state'):
+        flow.authorization_url(
+            extra_params={
+                'client_id': 'other',
+                'redirect_uri': 'https://example.com/cb',
+                'state': 'forged',
+                'code_challenge': 'unpaired',
+            }
+        )
 
 
 async def test_exchange_code_posts_pkce_form(monkeypatch: pytest.MonkeyPatch):
@@ -897,6 +915,27 @@ async def test_exchange_code_from_callback_survives_malformed_request_line(monke
     await writer.drain()
     status_line = await reader.readline()
     assert b'400' in status_line
+    writer.close()
+
+    accepted = await _get_callback(url, {'state': flow.state, 'code': 'the-code'})
+    assert 'close this tab' in accepted.text
+    credentials = await exchange
+    assert credentials.account_id == 'acc-9'
+
+
+async def test_exchange_code_from_callback_drops_stalled_client(monkeypatch: pytest.MonkeyPatch):
+    """A connection that never sends its request line must not block the real callback."""
+    mock = TokenEndpointMock(TOKEN_RESPONSE)
+    monkeypatch.setattr('pydantic_ai.providers.openai_codex._post_token_request', mock)
+    monkeypatch.setattr('pydantic_ai.providers._oauth._CALLBACK_READ_TIMEOUT', 0.2)
+    port = _free_port()
+    url = f'http://127.0.0.1:{port}/auth/callback'
+    flow = OpenAICodexOAuthFlow(redirect_uri=url)
+    exchange = asyncio.create_task(flow.exchange_code_from_callback())
+
+    await _get_callback(url, {'state': 'not-this-flow'})  # also waits for the server to bind
+    reader, writer = await asyncio.open_connection('127.0.0.1', port)
+    assert await reader.read() == b''  # the server hangs up on the silent connection
     writer.close()
 
     accepted = await _get_callback(url, {'state': flow.state, 'code': 'the-code'})
