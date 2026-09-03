@@ -850,9 +850,30 @@ class User(TypedDict):
         },
     )
     assert sig_ref_nonobj.render('...', name='tool5') == snapshot("""\
-def tool5(*, x: StringAlias) -> Any:
+def tool5(*, x: str) -> Any:
     ...\
 """)
+
+
+def test_scalar_type_ref_renders_resolved_type():
+    """Terminal scalar `$ref` defs render their resolved Python type, not an undefined alias."""
+    sig = FunctionSignature.from_schema(
+        name='list_tasks',
+        parameters_schema={
+            'type': 'object',
+            'properties': {'limit': {'$ref': '#/$defs/PageLimit'}},
+            'required': ['limit'],
+            '$defs': {'PageLimit': {'type': 'integer', 'minimum': 1, 'maximum': 100}},
+        },
+    )
+    rendered = sig.render('...', name='list_tasks')
+    assert rendered == snapshot("""\
+def list_tasks(*, limit: int) -> Any:
+    ...\
+""")
+    assert 'PageLimit' not in rendered
+    assert FunctionSignature.render_type_definitions([sig], frozenset()) == []
+    compile(rendered, '<test>', 'exec')
 
 
 def test_schema_signature_array_object_typelist():

@@ -612,6 +612,15 @@ def _schema_to_type_expr(
                 # Pydantic emits enum classes as non-object defs. Resolve terminal enum defs
                 # inline as `Literal[...]`; a bare class name would never be defined.
                 return _schema_to_type_expr(ref_schema, defs, referenced_types, tool_name, path)
+            elif (
+                isinstance(ref_schema.get('type'), str)
+                and ref_schema['type'] in _JSON_SIMPLE_TYPE_TO_PYTHON
+                and ref_schema.keys().isdisjoint(('$ref', 'allOf', 'anyOf', 'oneOf'))
+            ):
+                # Same rationale as the enum case above: resolve terminal scalar defs
+                # (constrained aliases included) inline as `int`/`str`/...; a bare class
+                # name would never be defined.
+                return _schema_to_type_expr(ref_schema, defs, referenced_types, tool_name, path)
         # Return the TypeSignature object if available, otherwise the name
         if ref_name in referenced_types:
             return referenced_types[ref_name]
