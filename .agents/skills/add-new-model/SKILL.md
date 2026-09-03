@@ -104,6 +104,27 @@ If the model is a new family or has unclear capabilities, write a small comparis
 
 Diff the responses. Anything that diverges from the neighbour belongs in the profile.
 
+### Gateway parity
+
+Where the gateway serves a model, it must behave the same as the provider's canonical API. Step 3 only
+gets the id recognized; this is about behavior, and nothing enumerates it for you.
+
+The gateway reaches the canonical API through an ordinary SDK client carrying a proxy base URL. So:
+
+- **Narrow a capability by client class, never by base URL.** Bedrock, Vertex and Foundry are separate
+  transports and earn their own gates. A proxied client is the canonical API, and must keep every
+  capability the unproxied one has.
+- **A `base_url` test inside a capability decision is the defect, not the fix.** It splits the gateway
+  off from the transport it actually reaches. No capability in `models/` or `profiles/` is decided that
+  way — if you are about to be the first, you are answering the wrong question.
+- **Probe the gateway leg rather than reasoning about it.** `Model('<id>', provider='gateway')`, then
+  exercise whatever capability you gated. If `PYDANTIC_AI_GATEWAY_BASE_URL` is set in the environment,
+  check it points at the gateway root: a provider-specific proxy path 404s every other provider.
+
+A model the gateway genuinely does not serve is the other case entirely: it belongs in
+`UNSUPPORTED_GATEWAY_MODEL_NAMES`, on evidence that the gateway rejects the id. Never leave the id
+advertised and quietly degraded by a capability carve-out instead.
+
 ## Step 6 — Edit (minimal diff matching the mirrored PR)
 
 Make only the changes the enumeration step surfaced. Resist scope creep. If you discover a pre-existing bug in a sibling model's profile, **flag it in the PR description; do not fix it in this PR.**
