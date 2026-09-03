@@ -16,6 +16,7 @@ from pydantic_ai._instructions import (
 from pydantic_ai._utils import aclose_all, gather, replace_no_init
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
+from pydantic_ai.sandboxes import Sandbox
 from pydantic_ai.settings import ModelSettings, merge_model_settings
 from pydantic_ai.tools import (
     AgentDepsT,
@@ -363,6 +364,16 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         any_wrapped = False
         for capability in reversed(self.capabilities):
             result = capability.get_wrapper_toolset(wrapped)
+            if result is not None:
+                wrapped = result
+                any_wrapped = True
+        return wrapped if any_wrapped else None
+
+    def get_wrapper_sandbox(self, ctx: RunContext[AgentDepsT], sandbox: Sandbox) -> Sandbox | None:
+        wrapped = sandbox
+        any_wrapped = False
+        for capability in reversed(self.capabilities):
+            result = capability.get_wrapper_sandbox(ctx, wrapped)
             if result is not None:
                 wrapped = result
                 any_wrapped = True

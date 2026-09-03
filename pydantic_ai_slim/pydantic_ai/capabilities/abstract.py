@@ -26,7 +26,7 @@ from pydantic_ai.messages import (
     ModelResponse,
     ToolCallPart,
 )
-from pydantic_ai.sandboxes import SandboxBackend, SandboxRef
+from pydantic_ai.sandboxes import Sandbox, SandboxBackend, SandboxRef
 from pydantic_ai.tools import (
     AgentDepsT,
     AgentNativeTool,
@@ -565,6 +565,18 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         The run closes the returned backend with `close(terminate=False)` when supported, once per
         in-process run and once per Temporal activity. This hook is never a durable operation: it is
         construct-only and runs inside every durable unit.
+        """
+        return None
+
+    def get_wrapper_sandbox(self, ctx: RunContext[AgentDepsT], sandbox: Sandbox) -> Sandbox | None:
+        """Wrap the resolved sandbox for this run, or return `None` to leave it unchanged.
+
+        Called once per run after the backend is resolved and before
+        [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run]. The facade's
+        [`backend`][pydantic_ai.sandboxes.Sandbox.backend] and
+        [`ref`][pydantic_ai.sandboxes.Sandbox.ref] are available for inspection. A replacement
+        typically wraps the backend as `Sandbox(WrappedBackend(sandbox.backend), ref=sandbox.ref)`.
+        When multiple capabilities wrap, the first capability in the list is outermost.
         """
         return None
 

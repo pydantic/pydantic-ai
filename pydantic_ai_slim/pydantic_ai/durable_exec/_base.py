@@ -46,7 +46,7 @@ from pydantic_ai.models import (
 )
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.run import AgentRunResult
-from pydantic_ai.sandboxes import Sandbox, SandboxRef, UnavailableSandbox
+from pydantic_ai.sandboxes import Sandbox, UnavailableSandbox
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
 from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
@@ -97,6 +97,7 @@ from ._runtime_toolsets import (
     cancellation_token_unsupported_error,
     reject_unsupported_runtime_toolsets,
 )
+from ._sandbox import WorkflowSandboxGuard
 from ._spec import DurabilityEngineSpec
 from ._toolset import (
     CallToolResult,
@@ -592,23 +593,22 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         cancellation = ctx.__dict__.get('_cancellation')
         if cancellation is not None and cancellation.has_token:
             raise cancellation_token_unsupported_error(self.engine_name)
-        # A live sandbox backend is likewise a same-process handle: only a `SandboxRef` (or the
-        # framework's unavailable placeholder) can be carried across the durable boundary, and a
-        # ref must not connect in {container} code either — durable units reconnect it themselves.
-        sandbox = ctx.__dict__.get('sandbox')
-        # A deserialized context can arrive without one; every run in-process has one.
-        if isinstance(sandbox, Sandbox):  # pragma: no branch
-            identity = sandbox._durable_identity()  # pyright: ignore[reportPrivateUsage]
-            if isinstance(identity, SandboxRef):
-                sandbox._forbid_connection(  # pyright: ignore[reportPrivateUsage]
-                    f'`ctx.sandbox` cannot connect inside {self.engine_name} {self.durable_container_noun} code. '
-                    'Use it from tools or other durable units, which reconnect it through `get_sandbox`.'
-                )
-            elif not isinstance(identity, UnavailableSandbox):
-                raise UserError(
-                    f'A live sandbox backend cannot be passed to an agent run inside {self.engine_name} durable '
-                    f'{self.durable_container_noun}. Pass a `SandboxRef` instead.'
-                )
+
+    def get_wrapper_sandbox(self, ctx: RunContext[AgentDepsT], sandbox: Sandbox) -> Sandbox | None:
+        if not self.in_durable_context:
+            return None
+        if sandbox.ref is not None:
+            reason = (
+                f'`ctx.sandbox` cannot connect inside {self.engine_name} {self.durable_container_noun} code. '
+                'Use it from tools or other durable units, which reconnect it through `get_sandbox`.'
+            )
+            return Sandbox(WorkflowSandboxGuard(reason, sandbox_id=sandbox.ref.sandbox_id), ref=sandbox.ref)
+        if not isinstance(sandbox.backend, UnavailableSandbox):
+            raise UserError(
+                f'A live sandbox backend cannot be passed to an agent run inside {self.engine_name} durable '
+                f'{self.durable_container_noun}. Pass a `SandboxRef` instead.'
+            )
+        return None
 
     def _effective_event_stream_handler(self) -> EventStreamHandler[AgentDepsT] | None:
         """The handler in-boundary event delivery targets for the current run.

@@ -165,12 +165,16 @@ class ReplayingDurability(RecordingDurability):
 
 async def test_durable_sandbox_release_failure_propagates() -> None:
     """A durable release failure surfaces like any other failed durable operation."""
+    from ..sandbox_fakes import RecordingSandboxBackend
 
     class FailingRelease(AbstractCapability[Any]):
         id = 'sandbox'
 
         async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
             return SandboxRef(sandbox_id='durable-sandbox')
+
+        def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> RecordingSandboxBackend:
+            return RecordingSandboxBackend(ref.sandbox_id)
 
         async def release_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
             raise RuntimeError('control plane unavailable')
@@ -181,6 +185,8 @@ async def test_durable_sandbox_release_failure_propagates() -> None:
 
 
 async def test_wrapped_sandbox_provider_lifecycle_uses_durable_dispatch() -> None:
+    from ..sandbox_fakes import RecordingSandboxBackend
+
     class SandboxProvider(AbstractCapability[Any]):
         id = 'sandbox'
 
@@ -190,6 +196,9 @@ async def test_wrapped_sandbox_provider_lifecycle_uses_durable_dispatch() -> Non
         async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
             self.events.append('acquire')
             return SandboxRef(sandbox_id='wrapped')
+
+        def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> RecordingSandboxBackend:
+            return RecordingSandboxBackend(ref.sandbox_id)
 
         async def release_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
             self.events.append('release')
@@ -234,6 +243,30 @@ async def test_durability_forbids_connecting_sandbox_ref_in_durable_context() ->
 
     with pytest.raises(UserError, match=r'`ctx.sandbox` cannot connect inside recording journal code'):
         await agent.run('go', sandbox=SandboxRef(sandbox_id='outside'))
+
+
+async def test_durability_sandbox_guard_is_visible_to_run_hooks() -> None:
+    from ..sandbox_fakes import ConnectOnlySandboxCapability
+
+    seen: list[tuple[str, str]] = []
+
+    class Observer(AbstractCapability[Any]):
+        async def for_run(self, ctx: RunContext[Any]) -> AbstractCapability[Any]:
+            seen.append(('for_run', type(ctx.sandbox.backend).__name__))
+            return self
+
+        async def before_run(self, ctx: RunContext[Any]) -> None:
+            seen.append(('before_run', type(ctx.sandbox.backend).__name__))
+
+    agent = Agent(
+        TestModel(),
+        name='guard_hooks',
+        capabilities=[ConnectOnlySandboxCapability(), Observer(), RecordingDurability()],
+    )
+
+    await agent.run('go', sandbox=SandboxRef(sandbox_id='outside'))
+
+    assert seen == [('for_run', 'WorkflowSandboxGuard'), ('before_run', 'WorkflowSandboxGuard')]
 
 
 async def test_durability_allows_live_sandbox_outside_durable_context() -> None:
@@ -873,6 +906,7 @@ def test_duplicate_operation_names_fail_during_agent_construction() -> None:
     [
         'get_toolset',
         'get_wrapper_toolset',
+        'get_wrapper_sandbox',
         'wrap_run',
         'wrap_node_run',
         'wrap_model_request',
@@ -884,7 +918,7 @@ def test_duplicate_operation_names_fail_during_agent_construction() -> None:
     ],
 )
 def test_never_durable_hooks_fail_at_bind(hook: str) -> None:
-    if hook in ('get_toolset', 'get_wrapper_toolset'):
+    if hook in ('get_toolset', 'get_wrapper_toolset', 'get_wrapper_sandbox'):
 
         def sync_invalid(self: AbstractCapability[Any], *args: Any, **kwargs: Any) -> None:
             return None

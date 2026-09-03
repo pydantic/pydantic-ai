@@ -10,6 +10,14 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.sandboxes import SandboxBackend, SandboxRef, UnavailableSandbox
 
 
+class WorkflowSandboxGuard(UnavailableSandbox):
+    """A backend that explains why workflow-side sandbox operations are unsafe."""
+
+    def __init__(self, reason: str, *, sandbox_id: str) -> None:
+        super().__init__(reason)
+        self.sandbox_id = sandbox_id
+
+
 def _supplies_sandbox(capability: AbstractCapability[Any]) -> bool:
     if isinstance(capability, WrapperCapability):
         return _supplies_sandbox(capability.wrapped)
@@ -21,8 +29,8 @@ def _supplies_sandbox(capability: AbstractCapability[Any]) -> bool:
 def contributes_sandbox(capability: AbstractCapability[Any]) -> bool:
     """Whether the capability tree statically declares an async sandbox supplier.
 
-    The deprecated durable-agent wrappers reject sandbox-supplying capabilities up front: running
-    An async `acquire_sandbox` performs I/O and the wrappers have no way to route it into a durable
+    The deprecated durable-agent wrappers reject sandbox-supplying capabilities up front: an
+    async `acquire_sandbox` performs I/O and the wrappers have no way to route it into a durable
     unit. A sync override is allowed because its contract forbids I/O and requires deterministic output.
     A supplier produced at run time by a capability function is not visible here.
     """

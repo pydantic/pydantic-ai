@@ -1644,6 +1644,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     stack.push_async_callback(release_run_sandbox, supplier, initial_ctx, sandbox_ref)
                     # Detach the live connection before releasing ownership of the environment.
                     stack.push_async_callback(_close_sandbox_connection, sandbox_facade)
+
+            if not isinstance(sandbox_facade.backend, UnavailableSandbox):
+                original_ref = sandbox_facade.ref
+                original_supplier_id = sandbox_facade._supplier_id  # pyright: ignore[reportPrivateUsage]
+                if wrapped_sandbox := bootstrap_capability.get_wrapper_sandbox(initial_ctx, sandbox_facade):
+                    sandbox_facade = wrapped_sandbox
+                    sandbox_facade._ref = original_ref  # pyright: ignore[reportPrivateUsage]
+                    sandbox_facade._supplier_id = original_supplier_id  # pyright: ignore[reportPrivateUsage]
             initial_ctx.sandbox = sandbox_facade
 
             # Resolve run metadata up front so capability and toolset `for_run` hooks

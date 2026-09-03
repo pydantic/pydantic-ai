@@ -1028,6 +1028,60 @@ async def test_run_argument_wins_over_capability():
     assert second.events == []
 
 
+async def test_wrapper_sandbox_uses_middleware_order_and_keeps_ref():
+    events: list[str] = []
+
+    class MiddlewareBackend(FakeSandbox):
+        def __init__(self, label: str, wrapped: SandboxBackend) -> None:
+            super().__init__(label)
+            self.wrapped = wrapped
+
+        @property
+        def sandbox_id(self) -> str:
+            return self.wrapped.sandbox_id
+
+        async def run(
+            self,
+            command: str | Sequence[str],
+            *,
+            shell: bool = False,
+            cwd: str | None = None,
+            env: Mapping[str, str] | None = None,
+            timeout: float | None = None,
+        ) -> FakeSandboxResult:
+            events.append(f'{self.name}:before')
+            result = await self.wrapped.run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
+            events.append(f'{self.name}:after')
+            return FakeSandboxResult(exit_code=result.exit_code, stdout=result.stdout, stderr=result.stderr)
+
+        async def working_dir(self) -> str:
+            return await self.wrapped.working_dir()
+
+    @dataclass
+    class Middleware(AbstractCapability[Any]):
+        label: str
+
+        def get_wrapper_sandbox(self, ctx: RunContext[Any], sandbox: Sandbox) -> Sandbox:
+            # Deliberately omit the ref: Agent restores identity on replacement facades.
+            return Sandbox(MiddlewareBackend(self.label, sandbox.backend))
+
+    connector = ConnectOnlySandboxCapability()
+    agent = Agent(_tool_call_then_text(), capabilities=[Middleware('first'), Middleware('second'), connector])
+    seen_ref: list[SandboxRef | None] = []
+
+    @agent.tool
+    async def probe(ctx: RunContext[Any]) -> str:
+        seen_ref.append(ctx.sandbox.ref)
+        await ctx.sandbox.run(['true'])
+        return 'ok'
+
+    ref = SandboxRef(sandbox_id='wrapped')
+    await agent.run('go', sandbox=ref)
+
+    assert seen_ref == [ref]
+    assert events == ['first:before', 'second:before', 'second:after', 'first:after']
+
+
 @pytest.mark.parametrize('release_fails', [False, True])
 async def test_multiple_sandbox_suppliers_are_released_and_rejected(release_fails: bool):
     """Every acquired sandbox is released before the ambiguity error; a failed release rides
