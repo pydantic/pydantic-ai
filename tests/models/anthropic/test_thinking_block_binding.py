@@ -249,7 +249,7 @@ async def test_anthropic_count_tokens_retries_a_stale_thinking_block(allow_model
 
     mock_client.beta.messages.count_tokens = count_tokens
     model = AnthropicModel('claude-fable-5-1', provider=AnthropicProvider(anthropic_client=mock_client))
-    messages = [ModelRequest.user_text_prompt('Count this')]
+    messages: list[ModelMessage] = [ModelRequest.user_text_prompt('Count this')]
     messages[0].metadata = {'__pydantic_ai__': {'other': True}}
 
     with pytest.warns(AnthropicStaleThinkingBlockWarning, match='rejected a replayed thinking block'):
