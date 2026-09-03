@@ -1,6 +1,6 @@
 """Sandbox API, backend protocols, and implementations."""
 
-from .local import LocalSandbox
+from .local import LocalSandboxBackend
 from .protocol import (
     CommandResult,
     FileEntry,
@@ -23,7 +23,7 @@ __all__ = (
     'CommandResult',
     'FileEntry',
     'FileWindow',
-    'LocalSandbox',
+    'LocalSandboxBackend',
     'ReadOnlySandbox',
     'Sandbox',
     'SandboxBackend',

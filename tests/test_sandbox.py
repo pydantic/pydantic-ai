@@ -451,7 +451,7 @@ async def test_run_without_sandbox_is_unavailable_with_attachment_instructions()
         await ctx.sandbox.run(['echo', 'hello'])
         return 'ok'  # pragma: no cover
 
-    with pytest.raises(UserError, match=r'No sandbox is attached to this run.+`sandbox=LocalSandbox\(\)`'):
+    with pytest.raises(UserError, match=r'No sandbox is attached to this run.+`LocalSandbox\(\)`'):
         await agent.run('go')
 
 

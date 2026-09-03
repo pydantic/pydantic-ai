@@ -91,6 +91,7 @@ from pydantic_graph import GraphBuilder, StepContext
 
 from ..._inline_snapshot import snapshot
 from ...continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
+from ...sandbox_fakes import RecordingSandboxBackend
 
 try:
     from temporalio import activity, workflow
@@ -1184,6 +1185,9 @@ async def test_durability_runs_sandbox_lifecycle_as_activities(monkeypatch: pyte
         async def acquire_sandbox(self, ctx: RunContext[None]) -> SandboxRef:
             self.events.append('acquire')
             return SandboxRef(sandbox_id='temporal-sandbox')
+
+        def get_sandbox(self, ctx: RunContext[None], ref: SandboxRef) -> RecordingSandboxBackend:
+            return RecordingSandboxBackend(ref.sandbox_id)
 
         async def release_sandbox(self, ctx: RunContext[None], ref: SandboxRef) -> None:
             self.events.append(f'release:{ref.sandbox_id}')

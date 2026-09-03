@@ -13,7 +13,13 @@ from typing import TYPE_CHECKING, Any, cast
 import pytest
 
 from pydantic_ai import Agent, ModelMessage, ModelSettings
-from pydantic_ai.capabilities import AbstractCapability, ResolveModelId, WrapperCapability, durable_operation
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    LocalSandbox,
+    ResolveModelId,
+    WrapperCapability,
+    durable_operation,
+)
 from pydantic_ai.durable_exec import DurabilityEngineSpec
 from pydantic_ai.durable_exec._base import BaseDurabilityCapability
 from pydantic_ai.durable_exec._capability_operation import (
@@ -220,6 +226,21 @@ async def test_wrapped_sandbox_provider_lifecycle_uses_durable_dispatch() -> Non
         'wrapped_sandbox__capability__sandbox.release_sandbox',
     ]
     assert provider.events == ['acquire', 'release']
+
+
+async def test_local_sandbox_only_dispatches_async_release() -> None:
+    agent = Agent(
+        TestModel(),
+        name='local_sandbox',
+        capabilities=[LocalSandbox(id='local'), RecordingDurability()],
+    )
+
+    await agent.run('go')
+
+    durability = RecordingDurability.from_agent(agent)
+    assert durability is not None
+    durable_calls = [name for name, _ in durability.calls if '__capability__local.' in name]
+    assert durable_calls == ['local_sandbox__capability__local.release_sandbox']
 
 
 async def test_durability_rejects_live_sandbox_in_durable_context() -> None:

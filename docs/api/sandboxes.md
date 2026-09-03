@@ -12,7 +12,7 @@
             - SandboxTimeoutError
             - SandboxUnavailableError
             - SupportsFilesystem
-            - LocalSandbox
+            - LocalSandboxBackend
             - ReadOnlySandbox
             - UnavailableSandbox
             - SandboxCommand

@@ -14,7 +14,7 @@ from datetime import timedelta
 from decimal import Decimal
 from types import SimpleNamespace
 from typing import Any, Literal, cast
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import anyio
 import httpx
@@ -1536,6 +1536,38 @@ async def test_agent_without_model():
         TemporalAgent(Agent(name='test_agent'))  # pyright: ignore[reportDeprecated]
 
 
+async def test_temporal_agent_allows_sync_sandbox_supplier_and_rejects_async_supplier():
+    class SyncSupplier(Capability[Any]):
+        def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
+            return SandboxRef(sandbox_id='sync')
+
+        def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> RecordingSandboxBackend:
+            return RecordingSandboxBackend(ref.sandbox_id)
+
+    class AsyncSupplier(Capability[Any]):
+        async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
+            return SandboxRef(sandbox_id='async')
+
+        def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> RecordingSandboxBackend:
+            return RecordingSandboxBackend(ref.sandbox_id)
+
+    sync_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
+        Agent(TestModel(), name='sync_sandbox_supplier', capabilities=[SyncSupplier(id='supplier')])
+    )
+    async_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
+        Agent(TestModel(), name='async_sandbox_supplier', capabilities=[AsyncSupplier(id='supplier')])
+    )
+
+    run_result = object()
+    with (
+        patch('pydantic_ai.durable_exec.temporal._agent.workflow.in_workflow', return_value=True),
+        patch('pydantic_ai.agent.abstract.AbstractAgent.run', new=AsyncMock(return_value=run_result)),
+    ):
+        assert await sync_agent.run('hello') is run_result
+        with pytest.raises(UserError, match='supplies a sandbox'):
+            await async_agent.run('hello')
+
+
 async def test_temporal_agent():
     assert isinstance(complex_temporal_agent.model, TemporalModel)
     assert complex_temporal_agent.model.wrapped == complex_agent.model
@@ -2829,9 +2861,12 @@ async def test_temporal_activity_closes_deferred_sandbox_connections():
             self.close_calls.append(terminate)
 
     backend = ClosableBackend()
+    get_calls = 0
 
     class Provider(Capability[Any]):
         def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
+            nonlocal get_calls
+            get_calls += 1
             return backend
 
     async def use_sandbox(ctx: RunContext[None]) -> str:
@@ -2860,18 +2895,19 @@ async def test_temporal_activity_closes_deferred_sandbox_connections():
         patch('temporalio.activity.info', return_value=SimpleNamespace(heartbeat_timeout=None)),
         patch('temporalio.activity.heartbeat'),
     ):
-        result = await call_tool_activity(
-            CallToolParams(
-                name='use_sandbox',
-                tool_args={},
-                serialized_run_context=TemporalRunContext.serialize_run_context(_sandbox_context(sandbox)),
-                tool_def=toolset.tools['use_sandbox'].tool_def,
-            ),
-            None,
+        params = CallToolParams(
+            name='use_sandbox',
+            tool_args={},
+            serialized_run_context=TemporalRunContext.serialize_run_context(_sandbox_context(sandbox)),
+            tool_def=toolset.tools['use_sandbox'].tool_def,
         )
+        result = await call_tool_activity(params, None)
+        second_result = await call_tool_activity(params, None)
 
     assert unwrap_tool_call_result(result) == 'connected'
-    assert backend.close_calls == [False]
+    assert unwrap_tool_call_result(second_result) == 'connected'
+    assert get_calls == 2
+    assert backend.close_calls == [False, False]
 
 
 async def test_temporal_activity_sandbox_close_error_does_not_mask_handler_error():

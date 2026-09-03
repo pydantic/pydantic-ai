@@ -401,9 +401,9 @@ S = TypeVar('S')
 NoneType = type(None)
 
 _NO_SANDBOX_REASON = (
-    'No sandbox is attached to this run. Pass `sandbox=LocalSandbox()` to the run method to use the '
+    'No sandbox is attached to this run. Add `LocalSandbox()` to `capabilities=` to use the '
     'local machine (unsafe: commands and file operations run with the full permissions of this process), '
-    'attach a capability that supplies a sandbox through its `acquire_sandbox` hook, or pass a `SandboxRef` '
+    'attach another sandbox capability, or pass a `SandboxRef` '
     'to connect to an existing environment. See https://ai.pydantic.dev/sandbox/ for details.'
 )
 

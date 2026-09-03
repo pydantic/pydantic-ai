@@ -82,6 +82,7 @@ from pydantic_ai.sandboxes import SandboxRef
 from pydantic_ai.usage import RequestUsage, UsageLimits
 
 from ..conftest import IsDatetime, IsNow, IsStr
+from ..sandbox_fakes import RecordingSandboxBackend
 
 try:
     from dbos import DBOS, DBOSConfig, SetWorkflowID
@@ -4534,6 +4535,9 @@ async def test_dbos_durability_runs_sandbox_lifecycle_in_steps(dbos: DBOS) -> No
         async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
             self.in_step.append(DBOS.step_id is not None)
             return SandboxRef(sandbox_id=ctx.run_id or 'run')
+
+        def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> RecordingSandboxBackend:
+            return RecordingSandboxBackend(ref.sandbox_id)
 
         async def release_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
             self.in_step.append(DBOS.step_id is not None)
