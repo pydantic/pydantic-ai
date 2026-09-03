@@ -23,6 +23,10 @@ budget before anyone noticed, documented in #6766:
   killed before it could emit anything.
 - `compiler_versions` — a partial `gh aw compile` leaves locks on mixed compiler
   versions, which is how source and lock drift apart unnoticed.
+- `compiled_runner_contract` — every generated agent job must keep the command-line
+  contract required by the Pydantic AI runner shim.
+- `compiler_version_compatibility` — the compiler version in every generated lock
+  must not appear in gh-aw's live blocked-version policy.
 - `lock_regenerated` — `.github/workflows/AGENTS.md` requires a recompiled
   `*.lock.yml` in the same change as its `*.md` source. GitHub Actions runs the
   lock, so an un-recompiled source is a silent no-op.
@@ -376,6 +380,77 @@ def check_compiler_versions(locks: list[Path]) -> list[Violation]:
     ]
 
 
+def check_compiled_runner_contract(lock: Path) -> list[Violation]:
+    """The generated agent command must retain the interface our runner implements."""
+    workflow = _as_mapping(yaml.safe_load(lock.read_text(encoding='utf-8')))
+    agent = _as_mapping(_as_mapping(workflow.get('jobs')).get('agent'))
+    steps = agent.get('steps')
+    commands: list[str] = []
+    for raw_step in cast(list[Any], steps) if isinstance(steps, list) else []:
+        run = _as_mapping(raw_step).get('run')
+        if isinstance(run, str) and 'pydantic-ai-runner-launch' in run and '--allowed-tools' in run:
+            commands.append(run)
+    if len(commands) != 1:
+        return [
+            Violation(
+                str(lock),
+                'compiled-runner-contract',
+                'the `agent` job must contain exactly one invocation of '
+                '`pydantic-ai-runner-launch`. The custom runner is the compatibility '
+                'boundary between gh-aw and Pydantic AI.',
+            )
+        ]
+
+    command = commands[0]
+    required = ('--output-format stream-json', '--mcp-config', 'mcp__safeoutputs')
+    missing = [f'`{fragment}`' for fragment in required if fragment not in command]
+    if not missing:
+        return []
+    return [
+        Violation(
+            str(lock),
+            'compiled-runner-contract',
+            f'the generated Pydantic AI runner invocation is missing {", ".join(missing)}. '
+            'Recompiling changed the gh-aw interface that the custom runner implements.',
+        )
+    ]
+
+
+def check_compiler_version_compatibility(locks: list[Path], compatibility: dict[str, Any]) -> list[Violation]:
+    """Compiled gh-aw versions must not be revoked by the upstream runtime policy."""
+    blocked_raw = compatibility.get('blockedVersions')
+    blocked = _as_strings(blocked_raw)
+    if not isinstance(blocked_raw, list):
+        return [
+            Violation(
+                'gh-aw compatibility policy',
+                'compiler-compatibility-policy-invalid',
+                '`blockedVersions` is missing or is not a list; refusing to pass without '
+                'the policy enforced by gh-aw activation jobs.',
+            )
+        ]
+    violations: list[Violation] = []
+    for lock in locks:
+        first_line = lock.read_text(encoding='utf-8').split('\n', 1)[0]
+        _, _, payload = first_line.partition('gh-aw-metadata: ')
+        if not payload:
+            continue
+        try:
+            version = _as_mapping(json.loads(payload)).get('compiler_version')
+        except json.JSONDecodeError:
+            continue
+        if isinstance(version, str) and version in blocked:
+            violations.append(
+                Violation(
+                    str(lock),
+                    'compiler-version-blocked',
+                    f'compiler version `{version}` is blocked by gh-aw and the activation job will fail. '
+                    'Upgrade gh-aw and recompile every agentic workflow.',
+                )
+            )
+    return violations
+
+
 def check_lock_regenerated(changed: list[str], workflows_dir: Path = WORKFLOWS_DIR) -> list[Violation]:
     """A changed `.md` source (or shared import) must ship its recompiled lock.
 
@@ -449,7 +524,11 @@ def changed_files(base_ref: str) -> list[str]:
     return [line for line in completed.stdout.splitlines() if line]
 
 
-def run_checks(workflows_dir: Path = WORKFLOWS_DIR, changed: list[str] | None = None) -> list[Violation]:
+def run_checks(
+    workflows_dir: Path = WORKFLOWS_DIR,
+    changed: list[str] | None = None,
+    compatibility: dict[str, Any] | None = None,
+) -> list[Violation]:
     """Run every static check; `changed` enables the lock-freshness check."""
     sources = sorted(workflows_dir.glob(AGENTIC_GLOB))
     locks = sorted(workflows_dir.glob('*.lock.yml'))
@@ -465,6 +544,7 @@ def run_checks(workflows_dir: Path = WORKFLOWS_DIR, changed: list[str] | None = 
     violations: list[Violation] = []
     for lock in locks:
         violations += check_dangling_needs(lock)
+        violations += check_compiled_runner_contract(lock)
     for source in sources:
         violations += check_safe_output_job_max(source)
         violations += check_timeout_declared(source)
@@ -472,6 +552,8 @@ def run_checks(workflows_dir: Path = WORKFLOWS_DIR, changed: list[str] | None = 
     for markdown in [*sources, *shared]:
         violations += check_prompt_paths(markdown)
     violations += check_compiler_versions(locks)
+    if compatibility is not None:
+        violations += check_compiler_version_compatibility(locks, compatibility)
     if changed:
         violations += check_lock_regenerated(changed, workflows_dir)
     return violations
@@ -490,6 +572,11 @@ def main(argv: list[str] | None = None) -> int:
             'checkout is shallow and a `git diff` range cannot resolve: feed it `gh pr view --json files`.'
         ),
     )
+    parser.add_argument(
+        '--compatibility-file',
+        type=Path,
+        help='gh-aw compatibility policy downloaded from `.github/aw/compat.json` in github/gh-aw',
+    )
     args = parser.parse_args(argv)
 
     if args.changed_file_list:
@@ -503,7 +590,15 @@ def main(argv: list[str] | None = None) -> int:
     else:
         changed = None
 
-    violations = run_checks(changed=changed)
+    if args.compatibility_file is None:
+        violations = run_checks(changed=changed)
+    else:
+        try:
+            compatibility = _as_mapping(json.loads(args.compatibility_file.read_text(encoding='utf-8')))
+        except (OSError, json.JSONDecodeError) as error:
+            print(f'{args.compatibility_file}: [compiler-compatibility-policy-invalid] {error}', file=sys.stderr)
+            return 1
+        violations = run_checks(changed=changed, compatibility=compatibility)
     for violation in violations:
         print(violation, file=sys.stderr)
     if violations:

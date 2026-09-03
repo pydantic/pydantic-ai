@@ -190,10 +190,18 @@ jobs:
       # classic case being one that bumps the gh-aw compiler while another adds a lock
       # at the old version — and without this the drift first surfaces as a red `quality checks`
       # on whichever contributor next opens a PR, about workflows they never touched.
+      - name: Fetch gh-aw compatibility policy
+        run: >-
+          curl --fail --silent --show-error --location --retry 3 --retry-all-errors
+          https://raw.githubusercontent.com/github/gh-aw/main/.github/aw/compat.json
+          --output /tmp/gh-aw-compat.json
+
       - name: Check agentic workflow policy
         env:
           UV_NO_SYNC: "1"
-        run: uv run python .github/scripts/agentic_workflow_guard.py check
+        run: >-
+          uv run python .github/scripts/agentic_workflow_guard.py check
+          --compatibility-file /tmp/gh-aw-compat.json
 
       # Actions runs the `*.lock.yml`, never the `*.md`, so a source edited without
       # its recompiled lock is a silent no-op. The checkout is shallow, so feed the
