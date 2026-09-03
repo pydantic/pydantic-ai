@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field, replace
-from typing import Any, cast
+from typing import Any, TypeVar, cast
 
 from pydantic_ai._utils import replace_no_init
 from pydantic_ai.exceptions import UserError
@@ -13,9 +13,12 @@ from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.toolsets.prepared import PreparedToolset
 
 from ._merge import merge_capability_fields, merge_field_values
+from ._native_resolution import resolve_native_tool
 from .abstract import (
     AbstractCapability,
 )
+
+_NativeToolT = TypeVar('_NativeToolT', bound=AbstractNativeTool)
 
 
 @dataclass(init=False)
@@ -48,6 +51,7 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
     - `False`: disable the native tool; always use the local tool.
     - An `AbstractNativeTool` instance: use this specific configuration.
     - A callable (`NativeToolFunc`): dynamically create the native tool per-run via `RunContext`.
+      Returning `None` omits the native tool.
     """
 
     local: str | Tool[AgentDepsT] | Callable[..., Any] | AbstractToolset[AgentDepsT] | bool | None = None
@@ -256,3 +260,38 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
         )
         merged.__post_init__()
         return merged
+
+    def _resolve_native_with_overrides(
+        self, tool_cls: type[_NativeToolT], overrides: dict[str, Any]
+    ) -> _NativeToolT | Callable[[RunContext[AgentDepsT]], Awaitable[_NativeToolT] | _NativeToolT]:
+        """Resolve the native tool for the fallback subagent, with capability-level overrides applied.
+
+        Handles every `native` shape reaching here: an instance (overridden via
+        `dataclasses.replace`), `False` (a default instance with overrides), or a factory (wrapped
+        so its resolved result is overridden the same way). `True` never arrives — `__post_init__`
+        has already resolved it to an instance. A factory that returns `None` raises `UserError`
+        rather than substituting a default instance, and anything else raises too.
+
+        Only the `fallback_model` path reaches here: `__post_init__` calls `_default_local()`, which
+        returns early when `fallback_model` is unset, so a capability configured without one never
+        runs this check. Validating in `__post_init__` instead would reject configurations that
+        construct fine today for users who never opted into a fallback subagent.
+        """
+        if isinstance(self.native, tool_cls):
+            return replace(self.native, **overrides) if overrides else self.native
+
+        if self.native is False:
+            return tool_cls(**overrides)
+
+        native_factory = self.native
+        if not callable(native_factory):
+            raise UserError(
+                f'{type(self).__name__}: `native` must be `True`, `False`, a callable, or an instance of '
+                f'`{tool_cls.__name__}`, not {native_factory!r}'
+            )
+
+        async def resolve_native(ctx: RunContext[AgentDepsT]) -> _NativeToolT:
+            native_tool = await resolve_native_tool(tool_cls, native_factory, ctx)
+            return replace(native_tool, **overrides) if overrides else native_tool
+
+        return resolve_native

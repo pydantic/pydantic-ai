@@ -232,6 +232,8 @@ The activity's `RunContext` is rebuilt from the serialized payload, so its field
 
 A tool's [`prepare`](../tools-advanced.md#tool-prepare) function is not affected by these limitations: for tools in a [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset] (including those defined on the agent itself), it runs in workflow code with the complete `RunContext`, once per run step like outside a workflow. The tool definition it returns is sent to the tool-call activity, which uses it as-is, so the tool the model saw is the tool that runs, down to its [`timeout`](../tools-advanced.md#tool-timeout). Tools from a `DynamicToolset` are the exception: as the toolset is re-resolved inside activities, their `prepare` functions run there as well and see the limited `RunContext`.
 
+A `native=` factory on [`XSearch`][pydantic_ai.capabilities.XSearch] or [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] is resolved twice, on either side of the boundary: once in workflow code to configure the native tool, and again inside the fallback subagent's tool-call activity, where it sees the limited `RunContext`. Read `ctx.deps` there, not `ctx.messages`.
+
 ### Capabilities at Runtime
 
 Attach [capabilities](../capabilities/overview.md) when the agent is constructed, so `TemporalDurability.for_agent()` can register their activities before the worker starts. Passing `agent.run(capabilities=[...])` inside a workflow raises a `UserError`: a capability added that late has no registered activities for the toolsets it contributes or for its own [`@durable_operation`][pydantic_ai.capabilities.durable_operation] methods.
