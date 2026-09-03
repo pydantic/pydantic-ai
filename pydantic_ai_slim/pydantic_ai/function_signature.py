@@ -101,6 +101,17 @@ _DOC_INDENT = '    '
 # and quotes could terminate the delimiter.
 _DESCRIPTION_ESCAPES = str.maketrans({'\\': '\\\\', '\0': '\\x00', '"': '\\"'})
 
+_SCALAR_CONSTRAINT_KEYS = (
+    'minimum',
+    'maximum',
+    'exclusiveMinimum',
+    'exclusiveMaximum',
+    'multipleOf',
+    'minLength',
+    'maxLength',
+    'pattern',
+)
+
 
 def _render_description(text: str, indent: str = '') -> list[str]:
     """Render a description as a list of indented docstring lines."""
@@ -475,6 +486,15 @@ _JSON_TYPE_TO_PYTHON: dict[str, str] = {
 }
 
 
+def _is_terminal_scalar_schema(schema: dict[str, Any]) -> bool:
+    schema_type = schema.get('type')
+    return (
+        isinstance(schema_type, str)
+        and schema_type in _JSON_SIMPLE_TYPE_TO_PYTHON
+        and schema.keys().isdisjoint(('$ref', 'allOf', 'anyOf', 'oneOf'))
+    )
+
+
 def _json_type_to_python(json_type: str) -> SimpleTypeExpr:
     """Convert a JSON type string to a SimpleTypeExpr."""
     return SimpleTypeExpr(_JSON_SIMPLE_TYPE_TO_PYTHON.get(json_type, 'Any'))
@@ -552,6 +572,16 @@ def _build_params_from_schema(
         prop_schema = _normalize_schema_node(prop_schema_raw)
         type_expr = _schema_to_type_expr(prop_schema, defs, referenced_types, tool_name, prop_name)
         description = prop_schema.get('description', '') or None
+        if '$ref' in prop_schema:
+            ref_name = prop_schema['$ref'].split('/')[-1]
+            ref_schema = _normalize_schema_node(defs.get(ref_name, {}))
+            if _is_terminal_scalar_schema(ref_schema):
+                constraints = ', '.join(
+                    f'{key}={ref_schema[key]!r}' for key in _SCALAR_CONSTRAINT_KEYS if key in ref_schema
+                )
+                if constraints:
+                    constraint_description = f'Constraints: {constraints}.'
+                    description = f'{description}\n{constraint_description}' if description else constraint_description
 
         if 'default' in prop_schema:
             default_str = repr(prop_schema['default'])
@@ -612,11 +642,7 @@ def _schema_to_type_expr(
                 # Pydantic emits enum classes as non-object defs. Resolve terminal enum defs
                 # inline as `Literal[...]`; a bare class name would never be defined.
                 return _schema_to_type_expr(ref_schema, defs, referenced_types, tool_name, path)
-            elif (
-                isinstance(ref_schema.get('type'), str)
-                and ref_schema['type'] in _JSON_SIMPLE_TYPE_TO_PYTHON
-                and ref_schema.keys().isdisjoint(('$ref', 'allOf', 'anyOf', 'oneOf'))
-            ):
+            elif _is_terminal_scalar_schema(ref_schema):
                 # Same rationale as the enum case above: resolve terminal scalar defs
                 # (constrained aliases included) inline as `int`/`str`/...; a bare class
                 # name would never be defined.

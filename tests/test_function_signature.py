@@ -867,13 +867,30 @@ def test_scalar_type_ref_renders_resolved_type():
         },
     )
     rendered = sig.render('...', name='list_tasks')
-    assert rendered == snapshot("""\
+    assert rendered == snapshot('''\
 def list_tasks(*, limit: int) -> Any:
+    """
+    Args:
+        limit: Constraints: minimum=1, maximum=100.
+    """
     ...\
-""")
+''')
     assert 'PageLimit' not in rendered
     assert FunctionSignature.render_type_definitions([sig], frozenset()) == []
     compile(rendered, '<test>', 'exec')
+
+    described_sig = FunctionSignature.from_schema(
+        name='list_tasks',
+        parameters_schema={
+            'type': 'object',
+            'properties': {'limit': {'$ref': '#/$defs/PageLimit', 'description': 'Maximum tasks to return.'}},
+            'required': ['limit'],
+            '$defs': {'PageLimit': {'type': 'integer', 'minimum': 1, 'maximum': 100}},
+        },
+    )
+    assert described_sig.params['limit'].description == snapshot(
+        'Maximum tasks to return.\nConstraints: minimum=1, maximum=100.'
+    )
 
 
 def test_schema_signature_array_object_typelist():
