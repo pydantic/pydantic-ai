@@ -122,17 +122,19 @@ class TestImageGenerationCapability:
         assert cap.get_toolset() is not None
 
     def test_image_generation_accepts_direct_image_model(self):
-        """A direct image model is normalized to the local capability tool."""
-        cap = ImageGeneration(local=TestImageGenerationModel())
+        """A direct image model is kept as declared; the capability tool is derived from it later."""
+        image_model = TestImageGenerationModel()
+        cap = ImageGeneration(local=image_model)
 
-        assert isinstance(cap.local, Tool)
+        assert cap.local is image_model
         assert cap.get_toolset() is not None
 
     def test_image_generation_accepts_direct_model_name(self):
-        """A direct image model name is resolved as a local capability strategy."""
+        """A direct image model name resolves to an `ImageGenerator`, with the model itself deferred."""
         cap = ImageGeneration(native=False, local='openai:gpt-image-1.5')
 
-        assert isinstance(cap.local, Tool)
+        assert isinstance(cap.local, ImageGenerator)
+        assert cap.local.model == 'openai:gpt-image-1.5'
         assert cap.get_toolset() is not None
 
     def test_image_generation_direct_model_name_warns_for_native_only_settings(self):
@@ -472,11 +474,11 @@ class TestImageGenerationCapability:
         assert image_model.last_settings is None
 
     async def test_image_generation_direct_generator_survives_dataclass_replace(self, allow_model_requests: None):
-        """`dataclasses.replace()` re-enters `__init__` with the already-converted `local`.
+        """The shipped capability skill tells users to reconfigure a capability with `replace()`.
 
-        The shipped capability skill tells users to reconfigure a capability that way, so the copy
-        has to stay a direct generator on both counts: no construction-time `ignored direct-only
-        setting(s)` warning, and the per-request native-supersedes notice still installed.
+        The copy has to stay a direct generator on both counts: no construction-time `ignored
+        direct-only setting(s)` warning, and the per-request native-supersedes notice still
+        installed.
         """
         image_model = TestImageGenerationModel()
 
@@ -496,6 +498,93 @@ class TestImageGenerationCapability:
             result = await agent.run('Generate an image')
 
         assert result.output == 'native path'
+
+    @pytest.fixture
+    def direct_generation_model(self) -> FunctionModel:
+        """A model with no native image generation, which calls `generate_image` once and stops."""
+
+        def outer_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if any(isinstance(p, ToolReturnPart) for m in messages if isinstance(m, ModelRequest) for p in m.parts):
+                return ModelResponse(parts=[TextPart(content='done')])
+            return ModelResponse(parts=[ToolCallPart(tool_name='generate_image', args={'prompt': 'tiny robot'})])
+
+        return FunctionModel(outer_model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
+
+    async def test_image_generation_replace_sends_the_replaced_dimensions(
+        self, allow_model_requests: None, direct_generation_model: FunctionModel
+    ):
+        """The copy's own geometry is what the run sends, not the geometry it was copied from.
+
+        The capability's fields are the configuration and the `generate_image` tool is derived from
+        them when the toolset is requested, so nothing the original settled can outlive being
+        replaced.
+        """
+        image_model = TestImageGenerationModel()
+        capability = ImageGeneration(native=False, local=image_model, dimensions=(1024, 1024))
+
+        agent = Agent(direct_generation_model, capabilities=[replace(capability, dimensions=(1536, 1024))])
+        await agent.run('Generate an image')
+
+        assert image_model.last_settings == snapshot({'dimensions': (1536, 1024)})
+
+    def test_image_generation_replace_rejects_an_edit_action_the_constructor_would(self):
+        """A copy is held to the construction-time checks, not just the instance it came from.
+
+        `native=False` makes the prompt-only direct tool the only path, so the edit is unserviceable
+        however the capability carrying it was built.
+        """
+        capability = ImageGeneration(native=False, local=TestImageGenerationModel(), dimensions=(1024, 1024))
+
+        with pytest.raises(UserError, match='cannot honor `action="edit"`'):
+            replace(capability, action='edit')
+
+    async def test_image_generation_composed_capabilities_send_the_merged_dimensions(
+        self, allow_model_requests: None, direct_generation_model: FunctionModel
+    ):
+        """Two capabilities under one id are one configuration stated twice, and the merge is what runs.
+
+        The generator comes from the first and the geometry from the second, so a tool built from
+        either instance on its own would send the other's settings.
+        """
+        image_model = TestImageGenerationModel()
+        with pytest.warns(UserWarning, match=r'ignored direct-only setting\(s\): dimensions'):
+            agent = Agent(
+                direct_generation_model,
+                capabilities=[ImageGeneration(local=image_model), ImageGeneration(dimensions=(1536, 1024))],
+            )
+
+        await agent.run('Generate an image')
+
+        assert image_model.last_settings == snapshot({'dimensions': (1536, 1024)})
+
+    async def test_image_generation_merged_dimensions_take_the_later_pair(
+        self, allow_model_requests: None, direct_generation_model: FunctionModel
+    ):
+        """`dimensions` is a `(width, height)` value, so the default sequence union corrupts it.
+
+        Unioning two overlapping pairs flips the orientation to `(1024, 1536)`, and unioning two
+        disjoint ones yields a three-element tuple that is no size at all. Asserted through the run
+        rather than on the merged capability alone, since sending the geometry is the point.
+        """
+        overlapping_model = TestImageGenerationModel()
+        overlapping = ImageGeneration.combine(
+            [
+                ImageGeneration(native=False, local=overlapping_model, dimensions=(1024, 1024)),
+                ImageGeneration(native=False, local=overlapping_model, dimensions=(1536, 1024)),
+            ]
+        )
+        await Agent(direct_generation_model, capabilities=[overlapping]).run('Generate an image')
+        assert overlapping_model.last_settings == snapshot({'dimensions': (1536, 1024)})
+
+        disjoint_model = TestImageGenerationModel()
+        disjoint = ImageGeneration.combine(
+            [
+                ImageGeneration(native=False, local=disjoint_model, dimensions=(512, 768)),
+                ImageGeneration(native=False, local=disjoint_model, dimensions=(1024, 1024)),
+            ]
+        )
+        await Agent(direct_generation_model, capabilities=[disjoint]).run('Generate an image')
+        assert disjoint_model.last_settings == snapshot({'dimensions': (1024, 1024)})
 
     def test_image_generation_plain_tool_local_is_not_a_direct_generator(self):
         """A `Tool` the capability didn't build itself carries no direct settings, so geometry is dropped."""

@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import warnings
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Literal, get_args
 
+from pydantic_ai._utils import replace_no_init
 from pydantic_ai.exceptions import ContentFilterError, ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.images import (
     ImageDimensions,
@@ -27,6 +28,7 @@ from pydantic_ai.tools import AgentDepsT, RunContext, Tool, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.toolsets.prepared import PreparedToolset
 
+from .abstract import AbstractCapability
 from .native_or_local import NativeOrLocalTool
 
 if TYPE_CHECKING:
@@ -63,9 +65,10 @@ class _DirectImageGenerationTool:
 
     async def __call__(self, prompt: str) -> BinaryImage:
         if self.action == 'edit':
-            # `_direct_local_tool` already rejected this at construction when `native=False`. With
-            # native enabled the native tool can honor the edit, so whether it is unserviceable is
-            # only known once the model has dropped the native tool and called this one instead.
+            # `_validate_direct_settings` already rejected this at construction when
+            # `native=False`. With native enabled the native tool can honor the edit, so whether it
+            # is unserviceable is only known once the model has dropped the native tool and called
+            # this one instead.
             raise UserError(_EDIT_ACTION_UNSUPPORTED)
         if self.image_model is not None:
             warnings.warn(
@@ -110,6 +113,26 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
     When passing a custom `native` instance or factory, its settings are also used for the
     `fallback_model` subagent; capability-level fields override any `native` settings. A static
     instance's `aspect_ratio` is also inherited by the direct fallback.
+    """
+
+    local: (
+        str
+        | Tool[AgentDepsT]
+        | Callable[..., Any]
+        | AbstractToolset[AgentDepsT]
+        | ImageGenerator
+        | ImageGenerationModel
+        | bool
+        | None
+    ) = None
+    """Configure the local fallback tool.
+
+    Adds two shapes to the ones [`NativeOrLocalTool`][pydantic_ai.capabilities.NativeOrLocalTool]
+    accepts: an [`ImageGenerator`][pydantic_ai.images.ImageGenerator] or an
+    [`ImageGenerationModel`][pydantic_ai.images.ImageGenerationModel], which generate through the
+    direct image API and which a `'provider:model'` string also resolves to. Either is kept as
+    declared; the `generate_image` tool is derived from it and the capability's settings each time
+    the toolset is requested.
     """
 
     fallback_model: ImageGenerationFallbackModel
@@ -285,19 +308,6 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         self.size = size
         self.dimensions = dimensions
         self.aspect_ratio = aspect_ratio
-        # A direct generator applies the geometry settings the native tool can't, so `_image_gen_kwargs`
-        # must not report them as ignored. An already-converted tool counts too: `dataclasses.replace`
-        # re-enters `__init__` with the converted `local`, and would otherwise clear the flag.
-        self._has_direct_generator = isinstance(local, (ImageGenerator, ImageGenerationModel, str)) or (
-            isinstance(local, Tool)
-            and isinstance(
-                getattr(local.function, '__self__', None),  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
-                _DirectImageGenerationTool,
-            )
-        )
-        if isinstance(local, (ImageGenerator, ImageGenerationModel)):
-            # user → `__init__` → helper → `warn`.
-            local = self._direct_local_tool(local, stacklevel=3)
         self.local = local
         self.__post_init__()
 
@@ -313,6 +323,22 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
                 'use `fallback_model` for the default subagent fallback, or `local` for a custom tool'
             )
 
+        if isinstance(self.local, str):
+            if ':' not in self.local:
+                raise UserError(self._unsupported_local(self.local))
+            # The provider prefix is the only part of the id resolvable without credentials, so
+            # checking it here keeps the unsupported-strategy rejection at construction while the
+            # model itself stays deferred to the first generate call. `local` keeps the generator
+            # rather than a tool built from it: the tool is derived in `get_toolset`, so the settings
+            # it carries can still change until then.
+            #
+            # The suppression covers the widened `local` field, which pyright reports at the field's
+            # last assignment; `get_toolset` narrows the generator back to the `Tool` the base expects.
+            self.local = ImageGenerator(self.local)  # pyright: ignore[reportIncompatibleVariableOverride]
+
+        if self._has_direct_generator:
+            self._validate_direct_settings()
+
         # The native tool's kwargs are collected once for the default native tool and again for the
         # `fallback_model` subagent's copy, so the notice lives here to fire exactly once.
         ignored: list[str] = []
@@ -322,7 +348,7 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
             # `native=False` with a local tool of the user's own: no native tool is built and the
             # tool the capability didn't build carries no settings, so the geometry the native tool
             # could never express has nothing left to apply it. `size` and the other native-only
-            # settings are the direct generator's to report, from `_direct_local_tool`.
+            # settings are the direct generator's to report, from `_validate_direct_settings`.
             ignored = self._direct_only_geometry()
         super().__post_init__()
         if ignored:
@@ -334,6 +360,38 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
                 UserWarning,
                 stacklevel=3,
             )
+
+    @property
+    def _has_direct_generator(self) -> bool:
+        """Whether `local` generates through the direct image API.
+
+        Derived rather than recorded, so every instance the framework builds from this
+        configuration -- `dataclasses.replace`, `combine` -- reads the same answer as the
+        constructed one.
+        """
+        return isinstance(self.local, (ImageGenerator, ImageGenerationModel))
+
+    @classmethod
+    def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
+        """Merge like `NativeOrLocalTool`, except that `dimensions` is one value, not a collection.
+
+        The default merge unions two sequences, and a `(width, height)` pair's entries are not
+        independent: `(1024, 1024)` beside `(1536, 1024)` unions to `(1024, 1536)`, a flipped
+        orientation neither instance asked for, and two disjoint pairs union to a three-element
+        tuple that is no size at all. It takes the later stated value instead, the rule the scalar
+        fields already get.
+
+        Applied after the base merge because `__post_init__` reads only whether `dimensions` is
+        set, never what it is, and a merge never turns a stated pair into `None`.
+        """
+        merged = super().combine(capabilities)
+        assert isinstance(merged, cls)
+        stated = [
+            capability.dimensions
+            for capability in capabilities
+            if isinstance(capability, ImageGeneration) and capability.dimensions is not None
+        ]
+        return replace_no_init(merged, dimensions=stated[-1]) if stated else merged
 
     @classmethod
     def from_spec(
@@ -423,8 +481,8 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         """The geometry settings the native tool can express, and the ones it can't.
 
         `dimensions` and `aspect_ratio` are only reported as ignored when no direct generator is
-        configured, since `_direct_local_tool` forwards both. `size` has no direct counterpart,
-        so it is dropped whichever path runs.
+        configured, since the `generate_image` tool built for one forwards both. `size` has no
+        direct counterpart, so it is dropped whichever path runs.
 
         That suppression is a construction-time approximation: this runs from `__post_init__`, before
         a model exists, while native-vs-local is decided per request in `models.resolve_request_tools`.
@@ -476,23 +534,20 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
     def _default_native(self) -> ImageGenerationTool:
         return ImageGenerationTool(**self._image_gen_kwargs())
 
-    def _resolve_local_strategy(self, name: str | bool) -> Tool[AgentDepsT] | AbstractToolset[AgentDepsT]:
-        if isinstance(name, str):
-            if ':' not in name:
-                # The provider prefix is the only part of the id resolvable without credentials, so
-                # checking it here keeps the unsupported-strategy rejection at construction while the
-                # model itself stays deferred to the first generate call.
-                raise UserError(
-                    f'{type(self).__name__}: `local={name!r}` is not supported. Name a direct image '
-                    "model as `local='provider:model'`, or pass a `Tool`, `AbstractToolset`, or "
-                    'callable directly.'
-                )
-            # user → `__init__` → `__post_init__` → `NativeOrLocalTool.__post_init__` → here → helper → `warn`.
-            return self._direct_local_tool(ImageGenerator(name), stacklevel=6)
-        return super()._resolve_local_strategy(name)
+    def _unsupported_local(self, value: str | bool) -> str:
+        return (
+            f'{type(self).__name__}: `local={value!r}` is not supported. Name a direct image '
+            "model as `local='provider:model'`, or pass a `Tool`, `AbstractToolset`, or "
+            'callable directly.'
+        )
 
-    def _direct_local_tool(self, generator: ImageGenerator | ImageGenerationModel, *, stacklevel: int) -> Tool[Any]:
-        """Wrap a direct generator in the `generate_image` tool, rejecting what only it could serve.
+    def _resolve_local_strategy(self, name: str | bool) -> Tool[AgentDepsT] | AbstractToolset[AgentDepsT]:
+        # `__post_init__` turns a `'provider:model'` string into an `ImageGenerator` and rejects
+        # every other string, so only `local=True` reaches the base's strategy hook.
+        raise UserError(self._unsupported_local(name))
+
+    def _validate_direct_settings(self) -> None:
+        """Reject at construction what only the direct generator could have served.
 
         `native=False` is the one configuration whose routing is settled here: the direct generator
         is the only implementation, so an `action='edit'` it cannot serve and the native-only
@@ -503,10 +558,7 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         prepare function `get_toolset` installs. `_DirectImageGenerationTool.__call__` still rejects
         the edit action, at the point where the direct tool is provably the one running.
 
-        `stacklevel` selects the frame the warning points at, since the two paths that get here sit
-        at different depths: a generator instance is converted straight from `__init__`, while a
-        `local='provider:model'` name is resolved several frames deeper, from `__post_init__`. Both
-        count from a direct `ImageGeneration(...)` call, so `from_spec` lands one frame short.
+        Split out of `__post_init__` only to keep that method under the complexity limit.
         """
         # The direct model rejects the pair on every `generate` call, but a pair the user set on the
         # capability himself is already decided here, so it fails at construction rather than at the
@@ -518,11 +570,21 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
             if self.action == 'edit':
                 raise UserError(_EDIT_ACTION_UNSUPPORTED)
             if ignored := self._native_only_settings():
+                # user → `__init__` → `__post_init__` → here → `warn`; `from_spec` adds a frame and
+                # so lands one short.
                 warnings.warn(
                     _NATIVE_ONLY_SETTINGS_DROPPED.format(settings=', '.join(ignored)),
                     UserWarning,
-                    stacklevel=stacklevel,
+                    stacklevel=4,
                 )
+
+    def _direct_local_tool(self, generator: ImageGenerator | ImageGenerationModel) -> Tool[Any]:
+        """Build the `generate_image` tool from the capability's current settings.
+
+        Derived when the toolset is requested rather than stored at construction, so what the tool
+        carries is always what the capability declares: `dataclasses.replace` and `combine` both
+        produce an instance whose fields no longer match a tool built from an earlier one.
+        """
         settings: ImageGenerationSettings = {}
         if self.dimensions is not None:
             settings['dimensions'] = self.dimensions
@@ -563,7 +625,13 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         return image_generation_tool(model=self.fallback_model, native_tool=self._resolved_native())
 
     def get_toolset(self) -> AbstractToolset[AgentDepsT] | None:
-        toolset = super().get_toolset()
+        capability = self
+        if isinstance(self.local, (ImageGenerator, ImageGenerationModel)):
+            # The base only knows how to wrap a `Tool` or a toolset, so the generator is resolved
+            # into one on a copy. Building it here rather than keeping it on the capability is what
+            # keeps a replaced or merged instance from sending an earlier one's settings.
+            capability = replace_no_init(self, local=self._direct_local_tool(self.local))
+        toolset = super(ImageGeneration, capability).get_toolset()
         # A callable `native` is resolved per request by the framework, so whether it yields a tool
         # that supersedes the generator can't be known here without invoking it a second time.
         # A resolved `native` tool also means the base wrapped the local toolset for `unless_native`,
