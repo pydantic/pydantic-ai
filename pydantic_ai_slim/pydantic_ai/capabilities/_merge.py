@@ -62,7 +62,8 @@ def merge_capability_fields(
     for capability in capabilities:
         # Configuration no field declares (a plain class keeping its state in plain attributes)
         # cannot be merged, so refuse rather than silently keep only the last instance's.
-        invisible = {name for name in vars(capability) if not name.startswith('_')} - field_names
+        # Generic aliases attach typing metadata after initialization; it is not capability state.
+        invisible = set(vars(capability)) - field_names - {'__orig_class__'}
         if invisible:
             cls_name = type(merged).__name__
             raise UserError(
@@ -94,9 +95,10 @@ def merge_field_values(values: Sequence[Any]) -> Any:
         merged_mapping: dict[Any, Any] = {}
         for value in cast('list[Mapping[Any, Any]]', stated):
             merged_mapping.update(value)
-        return _as_declared(first, merged_mapping)
+        return _as_declared(first, merged_mapping, merged_mapping)
     if all(isinstance(value, AbstractSet) for value in stated):
-        return _as_declared(first, set[Any]().union(*cast('list[AbstractSet[Any]]', stated)))
+        merged_set = set[Any]().union(*cast('list[AbstractSet[Any]]', stated))
+        return _as_declared(first, merged_set, merged_set)
     if all(isinstance(value, Sequence) and not isinstance(value, (str, bytes)) for value in stated):
         # Ordered union: a shared entry keeps the position its first mention gave it.
         merged_sequence: list[Any] = []
@@ -104,11 +106,11 @@ def merge_field_values(values: Sequence[Any]) -> Any:
             merged_sequence.extend(
                 entry for entry in value if not any(_same_value(entry, kept) for kept in merged_sequence)
             )
-        return _as_declared(first, merged_sequence)
+        return _as_declared(first, merged_sequence, stated[-1])
     return stated[-1]
 
 
-def _as_declared(first: Any, merged: Any) -> Any:
+def _as_declared(first: Any, merged: Any, fallback: Any) -> Any:
     """Rebuild `merged` as the collection type the field already held, when that is possible.
 
     The union is computed in a plain `dict`/`set`/`list`, which would hand a field annotated
@@ -116,16 +118,16 @@ def _as_declared(first: Any, merged: Any) -> Any:
     the `__post_init__` that might otherwise have caught it.
 
     Not every collection can be rebuilt from its contents: a `NamedTuple` takes its fields
-    positionally and a `range` takes integers, so both raise here. Those keep the plain merged value
-    rather than turning a type mismatch into a `TypeError` -- neither is a collection a capability
-    field would be unioning in the first place.
+    positionally and a `range` takes integers, so both raise here. The caller chooses the fallback;
+    sequences use the later original value, matching scalar behavior without corrupting the field's
+    runtime type.
     """
     if type(first) is type(merged):
         return merged
     try:
         return type(first)(merged)
     except (TypeError, ValueError):
-        return merged
+        return fallback
 
 
 def _same_value(left: Any, right: Any) -> bool:

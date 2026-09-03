@@ -13,7 +13,7 @@ import pkgutil
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import KW_ONLY, dataclass, field
-from typing import Any, NamedTuple, TypeGuard, cast
+from typing import Any, ClassVar, NamedTuple, TypeGuard, cast
 
 import pytest
 from inline_snapshot import snapshot
@@ -547,6 +547,30 @@ def test_a_plain_class_capability_cannot_silently_lose_its_configuration() -> No
         Retries.combine([Retries(1), Retries(9)])
 
 
+def test_a_plain_class_capability_cannot_silently_lose_private_configuration() -> None:
+    """Private attributes are still configuration the default merge cannot reconcile."""
+
+    class Retries(AbstractCapability[Any]):
+        id: str | None = 'retries'
+
+        def __init__(self, limit: int) -> None:
+            self._limit = limit
+
+    with pytest.raises(UserError, match='outside dataclass fields'):
+        Retries.combine([Retries(1), Retries(9)])
+
+
+def test_generic_alias_metadata_is_not_capability_configuration() -> None:
+    """`__orig_class__` is typing metadata attached after initialization, not hidden user state."""
+
+    merged = ReinjectSystemPrompt[Any].combine(
+        [ReinjectSystemPrompt[Any](replace_existing=False), ReinjectSystemPrompt[Any](replace_existing=True)]
+    )
+
+    assert isinstance(merged, ReinjectSystemPrompt)
+    assert merged.replace_existing is True
+
+
 def test_a_field_whose_equality_raises_takes_the_later_value() -> None:
     """Values that cannot be compared are not mergeable, so the later one wins.
 
@@ -728,11 +752,11 @@ def test_a_merged_collection_keeps_the_type_the_field_declared() -> None:
     assert type(merged.unique) is frozenset
 
 
-def test_a_collection_that_cannot_be_rebuilt_keeps_the_plain_merge() -> None:
+def test_a_collection_that_cannot_be_rebuilt_keeps_the_later_declared_value() -> None:
     """A `NamedTuple` takes its fields positionally, so rebuilding it from a list raises.
 
-    Merging keeps the plain value rather than turning a type mismatch into a `TypeError`. Two of
-    these are not really a union anyway -- a `NamedTuple` is a record, not a collection.
+    Merging keeps the later declared value rather than turning a type mismatch into a `TypeError`
+    or corrupting the field to a plain `list`. A `NamedTuple` is a record, not a collection.
     """
 
     class Pair(NamedTuple):
@@ -747,7 +771,8 @@ def test_a_collection_that_cannot_be_rebuilt_keeps_the_plain_merge() -> None:
 
     merged = Record.combine([Record(pair=Pair('a', 'b')), Record(pair=Pair('c', 'd'))])
     assert isinstance(merged, Record)
-    assert merged.pair == ['a', 'b', 'c', 'd']
+    assert merged.pair == Pair('c', 'd')
+    assert type(merged.pair) is Pair
 
 
 async def test_a_second_local_search_tool_replaces_the_first() -> None:
@@ -814,6 +839,39 @@ async def test_a_run_level_capability_replaces_the_agent_level_one_whole() -> No
     await agent.run('hi', capabilities=[WebSearch(allowed_domains=['run.example'])])
 
     assert seen == snapshot([[WebSearchTool(allowed_domains=['run.example'])]])
+
+
+async def test_different_capability_classes_cannot_share_an_id_across_layers() -> None:
+    """An id always names one capability type, even when the later layer would replace the first."""
+
+    agent = Agent(TestModel(call_tools=[]), capabilities=[Thinking(id='shared')])
+
+    with pytest.raises(UserError, match=r"Capability id 'shared'.*different types"):
+        await agent.run('hi', capabilities=[ReinjectSystemPrompt(id='shared')])
+
+
+async def test_reusing_one_capability_object_across_layers_does_not_combine() -> None:
+    """Layer identity belongs to each occurrence, not to the shared object's identity."""
+
+    @dataclass
+    class Counting(AbstractCapability[Any]):
+        combine_calls: ClassVar[int] = 0
+
+        _: KW_ONLY
+
+        id: str | None = 'counting'
+
+        @classmethod
+        def combine(cls, capabilities: Sequence[AbstractCapability[Any]]) -> AbstractCapability[Any]:
+            cls.combine_calls += 1
+            return capabilities[-1]
+
+    shared = Counting()
+    agent = Agent(TestModel(call_tools=[]), capabilities=[shared])
+
+    await agent.run('hi', capabilities=[shared])
+
+    assert Counting.combine_calls == 0
 
 
 async def test_a_session_level_instrumentation_supersedes_the_agent_level_one() -> None:
