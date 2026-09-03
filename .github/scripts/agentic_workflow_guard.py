@@ -25,6 +25,11 @@ budget before anyone noticed, documented in #6766:
   versions, which is how source and lock drift apart unnoticed.
 - `compiled_runner_contract` — every generated agent job must keep the command-line
   contract required by the Pydantic AI runner shim.
+- `awf_binary_version` — `engine.command` makes gh-aw skip its own AWF install, so
+  `shared/pre-steps.md` re-runs the installer with a hand-written version. #8041 moved
+  gh-aw to a release bundling AWF v0.27.44 without touching that pin, and the v0.27.42
+  binary rejected the v0.27.44 config (`config.apiProxy.providers is not supported`).
+  The agent job died before the model started, on every workflow using the shim.
 - `compiler_version_compatibility` — the compiler version in every generated lock
   must not appear in gh-aw's live blocked-version policy.
 - `lock_regenerated` — `.github/workflows/AGENTS.md` requires a recompiled
@@ -95,6 +100,9 @@ JOB_TIMEOUT_HEADROOM_MINS = 2
 # whitespace, backtick, quote and the markdown-link delimiters is enough to end the token
 # wherever a prompt actually writes one.
 SANDBOX_PATH = re.compile(rf'{re.escape(SANDBOX_PREFIX)}[^\s`\'"()\[\]<>]*')
+
+# The version argument of the hand-written AWF install step, quoted or bare.
+AWF_INSTALL_VERSION = re.compile(r'install_awf_binary\.sh"?\s+(\S+)')
 
 NEEDS_REFERENCE = re.compile(r'\bneeds\.([A-Za-z_][A-Za-z0-9_-]*)')
 EXPRESSION_BLOCK = re.compile(r'\$\{\{(.*?)\}\}', re.DOTALL)
@@ -437,6 +445,47 @@ def check_compiled_runner_contract(lock: Path) -> list[Violation]:
     ]
 
 
+def check_awf_binary_version(lock: Path) -> list[Violation]:
+    """The hand-pinned AWF binary must be the one gh-aw compiled the lock against.
+
+    `GH_AW_INFO_AWF_VERSION` is what gh-aw bundles and what it writes the firewall
+    config against; the install step's argument is maintained by hand because
+    `engine.command` makes gh-aw skip its own install. A gh-aw upgrade moves the
+    first and leaves the second, and the older binary then refuses the newer config.
+    """
+    workflow = _as_mapping(yaml.safe_load(lock.read_text(encoding='utf-8')))
+    pinned: set[str] = set()
+    bundled: set[str] = set()
+    for raw_job in _as_mapping(workflow.get('jobs')).values():
+        steps = _as_mapping(raw_job).get('steps')
+        for raw_step in cast(list[Any], steps) if isinstance(steps, list) else []:
+            step = _as_mapping(raw_step)
+            run = step.get('run')
+            if isinstance(run, str) and (match := AWF_INSTALL_VERSION.search(run)):
+                pinned.add(match.group(1))
+            version = _as_mapping(step.get('env')).get('GH_AW_INFO_AWF_VERSION')
+            if isinstance(version, str):
+                bundled.add(version)
+
+    # No install step means this lock does not use the shim, so there is no hand-written
+    # pin to drift. No `GH_AW_INFO_AWF_VERSION` means gh-aw stopped reporting the version
+    # it bundles, which this check cannot substitute for.
+    if not pinned or not bundled:
+        return []
+    unexpected = sorted(pinned - bundled)
+    if not unexpected:
+        return []
+    return [
+        Violation(
+            str(lock),
+            'awf-binary-version',
+            f'the AWF install step pins {", ".join(unexpected)} but gh-aw compiled this lock against '
+            f'{", ".join(sorted(bundled))}. Update the version in the `pre-steps` that re-run '
+            '`install_awf_binary.sh` and recompile; an older binary rejects the newer firewall config.',
+        )
+    ]
+
+
 def check_compiler_version_compatibility(locks: list[Path], compatibility: dict[str, Any]) -> list[Violation]:
     """Compiled gh-aw versions must not be revoked by the upstream runtime policy."""
     blocked_raw = compatibility.get('blockedVersions')
@@ -566,6 +615,7 @@ def run_checks(
     for lock in locks:
         violations += check_dangling_needs(lock)
         violations += check_compiled_runner_contract(lock)
+        violations += check_awf_binary_version(lock)
     for source in sources:
         violations += check_safe_output_job_max(source)
         violations += check_timeout_declared(source)

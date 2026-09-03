@@ -19,6 +19,7 @@ import agentic_workflow_guard
 from agentic_workflow_guard import (
     Violation,
     changed_files,
+    check_awf_binary_version,
     check_compiled_runner_contract,
     check_compiler_version_compatibility,
     check_compiler_versions,
@@ -686,6 +687,78 @@ jobs:
     )
 
     assert check_compiled_runner_contract(lock) == []
+
+
+# --- AWF binary pin (the #8041 skew) ------------------------------------------
+
+_AWF_LOCK = """
+jobs:
+  agent:
+    steps:
+      - name: Setup Scripts
+        run: bash setup.sh
+        env:
+          GH_AW_INFO_AWF_VERSION: "v0.27.44"
+      - name: Install AWF firewall binary (skipped by custom engine.command)
+        run: bash "${{RUNNER_TEMP}}/gh-aw/actions/install_awf_binary.sh" {pinned}
+"""
+
+
+def test_awf_binary_version_catches_the_gh_aw_upgrade_skew(tmp_path: Path):
+    """The shape #8041 shipped: gh-aw moved to AWF v0.27.44, the hand-written pin stayed.
+
+    The v0.27.42 binary then rejected the v0.27.44 firewall config with
+    `config.apiProxy.providers is not supported`, so the agent job exited before
+    the model ever started.
+    """
+    lock = _write(tmp_path / 'w.lock.yml', _AWF_LOCK.format(pinned='v0.27.42'))
+
+    violations = check_awf_binary_version(lock)
+
+    assert [v.check for v in violations] == ['awf-binary-version']
+    assert 'v0.27.42' in violations[0].message and 'v0.27.44' in violations[0].message
+
+
+def test_awf_binary_version_accepts_a_matched_pin(tmp_path: Path):
+    lock = _write(tmp_path / 'w.lock.yml', _AWF_LOCK.format(pinned='v0.27.44'))
+
+    assert check_awf_binary_version(lock) == []
+
+
+def test_awf_binary_version_ignores_a_lock_without_the_hand_written_install(tmp_path: Path):
+    """Only workflows setting `engine.command` re-run the installer themselves."""
+    lock = _write(
+        tmp_path / 'w.lock.yml',
+        """
+jobs:
+  agent:
+    steps:
+      - name: Setup Scripts
+        env:
+          GH_AW_INFO_AWF_VERSION: "v0.27.44"
+      - name: Run agent
+        run: awf -- /bin/bash -c 'agent'
+  detect:
+    runs-on: ubuntu-latest
+""",
+    )
+
+    assert check_awf_binary_version(lock) == []
+
+
+def test_awf_binary_version_ignores_a_lock_that_reports_no_bundled_version(tmp_path: Path):
+    """Without `GH_AW_INFO_AWF_VERSION` there is nothing to compare the pin against."""
+    lock = _write(
+        tmp_path / 'w.lock.yml',
+        """
+jobs:
+  agent:
+    steps:
+      - run: bash "${RUNNER_TEMP}/gh-aw/actions/install_awf_binary.sh" v0.27.42
+""",
+    )
+
+    assert check_awf_binary_version(lock) == []
 
 
 def test_compiler_version_compatibility_rejects_a_blocked_version(tmp_path: Path):
