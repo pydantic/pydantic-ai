@@ -13,8 +13,9 @@ from importlib.util import find_spec
 from types import NoneType
 from typing import Any
 
+import httpx2
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, TypeAdapter
 
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._spec import NamedSpec
@@ -79,7 +80,13 @@ from .capability_models import (
     build_run_context as _build_run_context,
     make_text_response,
 )
-from .conftest import IsDatetime, IsInstance, IsStr, iter_message_parts
+from .conftest import IsDatetime, IsInstance, IsStr, iter_message_parts, try_import
+
+_REQUEST_BODY_ADAPTER = TypeAdapter(dict[str, Any])
+
+with try_import() as openai_imports:
+    from pydantic_ai.models.openai import OpenAIResponsesModel
+    from pydantic_ai.providers.openai import OpenAIProvider
 
 _SEARCH_TOOLS_NAME = ToolSearch.function_tool_name
 
@@ -242,19 +249,6 @@ class TestXSearchCapability:
         """XSearch(native=False, allowed_x_handles=...) without fallback_model → UserError."""
         with pytest.raises(UserError, match='constraint fields require the native tool'):
             XSearch(native=False, allowed_x_handles=['handle1'])
-
-    def test_xsearch_resolved_native_merges_overrides(self):
-        """Capability-level kwargs override fields on a passed native instance."""
-        base = XSearchTool(allowed_x_handles=['a'], enable_image_understanding=True)
-        cap = XSearch(native=base, from_date=datetime(2024, 1, 1), enable_image_understanding=False)
-        resolved = cap._resolved_native()  # pyright: ignore[reportPrivateUsage]
-        assert resolved == snapshot(
-            XSearchTool(
-                allowed_x_handles=['a'],
-                from_date=datetime(2024, 1, 1),
-                enable_image_understanding=False,
-            )
-        )
 
     def test_xsearch_fallback_model_and_local_conflict(self):
         """XSearch(fallback_model=..., local=func) raises UserError."""
@@ -666,7 +660,11 @@ class TestImageGenerationCapability:
         assert tool.aspect_ratio == '16:9'
 
     def test_image_generation_fallback_merges_custom_native_with_overrides(self):
-        """Custom native tool settings are merged with capability-level overrides for the fallback."""
+        """A custom native instance produces a local fallback tool.
+
+        What that fallback is actually handed is asserted through `agent.run` by
+        `tests/test_fallback_native_factory.py::test_instance_native_config_is_merged_for_fallback`.
+        """
         from pydantic_ai.tools import Tool
 
         custom_native = ImageGenerationTool(quality='high', size='1024x1024')
@@ -675,7 +673,6 @@ class TestImageGenerationCapability:
             fallback_model='openai-responses:gpt-5.4',
             output_format='jpeg',  # capability-level override
         )
-        # The local fallback should exist and contain the merged config
         assert isinstance(cap.local, Tool)
         assert cap.get_toolset() is not None
 
@@ -879,12 +876,19 @@ class TestImageGenerationCapability:
         ):
             ImageGeneration(fallback_model=f'{provider}:{model_name}')
 
+    @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
     @pytest.mark.vcr()
     async def test_image_generation_local_fallback(self, allow_model_requests: None, openai_api_key: str):
-        """ImageGeneration(fallback_model=...) with non-supporting outer model uses subagent fallback."""
+        """The fallback subagent sends factory-produced native config with capability overrides."""
         from pydantic_ai.messages import BinaryImage
-        from pydantic_ai.models.openai import OpenAIResponsesModel
-        from pydantic_ai.providers.openai import OpenAIProvider
+
+        sent_bodies: list[dict[str, Any]] = []
+
+        async def capture_request(request: httpx2.Request) -> None:
+            sent_bodies.append(_REQUEST_BODY_ADAPTER.validate_json(request.content))
+
+        def native_factory(ctx: RunContext[Any]) -> ImageGenerationTool:
+            return ImageGenerationTool(quality='low')
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             # If we see a tool return, the image was generated — return final text
@@ -901,16 +905,44 @@ class TestImageGenerationCapability:
             tool = info.function_tools[0]
             return ModelResponse(parts=[ToolCallPart(tool_name=tool.name, args='{"prompt": "A cute baby sea otter"}')])
 
-        inner_model = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(api_key=openai_api_key))
-        outer_model = FunctionModel(model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
-        agent = Agent(
-            outer_model,
-            capabilities=[
-                ImageGeneration(fallback_model=inner_model),
-            ],
-        )
-        result = await agent.run('Generate an image of a cute baby sea otter')
+        async with httpx2.AsyncClient(event_hooks={'request': [capture_request]}) as http_client:
+            inner_model = OpenAIResponsesModel(
+                'gpt-5.4', provider=OpenAIProvider(api_key=openai_api_key, http_client=http_client)
+            )
+            outer_model = FunctionModel(model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
+            agent = Agent(
+                outer_model,
+                capabilities=[
+                    ImageGeneration(
+                        native=native_factory,
+                        fallback_model=inner_model,
+                        background='opaque',
+                    ),
+                ],
+            )
+            result = await agent.run('Generate an image of a cute baby sea otter')
+
         assert result.output == 'Here is the generated image.'
+        assert len(sent_bodies) == 1
+        generated_image = next(iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)).content
+        assert isinstance(generated_image, BinaryImage)
+        # The format the provider actually returned, pinned here rather than only in the cassette.
+        assert generated_image.media_type == 'image/png'
+        assert sent_bodies[0]['tools'] == snapshot(
+            [
+                {
+                    'type': 'image_generation',
+                    'action': 'auto',
+                    'background': 'opaque',
+                    'moderation': 'auto',
+                    'output_compression': 100,
+                    'output_format': 'png',
+                    'partial_images': 0,
+                    'quality': 'low',
+                    'size': 'auto',
+                }
+            ]
+        )
         assert result.all_messages() == snapshot(
             [
                 ModelRequest(

@@ -377,7 +377,12 @@ async def test_toolset_without_id():
     with pytest.raises(
         UserError,
         match=re.escape(
-            "Toolsets that are 'leaves' (i.e. those that implement their own tool listing and calling) need to have a unique `id` in order to be used with Temporal. The ID will be used to identify the toolset's activities within the workflow."
+            "Toolsets that are 'leaves' (i.e. those that implement their own tool listing and calling) "
+            'need to have a unique `id` in order to be used with Temporal. '
+            "The ID will be used to identify the toolset's activities within the workflow. "
+            'Set it on the toolset itself with `FunctionToolset(id=...)` or `MCPToolset(..., id=...)`, '
+            "or, when the toolset is contributed by a capability, set the capability's `id` "
+            "(for example, `WebSearch(local='duckduckgo', id='search')` or `MCP(url='...', id='...')`)."
         ),
     ):
         TemporalAgent(Agent(model=model, name='test_agent', toolsets=[FunctionToolset()]))  # pyright: ignore[reportDeprecated]
@@ -874,11 +879,7 @@ async def test_temporal_agent_run_in_workflow_with_executing_toolsets(allow_mode
         with workflow_raises(
             UserError,
             snapshot(
-                'FunctionToolset cannot be passed to `run(toolsets=...)` at runtime with Temporal, because '
-                'toolsets that execute their own tools or resolve dynamically must be registered for durable '
-                'execution when the agent is constructed. Pass them to the agent constructor instead. '
-                'Non-executing toolsets like `ExternalToolset` can be passed at runtime. Async tools that '
-                "don't need durable wrapping can opt out with metadata={'temporal': False} to be allowed at runtime."
+                "FunctionToolset cannot be added at runtime with Temporal, because toolsets that execute their own tools or resolve dynamically must be registered for durable execution when the agent is constructed. Pass them to the agent constructor instead -- not to `run(toolsets=...)` or `override(toolsets=...)`, and not via a post-construction `@agent.toolset`. Non-executing toolsets like `ExternalToolset` can be passed at runtime. Async tools that don't need durable wrapping can opt out with metadata={'temporal': False} to be allowed at runtime."
             ),
         ):
             await client.execute_workflow(

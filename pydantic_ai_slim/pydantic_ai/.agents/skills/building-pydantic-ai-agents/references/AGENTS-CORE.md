@@ -140,6 +140,33 @@ async def main():
 
 Deferred tool calls also surface as batch-level events: `DeferredToolRequestsEvent` (once per batch of deferred calls, before any `HandleDeferredToolCalls` handler runs) and `DeferredToolResultsEvent` (when a handler resolves requests inline). Use these to tell a frontend the run is paused waiting for approvals or external calls.
 
+To surface progress or intermediate results from an async tool into the same event stream without polluting the model's context, define a dataclass subclass of `CustomEvent` (its fields are the payload; the event name derives from the class name) and await `ctx.emit(event)`. Sync tools cannot emit events. It reaches the `event_stream_handler`, `run_stream_events()`, `iter()` streaming, and the AG-UI/Vercel AI adapters; when emitted from a tool, its `tool_call_id` and `tool_name` are auto-stamped, and consumers use `isinstance()` against the class. Code driving `agent.iter()` can inject events by awaiting `AgentRun.emit()`. The payload can't reuse the envelope's own field names: `data`, `tool_call_id`, `tool_name`, and `event_kind` are rejected at class definition.
+
+`CustomEvent` is for application-owned code only. Code that lives inside a capability must define namespaced `CapabilityEvent` subclasses instead; emitting either family from the other's side raises `UserError`. See CAPABILITIES-AND-HOOKS.md.
+
+Custom events reach the AG-UI and Vercel AI frontends by default. For an event that should stay server-side (metrics, audit logs), declare the class `ui=False` — `class IndexProgressEvent(CustomEvent, ui=False)` — and every UI adapter skips it while in-process consumers still receive it. Declaring a `ui` field or `ClassVar` on an event class is rejected, since it would shadow that flag. The flag is class-level, not on the wire, so adapters also skip an `UnknownCustomEvent` (a class this process never imported): when events reach the frontend from another process, import their defining modules there or none of them are forwarded.
+
+```python
+from dataclasses import dataclass
+
+from pydantic_ai import Agent, CustomEvent, RunContext
+
+agent = Agent('openai:gpt-5.2', name='progress_agent')
+
+
+@dataclass(kw_only=True)
+class ProgressEvent(CustomEvent):
+    done: int
+    total: int
+
+
+@agent.tool
+async def process(ctx: RunContext, count: int) -> str:
+    for i in range(count):
+        await ctx.emit(ProgressEvent(done=i + 1, total=count))
+    return 'done'
+```
+
 ## Handle Provider Failures
 
 Use `FallbackModel` when the user wants automatic provider or model failover.

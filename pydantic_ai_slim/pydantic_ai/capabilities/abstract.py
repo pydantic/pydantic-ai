@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import ABC
 from collections import Counter
-from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
+from collections.abc import AsyncIterable, Awaitable, Callable, Collection, Sequence
 from dataclasses import KW_ONLY, dataclass
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypeAlias
 from weakref import WeakValueDictionary
@@ -19,7 +19,7 @@ from pydantic_ai._instructions import (
     sourced_instruction,
 )
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
-from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
     CapabilityInstructionSource,
@@ -36,6 +36,9 @@ from pydantic_ai.tools import (
     ToolDefinition,
 )
 from pydantic_ai.toolsets import AbstractToolset, AgentToolset
+
+from ._merge import merge_capability_fields
+from ._on_event import collect_on_event_methods, marked_listens_to
 
 if TYPE_CHECKING:
     from pydantic_ai import _agent_graph
@@ -253,6 +256,14 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     in [#5477](https://github.com/pydantic/pydantic-ai/issues/5477).
     """
 
+    @property
+    def _emits_app_events(self) -> bool:
+        """Whether this app-facing capability may emit `CustomEvent`s while dispatching callbacks.
+
+        A property rather than a flag so wrappers can derive it from the capability they wrap.
+        """
+        return False
+
     _: KW_ONLY
 
     id: str | None = None
@@ -283,6 +294,39 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     override is optional and only adds routing context to the load catalog.
     """
 
+    @classmethod
+    def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
+        """Combine capabilities that resolved to the same `id` into the one the run will use.
+
+        Two capabilities under one `id` name the same thing, so exactly one of them can be what
+        that `id` refers to. The default merges them field by field: a value only one of them
+        states is kept, and a value both state takes the later one.
+
+        That default needs no thought from most capabilities, because it follows from the `id`.
+        Declaring a default `id` *is* the statement that an agent has one of these, so a repeat is
+        one configuration stated twice and merging is what it meant. A capability that can
+        legitimately appear several times declares no default `id` instead -- and then this is
+        never reached, because the run tells anonymous capabilities apart itself, and an `id` the
+        *user* passed to such a capability is a name they chose, so passing it twice is reported as
+        a collision rather than merged.
+
+        Override it when composing takes more than merging fields: `NativeOrLocalTool` rebuilds its
+        native tool from the merged configuration, because that tool, not the capability, is what
+        reaches the provider.
+
+        Only reached *within* one layer: a capability supplied for a run overrides its agent-level
+        namesake outright rather than composing with it.
+
+        Args:
+            capabilities: The two or more capabilities sharing an `id`, in application order.
+                All are instances of `cls`; a shared `id` across *different* classes is always
+                rejected, since no one class can say how it composes.
+
+        Returns:
+            The single capability the `id` refers to for this run.
+        """
+        return merge_capability_fields(capabilities)
+
     def apply(self, visitor: Callable[[AbstractCapability[AgentDepsT]], None]) -> None:
         """Run a visitor function on all leaf capabilities in this tree.
 
@@ -291,6 +335,31 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         to recursively visit all child capabilities.
         """
         visitor(self)
+
+    def visit_and_replace(
+        self, visitor: Callable[[AbstractCapability[AgentDepsT]], AbstractCapability[AgentDepsT] | None]
+    ) -> AbstractCapability[AgentDepsT] | None:
+        """Run a visitor function on the same capabilities as `apply`, and replace them in this tree with its result.
+
+        Analogous to
+        [`AbstractToolset.visit_and_replace`][pydantic_ai.toolsets.AbstractToolset.visit_and_replace],
+        except that returning `None` removes the visited capability instead of replacing it.
+
+        Rewrites in place: containers and wrappers rebuild only the branches that changed, so what
+        survives keeps its position in the hierarchy and a wrapper goes on wrapping whatever is left
+        of its subtree. Rebuilding a tree from the flat list `apply` produces does neither: it loses
+        the nesting, and re-adds a container's children next to the wrapper that already contributes
+        them.
+
+        Returns `self` when nothing changed, and `None` when the visitor removed everything.
+
+        For a single capability, returns the visitor's result for itself. Overridden by
+        [`CombinedCapability`][pydantic_ai.capabilities.CombinedCapability] and
+        [`WrapperCapability`][pydantic_ai.capabilities.WrapperCapability] to rebuild their children;
+        a custom capability that overrides `apply` because it holds children of its own should
+        override this alongside it, or those children are invisible to callers rewriting the tree.
+        """
+        return visitor(self)
 
     @property
     @deprecated(
@@ -325,6 +394,22 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     def has_wrap_run_event_stream(self) -> bool:
         """Whether this capability (or any sub-capability) overrides wrap_run_event_stream."""
         return type(self).wrap_run_event_stream is not AbstractCapability.wrap_run_event_stream
+
+    @property
+    def has_on_event(self) -> bool:
+        """Whether this capability handles run events dynamically or with marked methods."""
+        return type(self).on_event is not AbstractCapability.on_event or bool(collect_on_event_methods(type(self)))
+
+    def listens_to(self, event: AgentStreamEvent) -> bool:
+        """Whether [`on_event`][pydantic_ai.capabilities.AbstractCapability.on_event] would reach a listener for `event`.
+
+        Dispatch asks this before descending, so a capability that listens to a few event classes
+        isn't woken for every event in the run. The default reports `True` for any event a
+        [`@on_event`][pydantic_ai.capabilities.on_event]-marked method accepts, and for every event
+        when `on_event` is overridden directly, since what an override dispatches to isn't knowable
+        here. Override this alongside `on_event` when you can report something narrower.
+        """
+        return type(self).on_event is not AbstractCapability.on_event or marked_listens_to(type(self), event)
 
     @classmethod
     def get_serialization_name(cls) -> str | None:
@@ -777,7 +862,23 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """
         raise error
 
-    # --- Event stream hook ---
+    # --- Event hooks ---
+
+    async def on_event(self, ctx: RunContext[AgentDepsT], *, event: AgentStreamEvent) -> None:
+        """React to every event in the run's event stream.
+
+        This includes model response stream events, tool events, deferred and enqueued-message events,
+        [`CustomEvent`][pydantic_ai.messages.CustomEvent]s, and
+        [`CapabilityEvent`][pydantic_ai.messages.CapabilityEvent]s. The default implementation dispatches
+        to methods marked with [`on_event`][pydantic_ai.capabilities.on_event], in definition order.
+
+        Override this method for fully dynamic handling. Call `super().on_event(...)` to retain marked
+        method dispatch. A capability receives events it emits itself. Events emitted by a listener
+        enter the stream after the event being handled.
+        """
+        for method in collect_on_event_methods(type(self)):
+            if not method.event_types or isinstance(event, method.event_types):
+                await method.__get__(self, type(self))(ctx, event)
 
     async def wrap_run_event_stream(
         self,
@@ -1272,3 +1373,147 @@ def leaf_capabilities(capability: AbstractCapability[AgentDepsT]) -> list[Abstra
     leaves: list[AbstractCapability[AgentDepsT]] = []
     capability.apply(leaves.append)
     return leaves
+
+
+def _combine_duplicate_capabilities(  # pyright: ignore[reportUnusedFunction]
+    capability: AbstractCapability[AgentDepsT],
+    layers: Sequence[Sequence[AbstractCapability[AgentDepsT]]],
+) -> AbstractCapability[AgentDepsT]:
+    """Resolve capabilities sharing an `id` in a tree down to one each.
+
+    Two capabilities under one `id` mean different things depending on where they came from, so the
+    rule is different in each direction:
+
+    * **Within a layer** they are one configuration stated twice, and
+      [`combine`][pydantic_ai.capabilities.AbstractCapability.combine] decides what that means.
+      `Agent(capabilities=[Coder(), Researcher()])` brings two `WebSearch` capabilities with
+      different allow-lists, and the agent should be able to reach both sets of domains.
+    * **Across layers** the later layer *overrides* the earlier one outright, and `combine` is not
+      consulted at all. `agent.run(capabilities=[WebSearch(allowed_domains=[...])])` states what
+      this run may reach; merging it into the agent's list would widen the very restriction it was
+      passed to impose. A run-level capability replaces its agent-level namesake, whole.
+
+    `Agent.__init__` also runs this over the capabilities the agent was constructed with -- one
+    layer, so within-layer rules -- because it goes on to bind them and read what they contribute
+    long before a run exists, and two that will merge into one must not be read as two.
+
+    Keeping both is not an option: `_build_run_capabilities` maps the id to exactly one of them, so
+    the other would go on contributing tools and instructions while nothing could name it --
+    `resolve_capability_id` wouldn't find it, and it would be missing from
+    `RunContext.active_capability_ids`.
+
+    Rewrites the tree in place with
+    [`visit_and_replace`][pydantic_ai.capabilities.AbstractCapability.visit_and_replace] rather than
+    rebuilding it from the flat leaf list, which would drop the nesting and re-add a container's
+    children beside the wrapper that already contributes them.
+
+    Capabilities with `id=None` are left alone: the run tells those apart itself.
+
+    `layers` is the application layers in order, each holding the capabilities supplied to it. The
+    composed tree cannot answer either question: `CombinedCapability` sorts its leaves into ordering
+    tiers, so a capability supplied later but positioned `'outermost'` moves ahead of one supplied
+    earlier, and reading "last" off the tree would turn a run-level override into the agent-level
+    capability winning.
+    """
+    order: dict[int, int] = {}
+    layer_of: dict[int, int] = {}
+    position = 0
+    for layer_index, layer in enumerate(layers):
+        for member in layer:
+            for leaf in leaf_capabilities(member):
+                order.setdefault(id(leaf), position)
+                layer_of.setdefault(id(leaf), layer_index)
+                position += 1
+
+    by_id: dict[str, list[AbstractCapability[AgentDepsT]]] = {}
+    for leaf in leaf_capabilities(capability):
+        if leaf.id is not None:
+            by_id.setdefault(leaf.id, []).append(leaf)
+    for duplicates in by_id.values():
+        # Stable, so duplicates the application order does not distinguish keep their tree order.
+        duplicates.sort(key=lambda leaf: order.get(id(leaf), 0))
+
+    # The combined capability takes the last occurrence's place, so what survives keeps the position
+    # the run's last word on that id had; the earlier occurrences are removed.
+    #
+    # Keyed by occurrence rather than by object: the same instance may be registered twice (on the
+    # agent and passed again for the run), and a plain `id()` -> replacement map would hand every
+    # occurrence of it the same answer, leaving the survivor in the tree as many times as it went in.
+    # `visit_and_replace` walks the nodes `apply` yields, in that order, so consuming one decision
+    # per visit lines the decisions up with the occurrences they were made for.
+    replacements: dict[int, list[AbstractCapability[AgentDepsT] | None]] = {}
+    for capability_id, duplicates in by_id.items():
+        if len(duplicates) == 1:
+            continue
+        # Only the last layer to state this id has a say; everything an earlier layer said under it
+        # is overridden, not merged in. `combine` then settles what the survivors within that one
+        # layer mean -- and with a single survivor there is nothing to settle, so it isn't called.
+        last_layer = max(layer_of.get(id(duplicate), 0) for duplicate in duplicates)
+        surviving = [duplicate for duplicate in duplicates if layer_of.get(id(duplicate), 0) == last_layer]
+        # With a single survivor there is nothing to settle, so `combine` isn't called.
+        combined_duplicate = surviving[-1]
+        if len(surviving) > 1:
+            _reject_class_crossing_id(capability_id, {type(duplicate) for duplicate in duplicates})
+            if not _declares_default_id(type(combined_duplicate)):
+                raise UserError(_repeated_id_message(capability_id))
+            combined_duplicate = combined_duplicate.combine(surviving)
+        for index, duplicate in enumerate(duplicates):
+            is_last = index == len(duplicates) - 1
+            replacements.setdefault(id(duplicate), []).append(combined_duplicate if is_last else None)
+
+    if not replacements:
+        return capability
+
+    def replace_occurrence(cap: AbstractCapability[AgentDepsT]) -> AbstractCapability[AgentDepsT] | None:
+        decisions = replacements.get(id(cap))
+        if not decisions:
+            return cap
+        return decisions.pop(0)
+
+    combined = capability.visit_and_replace(replace_occurrence)
+    # Every duplicated id keeps one occurrence, so the tree can never be emptied.
+    assert combined is not None, 'combining duplicate capabilities cannot empty the tree'
+    return combined
+
+
+def _repeated_id_message(capability_id: str) -> str:
+    """Why an `id` the user chose for two capabilities cannot resolve to one.
+
+    Shared by `Agent(...)` validation and the run's own resolution so the two report it the same
+    way, whichever notices first.
+    """
+    return (
+        f'Capability id {capability_id!r} is used by multiple capabilities. '
+        'Ids identify one capability within a run, so give each a distinct `id`.'
+    )
+
+
+def _declares_default_id(capability_type: type[AbstractCapability[Any]]) -> bool:
+    """Whether the class itself names the `id` its instances carry, rather than the user.
+
+    A default `id` is a class saying "an agent has one of me", which is what makes a repeat
+    something to combine rather than a collision. Without one, an `id` exists only because the user
+    passed it, and two they passed the same are two capabilities they meant to tell apart.
+
+    Read off the class attribute, so declaring a default means writing one -- `id: str | None =
+    'web_search'` in the class body. A capability that only passes `id=` up from inside its own
+    `__init__` has not declared anything a reader or this check can see, and is treated as
+    anonymous; two of it collide, loudly, and the fix is to hoist the default into the class body.
+    """
+    return getattr(capability_type, 'id', None) is not None
+
+
+def _reject_class_crossing_id(capability_id: str, types: Collection[type[AbstractCapability[Any]]]) -> None:
+    """Reject an `id` two different capability classes both claim.
+
+    No class can be asked to combine another's instances, so a shared id across classes is never
+    resolvable however they were ordered. Shared with `Agent(...)` validation so the two report the
+    same thing: construction sees only the capabilities it was handed, and this pass sees the tree
+    a run resolves to, but neither one is a case the other should describe differently.
+    """
+    if len(types) > 1:
+        names = ', '.join(sorted(cls.__name__ for cls in types))
+        raise UserError(
+            f'Capability id {capability_id!r} is used by capabilities of different types ({names}). '
+            'Ids identify one capability within a run, so give each a distinct `id`.'
+        )

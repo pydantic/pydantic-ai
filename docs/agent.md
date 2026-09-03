@@ -290,6 +290,161 @@ if __name__ == '__main__':
 
 _(This example is complete, it can be run "as is")_
 
+### Custom Events
+
+Alongside the framework's own events, a tool or code driving [`agent.iter()`](#iterating-over-an-agents-graph) can emit its own [`CustomEvent`][pydantic_ai.messages.CustomEvent]s into the same stream. This is useful for surfacing progress updates, intermediate results, or status information from long-running work to whoever is consuming the stream, without adding anything to the model's context.
+
+#### Which event type do I use? {#which-event-type}
+
+Pydantic AI has two families of user-defined events. They ride the same stream and are defined the same way, but which one you define is decided by **who owns the code doing the emitting**, and that split is enforced at runtime: emitting the wrong family raises a [`UserError`][pydantic_ai.exceptions.UserError].
+
+| | [`CustomEvent`][pydantic_ai.messages.CustomEvent] | [`CapabilityEvent`][pydantic_ai.messages.CapabilityEvent] |
+|---|---|---|
+| **Use it when** | your application wants to tell its own stream consumer or frontend something | your [capability](capabilities/overview.md) wants to tell other capabilities and the host application something |
+| **Emit from** | an application tool, an [output validator](output.md#output-validator-functions), a [hook](hooks.md), an `event_stream_handler`, or [`AgentRun.emit()`][pydantic_ai.run.AgentRun.emit] | a [capability](capabilities/custom.md) hook or a tool the capability contributes |
+| **Naming** | flat and process-wide, like `progress` | namespaced, like `file_system.file_read` |
+| **Reaches the frontend** | yes, via the [AG-UI](ui/ag-ui.md) and [Vercel AI](ui/vercel-ai.md) adapters | no, it is an internal signal; re-publish it as a `CustomEvent` if the frontend needs it |
+| **Can carry a decision** | no | yes, with `dispatch='immediate'` |
+
+If you are writing a **capability**, define [`CapabilityEvent`][pydantic_ai.messages.CapabilityEvent]s, as described in [Capability events](capabilities/overview.md#capability-events): its events are part of its contract with the rest of the run, and the namespace is what keeps two capabilities from colliding on a name. If you are writing an **application**, define `CustomEvent`s. To surface a capability's event to your frontend, listen for it with an [event hook](hooks.md#event-stream-hooks) and emit your own `CustomEvent` carrying the public payload.
+
+#### Defining and emitting an event
+
+Define an event as a dataclass subclass of `CustomEvent` — its fields are the payload, and consumers can use an `isinstance` check against the class. Await [`ctx.emit()`][pydantic_ai.tools.RunContext.emit] with an event instance from any of your application's async code that receives a [`RunContext`][pydantic_ai.tools.RunContext]; code driving `agent.iter()` uses [`AgentRun.emit()`][pydantic_ai.run.AgentRun.emit] instead. Sync tools cannot emit events; write async tools when they need to emit events. When emitted from within a tool call, the event's [`tool_call_id`][pydantic_ai.messages.CustomEvent.tool_call_id] and [`tool_name`][pydantic_ai.messages.CustomEvent.tool_name] are stamped automatically so consumers can attribute it to the originating call. The event reaches the `event_stream_handler`, `run_stream_events()`, `agent.iter()` streaming, and the [AG-UI](ui/ag-ui.md) and [Vercel AI](ui/vercel-ai.md) UI adapters.
+
+```python {title="custom_events.py"}
+from collections.abc import AsyncIterator
+from dataclasses import dataclass
+
+from pydantic_ai import Agent, CustomEvent, RunContext
+from pydantic_ai.capabilities import Hooks
+from pydantic_ai.messages import ModelMessage, ToolReturnPart
+from pydantic_ai.models.function import (
+    AgentInfo,
+    DeltaToolCall,
+    DeltaToolCalls,
+    FunctionModel,
+)
+
+
+@dataclass(kw_only=True)
+class SyncProgressEvent(CustomEvent):
+    done: int
+    total: int
+
+
+async def model_function(
+    messages: list[ModelMessage], info: AgentInfo
+) -> AsyncIterator[DeltaToolCalls | str]:
+    if any(
+        isinstance(part, ToolReturnPart)
+        for message in messages
+        for part in message.parts
+    ):
+        yield 'All 3 files synchronized.'
+    else:
+        yield {
+            0: DeltaToolCall(
+                name='sync_files', json_args='{"count": 3}', tool_call_id='sync'
+            )
+        }
+
+
+hooks = Hooks()
+progress: list[str] = []
+
+
+@hooks.on.event(SyncProgressEvent)
+async def record_progress(ctx: RunContext, event: SyncProgressEvent) -> None:
+    progress.append(
+        f'{event.done}/{event.total} from {event.tool_name} ({event.tool_call_id})'
+    )
+
+
+agent = Agent(FunctionModel(stream_function=model_function), capabilities=[hooks])
+
+
+@agent.tool
+async def sync_files(ctx: RunContext, count: int) -> str:
+    for i in range(1, count + 1):
+        # Do some long-running work, emitting a progress event after each step.
+        await ctx.emit(SyncProgressEvent(done=i, total=count))
+    return f'Synchronized {count} files.'
+
+
+async def main():
+    await agent.run('Synchronize my files')
+    print(progress)
+    """
+    [
+        '1/3 from sync_files (sync)',
+        '2/3 from sync_files (sync)',
+        '3/3 from sync_files (sync)',
+    ]
+    """
+```
+
+_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+
+Any consumer of the run's events sees them: an [event hook](hooks.md#event-stream-hooks) as above, an `event_stream_handler=`, [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events], `agent.iter()` streaming, and the [AG-UI](ui/ag-ui.md) and [Vercel AI](ui/vercel-ai.md) adapters. Payload fields can hold any object, but to flow through [durable execution](durable_execution/overview.md) and the UI adapters they need to be serializable by pydantic.
+
+The payload cannot use the field names the envelope needs for itself: `data`, `tool_call_id`, `tool_name`, and `event_kind` are rejected when the class is defined, so pick another name (`payload`, `call_id`) for a field that would collide.
+
+Emitting only works while the run is in progress and only from the family the emitting code owns, so each of these raises a [`UserError`][pydantic_ai.exceptions.UserError]: emitting a `CustomEvent` from a capability, emitting a [`CapabilityEvent`][pydantic_ai.messages.CapabilityEvent] from application code, and calling [`AgentRun.emit()`][pydantic_ai.run.AgentRun.emit] after the run has finished. Events emitted with `AgentRun.emit()` reach consumers that stream the run's nodes with `node.stream(run.ctx)`, as shown in [Streaming All Events and Output](#streaming-all-events-and-output); a bare `async for node in run` does not consume any event stream, so nothing surfaces.
+
+An event is delivered to stream consumers as soon as it is emitted, so a progress event surfaces while the emitting tool is still running rather than at its return. Events emitted from tools running concurrently interleave in emission order (best-effort ordering).
+
+Events that share fields can share a base. Give the base its own `@dataclass` decorator — an undecorated one contributes no fields, which is rejected rather than left to surface as a payload quietly missing them — and mark it `abstract=True` so it stays out of the event registry and can't be emitted itself:
+
+```python {title="shared_event_base.py" noqa="F841"}
+from dataclasses import dataclass
+
+from pydantic_ai import CustomEvent
+
+
+@dataclass(kw_only=True)
+class AppEvent(CustomEvent, abstract=True):
+    request_id: str
+
+
+@dataclass(kw_only=True)
+class ReindexProgressEvent(AppEvent):
+    done: int
+    total: int
+```
+
+[`CapabilityEvent`](capabilities/overview.md#capability-events) bases work the same way, and a base is the natural place to put the family's `namespace=`.
+
+Custom event names are derived from the class name by removing `Event` and converting the rest to snake case, so `SyncProgressEvent` uses `sync_progress`. Override the name with a class argument, for example `class SyncProgressEvent(CustomEvent, name='sync_status')`. Names are registered when the class is defined and must be unique within the process; re-executing the same class definition (as when re-running a notebook cell) replaces the registration.
+
+The name is the event's wire identifier, not just a label: it's what a serialized event carries, so renaming the class renames the tag along with it. A rename is a compatibility break wherever events outlive the process that emitted them — [durable execution](durable_execution/overview.md) histories and caches, persisted event logs, a frontend matching on the name. Pass an explicit `name=` to pin the tag when you want the class free to be renamed.
+
+Spell the name out as well when the tag has to match something you don't control. It's the identifier the UI adapters put on the wire, as the AG-UI event's `name` and the Vercel AI chunk's `data-{name}` type, and derivation only ever produces snake case: a frontend that already expects `data-indexProgress` or a dotted `ui.progress` needs `name='indexProgress'` or `name='ui.progress'` rather than a class renamed to suit it.
+
+Events round-trip through [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent] serialization as their original class. If an event is deserialized before its class is registered, it becomes an [`UnknownCustomEvent`][pydantic_ai.messages.UnknownCustomEvent], with its payload preserved in `data`, and a `UserWarning` is emitted. Import the module that defines your event before creating the adapter that deserializes it; each pydantic `TypeAdapter` captures the event classes registered when it is created. A registered event's payload schema follows the same compatibility expectations as [message](message-history.md) types: a payload that no longer validates against the local class fails loudly rather than degrading, so keep the serializing and deserializing sides on compatible versions of the module that defines the event.
+
+Event names share one application-wide registry, and defining a second class with an already-registered name raises immediately. Custom events belong to the application, so a library that emits events into agent runs should define [capability events](capabilities/overview.md#capability-events) on a capability, which are namespaced. Only a library that reaches the run outside a capability -- a bare tool it hands the user to register -- can emit application-level events at all, and it should then register them under a dotted prefix (`name='mylib.progress'`) so they can't collide with the application's own event names.
+
+UI adapters get the frontend payload by calling [`CustomEvent.to_payload()`][pydantic_ai.messages.CustomEvent.to_payload], which defaults to the event's own fields; override it when the UI should receive a different payload.
+
+Custom events are forwarded to the frontend by default, as the application that emits them is also the one serving that frontend. An event that exists only for server-side consumers — metrics, an audit log, an `event_stream_handler` of your own — opts out with `ui=False`, and then reaches every in-process consumer while the [AG-UI](ui/ag-ui.md) and [Vercel AI](ui/vercel-ai.md) adapters skip it:
+
+```python {title="internal_custom_event.py" noqa="F841"}
+from dataclasses import dataclass
+
+from pydantic_ai import CustomEvent
+
+
+@dataclass(kw_only=True)
+class IndexProgressEvent(CustomEvent, ui=False):
+    done: int
+    total: int
+```
+
+Subclasses inherit the setting, and because the check happens before the protocol-specific handler, adapters for other protocols honor it too. To send a *different* payload rather than nothing, override `to_payload()` instead — returning `None` from it sends an event with a null payload, which is how you send a name-only signal.
+
+The flag lives on the class rather than on the wire, so an event deserialized where its defining module hasn't been imported arrives as an [`UnknownCustomEvent`][pydantic_ai.messages.UnknownCustomEvent] whose `ui` says nothing about what the application declared. Those aren't forwarded either, so an event crossing a process boundary can't leak a payload its class had opted out of. If events reach your frontend from another process — a [durable execution](durable_execution/overview.md) workflow, a queue, a websocket fan-out, as in [encoding events without a request](ui/overview.md#encoding-events-without-a-request) — import the modules that define them there, or none of your custom events will reach the frontend.
+
 ### Iterating Over an Agent's Graph
 
 Under the hood, each `Agent` in Pydantic AI uses **pydantic-graph** to manage its execution flow. **pydantic-graph** is a generic, type-centric library for building and running finite state machines in Python. It doesn't actually depend on Pydantic AI — you can use it standalone for workflows that have nothing to do with GenAI — but Pydantic AI makes use of it to orchestrate the handling of model requests and model responses in an agent's run.

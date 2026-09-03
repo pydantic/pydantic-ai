@@ -23,8 +23,9 @@ from typing_extensions import Self
 from pydantic_ai import FunctionToolset, ToolsetTool
 from pydantic_ai._run_context import set_current_run_context
 from pydantic_ai._utils import aclose_if_supported, get_union_args
-from pydantic_ai.agent import EventStreamHandler
+from pydantic_ai.agent import Agent, EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
+from pydantic_ai.agent.wrapper import WrapperAgent
 from pydantic_ai.capabilities import ProcessEventStream
 from pydantic_ai.capabilities.abstract import (
     AbstractCapability,
@@ -118,6 +119,27 @@ from ._toolset import (
 from ._utils import DurableModel, StreamedActivityResult, capture_event_stream, managed_model_scope, unwrap_model
 
 _T = TypeVar('_T')
+
+
+def construction_toolsets(agent: AbstractAgent[AgentDepsT, Any]) -> Sequence[AbstractToolset[AgentDepsT]]:
+    """The toolsets `agent` was built with, ignoring anything added after construction.
+
+    `AbstractAgent.toolsets` is the wrong list to ask for here: it reflects an active
+    `override(toolsets=...)` and includes toolsets a `@agent.toolset` decorator registered after
+    construction. Those would land in the known-good set, and the runtime-toolset guard would wave
+    through the very thing it exists to catch -- toolsets that arrive after binding and were
+    therefore never wrapped for the durable engine.
+
+    Only `Agent` can tell the two lists apart, and only durable execution needs them told apart, so
+    the question is asked here rather than widened into a hook that every `AbstractAgent`
+    implementation would have to answer. An agent that supports no post-construction additions has
+    nothing to subtract, which is what its `toolsets` already reports.
+    """
+    if isinstance(agent, WrapperAgent):
+        return construction_toolsets(agent.wrapped)
+    if isinstance(agent, Agent):
+        return agent._construction_toolsets  # pyright: ignore[reportPrivateUsage]
+    return agent.toolsets
 
 
 @runtime_checkable
@@ -534,7 +556,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         construction_leaves: set[int] = set()
         # `for_agent` always binds before a run.
         if self._agent is not None:  # pragma: no branch
-            for agent_toolset in self._agent.toolsets:
+            for agent_toolset in construction_toolsets(self._agent):
                 agent_toolset.apply(lambda leaf: construction_leaves.add(id(leaf)))
 
         runtime_leaves: list[AbstractToolset[AgentDepsT]] = []
@@ -676,7 +698,10 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                 f"Toolsets that are 'leaves' (i.e. those that implement their own tool listing and calling) "
                 f'need to have a unique `id` in order to be used with {self.engine_name}. '
                 f"The ID will be used to identify the toolset's {self.durable_unit_plural} within the "
-                f'{self.durable_container_noun}.'
+                f'{self.durable_container_noun}. Set it on the toolset itself with '
+                '`FunctionToolset(id=...)` or `MCPToolset(..., id=...)`, or, when the toolset is '
+                "contributed by a capability, set the capability's `id` (for example, "
+                "`WebSearch(local='duckduckgo', id='search')` or `MCP(url='...', id='...')`)."
             )
         self._toolsets_by_id[ts_id] = wrapped
         return wrapped
@@ -1471,9 +1496,31 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
 
         def swap(ts: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
             ts_id = ts.id
-            if ts_id is not None and ts_id in self._toolsets_by_id:
-                return self._toolsets_by_id[ts_id]
-            return ts
+            if ts_id is None or (registered := self._toolsets_by_id.get(ts_id)) is None:
+                return ts
+            if registered.wrapped is not ts:
+                # A toolset that arrived after binding (via `run(toolsets=...)`,
+                # `override(toolsets=...)`, or a per-run capability) under an `id` that is already
+                # registered would be replaced here by the wrapper around the *construction-time*
+                # toolset, silently running that toolset's tools instead of its own. The
+                # construction-time counterpart of this is caught in `_wrap_and_register_leaf`.
+                #
+                # Only inside a workflow, flow, or step. `get_wrapper_toolset` runs on every run,
+                # and core toolsets carry no global uniqueness requirement, so raising outside a
+                # durable context would stop a durability capability being transparent for ordinary
+                # runs -- moving behavior on the plain-`Agent` surface to fix a durable-only defect.
+                # Outside one there is no durable unit to dispatch to, so the toolset that actually
+                # arrived is simply used as-is.
+                if not self.in_durable_context:
+                    return ts
+                raise UserError(
+                    f'A toolset added at run time has the same `id` {ts_id!r} as one the agent was '
+                    f'constructed with. Toolset `id`s must be unique: the `id` identifies which registered '
+                    f"toolset's {self.durable_unit_noun} a tool call is dispatched to inside the "
+                    f'{self.durable_container_noun}, so this run would have called the construction-time '
+                    "toolset's tools instead. Give the toolset a different `id`."
+                )
+            return registered
 
         return toolset.visit_and_replace(swap)
 
