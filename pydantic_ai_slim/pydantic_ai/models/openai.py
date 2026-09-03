@@ -1020,7 +1020,9 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         """
         _profile = super().profile
         if (provider := self.provider) is not None and _is_azure(provider.client, provider.name):
-            _profile = merge_profile(_profile, OpenAIModelProfile(openai_chat_supports_document_input=False))
+            user = self._profile
+            if user is None or (not callable(user) and 'openai_chat_supports_document_input' not in user):
+                _profile = merge_profile(_profile, OpenAIModelProfile(openai_chat_supports_document_input=False))
         if not _profile.get('openai_chat_supports_web_search', False):
             new_tools = _profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) - {WebSearchTool}
             _profile = merge_profile(_profile, ModelProfile(supported_native_tools=new_tools))

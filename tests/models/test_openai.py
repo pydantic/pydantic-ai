@@ -5610,7 +5610,50 @@ def test_azure_prompt_filter_error(allow_model_requests: None) -> None:
     )
 
 
-async def test_openai_provider_with_azure_client_uses_azure_behavior(allow_model_requests: None) -> None:
+def enable_document_input(default: ModelProfile) -> ModelProfile:
+    return merge_profile(default, OpenAIModelProfile(openai_chat_supports_document_input=True))
+
+
+def replace_document_profile(_default: ModelProfile) -> ModelProfile:
+    return ModelProfile()
+
+
+@pytest.mark.parametrize('provider_class', [AzureProvider, OpenAIProvider])
+@pytest.mark.parametrize(
+    'profile, expected',
+    [
+        (None, False),
+        ({}, False),
+        (OpenAIModelProfile(openai_chat_supports_document_input=False), False),
+        (OpenAIModelProfile(openai_chat_supports_document_input=True), True),
+        (enable_document_input, True),
+        (replace_document_profile, None),
+    ],
+    ids=['default', 'partial', 'disabled', 'enabled', 'callable-override', 'callable-replacement'],
+)
+async def test_azure_document_profile_override(
+    provider_class: type[AzureProvider] | type[OpenAIProvider],
+    profile: ModelProfile | Callable[[ModelProfile], ModelProfile] | None,
+    expected: bool | None,
+) -> None:
+    """Profile resolution is local configuration, independent of Azure's live API capabilities."""
+    async with AsyncAzureOpenAI(
+        api_version='2024-12-01-preview',
+        azure_endpoint='https://example.openai.azure.com/',
+        api_key='test',
+    ) as client:
+        model = OpenAIChatModel('gpt-5-mini', provider=provider_class(openai_client=client), profile=profile)
+        assert model.profile.get('openai_chat_supports_document_input') is expected
+
+
+@pytest.mark.parametrize('provider_class', [AzureProvider, OpenAIProvider])
+@pytest.mark.parametrize('model_class', [OpenAIChatModel, OpenAIResponsesModel])
+@pytest.mark.vcr(ignore_hosts=['example.openai.azure.com'])
+async def test_openai_provider_with_azure_client_uses_azure_behavior(
+    allow_model_requests: None,
+    provider_class: type[AzureProvider] | type[OpenAIProvider],
+    model_class: type[OpenAIChatModel] | type[OpenAIResponsesModel],
+) -> None:
     error = {
         'code': 'content_filter',
         'message': 'The content was filtered.',
@@ -5620,37 +5663,35 @@ async def test_openai_provider_with_azure_client_uses_azure_behavior(allow_model
         },
     }
 
-    client = AsyncAzureOpenAI(
+    async with AsyncAzureOpenAI(
         api_version='2024-12-01-preview',
         azure_endpoint='https://example.openai.azure.com/',
         api_key='test',
-    )
-    try:
-        model = OpenAIChatModel('gpt-5-mini', provider=OpenAIProvider(openai_client=client))
+        http_client=httpx2.AsyncClient(
+            transport=httpx2.MockTransport(lambda request: httpx2.Response(400, json={'error': error}))
+        ),
+    ) as client:
+        provider = provider_class(openai_client=client)
+        model = model_class('gpt-5-mini', provider=provider)
 
-        assert model.system == 'openai'
-        assert model.profile.get('openai_chat_supports_document_input') is False
-        with pytest.raises(UserError, match="Azure's Chat Completions API does not support document input"):
-            await Agent(model).run([BinaryContent(data=b'%PDF-1.4 test', media_type='application/pdf')])
+        assert model.system == provider.name
+        if isinstance(model, OpenAIChatModel):
+            assert model.profile.get('openai_chat_supports_document_input') is False
+            with pytest.raises(UserError, match="Azure's Chat Completions API does not support document input"):
+                await Agent(model).run([BinaryContent(data=b'%PDF-1.4 test', media_type='application/pdf')])
 
-        response = httpx2.Response(
-            400,
-            request=httpx2.Request('POST', 'https://example.openai.azure.com/openai/deployments/gpt-5-mini'),
-            json={'error': error},
-        )
-        status_error = client._make_status_error_from_response(response)  # pyright: ignore[reportPrivateUsage]
-        with (
-            patch.object(client.chat.completions, 'create', AsyncMock(side_effect=status_error)),
-            pytest.raises(ContentFilterError) as exc_info,
-        ):
+        with pytest.raises(
+            ContentFilterError, match=r"Content filter triggered. Finish reason: 'content_filter'"
+        ) as exc_info:
             await Agent(model).run('bad prompt')
-    finally:
-        await client.close()
 
     assert exc_info.value.body is not None
     response = json.loads(exc_info.value.body)[0]
-    assert response['provider_name'] == 'openai'
-    assert response['provider_details']['content_filter_result'] == {'hate': {'filtered': True, 'severity': 'high'}}
+    assert response['provider_name'] == provider.name
+    assert response['provider_details'] == {
+        'finish_reason': 'content_filter',
+        'content_filter_result': {'hate': {'filtered': True, 'severity': 'high'}},
+    }
 
 
 def test_responses_azure_prompt_filter_error(allow_model_requests: None) -> None:
