@@ -1540,18 +1540,22 @@ async def test_agent_without_model():
 async def test_temporal_agent_allows_inline_sandbox_supplier_and_rejects_durable_supplier():
     class InlineSupplier(Capability[Any]):
         async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
-            return SandboxRef(sandbox_id='inline')
+            # The deprecated wrapper validates suppliers without invoking lifecycle callbacks.
+            raise NotImplementedError  # pragma: no cover
 
         def resolve_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> RecordingSandboxBackend:
-            return RecordingSandboxBackend(ref.sandbox_id)
+            # The mocked agent run never resolves a sandbox.
+            raise NotImplementedError  # pragma: no cover
 
     class DurableSupplier(Capability[Any]):
         @durable_operation('acquire_sandbox')
         async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
-            return SandboxRef(sandbox_id='durable')
+            # The deprecated wrapper validates decorator metadata without invoking the callback.
+            raise NotImplementedError  # pragma: no cover
 
         def resolve_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> RecordingSandboxBackend:
-            return RecordingSandboxBackend(ref.sandbox_id)
+            # Construction-time validation rejects this supplier before resolution.
+            raise NotImplementedError  # pragma: no cover
 
     inline_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
         Agent(TestModel(), name='inline_sandbox_supplier', capabilities=[InlineSupplier(id='supplier')])

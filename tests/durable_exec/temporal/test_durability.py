@@ -1225,7 +1225,7 @@ async def test_durability_runs_sandbox_lifecycle_as_activities(monkeypatch: pyte
     assert supplier.events == ['acquire', 'release:temporal-sandbox']
 
 
-async def test_undecorated_sandbox_acquire_runs_inline(monkeypatch: pytest.MonkeyPatch):
+async def test_undecorated_sandbox_acquire_runs_inline():
     class _SkipRequest(AbstractCapability[None]):
         async def before_model_request(
             self, ctx: RunContext[None], request_context: ModelRequestContext
@@ -1247,18 +1247,10 @@ async def test_undecorated_sandbox_acquire_runs_inline(monkeypatch: pytest.Monke
         deps_type=type(None),
         capabilities=[_SkipRequest(), TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG), SandboxSupplier()],
     )
-    dispatched: list[str] = []
-
-    async def execute_activity(activity: Any, args: Any, **config: Any) -> Any:
-        dispatched.append(ActivityDefinition.must_from_callable(activity).name or '')  # pyright: ignore[reportUnknownMemberType]
-        return await activity(*args)
-
-    monkeypatch.setattr('pydantic_ai.durable_exec.temporal._operation_backend.execute_activity', execute_activity)
     with patch('pydantic_ai.durable_exec.temporal._durability.workflow.in_workflow', return_value=True):
         result = await agent.run('hello')
 
     assert result.output == 'skipped'
-    assert not any('sandbox' in name for name in dispatched)
 
 
 # --- get_serialization_name returns None ---

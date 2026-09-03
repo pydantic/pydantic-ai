@@ -463,6 +463,10 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
             if capability.defer_loading is not True and _capability_owns_id(capability, ctx, ref.capability_id):
                 await capability.release_sandbox(ctx, ref)
                 return
+        raise UserError(
+            f'No capability with id {ref.capability_id!r} is attached to this agent to release sandbox '
+            f'{ref.sandbox_id!r}.'
+        )
 
     # --- Tool preparation hooks ---
 
@@ -1117,7 +1121,11 @@ def _effective_capability_id(capability: AbstractCapability[Any], ctx: RunContex
 
 def _required_effective_capability_id(capability: AbstractCapability[Any], ctx: RunContext[Any]) -> str:
     capability_id = _effective_capability_id(capability, ctx)
-    assert capability_id is not None
+    if capability_id is None:
+        raise UserError(
+            f'{type(capability).__name__} needs an explicit `id` to acquire a sandbox using a run context '
+            'without a capability registry.'
+        )
     return capability_id
 
 

@@ -46,7 +46,7 @@ from pydantic_ai.models import (
     StreamedResponse,
 )
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.sandboxes import SandboxRef
+from pydantic_ai.sandboxes import Sandbox, SandboxRef, UnavailableSandbox
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
 
@@ -264,10 +264,19 @@ def test_decorated_sandbox_lifecycle_requires_explicit_id() -> None:
     class MissingId(AbstractCapability[Any]):
         @durable_operation('acquire_sandbox')
         async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef | None:
-            return None
+            # Agent binding rejects the missing id before this callback can run.
+            raise NotImplementedError  # pragma: no cover
 
     with pytest.raises(UserError, match='needs an explicit `id` because persisted operation identity'):
         Agent(TestModel(), name='missing_sandbox_id', capabilities=[MissingId(), RecordingDurability()])
+
+
+def test_durability_leaves_unavailable_sandbox_without_ref_unwrapped() -> None:
+    durability = RecordingDurability()
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+    sandbox = Sandbox.wrap(UnavailableSandbox('not configured'))
+
+    assert durability.get_wrapper_sandbox(ctx, sandbox) is None
 
 
 async def test_local_sandbox_only_dispatches_async_release() -> None:

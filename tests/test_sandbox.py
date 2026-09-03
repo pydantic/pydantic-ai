@@ -14,6 +14,7 @@ import pytest
 from pydantic_ai import Agent, RunContext, UserError
 from pydantic_ai.agent import WrapperAgent
 from pydantic_ai.capabilities import AbstractCapability, CombinedCapability, WrapperCapability, durable_operation
+from pydantic_ai.capabilities._sandbox import resolve_sandbox_ref
 from pydantic_ai.durable_exec._sandbox import contributes_sandbox, guard_workflow_sandbox
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -81,6 +82,16 @@ async def test_working_dir_is_cached():
     assert await sandbox.working_dir() == '/workspace'
     assert await sandbox.resolve('file.txt') == '/workspace/file.txt'
     assert backend.calls == 1
+
+
+async def test_close_connection_is_idempotent():
+    close_calls: list[bool] = []
+    sandbox = Sandbox(_ClosableFakeSandbox('close-once', close_calls))
+
+    await sandbox._close_connection()  # pyright: ignore[reportPrivateUsage]
+    await sandbox._close_connection()  # pyright: ignore[reportPrivateUsage]
+
+    assert close_calls == [False]
 
 
 class _ClosableFakeSandbox(FakeSandbox):
@@ -696,8 +707,8 @@ async def test_sandbox_ref_user_error_is_preserved():
 
     @agent.tool
     async def probe(ctx: RunContext[Any]) -> str:
-        await ctx.sandbox.run(['true'])
-        return 'ok'  # pragma: no cover
+        # Ref resolution raises before tool execution, so this callback cannot run.
+        raise NotImplementedError  # pragma: no cover
 
     with pytest.raises(UserError, match='credentials are missing'):
         await agent.run('go', sandbox=SandboxRef(sandbox_id='broken'))
@@ -733,12 +744,14 @@ async def test_multiple_ref_connectors_are_rejected():
 def test_contributes_sandbox_detection():
     class ConfiguredSandbox(AbstractCapability[Any]):
         async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
-            return SandboxRef(sandbox_id='configured')
+            # This test only statically inspects whether the method is overridden.
+            raise NotImplementedError  # pragma: no cover
 
     class DurableSandbox(ConfiguredSandbox):
         @durable_operation('acquire_sandbox')
         async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
-            return await super().acquire_sandbox(ctx)
+            # This test only statically inspects the decorator metadata.
+            raise NotImplementedError  # pragma: no cover
 
     assert contributes_sandbox(ConnectOnlySandboxCapability()) is False
     assert contributes_sandbox(ConfiguredSandbox()) is False
@@ -945,11 +958,39 @@ async def test_acquired_sandbox_connection_failure_is_explained(failure: str):
     assert exc_info.value.__cause__ is (error if failure == 'raise' else None)
 
 
+async def test_stamped_ref_routes_to_inherited_resolver():
+    class AcquireOnly(AbstractCapability[Any]):
+        id = 'acquirer'
+
+        async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
+            return SandboxRef(sandbox_id='owned')
+
+    capability: CombinedCapability[Any] = CombinedCapability([AcquireOnly()])
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+    ref = await capability.acquire_sandbox(ctx)
+    assert ref is not None
+    assert ref == SandboxRef(sandbox_id='owned', capability_id='acquirer')
+
+    with pytest.raises(
+        UserError,
+        match=re.escape("No capability with id 'acquirer' is attached to this agent to connect sandbox 'owned'"),
+    ):
+        resolve_sandbox_ref(capability, ctx, ref)
+
+
+def test_base_resolve_sandbox_returns_none():
+    capability = AcquireOnlySandboxCapability()
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+
+    assert AbstractCapability.resolve_sandbox(capability, ctx, SandboxRef(sandbox_id='owned')) is None
+
+
 def test_durable_workflow_sandbox_guard():
     class DurableSupplier(AcquireOnlySandboxCapability):
         @durable_operation('acquire_sandbox')
         async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
-            return await super().acquire_sandbox(ctx)
+            # The guard only statically inspects the decorator metadata.
+            raise NotImplementedError  # pragma: no cover
 
     with pytest.raises(UserError, match='contribution'):
         guard_workflow_sandbox(
@@ -994,6 +1035,43 @@ async def test_combined_capability_cannot_release_unstamped_ref():
 
     with pytest.raises(UserError, match=r"Sandbox ref 'caller-built' without a `capability_id` cannot be released"):
         await capability.release_sandbox(ctx, SandboxRef(sandbox_id='caller-built'))
+
+
+async def test_combined_capability_rejects_unknown_release_owner():
+    capability: CombinedCapability[Any] = CombinedCapability([AcquireOnlySandboxCapability()])
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+
+    with pytest.raises(
+        UserError,
+        match=re.escape("No capability with id 'nobody' is attached to this agent to release sandbox 'x'"),
+    ):
+        await capability.release_sandbox(ctx, SandboxRef(sandbox_id='x', capability_id='nobody'))
+
+
+async def test_bare_context_stamps_explicit_capability_id():
+    capability = AcquireOnlySandboxCapability()
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+    del ctx.__dict__['capabilities']
+    del ctx.__dict__['root_capability']
+
+    assert await CombinedCapability([capability]).acquire_sandbox(ctx) == SandboxRef(
+        sandbox_id='created-1', capability_id='test-sandbox'
+    )
+
+
+async def test_bare_context_requires_explicit_capability_id_for_sandbox_acquisition():
+    class IdlessSupplier(AbstractCapability[Any]):
+        async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
+            return SandboxRef(sandbox_id='created')
+
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+    del ctx.__dict__['capabilities']
+    del ctx.__dict__['root_capability']
+    with pytest.raises(
+        UserError,
+        match=r'IdlessSupplier needs an explicit `id` to acquire a sandbox using a run context without a capability registry',
+    ):
+        await CombinedCapability([IdlessSupplier()]).acquire_sandbox(ctx)
 
 
 async def test_lifecycle_capability_also_connects_ref_run_arguments():
@@ -1104,6 +1182,8 @@ async def test_wrapper_sandbox_uses_middleware_order_and_keeps_ref():
     @agent.tool
     async def probe(ctx: RunContext[Any]) -> str:
         seen_ref.append(ctx.sandbox.ref)
+        assert ctx.sandbox.backend.sandbox_id == 'wrapped'
+        assert await ctx.sandbox.working_dir() == '/workspace'
         await ctx.sandbox.run(['true'])
         return 'ok'
 
