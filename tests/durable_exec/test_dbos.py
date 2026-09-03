@@ -996,9 +996,8 @@ async def test_capability_contributed_toolsets_with_colliding_derived_id():
     MCP request, so there's no network round-trip to record.
     """
     with pytest.raises(
-        UserError,
         match=re.escape(
-            "Capability id 'a.com-api' is used by multiple capabilities. Capability ids must be unique within a run."
+            "Capability id 'a.com-api' is used by multiple capabilities. Ids identify one capability within a run, so give each a distinct `id`."
         ),
     ):
         DBOSAgent(  # pyright: ignore[reportDeprecated]

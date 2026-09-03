@@ -1682,6 +1682,13 @@ def test_model_json_schema_with_capabilities():
                     'title': 'spec_ReinjectSystemPrompt',
                     'type': 'object',
                 },
+                'spec_Instrumentation': {
+                    'additionalProperties': False,
+                    'properties': {'Instrumentation': {'$ref': '#/$defs/spec_params_Instrumentation'}},
+                    'required': ['Instrumentation'],
+                    'title': 'spec_Instrumentation',
+                    'type': 'object',
+                },
                 'spec_Thinking': {
                     'additionalProperties': False,
                     'properties': {'Thinking': {'$ref': '#/$defs/spec_params_Thinking'}},
@@ -1772,6 +1779,21 @@ def test_model_json_schema_with_capabilities():
                         'replace_existing': {'title': 'Replace Existing', 'type': 'boolean'},
                     },
                     'title': 'spec_params_ReinjectSystemPrompt',
+                    'type': 'object',
+                },
+                'spec_params_Instrumentation': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
+                        'include_binary_content': {'title': 'Include Binary Content', 'type': 'boolean'},
+                        'include_content': {'title': 'Include Content', 'type': 'boolean'},
+                        'version': {'enum': [2, 3, 4, 5, 6], 'title': 'Version', 'type': 'integer'},
+                        'use_aggregated_usage_attribute_names': {
+                            'title': 'Use Aggregated Usage Attribute Names',
+                            'type': 'boolean',
+                        },
+                    },
+                    'title': 'spec_params_Instrumentation',
                     'type': 'object',
                 },
                 'spec_params_Thinking': {
@@ -1926,6 +1948,7 @@ def test_model_json_schema_with_capabilities():
                                 {'const': 'IncludeToolReturnSchemas', 'type': 'string'},
                                 {'$ref': '#/$defs/spec_IncludeToolReturnSchemas'},
                                 {'const': 'Instrumentation', 'type': 'string'},
+                                {'$ref': '#/$defs/spec_Instrumentation'},
                                 {'$ref': '#/$defs/short_spec_MCP'},
                                 {'$ref': '#/$defs/spec_MCP'},
                                 {'$ref': '#/$defs/spec_PrefixTools'},
@@ -2146,6 +2169,7 @@ def test_model_json_schema_with_capabilities():
                             {'const': 'IncludeToolReturnSchemas', 'type': 'string'},
                             {'$ref': '#/$defs/spec_IncludeToolReturnSchemas'},
                             {'const': 'Instrumentation', 'type': 'string'},
+                            {'$ref': '#/$defs/spec_Instrumentation'},
                             {'$ref': '#/$defs/short_spec_MCP'},
                             {'$ref': '#/$defs/spec_MCP'},
                             {'$ref': '#/$defs/spec_PrefixTools'},
