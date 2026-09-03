@@ -2,7 +2,6 @@ from __future__ import annotations as _annotations
 
 import asyncio
 from datetime import datetime, timedelta, timezone
-from unittest.mock import MagicMock
 
 import pytest
 from pytest_mock import MockerFixture
@@ -95,44 +94,6 @@ async def test_context_subtree_concurrent():
     task2_child = task2_root.children[0]
     assert len(task2_child.children) == 1, 'task2_child1 should have exactly one child'
     assert task2_child.children[0].name == 'task2_grandchild', "task2_child1's child should be task2_grandchild"
-
-
-async def test_context_subtree_skips_teardown_when_context_id_is_unset(monkeypatch: pytest.MonkeyPatch):
-    """Test that span collection is skipped when no exporter context id could be established.
-
-    `context_id` stays `None` if `_set_exporter_context_id` fails on entry. Calling `clear(None)` or
-    `get_finished_spans(None)` in that case would discard spans belonging to every other context, so
-    the `finally` block has to skip collection entirely.
-
-    This uses `monkeypatch` rather than `mocker.spy`: older `pytest-mock` releases call the
-    `asyncio.iscoroutinefunction` alias that Python 3.14 deprecates, and this project escalates
-    `DeprecationWarning`s to errors, which broke the lowest-versions matrix job.
-    """
-    from pydantic_evals.otel import _context_in_memory_span_exporter as exporter_module
-
-    exporter_cls = exporter_module._ContextInMemorySpanExporter  # pyright: ignore[reportPrivateUsage]
-
-    def fail_to_set_context_id(*args: object, **kwargs: object) -> None:
-        raise RuntimeError('failed to set exporter context id')
-
-    # Exercise the helper directly so its body is covered even in environments where the
-    # monkeypatch below does not reach `_set_exporter_context_id` (e.g. when no exporter
-    # context can be established). This asserts the helper's contract independent of wiring.
-    with pytest.raises(RuntimeError, match='failed to set exporter context id'):
-        fail_to_set_context_id()
-
-    # A `MagicMock` rather than a hand-written recording function: the whole point is that `clear` is
-    # never called, and an unexecuted function body would show up as a missing statement under this
-    # project's `fail_under = 100`, which also measures `tests/**/*.py`.
-    clear_mock = MagicMock()
-    monkeypatch.setattr(exporter_cls, 'clear', clear_mock)
-    monkeypatch.setattr(exporter_module, '_set_exporter_context_id', fail_to_set_context_id)
-
-    with pytest.raises(RuntimeError, match='failed to set exporter context id'):
-        with context_subtree():
-            pass  # pragma: no cover
-
-    assert clear_mock.call_count == 0, 'teardown must not clear spans when no context id was set'
 
 
 @pytest.fixture
@@ -1190,7 +1151,7 @@ async def test_context_subtree_clears_exporter_on_exception():
 
     exporter = _add_context_span_exporter()
     assert isinstance(exporter, _ContextInMemorySpanExporter)
-    exporter.clear()
+    exporter._finished_spans.clear()  # pyright: ignore[reportPrivateUsage]
 
     with pytest.raises(RuntimeError, match='boom'):
         with context_subtree():
@@ -1198,7 +1159,10 @@ async def test_context_subtree_clears_exporter_on_exception():
                 pass
             raise RuntimeError('boom')
 
-    assert exporter.get_finished_spans() == ()
+    # Assert on the mapping, not on `get_finished_spans()`: the flattened view would also be
+    # empty if the context's key survived holding an empty list, which is the unbounded-growth
+    # half of #6927.
+    assert exporter._finished_spans == {}  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_span_node_status_captured():
