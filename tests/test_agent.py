@@ -9541,11 +9541,11 @@ class _ToolsetOnlyAgent(AbstractAgent[None, str]):
 
     @property
     def deps_type(self) -> type:
-        return type(None)
+        raise NotImplementedError
 
     @property
     def output_type(self) -> OutputSpec[str]:
-        return str
+        raise NotImplementedError
 
     @property
     def event_stream_handler(self) -> Any:
