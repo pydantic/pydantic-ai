@@ -22,11 +22,6 @@ from pydantic_ai import Agent
 from pydantic_ai._instrumentation import get_instructions
 from pydantic_ai.capabilities import Hooks, NativeTool, ProcessEventStream, WebSearch
 from pydantic_ai.capabilities.abstract import AbstractCapability, WrapRunHandler
-
-# `WebSearch` resolves its local strategy by importing this module the first time one is built.
-# Doing that inside an async test makes BlockBuster flag the import machinery's own `os.listdir`,
-# so the import is warmed here, at collection time, rather than in the event loop.
-from pydantic_ai.common_tools.duckduckgo import duckduckgo_search_tool as _warm_duckduckgo_import  # noqa: F401
 from pydantic_ai.exceptions import RunCancelled, UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
@@ -68,6 +63,13 @@ from pydantic_ai.tools import RunContext, ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
 
 pytestmark = pytest.mark.anyio
+
+
+@pytest.fixture(autouse=True)
+def blockbuster_excluded_modules() -> tuple[str, ...]:
+    """`WebSearch` imports its DuckDuckGo fallback the first time one resolves a local strategy,
+    and Python's import machinery reads the filesystem to do it."""
+    return ('pydantic_ai.common_tools.duckduckgo',)
 
 
 class _Connection(RealtimeConnection):
