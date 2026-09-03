@@ -916,11 +916,13 @@ jobs:
         uses: re-actors/alls-green@05ac9388f0aebcb5727afa17fcccfecd6f8ec5fe # release/v1
         with:
           # The canary runs on tag refs only, and `docs-only` runs only for Markdown-only PRs.
-          # Full CI jobs may skip only when the classifier selected that reduced PR path.
+          # On tags only `docs-only` may skip; full CI jobs may skip only on the reduced PR path.
           allowed-skips: >-
             ${{
               needs.classify.outputs.docs_only == 'true'
               && 'quality,mypy,test,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,latest-versions-canary,coverage'
+              || github.ref_type == 'tag'
+              && 'docs-only'
               || 'docs-only,latest-versions-canary'
             }}
           jobs: ${{ toJSON(needs) }}
