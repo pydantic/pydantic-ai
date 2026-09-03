@@ -18,14 +18,17 @@ from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import LocalSandbox
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.test import TestModel
 from pydantic_ai.sandboxes import (
     LocalSandboxBackend,
     Sandbox,
     SandboxBackend,
     SandboxError,
+    SandboxRef,
     SandboxTimeoutError,
     SupportsFilesystem,
 )
+from pydantic_ai.usage import RunUsage
 
 pytestmark = [
     pytest.mark.anyio,
@@ -599,3 +602,10 @@ async def test_local_sandbox_capability_removes_per_run_root():
     assert result.output == 'done'
     assert len(roots) == 1
     assert not roots[0].exists()
+
+
+def test_local_sandbox_capability_declines_foreign_ref():
+    capability: LocalSandbox[Any] = LocalSandbox()
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+
+    assert capability.get_sandbox(ctx, SandboxRef(sandbox_id='remote:123')) is None

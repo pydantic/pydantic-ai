@@ -986,6 +986,22 @@ def test_durable_workflow_sandbox_guard():
         )
         is ref
     )
+    with pytest.raises(UserError, match=r'`sandbox=` takes a `SandboxRef` or a `SandboxBackend`'):
+        guard_workflow_sandbox(
+            AcquireOnlySandboxCapability(),  # pyright: ignore[reportArgumentType]
+            None,
+            static_contributes_sandbox=False,
+            contribution_error='contribution blocked',
+            live_error='live blocked',
+        )
+
+
+async def test_combined_capability_cannot_release_unstamped_ref():
+    capability: CombinedCapability[Any] = CombinedCapability([])
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+
+    with pytest.raises(UserError, match=r"Sandbox ref 'caller-built' without a `capability_id` cannot be released"):
+        await capability.release_sandbox(ctx, SandboxRef(sandbox_id='caller-built'))
 
 
 async def test_lifecycle_capability_also_connects_ref_run_arguments():
