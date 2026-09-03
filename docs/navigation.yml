@@ -96,6 +96,8 @@ navigation:
         slug: "core-concepts/retries"
         aliases:
           - "retries"
+          - "models/http-request-retries"
+          - "advanced-features/retries"
       - page: "Timeouts"
         path: "timeouts.md"
         slug: "core-concepts/timeouts"
@@ -118,11 +120,6 @@ navigation:
           - "api/models/outlines"
           - "models/outlines"
           - "models/base"
-      - page: "HTTP Request Retries"
-        path: "models/http-request-retries.md"
-        slug: "models/http-request-retries"
-        aliases:
-          - "advanced-features/retries"
       - page: "Pydantic AI Gateway"
         path: "gateway.md"
         slug: "overview/gateway"
