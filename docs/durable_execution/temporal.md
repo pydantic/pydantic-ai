@@ -350,17 +350,22 @@ A consumer that holds only a workflow handle then observes the run as it happens
 [`stream_agent_events()`][pydantic_ai.durable_exec.temporal.TemporalDurability.stream_agent_events]:
 
 ```python {title="temporal_workflow_streams_consumer.py" test="skip" lint="skip"}
+from uuid import uuid4
+
 from temporalio.client import Client
 
 
 async def relay_events(client: Client, prompt: str) -> str:
     handle = await client.start_workflow(
-        AssistantWorkflow.run, prompt, id='assistant-1', task_queue='my-task-queue'
+        AssistantWorkflow.run, prompt, id=f'assistant-{uuid4()}', task_queue='my-task-queue'
     )
     async for event in durability.stream_agent_events(client, handle, output_type=str):
         ...  # forward `event` to the frontend over SSE
     return await handle.result()
 ```
+
+Assign each independent workflow chain a unique workflow ID. Continue-as-new keeps that ID across
+the whole chain automatically, so do not reuse it for an unrelated workflow.
 
 This is effectively a durable [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] across the workflow boundary: the same [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent]s, in order, ending with the [`AgentRunResultEvent`][pydantic_ai.run.AgentRunResultEvent] that carries the run's result — except the events crossed into another process to get here. The `async for` therefore ends on its own when the run does; you don't need a separate signal to know when to stop.
 
