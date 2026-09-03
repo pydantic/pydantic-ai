@@ -30,7 +30,7 @@ else:
 
 
 class NebiusProvider(_OpenAICompatibleProvider):
-    """Provider for Nebius AI Studio API."""
+    """Provider for the Nebius Token Factory API."""
 
     @property
     def name(self) -> str:
@@ -38,7 +38,7 @@ class NebiusProvider(_OpenAICompatibleProvider):
 
     @property
     def base_url(self) -> str:
-        return 'https://api.studio.nebius.com/v1'
+        return 'https://api.tokenfactory.nebius.com/v1'
 
     @property
     def client(self) -> AsyncOpenAI:
@@ -93,7 +93,7 @@ class NebiusProvider(_OpenAICompatibleProvider):
         if not api_key and openai_client is None:
             raise UserError(
                 'Set the `NEBIUS_API_KEY` environment variable or pass it via '
-                '`NebiusProvider(api_key=...)` to use the Nebius AI Studio provider.'
+                '`NebiusProvider(api_key=...)` to use the Nebius Token Factory provider.'
             )
 
         if openai_client is not None:

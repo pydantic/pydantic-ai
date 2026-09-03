@@ -32,8 +32,9 @@ pytestmark = [
 def test_nebius_provider():
     provider = NebiusProvider(api_key='api-key')
     assert provider.name == 'nebius'
-    assert provider.base_url == 'https://api.studio.nebius.com/v1'
+    assert provider.base_url == 'https://api.tokenfactory.nebius.com/v1'
     assert isinstance(provider.client, openai.AsyncOpenAI)
+    assert str(provider.client.base_url) == 'https://api.tokenfactory.nebius.com/v1/'
     assert provider.client.api_key == 'api-key'
 
 
@@ -43,7 +44,7 @@ def test_nebius_provider_need_api_key(env: TestEnv) -> None:
         UserError,
         match=re.escape(
             'Set the `NEBIUS_API_KEY` environment variable or pass it via '
-            '`NebiusProvider(api_key=...)` to use the Nebius AI Studio provider.'
+            '`NebiusProvider(api_key=...)` to use the Nebius Token Factory provider.'
         ),
     ):
         NebiusProvider()
