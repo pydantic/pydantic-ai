@@ -42,6 +42,23 @@ _TEXT_MARKER = '__harness_external_text__'
 # `part_kind`/`content`/`uri`, and a plain `uri` key alone would drop the
 # original. See `_write_reference` for the backward-compatible `uri` mirror.
 _URI_KEY = '__harness_external_uri__'
+# A marker can overwrite fields with the same names as its own metadata. New
+# markers move those caller-owned values into a versioned mapping before writing
+# the metadata, and the reader puts them back after rehydrating the payload.
+_ESCAPED_KEYS = '__harness_external_escaped_keys__'
+_MARKER_FORMAT = '__harness_external_marker_format__'
+# Version stamps this format issues. The prefix is what tells a stamp we wrote
+# apart from a caller-owned `_MARKER_FORMAT` value, so only a stamp inside the
+# namespace makes the version check apply at all.
+_ESCAPED_KEYS_FORMAT_PREFIX = 'escaped-keys-v'
+_ESCAPED_KEYS_FORMAT = f'{_ESCAPED_KEYS_FORMAT_PREFIX}1'
+_MARKER_METADATA_KEYS = (
+    _EXTERNAL_MARKER,
+    _TEXT_MARKER,
+    _URI_KEY,
+    _ESCAPED_KEYS,
+    _MARKER_FORMAT,
+)
 # `TextContent.kind` (`pydantic_ai.messages.TextContent`). Unlike a message
 # part it carries no `part_kind`, so it needs its own discriminator match.
 _TEXT_CONTENT_KIND = 'text-content'
@@ -146,6 +163,7 @@ async def _maybe_externalize_binary(
     # survives new `BinaryContent` fields added by pydantic_ai upstream. Fields
     # are recursively walked so any nested externalizable payload still goes out.
     marker = await _preserve_fields(node, 'data', media_store, threshold_bytes)
+    _escape_marker_metadata(marker)
     marker[_EXTERNAL_MARKER] = True
     _write_reference(marker, node, uri)
     return marker
@@ -172,6 +190,7 @@ async def _maybe_externalize_text(
     # `_TEXT_MARKER` tells `restore_media` to decode UTF-8 back into `content`
     # rather than base64 into `data`.
     marker = await _preserve_fields(node, 'content', media_store, threshold_bytes)
+    _escape_marker_metadata(marker)
     marker[_EXTERNAL_MARKER] = True
     marker[_TEXT_MARKER] = True
     _write_reference(marker, node, uri)
@@ -195,6 +214,37 @@ def _write_reference(marker: dict[str, object], node: dict[str, object], uri: st
     marker[_URI_KEY] = uri
     if 'uri' not in node:
         marker['uri'] = uri
+
+
+def _escape_marker_metadata(marker: dict[str, object]) -> None:
+    """Move caller-owned marker metadata keys aside before writing our values."""
+    escaped: dict[str, object] = {}
+    for key in _MARKER_METADATA_KEYS:
+        if key in marker:
+            escaped[key] = marker.pop(key)
+    if escaped:
+        marker[_MARKER_FORMAT] = _ESCAPED_KEYS_FORMAT
+        marker[_ESCAPED_KEYS] = escaped
+
+
+def _is_escape_stash(value: object) -> TypeGuard[dict[str, object]]:
+    """Does `value` have the shape `_escape_marker_metadata` writes?
+
+    `_ESCAPED_KEYS` and `_MARKER_FORMAT` are themselves keys a caller can own, so
+    a marker carrying them is not evidence that this format wrote them. The stash
+    is only ever a non-empty mapping keyed by metadata names.
+    """
+    return _is_json_dict(value) and bool(value) and not (value.keys() - _MARKER_METADATA_KEYS)
+
+
+def _is_escaped_keys_format(value: object) -> bool:
+    """Is `value` a version stamp from this format's own namespace?
+
+    Paired with `_is_escape_stash`: both have to hold before the marker is read
+    as escaped. A caller-owned `_MARKER_FORMAT` carrying anything else leaves the
+    marker in the pre-escaping reading, where both keys are the payload's data.
+    """
+    return isinstance(value, str) and value.startswith(_ESCAPED_KEYS_FORMAT_PREFIX)
 
 
 async def _preserve_fields(
@@ -236,6 +286,23 @@ async def restore_media(node: object, *, media_store: MediaStore) -> object:
 
 async def _restore_external(node: dict[str, object], media_store: MediaStore) -> dict[str, object]:
     dropped = {_EXTERNAL_MARKER, _TEXT_MARKER}
+    escaped: dict[str, object] | None = None
+    escaped_value = node.get(_ESCAPED_KEYS)
+    marker_format = node.get(_MARKER_FORMAT)
+    # An ambiguous match degrades to "this is caller data" instead of raising: a
+    # marker written before this format existed can carry both keys as the
+    # payload's own, and rejecting it would turn a snapshot that reads today into
+    # one that cannot be read at all, with no recovery path. So both halves have
+    # to look like ours -- the stash's shape and a version stamp from this
+    # format's namespace -- before the marker is read as escaped. Once they do,
+    # an unrecognized version is a marker this reader genuinely cannot restore,
+    # and it says so rather than drop the stash on the floor: this reader is the
+    # only one that can refuse a later format.
+    if _is_escape_stash(escaped_value) and _is_escaped_keys_format(marker_format):
+        if marker_format != _ESCAPED_KEYS_FORMAT:
+            raise ValueError(f'externalized media marker has an unsupported escaped-keys format: {marker_format!r}')
+        escaped = escaped_value
+        dropped.update({_MARKER_FORMAT, _ESCAPED_KEYS})
     if _URI_KEY in node:
         uri_value = node[_URI_KEY]
         dropped.add(_URI_KEY)
@@ -270,6 +337,9 @@ async def _restore_external(node: dict[str, object], media_store: MediaStore) ->
         if key in dropped:
             continue
         restored[key] = await restore_media(value, media_store=media_store)
+    if escaped is not None:
+        for key, value in escaped.items():
+            restored[key] = await restore_media(value, media_store=media_store)
     if is_text:
         restored['content'] = raw.decode('utf-8', errors='surrogatepass')
     else:
