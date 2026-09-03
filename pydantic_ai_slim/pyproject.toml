@@ -88,11 +88,11 @@ mistral = ["mistralai>=2.9.2"]
 bedrock = ["boto3>=1.42.63"]
 # Amazon Bedrock Mantle serves OpenAI models through an OpenAI-compatible API via `AsyncBedrockOpenAI`,
 # which needs `openai` and (for AWS SigV4 auth) `botocore`; the bearer-token path needs `openai` alone.
-bedrock-mantle = ["openai>=3.0.0", "botocore>=1.42.63"]
-zai = ["openai>=3.0.0"]
-snowflake = ["openai>=3.0.0"]
-crusoe = ["openai>=3.0.0"]
-cerebras = ["openai>=3.0.0"]
+bedrock-mantle = ["openai>=3.8.0", "botocore>=1.42.63"]
+zai = ["openai>=3.8.0"]
+snowflake = ["openai>=3.8.0"]
+crusoe = ["openai>=3.8.0"]
+cerebras = ["openai>=3.8.0"]
 huggingface = [
     "huggingface-hub>=1.3.4,<2.0.0",
     # huggingface_hub 1.3.x still calls the deprecated hf_xet.download_files() API.
