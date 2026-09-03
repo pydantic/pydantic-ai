@@ -1393,8 +1393,9 @@ class RealtimeSession:
         tap.pending_dropped_bytes = 0
         while not tap.queue.empty():
             item = tap.queue.get_nowait()
-            if item is self._tap_finished:  # pragma: no cover - defensive: the sentinel is enqueued
-                # once the pump has finished, after which nothing arrives that would need flushing.
+            if item is self._tap_finished:
+                # A barge-in that lands after the pump finished still has buffered audio to discard,
+                # but the completion sentinel behind it has to stay so the consumer's iterator ends.
                 tap.queue.put_nowait(item)
                 break
             assert isinstance(item, bytes)

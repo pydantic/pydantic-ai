@@ -1491,6 +1491,10 @@ async def test_interrupt_played_bytes_leaves_drops_ahead_of_the_device_out_of_th
         assert await session.interrupt(played_bytes=0) is True
         assert conn.sent == [TruncateOutput(audio_end_ms=0), CancelResponse()]
 
+        # The burst was the last of the wire stream, so the flush also had to step over the
+        # completion sentinel behind it and put it back: the iterator still ends cleanly.
+        assert [chunk async for chunk in stream] == []
+
 
 async def test_interrupt_rejects_both_playback_positions() -> None:
     conn = FakeRealtimeConnection([])
