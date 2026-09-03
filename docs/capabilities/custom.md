@@ -454,16 +454,18 @@ Capabilities passed directly to [`run()`][pydantic_ai.agent.AbstractAgent.run] o
 
 Binding hooks establish which capability participates in a run; lifecycle hooks then intercept the work it performs. The high-level order is:
 
-`for_agent()` → bootstrap model selection and resolution → `for_run()` → per-step selection and preparation → model request → tool/output processing → run completion
+`for_agent()` → `wrap_entire_run` entry → bootstrap model selection and resolution → `for_run()` → per-step selection and preparation → model request → tool/output processing → run completion → `wrap_entire_run` exit
 
 | Phase | Capability work | What is available |
 |---|---|---|
 | Agent binding | [`for_agent()`][pydantic_ai.capabilities.AbstractCapability.for_agent] | Agent name, raw constructor model, toolsets, and other constructor configuration; no run dependencies or `RunContext` |
+| Whole-run entry | [`wrap_entire_run`][pydantic_ai.capabilities.AbstractCapability.wrap_entire_run] | A [`RunPreparationContext`][pydantic_ai.RunPreparationContext] with dependencies, history, usage, IDs, and the explicitly passed model, if any |
 | Run bootstrap | [`get_model()`][pydantic_ai.capabilities.AbstractCapability.get_model], then [`resolve_model_id()`][pydantic_ai.capabilities.AbstractCapability.resolve_model_id] if the selection is a string | Dependencies, message history, usage, and the lower-precedence model through selection/resolution contexts; no complete `RunContext` yet |
 | Run binding | [`for_run()`][pydantic_ai.capabilities.AbstractCapability.for_run] | A complete [`RunContext`][pydantic_ai.tools.RunContext] containing the bootstrap model; may return a run-scoped replacement capability |
 | Each logical model step | Post-`for_run()` model selection/resolution, model settings, tool preparation, and message preparation | The selected model is installed in `RunContext` before its settings, profile-sensitive tools, and model-specific message preparation are evaluated |
 | Model request and response | Model request, tool, output, node, and event-stream [hooks](#hooking-into-the-lifecycle) | The fully prepared request and the live run state appropriate to each hook |
 | Run completion | `after_run`, `on_run_error`, and `wrap_run` completion | Final result or error, accumulated messages, and usage |
+| Whole-run exit | `wrap_entire_run` exit | Final outcome or propagated error after resource teardown |
 
 If `for_run()` returns the original capability, the bootstrap model selection is reused for step one. A replacement capability can select a different model for step one. Continuation polling within one logical step remains pinned to that step's selected model.
 
@@ -476,6 +478,9 @@ Capabilities can hook into five lifecycle points, each with up to four variants:
 * **`wrap_*`** — full middleware control: receives a `handler` callable and decides whether/how to call it
 * **`on_*_error`** — fires when the action fails (after `wrap_*` has had its chance to recover), can observe, transform, or recover from errors
 
+The context-manager-shaped `wrap_entire_run` hook is the exception to these variants: it brackets
+the complete run lifecycle without receiving a handler or controlling the run.
+
 !!! tip
     For quick, application-level hooks without subclassing, use the [`Hooks`](../hooks.md) capability instead.
 
@@ -483,12 +488,45 @@ Capabilities can hook into five lifecycle points, each with up to four variants:
 
 | Hook | Signature | Purpose |
 |---|---|---|
+| [`wrap_entire_run`][pydantic_ai.capabilities.AbstractCapability.wrap_entire_run] | `(ctx: `[`RunPreparationContext`][pydantic_ai.RunPreparationContext]`) -> AbstractAsyncContextManager[None]` | Bracket resolution, resource setup, execution, recovery, and teardown |
 | [`before_run`][pydantic_ai.capabilities.AbstractCapability.before_run] | `(ctx: `[`RunContext`][pydantic_ai.tools.RunContext]`) -> None` | Observe-only notification that a run is starting |
 | [`after_run`][pydantic_ai.capabilities.AbstractCapability.after_run] | `(ctx: `[`RunContext`][pydantic_ai.tools.RunContext]`, *, result: `[`AgentRunResult`][pydantic_ai.run.AgentRunResult]`) -> `[`AgentRunResult`][pydantic_ai.run.AgentRunResult] | Modify the final result |
 | [`wrap_run`][pydantic_ai.capabilities.AbstractCapability.wrap_run] | `(ctx: `[`RunContext`][pydantic_ai.tools.RunContext]`, *, handler: `[`WrapRunHandler`][pydantic_ai.capabilities.WrapRunHandler]`) -> `[`AgentRunResult`][pydantic_ai.run.AgentRunResult] | Wrap the entire run |
 | [`on_run_error`][pydantic_ai.capabilities.AbstractCapability.on_run_error] | `(ctx: `[`RunContext`][pydantic_ai.tools.RunContext]`, *, error: BaseException) -> `[`AgentRunResult`][pydantic_ai.run.AgentRunResult] | Handle run errors (see [error hooks](#error-hooks)) |
 
-`wrap_run` supports error recovery: if `handler()` raises and `wrap_run` catches the exception and returns a result instead, the error is suppressed and the recovery result is used. This works with [`agent.run()`][pydantic_ai.agent.AbstractAgent.run], [`agent.iter()`][pydantic_ai.agent.Agent.iter], and [realtime sessions](../realtime/capabilities.md) — a realtime session is a run, so all four hooks fire once around it, with `wrap_run`'s handler resolving when the session closes. Check [`ctx.realtime`][pydantic_ai.tools.RunContext.realtime] to branch behavior, and use [`ctx.realtime_session`][pydantic_ai.tools.RunContext.realtime_session] (set once the session is connected) to interact with the live session.
+Use `wrap_entire_run` for resources or telemetry that must include setup and teardown, such as
+timing the complete lifecycle:
+
+```python {title="whole_run_timing.py"}
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
+from dataclasses import dataclass
+from time import monotonic
+from typing import Any
+
+from pydantic_ai import Agent, RunPreparationContext
+from pydantic_ai.capabilities import AbstractCapability
+
+
+@dataclass
+class WholeRunTimer(AbstractCapability[Any]):
+    @asynccontextmanager
+    async def wrap_entire_run(
+        self, ctx: RunPreparationContext[Any]
+    ) -> AsyncGenerator[None]:
+        started = monotonic()
+        try:
+            yield
+        finally:
+            print(f'Complete run lifecycle: {monotonic() - started:.3f}s')
+
+
+agent = Agent('openai:gpt-5.2', capabilities=[WholeRunTimer()])
+```
+
+`wrap_entire_run` runs on the shared agent-level capability before `for_run` and model resolution, so `ctx.model` is only the explicitly passed model. It cannot alter control flow, and suppressing the run's exception is reported as a [`UserError`][pydantic_ai.exceptions.UserError].
+
+`wrap_run` supports error recovery: if `handler()` raises and `wrap_run` catches the exception and returns a result instead, the error is suppressed and the recovery result is used. This works with [`agent.run()`][pydantic_ai.agent.AbstractAgent.run], [`agent.iter()`][pydantic_ai.agent.Agent.iter], and [realtime sessions](../realtime/capabilities.md) — a realtime session is a run, so `before_run`, `after_run`, `wrap_run`, and `on_run_error` each fire once around it, with `wrap_run`'s handler resolving when the session closes. Check [`ctx.realtime`][pydantic_ai.tools.RunContext.realtime] to branch behavior, and use [`ctx.realtime_session`][pydantic_ai.tools.RunContext.realtime_session] (set once the session is connected) to interact with the live session.
 
 !!! warning "Tearing down tasks you spawn"
     A run is cancelled — via [`RunContext.cancel()`][pydantic_ai.tools.RunContext.cancel], a [`CancellationToken`][pydantic_ai.CancellationToken], an `asyncio.wait_for` timeout, or an enclosing task group — by cancelling the single asyncio task that drives it. Work the run `await`s inline receives the `CancelledError` automatically; a task you start yourself with `asyncio.create_task(...)` runs on a **different** task and does **not**, so a capability that spawns tasks must tear them down itself.
@@ -968,7 +1006,7 @@ print(counter.count)
 #> 0
 ```
 
-When `for_run` returns a new instance, the capability's configuration is re-extracted from that replacement at run setup: [`get_instructions`][pydantic_ai.capabilities.AbstractCapability.get_instructions], [`get_toolset`][pydantic_ai.capabilities.AbstractCapability.get_toolset], [`get_native_tools`][pydantic_ai.capabilities.AbstractCapability.get_native_tools], and [`get_model_settings`][pydantic_ai.capabilities.AbstractCapability.get_model_settings] are re-invoked on it, and [`get_wrapper_toolset`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_toolset], [`get_description`][pydantic_ai.capabilities.AbstractCapability.get_description], and all lifecycle hooks always run on it. The exception is model selection: [`get_model()`][pydantic_ai.capabilities.AbstractCapability.get_model] and bootstrap [`resolve_model_id()`][pydantic_ai.capabilities.AbstractCapability.resolve_model_id] run *before* `for_run` on the original instance, and the bootstrap selection is reused unless the replacement actually changes the model contribution — see [Model selection lifecycle and limitations](#model-selection-lifecycle-and-limitations).
+When `for_run` returns a new instance, the capability's configuration is re-extracted from that replacement at run setup: [`get_instructions`][pydantic_ai.capabilities.AbstractCapability.get_instructions], [`get_toolset`][pydantic_ai.capabilities.AbstractCapability.get_toolset], [`get_native_tools`][pydantic_ai.capabilities.AbstractCapability.get_native_tools], and [`get_model_settings`][pydantic_ai.capabilities.AbstractCapability.get_model_settings] are re-invoked on it, and [`get_wrapper_toolset`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_toolset], [`get_description`][pydantic_ai.capabilities.AbstractCapability.get_description], and post-binding lifecycle hooks run on it. The exceptions are `wrap_entire_run` and model selection: `wrap_entire_run`, [`get_model()`][pydantic_ai.capabilities.AbstractCapability.get_model], and bootstrap [`resolve_model_id()`][pydantic_ai.capabilities.AbstractCapability.resolve_model_id] run *before* `for_run` on the original instance, and the bootstrap selection is reused unless the replacement actually changes the model contribution — see [Model selection lifecycle and limitations](#model-selection-lifecycle-and-limitations).
 
 Never mutate `self` inside `for_run` — return a new instance instead. When `for_run` returns the original unchanged, the configuration cached at agent construction is reused, so mutations to `self` would not be picked up.
 

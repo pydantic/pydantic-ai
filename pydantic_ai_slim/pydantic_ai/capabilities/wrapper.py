@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 from pydantic import ValidationError
 
 from pydantic_ai._instructions import AgentInstructions, SourcedInstruction, normalize_instructions
+from pydantic_ai._run_context import RunPreparationContext
 from pydantic_ai._utils import aclose_all, replace_no_init
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
@@ -40,6 +41,8 @@ from .abstract import (
 )
 
 if TYPE_CHECKING:
+    from contextlib import AbstractAsyncContextManager
+
     from pydantic_ai.agent.abstract import AbstractAgent, AgentModelSettings
     from pydantic_ai.models import KnownModelName, Model, ModelRequestContext, ModelResolutionContext
     from pydantic_ai.output import OutputContext
@@ -208,10 +211,8 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
     def _prepare_run_context(self, ctx: RunContext[AgentDepsT]) -> None:
         self.wrapped._prepare_run_context(ctx)
 
-    def _validate_runtime_capabilities(
-        self, ctx: RunContext[AgentDepsT], capabilities: Sequence[AbstractCapability[AgentDepsT]]
-    ) -> None:
-        self.wrapped._validate_runtime_capabilities(ctx, capabilities)
+    def _validate_runtime_capabilities(self, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> None:
+        self.wrapped._validate_runtime_capabilities(capabilities)
 
     # --- Get methods ---
 
@@ -271,6 +272,9 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         return await self.wrapped.prepare_output_tools(ctx, tool_defs)
 
     # --- Run lifecycle hooks ---
+
+    def wrap_entire_run(self, ctx: RunPreparationContext[AgentDepsT]) -> AbstractAsyncContextManager[None]:
+        return self.wrapped.wrap_entire_run(ctx)
 
     async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
         await self.wrapped.before_run(ctx)

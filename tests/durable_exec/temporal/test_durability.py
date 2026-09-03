@@ -1130,14 +1130,6 @@ async def test_durability_validates_only_resolved_runtime_capability_layers():
         pass
 
     @dataclass
-    class _ExtraOne(AbstractCapability[None]):
-        pass
-
-    @dataclass
-    class _ExtraTwo(AbstractCapability[None]):
-        pass
-
-    @dataclass
     class _SkipRequest(AbstractCapability[None]):
         async def before_model_request(
             self, ctx: RunContext[None], request_context: ModelRequestContext
@@ -1146,9 +1138,6 @@ async def test_durability_validates_only_resolved_runtime_capability_layers():
 
     def base_factory(ctx: RunContext[None]) -> AbstractCapability[None]:
         return CombinedCapability([_BaseOne(), _BaseTwo(), _SkipRequest()])
-
-    def extra_factory(ctx: RunContext[None]) -> AbstractCapability[None]:
-        return CombinedCapability([_ExtraOne(), _ExtraTwo()])
 
     agent = Agent(
         TestModel(),
@@ -1162,7 +1151,7 @@ async def test_durability_validates_only_resolved_runtime_capability_layers():
         assert result.output == 'skipped'
 
         with pytest.raises(UserError, match='Capabilities added per-run inside a Temporal workflow'):
-            await agent.run('hello', capabilities=[extra_factory])
+            await agent.run('hello', capabilities=[base_factory])
 
 
 # --- get_serialization_name returns None ---
