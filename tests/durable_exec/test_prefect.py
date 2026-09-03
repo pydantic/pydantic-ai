@@ -2957,7 +2957,7 @@ async def test_prefect_durability_rejects_partially_opted_out_runtime_function_t
     async def run_agent() -> None:
         await agent.run('Hello', toolsets=[toolset])
 
-    with pytest.raises(UserError, match=r'FunctionToolset .*cannot be passed'):
+    with pytest.raises(UserError, match=r'FunctionToolset .*cannot be added at runtime'):
         await run_agent()
 
 
@@ -3024,7 +3024,7 @@ async def test_prefect_durability_rejects_executing_toolset_from_per_run_capabil
     async def run_with_toolset_capability() -> None:
         await agent.run('Hello', capabilities=[Toolset(FunctionToolset(id='per_run_fn'))])
 
-    with pytest.raises(UserError, match=r'FunctionToolset .*cannot be passed'):
+    with pytest.raises(UserError, match=r'FunctionToolset .*cannot be added at runtime'):
         await run_with_toolset_capability()
 
 
