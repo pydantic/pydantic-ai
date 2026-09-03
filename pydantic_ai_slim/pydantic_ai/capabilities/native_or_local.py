@@ -93,19 +93,14 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
     )
     """What the caller passed as `local`, before `__post_init__` resolved it. See `_declared_native`."""
 
-    _declarations_captured: bool = field(init=False, repr=False, compare=False, default=False)
-    """Whether the two fields above hold what the caller stated, rather than the field defaults."""
-
     def __post_init__(self) -> None:
         # Assigned through `object.__setattr__` rather than relying on the field defaults: the
         # subclasses declare their own `__init__`, which never runs the dataclass field
-        # initializers. Capture happens once, so re-running `__post_init__` on an instance whose
-        # `native`/`local` are already resolved -- which `combine` does -- cannot overwrite the
-        # declarations with the resolved values.
-        if not self._declarations_captured:
-            object.__setattr__(self, '_declared_native', self.native)
-            object.__setattr__(self, '_declared_local', self.local)
-            object.__setattr__(self, '_declarations_captured', True)
+        # initializers. Every caller reaches here with `native`/`local` as stated rather than
+        # resolved -- a fresh `__init__`, or `combine` having just put the merged declarations
+        # back -- so capturing unconditionally records declarations, never resolved values.
+        object.__setattr__(self, '_declared_native', self.native)
+        object.__setattr__(self, '_declared_local', self.local)
         if self.native is False and self.local is False:
             raise UserError(f'{type(self).__name__}: both `native` and `local` cannot be False')
 
@@ -251,11 +246,11 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
         assert len(nol_capabilities) == len(capabilities)
         merged = merge_capability_fields(capabilities)
         assert isinstance(merged, cls)
-        # `_declarations_captured=False` so `__post_init__` re-reads the merged declarations below
-        # rather than keeping whichever instance `replace_no_init` copied from.
+        # `native`/`local` are set to the *declarations* rather than the resolved values, so the
+        # `__post_init__` below re-records them as such and then resolves them once, exactly as a
+        # constructor would.
         merged = replace_no_init(
             merged,
-            _declarations_captured=False,
             native=merge_field_values([capability._declared_native for capability in nol_capabilities]),
             local=merge_field_values([capability._declared_local for capability in nol_capabilities]),
         )
