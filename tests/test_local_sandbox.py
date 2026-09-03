@@ -613,9 +613,11 @@ def test_local_sandbox_capability_declines_foreign_ref():
 
 
 async def test_local_sandbox_default_id_combines_and_routes_through_nested_combined(tmp_path: Path):
-    class DecliningWrapper(WrapperCapability[Any]):
-        async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef | None:
-            return None
+    # `LocalSandbox` declares a default `id`, so the two instances below are combined into one
+    # before the run: the surviving branch is the later capability's, and this wrapper's own
+    # `acquire_sandbox` is never reached.
+    class PlainWrapper(WrapperCapability[Any]):
+        pass
 
     @dataclass
     class RecordingWrapper(WrapperCapability[Any]):
@@ -625,7 +627,7 @@ async def test_local_sandbox_default_id_combines_and_routes_through_nested_combi
             self.released.append(ref)
             await super().release_sandbox(ctx, ref)
 
-    inactive = DecliningWrapper(wrapped=CombinedCapability([LocalSandbox(root=tmp_path / 'inactive')]))
+    inactive = PlainWrapper(wrapped=CombinedCapability([LocalSandbox(root=tmp_path / 'inactive')]))
     active = RecordingWrapper(wrapped=CombinedCapability([LocalSandbox(root=tmp_path / 'active')]))
     refs: list[SandboxRef | None] = []
 
