@@ -5,7 +5,7 @@ from collections import Counter
 from collections.abc import AsyncIterable, Awaitable, Callable, Collection, Sequence
 from dataclasses import KW_ONLY, dataclass
 from itertools import chain
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, NamedTuple, TypeAlias
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypeAlias
 from weakref import WeakValueDictionary
 
 from pydantic import ValidationError
@@ -1383,7 +1383,8 @@ def _combination_roots(capability: AbstractCapability[AgentDepsT]) -> Sequence[A
     return capability.capabilities if isinstance(capability, CombinedCapability) else [capability]
 
 
-class _CapabilityOccurrence(NamedTuple, Generic[AgentDepsT]):
+@dataclass(frozen=True)
+class _CapabilityOccurrence(Generic[AgentDepsT]):
     capability: AbstractCapability[AgentDepsT]
     occurrence_index: int
     layer_index: int
