@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import Any, cast
 
+from pydantic_ai._utils import replace_no_init
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.native_tools import AbstractNativeTool
 from pydantic_ai.tools import AgentDepsT, AgentNativeTool, RunContext, Tool, ToolDefinition
@@ -11,7 +12,10 @@ from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.toolsets.prepared import PreparedToolset
 
-from .abstract import AbstractCapability
+from ._merge import merge_capability_fields, merge_field_values
+from .abstract import (
+    AbstractCapability,
+)
 
 
 @dataclass(init=False)
@@ -73,7 +77,30 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
         self.local = local
         self.__post_init__()
 
+    _declared_native: AgentNativeTool[AgentDepsT] | bool | None = field(
+        init=False, repr=False, compare=False, default=None
+    )
+    """What the caller passed as `native`, before `__post_init__` resolved it.
+
+    Resolution is destructive: `native=True` becomes a tool instance, so afterwards there is no way
+    to tell configuration the caller stated from configuration this class derived. `combine` needs
+    that distinction to rebuild the derived half from merged configuration. Excluded from `compare`
+    because it restates a field that is already compared.
+    """
+
+    _declared_local: str | Tool[AgentDepsT] | Callable[..., Any] | AbstractToolset[AgentDepsT] | bool | None = field(
+        init=False, repr=False, compare=False, default=None
+    )
+    """What the caller passed as `local`, before `__post_init__` resolved it. See `_declared_native`."""
+
     def __post_init__(self) -> None:
+        # Assigned through `object.__setattr__` rather than relying on the field defaults: the
+        # subclasses declare their own `__init__`, which never runs the dataclass field
+        # initializers. Every caller reaches here with `native`/`local` as stated rather than
+        # resolved -- a fresh `__init__`, or `combine` having just put the merged declarations
+        # back -- so capturing unconditionally records declarations, never resolved values.
+        object.__setattr__(self, '_declared_native', self.native)
+        object.__setattr__(self, '_declared_local', self.local)
         if self.native is False and self.local is False:
             raise UserError(f'{type(self).__name__}: both `native` and `local` cannot be False')
 
@@ -193,3 +220,39 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
 
             return PreparedToolset(wrapped=toolset, prepare_func=_add_unless_native)
         return toolset
+
+    @classmethod
+    def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
+        """Merge the declared configuration, then rebuild the native tool from the result.
+
+        `__post_init__` copies this capability's configuration into the native tool it builds, and
+        that tool -- not the capability -- is what reaches the provider. Merging the capability's
+        fields alone would leave a merged `allowed_domains` beside a native tool still carrying one
+        instance's, so a composed restriction would read as applied while the request went out
+        without it. Anything `_default_native` produced is therefore produced again from the merged
+        configuration.
+
+        A native tool the user passed in is left alone: it states its own configuration, and
+        rebuilding would discard it. Two of those take the later, like any other value the merge
+        cannot reconcile.
+
+        The merged instance is validated the way a constructed one is. `replace_no_init` skips
+        `__post_init__`, and a merge can reach a combination no constructor would accept -- a
+        `native=False` instance beside one carrying native-only constraints leaves a capability that
+        contributes neither the native tool nor a local fallback. Re-running the check turns that
+        into the same `UserError` writing it by hand would raise.
+        """
+        nol_capabilities = [capability for capability in capabilities if isinstance(capability, NativeOrLocalTool)]
+        assert len(nol_capabilities) == len(capabilities)
+        merged = merge_capability_fields(capabilities)
+        assert isinstance(merged, cls)
+        # `native`/`local` are set to the *declarations* rather than the resolved values, so the
+        # `__post_init__` below re-records them as such and then resolves them once, exactly as a
+        # constructor would.
+        merged = replace_no_init(
+            merged,
+            native=merge_field_values([capability._declared_native for capability in nol_capabilities]),
+            local=merge_field_values([capability._declared_local for capability in nol_capabilities]),
+        )
+        merged.__post_init__()
+        return merged

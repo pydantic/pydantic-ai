@@ -4,6 +4,35 @@ To build your own [capability](overview.md), subclass [`AbstractCapability`][pyd
 
 Custom capability classes can be plain classes or dataclasses. The shared metadata attributes — [`id`][pydantic_ai.capabilities.AbstractCapability.id], [`description`][pydantic_ai.capabilities.AbstractCapability.description], and [`defer_loading`][pydantic_ai.capabilities.AbstractCapability.defer_loading] — are optional declarations on the capability object for always-on capabilities. If `id` is omitted there, Pydantic AI derives a run-local id from the class name and disambiguates duplicates within the run. Deferred capabilities require an explicit stable `id`.
 
+Capabilities that cover a single fixed concern instead declare a stable default `id` — the built-in [`WebSearch`][pydantic_ai.capabilities.WebSearch] uses `'web_search'`, [`Thinking`][pydantic_ai.capabilities.Thinking] uses `'thinking'`, and so on — so [durable execution](../durable_execution/overview.md) can identify what they contribute without you naming something you never constructed. Give your own capability a default `id` when it is one-off in the same way.
+
+Because the id is fixed, two of them can meet under one id, and what that means depends on where they came from.
+
+**Two on the same agent** are one configuration stated twice, so they merge field by field: a value only one of them states is kept, and a value both state takes the later one. That is what lets two packaged capabilities each bring a `WebSearch` and the agent reach both sets of domains. There is nothing to declare beyond the default `id` itself — writing one *is* the statement that an agent has one of these:
+
+```python {title="combine_capability.py"}
+from dataclasses import dataclass
+from typing import Any
+
+from pydantic_ai.capabilities import AbstractCapability
+
+
+@dataclass
+class Retries(AbstractCapability[Any]):
+    limit: int = 3
+    id: str | None = 'retries'
+```
+
+When two instances are two *identities* rather than two statements of one configuration — two accounts, two credentials — a fixed default `id` is the wrong shape, because merging them would silently drop one. Derive the `id` from whatever distinguishes them instead: two identities then carry two ids and stay two capabilities, and two under one id are a genuine mistake that is reported. [`MCP`][pydantic_ai.capabilities.MCP] derives one from its server's host and last path segment, so servers that differ only in their port or in an earlier path segment still need distinct explicit `id`s.
+
+Override [`combine`][pydantic_ai.capabilities.AbstractCapability.combine] only when composing takes more than merging fields — a budget that should take the *smaller* of two values, say.
+
+**A capability supplied for a run** overrides its agent-level namesake outright — `agent.run(capabilities=[Thinking(effort='high')])` replaces the agent's `Thinking` rather than merging with it. A run states what *this* run does, so merging would let an agent-level setting the run meant to replace survive, and let an agent-level allow-list widen a restriction the run was passed to impose. `combine` is not consulted across layers.
+
+To keep two rather than resolving them, pass a distinct `id` to each, or `id=None` to opt back into the derived-and-disambiguated ids. An `id` you pass to a capability that declares no default is a name you chose, so passing the same one twice is reported as a collision rather than merged.
+
+One limit: for a capability that contributes a [native tool](../native-tools.md), these escapes do not dissolve the native tool's own `id`. Two differently-configured duplicates of a `WebSearch` still raise the native-tool-id conflict whether you give the capabilities distinct `id`s or `id=None` — only identical configurations avoid it.
+
 ```python {title="custom_capability_plain.py"}
 from typing import Any
 

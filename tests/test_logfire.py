@@ -3822,9 +3822,12 @@ def test_instrumentation_capability_serialization() -> None:
     assert cap.settings.version == 2
     assert cap.settings.include_content is False
 
-    # Empty kwargs form: `Instrumentation: {}` in YAML.
+    # Empty kwargs form: `Instrumentation: {}` in YAML. The spec can name the capability id;
+    # the default matches the class-level default.
     cap_default = Instrumentation.from_spec()
     assert cap_default.settings.version == InstrumentationSettings().version
+    assert cap_default.id == 'instrumentation'
+    assert Instrumentation.from_spec(id='monitoring').id == 'monitoring'
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
