@@ -58,6 +58,13 @@ def merge_capability_fields(
     survives. That cannot hold for an attribute the merge cannot enumerate -- `replace_no_init`
     copies the last instance, so such an attribute silently takes the last value even where an
     earlier instance was the only one to state it. Refusing says so instead.
+
+    A leading underscore exempts an attribute from that check, but only because internal state is
+    not this function's business -- it is not a way to get derived state merged. Nothing here
+    re-runs `__post_init__` (`replace_no_init` exists precisely to skip it), so `_count = len(...)`
+    keeps the last instance's value while the field it counts holds the union. A capability with
+    state derived from a merged field recomputes it in its own `combine`, the way
+    `NativeOrLocalTool` rebuilds its native tool.
     """
     merged = capabilities[-1]
     field_names = {field.name for field in dataclasses.fields(merged)}
@@ -74,9 +81,10 @@ def merge_capability_fields(
                 f'Capability id {merged.id!r} is used by multiple {cls_name} capabilities, but {cls_name} '
                 f'sets {names} outside its dataclass fields. Merging keeps a value only one of them states, '
                 'and cannot do that for an attribute it cannot enumerate -- the last instance would win '
-                f'silently. Declare {names} as dataclass fields to have them merged, rename them with a '
-                'leading underscore if they are internal state rather than configuration, or override '
-                '`combine` to merge them yourself.'
+                f'silently. Declare {names} as dataclass fields to have them merged; or, for state derived '
+                'from other fields, override `combine` to recompute it after merging, since this does not '
+                're-run `__post_init__`. A leading underscore only silences this check, and leaves state '
+                "derived from a merged field holding the last instance's value."
             )
     changes: dict[str, Any] = {}
     for field in dataclasses.fields(merged):

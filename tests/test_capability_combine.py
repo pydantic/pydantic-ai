@@ -569,23 +569,54 @@ def test_the_undeclared_attribute_error_names_the_underscore_way_out() -> None:
         Derived.combine([Derived(limit=1), Derived(limit=2)])
 
     message = str(exc_info.value)
-    assert 'leading underscore' in message, 'the rename is the fix for internal state'
     assert 'dataclass fields' in message, 'declaring it is the fix for real configuration'
-    assert '`combine`' in message, 'writing a merge is the fix for something neither covers'
+    assert '`combine`' in message, 'recomputing it is the fix for state derived from merged fields'
+    assert 'only silences this check' in message, 'an underscore is not a way to get derived state merged'
 
-    # And the rename is genuinely a way out, not just advice.
+
+def test_an_underscore_silences_the_check_without_recomputing_derived_state() -> None:
+    """The underscore exemption is not a fix for derived state, and the message must not imply it.
+
+    Nothing here re-runs `__post_init__` -- `replace_no_init` exists to skip it -- so an underscored
+    attribute keeps the *last* instance's value. Where the merge changed the field it derives from,
+    that value is stale. A scalar hides this, because last-wins gives the same answer either way;
+    only a union shows it, which is why this test unions.
+    """
+
     @dataclass
     class Underscored(AbstractCapability[Any]):
-        limit: int = 3
+        domains: list[str] = field(default_factory=list[str])
         _: KW_ONLY
         id: str | None = 'underscored'
 
         def __post_init__(self) -> None:
-            self._doubled = self.limit * 2
+            self._count = len(self.domains)
 
-    merged = Underscored.combine([Underscored(limit=1), Underscored(limit=2)])
+        @property
+        def count(self) -> int:
+            """How the capability itself would read the derived value."""
+            return self._count
+
+    merged = Underscored.combine([Underscored(domains=['a']), Underscored(domains=['b'])])
     assert isinstance(merged, Underscored)
-    assert merged.limit == 2
+    assert merged.domains == ['a', 'b'], 'the declared field unions, as the table promises'
+    assert merged.count == 1, "and the derived attribute is the last instance's, now stale"
+
+    # Recomputing in `combine` is what actually fixes it, which is what the message says.
+    @dataclass
+    class Recomputes(Underscored):
+        id: str | None = 'recomputes'
+
+        @classmethod
+        def combine(cls, capabilities: Sequence[AbstractCapability[Any]]) -> AbstractCapability[Any]:
+            merged = merge_capability_fields(capabilities)
+            assert isinstance(merged, Recomputes)
+            merged.__post_init__()
+            return merged
+
+    recomputed = Recomputes.combine([Recomputes(domains=['a']), Recomputes(domains=['b'])])
+    assert isinstance(recomputed, Recomputes)
+    assert recomputed.count == 2
 
 
 def test_a_field_whose_equality_raises_takes_the_later_value() -> None:
