@@ -935,7 +935,10 @@ async def test_mcp_toolset_without_id():
         UserError,
         match=re.escape(
             'MCP toolsets need to have a unique `id` in order to be used with DBOS. '
-            "The ID will be used to identify the MCP server's steps within the workflow."
+            "The ID will be used to identify the MCP server's steps within the workflow. "
+            'Set it on the toolset itself with `MCPToolset(..., id=...)`, or, when the toolset '
+            "is contributed by a capability, set the capability's `id` "
+            "(for example, `MCP(url='...', id='...')`)."
         ),
     ):
         DBOSAgent(Agent(model=model, name='test_agent', toolsets=[MCPToolset('https://example.com/mcp')]))  # pyright: ignore[reportDeprecated]
@@ -1409,7 +1412,7 @@ async def test_dbos_agent_run_in_workflow_rejects_runtime_mcp_toolset(dbos: DBOS
     with workflow_raises(
         UserError,
         snapshot(
-            "MCPToolset 'runtime_mcp' cannot be passed to `run(toolsets=...)` or `override(toolsets=...)` at runtime with DBOS, because toolsets that execute their own tools or resolve dynamically must be registered for durable execution when the agent is constructed. Pass them to the agent constructor instead. Non-executing toolsets like `ExternalToolset` can be passed at runtime."
+            "MCPToolset 'runtime_mcp' cannot be added at runtime with DBOS, because toolsets that execute their own tools or resolve dynamically must be registered for durable execution when the agent is constructed. Pass them to the agent constructor instead -- not to `run(toolsets=...)` or `override(toolsets=...)`, and not via a post-construction `@agent.toolset`. Non-executing toolsets like `ExternalToolset` can be passed at runtime."
         ),
     ):
         await simple_dbos_agent.run(
@@ -1422,7 +1425,7 @@ async def test_dbos_agent_run_in_workflow_rejects_runtime_dynamic_toolset(dbos: 
     with workflow_raises(
         UserError,
         snapshot(
-            "DynamicToolset 'runtime_dynamic' cannot be passed to `run(toolsets=...)` or `override(toolsets=...)` at runtime with DBOS, because toolsets that execute their own tools or resolve dynamically must be registered for durable execution when the agent is constructed. Pass them to the agent constructor instead. Non-executing toolsets like `ExternalToolset` can be passed at runtime."
+            "DynamicToolset 'runtime_dynamic' cannot be added at runtime with DBOS, because toolsets that execute their own tools or resolve dynamically must be registered for durable execution when the agent is constructed. Pass them to the agent constructor instead -- not to `run(toolsets=...)` or `override(toolsets=...)`, and not via a post-construction `@agent.toolset`. Non-executing toolsets like `ExternalToolset` can be passed at runtime."
         ),
     ):
         await simple_dbos_agent.run(
@@ -4215,9 +4218,7 @@ async def test_dbos_durability_rejects_runtime_mcp_toolset(dbos: DBOS) -> None:
             toolsets=[MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='runtime_mcp')],
         )
 
-    with pytest.raises(
-        UserError, match=r"MCPToolset 'runtime_mcp' cannot be passed to `run\(toolsets=\.\.\.\)` or `override"
-    ):
+    with pytest.raises(UserError, match=r"MCPToolset 'runtime_mcp' cannot be added at runtime with DBOS"):
         await run_agent()
 
 
@@ -4231,7 +4232,7 @@ def test_dbos_durability_rejects_runtime_dynamic_toolset_sync(dbos: DBOS) -> Non
 
     with pytest.raises(
         UserError,
-        match=r"DynamicToolset 'runtime_dynamic' cannot be passed to `run\(toolsets=\.\.\.\)` or `override",
+        match=r"DynamicToolset 'runtime_dynamic' cannot be added at runtime with DBOS",
     ):
         run_agent()
 
@@ -4253,9 +4254,7 @@ async def test_dbos_durability_rejects_runtime_mcp_toolset_in_iter(dbos: DBOS) -
             # Run setup raises before any node runs.
             pass  # pragma: no cover
 
-    with pytest.raises(
-        UserError, match=r"MCPToolset 'iter_mcp' cannot be passed to `run\(toolsets=\.\.\.\)` or `override"
-    ):
+    with pytest.raises(UserError, match=r"MCPToolset 'iter_mcp' cannot be added at runtime with DBOS"):
         await run_agent()
 
 
@@ -4316,7 +4315,7 @@ async def test_dbos_durability_rejects_overridden_executing_toolsets(dbos: DBOS,
         with agent.override(toolsets=[toolsets[kind]]):
             await agent.run('Hello')
 
-    with pytest.raises(UserError, match=r'cannot be passed to .*`override'):
+    with pytest.raises(UserError, match=r'cannot be added at runtime .*`override'):
         await run_agent()
 
 

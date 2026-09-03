@@ -39,8 +39,8 @@ from pydantic_ai.capabilities._merge import merge_capability_fields
 from pydantic_ai.capabilities._ordering import find_capability
 from pydantic_ai.capabilities.abstract import (
     AbstractCapability,
-    combine_duplicate_capabilities,
-    declares_default_id,
+    _combine_duplicate_capabilities,  # pyright: ignore[reportPrivateUsage]
+    _declares_default_id,  # pyright: ignore[reportPrivateUsage]
     leaf_capabilities,
 )
 from pydantic_ai.capabilities.combined import CombinedCapability
@@ -48,6 +48,7 @@ from pydantic_ai.capabilities.wrapper import WrapperCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import WebFetchTool, WebSearchTool, XSearchTool
 from pydantic_ai.toolsets import AbstractToolset
@@ -120,6 +121,7 @@ def _check_image_generation(merged: ImageGeneration) -> None:
 
 def _check_instrumentation(merged: Instrumentation) -> None:
     assert merged.settings is not None
+    assert merged.settings.include_content is False, 'a scalar takes the later value'
 
 
 _FIRST_EXECUTOR = ThreadPoolExecutor(1, 'first')
@@ -169,7 +171,10 @@ COMBINE_POLICY: dict[str, Policy] = {
     ),
     'Instrumentation': Combines(
         'an agent is instrumented one way',
-        lambda: (Instrumentation(), Instrumentation()),
+        lambda: (
+            Instrumentation(settings=InstrumentationSettings(include_content=True)),
+            Instrumentation(settings=InstrumentationSettings(include_content=False)),
+        ),
         _check_instrumentation,
     ),
     'ReinjectSystemPrompt': Combines(
@@ -282,14 +287,14 @@ def test_capability_combine_policy_holds(name: str) -> None:
 
     if isinstance(policy, Anonymous):
         # Anonymous capabilities declare no default id, so two never meet under one key. Read
-        # through `declares_default_id` rather than the class attribute directly, so this test
+        # through `_declares_default_id` rather than the class attribute directly, so this test
         # asks the same question the resolver does.
-        assert not declares_default_id(capability_type), (
+        assert not _declares_default_id(capability_type), (
             f'{name} is declared `Anonymous` but its instances carry a default id'
         )
         return
 
-    assert declares_default_id(capability_type), (
+    assert _declares_default_id(capability_type), (
         f'{name} is declared `Combines` but declares no default id, so two never meet'
     )
 
@@ -345,7 +350,7 @@ async def test_one_instance_registered_twice_survives_once() -> None:
     tree = CombinedCapability[Any]([shared, shared])
     assert len(leaf_capabilities(tree)) == 2
 
-    combined = combine_duplicate_capabilities(tree)
+    combined = _combine_duplicate_capabilities(tree, [[shared, shared]])
 
     leaves = leaf_capabilities(combined)
     assert [(type(leaf).__name__, leaf.id) for leaf in leaves] == [('Thinking', 'thinking')]
@@ -501,6 +506,61 @@ def test_collections_merge_as_unions() -> None:
     assert merged.labels == {'shared': 'second', 'only-first': 'x', 'only-second': 'y'}
 
 
+@dataclass(eq=False)
+class _Uncomparable:
+    """A value whose `__eq__` raises, the way an array-like refuses elementwise comparison."""
+
+    def __eq__(self, other: object) -> bool:
+        raise ValueError('comparison is not supported')
+
+
+@dataclass
+class _CarriesUncomparable(AbstractCapability[Any]):
+    """A capability one of whose fields holds values the merge cannot compare."""
+
+    value: _Uncomparable | None = None
+
+    _: KW_ONLY
+
+    id: str | None = 'uncomparable'
+
+    @classmethod
+    def combine(cls, capabilities: Sequence[AbstractCapability[Any]]) -> AbstractCapability[Any]:
+        return merge_capability_fields(capabilities)
+
+
+def test_a_plain_class_capability_cannot_silently_lose_its_configuration() -> None:
+    """A merge can only reconcile what dataclass fields declare, so invisible configuration is refused.
+
+    A plain class keeps its configuration in plain attributes: `merge_capability_fields` would see
+    no fields to reconcile, keep the last instance whole, and silently drop the rest. Raising turns
+    the silent loss into a decision: declare the configuration as fields, or override `combine`.
+    """
+
+    class Retries(AbstractCapability[Any]):
+        id: str | None = 'retries'
+
+        def __init__(self, limit: int) -> None:
+            self.limit = limit
+
+    with pytest.raises(UserError, match='outside dataclass fields'):
+        Retries.combine([Retries(1), Retries(9)])
+
+
+def test_a_field_whose_equality_raises_takes_the_later_value() -> None:
+    """Values that cannot be compared are not mergeable, so the later one wins.
+
+    `_same_value` treats an `__eq__` that raises as "different" rather than crashing the merge --
+    the same answer two stores or two clients already get.
+    """
+    first, second = _Uncomparable(), _Uncomparable()
+
+    merged = _CarriesUncomparable.combine([_CarriesUncomparable(value=first), _CarriesUncomparable(value=second)])
+
+    assert isinstance(merged, _CarriesUncomparable)
+    assert merged.value is second
+
+
 def test_find_capability_returns_the_first_match_in_the_tree() -> None:
     """`find_capability` searches leaves in tree order, which is not the same question `combine` asks.
 
@@ -593,9 +653,9 @@ async def test_two_native_capabilities_on_one_agent_merge_rather_than_collide() 
 def test_a_chain_of_wrappers_walks_its_subtree_once_per_level() -> None:
     """A wrapper asks what its subtree registers and then registers it, from one walk, not two.
 
-    `apply` used to call `_registers_wrapped_children` -- itself a full walk of the subtree --
-    and then walk that same subtree again to visit it. Two walks per level is `2 ** depth`
-    traversals for a chain of wrappers, so a stack of `prefix_tools()` calls over a container
+    `apply` used to walk the subtree once to ask what it registers and then walk that same
+    subtree again to visit it. Two walks per level is `2 ** depth` traversals for a chain of
+    wrappers, so a stack of `prefix_tools()` calls over a container
     stopped resolving in any reasonable time.
     """
     walks = 0
@@ -754,6 +814,62 @@ async def test_a_run_level_capability_replaces_the_agent_level_one_whole() -> No
     await agent.run('hi', capabilities=[WebSearch(allowed_domains=['run.example'])])
 
     assert seen == snapshot([[WebSearchTool(allowed_domains=['run.example'])]])
+
+
+async def test_a_session_level_instrumentation_supersedes_the_agent_level_one() -> None:
+    """Across the agent-to-session boundary the last one stated is selected, not combined.
+
+    Which capability's `include_content` governs exported content is a privacy decision, so the
+    session reads the settings the run would keep -- the last explicit `Instrumentation`, the same
+    precedence the tool spans get. Taking the first would drive the session and chat spans from
+    settings the effective configuration had already turned off.
+    """
+    from contextlib import AbstractAsyncContextManager
+
+    from pydantic_ai.models import ModelRequestParameters
+    from pydantic_ai.realtime import (
+        RealtimeModel,
+        RealtimeModelProfile,
+        RealtimeModelSettings,
+    )
+    from pydantic_ai.realtime.codec import RealtimeConnection
+
+    class _StubRealtimeModel(RealtimeModel):
+        """A `RealtimeModel` in name only: session resolution must never open a connection."""
+
+        @property
+        def model_name(self) -> str:
+            return 'stub_realtime'
+
+        @property
+        def system(self) -> str:
+            return 'stub-realtime'
+
+        @property
+        def name(self) -> str:
+            return 'stub_realtime'
+
+        @property
+        def profile(self) -> RealtimeModelProfile:
+            return RealtimeModelProfile()
+
+        def connect(
+            self,
+            *,
+            messages: Sequence[ModelMessage],
+            model_settings: RealtimeModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+        ) -> AbstractAsyncContextManager[RealtimeConnection]:  # pragma: no cover
+            raise AssertionError('session resolution must not open a connection')
+
+    agent = Agent(TestModel(), capabilities=[Instrumentation(settings=InstrumentationSettings(include_content=True))])
+    async with agent._resolve_realtime_session(  # pyright: ignore[reportPrivateUsage]
+        _StubRealtimeModel(),
+        capabilities=[Instrumentation(settings=InstrumentationSettings(include_content=False))],
+    ) as resolution:
+        assert resolution.instrumentation_settings is not None
+        assert resolution.instrumentation_settings.include_content is False, 'the session-level one wins'
+        assert resolution.run_context.trace_include_content is False
 
 
 async def test_two_capabilities_on_one_agent_merge_rather_than_override() -> None:

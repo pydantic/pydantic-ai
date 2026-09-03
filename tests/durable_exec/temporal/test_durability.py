@@ -3376,7 +3376,7 @@ async def test_durability_runtime_function_toolset_opt_out(allow_model_requests:
         with workflow_raises(
             UserError,
             snapshot(
-                "FunctionToolset 'runtime' cannot be passed to `run(toolsets=...)` or `override(toolsets=...)` at runtime with Temporal, because toolsets that execute their own tools or resolve dynamically must be registered for durable execution when the agent is constructed. Pass them to the agent constructor instead. Non-executing toolsets like `ExternalToolset` can be passed at runtime. Async tools that don't need durable wrapping can opt out with metadata={'temporal': False} to be allowed at runtime."
+                "FunctionToolset 'runtime' cannot be added at runtime with Temporal, because toolsets that execute their own tools or resolve dynamically must be registered for durable execution when the agent is constructed. Pass them to the agent constructor instead -- not to `run(toolsets=...)` or `override(toolsets=...)`, and not via a post-construction `@agent.toolset`. Non-executing toolsets like `ExternalToolset` can be passed at runtime. Async tools that don't need durable wrapping can opt out with metadata={'temporal': False} to be allowed at runtime."
             ),
         ):
             await client.execute_workflow(
@@ -3410,7 +3410,7 @@ async def test_durability_rejects_runtime_executing_toolsets_in_workflow(allow_m
         with workflow_raises(
             UserError,
             snapshot(
-                "FunctionToolset cannot be passed to `run(toolsets=...)` or `override(toolsets=...)` at runtime with Temporal, because toolsets that execute their own tools or resolve dynamically must be registered for durable execution when the agent is constructed. Pass them to the agent constructor instead. Non-executing toolsets like `ExternalToolset` can be passed at runtime. Async tools that don't need durable wrapping can opt out with metadata={'temporal': False} to be allowed at runtime."
+                "FunctionToolset cannot be added at runtime with Temporal, because toolsets that execute their own tools or resolve dynamically must be registered for durable execution when the agent is constructed. Pass them to the agent constructor instead -- not to `run(toolsets=...)` or `override(toolsets=...)`, and not via a post-construction `@agent.toolset`. Non-executing toolsets like `ExternalToolset` can be passed at runtime. Async tools that don't need durable wrapping can opt out with metadata={'temporal': False} to be allowed at runtime."
             ),
         ):
             await client.execute_workflow(
@@ -3444,12 +3444,13 @@ async def test_durability_rejects_overridden_executing_toolsets_in_workflow(clie
     ):
         labels = {'function': 'FunctionToolset', 'mcp': 'MCPToolset', 'dynamic': 'DynamicToolset'}
         message = (
-            f"{labels[kind]} 'override_{'fn' if kind == 'function' else kind}' cannot be passed to "
-            '`run(toolsets=...)` or `override(toolsets=...)` at runtime with Temporal, because toolsets that '
-            'execute their own tools or resolve dynamically must be registered for durable execution when the '
-            'agent is constructed. Pass them to the agent constructor instead. Non-executing toolsets like '
-            "`ExternalToolset` can be passed at runtime. Async tools that don't need durable wrapping can opt "
-            "out with metadata={'temporal': False} to be allowed at runtime."
+            f"{labels[kind]} 'override_{'fn' if kind == 'function' else kind}' cannot be added at runtime with "
+            'Temporal, because toolsets that execute their own tools or resolve dynamically must be registered '
+            'for durable execution when the agent is constructed. Pass them to the agent constructor instead -- '
+            'not to `run(toolsets=...)` or `override(toolsets=...)`, and not via a post-construction '
+            '`@agent.toolset`. Non-executing toolsets like `ExternalToolset` can be passed at runtime. Async '
+            "tools that don't need durable wrapping can opt out with metadata={'temporal': False} to be "
+            'allowed at runtime.'
         )
         with workflow_raises(UserError, message):
             await client.execute_workflow(
@@ -3503,6 +3504,55 @@ async def test_durability_rejects_runtime_toolset_reusing_registered_id(client: 
                 DurabilityCollidingRuntimeToolsetIdWorkflow.run,
                 args=[override],
                 id=f'{DurabilityCollidingRuntimeToolsetIdWorkflow.__name__}-{override}',
+                task_queue=TASK_QUEUE,
+            )
+
+
+_late_decorator_agent = Agent(
+    _durability_fn_model,
+    name='durability_late_decorator_agent',
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class DurabilityLateDecoratorToolsetWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        @_late_decorator_agent.toolset(id='late_decorator')
+        def late_toolset(ctx: RunContext[object]) -> FunctionToolset[object]:
+            return FunctionToolset[object]()  # pragma: no cover
+
+        result = await _late_decorator_agent.run(prompt)
+        return result.output  # pragma: no cover
+
+
+async def test_durability_rejects_decorator_toolset_in_workflow(client: Client):
+    """A `@agent.toolset` registered after the capability bound is rejected inside a workflow.
+
+    The decorator lands in `agent.toolsets` only, so the runtime-toolset guard must subtract the
+    agent's *construction* toolsets to catch it: reading the wrong list would wave the
+    never-registered toolset through, and its tool calls would run undurably in workflow code.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DurabilityLateDecoratorToolsetWorkflow],
+        plugins=[AgentPlugin(_late_decorator_agent)],
+    ):
+        message = (
+            "DynamicToolset 'late_decorator' cannot be added at runtime with Temporal, because toolsets that "
+            'execute their own tools or resolve dynamically must be registered for durable execution when the '
+            'agent is constructed. Pass them to the agent constructor instead -- not to `run(toolsets=...)` or '
+            '`override(toolsets=...)`, and not via a post-construction `@agent.toolset`. Non-executing '
+            "toolsets like `ExternalToolset` can be passed at runtime. Async tools that don't need durable "
+            "wrapping can opt out with metadata={'temporal': False} to be allowed at runtime."
+        )
+        with workflow_raises(UserError, message):
+            await client.execute_workflow(
+                DurabilityLateDecoratorToolsetWorkflow.run,
+                args=['Hello'],
+                id=DurabilityLateDecoratorToolsetWorkflow.__name__,
                 task_queue=TASK_QUEUE,
             )
 

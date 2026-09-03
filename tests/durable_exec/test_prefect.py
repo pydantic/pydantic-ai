@@ -1500,35 +1500,35 @@ RUNTIME_TOOLSET_REJECTION_CASES = [
         id='multiple-named',
         toolsets=(FunctionToolset(id='search-tools'), FunctionToolset(id='billing-tools')),
         expected=snapshot(
-            "FunctionToolset 'search-tools', FunctionToolset 'billing-tools' cannot be passed to `run(toolsets=...)` or `override(toolsets=...)` at runtime with Prefect, because toolsets that execute their own tools or resolve dynamically must be registered for durable execution when the agent is constructed. Pass them to the agent constructor instead. Non-executing toolsets like `ExternalToolset` can be passed at runtime. Async tools that don't need durable wrapping can opt out with metadata={'prefect': False} to be allowed at runtime."
+            "FunctionToolset 'search-tools', FunctionToolset 'billing-tools' cannot be added at runtime with Prefect, because toolsets that execute their own tools or resolve dynamically must be registered for durable execution when the agent is constructed. Pass them to the agent constructor instead -- not to `run(toolsets=...)` or `override(toolsets=...)`, and not via a post-construction `@agent.toolset`. Non-executing toolsets like `ExternalToolset` can be passed at runtime. Async tools that don't need durable wrapping can opt out with metadata={'prefect': False} to be allowed at runtime."
         ),
     ),
     RuntimeToolsetRejectionCase(
         id='anonymous',
         toolsets=(FunctionToolset(),),
         expected=snapshot(
-            "FunctionToolset cannot be passed to `run(toolsets=...)` or `override(toolsets=...)` at runtime with Prefect, because toolsets that execute their own tools or resolve dynamically must be registered for durable execution when the agent is constructed. Pass them to the agent constructor instead. Non-executing toolsets like `ExternalToolset` can be passed at runtime. Async tools that don't need durable wrapping can opt out with metadata={'prefect': False} to be allowed at runtime."
+            "FunctionToolset cannot be added at runtime with Prefect, because toolsets that execute their own tools or resolve dynamically must be registered for durable execution when the agent is constructed. Pass them to the agent constructor instead -- not to `run(toolsets=...)` or `override(toolsets=...)`, and not via a post-construction `@agent.toolset`. Non-executing toolsets like `ExternalToolset` can be passed at runtime. Async tools that don't need durable wrapping can opt out with metadata={'prefect': False} to be allowed at runtime."
         ),
     ),
     RuntimeToolsetRejectionCase(
         id='anonymous-mcp',
         toolsets=(MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server'])),),
         expected=snapshot(
-            "MCPToolset cannot be passed to `run(toolsets=...)` or `override(toolsets=...)` at runtime with Prefect, because toolsets that execute their own tools or resolve dynamically must be registered for durable execution when the agent is constructed. Pass them to the agent constructor instead. Non-executing toolsets like `ExternalToolset` can be passed at runtime. Async tools that don't need durable wrapping can opt out with metadata={'prefect': False} to be allowed at runtime."
+            "MCPToolset cannot be added at runtime with Prefect, because toolsets that execute their own tools or resolve dynamically must be registered for durable execution when the agent is constructed. Pass them to the agent constructor instead -- not to `run(toolsets=...)` or `override(toolsets=...)`, and not via a post-construction `@agent.toolset`. Non-executing toolsets like `ExternalToolset` can be passed at runtime. Async tools that don't need durable wrapping can opt out with metadata={'prefect': False} to be allowed at runtime."
         ),
     ),
     RuntimeToolsetRejectionCase(
         id='anonymous-custom-mcp',
         toolsets=(CustomLabelMCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server'])),),
         expected=snapshot(
-            "custom MCP toolset cannot be passed to `run(toolsets=...)` or `override(toolsets=...)` at runtime with Prefect, because toolsets that execute their own tools or resolve dynamically must be registered for durable execution when the agent is constructed. Pass them to the agent constructor instead. Non-executing toolsets like `ExternalToolset` can be passed at runtime. Async tools that don't need durable wrapping can opt out with metadata={'prefect': False} to be allowed at runtime."
+            "custom MCP toolset cannot be added at runtime with Prefect, because toolsets that execute their own tools or resolve dynamically must be registered for durable execution when the agent is constructed. Pass them to the agent constructor instead -- not to `run(toolsets=...)` or `override(toolsets=...)`, and not via a post-construction `@agent.toolset`. Non-executing toolsets like `ExternalToolset` can be passed at runtime. Async tools that don't need durable wrapping can opt out with metadata={'prefect': False} to be allowed at runtime."
         ),
     ),
     RuntimeToolsetRejectionCase(
         id='mixed-custom-and-anonymous',
         toolsets=(CustomLabelFunctionToolset(id='named'), FunctionToolset()),
         expected=snapshot(
-            "custom function toolset 'named', FunctionToolset cannot be passed to `run(toolsets=...)` or `override(toolsets=...)` at runtime with Prefect, because toolsets that execute their own tools or resolve dynamically must be registered for durable execution when the agent is constructed. Pass them to the agent constructor instead. Non-executing toolsets like `ExternalToolset` can be passed at runtime. Async tools that don't need durable wrapping can opt out with metadata={'prefect': False} to be allowed at runtime."
+            "custom function toolset 'named', FunctionToolset cannot be added at runtime with Prefect, because toolsets that execute their own tools or resolve dynamically must be registered for durable execution when the agent is constructed. Pass them to the agent constructor instead -- not to `run(toolsets=...)` or `override(toolsets=...)`, and not via a post-construction `@agent.toolset`. Non-executing toolsets like `ExternalToolset` can be passed at runtime. Async tools that don't need durable wrapping can opt out with metadata={'prefect': False} to be allowed at runtime."
         ),
     ),
 ]
@@ -1559,7 +1559,7 @@ async def test_prefect_agent_run_rejects_executing_runtime_toolsets(kind: str) -
     labels = {'function': 'FunctionToolset', 'mcp': 'MCPToolset', 'dynamic': 'DynamicToolset'}
 
     prefect_agent = PrefectAgent(Agent(TestModel(), name=f'reject_{kind}_prefect_agent'))  # pyright: ignore[reportDeprecated]
-    with pytest.raises(UserError, match=f'{labels[kind]} .*cannot be passed to '):
+    with pytest.raises(UserError, match=f'{labels[kind]} .*cannot be added at runtime with '):
         await prefect_agent.run('Hello', toolsets=[toolset_factories[kind]()])
 
 
@@ -2898,7 +2898,7 @@ async def test_prefect_durability_rejects_executing_runtime_toolsets(kind: str) 
     async def run_agent() -> None:
         await agent.run('Hello', toolsets=[toolset_factories[kind]()])
 
-    with pytest.raises(UserError, match=f'{labels[kind]} .*cannot be passed to '):
+    with pytest.raises(UserError, match=f'{labels[kind]} .*cannot be added at runtime with '):
         await run_agent()
 
 
@@ -2975,7 +2975,7 @@ async def test_prefect_durability_rejects_runtime_toolset_in_iter() -> None:
             # Run setup raises before any node runs.
             pass  # pragma: no cover
 
-    with pytest.raises(UserError, match=r'FunctionToolset .*cannot be passed to '):
+    with pytest.raises(UserError, match=r'FunctionToolset .*cannot be added at runtime with '):
         await run_agent()
 
 
@@ -3049,7 +3049,7 @@ async def test_prefect_durability_rejects_overridden_executing_toolsets(kind: st
         with agent.override(toolsets=[toolsets[kind]]):
             await agent.run('Hello')
 
-    with pytest.raises(UserError, match=r'cannot be passed to .*`override'):
+    with pytest.raises(UserError, match=r'cannot be added at runtime .*`override'):
         await run_agent()
 
 

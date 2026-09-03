@@ -12,6 +12,7 @@ from collections.abc import Mapping, Sequence, Set as AbstractSet
 from typing import TYPE_CHECKING, Any, cast
 
 from pydantic_ai._utils import replace_no_init
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT
 
 if TYPE_CHECKING:
@@ -51,8 +52,25 @@ def merge_capability_fields(
     stores, two clients) likewise take the later. A capability that needs either reconciled — or
     needs a numeric budget to take the *smaller* value rather than the later one — overrides
     `combine` itself.
+
+    Configuration outside those fields is a harder limit: a plain class keeps its state in plain
+    attributes the fields never declare, so this refuses rather than silently keep only the last
+    instance's. Such a class declares its configuration as dataclass fields, or overrides `combine`.
     """
     merged = capabilities[-1]
+    field_names = {field.name for field in dataclasses.fields(merged)}
+    for capability in capabilities:
+        # Configuration no field declares (a plain class keeping its state in plain attributes)
+        # cannot be merged, so refuse rather than silently keep only the last instance's.
+        invisible = {name for name in vars(capability) if not name.startswith('_')} - field_names
+        if invisible:
+            cls_name = type(merged).__name__
+            raise UserError(
+                f'Capability id {merged.id!r} is used by multiple {cls_name} capabilities, but {cls_name} '
+                f'stores {", ".join(sorted(invisible))} outside dataclass fields, where the merge cannot see '
+                'it -- one instance would silently win and the rest would be dropped. Declare the '
+                'configuration as dataclass fields, or override `combine` to merge it yourself.'
+            )
     changes: dict[str, Any] = {}
     for field in dataclasses.fields(merged):
         if not field.compare:
@@ -116,6 +134,6 @@ def _same_value(left: Any, right: Any) -> bool:
         return True
     try:
         return bool(left == right)
-    except Exception:  # pragma: no cover
+    except Exception:
         # A field whose `__eq__` raises (e.g. an array-like) is not something we can merge.
         return False

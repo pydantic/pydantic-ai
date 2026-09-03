@@ -23,8 +23,9 @@ from typing_extensions import Self
 from pydantic_ai import FunctionToolset, ToolsetTool
 from pydantic_ai._run_context import set_current_run_context
 from pydantic_ai._utils import aclose_if_supported, get_union_args
-from pydantic_ai.agent import EventStreamHandler
+from pydantic_ai.agent import Agent, EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
+from pydantic_ai.agent.wrapper import WrapperAgent
 from pydantic_ai.capabilities import ProcessEventStream
 from pydantic_ai.capabilities.abstract import (
     AbstractCapability,
@@ -134,9 +135,6 @@ def construction_toolsets(agent: AbstractAgent[AgentDepsT, Any]) -> Sequence[Abs
     implementation would have to answer. An agent that supports no post-construction additions has
     nothing to subtract, which is what its `toolsets` already reports.
     """
-    from pydantic_ai.agent import Agent
-    from pydantic_ai.agent.wrapper import WrapperAgent
-
     if isinstance(agent, WrapperAgent):
         return construction_toolsets(agent.wrapped)
     if isinstance(agent, Agent):

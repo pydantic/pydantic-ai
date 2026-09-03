@@ -46,6 +46,7 @@ from pydantic_ai import (
     RetryPromptPart,
     RunContext,
     SystemPromptPart,
+    TemplateStr,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -66,7 +67,7 @@ from pydantic_ai._output import (
     PromptedOutput,
     TextOutput,
 )
-from pydantic_ai.agent import AbstractAgent, AgentRunResult, WrapperAgent
+from pydantic_ai.agent import AbstractAgent, AgentRunResult, EventStreamHandler, WrapperAgent
 from pydantic_ai.capabilities import (
     AbstractCapability,
     Hooks,
@@ -80,7 +81,7 @@ from pydantic_ai.capabilities import (
 from pydantic_ai.durable_exec._base import construction_toolsets
 from pydantic_ai.exceptions import ContentFilterError
 from pydantic_ai.messages import AgentStreamEvent, FunctionToolResultEvent, ModelResponseStreamEvent
-from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
+from pydantic_ai.models import KnownModelName, Model, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
@@ -9520,23 +9521,23 @@ class _ToolsetOnlyAgent(AbstractAgent[None, str]):
         return self._toolsets
 
     @property
-    def model(self) -> Any:
+    def model(self) -> Model | KnownModelName | str | None:
         raise NotImplementedError
 
     @property
-    def name(self) -> Any:
+    def name(self) -> str | None:
         raise NotImplementedError
 
     @name.setter
-    def name(self, value: Any) -> None:
+    def name(self, value: str | None) -> None:
         raise NotImplementedError
 
     @property
-    def description(self) -> Any:
+    def description(self) -> str | None:
         raise NotImplementedError
 
     @description.setter
-    def description(self, value: Any) -> None:
+    def description(self, value: TemplateStr[None] | str | None) -> None:
         raise NotImplementedError
 
     @property
@@ -9548,7 +9549,7 @@ class _ToolsetOnlyAgent(AbstractAgent[None, str]):
         raise NotImplementedError
 
     @property
-    def event_stream_handler(self) -> Any:
+    def event_stream_handler(self) -> EventStreamHandler[None] | None:
         raise NotImplementedError
 
     def iter(self, *args: Any, **kwargs: Any) -> Any:
@@ -9571,8 +9572,12 @@ def test_construction_toolsets_ignores_overrides():
     when the capability bound — from ones that arrive later and were never wrapped. `toolsets`
     can't serve that purpose because it includes decorator registrations and returns the *overridden*
     list while an override is in scope.
-    Not reachable through the public API: the distinction only shows up inside a workflow or flow,
-    where `test_temporal.py`/`test_dbos.py`/`test_prefect.py` cover it end to end.
+    Not reachable through the public API on a plain `Agent`: the distinction only matters inside a
+    workflow or flow. This unit test pins the list arithmetic itself: what `override` and a
+    `@agent.toolset` each do to the two lists, wrapper unwrapping, and the plain-`AbstractAgent`
+    fallback. The end-to-end rejection they enable there is covered by the durability corpora:
+    `tests/durable_exec/temporal/test_durability.py`, `tests/durable_exec/test_dbos.py`, and
+    `tests/durable_exec/test_prefect.py`.
     """
     registered = FunctionToolset(id='registered')
     agent = Agent('test', toolsets=[registered])

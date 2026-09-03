@@ -87,32 +87,15 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
 
     def apply(self, visitor: Callable[[AbstractCapability[AgentDepsT]], None]) -> None:
         visitor(self)
-        # Collected once and replayed rather than asking `_registers_wrapped_children` and then
-        # walking the subtree again: two walks per level turns a chain of `n` wrappers into
-        # `2**n` traversals, so a stack of `prefix_tools()` calls stops resolving in any
-        # reasonable time. One walk per level keeps the cost of the chain linear in its depth.
+        # Collected once and replayed rather than walking the subtree twice: two walks per level
+        # turns a chain of `n` wrappers into `2**n` traversals, so a stack of `prefix_tools()`
+        # calls stops resolving in any reasonable time. One walk per level keeps the cost of the
+        # chain linear in its depth.
         wrapped_capabilities: list[AbstractCapability[AgentDepsT]] = []
         self.wrapped.apply(wrapped_capabilities.append)
         if _registers_children(self.wrapped, wrapped_capabilities):
             for capability in wrapped_capabilities:
                 visitor(capability)
-
-    @property
-    def _registers_wrapped_children(self) -> bool:
-        """Whether the wrapped subtree contributes capabilities of its own beyond this wrapper.
-
-        A wrapper over a leaf capability is the registered proxy for that leaf. A wrapper
-        over a container still needs the container's leaves registered for child-owned hooks
-        and toolsets to resolve their capability ids.
-
-        Recomputed on every access rather than cached: `replace_no_init` carries subclass state
-        onto the rebound copy verbatim, so a cached answer would outlive the `wrapped` it was
-        computed for -- and a rebind is exactly when the answer can change, e.g. a
-        `DynamicCapability` leaf resolving into a container.
-        """
-        wrapped_capabilities: list[AbstractCapability[AgentDepsT]] = []
-        self.wrapped.apply(wrapped_capabilities.append)
-        return _registers_children(self.wrapped, wrapped_capabilities)
 
     def visit_and_replace(
         self, visitor: Callable[[AbstractCapability[AgentDepsT]], AbstractCapability[AgentDepsT] | None]
@@ -129,7 +112,11 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
             # The wrapper is what's registered for the subtree, so replacing or removing it takes
             # the subtree with it — visiting children the caller just discarded would be pointless.
             return replacement
-        if not self._registers_wrapped_children:
+        # A wrapper over a leaf capability is the registered proxy for that leaf: if the wrapped
+        # subtree registers nothing of its own, there is nothing beneath this wrapper to visit.
+        wrapped_capabilities: list[AbstractCapability[AgentDepsT]] = []
+        self.wrapped.apply(wrapped_capabilities.append)
+        if not _registers_children(self.wrapped, wrapped_capabilities):
             return self
         new_wrapped = self.wrapped.visit_and_replace(visitor)
         if new_wrapped is None:

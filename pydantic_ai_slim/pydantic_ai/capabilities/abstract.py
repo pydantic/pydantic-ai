@@ -1375,9 +1375,9 @@ def leaf_capabilities(capability: AbstractCapability[AgentDepsT]) -> list[Abstra
     return leaves
 
 
-def combine_duplicate_capabilities(
+def _combine_duplicate_capabilities(  # pyright: ignore[reportUnusedFunction]
     capability: AbstractCapability[AgentDepsT],
-    layers: Sequence[Sequence[AbstractCapability[AgentDepsT]]] | None = None,
+    layers: Sequence[Sequence[AbstractCapability[AgentDepsT]]],
 ) -> AbstractCapability[AgentDepsT]:
     """Resolve capabilities sharing an `id` in a tree down to one each.
 
@@ -1413,10 +1413,8 @@ def combine_duplicate_capabilities(
     composed tree cannot answer either question: `CombinedCapability` sorts its leaves into ordering
     tiers, so a capability supplied later but positioned `'outermost'` moves ahead of one supplied
     earlier, and reading "last" off the tree would turn a run-level override into the agent-level
-    capability winning. Omit it only where everything belongs to one layer.
+    capability winning.
     """
-    if layers is None:
-        layers = [[capability]]
     order: dict[int, int] = {}
     layer_of: dict[int, int] = {}
     position = 0
@@ -1452,7 +1450,13 @@ def combine_duplicate_capabilities(
         # layer mean -- and with a single survivor there is nothing to settle, so it isn't called.
         last_layer = max(layer_of.get(id(duplicate), 0) for duplicate in duplicates)
         surviving = [duplicate for duplicate in duplicates if layer_of.get(id(duplicate), 0) == last_layer]
-        combined_duplicate = _combine_duplicates(capability_id, surviving) if len(surviving) > 1 else surviving[-1]
+        # With a single survivor there is nothing to settle, so `combine` isn't called.
+        combined_duplicate = surviving[-1]
+        if len(surviving) > 1:
+            _reject_class_crossing_id(capability_id, {type(duplicate) for duplicate in duplicates})
+            if not _declares_default_id(type(combined_duplicate)):
+                raise UserError(_repeated_id_message(capability_id))
+            combined_duplicate = combined_duplicate.combine(surviving)
         for index, duplicate in enumerate(duplicates):
             is_last = index == len(duplicates) - 1
             replacements.setdefault(id(duplicate), []).append(combined_duplicate if is_last else None)
@@ -1472,28 +1476,19 @@ def combine_duplicate_capabilities(
     return combined
 
 
-def _combine_duplicates(
-    capability_id: str, duplicates: Sequence[AbstractCapability[AgentDepsT]]
-) -> AbstractCapability[AgentDepsT]:
-    """Ask the shared class how its instances compose, or reject an `id` no class claims."""
-    reject_class_crossing_id(capability_id, {type(duplicate) for duplicate in duplicates})
-    if not declares_default_id(type(duplicates[-1])):
-        raise UserError(repeated_id_message(capability_id))
-    return duplicates[-1].combine(duplicates)
-
-
-def repeated_id_message(capability_id: str) -> str:
+def _repeated_id_message(capability_id: str) -> str:
     """Why an `id` the user chose for two capabilities cannot resolve to one.
 
     Shared by `Agent(...)` validation and the run's own resolution so the two report it the same
     way, whichever notices first.
     """
     return (
-        f'Capability id {capability_id!r} is used by multiple capabilities. Capability ids must be unique within a run.'
+        f'Capability id {capability_id!r} is used by multiple capabilities. '
+        'Ids identify one capability within a run, so give each a distinct `id`.'
     )
 
 
-def declares_default_id(capability_type: type[AbstractCapability[Any]]) -> bool:
+def _declares_default_id(capability_type: type[AbstractCapability[Any]]) -> bool:
     """Whether the class itself names the `id` its instances carry, rather than the user.
 
     A default `id` is a class saying "an agent has one of me", which is what makes a repeat
@@ -1508,7 +1503,7 @@ def declares_default_id(capability_type: type[AbstractCapability[Any]]) -> bool:
     return getattr(capability_type, 'id', None) is not None
 
 
-def reject_class_crossing_id(capability_id: str, types: Collection[type[AbstractCapability[Any]]]) -> None:
+def _reject_class_crossing_id(capability_id: str, types: Collection[type[AbstractCapability[Any]]]) -> None:
     """Reject an `id` two different capability classes both claim.
 
     No class can be asked to combine another's instances, so a shared id across classes is never

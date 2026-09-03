@@ -5,7 +5,7 @@ from __future__ import annotations
 import warnings
 from collections.abc import Awaitable, Callable
 from dataclasses import KW_ONLY, dataclass, field, replace
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from opentelemetry.baggage import set_baggage as _otel_set_baggage
 from opentelemetry.context import attach as _otel_attach, detach as _otel_detach
@@ -126,11 +126,20 @@ class Instrumentation(AbstractCapability[Any]):
         return CapabilityOrdering(position='outermost')
 
     @classmethod
-    def from_spec(cls, **kwargs: Any) -> Instrumentation:
+    def from_spec(
+        cls,
+        *,
+        id: str | None = 'instrumentation',
+        include_binary_content: bool = True,
+        include_content: bool = True,
+        version: Literal[2, 3, 4, 5, 6] = DEFAULT_INSTRUMENTATION_VERSION,
+        use_aggregated_usage_attribute_names: bool = True,
+    ) -> Instrumentation:
         """Build an `Instrumentation` capability from a YAML/JSON spec.
 
-        Accepts the serializable subset of [`InstrumentationSettings`][pydantic_ai.models.instrumented.InstrumentationSettings]
-        kwargs (`include_binary_content`, `include_content`, `version`,
+        Accepts an optional `id` plus the serializable subset of
+        [`InstrumentationSettings`][pydantic_ai.models.instrumented.InstrumentationSettings]
+        options (`include_binary_content`, `include_content`, `version`,
         `use_aggregated_usage_attribute_names`). The OTel `tracer_provider` and `meter_provider`
         fields can't be expressed in YAML and default to the global providers (typically configured
         via `logfire.configure()`).
@@ -140,12 +149,21 @@ class Instrumentation(AbstractCapability[Any]):
             capabilities:
               - Instrumentation: {}                # default settings
               - Instrumentation:
+                  id: monitoring                   # optional; defaults to 'instrumentation'
                   version: 2
                   include_content: false
         """
         from pydantic_ai.models.instrumented import InstrumentationSettings
 
-        return cls(settings=InstrumentationSettings(**kwargs))
+        return cls(
+            id=id,
+            settings=InstrumentationSettings(
+                include_binary_content=include_binary_content,
+                include_content=include_content,
+                version=version,
+                use_aggregated_usage_attribute_names=use_aggregated_usage_attribute_names,
+            ),
+        )
 
     async def for_run(self, ctx: RunContext[Any]) -> Instrumentation:
         """Return a fresh copy for per-run state isolation."""
