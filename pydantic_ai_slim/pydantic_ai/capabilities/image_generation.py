@@ -109,6 +109,13 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
     Supported by: Google (Gemini), OpenAI Responses (maps `'1:1'`, `'2:3'`, `'3:2'` to sizes).
     """
 
+    id: str | None = 'image_generation'
+    """One-off: an agent searches, fetches or generates one way, so the id is fixed.
+
+    Declared here rather than only as an `__init__` default so the class states it where
+    `_declares_default_id` -- and a reader -- can see it.
+    """
+
     def __init__(
         self,
         *,
@@ -131,18 +138,13 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         quality: Literal['low', 'medium', 'high', 'auto'] | None = None,
         size: Literal['auto', '1024x1024', '1024x1536', '1536x1024', '512', '1K', '2K', '4K'] | None = None,
         aspect_ratio: ImageAspectRatio | None = None,
-        id: str | None = None,
+        id: str | None = 'image_generation',
         defer_loading: bool = False,
         description: str | None = None,
     ) -> None:
         self.id = id
         self.description = description
         self.defer_loading = defer_loading
-        if fallback_model is not None and local is not None:
-            raise UserError(
-                'ImageGeneration: cannot specify both `fallback_model` and `local` — '
-                'use `fallback_model` for the default subagent fallback, or `local` for a custom tool'
-            )
         self.native = native
         self.local = local
         self.fallback_model = fallback_model
@@ -157,6 +159,19 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         self.size = size
         self.aspect_ratio = aspect_ratio
         self.__post_init__()
+
+    def __post_init__(self) -> None:
+        # Checked here rather than in `__init__` so a merge is held to it too: `combine` can pair
+        # one instance's `fallback_model` with another's `local`, which no constructor accepts, and
+        # the local tool would then take effect with `fallback_model` silently ignored. Runs before
+        # the base resolves `local`, so it reads what was declared rather than what was
+        # materialized.
+        if self.fallback_model is not None and self.local is not None:
+            raise UserError(
+                'ImageGeneration: cannot specify both `fallback_model` and `local` — '
+                'use `fallback_model` for the default subagent fallback, or `local` for a custom tool'
+            )
+        super().__post_init__()
 
     def _image_gen_kwargs(self) -> dict[str, Any]:
         """Collect non-None ImageGenerationTool config fields."""
