@@ -18,6 +18,7 @@ from ..._uuid import uuid7
 from ...exceptions import RunCancelled
 from ...messages import (
     CompactionPart,
+    CustomEvent,
     FunctionToolResultEvent,
     NativeToolCallPart,
     NativeToolReturnPart,
@@ -58,6 +59,7 @@ from ._utils import (
 try:
     from ag_ui.core import (
         BaseEvent,
+        CustomEvent as AGUICustomEvent,
         EventType,
         RunAgentInput,
         RunErrorEvent,
@@ -293,7 +295,7 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         self._reasoning_started = False
 
         if self._use_reasoning:
-            from ._thinking_0_13 import handle_thinking_start as _impl
+            from ._thinking_0_11 import handle_thinking_start as _impl
         else:
             from ._thinking_0_10 import handle_thinking_start as _impl
         async for event in _impl(self, part):
@@ -308,7 +310,7 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         )
 
         if self._use_reasoning:
-            from ._thinking_0_13 import handle_thinking_delta as _impl
+            from ._thinking_0_11 import handle_thinking_delta as _impl
         else:
             from ._thinking_0_10 import handle_thinking_delta as _impl
         async for event in _impl(self, delta):
@@ -320,7 +322,7 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         assert self._reasoning_message_id is not None, 'handle_thinking_start must be called before handle_thinking_end'
 
         if self._use_reasoning:
-            from ._thinking_0_13 import handle_thinking_end as _impl
+            from ._thinking_0_11 import handle_thinking_end as _impl
         else:
             from ._thinking_0_10 import handle_thinking_end as _impl
         async for event in _impl(self, part):
@@ -359,7 +361,7 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         )
         if self._use_reasoning and (encrypted_value := tool_kind_encrypted_value(part.tool_kind)):
             # Clients echo this back as `ToolCall.encrypted_value`, so `tool_kind` survives
-            # streaming-built histories. The event is 0.1.13+, hence the gated import.
+            # streaming-built histories. The event is 0.1.11+, hence the gated import.
             from ag_ui.core import ReasoningEncryptedValueEvent
 
             yield ReasoningEncryptedValueEvent(
@@ -440,6 +442,18 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
     async def handle_output_tool_result(self, event: OutputToolResultEvent) -> AsyncIterator[BaseEvent]:
         async for e in self._handle_tool_result(event.part):
             yield e
+
+    async def handle_custom_event(self, event: CustomEvent) -> AsyncIterator[BaseEvent]:
+        # An `ag_ui.core.BaseEvent` payload is passed through verbatim, mirroring the tool-return metadata passthrough.
+        payload = event.to_payload()
+        if isinstance(payload, BaseEvent):
+            yield payload
+        else:
+            # The value is always the bare payload, whether or not the event is tool-scoped: a
+            # frontend written against one shape must not break when the same event class is later
+            # emitted from inside a tool. An event that wants its attribution on the wire includes
+            # it by overriding `to_payload`.
+            yield AGUICustomEvent(name=event.name, value=payload)
 
     async def _handle_tool_result(self, result: ToolReturnPart | RetryPromptPart) -> AsyncIterator[BaseEvent]:
         if isinstance(result, RetryPromptPart):

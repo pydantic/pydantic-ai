@@ -895,7 +895,7 @@ async def test_sandbox_lifecycle_brackets_the_run(run_mode: str) -> None:
     ]
 
 
-async def test_duplicate_per_run_supplier_ids_fail_and_release():
+async def test_duplicate_per_run_capability_ids_fail_and_release():
     creator = LifecycleSandboxCapability()
     creator.id = 'duplicate'
     decliner = DecliningSandboxCapability()

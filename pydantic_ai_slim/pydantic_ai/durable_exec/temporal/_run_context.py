@@ -4,17 +4,18 @@ import sys
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, overload
 
 import anyio
 from pydantic import TypeAdapter
 from typing_extensions import TypeVar
 
-from pydantic_ai._run_context import AnchoredEvidence
+from pydantic_ai._run_context import AnchoredEvidence, CapabilityEventT, CustomEventT
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.capabilities._sandbox import resolve_sandbox_ref
 from pydantic_ai.durable_exec._toolset import EnqueueGuard, enqueue_not_supported_message
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.messages import CapabilityEvent, CustomEvent
 from pydantic_ai.sandboxes import Sandbox, SandboxRef, UnavailableSandbox
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage, UsageLimits
@@ -223,6 +224,32 @@ class TemporalRunContext(RunContext[AgentDepsT]):
             return snapshot
         return super()._deferred_capability_ids
 
+    @overload
+    async def emit(self, event: CustomEventT, /) -> CustomEventT: ...
+
+    @overload
+    async def emit(self, event: CapabilityEventT, /) -> CapabilityEventT: ...
+
+    async def emit(self, event: CustomEvent | CapabilityEvent, /) -> CustomEvent | CapabilityEvent:
+        """Reject `emit` from inside a Temporal activity.
+
+        Tools and event stream handlers run inside activities where the run's event stream isn't
+        reachable, so events emitted there can't currently flow back into the stream; raising beats
+        silently dropping them. This covers a capability's own tools emitting a `CapabilityEvent`,
+        which run in activities like any other tool. Events emitted workflow-side (e.g. from
+        capability hooks) work as usual.
+
+        Lifting this needs a transport from the activity back to the workflow and a decision on what
+        a retried attempt's events mean; tracked in https://github.com/pydantic/pydantic-ai/issues/7971.
+        """
+        raise UserError(
+            'Emitting events from a tool or event stream handler is not supported under Temporal yet, as '
+            'they run inside activities that cannot reach the run event stream. This includes a capability '
+            'emitting a `CapabilityEvent` from one of its own tools. Emit events from capability hooks, '
+            'which run in the workflow, instead. Tracked in '
+            'https://github.com/pydantic/pydantic-ai/issues/7971.'
+        )
+
     @classmethod
     def serialize_run_context(cls, ctx: RunContext[Any]) -> dict[str, Any]:
         """Serialize the run context to a `dict[str, Any]`."""
@@ -326,13 +353,14 @@ def _restore_sandbox(
             sandbox_id=sandbox_id,
             capability_id=capability_id if isinstance(capability_id, str) else None,
         )
+        # The worker's capability tree is the connection registry: the capability that can
+        # resolve the ref exists on the agent this worker constructed, credentials included.
         if agent is None:
             raise UserError(
                 f'Cannot connect to sandbox {ref.sandbox_id!r}: no agent is attached to this Temporal '
                 'activity, so there is no capability chain to resolve the reference through.'
             )
         backend = resolve_sandbox_ref(agent.root_capability, ctx, ref)
-        facade = Sandbox(backend, ref=ref)
-        ctx.__dict__['_sandbox'] = facade
+        ctx.__dict__['_sandbox'] = Sandbox(backend, ref=ref)
     elif isinstance(unavailable_reason, str):
         ctx.__dict__['_sandbox_unavailable_reason'] = unavailable_reason

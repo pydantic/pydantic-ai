@@ -50,6 +50,7 @@ from pydantic_ai.exceptions import (
 )
 from pydantic_ai.messages import (
     AgentStreamEvent,
+    CapabilityEvent,
     LoadCapabilityCallPart,
     LoadCapabilityReturnPart,
     ModelMessage,
@@ -1622,14 +1623,13 @@ class TestHooksCapability:
         assert any('error:RuntimeError' in e for e in error_log)
 
     async def test_on_event_hook(self):
-        """on.event fires for each stream event and can modify events."""
+        """on.event fires for each stream event as an observer."""
         hooks = Hooks()
         events_seen: list[str] = []
 
         @hooks.on.event
-        async def observe(ctx: RunContext[Any], event: AgentStreamEvent) -> AgentStreamEvent:
+        async def observe(ctx: RunContext[Any], event: AgentStreamEvent) -> None:
             events_seen.append(type(event).__name__)
-            return event
 
         agent = Agent(
             FunctionModel(simple_model_function, stream_function=simple_stream_function),
@@ -1645,9 +1645,8 @@ class TestHooksCapability:
         events_seen: list[str] = []
 
         @hooks.on.event
-        async def observe(ctx: RunContext[Any], event: AgentStreamEvent) -> AgentStreamEvent:
+        async def observe(ctx: RunContext[Any], event: AgentStreamEvent) -> None:
             events_seen.append(type(event).__name__)
-            return event
 
         agent = Agent(
             FunctionModel(simple_model_function, stream_function=simple_stream_function),
@@ -1685,9 +1684,8 @@ class TestHooksCapability:
         stream_log: list[str] = []
 
         @hooks.on.event
-        async def per_event(ctx: RunContext[Any], event: AgentStreamEvent) -> AgentStreamEvent:
+        async def per_event(ctx: RunContext[Any], event: AgentStreamEvent) -> None:
             event_log.append(type(event).__name__)
-            return event
 
         @hooks.on.run_event_stream
         async def wrap_stream(
@@ -1706,6 +1704,56 @@ class TestHooksCapability:
             await stream.get_output()
         assert len(event_log) > 0
         assert stream_log == ['started', 'finished']
+
+    async def test_on_event_typed_filter(self):
+        hooks = Hooks()
+        seen: list[str] = []
+
+        @dataclass(kw_only=True)
+        class FilteredEvent(CapabilityEvent, namespace='hooks_typed_filter'):
+            value: str
+
+        @hooks.on.event(FilteredEvent)
+        def observe(ctx: RunContext[Any], event: FilteredEvent) -> None:
+            seen.append(event.value)
+
+        @dataclass
+        class Emitter(AbstractCapability[Any]):
+            async def before_run(self, ctx: RunContext[Any]) -> None:
+                await ctx.emit(FilteredEvent(value='matched'))
+
+        await Agent(
+            FunctionModel(simple_model_function, stream_function=simple_stream_function),
+            capabilities=[Emitter(), hooks],
+        ).run('hello')
+        assert seen == ['matched']
+
+    async def test_on_event_participates_in_immediate_decision(self):
+        hooks = Hooks()
+        observed: list[bool] = []
+
+        @dataclass(kw_only=True)
+        class DecisionEvent(CapabilityEvent, namespace='hooks_immediate_decision', dispatch='immediate'):
+            cancelled: bool = False
+
+            def cancel(self) -> None:
+                self.cancelled = True
+
+        @hooks.on.event(DecisionEvent)
+        async def cancel(ctx: RunContext[Any], event: DecisionEvent) -> None:
+            event.cancel()
+
+        @dataclass
+        class Emitter(AbstractCapability[Any]):
+            async def before_run(self, ctx: RunContext[Any]) -> None:
+                event = await ctx.emit(DecisionEvent())
+                observed.append(event.cancelled)
+
+        await Agent(
+            FunctionModel(simple_model_function, stream_function=simple_stream_function),
+            capabilities=[Emitter(), hooks],
+        ).run('hello')
+        assert observed == [True]
 
     async def test_prepare_tools_hook(self):
         """on.prepare_tools filters tool definitions."""
