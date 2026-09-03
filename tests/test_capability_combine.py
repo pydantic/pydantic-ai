@@ -874,7 +874,9 @@ async def test_reusing_one_capability_object_across_layers_does_not_combine() ->
         id: str | None = 'counting'
 
         @classmethod
-        def combine(cls, capabilities: Sequence[AbstractCapability[Any]]) -> AbstractCapability[Any]:
+        def combine(  # pragma: no cover
+            cls, capabilities: Sequence[AbstractCapability[Any]]
+        ) -> AbstractCapability[Any]:
             cls.combine_calls += 1
             return capabilities[-1]
 
