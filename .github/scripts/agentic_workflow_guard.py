@@ -96,6 +96,9 @@ SANDBOX_PATH = re.compile(rf'{re.escape(SANDBOX_PREFIX)}[^\s`\'"()\[\]<>]*')
 
 NEEDS_REFERENCE = re.compile(r'\bneeds\.([A-Za-z_][A-Za-z0-9_-]*)')
 EXPRESSION_BLOCK = re.compile(r'\$\{\{(.*?)\}\}', re.DOTALL)
+RUNNER_STREAM_JSON_ARGUMENT = re.compile(r'--output-format\s+stream-json(?=\s|$)')
+RUNNER_MCP_CONFIG_ARGUMENT = re.compile(r'--mcp-config\s+\S+')
+RUNNER_ALLOWED_TOOLS_ARGUMENT = re.compile(r'--allowed-tools\s+(\S+)(?=\s+--)')
 
 
 @dataclass(frozen=True)
@@ -402,8 +405,14 @@ def check_compiled_runner_contract(lock: Path) -> list[Violation]:
         ]
 
     command = commands[0]
-    required = ('--output-format stream-json', '--mcp-config', 'mcp__safeoutputs')
-    missing = [f'`{fragment}`' for fragment in required if fragment not in command]
+    allowed_tools = RUNNER_ALLOWED_TOOLS_ARGUMENT.search(command)
+    missing: list[str] = []
+    if RUNNER_STREAM_JSON_ARGUMENT.search(command) is None:
+        missing.append('`--output-format stream-json`')
+    if RUNNER_MCP_CONFIG_ARGUMENT.search(command) is None:
+        missing.append('`--mcp-config`')
+    if allowed_tools is None or 'mcp__safeoutputs' not in allowed_tools.group(1):
+        missing.append('`mcp__safeoutputs` in `--allowed-tools`')
     if not missing:
         return []
     return [

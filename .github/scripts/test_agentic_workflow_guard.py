@@ -658,17 +658,18 @@ jobs:
   agent:
     steps:
       - name: Run agent
-        run: >-
-          /tmp/gh-aw/bin/pydantic-ai-runner-launch
-          --allowed-tools Read
-          --output-format stream-json
+        run: |
+          /tmp/gh-aw/bin/pydantic-ai-runner-launch \
+            --allowed-tools Read \
+            --output-format stream-json \
+            --mcp-config mcp-servers.json
+          echo mcp__safeoutputs
 """,
     )
 
     violations = check_compiled_runner_contract(lock)
 
     assert [v.check for v in violations] == ['compiled-runner-contract']
-    assert '`--mcp-config`' in violations[0].message
     assert '`mcp__safeoutputs`' in violations[0].message
 
 
