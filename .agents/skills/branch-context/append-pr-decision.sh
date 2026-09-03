@@ -101,19 +101,37 @@ validate_field 'source' "$SOURCE"
 validate_field 'iteration' "$ITER"
 validate_field 'supersedes' "$SUPERSEDES"
 
-# An import needs a PATH after the @. Matching every `@` before a non-space
-# character instead rejects this repo's own vocabulary -- `@agent.tool`,
-# `@dataclass`, `@field_validator` -- which is exactly what a pydantic-ai
-# decision entry is most likely to name.
-IMPORT_PATH_RE='@[^[:space:]]*/|@[^[:space:]/]*\.(md|markdown|txt|rst|json|ya?ml|toml|ini|cfg|conf|env|py|pyi|sh|zsh|bash|lock)([^[:alnum:]]|$)'
+# Static helpers can be reached through any harness skill root. All harnesses
+# share the Claude compatibility directory as the branch-local live-state home.
+WORKTREE="$(git rev-parse --show-toplevel 2>/dev/null)" || {
+    echo 'error: run this helper from inside a git worktree' >&2
+    exit 1
+}
+DIR="$WORKTREE/.claude/skills/branch-context"
+FILE="$DIR/pr-decisions.md"
 
+# One implementation of the import test, in check-autoload-safety.sh. Duplicating
+# the pattern here is how the two copies drifted the first time. The check needs a
+# file to resolve relative paths against, so hand it one inside the live directory.
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 reject_import_syntax() {
-    local label="$1" value="$2"
-    if [[ "$value" =~ $IMPORT_PATH_RE ]]; then
-        echo "error: $label must not contain an active @-import path" >&2
-        echo "       Write the path without its leading @ before writing autoloaded branch context." >&2
+    local label="$1" value="$2" probe checker
+    checker="$SELF_DIR/check-autoload-safety.sh"
+    if [ ! -x "$checker" ]; then
+        echo "error: cannot find $checker; refusing to write unchecked text" >&2
         exit 1
     fi
+    # Not initialized yet -- let the friendlier "initialize branch context" error below win.
+    [ -d "$DIR" ] || return 0
+    probe="$(mktemp "$DIR/.autoload-check.XXXXXX")"
+    printf '%s\n' "$value" > "$probe"
+    if ! "$checker" "$probe" >/dev/null 2>&1; then
+        rm -f "$probe"
+        echo "error: $label must not contain an active @-import" >&2
+        echo "       Write the reference without its leading @ before writing autoloaded branch context." >&2
+        exit 1
+    fi
+    rm -f "$probe"
 }
 
 reject_import_syntax 'title' "$TITLE"
@@ -139,14 +157,6 @@ case "$SOURCE" in
         ;;
 esac
 
-# Static helpers can be reached through any harness skill root. All harnesses
-# share the Claude compatibility directory as the branch-local live-state home.
-WORKTREE="$(git rev-parse --show-toplevel 2>/dev/null)" || {
-    echo 'error: run this helper from inside a git worktree' >&2
-    exit 1
-}
-DIR="$WORKTREE/.claude/skills/branch-context"
-FILE="$DIR/pr-decisions.md"
 if [ ! -f "$FILE" ]; then
     echo "error: $FILE not found. Initialize branch context before appending a decision." >&2
     exit 1

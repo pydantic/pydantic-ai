@@ -44,36 +44,7 @@ SUMMARY="$1"
 BODY_SRC="${2:-}"
 SESSION_ID="${HANDOFF_SESSION_ID:-${CLAUDE_CODE_SESSION_ID:-${CODEX_SESSION_ID:-}}}"
 
-# An import needs a PATH after the @. Matching every `@` before a non-space
-# character instead rejects this repo's own vocabulary -- `@agent.tool`,
-# `@dataclass`, `@field_validator` -- which is exactly what a pydantic-ai
-# decision entry is most likely to name.
-IMPORT_PATH_RE='@[^[:space:]]*/|@[^[:space:]/]*\.(md|markdown|txt|rst|json|ya?ml|toml|ini|cfg|conf|env|py|pyi|sh|zsh|bash|lock)([^[:alnum:]]|$)'
-
-validate_index_text() {
-    local label="$1" value="$2"
-    if [[ "$value" == *$'\n'* || "$value" == *$'\r'* ]] || \
-        LC_ALL=C grep -q '[[:cntrl:]]' <<< "$value"; then
-        echo "error: $label must not contain control characters" >&2
-        exit 1
-    fi
-    if [[ "$value" == *'\'* ]]; then
-        echo "error: $label must not contain backslashes" >&2
-        exit 1
-    fi
-    if [[ "$value" =~ $IMPORT_PATH_RE ]]; then
-        echo "error: $label must not contain an active @-import path" >&2
-        exit 1
-    fi
-}
-
-validate_index_text 'writer' "$WRITER"
-validate_index_text 'summary' "$SUMMARY"
-if [[ "$WRITER" == *']'* || "$WRITER" == *' · '* ]]; then
-    echo "error: writer must not contain ']' or the index field separator" >&2
-    exit 1
-fi
-
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKTREE="$(git rev-parse --show-toplevel 2>/dev/null)" || {
     echo 'error: run this helper from inside a git worktree' >&2
     exit 1
@@ -86,6 +57,48 @@ if [ ! -d "$DIR" ]; then
     echo "error: branch context not found at $DIR" >&2
     exit 1
 fi
+
+validate_index_text() {
+    local label="$1" value="$2"
+    if [[ "$value" == *$'\n'* || "$value" == *$'\r'* ]] || \
+        LC_ALL=C grep -q '[[:cntrl:]]' <<< "$value"; then
+        echo "error: $label must not contain control characters" >&2
+        exit 1
+    fi
+    if [[ "$value" == *'\'* ]]; then
+        echo "error: $label must not contain backslashes" >&2
+        exit 1
+    fi
+    if ! import_safe "$value"; then
+        echo "error: $label must not contain an active @-import" >&2
+        exit 1
+    fi
+}
+
+# One implementation of the import test, in check-autoload-safety.sh. Duplicating
+# the pattern here is how the two copies drifted the first time. The check needs a
+# file to resolve relative paths against, so hand it one inside the live directory.
+import_safe() {
+    local value="$1" probe checker rc=0
+    checker="$SELF_DIR/check-autoload-safety.sh"
+    if [ ! -x "$checker" ]; then
+        echo "error: cannot find $checker; refusing to write unchecked text" >&2
+        exit 1
+    fi
+    probe="$(mktemp "$DIR/.autoload-check.XXXXXX")"
+    printf '%s\n' "$value" > "$probe"
+    "$checker" "$probe" >/dev/null 2>&1 || rc=1
+    rm -f "$probe"
+    return "$rc"
+}
+
+validate_index_text 'writer' "$WRITER"
+validate_index_text 'summary' "$SUMMARY"
+if [[ "$WRITER" == *']'* || "$WRITER" == *' · '* ]]; then
+    echo "error: writer must not contain ']' or the index field separator" >&2
+    exit 1
+fi
+
 
 mkdir -p "$HAND_DIR"
 
