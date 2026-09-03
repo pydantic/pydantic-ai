@@ -188,7 +188,7 @@ The dotted-ID rewrite currently lives in a workflow file. It is provider knowled
 - Claude thinking as a working v1 feature (follow-up: `/v1/messages`).
 - Repairing Anthropic-native Chat Completions bodies (not observed; see A16 / B23).
 - Client-side API-key format validation.
-- Adding `github-copilot` to genai-prices (tracked separately; see [Deliberate scope](#deliberate-scope)).
+- Adding `github-copilot` to genai-prices (tracked by [genai-prices#681](https://github.com/pydantic/genai-prices/issues/681)).
 
 ---
 
@@ -611,7 +611,7 @@ Every unmet requirement gets a test asserting the **desired end state**, marked 
 
 | Requirement | Test asserts | `xfail` reason |
 | --- | --- | --- |
-| genai-prices knows `github-copilot` | `lookup_context_window(GitHubCopilotModel('gpt-5.4', …))` is not `None` | Blocked on the genai-prices issue. XPASS means the entry shipped — drop the marker and add the context-window assertion to the profile snapshot. |
+| genai-prices knows `github-copilot` | `lookup_context_window(GitHubCopilotModel('gpt-5.4', …))` is not `None` | Blocked on [genai-prices#681](https://github.com/pydantic/genai-prices/issues/681). XPASS means the entry shipped — drop the marker and add the context-window assertion to the profile snapshot. |
 | Claude thinking works on Copilot | `Agent('github-copilot:claude-haiku-4.5')` with `thinking=True` returns a `ThinkingPart` | Blocked on PR 2 (`/v1/messages`). Today it raises `UserError`; XPASS means the Messages transport landed. |
 | Responses-only ids are reachable | a `gpt-5.6-*` id completes a basic run | Blocked on PR 3 (`/responses`). Today Copilot returns `unsupported_api_for_model`. |
 | A fine-grained PAT authenticates | `github_pat_` credential completes a request | Probe A1 says 401 on the Individual plan. XPASS means GitHub widened it (or a Business plan differs) and the docs caveat can go. |
@@ -742,7 +742,7 @@ Additive. No feature flag. Rollback is revert. No migration.
 | Envelope shape differs again on an unprobed host | Medium | `_validate_completion` fills defensively rather than asserting a shape; a new gap lands in the same method with a cassette. |
 | Anthropic-native bodies appear on a plan we could not reach | Medium | Not implemented on folklore. `_validate_completion` is the single place a real report gets fixed. |
 | Enterprise hosts enforce headers we send but could not verify | Low | We send them anyway; comment records they are unverified. |
-| No pricing / context-window data | Medium | Tracked genai-prices issue plus an `xfail` test that XPASSes when it lands. |
+| No pricing / context-window data | Medium | [genai-prices#681](https://github.com/pydantic/genai-prices/issues/681) plus an `xfail` test that XPASSes when it lands. |
 | Header values bit-rot | Low | One version constant. |
 | Users confuse `github:` and `github-copilot:` | Low | Docs successor note. |
 
@@ -759,7 +759,7 @@ None blocking implementation. Settled by probe or by decision: prefix `github-co
 Choices a reviewer could mistake for oversights.
 
 - `GitHubProvider` / `github:` / `GITHUB_API_KEY` left as they are, including the HTTPX2 unreadiness test.
-- **genai-prices has no `github-copilot` entry, so `context_window` is unset and cost is unresolvable.** Out of scope for this repo's PR; tracked by an issue on `pydantic/genai-prices` and by the `xfail` test above. Not silently accepted.
+- **genai-prices has no `github-copilot` entry, so `context_window` is unset and cost is unresolvable.** Out of scope for this repo's PR; tracked by [genai-prices#681](https://github.com/pydantic/genai-prices/issues/681) and by the `xfail` test above. Not silently accepted.
 - No Pydantic AI Gateway route; no Copilot embeddings / realtime / BYOK.
 - No gh-aw or pydantic-ai-harness changes.
 - No `KnownModelName` members; no `github-copilot` extra; no device flow.
@@ -846,7 +846,7 @@ The probes are done, so PR 1 implements a settled design rather than branching o
 ### PR A — genai-prices `github-copilot` provider (other repo, parallel)
 
 - **Repo:** `pydantic/genai-prices`
-- **Why:** no provider entry matching `github-copilot` or `https://api.githubcopilot.com`, so Copilot models get no `context_window` and no cost.
+- **Issue:** [genai-prices#681](https://github.com/pydantic/genai-prices/issues/681) — no provider entry matching `github-copilot` or `https://api.githubcopilot.com`, so Copilot models get no `context_window` and no cost.
 - **Unblocks:** the genai-prices `xfail` in PR 1.
 - Independent of PR 1; neither blocks the other.
 
