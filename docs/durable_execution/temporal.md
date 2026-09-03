@@ -318,6 +318,10 @@ As the streaming model request activity, workflow, and workflow execution call a
 - To get data from the workflow call site or workflow to the event stream handler, you can use a [dependencies object](#agent-run-context-and-dependencies).
 - To get data from the event stream handler to the workflow, workflow call site, or a frontend, you need to use an external system that the event stream handler can write to and the event consumer can read from, like a message queue. You can use the dependency object to make sure the same connection string or other unique ID is available in all the places that need it.
 
+Emitting events via [`ctx.emit()`][pydantic_ai.tools.RunContext.emit] from a tool or an event stream handler is not currently supported, as they run inside activities that cannot reach the run's event stream; doing so raises a `UserError`. This covers both [custom events](../agent.md#custom-events) emitted by application tools and [capability events](../capabilities/overview.md#capability-events) emitted by a capability's own tools. Emit events from [capability](../capabilities/overview.md) hooks, which run in the workflow, instead. Support for emitting from activities is tracked in [pydantic-ai#7971](https://github.com/pydantic/pydantic-ai/issues/7971).
+
+Capability listeners registered with [`@on_event`][pydantic_ai.capabilities.on_event] run in workflow code rather than in a durable unit, so they re-run on every workflow replay and must be deterministic. Keep I/O in a durability `event_stream_handler=`, which runs in its own activity.
+
 Because the model stream is consumed inside the activity, cancelling it from the workflow side (e.g. with [`AgentStream.cancel()`][pydantic_ai.result.AgentStream.cancel]) is not available across the durable boundary. To stop an in-flight model request, cancel the Temporal workflow: the cancellation is delivered to the activity (via its heartbeats), which cancels any server-side job before the activity completes.
 
 Whole-run cancellation (see [Cancelling a Run](../agent.md#cancelling-a-run)) follows the same split, with Temporal-specific consequences:

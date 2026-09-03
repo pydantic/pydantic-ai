@@ -322,7 +322,9 @@ LatestBedrockModelNames = Literal[
     'us.anthropic.claude-sonnet-5',
     'global.anthropic.claude-sonnet-5',
     'us.anthropic.claude-fable-5',
+    'us.anthropic.claude-fable-5-1',
     'global.anthropic.claude-fable-5',
+    'global.anthropic.claude-fable-5-1',
     # Amazon Nova
     'us.amazon.nova-premier-v1:0',
     'global.amazon.nova-2-lite-v1:0',
