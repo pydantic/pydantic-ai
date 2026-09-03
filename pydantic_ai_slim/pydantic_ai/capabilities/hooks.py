@@ -20,6 +20,7 @@ agent = Agent('openai:gpt-5', capabilities=[hooks])
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from functools import cached_property
@@ -29,10 +30,12 @@ import anyio
 from pydantic import ValidationError
 
 from pydantic_ai import _utils
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.exceptions import AgentRunError, ModelRetry
-from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
+from pydantic_ai.messages import AgentStreamEvent, CapabilityEvent, ModelResponse, ToolCallPart
 from pydantic_ai.tools import AgentDepsT, DeferredToolRequests, DeferredToolResults, RunContext, ToolDefinition
 
+from ._on_event import collect_on_event_methods, marked_listens_to
 from .abstract import (
     AbstractCapability,
     AgentNode,
@@ -56,6 +59,7 @@ if TYPE_CHECKING:
     from pydantic_ai.run import AgentRunResult
 
 _FuncT = TypeVar('_FuncT', bound=Callable[..., Any])
+EventT = TypeVar('EventT', bound=AgentStreamEvent, contravariant=True)
 
 
 # --- Timeout exception ---
@@ -87,6 +91,22 @@ class _ToolHookEntry(_HookEntry[_FuncT]):
     """A registered tool hook function with optional tools filter and timeout."""
 
     tools: frozenset[str] | None = None
+
+
+@dataclass
+class _EventHookEntry(_HookEntry[_FuncT]):
+    """A registered event observer with optional event-type filters."""
+
+    event_types: tuple[type[AgentStreamEvent], ...] = ()
+
+
+def _event_entry_matches(entry: _HookEntry[Any], event: AgentStreamEvent) -> bool:
+    """Whether a registered `on_event` observer accepts `event`.
+
+    Shared by dispatch and by `listens_to`, so the answer to "will this callback run?" is decided in
+    one place: an entry without filters, or one written before filters existed, takes every event.
+    """
+    return not isinstance(entry, _EventHookEntry) or not entry.event_types or isinstance(event, entry.event_types)
 
 
 # fmt: off
@@ -133,11 +153,11 @@ class WrapRunEventStreamHookFunc(Protocol):
         self, ctx: RunContext[Any], /, *, stream: AsyncIterable[AgentStreamEvent]
     ) -> AsyncIterable[AgentStreamEvent]: ...
 
-class OnEventHookFunc(Protocol):
-    """Protocol for per-event hook functions (convenience over `wrap_run_event_stream`)."""
+class OnEventHookFunc(Protocol, Generic[EventT]):
+    """Protocol for event observer functions."""
     def __call__(
-        self, ctx: RunContext[Any], event: AgentStreamEvent, /
-    ) -> AgentStreamEvent | Awaitable[AgentStreamEvent]: ...
+        self, ctx: RunContext[Any], event: EventT, /
+    ) -> None | AgentStreamEvent | Awaitable[None | AgentStreamEvent]: ...
 
 class BeforeModelRequestHookFunc(Protocol):
     """Protocol for [`before_model_request`][pydantic_ai.capabilities.AbstractCapability.before_model_request] hook functions."""
@@ -414,11 +434,29 @@ class _HookRegistration(Generic[AgentDepsT]):
         return func
 
     @overload
-    def event(self, func: OnEventHookFunc, /) -> OnEventHookFunc: ...
+    def event(self, func: OnEventHookFunc[AgentStreamEvent], /) -> OnEventHookFunc[AgentStreamEvent]: ...
     @overload
-    def event(self, *, timeout: float | None = None) -> Callable[[OnEventHookFunc], OnEventHookFunc]: ...
-    def event(self, func: OnEventHookFunc | None = None, *, timeout: float | None = None) -> Any:
-        return _bare_or_parameterized(self._r, '_on_event', func, timeout=timeout)
+    def event(
+        self, *event_types: type[EventT], timeout: float | None = None
+    ) -> Callable[[OnEventHookFunc[EventT]], OnEventHookFunc[EventT]]: ...
+    def event(
+        self,
+        func_or_event_type: OnEventHookFunc[AgentStreamEvent] | type[EventT] | None = None,
+        *event_types: type[EventT],
+        timeout: float | None = None,
+    ) -> Any:
+        """Register an observer for every event, or for selected event classes."""
+        if func_or_event_type is not None and not isinstance(func_or_event_type, type):
+            self._r.setdefault('on_event', []).append(_EventHookEntry(func_or_event_type, timeout=timeout))
+            return func_or_event_type
+
+        filters = (() if func_or_event_type is None else (func_or_event_type,)) + event_types
+
+        def decorator(func: OnEventHookFunc[EventT]) -> OnEventHookFunc[EventT]:
+            self._r.setdefault('on_event', []).append(_EventHookEntry(func, timeout=timeout, event_types=filters))
+            return func
+
+        return decorator
 
     # --- Model request ---
 
@@ -748,6 +786,10 @@ class Hooks(AbstractCapability[AgentDepsT]):
 
     _registry: dict[str, list[_HookEntry[Any]]]
 
+    @property
+    def _emits_app_events(self) -> bool:
+        return True
+
     def __init__(
         self,
         *,
@@ -763,7 +805,7 @@ class Hooks(AbstractCapability[AgentDepsT]):
         node_run_error: OnNodeRunErrorHookFunc | None = None,
         # Event stream
         run_event_stream: WrapRunEventStreamHookFunc | None = None,
-        event: OnEventHookFunc | None = None,
+        event: OnEventHookFunc[AgentStreamEvent] | None = None,
         # Model request
         before_model_request: BeforeModelRequestHookFunc | None = None,
         after_model_request: AfterModelRequestHookFunc | None = None,
@@ -816,7 +858,7 @@ class Hooks(AbstractCapability[AgentDepsT]):
             'wrap_node_run': node_run,
             'on_node_run_error': node_run_error,
             'wrap_run_event_stream': run_event_stream,
-            '_on_event': event,
+            'on_event': event,
             'before_model_request': before_model_request,
             'after_model_request': after_model_request,
             'wrap_model_request': model_request,
@@ -843,7 +885,8 @@ class Hooks(AbstractCapability[AgentDepsT]):
         }
         for key, func in _kwargs.items():
             if func is not None:
-                self._registry.setdefault(key, []).append(_HookEntry(func))
+                entry = _EventHookEntry(func) if key == 'on_event' else _HookEntry(func)
+                self._registry.setdefault(key, []).append(entry)
 
     @cached_property
     def on(self) -> _HookRegistration[AgentDepsT]:
@@ -853,6 +896,8 @@ class Hooks(AbstractCapability[AgentDepsT]):
     def _get(self, key: str) -> list[_HookEntry[Any]]:
         return self._registry.get(key, [])
 
+    # The has-checks must not mask a subclass's overrides or marked listeners: registered hook
+    # functions are this class's own contribution, on top of the base capability surface.
     @property
     def _has_wrap_node_run(self) -> bool:
         return type(self).wrap_node_run is not Hooks.wrap_node_run or bool(self._get('wrap_node_run'))
@@ -873,7 +918,25 @@ class Hooks(AbstractCapability[AgentDepsT]):
 
     @property
     def has_wrap_run_event_stream(self) -> bool:
-        return bool(self._get('wrap_run_event_stream') or self._get('_on_event'))
+        return (
+            bool(self._get('wrap_run_event_stream'))
+            or type(self).wrap_run_event_stream is not Hooks.wrap_run_event_stream
+        )
+
+    @property
+    def has_on_event(self) -> bool:
+        return (
+            bool(self._get('on_event'))
+            or type(self).on_event is not Hooks.on_event
+            or bool(collect_on_event_methods(type(self)))
+        )
+
+    def listens_to(self, event: AgentStreamEvent) -> bool:
+        return (
+            type(self).on_event is not Hooks.on_event
+            or marked_listens_to(type(self), event)
+            or any(_event_entry_matches(entry, event) for entry in self._get('on_event'))
+        )
 
     def get_ordering(self) -> CapabilityOrdering | None:
         return self._ordering
@@ -962,12 +1025,6 @@ class Hooks(AbstractCapability[AgentDepsT]):
         self, ctx: RunContext[AgentDepsT], *, stream: AsyncIterable[AgentStreamEvent]
     ) -> AsyncIterable[AgentStreamEvent]:
         wrapped_streams = [stream]
-        # First, wrap with per-event callbacks (innermost)
-        event_entries = self._get('_on_event')
-        if event_entries:
-            stream = _event_callback_stream(ctx, stream, event_entries)
-            wrapped_streams.append(stream)
-        # Then chain explicit stream wrappers (outermost)
         for entry in reversed(self._get('wrap_run_event_stream')):
             stream = entry.func(ctx, stream=stream)
             wrapped_streams.append(stream)
@@ -976,6 +1033,34 @@ class Hooks(AbstractCapability[AgentDepsT]):
                 yield event
         finally:
             await _utils.aclose_all(reversed(wrapped_streams))
+
+    async def on_event(self, ctx: RunContext[AgentDepsT], *, event: AgentStreamEvent) -> None:
+        # Replacements chain: each callback sees the previous callback's replacement, while the
+        # replacement map stays keyed by the original event, which is what the stream position holds.
+        # The chain spans capabilities, not just the callbacks on one `Hooks`: on the stream-wrapper
+        # implementation this replaced, each capability's wrapper fed the next one's, so picking up
+        # a replacement another capability already recorded is what keeps that composition. Without
+        # it the last capability to run would silently drop every earlier replacement.
+        original_event = event
+        if (prior := ctx._event_stream_replacements.get(id(original_event))) is not None:  # pyright: ignore[reportPrivateUsage]
+            event = prior
+        for entry in self._get('on_event'):
+            if not _event_entry_matches(entry, event):
+                continue
+            replacement = await _call_entry(entry, 'on_event', ctx, event)
+            if replacement is None or replacement is event:
+                continue
+            warnings.warn(
+                'returning a replacement event from `hooks.on.event` is deprecated; '
+                'use `hooks.on.run_event_stream` to transform the stream',
+                PydanticAIDeprecationWarning,
+                stacklevel=2,
+            )
+            event = replacement
+            if not isinstance(original_event, CapabilityEvent) or original_event.event_dispatch != 'immediate':
+                ctx._event_stream_replacements[id(original_event)] = replacement  # pyright: ignore[reportPrivateUsage]
+        # A `Hooks` subclass can carry marked listeners of its own; the base dispatches them.
+        await super().on_event(ctx, event=event)
 
     async def before_model_request(
         self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext
@@ -1314,21 +1399,3 @@ def _make_wrap_link(
         return await _call_entry(entry, hook_name, ctx, handler=inner_handler, **frozen_kwargs)
 
     return wrapper_no_arg
-
-
-# --- Event stream helper ---
-
-
-async def _event_callback_stream(
-    ctx: RunContext[Any],
-    stream: AsyncIterable[AgentStreamEvent],
-    entries: list[_HookEntry[Any]],
-) -> AsyncIterable[AgentStreamEvent]:
-    """Wrap a stream with per-event callbacks that can observe or modify events."""
-    try:
-        async for event in stream:
-            for entry in entries:
-                event = await _call_entry(entry, 'on_event', ctx, event)
-            yield event
-    finally:
-        await _utils.aclose_if_supported(stream)

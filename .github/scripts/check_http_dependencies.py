@@ -56,7 +56,7 @@ assert any(
 
 anthropic_requirements = [requirement for requirement in slim if requirement.name == 'anthropic']
 assert len(anthropic_requirements) == 1
-assert anthropic_requirements[0].specifier.contains('1.0.0')
+assert anthropic_requirements[0].specifier.contains('1.3.0')
 assert str(anthropic_requirements[0].marker) == 'extra == "anthropic"'
 
 anthropic_dependencies = [Requirement(value) for value in requires('anthropic') or []]
