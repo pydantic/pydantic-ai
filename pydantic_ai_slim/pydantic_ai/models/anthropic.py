@@ -333,7 +333,7 @@ _ANTHROPIC_THINKING_BINDING_BETA = 'thinking-binding-controls-2026-08-01'
 _ANTHROPIC_DROP_STALE_THINKING_BLOCKS: BetaThinkingBlockBindingParam = {'prefix_mismatch_behavior': 'drop_block'}
 _STALE_THINKING_BLOCK_MARKER = 'The block is bound to a different conversation'
 _PYDANTIC_AI_METADATA_KEY = '__pydantic_ai__'
-_ANTHROPIC_DROP_STALE_THINKING_BLOCKS_METADATA_KEY = 'anthropic_drop_stale_thinking_blocks'
+_ANTHROPIC_COUNT_TOKENS_DROP_STALE_THINKING_BLOCKS_METADATA_KEY = 'anthropic_count_tokens_drop_stale_thinking_blocks'
 _ANTHROPIC_FILES_API_BETA = 'files-api-2025-04-14'
 _ANTHROPIC_COMPACT_EDIT_TYPE = 'compact_20260112'
 
@@ -682,12 +682,16 @@ def _drop_stale_thinking_blocks(thinking: dict[str, object] | Omit) -> dict[str,
     return {**configured, 'block_binding': _ANTHROPIC_DROP_STALE_THINKING_BLOCKS}
 
 
-def _history_dropped_stale_thinking_blocks(messages: list[ModelMessage]) -> bool:
+def _history_dropped_stale_thinking_blocks(
+    messages: list[ModelMessage], *, include_count_tokens_recovery: bool = False
+) -> bool:
     """Whether Anthropic already told us this conversation needs the drop on later requests."""
     for message in reversed(messages):
-        if isinstance(message, ModelRequest) and message.metadata:
+        if include_count_tokens_recovery and isinstance(message, ModelRequest) and message.metadata:
             namespace: object = message.metadata.get(_PYDANTIC_AI_METADATA_KEY)
-            if _utils.is_str_dict(namespace) and namespace.get(_ANTHROPIC_DROP_STALE_THINKING_BLOCKS_METADATA_KEY):
+            if _utils.is_str_dict(namespace) and namespace.get(
+                _ANTHROPIC_COUNT_TOKENS_DROP_STALE_THINKING_BLOCKS_METADATA_KEY
+            ):
                 return True
         if not isinstance(message, ModelResponse) or not message.provider_details:
             continue
@@ -702,8 +706,8 @@ def _history_dropped_stale_thinking_blocks(messages: list[ModelMessage]) -> bool
     return False
 
 
-def _mark_history_to_drop_stale_thinking_blocks(messages: list[ModelMessage]) -> None:
-    """Bridge a successful count-token recovery to inference and later conversation turns."""
+def _mark_history_to_drop_stale_thinking_blocks_for_count_tokens(messages: list[ModelMessage]) -> None:
+    """Keep a successful count-token recovery active for later counts of this conversation."""
     request = next((message for message in reversed(messages) if isinstance(message, ModelRequest)), None)
     if request is None:  # pragma: no cover
         return
@@ -712,7 +716,7 @@ def _mark_history_to_drop_stale_thinking_blocks(messages: list[ModelMessage]) ->
     if not _utils.is_str_dict(namespace):
         namespace = {}
         request.metadata[_PYDANTIC_AI_METADATA_KEY] = namespace
-    namespace[_ANTHROPIC_DROP_STALE_THINKING_BLOCKS_METADATA_KEY] = True
+    namespace[_ANTHROPIC_COUNT_TOKENS_DROP_STALE_THINKING_BLOCKS_METADATA_KEY] = True
 
 
 def _thinking_with_stale_block_history(
@@ -721,12 +725,16 @@ def _thinking_with_stale_block_history(
     thinking: BetaThinkingConfigParam | Omit,
     effective_thinking: dict[str, object] | Omit,
     betas: set[str],
+    *,
+    include_count_tokens_recovery: bool = False,
 ) -> tuple[BetaThinkingConfigParam | Omit, set[str], dict[str, object] | None, dict[str, object] | Omit]:
     """Resolve request parameters that keep a prior request-local drop active for this history."""
     keep_dropping = (
         profile.get('anthropic_binds_thinking_blocks', False)
         and (isinstance(effective_thinking, Omit) or 'block_binding' not in effective_thinking)
-        and _history_dropped_stale_thinking_blocks(messages)
+        and _history_dropped_stale_thinking_blocks(
+            messages, include_count_tokens_recovery=include_count_tokens_recovery
+        )
     )
     if not keep_dropping:
         return thinking, betas, None, effective_thinking
@@ -1477,7 +1485,14 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         context_management = self._add_compaction_params(messages, betas, model_settings)
         self._validate_task_budget_vs_context_management(model_settings, context_management)
         initial_thinking, initial_betas, initial_thinking_override, initial_effective_thinking = (
-            _thinking_with_stale_block_history(anthropic_profile, messages, thinking, effective_thinking, betas)
+            _thinking_with_stale_block_history(
+                anthropic_profile,
+                messages,
+                thinking,
+                effective_thinking,
+                betas,
+                include_count_tokens_recovery=True,
+            )
         )
 
         async def count(
@@ -1543,7 +1558,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 betas | {_ANTHROPIC_THINKING_BINDING_BETA},
                 _drop_stale_thinking_blocks(effective_thinking),
             )
-            _mark_history_to_drop_stale_thinking_blocks(messages)
+            _mark_history_to_drop_stale_thinking_blocks_for_count_tokens(messages)
             _warn_stale_thinking_block_recovery(self.model_name)
             return result
 

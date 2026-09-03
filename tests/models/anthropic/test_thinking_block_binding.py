@@ -261,8 +261,8 @@ async def test_anthropic_count_tokens_retries_a_stale_thinking_block(allow_model
     assert _THINKING_BINDING_BETA in requests[1]['betas']
 
 
-async def test_anthropic_count_tokens_recovery_carries_into_inference_and_later_turns(allow_model_requests: None):
-    """A pre-request count recovery must prevent inference and the next turn from rejecting again."""
+async def test_anthropic_count_tokens_recovery_only_carries_into_later_counts(allow_model_requests: None):
+    """A count-only prefix mismatch must not make an otherwise-valid inference drop its thinking."""
     mock_client = MockAnthropic.create_mock(
         completion_message([BetaTextBlock(text='4', type='text')], usage=BetaUsage(input_tokens=10, output_tokens=1))
     )
@@ -283,13 +283,20 @@ async def test_anthropic_count_tokens_recovery_carries_into_inference_and_later_
         first = await agent.run(
             'What is 2+2?', usage_limits=UsageLimits(count_tokens_before_request=True, input_tokens_limit=100)
         )
-        await agent.run('And again?', message_history=first.all_messages())
+        await agent.run(
+            'And again?',
+            message_history=first.all_messages(),
+            usage_limits=UsageLimits(count_tokens_before_request=True, input_tokens_limit=100),
+        )
 
     assert len(caught_warnings) == 1
+    assert len(count_requests) == 3
+    assert count_requests[2]['extra_body'] == snapshot(
+        {'thinking': {'block_binding': {'prefix_mismatch_behavior': 'drop_block'}}}
+    )
     first_inference, next_turn = get_mock_chat_completion_kwargs(mock_client)
-    expected_thinking = snapshot({'thinking': {'block_binding': {'prefix_mismatch_behavior': 'drop_block'}}})
-    assert first_inference['extra_body'] == expected_thinking
-    assert next_turn['extra_body'] == expected_thinking
+    assert first_inference.get('extra_body') is None
+    assert next_turn.get('extra_body') is None
 
 
 async def test_anthropic_count_tokens_does_not_retry_an_unrelated_bad_request(allow_model_requests: None):
