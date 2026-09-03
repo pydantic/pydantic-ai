@@ -38,7 +38,9 @@ from .abstract import (
     RawOutput,
     WrapOutputProcessHandler,
     WrapOutputValidateHandler,
+    leaf_capabilities,
 )
+from .wrapper import WrapperCapability
 
 if TYPE_CHECKING:
     from pydantic_ai import _agent_graph
@@ -387,34 +389,39 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                 any_wrapped = True
         return wrapped if any_wrapped else None
 
-    def _sandbox_capability_ids(self) -> dict[int, str]:
-        """Return the same run-local IDs used for capabilities without an explicit `id`."""
-        return dict(zip(map(id, self.capabilities), effective_capability_ids(self.capabilities)))
-
     async def acquire_sandbox(self, ctx: RunContext[AgentDepsT]) -> SandboxRef | None:
-        capability_ids = self._sandbox_capability_ids()
         for capability in self.capabilities:
             if capability.defer_loading is not True and (ref := await capability.acquire_sandbox(ctx)) is not None:
-                return replace(ref, capability_id=capability_ids[id(capability)]) if ref.capability_id is None else ref
+                if ref.capability_id is None:
+                    capability_id = _required_effective_capability_id(capability, ctx)
+                    return replace(ref, capability_id=capability_id)
+                return ref
         return None
 
-    def get_sandbox(self, ctx: RunContext[AgentDepsT], ref: SandboxRef) -> SandboxBackend | None:
-        connected: list[SandboxBackend] = []
-        capability_ids = self._sandbox_capability_ids()
+    def resolve_sandbox(self, ctx: RunContext[AgentDepsT], ref: SandboxRef) -> SandboxBackend | None:
+        if ref.capability_id is None:
+            resolvers = [
+                (leaf, capability)
+                for capability in self.capabilities
+                if capability.defer_loading is not True
+                for leaf in leaf_capabilities(capability)
+                if leaf.defer_loading is not True and _overrides_resolve_sandbox(leaf)
+            ]
+            if len(resolvers) == 1:
+                return resolvers[0][1].resolve_sandbox(ctx, ref)
+            if not resolvers:
+                return None
+            resolver_ids = [_required_effective_capability_id(leaf, ctx) for leaf, _ in resolvers]
+            raise UserError(
+                f'Several capabilities can resolve sandbox refs ({", ".join(resolver_ids)}); pass '
+                '`SandboxRef(sandbox_id=..., capability_id=...)` naming the one that owns '
+                f'{ref.sandbox_id!r}.'
+            )
+
         for capability in self.capabilities:
-            if capability.defer_loading is True:
-                continue
-            if ref.capability_id is not None and not (
-                capability_ids[id(capability)] == ref.capability_id or isinstance(capability, CombinedCapability)
-            ):
-                continue
-            if (backend := capability.get_sandbox(ctx, ref)) is not None:
-                connected.append(backend)
-                if ref.capability_id is not None:
-                    return backend
-        if len(connected) > 1:
-            raise UserError(f'Exactly one capability may connect to sandbox {ref.sandbox_id!r}; {len(connected)} did.')
-        return connected[0] if connected else None
+            if capability.defer_loading is not True and _capability_owns_id(capability, ctx, ref.capability_id):
+                return capability.resolve_sandbox(ctx, ref)
+        return None
 
     def get_wrapper_sandbox(self, ctx: RunContext[AgentDepsT], sandbox: Sandbox) -> Sandbox | None:
         wrapped = sandbox
@@ -436,14 +443,10 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
             raise UserError(
                 f'Sandbox ref {ref.sandbox_id!r} without a `capability_id` cannot be released because no capability acquired it.'
             )
-        capability_ids = self._sandbox_capability_ids()
         for capability in self.capabilities:
-            if capability.defer_loading is not True and (
-                capability_ids[id(capability)] == ref.capability_id or isinstance(capability, CombinedCapability)
-            ):
+            if capability.defer_loading is not True and _capability_owns_id(capability, ctx, ref.capability_id):
                 await capability.release_sandbox(ctx, ref)
-                if capability_ids[id(capability)] == ref.capability_id:
-                    return
+                return
 
     # --- Tool preparation hooks ---
 
@@ -1067,6 +1070,37 @@ def bind_capabilities_tier(
 
 def _ctx_for_cap(capability: AbstractCapability[AgentDepsT], ctx: RunContext[AgentDepsT]) -> RunContext[AgentDepsT]:
     return _replace_capability_context(ctx, capability_active=_capability_active(capability, ctx))
+
+
+def _effective_capability_id(capability: AbstractCapability[Any], ctx: RunContext[Any]) -> str | None:
+    registry = ctx.__dict__.get('capabilities')
+    if registry is None and (root_capability := ctx.__dict__.get('root_capability')) is not None:
+        leaves = leaf_capabilities(root_capability)
+        registry = dict(zip(effective_capability_ids(leaves), leaves))
+    if registry is None:
+        return capability.id
+    return next(
+        (capability_id for capability_id, registered in registry.items() if registered is capability),
+        capability.id,
+    )
+
+
+def _required_effective_capability_id(capability: AbstractCapability[Any], ctx: RunContext[Any]) -> str:
+    capability_id = _effective_capability_id(capability, ctx)
+    assert capability_id is not None
+    return capability_id
+
+
+def _capability_owns_id(capability: AbstractCapability[Any], ctx: RunContext[Any], capability_id: str) -> bool:
+    return any(_effective_capability_id(leaf, ctx) == capability_id for leaf in leaf_capabilities(capability))
+
+
+def _overrides_resolve_sandbox(capability: AbstractCapability[Any]) -> bool:
+    while isinstance(capability, WrapperCapability):
+        capability = capability.wrapped
+    return not isinstance(capability, CombinedCapability) and (
+        type(capability).resolve_sandbox is not AbstractCapability.resolve_sandbox
+    )
 
 
 def _ctx_for_active_cap(

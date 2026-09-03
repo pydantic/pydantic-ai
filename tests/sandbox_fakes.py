@@ -155,7 +155,7 @@ class ConnectOnlySandboxCapability(AbstractCapability[Any]):
         self.sandbox_ids: list[str] = []
         self.backends: list[RecordingSandboxBackend] = []
 
-    def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
+    def resolve_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
         self.sandbox_ids.append(ref.sandbox_id)
         backend = RecordingSandboxBackend(ref.sandbox_id)
         self.backends.append(backend)
@@ -182,7 +182,7 @@ class AcquireOnlySandboxCapability(AbstractCapability[Any]):
         self.events.append(f'acquire:{sandbox_id}')
         return SandboxRef(sandbox_id=sandbox_id)
 
-    def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
+    def resolve_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
         self.events.append(f'connect:{ref.sandbox_id}')
         backend = RecordingSandboxBackend(ref.sandbox_id)
         self.backends.append(backend)

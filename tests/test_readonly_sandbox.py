@@ -73,7 +73,7 @@ async def _run_with_connected(backend: SandboxBackend) -> None:
         async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
             return SandboxRef(sandbox_id=backend.sandbox_id)
 
-        def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
+        def resolve_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
             return ReadOnlySandbox(backend)
 
     def model_func(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:

@@ -1188,7 +1188,7 @@ async def test_durability_runs_sandbox_lifecycle_as_activities(monkeypatch: pyte
             self.events.append('acquire')
             return SandboxRef(sandbox_id='temporal-sandbox')
 
-        def get_sandbox(self, ctx: RunContext[None], ref: SandboxRef) -> RecordingSandboxBackend:
+        def resolve_sandbox(self, ctx: RunContext[None], ref: SandboxRef) -> RecordingSandboxBackend:
             return RecordingSandboxBackend(ref.sandbox_id)
 
         @durable_operation('release_sandbox')
@@ -1236,7 +1236,7 @@ async def test_undecorated_sandbox_acquire_runs_inline(monkeypatch: pytest.Monke
         async def acquire_sandbox(self, ctx: RunContext[None]) -> SandboxRef:
             return SandboxRef(sandbox_id='inline')
 
-        def get_sandbox(self, ctx: RunContext[None], ref: SandboxRef) -> RecordingSandboxBackend:
+        def resolve_sandbox(self, ctx: RunContext[None], ref: SandboxRef) -> RecordingSandboxBackend:
             return RecordingSandboxBackend(ref.sandbox_id)
 
     agent = Agent(

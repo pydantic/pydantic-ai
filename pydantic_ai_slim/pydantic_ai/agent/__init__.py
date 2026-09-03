@@ -67,7 +67,7 @@ from ..capabilities import (
 from ..capabilities._dynamic import wrap_capability_funcs
 from ..capabilities._ordering import find_capability, has_capability_type
 from ..capabilities._pending_messages import PendingMessageDrainCapability
-from ..capabilities._sandbox import connect_sandbox_ref
+from ..capabilities._sandbox import resolve_sandbox_ref
 from ..capabilities.abstract import leaf_capabilities
 from ..capabilities.combined import bind_capabilities_tier, effective_capability_ids
 from ..capabilities.instrumentation import Instrumentation as InstrumentationCap
@@ -1612,6 +1612,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 conversation_id=state.conversation_id,
                 _cancellation=cancellation,
                 sandbox=Sandbox.wrap(UnavailableSandbox(_NO_SANDBOX_REASON)),
+                capabilities=_build_capability_registry(bootstrap_capability),
             )
 
             async def _close_sandbox_connection(facade: Sandbox) -> None:
@@ -1625,7 +1626,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             # Resolve the sandbox before `for_run` so every hook sees the final `ctx.sandbox`; its
             # release and connection close go on `stack` first so they run after the run's own teardown.
             if isinstance(sandbox, SandboxRef):
-                backend = connect_sandbox_ref(bootstrap_capability, initial_ctx, sandbox)
+                backend = resolve_sandbox_ref(bootstrap_capability, initial_ctx, sandbox)
                 sandbox_facade = Sandbox(backend, ref=sandbox)
                 stack.push_async_callback(_close_sandbox_connection, sandbox_facade)
             elif isinstance(sandbox, AbstractCapability):
@@ -1639,7 +1640,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 sandbox_facade = initial_ctx.sandbox
                 sandbox_ref = await bootstrap_capability.acquire_sandbox(initial_ctx)
                 if sandbox_ref is not None:
-                    backend = connect_sandbox_ref(bootstrap_capability, initial_ctx, sandbox_ref)
+                    backend = resolve_sandbox_ref(bootstrap_capability, initial_ctx, sandbox_ref)
                     sandbox_facade = Sandbox(backend, ref=sandbox_ref)
                     stack.push_async_callback(_release_sandbox, sandbox_ref)
                     # Detach the live connection before releasing ownership of the environment.
@@ -4198,10 +4199,15 @@ def _layer_model_settings(
 
 
 def _build_run_capabilities(capability: AbstractCapability[AgentDepsT]) -> dict[str, AbstractCapability[AgentDepsT]]:
-    capabilities: list[AbstractCapability[AgentDepsT]] = []
-    capability.apply(capabilities.append)
-
+    capabilities = leaf_capabilities(capability)
     _validate_capability_ids(capabilities)
+    return dict(zip(effective_capability_ids(capabilities), capabilities))
+
+
+def _build_capability_registry(
+    capability: AbstractCapability[AgentDepsT],
+) -> dict[str, AbstractCapability[AgentDepsT]]:
+    capabilities = leaf_capabilities(capability)
     return dict(zip(effective_capability_ids(capabilities), capabilities))
 
 

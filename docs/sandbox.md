@@ -109,7 +109,7 @@ environment fixed by configuration. Custom providers use three hooks:
 - [`acquire_sandbox`][pydantic_ai.capabilities.AbstractCapability.acquire_sandbox] returns its
   serializable identity, or `None` to decline. Decorate it with `@durable_operation` when
   provisioning or checking out performs I/O.
-- [`get_sandbox`][pydantic_ai.capabilities.AbstractCapability.get_sandbox] synchronously constructs
+- [`resolve_sandbox`][pydantic_ai.capabilities.AbstractCapability.resolve_sandbox] synchronously constructs
   a backend object without connecting, probing liveness, resuming, starting, or creating anything.
 - [`release_sandbox`][pydantic_ai.capabilities.AbstractCapability.release_sandbox] cleans up after
   a run whose acquisition returned a reference. Decorate it with `@durable_operation` when cleanup
@@ -137,7 +137,7 @@ class MySandboxCapability(AbstractCapability[Any]):
         sandbox = await self.client.create(idempotency_key=ctx.run_id)
         return SandboxRef(sandbox_id=sandbox.sandbox_id)
 
-    def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
+    def resolve_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
         # Construct only: the returned handle creates its client lazily on its first operation.
         return self.client.sandbox(ref.sandbox_id)
 
@@ -152,12 +152,12 @@ agent = Agent(
 )
 ```
 
-Pydantic AI closes the backend `get_sandbox` returned when the run ends; a live backend passed
+Pydantic AI closes the backend `resolve_sandbox` returned when the run ends; a live backend passed
 through `sandbox=` stays open and caller-owned.
 
 Choose the lifecycle that matches your application:
 
-| Lifecycle | `acquire_sandbox` | `get_sandbox` | `release_sandbox` |
+| Lifecycle | `acquire_sandbox` | `resolve_sandbox` | `release_sandbox` |
 |---|---|---|---|
 | Fresh sandbox per run | `@durable_operation`: provision and return its ref | construct a lazy client handle | `@durable_operation`: destroy |
 | Warm environment shared across runs | return its ref | construct a lazy client handle | inherited no-op |
@@ -271,21 +271,21 @@ from pydantic_ai import SandboxRef
 sandbox = SandboxRef(sandbox_id='sandbox-123')
 ```
 
-Pass that value through `sandbox=`. The agent must also have a capability whose `get_sandbox` can
+Pass that value through `sandbox=`. The agent must also have a capability whose `resolve_sandbox` can
 connect the reference. Because the caller owns this sandbox, the run does not acquire or release
 it. Do not pass a live backend or `LocalSandboxBackend` into a durable run; they cannot cross the
 durable boundary.
 
 Decorate `acquire_sandbox` and `release_sandbox` with `@durable_operation` so they run as durable
 units. Undecorated overrides run inline in workflow code and must be deterministic and free of I/O.
-`get_sandbox` runs inside every durable unit and must remain construct-only; liveness is the first
+`resolve_sandbox` runs inside every durable unit and must remain construct-only; liveness is the first
 `run` or `fs` operation's problem. The framework stamps the acquiring capability's ID on
-`SandboxRef.capability_id` and routes `get_sandbox` and `release_sandbox` back to it.
+`SandboxRef.capability_id` and routes `resolve_sandbox` and `release_sandbox` back to it.
 
 For reliable durable lifecycles:
 
 - make `acquire_sandbox` and `release_sandbox` idempotent because durable operations may retry;
-- make the backend returned by `get_sandbox` lazily connect to the existing environment rather than
+- make the backend returned by `resolve_sandbox` lazily connect to the existing environment rather than
   silently create an empty one;
 - keep credentials on the capability, never in `SandboxRef` or workflow history;
 - configure a provider-side TTL or reaper because a cancelled workflow may not run cleanup.

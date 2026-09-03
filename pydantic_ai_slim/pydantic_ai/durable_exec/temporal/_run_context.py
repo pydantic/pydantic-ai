@@ -12,7 +12,7 @@ from typing_extensions import TypeVar
 
 from pydantic_ai._run_context import AnchoredEvidence
 from pydantic_ai._utils import is_str_dict
-from pydantic_ai.capabilities._sandbox import connect_sandbox_ref
+from pydantic_ai.capabilities._sandbox import resolve_sandbox_ref
 from pydantic_ai.durable_exec._toolset import EnqueueGuard, enqueue_not_supported_message
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.sandboxes import Sandbox, SandboxRef, UnavailableSandbox
@@ -29,7 +29,7 @@ TEMPORAL_SANDBOX_UNAVAILABLE_REASON = (
     'RunContext.sandbox is not available inside a Temporal activity: a live sandbox handle cannot cross '
     'the activity boundary. Attach a capability that supplies a sandbox through its `acquire_sandbox` hook, '
     'or pass a `SandboxRef` to the agent run; either way the sandbox is re-opened inside each activity '
-    "through the capability chain's `get_sandbox`."
+    "through the capability chain's `resolve_sandbox`."
 )
 
 _activity_sandboxes: ContextVar[list[Sandbox] | None] = ContextVar('temporal_activity_sandboxes', default=None)
@@ -331,7 +331,7 @@ def _restore_sandbox(
                 f'Cannot connect to sandbox {ref.sandbox_id!r}: no agent is attached to this Temporal '
                 'activity, so there is no capability chain to resolve the reference through.'
             )
-        backend = connect_sandbox_ref(agent.root_capability, ctx, ref)
+        backend = resolve_sandbox_ref(agent.root_capability, ctx, ref)
         facade = Sandbox(backend, ref=ref)
         ctx.__dict__['_sandbox'] = facade
     elif isinstance(unavailable_reason, str):

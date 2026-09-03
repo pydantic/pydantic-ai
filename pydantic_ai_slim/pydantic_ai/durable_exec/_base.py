@@ -609,7 +609,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         if sandbox.ref is not None:
             reason = (
                 f'`ctx.sandbox` cannot connect inside {self.engine_name} {self.durable_container_noun} code. '
-                'Use it from tools or other durable units, which reconnect it through `get_sandbox`.'
+                'Use it from tools or other durable units, which reconnect it through `resolve_sandbox`.'
             )
             return Sandbox(WorkflowSandboxGuard(reason, sandbox_id=sandbox.ref.sandbox_id), ref=sandbox.ref)
         if not isinstance(sandbox.backend, UnavailableSandbox):

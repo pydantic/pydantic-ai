@@ -59,7 +59,7 @@ A capability can create an environment for each run, reconnect an existing one, 
 environment, or manage a pool. It does this through three hooks:
 
 - `acquire_sandbox`: return a ref or `None`; decorate it with `@durable_operation` when provisioning or checkout performs I/O.
-- `get_sandbox`: synchronously construct a backend whose client connects lazily on its first operation.
+- `resolve_sandbox`: synchronously construct a backend whose client connects lazily on its first operation.
 - `release_sandbox`: destroy, return, or do nothing; decorate it with `@durable_operation` when it performs I/O.
 
 When acquisition returns a `SandboxRef`, the run stores that serializable identity and constructs
@@ -83,7 +83,7 @@ class MySandboxCapability(AbstractCapability[Any]):
         sandbox = await self.client.create(idempotency_key=ctx.run_id)
         return SandboxRef(sandbox_id=sandbox.sandbox_id)
 
-    def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
+    def resolve_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
         """Construct a handle without I/O; the handle connects lazily on first use."""
         return self.client.sandbox(ref.sandbox_id)
 
@@ -98,14 +98,14 @@ Choose the lifecycle that matches the application:
 - For a warm sandbox shared across runs, return its ref from `acquire_sandbox` and leave
   `release_sandbox` unchanged.
 - For a pool, check out in `acquire_sandbox` and return it in `release_sandbox`.
-- For a sandbox provisioned elsewhere, implement `get_sandbox` to connect its `SandboxRef`; the
+- For a sandbox provisioned elsewhere, implement `resolve_sandbox` to connect its `SandboxRef`; the
   caller owns its lifecycle.
 
 Capabilities are asked in list order and the first ref returned from `acquire_sandbox` wins. The
 framework stamps its capability ID on the ref and routes connection and release back to it. For a
 caller-built unstamped ref, exactly one capability may connect. Deferred capabilities take no part.
 
-Pydantic AI closes the backend `get_sandbox` returned when the run ends; a live backend passed
+Pydantic AI closes the backend `resolve_sandbox` returned when the run ends; a live backend passed
 through `sandbox=` stays open and caller-owned.
 
 Pass `UnavailableSandbox(reason='Local execution is disabled by application policy.')` to
@@ -121,14 +121,14 @@ Only the `SandboxRef` crosses a durable boundary. Tools still call `ctx.sandbox`
 worker constructs a fresh backend inside every durable unit.
 
 Pass `SandboxRef(sandbox_id=...)` through `sandbox=` when the environment is provisioned elsewhere
-and outlives the run. The agent must have a capability whose `get_sandbox` connects it. Do not pass
+and outlives the run. The agent must have a capability whose `resolve_sandbox` connects it. Do not pass
 a live backend or `LocalSandboxBackend` into a durable run.
 
 Capability author rules:
 
 - Decorate `acquire_sandbox` and `release_sandbox` with `@durable_operation` to make them durable
   units. Undecorated overrides run inline and must be deterministic and free of I/O.
-- `get_sandbox` must be construct-only. Its backend should raise `SandboxUnavailableError` from
+- `resolve_sandbox` must be construct-only. Its backend should raise `SandboxUnavailableError` from
   the first operation when the environment has expired, never silently create a replacement.
 - Async `release_sandbox` must be idempotent. It may destroy the sandbox, return it to a pool,
   decrement a reference count, or do nothing for a warm environment.

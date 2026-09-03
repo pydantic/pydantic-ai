@@ -48,7 +48,7 @@ def sandbox_contribution_error(*, run_location: str, sandbox_constraint: str) ->
 def live_sandbox_error(*, run_location: str, sandbox_constraint: str) -> str:
     return (
         f'A live sandbox handle cannot be passed {run_location}: {sandbox_constraint}. '
-        'Pass a `SandboxRef` instead and attach a capability whose `get_sandbox` can connect to it.'
+        'Pass a `SandboxRef` instead and attach a capability whose `resolve_sandbox` can connect to it.'
     )
 
 

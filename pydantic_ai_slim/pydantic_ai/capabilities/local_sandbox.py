@@ -48,7 +48,7 @@ class LocalSandbox(AbstractCapability[AgentDepsT]):
     async def acquire_sandbox(self, ctx: RunContext[AgentDepsT]) -> SandboxRef:
         return SandboxRef(sandbox_id=f'{_LOCAL_PREFIX}{self._path(ctx).as_posix()}')
 
-    def get_sandbox(self, ctx: RunContext[AgentDepsT], ref: SandboxRef) -> SandboxBackend | None:
+    def resolve_sandbox(self, ctx: RunContext[AgentDepsT], ref: SandboxRef) -> SandboxBackend | None:
         if not ref.sandbox_id.startswith(_LOCAL_PREFIX):
             return None
         return LocalSandboxBackend(root=Path(ref.sandbox_id.removeprefix(_LOCAL_PREFIX)))

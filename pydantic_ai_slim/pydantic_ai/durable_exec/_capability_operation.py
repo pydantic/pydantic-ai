@@ -37,7 +37,7 @@ ResultT = TypeVar('ResultT')
 P = ParamSpec('P')
 A = TypeVar('A', bound=Awaitable[Any])
 
-_SYNC_NEVER_DURABLE_HOOKS = frozenset({'get_toolset', 'get_wrapper_toolset', 'get_sandbox', 'get_wrapper_sandbox'})
+_SYNC_NEVER_DURABLE_HOOKS = frozenset({'get_toolset', 'get_wrapper_toolset', 'resolve_sandbox', 'get_wrapper_sandbox'})
 """Sync hooks marked so collection can report why they cannot be durable.
 
 The decorator still attaches a marker to these sync hooks so binding raises the specific
@@ -60,7 +60,7 @@ _NEVER_DURABLE_HOOKS = {
     'wrap_run_event_stream': '`wrap_run_event_stream` receives a live stream and cannot be a durable operation.',
     'get_toolset': '`get_toolset` returns a live toolset and cannot be a durable operation.',
     'get_wrapper_toolset': '`get_wrapper_toolset` returns a live toolset and cannot be a durable operation.',
-    'get_sandbox': '`get_sandbox` is construct-only and runs inside every durable unit.',
+    'resolve_sandbox': '`resolve_sandbox` is construct-only and runs inside every durable unit.',
     'get_wrapper_sandbox': '`get_wrapper_sandbox` returns a live sandbox handle and cannot be a durable operation.',
 }
 

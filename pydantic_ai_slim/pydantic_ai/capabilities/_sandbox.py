@@ -8,12 +8,12 @@ from pydantic_ai.tools import AgentDepsT
 from .abstract import AbstractCapability
 
 
-def connect_sandbox_ref(
+def resolve_sandbox_ref(
     capability: AbstractCapability[AgentDepsT], ctx: RunContext[AgentDepsT], ref: SandboxRef
 ) -> SandboxBackend:
     """Connect to `ref` through a capability hierarchy or raise a user-facing error."""
     try:
-        backend = capability.get_sandbox(ctx, ref)
+        backend = capability.resolve_sandbox(ctx, ref)
     except UserError:
         raise
     except Exception as error:
@@ -26,6 +26,6 @@ def connect_sandbox_ref(
             f'{ref.sandbox_id!r}.'
         )
     raise UserError(
-        f'No capability can connect to sandbox {ref.sandbox_id!r}: every `get_sandbox` returned `None`. '
-        'Attach a capability whose `get_sandbox` recognizes it.'
+        f'No capability on this agent can resolve sandbox {ref.sandbox_id!r}: '
+        'add a sandbox capability such as `LocalSandbox()` to `capabilities=`.'
     )

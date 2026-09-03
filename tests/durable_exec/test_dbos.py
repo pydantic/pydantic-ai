@@ -4537,7 +4537,7 @@ async def test_dbos_durability_runs_sandbox_lifecycle_in_steps(dbos: DBOS) -> No
             self.in_step.append(DBOS.step_id is not None)
             return SandboxRef(sandbox_id=ctx.run_id or 'run')
 
-        def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> RecordingSandboxBackend:
+        def resolve_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> RecordingSandboxBackend:
             return RecordingSandboxBackend(ref.sandbox_id)
 
         @durable_operation('release_sandbox')

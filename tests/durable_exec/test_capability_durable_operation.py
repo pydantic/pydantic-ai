@@ -179,7 +179,7 @@ async def test_durable_sandbox_release_failure_propagates() -> None:
         async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
             return SandboxRef(sandbox_id='durable-sandbox')
 
-        def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> RecordingSandboxBackend:
+        def resolve_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> RecordingSandboxBackend:
             return RecordingSandboxBackend(ref.sandbox_id)
 
         @durable_operation('release_sandbox')
@@ -205,7 +205,7 @@ async def test_decorated_sandbox_lifecycle_uses_durable_dispatch_through_wrapper
             self.events.append('acquire')
             return SandboxRef(sandbox_id='wrapped')
 
-        def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> RecordingSandboxBackend:
+        def resolve_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> RecordingSandboxBackend:
             return RecordingSandboxBackend(ref.sandbox_id)
 
         @durable_operation('release_sandbox')
@@ -242,7 +242,7 @@ async def test_undecorated_async_sandbox_lifecycle_runs_inline() -> None:
         async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
             return SandboxRef(sandbox_id='inline')
 
-        def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> RecordingSandboxBackend:
+        def resolve_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> RecordingSandboxBackend:
             return RecordingSandboxBackend(ref.sandbox_id)
 
         async def release_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
@@ -967,7 +967,7 @@ def test_duplicate_operation_names_fail_during_agent_construction() -> None:
     [
         'get_toolset',
         'get_wrapper_toolset',
-        'get_sandbox',
+        'resolve_sandbox',
         'get_wrapper_sandbox',
         'wrap_run',
         'wrap_node_run',
@@ -980,7 +980,7 @@ def test_duplicate_operation_names_fail_during_agent_construction() -> None:
     ],
 )
 def test_never_durable_hooks_fail_at_bind(hook: str) -> None:
-    if hook in ('get_toolset', 'get_wrapper_toolset', 'get_sandbox', 'get_wrapper_sandbox'):
+    if hook in ('get_toolset', 'get_wrapper_toolset', 'resolve_sandbox', 'get_wrapper_sandbox'):
 
         def sync_invalid(self: AbstractCapability[Any], *args: Any, **kwargs: Any) -> None:
             return None

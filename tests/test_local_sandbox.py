@@ -9,13 +9,14 @@ import signal
 import sys
 import time
 from contextlib import suppress
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.capabilities import LocalSandbox
+from pydantic_ai.capabilities import CombinedCapability, LocalSandbox, WrapperCapability
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -567,7 +568,7 @@ async def test_local_sandbox_capability_run_end_to_end(tmp_path: Path):
             return ModelResponse(parts=[ToolCallPart('execute', {})])
         return ModelResponse(parts=[TextPart('done')])
 
-    agent: Agent = Agent(FunctionModel(model_func), capabilities=[LocalSandbox(id='local', root=tmp_path)])
+    agent: Agent = Agent(FunctionModel(model_func), capabilities=[LocalSandbox(root=tmp_path)])
     working_dirs: list[str] = []
 
     @agent.tool
@@ -587,7 +588,7 @@ async def test_local_sandbox_capability_removes_per_run_root():
             return ModelResponse(parts=[ToolCallPart('record_root', {})])
         return ModelResponse(parts=[TextPart('done')])
 
-    agent: Agent = Agent(FunctionModel(model_func), capabilities=[LocalSandbox(id='local')])
+    agent: Agent = Agent(FunctionModel(model_func), capabilities=[LocalSandbox()])
     roots: list[Path] = []
 
     @agent.tool
@@ -608,4 +609,41 @@ def test_local_sandbox_capability_declines_foreign_ref():
     capability: LocalSandbox[Any] = LocalSandbox()
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
 
-    assert capability.get_sandbox(ctx, SandboxRef(sandbox_id='remote:123')) is None
+    assert capability.resolve_sandbox(ctx, SandboxRef(sandbox_id='remote:123')) is None
+
+
+async def test_local_sandbox_without_id_routes_through_nested_combined(tmp_path: Path):
+    class DecliningWrapper(WrapperCapability[Any]):
+        async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef | None:
+            return None
+
+    @dataclass
+    class RecordingWrapper(WrapperCapability[Any]):
+        released: list[SandboxRef] = field(default_factory=lambda: list[SandboxRef]())
+
+        async def release_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
+            self.released.append(ref)
+            await super().release_sandbox(ctx, ref)
+
+    inactive = DecliningWrapper(wrapped=CombinedCapability([LocalSandbox(root=tmp_path / 'inactive')]))
+    active = RecordingWrapper(wrapped=CombinedCapability([LocalSandbox(root=tmp_path / 'active')]))
+    refs: list[SandboxRef | None] = []
+
+    def model_func(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('execute', {})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent: Agent = Agent(FunctionModel(model_func), capabilities=[inactive, active])
+
+    @agent.tool
+    async def execute(ctx: RunContext[Any]) -> str:
+        refs.append(ctx.sandbox.ref)
+        assert isinstance(ctx.sandbox.backend, LocalSandboxBackend)
+        return 'ok'
+
+    await agent.run('go')
+
+    expected = SandboxRef(sandbox_id=f'local:{(tmp_path / "active").as_posix()}', capability_id='local_sandbox_2')
+    assert refs == [expected]
+    assert active.released == [expected]

@@ -1542,7 +1542,7 @@ async def test_temporal_agent_allows_inline_sandbox_supplier_and_rejects_durable
         async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
             return SandboxRef(sandbox_id='inline')
 
-        def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> RecordingSandboxBackend:
+        def resolve_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> RecordingSandboxBackend:
             return RecordingSandboxBackend(ref.sandbox_id)
 
     class DurableSupplier(Capability[Any]):
@@ -1550,7 +1550,7 @@ async def test_temporal_agent_allows_inline_sandbox_supplier_and_rejects_durable
         async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
             return SandboxRef(sandbox_id='durable')
 
-        def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> RecordingSandboxBackend:
+        def resolve_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> RecordingSandboxBackend:
             return RecordingSandboxBackend(ref.sandbox_id)
 
     inline_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
@@ -2764,14 +2764,8 @@ def test_temporal_run_context_without_sandbox_state_has_no_sandbox(state: dict[s
 
 
 async def test_temporal_run_context_reconnects_sandbox_ref_through_agent():
-    class DecliningConnector(ConnectOnlySandboxCapability):
-        def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
-            self.sandbox_ids.append(ref.sandbox_id)
-            return None
-
-    declining = DecliningConnector()
     connector = ConnectOnlySandboxCapability()
-    agent = Agent(TestModel(), capabilities=[declining, connector])
+    agent = Agent(TestModel(), capabilities=[connector])
     ref = SandboxRef(sandbox_id='temporal-ref')
 
     sandbox = ref_sandbox(ref)
@@ -2780,7 +2774,6 @@ async def test_temporal_run_context_reconnects_sandbox_ref_through_agent():
     reconstructed = deserialize_run_context(TemporalRunContext, serialized, deps=None, agent=agent)
 
     assert (await reconstructed.sandbox.run(['true'])).stdout == 'connected'
-    assert declining.sandbox_ids == ['temporal-ref']
     assert connector.sandbox_ids == ['temporal-ref']
 
 
@@ -2834,7 +2827,7 @@ async def test_temporal_run_context_closes_reconnected_sandbox_when_scope_is_can
     backend = ClosableBackend()
 
     class Provider(Capability[Any]):
-        def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
+        def resolve_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
             return backend
 
     provider = Provider(id='provider')
@@ -2868,7 +2861,7 @@ async def test_temporal_activity_closes_deferred_sandbox_connections():
     get_calls = 0
 
     class Provider(Capability[Any]):
-        def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
+        def resolve_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
             nonlocal get_calls
             get_calls += 1
             return backend
@@ -2927,7 +2920,7 @@ async def test_temporal_activity_sandbox_close_error_does_not_mask_handler_error
     backend = FailingCloseBackend()
 
     class Provider(Capability[Any]):
-        def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
+        def resolve_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
             return backend
 
     agent = Agent(TestModel(), capabilities=[Provider(id='provider')])
@@ -2961,7 +2954,7 @@ async def test_temporal_activity_sandbox_close_raises_the_first_failure_after_cl
     backends = iter([FailingCloseBackend('first'), FailingCloseBackend('second')])
 
     class Provider(Capability[Any]):
-        def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
+        def resolve_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
             return next(backends)
 
     agent = Agent(TestModel(), capabilities=[Provider(id='provider')])

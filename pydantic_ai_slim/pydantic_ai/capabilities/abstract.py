@@ -551,7 +551,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """
         return None
 
-    def get_sandbox(self, ctx: RunContext[AgentDepsT], ref: SandboxRef) -> SandboxBackend | None:
+    def resolve_sandbox(self, ctx: RunContext[AgentDepsT], ref: SandboxRef) -> SandboxBackend | None:
         """Construct a backend object for `ref`, or return `None` if this capability cannot serve it.
 
         This method must not connect, probe liveness, resume, start, or create an environment. Any client

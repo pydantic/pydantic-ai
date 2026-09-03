@@ -4610,7 +4610,7 @@ async def test_prefect_durability_runs_sandbox_lifecycle_in_tasks(blockbuster_en
             self.events.append(('acquire', sandbox_id, TaskRunContext.get() is not None))
             return SandboxRef(sandbox_id=sandbox_id)
 
-        def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> RecordingSandboxBackend:
+        def resolve_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> RecordingSandboxBackend:
             return RecordingSandboxBackend(ref.sandbox_id)
 
         @durable_operation('release_sandbox')
