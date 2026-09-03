@@ -2741,6 +2741,14 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         timeout = to_httpx2_timeout(model_settings.get('timeout', NOT_GIVEN))
         return extra_headers, timeout
 
+    def _prepare_responses_settings(
+        self,
+        messages: list[ModelRequest | ModelResponse],
+        model_settings: OpenAIResponsesModelSettings,
+    ) -> OpenAIResponsesModelSettings:
+        """Adjust the settings of a single request; subclasses override this to derive settings from the messages."""
+        return model_settings
+
     @overload
     async def _responses_create(
         self,
@@ -2777,33 +2785,13 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             profile,
         )
         # Both helpers mutate the settings they receive.
-        model_settings = OpenAIResponsesModelSettings(**model_settings)
+        model_settings = self._prepare_responses_settings(messages, OpenAIResponsesModelSettings(**model_settings))
         _drop_sampling_params_for_reasoning(profile, model_settings, model_request_parameters)
         _drop_unsupported_params(profile, model_settings)
         store: bool | Omit | None = model_settings.get('openai_store', OMIT)
         if profile.get('openai_responses_requires_store_false', False):
             store = False
         extra_headers, timeout = self._build_request_options(model_settings)
-
-        prompt_cache_key: str | Omit = model_settings.get('openai_prompt_cache_key', OMIT)
-        # The conversation-scoped session identity mirroring the official Codex client's affinity:
-        # its root thread keeps `session-id`, `thread-id`, and `x-client-request-id` equal and
-        # stable across turns, so all three derive from the conversation carried by the messages.
-        # Callers modeling child threads (which inherit the session but get a fresh thread id)
-        # can override individual values via `extra_headers`. Messages with no conversation
-        # identity (e.g. direct `Model.request()` usage outside an agent run) leave the request
-        # unchanged.
-        if profile.get('openai_responses_session_affinity', False) and (
-            session_id := next((m.conversation_id for m in reversed(messages) if m.conversation_id), None)
-        ):
-            # Explicit user-supplied headers and cache key win over the derived affinity;
-            # HTTP field names are case-insensitive, so a case-variant override counts too.
-            supplied_headers = {name.lower() for name in extra_headers}
-            for header in ('session-id', 'thread-id', 'x-client-request-id'):
-                if header not in supplied_headers:
-                    extra_headers[header] = session_id
-            if isinstance(prompt_cache_key, Omit):
-                prompt_cache_key = session_id
 
         # OpenAI SDK type stubs incorrectly use 'in-memory' but API requires 'in_memory', so we have to use `Any` to not hit type errors
         prompt_cache_retention: Any = model_settings.get('openai_prompt_cache_retention', OMIT)
@@ -2832,7 +2820,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     store=store,
                     user=model_settings.get('openai_user', OMIT),
                     include=include or OMIT,
-                    prompt_cache_key=prompt_cache_key,
+                    prompt_cache_key=model_settings.get('openai_prompt_cache_key', OMIT),
                     prompt_cache_retention=prompt_cache_retention,
                     prompt_cache_options=model_settings.get('openai_prompt_cache_options', OMIT),
                     background=model_settings.get('openai_background', OMIT),

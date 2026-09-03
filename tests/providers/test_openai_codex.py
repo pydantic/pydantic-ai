@@ -33,7 +33,7 @@ from pydantic_ai.providers import infer_provider_class
 from ..conftest import TestEnv, try_import
 
 with try_import() as imports_successful:
-    from pydantic_ai.models.openai import OpenAIResponsesModel
+    from pydantic_ai.models.openai_codex import OpenAICodexModel
     from pydantic_ai.providers.openai_codex import (
         CredentialsPersistenceError,
         CredentialsRefreshError,
@@ -931,7 +931,7 @@ def test_openai_codex_prefix_infers_responses_model(env: TestEnv, tmp_path: Path
     env.set('CODEX_HOME', str(tmp_path))
     model = infer_model('openai-codex:gpt-5.6-luna')
 
-    assert isinstance(model, OpenAIResponsesModel)
+    assert isinstance(model, OpenAICodexModel)
     assert model.profile.get('openai_responses_requires_streaming') is True
     assert model.profile.get('openai_responses_requires_store_false') is True
     assert model.profile.get('openai_supports_input_token_counting') is False

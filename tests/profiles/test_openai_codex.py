@@ -25,7 +25,6 @@ def test_codex_wire_dialect_flags():
     assert profile.get('openai_responses_requires_streaming') is True
     assert profile.get('openai_responses_requires_store_false') is True
     assert profile.get('openai_supports_input_token_counting') is False
-    assert profile.get('openai_responses_session_affinity') is True
     assert profile.get('openai_unsupported_model_settings') == (
         'max_tokens',
         'temperature',
@@ -45,7 +44,6 @@ def test_codex_profile_extends_the_standard_openai_profile():
         'openai_responses_requires_streaming',
         'openai_responses_requires_store_false',
         'openai_supports_input_token_counting',
-        'openai_responses_session_affinity',
     }
     assert {k: v for k, v in codex.items() if k not in overridden} == {
         k: v for k, v in base.items() if k not in overridden

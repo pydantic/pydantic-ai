@@ -21,7 +21,7 @@ agent = Agent('openai-codex:gpt-5.6-luna')
 ...
 ```
 
-This resolves to [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] backed by [`OpenAICodexProvider`][pydantic_ai.providers.openai_codex.OpenAICodexProvider], which reads the CLI's credentials from `~/.codex/auth.json` (or `$CODEX_HOME/auth.json`). The file is never written to; refreshed tokens live in memory for the rest of the process.
+This resolves to [`OpenAICodexModel`][pydantic_ai.models.openai_codex.OpenAICodexModel] backed by [`OpenAICodexProvider`][pydantic_ai.providers.openai_codex.OpenAICodexProvider], which reads the CLI's credentials from `~/.codex/auth.json` (or `$CODEX_HOME/auth.json`). The file is never written to; refreshed tokens live in memory for the rest of the process.
 
 ## Logging in without the Codex CLI
 
@@ -31,7 +31,7 @@ If you don't want to depend on the Codex CLI, [`OpenAICodexOAuthFlow`][pydantic_
 import webbrowser
 
 from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIResponsesModel
+from pydantic_ai.models.openai_codex import OpenAICodexModel
 from pydantic_ai.providers.openai_codex import OpenAICodexOAuthFlow, OpenAICodexProvider
 
 
@@ -41,7 +41,7 @@ async def main():
     credentials = await flow.exchange_code_from_callback()
 
     provider = OpenAICodexProvider(credentials=credentials)
-    agent = Agent(OpenAIResponsesModel('gpt-5.6-luna', provider=provider))
+    agent = Agent(OpenAICodexModel('gpt-5.6-luna', provider=provider))
     result = await agent.run('Where does "hello world" come from?')
     print(result.output)
 ```
@@ -59,7 +59,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIResponsesModel
+from pydantic_ai.models.openai_codex import OpenAICodexModel
 from pydantic_ai.providers.openai_codex import (
     OpenAICodexCredentials,
     OpenAICodexCredentialSource,
@@ -87,18 +87,19 @@ async def main():
         await source.save(await flow.exchange_code_from_callback())
 
     provider = OpenAICodexProvider(credential_source=source)
-    agent = Agent(OpenAIResponsesModel('gpt-5.6-luna', provider=provider))
+    agent = Agent(OpenAICodexModel('gpt-5.6-luna', provider=provider))
     result = await agent.run('Where does "hello world" come from?')
     print(result.output)
 ```
 
-Keep the file wherever your app keeps secrets, not in `~/.codex`, which belongs to the Codex CLI.
+!!! tip "Protect the credentials file"
+    The file holds a refresh token that grants access to your subscription, so treat it like any other secret: keep it wherever your app keeps secrets (not in `~/.codex`, which belongs to the Codex CLI), and restrict it to the current user, for example with `self.path.chmod(0o600)` after writing.
 
 If `save()` raises, the refreshed credentials stay live in memory and a [`CredentialsPersistenceError`][pydantic_ai.providers.openai_codex.CredentialsPersistenceError] is raised. Both it and [`CredentialsRefreshError`][pydantic_ai.providers.openai_codex.CredentialsRefreshError] subclass [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], so a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] treats an unusable login like any other provider failure.
 
 ## Prompt caching
 
-The Codex backend keys prompt caching off a stable session identity, sent as the `session-id`, `thread-id`, and `x-client-request-id` headers and the `prompt_cache_key` request field. Pydantic AI derives all four from the [`conversation_id`](../message-history.md) of the message history, so runs continuing the same conversation share the cache and separate conversations stay isolated. An explicit `openai_prompt_cache_key` model setting or explicitly supplied `extra_headers` always win over the derived values.
+The Codex backend keys prompt caching off a stable session identity, sent as the `session-id`, `thread-id`, and `x-client-request-id` headers and the `prompt_cache_key` request field. [`OpenAICodexModel`][pydantic_ai.models.openai_codex.OpenAICodexModel] derives all four from the [`conversation_id`](../message-history.md) of the message history, so runs continuing the same conversation share the cache and separate conversations stay isolated. An explicit `openai_prompt_cache_key` model setting or explicitly supplied `extra_headers` always win over the derived values.
 
 ## Limitations
 

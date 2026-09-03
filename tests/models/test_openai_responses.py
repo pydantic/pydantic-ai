@@ -110,6 +110,7 @@ with try_import() as imports_successful:
         OpenAIResponsesModelSettings,
         _resolve_openai_image_generation_size,  # pyright: ignore[reportPrivateUsage]
     )
+    from pydantic_ai.models.openai_codex import OpenAICodexModel
     from pydantic_ai.providers.anthropic import AnthropicProvider
     from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.providers.openai import OpenAIProvider
@@ -16589,13 +16590,13 @@ async def test_openai_responses_malformed_tool_args_degraded_on_the_wire(allow_m
 
 
 # --- OpenAI Codex wire dialect through the model's request path ---
-# These pin the Codex-profile request/stream semantics of `OpenAIResponsesModel` against the
-# shared mock; the OAuth/credential unit tests stay in `tests/providers/test_openai_codex.py`.
+# These pin the request/stream semantics of `OpenAICodexModel` against the shared mock; the
+# OAuth/credential unit tests stay in `tests/providers/test_openai_codex.py`.
 
 
 async def test_codex_count_tokens_raises_user_error(allow_model_requests: None):
     mock_client = cast(AsyncOpenAI, MockOpenAIResponses())
-    model = OpenAIResponsesModel('gpt-5.6-luna', provider=OpenAICodexProvider(openai_client=mock_client))
+    model = OpenAICodexModel('gpt-5.6-luna', provider=OpenAICodexProvider(openai_client=mock_client))
     with pytest.raises(UserError, match='Server-side token counting is not available'):
         await model.count_tokens([ModelRequest(parts=[UserPromptPart('hi')])], None, ModelRequestParameters())
 
@@ -16698,9 +16699,9 @@ def _codex_stream(*, slim_completed: bool) -> list[resp.ResponseStreamEvent]:
 
 def _codex_model_with_stream(
     events: list[resp.ResponseStreamEvent],
-) -> tuple[OpenAIResponsesModel, MockOpenAIResponses]:
+) -> tuple['OpenAICodexModel', MockOpenAIResponses]:
     mock_client = MockOpenAIResponses.create_mock_stream(events)
-    model = OpenAIResponsesModel('gpt-5.6-luna', provider=OpenAICodexProvider(openai_client=mock_client))
+    model = OpenAICodexModel('gpt-5.6-luna', provider=OpenAICodexProvider(openai_client=mock_client))
     return model, cast(MockOpenAIResponses, mock_client)
 
 
@@ -16797,7 +16798,7 @@ async def test_forced_stream_drops_unsupported_settings(allow_model_requests: No
 async def test_forced_stream_without_events_raises(allow_model_requests: None):
     # The nested-list form is how the shared mock represents a single, empty stream.
     mock_client = MockOpenAIResponses.create_mock_stream([[]])
-    model = OpenAIResponsesModel('gpt-5.6-luna', provider=OpenAICodexProvider(openai_client=mock_client))
+    model = OpenAICodexModel('gpt-5.6-luna', provider=OpenAICodexProvider(openai_client=mock_client))
     with pytest.raises(UnexpectedModelBehavior, match='without content'):
         await model.request([ModelRequest(parts=[UserPromptPart('hi')])], None, ModelRequestParameters())
 
@@ -16805,10 +16806,10 @@ async def test_forced_stream_without_events_raises(allow_model_requests: None):
 # --- Session affinity (mirrors the official Codex client's session/thread identifiers) ---
 
 
-def _codex_model_with_streams(count: int) -> tuple[OpenAIResponsesModel, MockOpenAIResponses]:
+def _codex_model_with_streams(count: int) -> tuple['OpenAICodexModel', MockOpenAIResponses]:
     events = [_codex_stream(slim_completed=True) for _ in range(count)]
     mock_client = MockOpenAIResponses.create_mock_stream(events)
-    model = OpenAIResponsesModel('gpt-5.6-luna', provider=OpenAICodexProvider(openai_client=mock_client))
+    model = OpenAICodexModel('gpt-5.6-luna', provider=OpenAICodexProvider(openai_client=mock_client))
     return model, cast(MockOpenAIResponses, mock_client)
 
 
@@ -16913,7 +16914,7 @@ async def test_responses_store_passthrough_on_standard_model(allow_model_request
 
 
 async def test_no_session_affinity_on_standard_model(allow_model_requests: None):
-    """The flag-off arm of `openai_responses_session_affinity` with a conversation id present.
+    """Session affinity is an `OpenAICodexModel` behavior, not an `OpenAIResponsesModel` one.
 
     Every agent run carries a `conversation_id`, so a standard model request must not grow the
     affinity headers or a derived `prompt_cache_key`.
