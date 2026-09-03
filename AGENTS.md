@@ -79,6 +79,11 @@ Never add yourself (Claude) as a co-author on commits. Commits should be authore
 Before every push, and until the PR lifecycle is complete, follow the
 `pushing-commits-to-the-repo` skill. Do not idle after pushing.
 
+Branch state that has to outlive one session -- the issue brief, the decisions log, session
+handoffs -- lives in the `branch-context` skill, which `pushing-commits-to-the-repo` reads. Bootstrap
+it with `initialize-worktree` on new work or `adopt-pr` on an existing PR, and read it at the start
+of every session on that branch.
+
 **A restriction is a conclusion you earn from a real failure, not a field you read.** Never report an
 operation as blocked, unavailable, or not-permitted based on a metadata flag, a config field, or a
 docs claim — attempt it and quote the actual error. (`maintainerCanModify: false` on a PR does *not*

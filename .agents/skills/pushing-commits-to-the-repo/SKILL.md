@@ -51,20 +51,19 @@ Use one fenced `diff` tree from the public entry point to the changed observable
 
 ### Publish PR decisions
 
-Include the branch's appended decision entries from
-`.claude/skills/branch-context/pr-decisions.md` near the end of the body, before the checklist:
+When `.claude/skills/branch-context/pr-decisions.md` has at least one entry, include them near the
+end of the body, before the checklist. Skip the section entirely when the log is empty or absent —
+`/initialize-worktree` and `/adopt-pr` own creating it, not this step:
 
 ```markdown
 <details>
 <summary>PR decisions</summary>
 
-<dated decision entries, or "No non-obvious decisions recorded.">
+<dated decision entries>
 </details>
 ```
 
-Do not copy the decisions template's instructions into the PR body. When the local log is missing,
-copy `.agents/skills/branch-context/pr-decisions.template.md` to
-`.claude/skills/branch-context/pr-decisions.md`.
+Do not copy the decisions template's instructions into the PR body.
 
 ### Apply a label
 
@@ -108,10 +107,21 @@ Run this gate before the first push. Run it before later pushes while the curren
 budget remains. It catches semantic defects before they consume a CI and hosted-review round.
 
 Dispatch `pre-push-review` at most three times per PR during one task. Count every dispatch,
-including repeated reviews after findings. Track the count in the current task plan. Use the branch
-name until a PR number exists. When the PR exists, rename the plan entry and preserve the count.
-Reserve the next count before dispatch. Include `call N of 3` in the reviewer prompt. The final
-metadata review does not count against this budget.
+including repeated reviews after findings. Reserve the next count before dispatch and include
+`call N of 3` in the reviewer prompt. The final metadata review does not count against this budget.
+
+Record each dispatch in `pr-decisions.md` — not in the session, which does not survive a handoff:
+
+```bash
+.agents/skills/branch-context/append-pr-decision.sh \
+  --title "pre-push review N of 3 at <candidate-head-sha>" \
+  --decision "<no findings | remediated: one line>" \
+  --why "<what changed since the previous reviewed SHA>" \
+  --source "<PR URL, or the branch name until a PR exists>"
+```
+
+That entry is also the reviewed-SHA anchor the exempt-delta table below chains from. A successor
+session reads the budget off the log; without it the cap silently resets.
 
 1. Commit the exact state you intend to push. Leave nothing staged, unstaged, or uncommitted unless
    the user's instructions override this.
@@ -120,10 +130,14 @@ metadata review does not count against this budget.
    policy-base checkout the contract above refers to — it does not exist until you make it:
 
    ```bash
+   POLICY_BASE_DIR="$(mktemp -d)/policy-base"
    git worktree add --detach "$POLICY_BASE_DIR" "$POLICY_BASE_SHA"
+   # ... run the gate ...
+   git worktree remove --force "$POLICY_BASE_DIR"
    ```
 
-   Remove it when the gate finishes. A reviewer that only needs to read instructions can use
+   Put it outside the candidate worktree. A path inside it dirties the tree the clean check below
+   is about to inspect. A reviewer that only needs to read instructions can use
    `git show "$POLICY_BASE_SHA":AGENTS.md` instead of a second tree; a reviewer launched with the
    policy base as its working directory needs the worktree.
 3. Prepare the review bundle under the contract above.
@@ -140,7 +154,9 @@ metadata review does not count against this budget.
 
 Stop after a review returns no findings. After the third review, remediate its findings and run the
 relevant local checks. Do not dispatch a fourth review. Continue with the push, CI, and hosted
-review. This is the only exception to requiring a pre-push review of the exact pushed SHA.
+review. Budget exhaustion is one of three ways a pushed SHA can go un-reviewed; the other two are
+an evidence-backed dismissal on an unchanged candidate HEAD, above, and an exempt delta from the
+table below. Nothing else.
 
 Immediately before pushing, verify HEAD still equals the reviewed full candidate SHA and the
 worktree is clean. After third-review remediation, verify HEAD equals the locally checked

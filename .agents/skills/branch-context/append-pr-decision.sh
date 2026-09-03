@@ -101,11 +101,17 @@ validate_field 'source' "$SOURCE"
 validate_field 'iteration' "$ITER"
 validate_field 'supersedes' "$SUPERSEDES"
 
+# An import needs a PATH after the @. Matching every `@` before a non-space
+# character instead rejects this repo's own vocabulary -- `@agent.tool`,
+# `@dataclass`, `@field_validator` -- which is exactly what a pydantic-ai
+# decision entry is most likely to name.
+IMPORT_PATH_RE='@[^[:space:]]*/|@[^[:space:]/]*\.(md|markdown|txt|rst|json|ya?ml|toml|ini|cfg|conf|env|py|pyi|sh|zsh|bash|lock)([^[:alnum:]]|$)'
+
 reject_import_syntax() {
     local label="$1" value="$2"
-    if [[ "$value" =~ @[^[:space:]] ]]; then
-        echo "error: $label must not contain active @-import syntax" >&2
-        echo "       Paraphrase the text without @ before writing autoloaded branch context." >&2
+    if [[ "$value" =~ $IMPORT_PATH_RE ]]; then
+        echo "error: $label must not contain an active @-import path" >&2
+        echo "       Write the path without its leading @ before writing autoloaded branch context." >&2
         exit 1
     fi
 }

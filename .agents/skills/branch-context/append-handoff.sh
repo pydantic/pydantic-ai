@@ -44,6 +44,12 @@ SUMMARY="$1"
 BODY_SRC="${2:-}"
 SESSION_ID="${HANDOFF_SESSION_ID:-${CLAUDE_CODE_SESSION_ID:-${CODEX_SESSION_ID:-}}}"
 
+# An import needs a PATH after the @. Matching every `@` before a non-space
+# character instead rejects this repo's own vocabulary -- `@agent.tool`,
+# `@dataclass`, `@field_validator` -- which is exactly what a pydantic-ai
+# decision entry is most likely to name.
+IMPORT_PATH_RE='@[^[:space:]]*/|@[^[:space:]/]*\.(md|markdown|txt|rst|json|ya?ml|toml|ini|cfg|conf|env|py|pyi|sh|zsh|bash|lock)([^[:alnum:]]|$)'
+
 validate_index_text() {
     local label="$1" value="$2"
     if [[ "$value" == *$'\n'* || "$value" == *$'\r'* ]] || \
@@ -55,8 +61,8 @@ validate_index_text() {
         echo "error: $label must not contain backslashes" >&2
         exit 1
     fi
-    if [[ "$value" =~ @[^[:space:]] ]]; then
-        echo "error: $label must not contain active @-import syntax" >&2
+    if [[ "$value" =~ $IMPORT_PATH_RE ]]; then
+        echo "error: $label must not contain an active @-import path" >&2
         exit 1
     fi
 }
