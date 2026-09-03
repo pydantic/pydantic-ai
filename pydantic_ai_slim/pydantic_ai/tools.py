@@ -244,6 +244,11 @@ NativeToolFunc: TypeAlias = Callable[
 
 This is useful if you want to customize the native tool based on the run context (e.g. user dependencies),
 or omit it completely from a step.
+
+Returning `None` omits the tool. The one exception is a
+[`NativeOrLocalTool`][pydantic_ai.capabilities.NativeOrLocalTool] capability that routes native configuration
+into a `fallback_model` subagent, where the subagent has already been invoked and cannot omit; see
+[`XSearch`][pydantic_ai.capabilities.XSearch] and [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration].
 """
 
 AgentNativeTool: TypeAlias = AbstractNativeTool | NativeToolFunc[AgentDepsT]
