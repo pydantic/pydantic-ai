@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import shutil
 import tempfile
-from dataclasses import dataclass
+from dataclasses import KW_ONLY, dataclass
 from pathlib import Path
 
 from pydantic_ai._utils import run_in_executor
@@ -33,8 +33,11 @@ class LocalSandbox(AbstractCapability[AgentDepsT]):
     shared between workers.
     """
 
-    id: str | None = 'local_sandbox'
     root: Path | None = None
+
+    _: KW_ONLY
+
+    id: str | None = 'local_sandbox'
 
     def __post_init__(self) -> None:
         if self.root is not None:
