@@ -239,6 +239,7 @@ Outside the loop: how runs persist, survive failures, and get observed and confi
 | Capability | Package | What it does |
 |---|---|---|
 | [Durable execution](/ai/capabilities/durable_execution/overview/) | Core | Runs that survive restarts and failures on [Temporal](/ai/capabilities/durable_execution/temporal/), [DBOS](/ai/capabilities/durable_execution/dbos/), or [Prefect](/ai/capabilities/durable_execution/prefect/), with [Restate](/ai/capabilities/durable_execution/restate/), [Kitaru](/ai/capabilities/durable_execution/kitaru/), and [Airflow](/ai/capabilities/durable_execution/airflow/) integrations |
+| [AWS Lambda durability](aws-lambda.md) | Harness | Checkpoint model requests and tool calls into AWS Lambda durable function steps |
 | [Step Persistence](step-persistence.md) | Harness | Save, restore, resume (`continue_run`), and fork (`fork_run`) runs; file/SQLite/Mongo backends |
 | [Instrumentation](/ai/capabilities/instrumentation/) | Core | OpenTelemetry GenAI spans for every model and tool call; the raw material for [Logfire](https://pydantic.dev/logfire) traces |
 | [Managed Prompt](managed-prompt.md) | Harness | Back instructions with a [Logfire](https://pydantic.dev/logfire)-managed prompt; version and roll out without redeploying |
