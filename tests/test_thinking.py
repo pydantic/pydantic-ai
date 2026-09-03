@@ -688,7 +688,7 @@ class TestAnthropicThinkingOutputToolsConflict:
     """Tool Output resolves to a forced `tool_choice`, which Anthropic rejects alongside extended
     thinking but accepts alongside adaptive thinking, so only the former switches the output mode.
 
-    The exception is a model that rejects forcing outright (`claude-fable-5`, `claude-mythos-5`):
+    The exception is a model that rejects forcing outright (`claude-fable-5-1`, `claude-mythos-5-1`):
     there, Tool Output could only fall back to a soft `tool_choice='auto'` the model may ignore, so
     adaptive thinking keeps switching away from it too.
 
@@ -720,7 +720,7 @@ class TestAnthropicThinkingOutputToolsConflict:
                 id='unified_thinking_on_non_adaptive_profile_switches_to_native',
             ),
             pytest.param(
-                'claude-fable-5',
+                'claude-fable-5-1',
                 None,
                 'native',
                 id='adaptive_profile_that_cannot_force_switches_to_native',
@@ -757,9 +757,9 @@ class TestAnthropicThinkingOutputToolsConflict:
         'model_name,anthropic_thinking,expected_message',
         [
             pytest.param(
-                'claude-fable-5',
+                'claude-fable-5-1',
                 None,
-                "'claude-fable-5' does not support output tools when a thinking setting is configured, "
+                "'claude-fable-5-1' does not support output tools when a thinking setting is configured, "
                 'because it rejects the forced tool choice they require. '
                 'Use `output_type=NativeOutput(...)` instead.',
                 id='adaptive_profile_that_cannot_force_names_the_model',

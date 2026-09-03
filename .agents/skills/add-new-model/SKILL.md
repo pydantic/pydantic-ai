@@ -104,6 +104,27 @@ If the model is a new family or has unclear capabilities, write a small comparis
 
 Diff the responses. Anything that diverges from the neighbour belongs in the profile.
 
+### Gateway parity
+
+Where the gateway serves a model, it must behave the same as the provider's canonical API. Step 3 only
+gets the id recognized; this is about behavior, and nothing enumerates it for you.
+
+The gateway reaches the canonical API through an ordinary SDK client carrying a proxy base URL. So:
+
+- **Narrow a capability by client class, never by base URL.** Bedrock, Vertex and Foundry are separate
+  transports and earn their own gates. A proxied client is the canonical API, and must keep every
+  capability the unproxied one has.
+- **A `base_url` test inside a capability decision is the defect, not the fix.** It splits the gateway
+  off from the transport it actually reaches. No capability in `models/` or `profiles/` is decided that
+  way — if you are about to be the first, you are answering the wrong question.
+- **Probe the gateway leg rather than reasoning about it.** `Model('<id>', provider='gateway')`, then
+  exercise whatever capability you gated. If `PYDANTIC_AI_GATEWAY_BASE_URL` is set in the environment,
+  check it points at the gateway root: a provider-specific proxy path 404s every other provider.
+
+A model the gateway genuinely does not serve is the other case entirely: it belongs in
+`UNSUPPORTED_GATEWAY_MODEL_NAMES`, on evidence that the gateway rejects the id. Never leave the id
+advertised and quietly degraded by a capability carve-out instead.
+
 ## Step 6 — Edit (minimal diff matching the mirrored PR)
 
 Make only the changes the enumeration step surfaced. Resist scope creep. If you discover a pre-existing bug in a sibling model's profile, **flag it in the PR description; do not fix it in this PR.**
@@ -164,7 +185,7 @@ check. Keep the model-specific evidence concise:
   ```
   plus a docstring note to drop the literal once the `anthropic` pin is bumped past the release that adds it. This is the in-repo pattern (commit `87e7ccf39`, PR #5849, added the `claude-fable-5` bridge; `526b065e2` later dropped it and bumped the floor to `anthropic>=0.108.0`). The bridge lands green immediately — no need to split the PR for Anthropic. NOTE: `ModelParam` ≠ `anthropic.types.model.Model`; check `ModelParam` (it's the superset the repo actually consumes, and may carry ids `Model` doesn't).
 - **Capability flags live as `startswith` prefix tuples in `profiles/anthropic.py`** inside `anthropic_model_profile()` (+ the module-level `_ANTHROPIC_CODE_EXECUTION_20260120_MODEL_PREFIXES`). A new family is NOT a literal-only add — it almost always needs at least one profile override (a literal-only add is only right when the family truly inherits every default branch, which is rare). Probe and set each independently: `models_that_support_json_schema_output`, `supports_adaptive`, `supports_effort`, `supports_xhigh_effort`, `disallows_budget_thinking`, `disallows_sampling_settings`, `supports_task_budgets`, `supports_tool_search`, code-exec version, `anthropic_supports_fast_speed`. Default-`False` flags (e.g. fast speed) are subtractive — just omit the id from that tuple.
-- **Forced `tool_choice` is a real per-model divergence worth probing.** Most Anthropic models accept `tool_choice` `{'type':'any'}`/`{'type':'tool'}` and only reject forcing alongside *thinking*; some (Claude Fable 5) reject it **unconditionally** (400 `tool_choice forces tool use is not compatible with this model`). That's modeled by `AnthropicModelProfile.anthropic_supports_forced_tool_choice` (default `True`) threaded into `_support_tool_forcing` in `models/anthropic.py`. Probe `tool_choice={'type':'any'}` against the new id AND its neighbour to tell a genuine divergence from a thinking-only constraint.
+- **Forced `tool_choice` is a real per-model divergence worth probing.** Most Anthropic models accept `tool_choice` `{'type':'any'}`/`{'type':'tool'}` and only reject forcing alongside *thinking*; the Claude Fable 5.1 / Claude Mythos 5.1 pair reject it **unconditionally** (400 `tool_choice forces tool use is not compatible with this model`). That's modeled by `AnthropicModelProfile.anthropic_supports_forced_tool_choice` (default `True`) threaded into `_support_tool_forcing` in `models/anthropic.py`. Probe `tool_choice={'type':'any'}` against the new id AND its neighbour to tell a genuine divergence from a thinking-only constraint.
 - **Tests:** profile-flag unit tests go in `tests/profiles/test_anthropic.py` (NOT `tests/models/test_anthropic.py`). Forced-tool-choice / `_prepare_tools_and_tool_choice` fallback tests go in `tests/models/test_tool_choice_unit.py`. The capability behaviors keyed on shared flags (sampling drop, budget-thinking reject, xhigh) are already covered by the opus-4-7/4-8 parametrized tests — adding the new id to those lists is redundant once a dedicated profile test asserts the flags.
 - **`tests/test_capability_spec.py::test_model_json_schema_with_capabilities`** snapshots the whole `KnownModelName` enum. Refresh it by running THAT TEST ALONE with `--inline-snapshot=fix` — running the whole file can pull in unrelated `snapshot()` blocks and abort the fix.
 - **`providers/bedrock.py` `bedrock_structured_output_unsupported`**: only relevant if the new id is actually served on Bedrock. A direct-API-only model (not in Bedrock's foundation-model list) doesn't belong there; don't add it speculatively just because the mirrored PR did.
