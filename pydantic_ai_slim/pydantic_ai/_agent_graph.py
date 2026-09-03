@@ -1657,11 +1657,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             usage = deepcopy(usage)
 
             outgoing_request = next(
-                (message for message in reversed(messages) if isinstance(message, _messages.ModelRequest)), None
+                message for message in reversed(messages) if isinstance(message, _messages.ModelRequest)
             )
-            raw_outgoing_namespace_before = (
-                (outgoing_request.metadata or {}).get(_PYDANTIC_AI_METADATA_KEY) if outgoing_request else None
-            )
+            raw_outgoing_namespace_before = (outgoing_request.metadata or {}).get(_PYDANTIC_AI_METADATA_KEY)
             outgoing_namespace_before: dict[str, Any] = (
                 dict(raw_outgoing_namespace_before) if is_str_dict(raw_outgoing_namespace_before) else {}
             )
@@ -1671,33 +1669,29 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # normalization merged consecutive requests, that request is temporary, so copy only keys
             # added or changed by `count_tokens()` back to the durable trailing request. Application
             # metadata keeps the existing normalization contract and is never propagated this way.
-            if outgoing_request is not None:
-                outgoing_namespace = (outgoing_request.metadata or {}).get(_PYDANTIC_AI_METADATA_KEY)
-                updates = (
-                    {
-                        key: value
-                        for key, value in outgoing_namespace.items()
-                        if key not in outgoing_namespace_before or outgoing_namespace_before[key] != value
-                    }
-                    if is_str_dict(outgoing_namespace)
-                    else {}
+            outgoing_namespace = (outgoing_request.metadata or {}).get(_PYDANTIC_AI_METADATA_KEY)
+            updates = (
+                {
+                    key: value
+                    for key, value in outgoing_namespace.items()
+                    if key not in outgoing_namespace_before or outgoing_namespace_before[key] != value
+                }
+                if is_str_dict(outgoing_namespace)
+                else {}
+            )
+            if updates:
+                durable_request = next(
+                    message
+                    for message in reversed(ctx.state.message_history)
+                    if isinstance(message, _messages.ModelRequest)
                 )
-                if updates:
-                    durable_request = next(
-                        (
-                            message
-                            for message in reversed(ctx.state.message_history)
-                            if isinstance(message, _messages.ModelRequest)
-                        ),
-                        None,
-                    )
-                    if durable_request is not None and durable_request is not outgoing_request:
-                        durable_request.metadata = durable_request.metadata or {}
-                        durable_namespace = durable_request.metadata.get(_PYDANTIC_AI_METADATA_KEY)
-                        if not is_str_dict(durable_namespace):
-                            durable_namespace = {}
-                            durable_request.metadata[_PYDANTIC_AI_METADATA_KEY] = durable_namespace
-                        durable_namespace.update(updates)
+                if durable_request is not outgoing_request:
+                    durable_request.metadata = durable_request.metadata or {}
+                    durable_namespace = durable_request.metadata.get(_PYDANTIC_AI_METADATA_KEY)
+                    if not is_str_dict(durable_namespace):
+                        durable_namespace = {}
+                        durable_request.metadata[_PYDANTIC_AI_METADATA_KEY] = durable_namespace
+                    durable_namespace.update(updates)
             # Price this request's input tokens so the accumulated cost reflects them. Output tokens don't
             # exist yet, so this is a lower bound: it only catches a request whose input alone exceeds the limit.
             counted_price = best_effort_price(
