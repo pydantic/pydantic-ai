@@ -540,13 +540,17 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         return []
 
     @base_hook_durable_operation('acquire_sandbox')
-    async def acquire_sandbox(self, ctx: RunContext[AgentDepsT]) -> SandboxRef | None:
-        """Return the identity of this run's sandbox, creating or reusing an environment, or `None` to not contribute.
+    def acquire_sandbox(self, ctx: RunContext[AgentDepsT]) -> SandboxRef | None | Awaitable[SandboxRef | None]:
+        """Return the identity of this run's sandbox, or `None` to not contribute.
 
         Called once at run start, before any hook sees [`ctx.sandbox`][pydantic_ai.tools.RunContext.sandbox],
         and skipped when a `sandbox=` run argument was passed. Exactly one capability may return a ref.
-        Durable engines record it in a durable unit that may retry after a crash, so make it idempotent:
-        create-or-reuse keyed by [`ctx.run_id`][pydantic_ai.tools.RunContext.run_id].
+
+        Override this as `async def` when acquisition needs I/O, such as provisioning or checking out
+        from a pool. Under a durability capability, async overrides run as durable units and must be
+        idempotent keyed by [`ctx.run_id`][pydantic_ai.tools.RunContext.run_id]. Override it as `def`
+        when the ref is known without I/O, such as the local machine or an SSH host from configuration.
+        Sync overrides run inline, are never durable units, must be deterministic, and must not perform I/O.
         """
         return None
 
@@ -565,13 +569,17 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         return None
 
     @base_hook_durable_operation('release_sandbox')
-    async def release_sandbox(self, ctx: RunContext[AgentDepsT], ref: SandboxRef) -> None:
+    def release_sandbox(self, ctx: RunContext[AgentDepsT], ref: SandboxRef) -> None | Awaitable[None]:
         """Release the run's ownership of `ref`: destroy it, return it to a pool, or do nothing.
 
         Called after the run ends, success or failure, only on the capability whose `acquire_sandbox`
-        returned `ref`, and never for a `sandbox=` run argument. Durable engines may retry it, so make it
-        idempotent.
+        returned `ref`, and never for a `sandbox=` run argument. Override this as `async def` when release
+        needs I/O, such as destroying the environment or returning it to a pool. Under a durability
+        capability, async overrides run as durable units and must be idempotent keyed by `ctx.run_id`.
+        Override it as `def` only when no I/O is needed; sync overrides run inline, are never durable units,
+        and must be deterministic.
         """
+        return None
 
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
         """Wrap the agent's assembled toolset, or return None to leave it unchanged.

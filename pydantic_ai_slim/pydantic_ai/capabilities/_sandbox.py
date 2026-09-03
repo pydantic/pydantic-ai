@@ -1,6 +1,8 @@
 """Internal sandbox lifecycle routing: exactly one capability may supply a run's sandbox."""
 
-from collections.abc import Sequence
+import inspect
+from collections.abc import Awaitable, Callable, Sequence
+from typing import cast
 
 import anyio
 
@@ -11,6 +13,13 @@ from pydantic_ai.tools import AgentDepsT
 
 from ._durable_operation import invoke_durable_operation
 from .abstract import AbstractCapability, leaf_capabilities
+from .wrapper import WrapperCapability
+
+
+def _hook_is_async(capability: AbstractCapability[AgentDepsT], name: str) -> bool:
+    while isinstance(capability, WrapperCapability):
+        capability = capability.wrapped
+    return inspect.iscoroutinefunction(getattr(capability, name))
 
 
 def active_leaves(capability: AbstractCapability[AgentDepsT]) -> list[AbstractCapability[AgentDepsT]]:
@@ -24,7 +33,13 @@ async def acquire_run_sandbox(
     """Ask every active capability for the run's sandbox; exactly one may answer."""
     acquired: list[tuple[AbstractCapability[AgentDepsT], SandboxRef]] = []
     for leaf in active_leaves(capability):
-        ref = await invoke_durable_operation(leaf, 'acquire_sandbox', ctx, leaf.acquire_sandbox, (ctx,), {})
+        if _hook_is_async(leaf, 'acquire_sandbox'):
+            handler = cast(Callable[..., Awaitable[SandboxRef | None]], leaf.acquire_sandbox)
+            ref = await invoke_durable_operation(leaf, 'acquire_sandbox', ctx, handler, (ctx,), {})
+        else:
+            ref = leaf.acquire_sandbox(ctx)
+            if inspect.isawaitable(ref):
+                ref = await ref
         if ref is not None:
             acquired.append((leaf, ref))
     if len(acquired) <= 1:
@@ -44,7 +59,11 @@ async def release_run_sandbox(
 ) -> None:
     """Release `ref` through the capability that acquired it, even while the run is being cancelled."""
     with anyio.CancelScope(shield=True):
-        await invoke_durable_operation(supplier, 'release_sandbox', ctx, supplier.release_sandbox, (ctx, ref), {})
+        if _hook_is_async(supplier, 'release_sandbox'):
+            handler = cast(Callable[..., Awaitable[None]], supplier.release_sandbox)
+            await invoke_durable_operation(supplier, 'release_sandbox', ctx, handler, (ctx, ref), {})
+        elif inspect.isawaitable(result := supplier.release_sandbox(ctx, ref)):
+            await result
 
 
 def connect_sandbox_ref(

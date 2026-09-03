@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 from collections.abc import Sequence
 from typing import Any, cast
 
@@ -12,15 +13,18 @@ from pydantic_ai.sandboxes import SandboxBackend, SandboxRef, UnavailableSandbox
 def _supplies_sandbox(capability: AbstractCapability[Any]) -> bool:
     if isinstance(capability, WrapperCapability):
         return _supplies_sandbox(capability.wrapped)
-    return type(capability).acquire_sandbox is not AbstractCapability.acquire_sandbox
+    return type(capability).acquire_sandbox is not AbstractCapability.acquire_sandbox and inspect.iscoroutinefunction(
+        capability.acquire_sandbox
+    )
 
 
 def contributes_sandbox(capability: AbstractCapability[Any]) -> bool:
-    """Whether the capability tree statically declares a sandbox supplier.
+    """Whether the capability tree statically declares an async sandbox supplier.
 
     The deprecated durable-agent wrappers reject sandbox-supplying capabilities up front: running
-    `acquire_sandbox` would be I/O in workflow code, and the wrappers have no way to route it into a
-    durable unit. A supplier produced at run time by a capability function is not visible here.
+    An async `acquire_sandbox` performs I/O and the wrappers have no way to route it into a durable
+    unit. A sync override is allowed because its contract forbids I/O and requires deterministic output.
+    A supplier produced at run time by a capability function is not visible here.
     """
     return any(_supplies_sandbox(leaf) for leaf in active_leaves(capability))
 

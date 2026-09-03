@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import KW_ONLY, dataclass
-from typing import TYPE_CHECKING, Any, TypeVar, cast
+from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar, cast
 
 if TYPE_CHECKING:
     from pydantic_ai.tools import RunContext
@@ -12,13 +12,14 @@ if TYPE_CHECKING:
     from .abstract import AbstractCapability
 
 ResultT = TypeVar('ResultT')
+P = ParamSpec('P')
 
 
 @dataclass(frozen=True)
 class DurableOperationMarker:
     name: str
     _: KW_ONLY
-    function: Callable[..., Awaitable[Any]]
+    function: Callable[..., Any]
     base_hook: bool = False
 
 
@@ -45,16 +46,16 @@ def validate_operation_name(name: object) -> str:
 
 def base_hook_durable_operation(
     name: str,
-) -> Callable[[Callable[..., Awaitable[ResultT]]], Callable[..., Awaitable[ResultT]]]:
+) -> Callable[[Callable[P, ResultT]], Callable[P, ResultT]]:
     """Mark a base hook so every override inherits durable execution automatically."""
     name = validate_operation_name(name)
 
-    def decorate(function: Callable[..., Awaitable[ResultT]]) -> Callable[..., Awaitable[ResultT]]:
+    def decorate(function: Callable[P, ResultT]) -> Callable[P, ResultT]:
         set_durable_operation_marker(
             function,
             DurableOperationMarker(
                 name=name,
-                function=cast(Callable[..., Awaitable[Any]], function),
+                function=function,
                 base_hook=True,
             ),
         )

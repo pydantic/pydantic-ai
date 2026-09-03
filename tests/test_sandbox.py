@@ -727,7 +727,13 @@ async def test_multiple_ref_connectors_are_rejected():
 
 
 def test_contributes_sandbox_detection():
+    class ConfiguredSandbox(AbstractCapability[Any]):
+        def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
+            return SandboxRef(sandbox_id='configured')
+
     assert contributes_sandbox(ConnectOnlySandboxCapability()) is False
+    assert contributes_sandbox(ConfiguredSandbox()) is False
+    assert contributes_sandbox(WrapperCapability(wrapped=ConfiguredSandbox())) is False
     assert contributes_sandbox(WrapperCapability(wrapped=SandboxCapability())) is True
     assert contributes_sandbox(SandboxCapability(id='deferred-sandbox', defer_loading=True)) is False
     assert contributes_sandbox(CombinedCapability([SandboxCapability(), ConnectOnlySandboxCapability()])) is True

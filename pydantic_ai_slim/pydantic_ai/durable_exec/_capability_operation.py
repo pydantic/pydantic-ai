@@ -261,6 +261,34 @@ def durable_operation(name: str) -> Callable[[Callable[P, A]], Callable[P, A]]:
     return decorate
 
 
+def _async_base_hook_override(
+    capability: AbstractCapability[Any], method_name: str, base_member: object
+) -> Callable[..., Awaitable[Any]] | None:
+    member = getattr(type(capability), method_name)
+    if member is base_member:
+        return None
+    wrapped_member: object | None = None
+    if isinstance(capability, WrapperCapability) and member is getattr(WrapperCapability, method_name, None):
+        wrapped = capability.wrapped
+        wrapper_member = getattr(WrapperCapability, method_name, None)
+        while isinstance(wrapped, WrapperCapability) and getattr(type(wrapped), method_name, None) is wrapper_member:
+            wrapped = wrapped.wrapped
+        wrapped_member = getattr(type(wrapped), method_name, None)
+        if wrapped_member is base_member:
+            return None
+        if inspect.iscoroutinefunction(wrapped_member):
+
+            @wraps(wrapped_member)
+            async def wrapper_handler(self: WrapperCapability[Any], *args: Any, **kwargs: Any) -> Any:
+                result = member.__get__(self, type(self))(*args, **kwargs)
+                return await result if inspect.isawaitable(result) else result
+
+            return wrapper_handler
+    if not inspect.iscoroutinefunction(wrapped_member or member):
+        return None
+    return cast(Callable[..., Awaitable[Any]], member)
+
+
 def collect_capability_operations(
     capability: AbstractCapability[Any],
 ) -> dict[str, CapabilityMethodDeclaration]:
@@ -275,21 +303,8 @@ def collect_capability_operations(
             marker = get_durable_operation_marker(base_member)
             if marker is None or not marker.base_hook:
                 continue
-            member = getattr(type(capability), method_name)
-            if member is not base_member:
-                if isinstance(capability, WrapperCapability) and member is getattr(
-                    WrapperCapability, method_name, None
-                ):
-                    wrapped = capability.wrapped
-                    wrapper_member = getattr(WrapperCapability, method_name, None)
-                    while (
-                        isinstance(wrapped, WrapperCapability)
-                        and getattr(type(wrapped), method_name, None) is wrapper_member
-                    ):
-                        wrapped = wrapped.wrapped
-                    if getattr(type(wrapped), method_name, None) is base_member:
-                        continue
-                handlers[marker.name] = cast(Callable[..., Awaitable[Any]], member)
+            if member := _async_base_hook_override(capability, method_name, base_member):
+                handlers[marker.name] = member
 
     for method_name, member in inspect.getmembers(type(capability)):
         marker = get_durable_operation_marker(member)

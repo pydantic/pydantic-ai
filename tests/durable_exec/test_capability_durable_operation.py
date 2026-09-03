@@ -923,6 +923,26 @@ def test_base_hook_override_is_automatically_registered() -> None:
     assert ('base_hook', 'provision') in durability._bound_capability_operations  # pyright: ignore[reportPrivateUsage]
 
 
+def test_sync_base_hook_override_is_not_registered() -> None:
+    class TierOneBase(AbstractCapability[Any]):
+        @base_hook_durable_operation('provision')
+        def provision(self, ctx: RunContext[Any]) -> str | Awaitable[str]: ...  # pragma: no branch
+
+    class TierOne(TierOneBase):
+        id = 'base_hook'
+
+        def provision(self, ctx: RunContext[Any]) -> str:
+            return 'configured'
+
+    capability = TierOne()
+    assert collect_capability_operations(capability) == {}
+
+    agent = Agent(TestModel(), name='base_hook', capabilities=[capability, RecordingDurability()])
+    durability = RecordingDurability.from_agent(agent)
+    assert durability is not None
+    assert ('base_hook', 'provision') not in durability._bound_capability_operations  # pyright: ignore[reportPrivateUsage]
+
+
 async def test_inherited_base_hook_hook_is_not_registered_or_dispatched() -> None:
     class TierOneBase(AbstractCapability[Any]):
         def __init__(self) -> None:
