@@ -315,7 +315,7 @@ Listeners run sequentially in capability order, and marked methods within one ca
 
 Decision events that need listener mutations before the emitter continues declare `dispatch='immediate'` on the event class:
 
-Building on the file-system capability above, a write can announce itself before it happens and let a listener veto it:
+Building on the workspace capability above, a write can announce itself before it happens and let a listener veto it:
 
 ```python {title="cancellable_capability_event.py"}
 from dataclasses import dataclass
