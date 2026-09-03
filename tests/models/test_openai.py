@@ -5618,7 +5618,7 @@ def replace_document_profile(_default: ModelProfile) -> ModelProfile:
     return ModelProfile()
 
 
-@pytest.mark.parametrize('provider_class', [AzureProvider, OpenAIProvider])
+@pytest.mark.parametrize('provider_name', ['azure', 'openai'])
 @pytest.mark.parametrize(
     'profile, expected',
     [
@@ -5632,7 +5632,7 @@ def replace_document_profile(_default: ModelProfile) -> ModelProfile:
     ids=['default', 'partial', 'disabled', 'enabled', 'callable-override', 'callable-replacement'],
 )
 async def test_azure_document_profile_override(
-    provider_class: type[AzureProvider] | type[OpenAIProvider],
+    provider_name: Literal['azure', 'openai'],
     profile: ModelProfile | Callable[[ModelProfile], ModelProfile] | None,
     expected: bool | None,
 ) -> None:
@@ -5642,17 +5642,20 @@ async def test_azure_document_profile_override(
         azure_endpoint='https://example.openai.azure.com/',
         api_key='test',
     ) as client:
-        model = OpenAIChatModel('gpt-5-mini', provider=provider_class(openai_client=client), profile=profile)
+        provider = (
+            AzureProvider(openai_client=client) if provider_name == 'azure' else OpenAIProvider(openai_client=client)
+        )
+        model = OpenAIChatModel('gpt-5-mini', provider=provider, profile=profile)
         assert model.profile.get('openai_chat_supports_document_input') is expected
 
 
-@pytest.mark.parametrize('provider_class', [AzureProvider, OpenAIProvider])
-@pytest.mark.parametrize('model_class', [OpenAIChatModel, OpenAIResponsesModel])
+@pytest.mark.parametrize('provider_name', ['azure', 'openai'])
+@pytest.mark.parametrize('model_type', ['chat', 'responses'])
 @pytest.mark.vcr(ignore_hosts=['example.openai.azure.com'])
 async def test_openai_provider_with_azure_client_uses_azure_behavior(
     allow_model_requests: None,
-    provider_class: type[AzureProvider] | type[OpenAIProvider],
-    model_class: type[OpenAIChatModel] | type[OpenAIResponsesModel],
+    provider_name: Literal['azure', 'openai'],
+    model_type: Literal['chat', 'responses'],
 ) -> None:
     error = {
         'code': 'content_filter',
@@ -5671,10 +5674,13 @@ async def test_openai_provider_with_azure_client_uses_azure_behavior(
             transport=httpx2.MockTransport(lambda request: httpx2.Response(400, json={'error': error}))
         ),
     ) as client:
-        provider = provider_class(openai_client=client)
+        provider = (
+            AzureProvider(openai_client=client) if provider_name == 'azure' else OpenAIProvider(openai_client=client)
+        )
+        model_class = OpenAIChatModel if model_type == 'chat' else OpenAIResponsesModel
         model = model_class('gpt-5-mini', provider=provider)
 
-        assert model.system == provider.name
+        assert model.system == provider_name
         if isinstance(model, OpenAIChatModel):
             assert model.profile.get('openai_chat_supports_document_input') is False
             with pytest.raises(UserError, match="Azure's Chat Completions API does not support document input"):
@@ -5687,7 +5693,7 @@ async def test_openai_provider_with_azure_client_uses_azure_behavior(
 
     assert exc_info.value.body is not None
     response = json.loads(exc_info.value.body)[0]
-    assert response['provider_name'] == provider.name
+    assert response['provider_name'] == provider_name
     assert response['provider_details'] == {
         'finish_reason': 'content_filter',
         'content_filter_result': {'hate': {'filtered': True, 'severity': 'high'}},
