@@ -14,6 +14,15 @@ env:
   UV_FROZEN: "1"
   # Ubuntu's system interpreters are older and slower than uv's optimized managed builds.
   UV_PYTHON_PREFERENCE: only-managed
+  # Authenticate the Git fetches uv makes for Git-sourced dependencies. Anonymous HTTPS clones are
+  # capped per client IP, and runners that share an egress pool exhaust that budget as a matrix
+  # fans out, at which point GitHub answers with a credential challenge that surfaces as
+  # `could not read Username for 'https://github.com'` and fails the install before any test runs.
+  # `GIT_CONFIG_*` applies to every `uv sync` and implicit `uv run` sync without writing credentials
+  # into the checkout, so `actions/checkout`'s `persist-credentials: false` still holds.
+  GIT_CONFIG_COUNT: "1"
+  GIT_CONFIG_KEY_0: url.https://x-access-token:${{ github.token }}@github.com/.insteadOf
+  GIT_CONFIG_VALUE_0: https://github.com/
 
 permissions:
   contents: read
@@ -875,11 +884,11 @@ jobs:
           enable-cache: true
           cache-suffix: dev
 
-      - run: uv sync --group dev
-      - run: uv run coverage combine
-      - run: uv run coverage report
+      - run: uv sync --group dev --group coverage
+      - run: uv run --no-sync coverage combine
+      - run: uv run --no-sync coverage report
 
-      - run: uv run strict-no-cover
+      - run: uv run --no-sync strict-no-cover
         env:
           COVERAGE_FILE: .coverage/.coverage
 

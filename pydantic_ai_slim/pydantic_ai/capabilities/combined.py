@@ -31,6 +31,7 @@ from pydantic_ai.toolsets import AbstractToolset, AgentToolset, CombinedToolset
 from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
+from ._on_event import collect_on_event_methods, marked_listens_to
 from ._ordering import collect_leaves, is_innermost, sort_capabilities
 from .abstract import (
     AbstractCapability,
@@ -159,6 +160,21 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     @property
     def has_wrap_run_event_stream(self) -> bool:
         return any(c.has_wrap_run_event_stream for c in self.capabilities)
+
+    @property
+    def has_on_event(self) -> bool:
+        return (
+            type(self).on_event is not CombinedCapability.on_event
+            or bool(collect_on_event_methods(type(self)))
+            or any(c.has_on_event for c in self.capabilities)
+        )
+
+    def listens_to(self, event: AgentStreamEvent) -> bool:
+        return (
+            type(self).on_event is not CombinedCapability.on_event
+            or marked_listens_to(type(self), event)
+            or any(c.listens_to(event) for c in self.capabilities)
+        )
 
     def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> CombinedCapability[AgentDepsT]:
         new_caps = [capability.for_agent(agent) for capability in self.capabilities]
@@ -528,7 +544,19 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                 error = new_error
         raise error
 
-    # --- Event stream hook ---
+    # --- Event hooks ---
+
+    async def on_event(self, ctx: RunContext[AgentDepsT], *, event: AgentStreamEvent) -> None:
+        for capability in self.capabilities:
+            # Ask against the event a capability would actually see: an earlier capability's
+            # (deprecated) replacement is what `Hooks.on_event` picks up and filters on, so testing
+            # the original here would skip a listener registered for the replacement's type.
+            current = ctx._event_stream_replacements.get(id(event), event)  # pyright: ignore[reportPrivateUsage]
+            if capability.listens_to(current) and (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
+                await capability.on_event(cap_ctx, event=event)
+        # A `CombinedCapability` subclass can carry marked listeners of its own; dispatch them
+        # after the children's, matching the combination order used by the other hooks.
+        await super().on_event(ctx, event=event)
 
     async def wrap_run_event_stream(
         self,
@@ -1014,7 +1042,9 @@ def bind_capabilities_tier(
 
 
 def _ctx_for_cap(capability: AbstractCapability[AgentDepsT], ctx: RunContext[AgentDepsT]) -> RunContext[AgentDepsT]:
-    return _replace_capability_context(ctx, capability_active=_capability_active(capability, ctx))
+    return _replace_capability_context(
+        ctx, capability=capability, capability_active=_capability_active(capability, ctx)
+    )
 
 
 def _ctx_for_active_cap(
@@ -1023,11 +1053,13 @@ def _ctx_for_active_cap(
     capability_active = _capability_active(capability, ctx)
     if capability.defer_loading is True and not capability_active:
         return None
-    return _replace_capability_context(ctx, capability_active=capability_active)
+    return _replace_capability_context(ctx, capability=capability, capability_active=capability_active)
 
 
-def _replace_capability_context(ctx: RunContext[AgentDepsT], *, capability_active: bool) -> RunContext[AgentDepsT]:
-    return replace(ctx, capability_active=capability_active)
+def _replace_capability_context(
+    ctx: RunContext[AgentDepsT], *, capability: AbstractCapability[AgentDepsT], capability_active: bool
+) -> RunContext[AgentDepsT]:
+    return replace(ctx, capability_active=capability_active, _capability=capability)
 
 
 def _capability_active(capability: AbstractCapability[AgentDepsT], ctx: RunContext[AgentDepsT]) -> bool:
