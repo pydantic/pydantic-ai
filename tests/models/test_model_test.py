@@ -639,6 +639,20 @@ def test_json_schema_common_string_formats():
     Formatted.model_validate(data)
 
 
+@pytest.mark.parametrize('seed', [-1, 3_000_000, 1 << 128])
+def test_string_formats_unconstrained_seeds_still_validate(seed: int):
+    """`date-time`/`uuid` generators must wrap extreme seeds instead of raising."""
+
+    class Formatted(BaseModel):
+        day: date
+        when: datetime
+        clock: time
+        id: UUID
+
+    data = _JsonSchemaTestData(Formatted.model_json_schema(), seed=seed).generate()
+    Formatted.model_validate(data)
+
+
 def test_string_formats_as_structured_output():
     """Regression for #8011: TestModel should not retry out on common pydantic string formats."""
 

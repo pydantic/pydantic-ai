@@ -442,6 +442,11 @@ class TestStreamedResponse(StreamedResponse):
 
 
 _chars = string.ascii_letters + string.digits + string.punctuation
+_DATE_ANCHOR = date(2024, 1, 1)
+_MAX_DAY_OFFSET = (date(9999, 12, 31) - _DATE_ANCHOR).days
+_MIN_DAY_OFFSET = (date(1, 1, 1) - _DATE_ANCHOR).days
+_DAY_SPAN = _MAX_DAY_OFFSET - _MIN_DAY_OFFSET + 1
+_UUID_INT_MODULUS = 1 << 128
 
 
 class _JsonSchemaTestData:
@@ -516,6 +521,13 @@ class _JsonSchemaTestData:
 
         return data
 
+    def _day_offset(self) -> int:
+        """Map any seed into a timedelta that stays inside datetime's year 1–9999 range."""
+        n = self.seed % _DAY_SPAN
+        if n > _MAX_DAY_OFFSET:
+            n -= _DAY_SPAN
+        return n
+
     def _str_gen(self, schema: dict[str, Any]) -> str:
         """Generate a string from a JSON Schema string."""
         if schema.get('maxLength') == 0:
@@ -526,13 +538,13 @@ class _JsonSchemaTestData:
         # first made TestModel emit `'a'` and fail Pydantic validation.
         if fmt := schema.get('format'):
             if fmt == 'date':
-                return (date(2024, 1, 1) + timedelta(days=self.seed)).isoformat()
+                return (_DATE_ANCHOR + timedelta(days=self._day_offset())).isoformat()
             if fmt == 'date-time':
-                return (datetime(2024, 1, 1, tzinfo=timezone.utc) + timedelta(days=self.seed)).isoformat()
+                return (datetime(2024, 1, 1, tzinfo=timezone.utc) + timedelta(days=self._day_offset())).isoformat()
             if fmt == 'time':
                 return time(hour=self.seed % 24).isoformat()
             if fmt == 'uuid':
-                return str(UUID(int=self.seed))
+                return str(UUID(int=self.seed % _UUID_INT_MODULUS))
             if fmt in {'uri', 'uri-reference', 'url'}:
                 return 'https://example.com'
 
