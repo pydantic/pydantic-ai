@@ -9,7 +9,6 @@ from __future__ import annotations as _annotations
 import base64
 import hashlib
 import json
-import re
 import time
 import warnings
 from abc import ABC, abstractmethod
@@ -20,10 +19,10 @@ from datetime import datetime, timedelta
 from difflib import get_close_matches
 from functools import cache, cached_property
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypeVar, cast, get_args, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypeAlias, TypeVar, cast, get_args, overload
 
 import httpx2
-from typing_extensions import Self, TypeAliasType, TypedDict, assert_never, deprecated
+from typing_extensions import Self, TypeAliasType, TypedDict, deprecated
 from typing_inspection.introspection import get_literal_values
 
 from .. import _utils
@@ -71,7 +70,9 @@ from ..messages import (
     UserPromptPart,
     VideoUrl,
     _compaction_part_is_wire_boundary,  # pyright: ignore[reportPrivateUsage]
+    _dump_error_details,  # pyright: ignore[reportPrivateUsage]
     _tool_results_first_sort_key,  # pyright: ignore[reportPrivateUsage]
+    _wrap_in_tag,  # pyright: ignore[reportPrivateUsage]
 )
 from ..native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
 from ..native_tools._tool_search import TOOL_SEARCH_FUNCTION_TOOL_NAME, ToolSearchTool
@@ -725,10 +726,11 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         `ModelResponse(call) + ModelRequest(return)` so the adapter can render the
         provider-agnostic exchange.
 
-        Renders each `RetryFeedbackPart` into the statement of why the previous response couldn't be
-        used, in the harness's own voice: a `SystemPromptPart` where the profile takes a
-        mid-conversation system message, and the same `<system>`-tagged `UserPromptPart` an
-        operator's mid-conversation prompt degrades to where it doesn't.
+        Translates each retry part into the part that carries it on the wire: a `RetryFeedbackPart`
+        becomes a `<validation_errors>`-fenced `UserPromptPart` where the feedback quotes the model's
+        own output, and a mid-conversation `SystemPromptPart` where it carries a message the agent's
+        author wrote. A legacy `RetryPromptPart` becomes a `ToolReturnPart` with `outcome='retried'`
+        when it names a tool, and the `RetryFeedbackPart` it always meant when it doesn't.
 
         Also wraps non-leading `SystemPromptPart`s as `<system>`-tagged `UserPromptPart`s when
         the profile's `supports_inline_system_prompts` is `False`, and converts
@@ -749,6 +751,9 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 which differs only for a corpus mixing capability-gated and standalone deferred tools.
                 Framework callers pass it.
         """
+        # First, so every later step — the tool-availability announcement and the `<system>` wrap
+        # below it — sees the plain parts a retry translates into rather than the retry itself.
+        messages = _translate_retry_parts(messages)
         messages = _convert_speech_parts(messages, include_audio=self.profile.get('supports_audio_input', False))
 
         supports_tool_addition = self.tool_addition_mode is not None
@@ -805,12 +810,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         target_provider_name = self.system if supports_native_tool_search else None
         messages = synthesize_local_tool_search_messages(messages, target_provider_name=target_provider_name)
 
-        supports_inline_system_prompts = self.profile.get('supports_inline_system_prompts', False)
-        messages = _render_retry_feedback_messages(
-            messages, supports_inline_system_prompts=supports_inline_system_prompts
-        )
-
-        if not supports_inline_system_prompts:
+        if not self.profile.get('supports_inline_system_prompts', False):
             messages = _wrap_non_leading_system_prompts(messages)
 
         return messages
@@ -2226,23 +2226,14 @@ def _standing_prompt_request(prefix: list[ModelMessage], *, include_system_parts
     return [ModelRequest(parts=list(opening), instructions=instructions)]
 
 
-_SYSTEM_CLOSE_TAG_OPENER = re.compile(r'<(?=\s*/\s*system\s*>)', re.IGNORECASE)
-"""Matches only the `<` of a closing system tag, in every spelling a model might reach for.
-
-Escaping just that character neutralizes the tag while leaving the rest of the text it appeared in
-exactly as written.
-"""
-
-
 def _wrap_in_system_tags(content: str) -> str:
     """Tag text as the harness speaking, for a channel with no system role of its own.
 
-    `content` goes in as written: an operator's system prompt is theirs, and rewriting it here would
-    change what every caller already sends. Text the model had a hand in is neutralized by whatever
-    renders it — `_render_retry_feedback` escapes closing tags out of the feedback it renders for
-    this channel — because only the renderer knows which of its text came from where.
+    A closing `</system>` inside `content` is neutralized as it is wrapped, so the statement can't be
+    ended early by text that reached here from a model — through a validation error's `loc` or `msg`,
+    or through an MCP-chosen tool name in a tool-availability announcement.
     """
-    return f'<system>{content}</system>'
+    return _wrap_in_tag(content, tag='system')
 
 
 def _wrap_non_leading_system_prompts(messages: list[ModelMessage]) -> list[ModelMessage]:
@@ -2281,44 +2272,35 @@ def _wrap_non_leading_system_prompts(messages: list[ModelMessage]) -> list[Model
     return new_messages if changed else messages
 
 
-def _unsynthesized_tool_availability_delta_error() -> UserError:  # pyright: ignore[reportUnusedFunction]
-    """The error for a `ToolAvailabilityDeltaPart` that reached an adapter with no way to render it.
+_UnpreparedPart: TypeAlias = ToolAvailabilityDeltaPart | RetryFeedbackPart | RetryPromptPart
+"""The request parts `prepare_messages` translates away before any adapter sees them.
 
-    `prepare_messages` projects every delta to the local tool-search exchange unless the profile
-    advertises native support, so an adapter that doesn't support the part natively only sees one
-    when that projection didn't run. Running a model through an agent always runs it, but
+Each of these carries something no provider API has a field for — a mid-conversation change to the
+tool list, or a retry that isn't a plain turn — and `prepare_messages` turns it into the parts every
+adapter already knows how to map. So an adapter meeting one has been handed a history that step never
+ran on, which is one branch to check rather than one per part.
+"""
+
+
+def _unprepared_part_error(part: _UnpreparedPart) -> UserError:  # pyright: ignore[reportUnusedFunction]
+    """The error for a request part that reached an adapter with no way to render it.
+
+    Running a model through an agent always runs `prepare_messages`, but
     [`Model.request`][pydantic_ai.models.Model.request] and
     [`Model.count_tokens`][pydantic_ai.models.Model.count_tokens] are public and don't, so a caller
-    driving a model directly can reach this with a history that is otherwise perfectly valid. Hence
-    a `UserError` naming the missing step, rather than an assertion about an internal invariant.
+    driving a model directly can reach this with a history that is otherwise perfectly valid. Hence a
+    `UserError` naming the missing step, rather than an assertion about an internal invariant.
 
-    Raising beats dropping the part: silently discarding it would tell the model nothing about the
-    tools that appeared, and it would then fail to call a tool it was supposed to have gained.
+    Raising beats rendering something: a silently dropped availability delta tells the model nothing
+    about the tools that appeared, so it then fails to call one it was supposed to have gained, and a
+    retry the model reads as something a person wrote is the exact confusion
+    [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart] was introduced to end
+    (https://github.com/pydantic/pydantic-ai/issues/6404).
     """
     return UserError(
-        '`ToolAvailabilityDeltaPart` cannot be rendered by this model. '
-        'Call `model.prepare_messages(messages)` first and pass the result — that projects the part '
-        'into the tool-search exchange every model understands. `Agent` does this for you; a direct '
-        '`Model.request()` or `Model.count_tokens()` call has to do it itself.'
-    )
-
-
-def _unrendered_retry_feedback_error() -> UserError:  # pyright: ignore[reportUnusedFunction]
-    """The error for a `RetryFeedbackPart` that reached an adapter with no way to render it.
-
-    `prepare_messages` renders every feedback part into the system voice this part exists to reach,
-    so an adapter only ever sees a raw one when that step didn't run. Running a model through an agent
-    always runs it, but [`Model.request`][pydantic_ai.models.Model.request] and
-    [`Model.count_tokens`][pydantic_ai.models.Model.count_tokens] are public and don't — the same
-    contract, and the same `UserError`, as `_unsynthesized_tool_availability_delta_error`.
-
-    Raising beats falling back to user text: a retry the model reads as something a person wrote is
-    the exact confusion this part was introduced to end.
-    """
-    return UserError(
-        '`RetryFeedbackPart` cannot be rendered by this model. '
-        'Call `model.prepare_messages(messages)` first and pass the result — that renders the part '
-        'in the system voice every model understands. `Agent` does this for you; a direct '
+        f'`{type(part).__name__}` cannot be rendered by this model. '
+        'Call `model.prepare_messages(messages)` first and pass the result — that translates the part '
+        'into the shape every model understands. `Agent` does this for you; a direct '
         '`Model.request()` or `Model.count_tokens()` call has to do it itself.'
     )
 
@@ -2356,171 +2338,89 @@ for, on a turn the user didn't write.
 """
 
 
-_RETRY_FEEDBACK_VALIDATION_ERROR = 'The response failed validation:\n{feedback}'
-"""What a `RetryFeedbackPart` says to a model when its output didn't match the expected schema.
+def _translate_legacy_retry_part(part: RetryPromptPart) -> ToolReturnPart | RetryFeedbackPart:
+    """The part a legacy [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] always meant.
 
-Like [`TOOL_AVAILABILITY_ANNOUNCEMENT`][pydantic_ai.models.TOOL_AVAILABILITY_ANNOUNCEMENT], these
-render as a statement of fact and nothing more. The errors already say what is wrong and where; a
-model that is shown them and left to act needs no instruction on top, and adding one ("fix the errors
-and try again") spends the harness's system voice on a directive nobody authored — the very thing
-this part exists to keep honest.
-"""
+    `tool_name` says whether the retry answers a tool call. One that does is that call's own result
+    again, marked `outcome='retried'` so it travels the provider's native error channel; one that
+    doesn't is harness feedback, and its `content` says whether that feedback is validation errors or
+    a message somebody wrote (https://github.com/pydantic/pydantic-ai/issues/6404).
 
-_RETRY_FEEDBACK_NO_OUTPUT = 'The response contained no usable output. {feedback}'
-"""What a `RetryFeedbackPart` says to a model when its response carried nothing usable as output."""
-
-_RETRY_FEEDBACK_MODEL_RETRY = 'The response was not accepted:\n{feedback}'
-"""What a `RetryFeedbackPart` says to a model when an output validator, output function, or model
-hook raised [`ModelRetry`][pydantic_ai.exceptions.ModelRetry]."""
-
-
-def _render_retry_feedback(part: RetryFeedbackPart, *, escape_system_close_tags: bool = False) -> str:
-    """State in the harness's own voice why the previous response couldn't be used.
-
-    The per-`cause` wording lives here rather than on the part so the stored history stays
-    model-neutral. `prepare_messages` renders this into a mid-conversation `SystemPromptPart`, and the
-    UI adapters render the same string into their protocol's system-role message, so a transcript
-    shows the feedback exactly as the model was shown it.
-
-    `escape_system_close_tags` belongs to the callers that `<system>`-tag the result, and every one
-    of them does both in one expression: the escape exists only because of that wrap. The feedback is
-    the part of the statement the model had a hand in — it drops the value the model sent, but a
-    validation error's `loc` is a key the model invented for a mapping output, and a `value_error`'s
-    `msg` is whatever a validator raised, commonly the offending value interpolated in — so a closing
-    tag left in there would end the statement early and let whatever follows read as if it stood
-    outside it. Text bound for a real system message is never escaped: there is no tag to break, and
-    mangling it would be visible to the model (https://github.com/pydantic/pydantic-ai/issues/7806).
+    Every reader of a stored history goes through here — `prepare_messages`, the UI adapters' dumps,
+    the realtime seeders — so none of them has to know the old shape.
     """
-    if part.cause == 'validation_error':
-        template = _RETRY_FEEDBACK_VALIDATION_ERROR
-    elif part.cause == 'no_output':
-        template = _RETRY_FEEDBACK_NO_OUTPUT
-    elif part.cause == 'model_retry':
-        template = _RETRY_FEEDBACK_MODEL_RETRY
-    else:
-        assert_never(part.cause)
-    rendered = template.format(feedback=part.model_response())
-    return _SYSTEM_CLOSE_TAG_OPENER.sub('&lt;', rendered) if escape_system_close_tags else rendered
+    if part.tool_name is not None:
+        return ToolReturnPart(
+            tool_name=part.tool_name,
+            content=part.content if isinstance(part.content, str) else _dump_error_details(part.content),
+            tool_call_id=part.tool_call_id,
+            timestamp=part.timestamp,
+            outcome='retried',
+        )
+    return RetryFeedbackPart(
+        content=part.content,
+        cause='model_retry' if isinstance(part.content, str) else 'validation_error',
+        timestamp=part.timestamp,
+    )
 
 
-def _render_retry_feedback_messages(
-    messages: list[ModelMessage], *, supports_inline_system_prompts: bool
-) -> list[ModelMessage]:
-    """Render harness retry feedback as a mid-conversation system message.
+def _retry_feedback_speaks_for_the_harness(part: RetryFeedbackPart) -> bool:
+    """Whether this feedback reaches the model in the harness's voice rather than the user's.
 
-    A [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart] is retained model-neutrally in the
-    history and given its provider-facing shape here, the same way
-    `_announce_tool_availability_delta_messages` renders an availability delta: replaced in place, so
-    a request that also holds a user prompt keeps the order it was authored in, and append-only, so
-    the cached prefix ahead of it survives.
+    A `'validation_error'` quotes back the output the model itself wrote, which may in turn quote
+    untrusted user input, so it goes in the user voice inside the `<validation_errors>` fence
+    [`RetryFeedbackPart.model_response`][pydantic_ai.messages.RetryFeedbackPart.model_response] puts
+    it in — near enough to a person's turn in authority, and marked off from one by the tag. The
+    other causes carry a message the agent's author wrote knowing it would be shown, which is the
+    authority a system message already has.
 
-    On a model that takes a mid-conversation system message this lands as a real one, carrying the
-    operator authority the statement deserves; elsewhere it is degraded to the `<system>`-tagged user
-    text `_wrap_non_leading_system_prompts` gives an operator's own mid-conversation prompt. Either
-    way the model can tell it apart from something a person wrote, which is what a `RetryPromptPart`
-    rendered as bare user text never allowed (https://github.com/pydantic/pydantic-ai/issues/6404).
-
-    `supports_inline_system_prompts` is that same profile flag, resolved by the caller. Where it is
-    `False` this step does the degrading itself, rather than leaving the rendered part for
-    `_wrap_non_leading_system_prompts` to pick up: the feedback is the one text here the model had a
-    hand in, so it is escaped as it is wrapped, in a single expression that cannot fire half of itself.
-
-    One position is degraded on *every* profile, including one with a real mid-conversation system
-    message. `_standing_system_prompt_count` answers "how many opening parts are the run's standing
-    prompt", and each of its callers — `_wrap_non_leading_system_prompts` below, `anthropic.py`'s
-    mapper, and `_trim_messages_before_compaction` through `_standing_prompt_request` — runs it over
-    the parts *as rendered here*. So a feedback part rendered as a `SystemPromptPart` does not merely
-    fail to break the opening run: it extends it, and is then read as text authored before the run
-    started. Through the compaction path that means the feedback is rebuilt as the standing prompt and
-    outlives the boundary that drops the user prompt beside it.
-
-    Only one part can do that — the one sitting at the index the authored count ends on, since every
-    part ahead of it is already an authored `SystemPromptPart`. Rendering that one as `<system>`-tagged
-    user text ends the run exactly where the authored parts did, on any profile. The cost is that a
-    model with a real system role reads first-position feedback as tagged user text rather than a
-    system message; that is worth less than letting one response's feedback acquire standing authority
-    over the rest of the run, and it is the same routing `realtime/_openai_protocol.py` and
-    `realtime/google.py` refuse for the same reason.
-
-    An operator's own `SystemPromptPart` sitting behind such a part is demoted with it, which is not a
-    new call: on `main` a `RetryPromptPart` ahead of one already ends the run the same way.
-
-    That run is tracked across *consecutive* requests, not within the first one, because adjacent
-    `ModelRequest`s do reach here: `direct.model_request`, `direct.model_request_stream` and
-    `Model.count_tokens` call `prepare_messages` with no `_clean_message_history` at all, so a
-    hand-built pair survives into the render. Only the agent path cleans first, in
-    `_agent_graph._make_request`, and the rule must not depend on which caller it got.
-
-    What that protects is a run the *provider mappers* compute for themselves: seven of them —
-    OpenAI Chat and Responses, Cohere, Mistral, Groq, HuggingFace, xAI — scan their mapped messages
-    for the leading system-role run and splice the agent's own instructions in at that index. A
-    feedback part rendered into that run is the standing prompt in all but name, and it pushes the
-    operator's instructions behind it.
-
-    A second `_clean_message_history` runs after this on the agent path, and its
-    `_merge_consecutive_messages` concatenates a synthesized request onto its neighbour — which cannot
-    move a rendered feedback part into the head of that run today, because the only request this
-    pipeline synthesizes carries a tool-search return, and a feedback part that could reach the run
-    has already been degraded here. A synthesis that could put one there would have to re-derive the
-    run after that merge rather than here.
+    Every channel asks the same question and answers it here: `prepare_messages` picks the part,
+    the realtime seeders pick whether to `<system>`-tag the text, the UI adapters pick the role.
     """
+    return part.cause != 'validation_error'
+
+
+def _translate_retry_parts(messages: list[ModelMessage]) -> list[ModelMessage]:
+    """Replace every retry part with the part that carries it on the wire.
+
+    Runs first in [`prepare_messages`][pydantic_ai.models.Model.prepare_messages], so the tool-search
+    synthesis, the tool-availability announcement and the `<system>` wrap below it all see plain
+    parts: feedback bound for the system voice is degraded by the same
+    `_wrap_non_leading_system_prompts` that degrades an operator's own mid-conversation prompt, rather
+    than by a rule of its own.
+
+    Replaced in place, so a request that also holds a user prompt keeps the order it was authored in,
+    and the original list comes back when nothing changed, so the identity check in `_make_request`
+    can skip the redundant `_clean_message_history` pass.
+
+    A translated `SystemPromptPart` opening the first request joins that request's standing prompt,
+    exactly as an authored one there would — `_standing_system_prompt_count` reads the parts as
+    translated. That position is only reachable through a hand-built history, an adapter load, or
+    compaction, and it is the position the agent's author put the part in.
+    """
+
+    def translate(part: ModelRequestPart) -> ModelRequestPart:
+        if isinstance(part, RetryPromptPart):
+            translated = _translate_legacy_retry_part(part)
+            if isinstance(translated, ToolReturnPart):
+                return translated
+            part = translated
+        elif not isinstance(part, RetryFeedbackPart):
+            return part
+        if _retry_feedback_speaks_for_the_harness(part):
+            return SystemPromptPart(content=part.model_response(), timestamp=part.timestamp)
+        return UserPromptPart(content=part.model_response(), timestamp=part.timestamp)
+
     transformed: list[ModelMessage] = []
     changed = False
-    standing_run_open = True
     for message in messages:
-        if not isinstance(message, ModelRequest):
-            # An assistant turn ends the opening run of system messages on the wire.
-            standing_run_open = False
+        if not isinstance(message, ModelRequest) or not any(
+            isinstance(part, RetryPromptPart | RetryFeedbackPart) for part in message.parts
+        ):
             transformed.append(message)
             continue
-
-        inside_standing_run = standing_run_open
-        authored_standing = _standing_system_prompt_count(message) if inside_standing_run else 0
-        # The run survives past this request only if the request held nothing but standing prompts;
-        # the first part that is not one ends it, for this request and every later one.
-        standing_run_open = inside_standing_run and authored_standing == len(message.parts)
-        if not any(isinstance(part, RetryFeedbackPart) for part in message.parts):
-            transformed.append(message)
-            continue
-
         changed = True
-        # Anthropic requires the tool results answering the previous turn to open the message, so the
-        # rendered feedback sorts to the back — the same normalization
-        # `_announce_tool_availability_delta_messages` does after the same kind of replacement. A
-        # request can hold both: `_enqueue` accepts feedback alongside a tool return. Sorting the
-        # authored parts is equivalent to sorting the rendered ones, because rendering never changes a
-        # part's sort key, and it settles each part's final index before anything is rendered.
-        #
-        # The opening run of authored system prompts is held out of that sort, exactly as the sibling
-        # holds it out of its own: those parts are the agent's standing prompt *because* they open the
-        # first request, and a tool result sorting ahead of them would take that position away and
-        # with it the provider's top-level system field.
-        head, tail = list(message.parts[:authored_standing]), list(message.parts[authored_standing:])
-        tail.sort(key=_tool_results_first_sort_key)
-        ordered = [*head, *tail]
-        # `tail[0]` lands at exactly this index and is never a `SystemPromptPart` — the part the
-        # authored count stopped on isn't one, and the sort only promotes tool results ahead of it —
-        # so this is still the one index whose part can extend the run by rendering as a system
-        # message. Only the first request has a standing prompt to join.
-        standing_run_end = authored_standing if inside_standing_run else None
-
-        replacement_parts: list[ModelRequestPart] = []
-        for index, part in enumerate(ordered):
-            if not isinstance(part, RetryFeedbackPart):
-                replacement_parts.append(part)
-            elif supports_inline_system_prompts and index != standing_run_end:
-                replacement_parts.append(
-                    SystemPromptPart(content=_render_retry_feedback(part), timestamp=part.timestamp)
-                )
-            else:
-                replacement_parts.append(
-                    UserPromptPart(
-                        content=_wrap_in_system_tags(_render_retry_feedback(part, escape_system_close_tags=True)),
-                        timestamp=part.timestamp,
-                    )
-                )
-        transformed.append(replace(message, parts=replacement_parts))
-
+        transformed.append(replace(message, parts=[translate(part) for part in message.parts]))
     return transformed if changed else messages
 
 

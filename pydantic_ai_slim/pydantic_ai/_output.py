@@ -126,30 +126,16 @@ def build_retried_tool_return(
     This is the exact result the model receives when the agent loop handles the failure, so anything
     else presenting the same failure (an instrumentation span, say) must build it the same way.
 
-    A `ValidationError`'s details travel as structured tool-result content: `ctx` is dropped by
-    `include_context=False`, and `input` is kept once per distinct value. Root-level errors share one
-    `input` — the whole arguments object — so serializing it into each multiplies a large payload by
-    the error count, and a partially complete response can blow the context window before the model
-    gets to correct it (https://github.com/pydantic/pydantic-ai/issues/7171). The first root-level
-    error keeps it, so the model still sees the arguments it sent; a later one drops it only when it
-    is that same value. A distinct input is information of its own and stays, as does a nested
-    error's, which is the offending sub-value rather than the whole object.
+    A `ValidationError`'s details travel as structured tool-result content, serialized the same way a
+    [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart]'s are, so the two channels show the
+    model the same JSON: `ctx` is dropped by `include_context=False`, and `input` is kept once per
+    distinct value.
     """
     content: list[Any] | str
     if isinstance(error, ValidationError):
-        errors = error.errors(include_url=False, include_context=False)
-        exclude: dict[int, set[str]] = {}
-        root_input: Any = None
-        seen_root_error = False
-        for index, detail in enumerate(errors):
-            if len(detail.get('loc', ())) > 1:
-                continue
-            if not seen_root_error:
-                root_input = detail.get('input')
-                seen_root_error = True
-            elif detail.get('input') == root_input:
-                exclude[index] = {'input'}
-        content = _messages.error_details_ta.dump_python(errors, mode='json', exclude=exclude)
+        content = _messages._dump_error_details(  # pyright: ignore[reportPrivateUsage]
+            error.errors(include_url=False, include_context=False)
+        )
     else:
         content = error.message
 

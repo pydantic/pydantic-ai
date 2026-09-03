@@ -49,7 +49,10 @@ from ...messages import (
     parse_tool_kind,
     tool_return_content_ta,
 )
-from ...models import _render_retry_feedback  # pyright: ignore[reportPrivateUsage]
+from ...models import (
+    _retry_feedback_speaks_for_the_harness,  # pyright: ignore[reportPrivateUsage]
+    _translate_legacy_retry_part,  # pyright: ignore[reportPrivateUsage]
+)
 from ...output import OutputDataT
 from ...tools import AgentDepsT, DeferredToolResults, ToolDenied
 from .. import MessagesBuilder, UIAdapter
@@ -331,10 +334,31 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                     else:  # pragma: no cover
                         raise ValueError(f'Unsupported system message part type: {type(part)}')
             elif msg.role == 'user':
-                user_prompt_content: str | list[UserContent] = []
+                user_prompt_content: list[UserContent] = []
+
+                def flush_user_prompt(content: list[UserContent] = user_prompt_content) -> None:
+                    """Close off the user content accumulated so far, ahead of whatever follows it."""
+                    if not content:
+                        return
+                    first = content[0]
+                    builder.add(
+                        UserPromptPart(content=first if len(content) == 1 and isinstance(first, str) else [*content])
+                    )
+                    content.clear()
+
                 for part in msg.parts:
                     if isinstance(part, TextUIPart):
-                        user_prompt_content.append(part.text)
+                        # A user part reloads as harness retry feedback only when it carries the
+                        # marker this adapter dumped it with; text a person wrote has no such payload
+                        # and stays a `UserPromptPart`. See `retry_feedback_from_payload`.
+                        feedback = retry_feedback_from_payload(
+                            load_provider_metadata(part.provider_metadata).get('retry_feedback')
+                        )
+                        if feedback is not None:
+                            flush_user_prompt()
+                            builder.add(feedback)
+                        else:
+                            user_prompt_content.append(part.text)
                     elif isinstance(part, FileUIPart):
                         provider_meta = load_provider_metadata(part.provider_metadata)
                         # Restoring client-supplied `vendor_metadata` is intentional (as the `UploadedFile` branch
@@ -388,10 +412,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                     else:  # pragma: no cover
                         raise ValueError(f'Unsupported user message part type: {type(part)}')
 
-                if user_prompt_content:  # pragma: no branch
-                    if len(user_prompt_content) == 1 and isinstance(user_prompt_content[0], str):
-                        user_prompt_content = user_prompt_content[0]
-                    builder.add(UserPromptPart(content=user_prompt_content))
+                flush_user_prompt()
 
             elif msg.role == 'assistant':
                 for part in msg.parts:
@@ -679,26 +700,26 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         },
                     )
                 )
-            elif isinstance(part, RetryPromptPart):
-                if part.tool_name:
+            elif isinstance(part, RetryPromptPart | RetryFeedbackPart):
+                translated = _translate_legacy_retry_part(part) if isinstance(part, RetryPromptPart) else part
+                if isinstance(translated, ToolReturnPart):
                     # Tool-related retries are handled when processing ToolCallPart in ModelResponse
                     pass
                 else:
-                    # Non-tool retries (e.g., output validation errors) become user text
-                    user_ui_parts.append(TextUIPart(text=part.model_response(), state='done'))
-            elif isinstance(part, RetryFeedbackPart):
-                # Harness feedback carries the system voice it is rendered in for the model, not the
-                # user's, so it dumps as a system part rather than as text a person appears to have
-                # written (https://github.com/pydantic/pydantic-ai/issues/6404). The part itself
-                # rides in `provider_metadata` so the reload reconstructs it instead of the
-                # `SystemPromptPart` the rendered text alone would produce.
-                system_ui_parts.append(
-                    TextUIPart(
-                        text=_render_retry_feedback(part),
+                    # Harness feedback dumps in the voice the model is shown it in, so a transcript
+                    # can't read it as something a person wrote
+                    # (https://github.com/pydantic/pydantic-ai/issues/6404). The part itself rides in
+                    # `provider_metadata` either way, so the reload reconstructs it instead of the
+                    # plain part the rendered text alone would produce.
+                    feedback_ui_part = TextUIPart(
+                        text=translated.model_response(),
                         state='done',
-                        provider_metadata=dump_provider_metadata(retry_feedback=retry_feedback_payload(part)),
+                        provider_metadata=dump_provider_metadata(retry_feedback=retry_feedback_payload(translated)),
                     )
-                )
+                    if _retry_feedback_speaks_for_the_harness(translated):
+                        system_ui_parts.append(feedback_ui_part)
+                    else:
+                        user_ui_parts.append(feedback_ui_part)
             elif isinstance(part, SpeechPart):  # pragma: no cover
                 pass  # Realtime audio parts are not rendered in the UI
             else:
@@ -710,7 +731,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
     def _dump_response_message(
         cls,
         msg: ModelResponse,
-        tool_results: dict[str, ToolReturnPart | RetryPromptPart],
+        tool_results: dict[str, ToolReturnPart],
         sdk_version: Literal[5, 6, 7] = 5,
     ) -> list[UIMessagePart]:
         """Convert a ModelResponse into a UIMessage."""
@@ -881,7 +902,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
     @staticmethod
     def _dump_tool_call_part(
         part: ToolCallPart,
-        tool_results: dict[str, ToolReturnPart | RetryPromptPart],
+        tool_results: dict[str, ToolReturnPart],
         sdk_version: Literal[5, 6, 7] = 5,
     ) -> list[UIMessagePart]:
         """Convert a ToolCallPart (with optional result) into UIMessageParts."""
@@ -952,17 +973,6 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                 )
             # Check for Vercel AI chunks returned by tool calls via metadata.
             ui_parts.extend(_extract_metadata_ui_parts(tool_result))
-        elif isinstance(tool_result, RetryPromptPart):
-            ui_parts.append(
-                ToolOutputErrorPart(
-                    type=tool_type,
-                    tool_call_id=part.tool_call_id,
-                    input=part.args_as_dict(),
-                    error_text=tool_result.model_response(),
-                    provider_executed=False,
-                    call_provider_metadata=call_provider_metadata,
-                )
-            )
         else:
             # No result found → the tool call is deferred (awaiting approval or external result).
             # On v6, emit `approval-requested` so the frontend can render approve/reject buttons on reload.
@@ -1010,20 +1020,18 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         result (`outcome='retried'`) shares `ToolOutputErrorPart` with a failed one — the protocol
         has no separate retry concept — so its outcome rides the `providerMetadata` channel that
         already carries `'interrupted'`, and is restored from there on reload. A legacy
-        `RetryPromptPart` carries no such claim and still becomes a `ToolReturnPart` with
-        `outcome='failed'` on reload (or a user text part when it has no `tool_name`), so a reloaded
-        one is presented to the model as a definitive failure rather than a request to correct and
-        retry.
+        `RetryPromptPart` is dumped as the part it always meant, so a tool-bound one takes that same
+        path and reloads as a `ToolReturnPart` with `outcome='retried'`.
 
-        A `RetryFeedbackPart` dumps as a `role='system'` message holding the same text the model is
-        shown, with the part itself in that message's `providerMetadata`; it reloads as a
-        `RetryFeedbackPart` only from there, so a system message the client wrote stays a
-        `SystemPromptPart`.
+        A `RetryFeedbackPart` dumps as a message in the voice the model is shown it in — `role='user'`
+        for a `'validation_error'`, `role='system'` otherwise — with the part itself in that part's
+        `providerMetadata`; it reloads as a `RetryFeedbackPart` only from there, so a message the
+        client wrote stays a plain prompt part.
 
         Ordering is lossy within a single `ModelRequest`: system-voice parts (`SystemPromptPart`,
-        `RetryFeedbackPart`) and user content go out as two `UIMessage`s, and the `role='system'` one
-        always comes first, so feedback authored *after* a `UserPromptPart` reloads before it. AG-UI
-        keeps the authored order; this adapter's split-by-role dump cannot.
+        system-voice `RetryFeedbackPart`) and user content go out as two `UIMessage`s, and the
+        `role='system'` one always comes first, so feedback authored *after* a `UserPromptPart`
+        reloads before it. AG-UI keeps the authored order; this adapter's split-by-role dump cannot.
 
         Tool calls lose one thing too: `ToolCallPart.args` that don't parse as a JSON object are
         rewritten to `{'INVALID_JSON': '<raw args>'}` (see
@@ -1049,15 +1057,17 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         Returns:
             A list of UIMessage objects in Vercel AI format
         """
-        tool_results: dict[str, ToolReturnPart | RetryPromptPart] = {}
+        tool_results: dict[str, ToolReturnPart] = {}
 
         for msg in messages:
             if isinstance(msg, ModelRequest):
                 for part in msg.parts:
                     if isinstance(part, ToolReturnPart):
                         tool_results[part.tool_call_id] = part
-                    elif isinstance(part, RetryPromptPart) and part.tool_name:
-                        tool_results[part.tool_call_id] = part
+                    elif isinstance(part, RetryPromptPart) and isinstance(
+                        translated := _translate_legacy_retry_part(part), ToolReturnPart
+                    ):
+                        tool_results[part.tool_call_id] = translated
 
         id_generator = generate_message_id or _generate_message_id
         result: list[UIMessage] = []

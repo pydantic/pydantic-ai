@@ -51,7 +51,10 @@ from ...messages import (
     VideoUrl,
     narrow_message_parts,
 )
-from ...models import _render_retry_feedback  # pyright: ignore[reportPrivateUsage]
+from ...models import (
+    _retry_feedback_speaks_for_the_harness,  # pyright: ignore[reportPrivateUsage]
+    _translate_legacy_retry_part,  # pyright: ignore[reportPrivateUsage]
+)
 from ...output import OutputDataT
 from ...tools import (
     AgentDepsT,
@@ -407,8 +410,17 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         use_encrypted_value = parse_ag_ui_version(DEFAULT_AG_UI_VERSION) >= ENCRYPTED_VALUE_VERSION
         for msg in messages:
             match msg:
-                case UserMessage(content=content):
-                    if isinstance(content, str):
+                case UserMessage() as user_msg:
+                    # A user message only reloads as harness retry feedback when it carries the
+                    # `encrypted_value` marker this adapter dumped it with; one a person wrote has no
+                    # such claim and stays a `UserPromptPart`. See `retry_feedback_from_payload`.
+                    user_feedback = (
+                        parse_encrypted_retry_feedback(user_msg.encrypted_value) if use_encrypted_value else None
+                    )
+                    content = user_msg.content
+                    if user_feedback is not None:
+                        builder.add(user_feedback)
+                    elif isinstance(content, str):
                         builder.add(UserPromptPart(content=content))
                     else:
                         user_prompt_content: list[UserContent] = []
@@ -751,34 +763,43 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         },
                     )
                 )
-            elif isinstance(part, RetryPromptPart):
-                if part.tool_name:
-                    flush_user_content()
+            elif isinstance(part, RetryPromptPart | RetryFeedbackPart):
+                # Harness feedback dumps in the voice the model is shown it in, not as text a person
+                # appears to have written (https://github.com/pydantic/pydantic-ai/issues/6404), and
+                # carries the part itself so the reload can rebuild it. Flushing first keeps it in
+                # the position it was authored in here, instead of joining the standing prompt at the
+                # head of the request; that's this adapter's dump shape, not a guarantee every
+                # adapter makes — `VercelAIAdapter` hoists a system-voice one above the user message.
+                flush_user_content()
+                translated = _translate_legacy_retry_part(part) if isinstance(part, RetryPromptPart) else part
+                if isinstance(translated, ToolReturnPart):
                     result.append(
                         ToolMessage(
                             id=_new_message_id(),
-                            content=part.model_response(),
-                            tool_call_id=part.tool_call_id,
-                            error=part.model_response(),
+                            content=dump_tool_return_content(translated.content),
+                            tool_call_id=translated.tool_call_id,
+                            error=translated.model_response_str(wrap_if_error=False),
+                            **tool_kind_encrypted_value_kwargs(
+                                translated.tool_kind, outcome=translated.outcome, supported=use_encrypted_value
+                            ),
+                        )
+                    )
+                elif _retry_feedback_speaks_for_the_harness(translated):
+                    result.append(
+                        SystemMessage(
+                            id=_new_message_id(),
+                            content=translated.model_response(),
+                            **retry_feedback_encrypted_value_kwargs(translated, supported=use_encrypted_value),
                         )
                     )
                 else:
-                    user_content.append(TextInputContent(type='text', text=part.model_response()))
-            elif isinstance(part, RetryFeedbackPart):
-                # Harness feedback carries the system voice it is rendered in for the model, not the
-                # user's, so it dumps as its own `SystemMessage` rather than as text a person appears
-                # to have written (https://github.com/pydantic/pydantic-ai/issues/6404). Flushing
-                # first keeps it in the position it was authored in here, instead of joining the
-                # standing prompt at the head of the request; that's this adapter's dump shape, not a
-                # guarantee every adapter makes — `VercelAIAdapter` hoists it above the user message.
-                flush_user_content()
-                result.append(
-                    SystemMessage(
-                        id=_new_message_id(),
-                        content=_render_retry_feedback(part),
-                        **retry_feedback_encrypted_value_kwargs(part, supported=use_encrypted_value),
+                    result.append(
+                        UserMessage(
+                            id=_new_message_id(),
+                            content=translated.model_response(),
+                            **retry_feedback_encrypted_value_kwargs(translated, supported=use_encrypted_value),
+                        )
                     )
-                )
             elif isinstance(part, SpeechPart):  # pragma: no cover
                 pass  # Realtime audio parts are not rendered in AG-UI
             else:
@@ -955,12 +976,15 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
           carrier from 0.1.11 (`ToolMessage` has no outcome slot). Below that, `'failed'` survives
           via `ToolMessage.error`, `'denied'` and `'retried'` reload as `'failed'`, and
           `'interrupted'` reloads as `'success'`.
-        - `RetryFeedbackPart` dumps as a `SystemMessage` holding the same text the model is shown,
-          with the part itself in that message's `encrypted_value`; it reloads as a
-          `RetryFeedbackPart` only from there, so a system message the client wrote stays a
-          `SystemPromptPart`. Below 0.1.11 the carrier doesn't exist, so it reloads as a
-          `SystemPromptPart` holding the rendered text, and the dump warns.
-        - `RetryPromptPart` becomes `ToolReturnPart` (or `UserPromptPart`) on reload.
+        - `RetryFeedbackPart` dumps as a message in the voice the model is shown it in — a
+          `UserMessage` for a `'validation_error'`, a `SystemMessage` otherwise — with the part
+          itself in that message's `encrypted_value`; it reloads as a `RetryFeedbackPart` only from
+          there, so a message the client wrote stays a plain prompt part. Below 0.1.11 the carrier
+          doesn't exist, so it reloads as that plain part holding the rendered text, and the dump
+          warns.
+        - `RetryPromptPart` is dumped as the part it always meant, so a tool-bound one becomes a
+          `ToolMessage` and reloads as a `ToolReturnPart` with `outcome='retried'`, and a tool-less
+          one takes the `RetryFeedbackPart` path above.
         - A `NativeToolReturnPart` is always emitted directly after its `NativeToolCallPart`, so any
           part that originally sat between them — e.g. a `CompactionPart` — reloads after the pair
           instead. Provider adapters emit compaction parts outside call/return pairs, so this only

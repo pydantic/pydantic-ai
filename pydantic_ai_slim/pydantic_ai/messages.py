@@ -5,6 +5,7 @@ import dataclasses
 import hashlib
 import mimetypes
 import os
+import re
 import warnings
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Collection, Mapping, Sequence
@@ -1681,8 +1682,46 @@ class NativeToolReturnPart(BaseToolReturnPart):
 error_details_ta = pydantic.TypeAdapter(list[pydantic_core.ErrorDetails], config=pydantic.ConfigDict(defer_build=True))
 
 
+def _wrap_in_tag(content: str, *, tag: str) -> str:
+    """Wrap text in `<tag>…</tag>`, neutralizing any closing tag the text carries itself.
+
+    Only the `<` of a closing tag is escaped, in every spelling a model might reach for, so the rest
+    of the text goes in exactly as written. Without that, text the model had a hand in — a validation
+    error's `loc` is a key it invented for a mapping output, and a `value_error`'s `msg` is whatever a
+    validator raised, commonly with the offending value interpolated in — could end the statement
+    early and let whatever follows read as if it stood outside it.
+    """
+    escaped = re.sub(rf'<(?=\s*/\s*{tag}\s*>)', '&lt;', content, flags=re.IGNORECASE)
+    return f'<{tag}>{escaped}</{tag}>'
+
+
+def _dump_error_details(errors: list[pydantic_core.ErrorDetails]) -> list[pydantic_core.ErrorDetails]:
+    """Serialize validation error details for a model, carrying each distinct `input` once.
+
+    Root-level errors share one `input` — the whole value that failed — so serializing it into each
+    multiplies a large payload by the error count, and a partially complete response can blow the
+    context window before the model gets to correct it
+    (https://github.com/pydantic/pydantic-ai/issues/7171). The first root-level error keeps it, so the
+    model still sees what it sent; a later one drops it only when it is that same value. A distinct
+    input is information of its own and stays, as does a nested error's, which is the offending
+    sub-value rather than the whole object.
+    """
+    exclude: dict[int, set[str]] = {}
+    root_input: object = None
+    seen_root_error = False
+    for index, detail in enumerate(errors):
+        if len(detail.get('loc', ())) > 1:
+            continue
+        if not seen_root_error:
+            root_input = detail.get('input')
+            seen_root_error = True
+        elif detail.get('input') == root_input:
+            exclude[index] = {'input'}
+    return error_details_ta.dump_python(errors, mode='json', exclude=exclude)
+
+
 def _validation_error_description(
-    errors: list[pydantic_core.ErrorDetails], *, include_input: Literal['all', 'nested', 'none']
+    errors: list[pydantic_core.ErrorDetails], *, include_input: Literal['all', 'nested']
 ) -> str:
     """Render Pydantic error details as the JSON block a model is shown.
 
@@ -1697,21 +1736,9 @@ def _validation_error_description(
     - `'nested'` — the JSON a structured-output retry complains about is already in the model's
       context, so top-level errors drop it while a nested error keeps the offending sub-value a long
       generated document doesn't make obvious.
-    - `'none'` — the text is bound for the system voice, so the value the model sent is dropped: it is
-      the largest model-chosen string here and the one with no other purpose, and echoing it would let
-      a response steer the highest-privilege channel it is later shown. `loc` and `msg` still go, and
-      neither is guaranteed model-free — `loc` is a model-chosen key for a mapping output or an
-      `extra_forbidden` error, and a `value_error`'s `msg` carries whatever text the validator raised,
-      which a `field_validator` commonly interpolates the offending value into. What that residue can
-      do is bounded rather than removed: `_render_retry_feedback` escapes a closing tag out of the
-      feedback it renders for a model with no mid-conversation system message, so it cannot end the
-      `<system>` statement early. On one that takes a real system message there is nothing to escape,
-      and the text sits in the system role — tracked at https://github.com/pydantic/pydantic-ai/issues/7806.
     """
     if include_input == 'all':
         exclude = {'__all__': {'ctx'}}
-    elif include_input == 'none':
-        exclude = {'__all__': {'ctx', 'input'}}
     else:
         exclude = {i: {'ctx', 'input'} if len(e.get('loc', ())) <= 1 else {'ctx'} for i, e in enumerate(errors)}
     json_errors = error_details_ta.dump_json(errors, exclude=exclude, indent=2)
@@ -1833,11 +1860,14 @@ class RetryFeedbackPart:
     serve as output. A tool call that needs retrying answers its own call as a
     [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] with `outcome='retried'` instead.
 
-    The stored part stays model-neutral; each model renders it at
-    [`prepare_messages`][pydantic_ai.models.Model.prepare_messages] time as a mid-conversation
-    [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart], degraded to a `<system>`-tagged user
-    message where the provider takes no mid-conversation system message. That is what lets the model
-    tell harness feedback apart from something a person wrote, and keeping the presentation out of the
+    The stored part stays model-neutral; each model translates it at
+    [`prepare_messages`][pydantic_ai.models.Model.prepare_messages] time into the part its `cause`
+    calls for — a `<validation_errors>`-fenced
+    [`UserPromptPart`][pydantic_ai.messages.UserPromptPart] for output the model itself wrote, a
+    mid-conversation [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] for a message your
+    own code did. Either way the model can tell the feedback apart from something a person wrote,
+    which is what a `RetryPromptPart` rendered as bare user text never allowed
+    (https://github.com/pydantic/pydantic-ai/issues/6404), and keeping the presentation out of the
     history keeps a cached prefix valid across providers.
     """
 
@@ -1845,10 +1875,7 @@ class RetryFeedbackPart:
     """Details of why the response couldn't be used.
 
     If the retry was triggered by a [`ValidationError`][pydantic_core.ValidationError], this will be a
-    list of error details. Rendering drops each error's `input` — the value the model sent — so the
-    largest model-chosen string never reaches the system voice. `loc` and `msg` still render, and
-    neither is guaranteed model-free: `loc` is a model-chosen key for a mapping output type, and a
-    validator that raises `ValueError(f'{value!r} …')` puts the value in `msg`.
+    list of error details, serialized into the fenced block the model is shown.
 
     A string comes from a [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] your own code raised, and
     is rendered verbatim. Interpolating model output into that message puts the model's words in the
@@ -1859,12 +1886,17 @@ class RetryFeedbackPart:
     _: KW_ONLY
 
     cause: Literal['validation_error', 'no_output', 'model_retry']
-    """What made the response unusable, which decides how the feedback is worded to the model.
+    """What made the response unusable, which decides the voice the feedback reaches the model in.
 
-    - `'validation_error'`: the output failed validation against the expected schema.
+    - `'validation_error'`: the output failed validation against the expected schema. The feedback
+      quotes what the model itself wrote, which may in turn quote untrusted user input, so it goes in
+      the user voice inside a `<validation_errors>` fence rather than in the harness's own.
     - `'no_output'`: the response carried nothing usable as output (e.g. thinking only).
     - `'model_retry'`: an output validator, output function, or model hook raised
       [`ModelRetry`][pydantic_ai.exceptions.ModelRetry].
+
+    The last two carry text the agent's author wrote knowing it would be shown, so they reach the
+    model in the system voice.
     """
 
     timestamp: datetime = field(default_factory=_now_utc)
@@ -1874,27 +1906,36 @@ class RetryFeedbackPart:
     """Part type identifier, this is available on all parts as a discriminator."""
 
     def model_response(self) -> str:
-        """Return a string message describing why the response couldn't be used.
+        """Return the text the model is shown, in the voice `cause` calls for.
 
-        Just the feedback: the wording that frames it as the harness speaking is chosen per `cause`
-        when the model renders the part, so no provider-facing phrasing is baked into the history.
+        Error details serialize the way an errored
+        [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart]'s content does, so a retry that
+        answers a tool call and one that answers none show the model the same JSON. Only a
+        `'validation_error'` is fenced; the wrapping tag is what marks the model's own words off from
+        the harness's, and the other causes carry no model text to mark off.
+
+        What `prepare_messages` adds around this is the voice, not the wording: the part type it goes
+        into, and the `<system>` tagging a provider without a mid-conversation system message needs.
         """
-        if isinstance(self.content, str):
-            return self.content
-        return _validation_error_description(self.content, include_input='none')
+        content = (
+            self.content
+            if isinstance(self.content, str)
+            else tool_return_ta.dump_json(_dump_error_details(self.content), by_alias=True).decode()
+        )
+        if self.cause == 'validation_error':
+            return _wrap_in_tag(f'\n{content}\n', tag='validation_errors')
+        return content
 
     def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
         """Record the stored feedback as trace content.
 
-        The feedback alone, the way [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]
-        records its own content: the sentence a model is shown is chosen per `cause` at
-        [`prepare_messages`][pydantic_ai.models.Model.prepare_messages] time, and belongs to the
-        request rather than to the history recorded here.
+        The same text the model is shown, the way [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]
+        records its own content.
 
         Only `pydantic_ai.all_messages` on the run span reaches this method, because that attribute is
         built from the stored history. A model request span's `gen_ai.input.messages` is built after
-        `prepare_messages` has already replaced this part with a `SystemPromptPart`, so it shows the
-        rendered sentence at every instrumentation version.
+        `prepare_messages` has already replaced this part with the part its `cause` calls for, so it
+        shows the same text at every instrumentation version.
         """
         return [
             _otel_messages.TextPart(
@@ -3262,8 +3303,9 @@ def sanitize_messages(
     - [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s and
       [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart]s (disable with
       `strip_system_prompts=False`). The system prompt is the server's to own; a client that can
-      inject one can override the agent's behavior, and a `RetryFeedbackPart` reaches the model as
-      one. If stripping leaves a `ModelRequest` with no parts, the request is dropped from history
+      inject one can override the agent's behavior, and a client-submitted `RetryFeedbackPart` can
+      name the `cause` that reaches the model in the system voice. If stripping leaves a
+      `ModelRequest` with no parts, the request is dropped from history
       entirely.
     - [`FileUrl`][pydantic_ai.messages.FileUrl] parts whose URL scheme is not in
       `allowed_file_url_schemes` (default `http`/`https`). Non-HTTP schemes like `s3://` or `gs://`
@@ -3493,9 +3535,10 @@ def _sanitize_request_parts(
     stripped_system_prompt = False
     new_parts: list[ModelRequestPart] = []
     for part in parts:
-        # A `RetryFeedbackPart` is rendered into a `SystemPromptPart` before it reaches the model, so
+        # A `RetryFeedbackPart` naming `cause='model_retry'` or `'no_output'` becomes a
+        # `SystemPromptPart` before it reaches the model, and the client picks the `cause`, so
         # honoring a client-submitted one would hand the client the system voice the strip exists to
-        # protect. It goes with the system prompts, not through them.
+        # protect. Every cause goes with the system prompts, not through them.
         if strip_system_prompts and isinstance(part, SystemPromptPart | RetryFeedbackPart):
             stripped_system_prompt = True
             continue

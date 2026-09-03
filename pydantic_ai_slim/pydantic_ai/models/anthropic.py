@@ -40,8 +40,6 @@ from ..messages import (
     NativeToolReturnPart,
     NativeToolSearchCallPart,
     NativeToolSearchReturnPart,
-    RetryFeedbackPart,
-    RetryPromptPart,
     SpeechPart,
     SystemPromptPart,
     TextContent,
@@ -92,8 +90,8 @@ from . import (
     _standing_system_prompt_count,  # pyright: ignore[reportPrivateUsage]
     _suggest_known_model_id_from_provider_error,  # pyright: ignore[reportPrivateUsage]
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
-    _unrendered_retry_feedback_error,  # pyright: ignore[reportPrivateUsage]
-    _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
+    _unprepared_part_error,  # pyright: ignore[reportPrivateUsage]
+    _UnpreparedPart,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
     get_user_agent,
@@ -2101,7 +2099,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                             # matches them; rendering the blocks anyway would send them without the
                             # `mid-conversation-tool-changes` beta header, which is added under this
                             # same condition, and earn a 400 in place of an explanation.
-                            raise _unsynthesized_tool_availability_delta_error()
+                            raise _unprepared_part_error(request_part)
                         # Both block types carry a `tool_reference`, and the API rejects one naming a
                         # tool this request doesn't declare: `tool_addition/tool_removal references
                         # unknown tool '...'`. Replayed history routinely names tools that have since
@@ -2190,20 +2188,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     elif isinstance(request_part, SpeechPart):  # pragma: no cover
                         # Unconverted realtime speech; `prepare_messages` turns these into `UserPromptPart`s.
                         raise _unconverted_speech_part_error()
-                    elif isinstance(request_part, RetryPromptPart):
-                        if request_part.tool_name is None:
-                            text = request_part.model_response()
-                            retry_param = BetaTextBlockParam(type='text', text=text)
-                        else:
-                            retry_param = beta_tool_result_block_param.BetaToolResultBlockParam(
-                                tool_use_id=_guard_tool_call_id(t=request_part),
-                                type='tool_result',
-                                content=request_part.model_response(),
-                                is_error=True,
-                            )
-                        user_content_params.append(retry_param)
-                    elif isinstance(request_part, RetryFeedbackPart):  # pragma: no cover
-                        raise _unrendered_retry_feedback_error()
+                    elif isinstance(request_part, _UnpreparedPart):  # pragma: no cover
+                        raise _unprepared_part_error(request_part)
                     else:
                         assert_never(request_part)
                 # A marker that ends the request has the instruction authored before it and nothing

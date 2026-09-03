@@ -76,7 +76,8 @@ from ..messages import (
 )
 from ..models import (
     ModelRequestParameters,
-    _render_retry_feedback,  # pyright: ignore[reportPrivateUsage]
+    _retry_feedback_speaks_for_the_harness,  # pyright: ignore[reportPrivateUsage]
+    _translate_legacy_retry_part,  # pyright: ignore[reportPrivateUsage]
     _wrap_in_system_tags,  # pyright: ignore[reportPrivateUsage]
 )
 
@@ -426,19 +427,22 @@ async def _seed_request_parts(
                         )
                     )
                 )
-        elif isinstance(part, RetryPromptPart):
-            output = part.model_response()
-            text = output if part.tool_name is None else f'[Tool {part.tool_call_id}: {part.tool_name} error: {output}]'
-            parts.append(genai_types.Part(text=text))
-        elif isinstance(part, RetryFeedbackPart):
+        elif isinstance(part, RetryPromptPart | RetryFeedbackPart):
             # A seeded turn has no system role — a `SystemPromptPart` is hoisted to
-            # `system_instruction` instead — and this feedback answers one response rather than
-            # standing over the session, so hoisting it there would be wrong. It takes the same
-            # `<system>` tagging every model without a mid-conversation system message gets, which
-            # is what keeps the model from reading it as something a person said
+            # `system_instruction` instead — and a retry answers one response rather than standing
+            # over the session, so hoisting it there would be wrong. Feedback bound for the system
+            # voice takes the same `<system>` tagging every model without a mid-conversation system
+            # message gets, which is what keeps the model from reading it as something a person said
             # (https://github.com/pydantic/pydantic-ai/issues/6404).
-            feedback = _wrap_in_system_tags(_render_retry_feedback(part, escape_system_close_tags=True))
-            parts.append(genai_types.Part(text=feedback))
+            translated = _translate_legacy_retry_part(part) if isinstance(part, RetryPromptPart) else part
+            if isinstance(translated, ToolReturnPart):
+                output = translated.model_response_str()
+                text = f'[Tool {translated.tool_call_id}: {translated.tool_name} error: {output}]'
+            elif _retry_feedback_speaks_for_the_harness(translated):
+                text = _wrap_in_system_tags(translated.model_response())
+            else:
+                text = translated.model_response()
+            parts.append(genai_types.Part(text=text))
         else:
             assert_never(part)
     return parts

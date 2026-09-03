@@ -43,7 +43,14 @@ from ..messages import (
 )
 from ..settings import ModelSettings
 from ..usage import UsageBase
-from . import KnownModelName, Model, ModelRequestContext, ModelRequestParameters, StreamedResponse
+from . import (
+    KnownModelName,
+    Model,
+    ModelRequestContext,
+    ModelRequestParameters,
+    StreamedResponse,
+    _retry_feedback_speaks_for_the_harness,  # pyright: ignore[reportPrivateUsage]
+)
 from .wrapper import WrapperModel
 
 __all__ = 'instrument_model', 'InstrumentationSettings', 'InstrumentedModel'
@@ -422,11 +429,13 @@ def _otel_message_role(part: ModelRequestPart, version: int) -> _otel_messages.R
     `role='user'`. Earlier versions keep those parts on `user`, so a consumer written against them
     keeps reading the role it was built for.
 
-    `RetryFeedbackPart` sits on that same boundary, for the same reason. From version 6 on it gets
-    `system`, because that is the voice it reaches the model in. Earlier versions keep it on `user`,
-    so a consumer written against them keeps reading the role it was built for. Only
-    `pydantic_ai.all_messages` moves either way: a request span records the history after
-    `prepare_messages` has already replaced the part with a `SystemPromptPart`.
+    `RetryFeedbackPart` sits on that same boundary, for the same reason. From version 6 on it takes
+    the voice it reaches the model in, which its `cause` decides: `user` for a `'validation_error'`,
+    which quotes back what the model wrote, and `system` for the causes carrying a message the
+    agent's author wrote. Earlier versions keep every cause on `user`, so a consumer written against
+    them keeps reading the role it was built for — and for a `'validation_error'` that is already the
+    role the wire uses. Only `pydantic_ai.all_messages` moves at all: a request span records the
+    history after `prepare_messages` has already translated the part.
 
     `ToolAvailabilityDeltaPart` gets `system` as the least-bad fit in a closed vocabulary, not as a
     mirror of the wire. `Role` is `system | user | assistant | tool` and none of those means "the set
@@ -437,7 +446,7 @@ def _otel_message_role(part: ModelRequestPart, version: int) -> _otel_messages.R
     `tool_call_response`.
     """
     if isinstance(part, SystemPromptPart | ToolAvailabilityDeltaPart) or (
-        version >= 6 and isinstance(part, RetryFeedbackPart)
+        version >= 6 and isinstance(part, RetryFeedbackPart) and _retry_feedback_speaks_for_the_harness(part)
     ):
         return 'system'
     elif version >= 6 and (

@@ -44,14 +44,11 @@ from pydantic_ai import (
     ModelResponseStreamEvent,
     NativeToolCallPart,
     NativeToolReturnPart,
-    RetryFeedbackPart,
-    RetryPromptPart,
     SpeechPart,
     SystemPromptPart,
     TextContent,
     TextPart,
     ThinkingPart,
-    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
     UploadedFile,
@@ -70,8 +67,8 @@ from pydantic_ai.models import (
     StreamedResponse,
     _suggest_known_model_id_from_provider_error,  # pyright: ignore[reportPrivateUsage]
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
-    _unrendered_retry_feedback_error,  # pyright: ignore[reportPrivateUsage]
-    _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
+    _unprepared_part_error,  # pyright: ignore[reportPrivateUsage]
+    _UnpreparedPart,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
 )
@@ -1281,23 +1278,8 @@ class BedrockConverseModel(Model[BaseClient]):
                                 'content': [{'toolResult': success_result}, *colocated_media_content],
                             }
                         )
-                    elif isinstance(part, RetryPromptPart):
-                        if part.tool_name is None:
-                            flush_deferred_media()
-                            bedrock_messages.append({'role': 'user', 'content': [{'text': part.model_response()}]})
-                        else:
-                            assert part.tool_call_id is not None
-                            error_result: ToolResultBlockOutputTypeDef = {
-                                'toolUseId': part.tool_call_id,
-                                'content': [{'text': part.model_response()}],
-                            }
-                            if supports_tool_result_status:
-                                error_result['status'] = 'error'
-                            bedrock_messages.append({'role': 'user', 'content': [{'toolResult': error_result}]})
-                    elif isinstance(part, RetryFeedbackPart):  # pragma: no cover
-                        raise _unrendered_retry_feedback_error()
-                    elif isinstance(part, ToolAvailabilityDeltaPart):  # pragma: no cover
-                        raise _unsynthesized_tool_availability_delta_error()
+                    elif isinstance(part, _UnpreparedPart):  # pragma: no cover
+                        raise _unprepared_part_error(part)
                     elif isinstance(part, SpeechPart):  # pragma: no cover
                         # Unconverted realtime speech; `prepare_messages` turns these into `UserPromptPart`s in `Model.prepare_messages`.
                         raise _unconverted_speech_part_error()

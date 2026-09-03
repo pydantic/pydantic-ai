@@ -31,14 +31,11 @@ from ..messages import (
     ModelResponseStreamEvent,
     NativeToolCallPart,
     NativeToolReturnPart,
-    RetryFeedbackPart,
-    RetryPromptPart,
     SpeechPart,
     SystemPromptPart,
     TextContent,
     TextPart,
     ThinkingPart,
-    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
     UploadedFile,
@@ -65,8 +62,8 @@ from . import (
     StreamedResponse,
     _suggest_known_model_id_from_provider_error,  # pyright: ignore[reportPrivateUsage]
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
-    _unrendered_retry_feedback_error,  # pyright: ignore[reportPrivateUsage]
-    _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
+    _unprepared_part_error,  # pyright: ignore[reportPrivateUsage]
+    _UnpreparedPart,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
     get_user_agent,
@@ -1131,23 +1128,8 @@ class GoogleModel(Model[Client]):
                         message_parts.extend(await self._map_user_prompt(part))
                     elif isinstance(part, ToolReturnPart):
                         message_parts.extend(await self._map_tool_return(part))
-                    elif isinstance(part, RetryPromptPart):
-                        if part.tool_name is None:
-                            message_parts.append({'text': part.model_response()})
-                        else:
-                            message_parts.append(
-                                {
-                                    'function_response': {
-                                        'name': part.tool_name,
-                                        'response': {'error': part.model_response()},
-                                        'id': part.tool_call_id,
-                                    }
-                                }
-                            )
-                    elif isinstance(part, RetryFeedbackPart):
-                        raise _unrendered_retry_feedback_error()
-                    elif isinstance(part, ToolAvailabilityDeltaPart):
-                        raise _unsynthesized_tool_availability_delta_error()
+                    elif isinstance(part, _UnpreparedPart):
+                        raise _unprepared_part_error(part)
                     elif isinstance(part, SpeechPart):  # pragma: no cover
                         # Unconverted realtime speech; `prepare_messages` turns these into `UserPromptPart`s in `Model.prepare_messages`.
                         raise _unconverted_speech_part_error()

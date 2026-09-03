@@ -24,7 +24,6 @@ from ..messages import (
     ModelResponseStreamEvent,
     NativeToolCallPart,
     NativeToolReturnPart,
-    RetryPromptPart,
     SpeechPart,
     TextPart,
     ThinkingPart,
@@ -269,13 +268,11 @@ class TestModel(Model):
             last_message = messages[-1]
             assert isinstance(last_message, ModelRequest), 'Expected last message to be a `ModelRequest`.'
 
-            # check if there are any retries, if so retry them. A non-tool retry arrives already
-            # rendered into the system voice by `prepare_messages`, so only tool-bound ones show up
-            # here — apart from a legacy `RetryPromptPart` carried in from a stored history.
+            # check if there are any retries, if so retry them. `prepare_messages` has already
+            # translated every retry, so a tool-bound one is a `'retried'` tool return and a
+            # tool-less one is the system-voice part it renders as.
             new_retry_names = {
-                p.tool_name
-                for p in last_message.parts
-                if isinstance(p, RetryPromptPart) or (isinstance(p, ToolReturnPart) and p.outcome == 'retried')
+                p.tool_name for p in last_message.parts if isinstance(p, ToolReturnPart) and p.outcome == 'retried'
             }
             if new_retry_names:
                 # Handle retries for both function tools and output tools

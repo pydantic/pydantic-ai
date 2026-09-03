@@ -28,14 +28,11 @@ from ..messages import (
     ModelResponseStreamEvent,
     NativeToolCallPart,
     NativeToolReturnPart,
-    RetryFeedbackPart,
-    RetryPromptPart,
     SpeechPart,
     SystemPromptPart,
     TextContent,
     TextPart,
     ThinkingPart,
-    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
     UploadedFile,
@@ -52,8 +49,8 @@ from . import (
     ModelRequestParameters,
     StreamedResponse,
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
-    _unrendered_retry_feedback_error,  # pyright: ignore[reportPrivateUsage]
-    _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
+    _unprepared_part_error,  # pyright: ignore[reportPrivateUsage]
+    _UnpreparedPart,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
 )
 from ._tool_choice import resolve_tool_choice
@@ -483,23 +480,8 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
                         'content': tool_text,
                     }
                 )
-            elif isinstance(part, RetryPromptPart):
-                if part.tool_name is None:
-                    yield ChatCompletionInputMessage.parse_obj_as_instance(  # pyright: ignore[reportUnknownMemberType]
-                        {'role': 'user', 'content': part.model_response()}
-                    )
-                else:
-                    yield ChatCompletionInputMessage.parse_obj_as_instance(  # pyright: ignore[reportUnknownMemberType]
-                        {
-                            'role': 'tool',
-                            'tool_call_id': _guard_tool_call_id(t=part),
-                            'content': part.model_response(),
-                        }
-                    )
-            elif isinstance(part, RetryFeedbackPart):  # pragma: no cover
-                raise _unrendered_retry_feedback_error()
-            elif isinstance(part, ToolAvailabilityDeltaPart):  # pragma: no cover
-                raise _unsynthesized_tool_availability_delta_error()
+            elif isinstance(part, _UnpreparedPart):  # pragma: no cover
+                raise _unprepared_part_error(part)
             elif isinstance(part, SpeechPart):  # pragma: no cover
                 # Unconverted realtime speech; `prepare_messages` turns these into `UserPromptPart`s in `Model.prepare_messages`.
                 raise _unconverted_speech_part_error()

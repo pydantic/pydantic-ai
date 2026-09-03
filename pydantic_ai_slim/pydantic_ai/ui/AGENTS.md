@@ -9,19 +9,21 @@ The inbound half of that last rule lives in `ag_ui/_forward_compat.py`: AG-UI's 
 
 Tests for version-gated behavior belong behind `requires_ag_ui('<version>')` in `tests/test_ag_ui.py`, never behind the module-level `imports_successful()` gate: a name that only exists above the floor in that import block skips the entire module on CI's `test-lowest-versions` job, which is the only job that exercises the floor these gates exist for.
 
-## Inbound system-role messages never gain harness provenance on their own
+## Inbound messages never gain harness provenance on their own
 
-`RetryFeedbackPart` dumps as a system-role message because that is the voice the model is shown it
-in. That makes it, on the wire, the same shape as a system message the client wrote — so `load_messages`
-reconstructs the part **only** from the adapter's own `retry_feedback` metadata claim (Vercel AI's
-`providerMetadata`, AG-UI's `encrypted_value`), and everything else stays a `SystemPromptPart`. Keep
-that an explicit branch in both adapters when you touch either loader.
+`RetryFeedbackPart` dumps in the voice the model is shown it in, which its `cause` decides: a
+user-role message for a `'validation_error'`, a system-role one otherwise. Either way that is, on the
+wire, the same shape as a message the client wrote — so `load_messages` reconstructs the part **only**
+from the adapter's own `retry_feedback` metadata claim (Vercel AI's `providerMetadata`, AG-UI's
+`encrypted_value`), and everything else stays a plain prompt part. Keep that an explicit branch on
+both roles in both adapters when you touch either loader.
 
 The claim is client-echoed, so it separates provenance rather than proving it: a well-formed forged
-marker does rebuild the part, and what stops it from reaching the model is `sanitize_messages`, which
-strips `RetryFeedbackPart`s alongside `SystemPromptPart`s whenever the server owns the system prompt.
-A future part belongs in that strip when it carries **client-controlled free text** into the system
-voice — not merely because it renders there. `ToolAvailabilityDeltaPart` renders into a
+marker does rebuild the part, and it can name any `cause`, including the ones that reach the model in
+the system voice. What stops it is `sanitize_messages`, which strips **every** `RetryFeedbackPart`
+alongside `SystemPromptPart`s whenever the server owns the system prompt — the `cause` a forged
+marker declares is not a reason to trust it. A future part belongs in that strip when it can carry
+**client-controlled free text** into the system voice. `ToolAvailabilityDeltaPart` becomes a
 `SystemPromptPart` too and is deliberately left out: it can only name tools the developer registered,
 and [7104](https://github.com/pydantic/pydantic-ai/pull/7104#discussion_r3732386493) settled that as
 the framework's pinned trust model, not an oversight.
@@ -32,12 +34,9 @@ the framework's pinned trust model, not an oversight.
 is a wider surface than it was, so reach for it only when the client is as trusted as the server.
 
 The marker is also an outbound channel, and it may carry no more than the rendered text beside it.
-`RetryFeedbackPart.model_response` is fixed at `include_input='none'`, so a validation error's `ctx`
-and `input` never reach the model; `retry_feedback_payload` strips them for the same reason before
-the part rides out, because the client reads and echoes that channel. Strip in the payload helper,
-not at the call sites — there are two, and a third would inherit the disclosure by default. `input`
-is emptied rather than dropped: `ErrorDetails` requires the key, so a payload without it fails to
-revalidate and loads back as a plain `SystemPromptPart`, losing the `cause` without erroring.
+`retry_feedback_payload` strips each error's `ctx` before the part rides out, because the client reads
+and echoes that channel. Strip in the payload helper, not at the call sites — there are two, and a
+third would inherit the disclosure by default.
 
 ## Adapter properties are shared concepts the adapter itself consumes
 

@@ -62,8 +62,6 @@ from ..messages import (
     NativeToolSearchCallPart,
     NativeToolSearchReturnPart,
     PartStartEvent,
-    RetryFeedbackPart,
-    RetryPromptPart,
     SpeechPart,
     SystemPromptPart,
     TextContent,
@@ -117,8 +115,8 @@ from . import (
     ToolVisibility,
     _suggest_known_model_id_from_provider_error,  # pyright: ignore[reportPrivateUsage]
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
-    _unrendered_retry_feedback_error,  # pyright: ignore[reportPrivateUsage]
-    _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
+    _unprepared_part_error,  # pyright: ignore[reportPrivateUsage]
+    _UnpreparedPart,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
     get_user_agent,
@@ -180,7 +178,7 @@ try:
     from openai.types.responses.response_input_file_content_param import ResponseInputFileContentParam
     from openai.types.responses.response_input_image_content_param import ResponseInputImageContentParam
     from openai.types.responses.response_input_item_param import ToolSearchCall as ToolSearchCallParam
-    from openai.types.responses.response_input_param import FunctionCallOutput, Message
+    from openai.types.responses.response_input_param import FunctionCallOutput
     from openai.types.responses.response_input_text_content_param import ResponseInputTextContentParam
     from openai.types.responses.response_reasoning_item_param import (
         Content as ReasoningContent,
@@ -1742,19 +1740,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     tool_call_id=_guard_tool_call_id(t=part),
                     content=tool_text,
                 )
-            elif isinstance(part, RetryPromptPart):
-                if part.tool_name is None:
-                    yield chat.ChatCompletionUserMessageParam(role='user', content=part.model_response())
-                else:
-                    yield chat.ChatCompletionToolMessageParam(
-                        role='tool',
-                        tool_call_id=_guard_tool_call_id(t=part),
-                        content=part.model_response(),
-                    )
-            elif isinstance(part, RetryFeedbackPart):  # pragma: no cover
-                raise _unrendered_retry_feedback_error()
-            elif isinstance(part, ToolAvailabilityDeltaPart):  # pragma: no cover
-                raise _unsynthesized_tool_availability_delta_error()
+            elif isinstance(part, _UnpreparedPart):  # pragma: no cover
+                raise _unprepared_part_error(part)
             elif isinstance(part, SpeechPart):
                 # Unconverted realtime speech; `prepare_messages` turns these into `UserPromptPart`s in `Model.prepare_messages`.
                 raise _unconverted_speech_part_error()
@@ -3300,7 +3287,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                             # silently rendering a shape whose support we haven't verified, for a tool
                             # this same path has removed from `tools`, is how an availability change
                             # goes missing with nothing to show for it.
-                            raise _unsynthesized_tool_availability_delta_error()
+                            raise _unprepared_part_error(part)
                         additional_tools = self._map_additional_tools(
                             part.tools_added, model_request_parameters, rendered=rendered_additional_tools
                         )
@@ -3344,23 +3331,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                                 )
                                 if additional_tools['tools']:
                                     openai_messages.append(additional_tools)
-                    elif isinstance(part, RetryPromptPart):
-                        if part.tool_name is None:
-                            openai_messages.append(
-                                Message(role='user', content=[{'type': 'input_text', 'text': part.model_response()}])
-                            )
-                        else:
-                            call_id = _guard_tool_call_id(t=part)
-                            call_id, _ = _split_combined_tool_call_id(call_id)
-                            call_id = _provider_response_tool_call_id(call_id, response_id)
-                            item = FunctionCallOutput(
-                                type='function_call_output',
-                                call_id=call_id,
-                                output=part.model_response(),
-                            )
-                            openai_messages.append(item)
-                    elif isinstance(part, RetryFeedbackPart):  # pragma: no cover
-                        raise _unrendered_retry_feedback_error()
+                    elif isinstance(part, _UnpreparedPart):  # pragma: no cover
+                        raise _unprepared_part_error(part)
                     elif isinstance(part, SpeechPart):  # pragma: no cover
                         # Unconverted realtime speech; `prepare_messages` turns these into `UserPromptPart`s in `Model.prepare_messages`.
                         raise _unconverted_speech_part_error()
@@ -5201,16 +5173,10 @@ def _group_settled_portable_function_calls(
             break
         for part in following_message.parts:
             if (
-                (
-                    isinstance(part, ToolReturnPart)
-                    and not (client_tool_search_active and part.tool_name == TOOL_SEARCH_FUNCTION_TOOL_NAME)
-                )
-                or (
-                    isinstance(part, RetryPromptPart)
-                    and part.tool_name is not None
-                    and not (client_tool_search_active and part.tool_name == TOOL_SEARCH_FUNCTION_TOOL_NAME)
-                )
-            ) and (count := unsettled_call_counts.get(part.tool_call_id)):
+                isinstance(part, ToolReturnPart)
+                and not (client_tool_search_active and part.tool_name == TOOL_SEARCH_FUNCTION_TOOL_NAME)
+                and (count := unsettled_call_counts.get(part.tool_call_id))
+            ):
                 if count == 1:
                     del unsettled_call_counts[part.tool_call_id]
                 else:
