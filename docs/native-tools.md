@@ -72,6 +72,9 @@ print(result.output)
 #> The capital of France is Paris.
 ```
 
+!!! note "Returning `None` under a `fallback_model`"
+    Omission is what `None` means everywhere the native tool is the only path. [`XSearch`][pydantic_ai.capabilities.XSearch] and [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] are the exception: once `fallback_model` is set, their subagent tool is offered to the model whenever the factory returns `None`, and calling it raises [`UserError`][pydantic_ai.exceptions.UserError] instead of running with default settings. See [X Search](capabilities/x-search.md) and [Image Generation](capabilities/image-generation.md).
+
 ## Web Search Tool
 
 !!! tip

@@ -190,10 +190,18 @@ jobs:
       # classic case being one that bumps the gh-aw compiler while another adds a lock
       # at the old version — and without this the drift first surfaces as a red `quality checks`
       # on whichever contributor next opens a PR, about workflows they never touched.
+      - name: Fetch gh-aw compatibility policy
+        run: >-
+          curl --fail --silent --show-error --location --retry 3 --retry-all-errors
+          https://raw.githubusercontent.com/github/gh-aw/main/.github/aw/compat.json
+          --output /tmp/gh-aw-compat.json
+
       - name: Check agentic workflow policy
         env:
           UV_NO_SYNC: "1"
-        run: uv run python .github/scripts/agentic_workflow_guard.py check
+        run: >-
+          uv run python .github/scripts/agentic_workflow_guard.py check
+          --compatibility-file /tmp/gh-aw-compat.json
 
       # Actions runs the `*.lock.yml`, never the `*.md`, so a source edited without
       # its recompiled lock is a silent no-op. The checkout is shallow, so feed the
@@ -916,19 +924,23 @@ jobs:
         uses: re-actors/alls-green@05ac9388f0aebcb5727afa17fcccfecd6f8ec5fe # release/v1
         with:
           # The canary runs on tag refs only, and `docs-only` runs only for Markdown-only PRs.
-          # Full CI jobs may skip only when the classifier selected that reduced PR path.
+          # On tags only `docs-only` may skip; full CI jobs may skip only on the reduced PR path.
           allowed-skips: >-
             ${{
               needs.classify.outputs.docs_only == 'true'
               && 'quality,mypy,test,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,latest-versions-canary,coverage'
+              || github.ref_type == 'tag'
+              && 'docs-only'
               || 'docs-only,latest-versions-canary'
             }}
           jobs: ${{ toJSON(needs) }}
 
+  # `check` may succeed with intentionally skipped ancestors, so downstream jobs must override
+  # GitHub's default success check and inspect the result of their direct dependency.
   # Note: this should match the `deploy-docs-manual` job in manually-deploy-docs.yml
   deploy-docs:
     needs: [check]
-    if: success() && startsWith(github.ref, 'refs/tags/')
+    if: ${{ !cancelled() && github.ref_type == 'tag' && needs.check.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - name: Generate app token
@@ -956,7 +968,7 @@ jobs:
   release-build:
     name: build release artifacts
     needs: [check]
-    if: success() && startsWith(github.ref, 'refs/tags/')
+    if: ${{ !cancelled() && github.ref_type == 'tag' && needs.check.result == 'success' }}
     runs-on: ubuntu-latest
 
     outputs:
@@ -998,7 +1010,7 @@ jobs:
   release:
     name: publish to PyPI
     needs: [release-build]
-    if: success() && startsWith(github.ref, 'refs/tags/')
+    if: ${{ !cancelled() && github.ref_type == 'tag' && needs.release-build.result == 'success' }}
     runs-on: ubuntu-latest
 
     environment:
@@ -1026,7 +1038,7 @@ jobs:
   send-tweet:
     name: Send tweet
     needs: [release]
-    if: needs.release.result == 'success'
+    if: ${{ !cancelled() && needs.release.result == 'success' }}
     runs-on: ubuntu-latest
 
     steps:
