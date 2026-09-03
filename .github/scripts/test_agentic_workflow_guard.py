@@ -19,6 +19,8 @@ import agentic_workflow_guard
 from agentic_workflow_guard import (
     Violation,
     changed_files,
+    check_compiled_runner_contract,
+    check_compiler_version_compatibility,
     check_compiler_versions,
     check_dangling_needs,
     check_job_timeout_env,
@@ -647,6 +649,60 @@ def test_compiler_versions_accepts_a_uniform_set(tmp_path: Path):
     assert check_compiler_versions([a, b]) == []
 
 
+def test_compiled_runner_contract_rejects_drift_from_the_gh_aw_shim(tmp_path: Path):
+    """The generated agent command is the seam between gh-aw and our custom runner."""
+    lock = _write(
+        tmp_path / 'w.lock.yml',
+        """
+jobs:
+  agent:
+    steps:
+      - name: Run agent
+        run: |
+          awf -- /bin/bash -c '/tmp/gh-aw/bin/pydantic-ai-runner-launch --allowed-tools "Read,mcp__safeoutputs_fake"' --output-format stream-json --mcp-config ignored
+""",
+    )
+
+    violations = check_compiled_runner_contract(lock)
+
+    assert [v.check for v in violations] == ['compiled-runner-contract']
+    assert '`mcp__safeoutputs`' in violations[0].message
+
+
+def test_compiled_runner_contract_accepts_the_supported_interface(tmp_path: Path):
+    lock = _write(
+        tmp_path / 'w.lock.yml',
+        """
+jobs:
+  agent:
+    steps:
+      - name: Run agent
+        run: >-
+          awf -- /bin/bash -c '/tmp/gh-aw/bin/pydantic-ai-runner-launch
+          --allowed-tools "Read,mcp__safeoutputs"
+          --output-format stream-json
+          --mcp-config mcp-servers.json'
+""",
+    )
+
+    assert check_compiled_runner_contract(lock) == []
+
+
+def test_compiler_version_compatibility_rejects_a_blocked_version(tmp_path: Path):
+    lock = _write(tmp_path / 'w.lock.yml', '# gh-aw-metadata: {"compiler_version":"v0.83.4"}\njobs: {}\n')
+
+    violations = check_compiler_version_compatibility([lock], {'blockedVersions': ['v0.83.4']})
+
+    assert [v.check for v in violations] == ['compiler-version-blocked']
+    assert '`v0.83.4`' in violations[0].message
+
+
+def test_compiler_version_compatibility_accepts_an_unblocked_version(tmp_path: Path):
+    lock = _write(tmp_path / 'w.lock.yml', '# gh-aw-metadata: {"compiler_version":"v0.86.2"}\njobs: {}\n')
+
+    assert check_compiler_version_compatibility([lock], {'blockedVersions': ['v0.83.4']}) == []
+
+
 @pytest.fixture
 def workflows_dir(tmp_path: Path) -> Path:
     """A minimal workflows tree: one agentic source importing one shared fragment."""
@@ -801,6 +857,24 @@ def test_main_reads_a_changed_file_list_one_path_per_line(tmp_path: Path, monkey
     assert seen == [['.github/workflows/pydantic-ai-my workflow.md', '.github/workflows/other.md']]
 
 
+def test_main_checks_versions_against_a_compatibility_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    policy = _write(tmp_path / 'compat.json', '{"blockedVersions":["v0.83.4"]}\n')
+    seen: list[dict[str, object] | None] = []
+
+    def record(
+        workflows_dir: Path = WORKFLOWS_DIR,
+        changed: list[str] | None = None,
+        compatibility: dict[str, object] | None = None,
+    ) -> list[Violation]:
+        seen.append(compatibility)
+        return []
+
+    monkeypatch.setattr(agentic_workflow_guard, 'run_checks', record)
+
+    assert agentic_workflow_guard.main(['check', '--compatibility-file', str(policy)]) == 0
+    assert seen == [{'blockedVersions': ['v0.83.4']}]
+
+
 def test_changed_files_returns_empty_for_an_unresolvable_ref():
 
     assert changed_files('definitely-not-a-ref-8f3a2b') == []
@@ -862,7 +936,19 @@ def test_run_checks_scans_shared_fragments_under_the_given_root(tmp_path: Path):
         workflows / 'pydantic-ai-x.md',
         '---\ntimeout-minutes: 30\nenv:\n  PYDANTIC_AI_JOB_TIMEOUT_MINUTES: "30"\n---\nprompt\n',
     )
-    _write(workflows / 'pydantic-ai-x.lock.yml', 'jobs: {}\n')
+    _write(
+        workflows / 'pydantic-ai-x.lock.yml',
+        """
+jobs:
+  agent:
+    steps:
+      - run: >-
+          awf -- /bin/bash -c '/tmp/gh-aw/bin/pydantic-ai-runner-launch
+          --allowed-tools "Read,mcp__safeoutputs"
+          --output-format stream-json
+          --mcp-config mcp-servers.json'
+""",
+    )
     _write(workflows / 'shared' / 'ctx.md', '---\nname: ctx\n---\nRead /tmp/gh-aw/.review-context/x\n')
 
     violations = run_checks(workflows)
