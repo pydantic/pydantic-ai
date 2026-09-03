@@ -30,7 +30,7 @@ from pydantic_ai.toolsets.prepared import PreparedToolset
 from .native_or_local import NativeOrLocalTool
 
 if TYPE_CHECKING:
-    from pydantic_ai.common_tools.image_generation import ImageGenerationFallbackModel
+    from pydantic_ai.common_tools.image_generation import ImageGenerationFallbackModel, ImageGenerationNativeTool
 
 # Derived from the native tool's own aliases so widening either can't silently start dropping values.
 _NATIVE_IMAGE_SIZES = frozenset(get_args(ImageSize))
@@ -107,9 +107,9 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
     `ImageGenerationTool`; configure provider-specific direct settings on an explicit
     `ImageGenerator` or `ImageGenerationModel`.
 
-    When passing a custom `native` instance, its settings are also used for the `fallback_model`
-    subagent, and its `aspect_ratio` for the direct fallback; capability-level fields override any
-    `native` instance settings.
+    When passing a custom `native` instance or factory, its settings are also used for the
+    `fallback_model` subagent; capability-level fields override any `native` settings. A static
+    instance's `aspect_ratio` is also inherited by the direct fallback.
     """
 
     fallback_model: ImageGenerationFallbackModel
@@ -229,6 +229,13 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
     [ratio-to-dimensions matrix](../image-generation.md#canonical-dimensions-for-aspect_ratio).
     """
 
+    id: str | None = 'image_generation'
+    """One-off: an agent searches, fetches or generates one way, so the id is fixed.
+
+    Declared here rather than only as an `__init__` default so the class states it where
+    `_declares_default_id` -- and a reader -- can see it.
+    """
+
     def __init__(
         self,
         *,
@@ -258,18 +265,13 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         size: ImageSize | None = None,
         dimensions: ImageDimensions | None = None,
         aspect_ratio: ImageGenerationAspectRatio | None = None,
-        id: str | None = None,
+        id: str | None = 'image_generation',
         defer_loading: bool = False,
         description: str | None = None,
     ) -> None:
         self.id = id
         self.description = description
         self.defer_loading = defer_loading
-        if fallback_model is not None and local is not None:
-            raise UserError(
-                'ImageGeneration: cannot specify both `fallback_model` and `local` — '
-                'use `fallback_model` for the default subagent fallback, or `local` for a custom tool'
-            )
         self.native = native
         self.fallback_model = fallback_model
         self.action = action
@@ -300,6 +302,17 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         self.__post_init__()
 
     def __post_init__(self) -> None:
+        # Checked here rather than in `__init__` so a merge is held to it too: `combine` can pair
+        # one instance's `fallback_model` with another's `local`, which no constructor accepts, and
+        # the local tool would then take effect with `fallback_model` silently ignored. Runs before
+        # the base resolves `local`, so it reads what was declared rather than what was
+        # materialized.
+        if self.fallback_model is not None and self.local is not None:
+            raise UserError(
+                'ImageGeneration: cannot specify both `fallback_model` and `local` — '
+                'use `fallback_model` for the default subagent fallback, or `local` for a custom tool'
+            )
+
         # The native tool's kwargs are collected once for the default native tool and again for the
         # `fallback_model` subagent's copy, so the notice lives here to fire exactly once.
         ignored: list[str] = []
@@ -340,7 +353,7 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         size: ImageSize | None = None,
         dimensions: ImageDimensions | None = None,
         aspect_ratio: ImageGenerationAspectRatio | None = None,
-        id: str | None = None,
+        id: str | None = 'image_generation',
         defer_loading: bool = False,
         description: str | None = None,
     ) -> ImageGeneration[AgentDepsT]:
@@ -538,13 +551,9 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
     def _native_unique_id(self) -> str:
         return ImageGenerationTool.kind
 
-    def _resolved_native(self) -> ImageGenerationTool:
+    def _resolved_native(self) -> ImageGenerationNativeTool[AgentDepsT]:
         """Get the ImageGenerationTool for the fallback, with capability-level overrides applied."""
-        base = self.native if isinstance(self.native, ImageGenerationTool) else ImageGenerationTool()
-        overrides = self._image_gen_kwargs()
-        if not overrides:
-            return base
-        return replace(base, **overrides)
+        return self._resolve_native_with_overrides(ImageGenerationTool, self._image_gen_kwargs())
 
     def _default_local(self) -> Tool[AgentDepsT] | AbstractToolset[AgentDepsT] | None:
         if self.fallback_model is None:

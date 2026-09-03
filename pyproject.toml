@@ -450,6 +450,12 @@ filterwarnings = [
     # logfire to use logging.warning() instead of warnings.warn() for this diagnostic — it's
     # informational, not a deprecation, and should never be able to crash execution.
     "ignore:Found propagated trace context:RuntimeWarning",
+    # `starlette.testclient` still references the `anyio.abc.BlockingPortal` alias that anyio 4.15.0
+    # deprecated, so the warning fires at import time and fails collection of every test module that
+    # imports it. There is nothing to bump to: starlette's `master` still uses the alias.
+    # TODO: Drop once starlette moves to `anyio.from_thread.BlockingPortal`.
+    # https://github.com/Kludex/starlette/issues/3497
+    "ignore:The anyio.abc.BlockingPortal alias is deprecated:DeprecationWarning:starlette.testclient",
 ]
 
 # https://coverage.readthedocs.io/en/latest/config.html#run

@@ -141,6 +141,7 @@ OpenAIChatCompatibleProvider = TypeAliasType(
         'snowflake',
         'together',
         'vercel',
+        'vllm',
         'zai',
     ],
 )

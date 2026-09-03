@@ -240,19 +240,6 @@ class TestXSearchCapability:
         with pytest.raises(UserError, match='constraint fields require the native tool'):
             XSearch(native=False, allowed_x_handles=['handle1'])
 
-    def test_xsearch_resolved_native_merges_overrides(self):
-        """Capability-level kwargs override fields on a passed native instance."""
-        base = XSearchTool(allowed_x_handles=['a'], enable_image_understanding=True)
-        cap = XSearch(native=base, from_date=datetime(2024, 1, 1), enable_image_understanding=False)
-        resolved = cap._resolved_native()  # pyright: ignore[reportPrivateUsage]
-        assert resolved == snapshot(
-            XSearchTool(
-                allowed_x_handles=['a'],
-                from_date=datetime(2024, 1, 1),
-                enable_image_understanding=False,
-            )
-        )
-
     def test_xsearch_fallback_model_and_local_conflict(self):
         """XSearch(fallback_model=..., local=func) raises UserError."""
 

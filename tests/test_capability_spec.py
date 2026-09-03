@@ -1753,6 +1753,13 @@ def test_model_json_schema_with_capabilities():
                     'title': 'spec_ReinjectSystemPrompt',
                     'type': 'object',
                 },
+                'spec_Instrumentation': {
+                    'additionalProperties': False,
+                    'properties': {'Instrumentation': {'$ref': '#/$defs/spec_params_Instrumentation'}},
+                    'required': ['Instrumentation'],
+                    'title': 'spec_Instrumentation',
+                    'type': 'object',
+                },
                 'spec_Thinking': {
                     'additionalProperties': False,
                     'properties': {'Thinking': {'$ref': '#/$defs/spec_params_Thinking'}},
@@ -1843,6 +1850,21 @@ def test_model_json_schema_with_capabilities():
                         'replace_existing': {'title': 'Replace Existing', 'type': 'boolean'},
                     },
                     'title': 'spec_params_ReinjectSystemPrompt',
+                    'type': 'object',
+                },
+                'spec_params_Instrumentation': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
+                        'include_binary_content': {'title': 'Include Binary Content', 'type': 'boolean'},
+                        'include_content': {'title': 'Include Content', 'type': 'boolean'},
+                        'version': {'enum': [2, 3, 4, 5, 6], 'title': 'Version', 'type': 'integer'},
+                        'use_aggregated_usage_attribute_names': {
+                            'title': 'Use Aggregated Usage Attribute Names',
+                            'type': 'boolean',
+                        },
+                    },
+                    'title': 'spec_params_Instrumentation',
                     'type': 'object',
                 },
                 'spec_params_Thinking': {
@@ -2033,6 +2055,7 @@ def test_model_json_schema_with_capabilities():
                                 {'const': 'IncludeToolReturnSchemas', 'type': 'string'},
                                 {'$ref': '#/$defs/spec_IncludeToolReturnSchemas'},
                                 {'const': 'Instrumentation', 'type': 'string'},
+                                {'$ref': '#/$defs/spec_Instrumentation'},
                                 {'$ref': '#/$defs/short_spec_MCP'},
                                 {'$ref': '#/$defs/spec_MCP'},
                                 {'$ref': '#/$defs/spec_PrefixTools'},
@@ -2253,6 +2276,7 @@ def test_model_json_schema_with_capabilities():
                             {'const': 'IncludeToolReturnSchemas', 'type': 'string'},
                             {'$ref': '#/$defs/spec_IncludeToolReturnSchemas'},
                             {'const': 'Instrumentation', 'type': 'string'},
+                            {'$ref': '#/$defs/spec_Instrumentation'},
                             {'$ref': '#/$defs/short_spec_MCP'},
                             {'$ref': '#/$defs/spec_MCP'},
                             {'$ref': '#/$defs/spec_PrefixTools'},
@@ -3335,7 +3359,11 @@ async def test_custom_init_capability_can_initialize_metadata_without_post_init(
 
 
 async def test_duplicate_explicit_capability_ids_set_after_construction_raise_at_run() -> None:
-    """Ids that only collide after construction escape the eager check, so run registration still rejects them."""
+    """Ids that only collide after construction escape the eager check, so run registration still rejects them.
+
+    Two *different* classes under one id can never be combined: no one class can say how they
+    compose, so this is rejected outright rather than offered to `combine`.
+    """
 
     @dataclass
     class FirstCap(AbstractCapability):
@@ -3350,7 +3378,7 @@ async def test_duplicate_explicit_capability_ids_set_after_construction_raise_at
     agent = Agent(TestModel(), capabilities=[first, second])
     second.id = 'same'  # collision introduced after construction
 
-    with pytest.raises(UserError, match="Capability id 'same' is used by multiple capabilities"):
+    with pytest.raises(UserError, match="Capability id 'same' is used by capabilities of different types"):
         await agent.run('hi')
 
 
@@ -3369,3 +3397,94 @@ async def test_anonymous_non_deferred_capabilities_get_run_local_ids() -> None:
     assert first.id is None
     assert second.id is None
     assert {'plain_cap', 'plain_cap_2'} <= available_ids
+
+
+def _bare_local(query: str) -> str:
+    """Local search fallback."""
+    return 'result'  # pragma: no cover
+
+
+async def test_one_off_capabilities_carry_a_stable_default_id() -> None:
+    """Capabilities covering a single fixed concern name themselves, so durable execution can key on
+    them without the user naming something they never constructed."""
+    assert WebSearch(local=_bare_local).id == 'web_search'
+    assert WebFetch(local=_bare_local).id == 'web_fetch'
+    assert ImageGeneration(fallback_model='openai-responses:gpt-5.4').id == 'image_generation'
+    assert XSearch(fallback_model='xai:grok-4.3').id == 'x_search'
+    assert Thinking().id == 'thinking'
+    assert Instrumentation().id == 'instrumentation'
+    assert ReinjectSystemPrompt().id == 'reinject_system_prompt'
+    assert RaiseContentFilterError().id == 'raise_content_filter_error'
+    # The user's own id always wins, and `id=None` opts back into the derived, disambiguated ids.
+    assert Thinking(id='mine').id == 'mine'
+    assert Thinking(id=None).id is None
+
+
+async def test_two_one_off_capabilities_in_one_layer_combine() -> None:
+    """A fixed id means two of them are one configuration stated twice, so `combine` keeps the last."""
+    capability_map, _ = await _registered_capability_context(Thinking(effort='low'), Thinking(effort='high'))
+    thinking = capability_map['thinking']
+    assert isinstance(thinking, Thinking)
+    assert thinking.effort == 'high'
+
+
+async def test_one_off_capability_with_id_none_is_still_disambiguated() -> None:
+    """`id=None` is the documented escape hatch back to per-occurrence ids."""
+    first = Thinking(effort='low', id=None)
+    second = Thinking(effort='high', id=None)
+    capability_map, _ = await _registered_capability_context(first, second)
+    assert list(capability_map) == ['thinking', 'thinking_2']
+
+
+async def test_run_level_one_off_capability_supersedes_the_agent_level_one() -> None:
+    """A shared id across layers is `combine` choosing the last, not a separate override mechanism:
+    the registry and the composed tree agree on a single owner."""
+    offered: list[list[str]] = []
+
+    def capture(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        offered.append(sorted(tool.name for tool in (info.function_tools or [])))
+        return make_text_response('done')
+
+    def agent_level(query: str) -> str:
+        """Agent-level search."""
+        return 'agent'  # pragma: no cover
+
+    def run_level(topic: str) -> str:
+        """Run-level search."""
+        return 'run'  # pragma: no cover
+
+    agent = Agent(FunctionModel(capture), capabilities=[WebSearch(native=False, local=agent_level)])
+    await agent.run('hi', capabilities=[WebSearch(native=False, local=run_level)])
+
+    assert offered == [['run_level']]
+
+
+async def test_capability_reused_across_layers_keeps_one_occurrence() -> None:
+    """The same instance may appear on the agent and be passed again for the run. Combining leaves
+    exactly one occurrence rather than dropping every one of them."""
+    shared = Thinking(effort='low')
+    agent = Agent(FunctionModel(lambda _messages, _info: make_text_response('done')), capabilities=[shared])
+    result = await agent.run('hi', capabilities=[shared])
+    assert result.output == 'done'
+
+
+async def test_distinct_ids_keep_both_one_off_capabilities() -> None:
+    """Naming them apart is the documented way to run two, and `combine` is never consulted."""
+    offered: list[list[str]] = []
+
+    def capture(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        offered.append(sorted(tool.name for tool in (info.function_tools or [])))
+        return make_text_response('done')
+
+    def agent_level(query: str) -> str:
+        """Agent-level search."""
+        return 'agent'  # pragma: no cover
+
+    def run_level(topic: str) -> str:
+        """Run-level search."""
+        return 'run'  # pragma: no cover
+
+    agent = Agent(FunctionModel(capture), capabilities=[WebSearch(native=False, local=agent_level, id='agent')])
+    await agent.run('hi', capabilities=[WebSearch(native=False, local=run_level, id='run')])
+
+    assert offered == [['agent_level', 'run_level']]
