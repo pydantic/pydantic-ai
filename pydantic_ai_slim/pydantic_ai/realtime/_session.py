@@ -251,6 +251,14 @@ class _AudioTap:
     queue: asyncio.Queue[bytes | object]
     subscribed_at_bytes: int
     dropped_bytes: int = 0
+    """Gaps the consumer has already moved past, which its playback position no longer accounts for."""
+    pending_dropped_bytes: int = 0
+    """Gaps that are still ahead of the consumer: dropped from the queue, but not yet stepped over.
+
+    Drop-oldest discards the chunk that would have been delivered next, so a gap sits ahead of the
+    playback position until the consumer takes the chunk beyond it — counting it before then would
+    place the position further into the response than the device has actually reached.
+    """
     played_bytes: int = 0
     """Chunks the consumer finished with — counted when it resumes the iterator for the next one."""
 
@@ -982,6 +990,10 @@ class RealtimeSession:
         try:
             while (item := await queue.get()) is not self._tap_finished:
                 assert isinstance(item, bytes)
+                # Taking this chunk steps over every gap that opened before it, so those now sit
+                # behind the playback position and belong in the mapping.
+                tap.dropped_bytes += tap.pending_dropped_bytes
+                tap.pending_dropped_bytes = 0
                 yield item
                 # Resuming here means the consumer came back for the next chunk. Under the
                 # documented playback pattern — write each chunk to the device before pulling the
@@ -1273,10 +1285,11 @@ class RealtimeSession:
         buffered audio the user will never hear — chunks already queued, and the cancelled
         response's stragglers as they arrive — then truncates and cancels, returning `True`. On a
         model without output truncation the unheard audio is still flushed and the response
-        cancelled; only the provider-side transcript sync is unavailable. When
-        everything emitted was already played there is nothing to cut off, so nothing is sent and
-        `False` is returned: reporting an interruption anyway would make the provider discard part
-        of a completed reply. This form needs exactly one
+        cancelled; only the provider-side transcript sync is unavailable. When everything emitted
+        was already played there is nothing to cut off: a reply that has not reached its first audio
+        chunk is cancelled untruncated, since it is about to speak over the user, and otherwise
+        nothing is sent and `False` is returned — reporting an interruption anyway would make the
+        provider discard part of a completed reply. This form needs exactly one
         [`stream_audio()`][pydantic_ai.realtime.RealtimeSession.stream_audio] iterator, kept for the
         session's lifetime; with several (or none) the position is ambiguous and a
         [`UserError`][pydantic_ai.exceptions.UserError] is raised — keep your own accounting and
@@ -1331,15 +1344,23 @@ class RealtimeSession:
                 'accounting and pass `played_ms` instead.'
             )
         (tap,) = self._audio_taps
-        # The device consumed `played_bytes` of what this tap delivered; adding what the tap dropped
-        # before delivery (overflow, earlier flushes) and what predates the subscription places that
-        # position in the session's emitted-audio coordinates. (Flushed audio is erased from the
-        # stream, so skipping over it is what keeps this mapping honest across barge-ins.) Overflow
-        # drops land at the consumer's frontier, so treating them as behind the playhead is
-        # approximate by at most the buffer window — the same tolerance a hand-rolled playback
-        # buffer accepts after an overflow.
+        # The device consumed `played_bytes` of what this tap delivered; adding the gaps it has
+        # already stepped over (overflow drops, earlier flushes) and what predates the subscription
+        # places that position in the session's emitted-audio coordinates. (Flushed audio is erased
+        # from the stream, so skipping over it is what keeps this mapping honest across barge-ins.)
+        # Gaps still ahead of the consumer are deliberately excluded: see `pending_dropped_bytes`.
         playhead = tap.subscribed_at_bytes + played_bytes + tap.dropped_bytes
         if playhead >= self._emitted_audio_bytes:
+            # Everything emitted has been heard, so there is nothing to cut off. A reply that has
+            # opened a part but not reached its first audio chunk is still about to speak over the
+            # user, though — barging in during the model's think time is ordinary — so cancel it
+            # untruncated. Truncating is what would discard part of a reply the user did hear, and
+            # once the part has audio the response may simply be over with its `ResponseDone` still
+            # in flight, where a cancel can be applied to the *next* response instead.
+            if cancel and self._active_assistant is not None and self._audio_part_index != self._active_assistant_index:
+                await self._send_frame(CancelResponse())
+                self._session_instrumentation.record_lifecycle('interrupt', played_ms=None)
+                return True
             return False
         # Unheard audio exists: flush what's buffered, and erase the cancelled part's stragglers as
         # they arrive, so the stream carries nothing the barge-in already cut off.
@@ -1366,6 +1387,10 @@ class RealtimeSession:
 
     def _flush_tap(self, tap: _AudioTap) -> None:
         """Discard the tap's buffered chunks, counting them as dropped for position mapping."""
+        # Nothing queued survives the flush, so the next chunk delivered lands beyond every gap that
+        # was still ahead of the consumer as well.
+        tap.dropped_bytes += tap.pending_dropped_bytes
+        tap.pending_dropped_bytes = 0
         while not tap.queue.empty():
             item = tap.queue.get_nowait()
             if item is self._tap_finished:  # pragma: no cover - defensive: the sentinel is enqueued
@@ -2729,7 +2754,7 @@ class RealtimeSession:
                             # finished, after which nothing publishes.
                             assert isinstance(dropped, bytes)
                             self._audio_tap_drops += 1
-                            tap.dropped_bytes += len(dropped)
+                            tap.pending_dropped_bytes += len(dropped)
             if delta.transcript is not None and delta.speaker is not None:
                 # Keyed on the running transcript, not on the added text: a revision adds nothing, and
                 # gating on that would drop the very correction a caption UI needs.

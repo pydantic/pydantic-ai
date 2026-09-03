@@ -53,7 +53,9 @@ async def main():
 When the user speaks over the model, the session discards the buffered audio the user will never
 hear, truncates the provider's transcript to what was actually played, and cancels the response —
 doing nothing when the previous reply was heard in full, since the speech-start signal also fires
-on ordinary user turns. Provider differences are absorbed: on a model without output truncation
+on ordinary user turns. A reply that has not reached its first audio chunk is still stopped, so
+speaking over the model's thinking time works like speaking over its voice. Provider differences
+are absorbed: on a model without output truncation
 (xAI) the response is cancelled without a truncation point, and when the provider interrupts
 itself without reporting speech onset (Gemini) only the local flush is performed. The events still
 reach your iterator, already handled — react to them for UI state or to flush your audio layer's

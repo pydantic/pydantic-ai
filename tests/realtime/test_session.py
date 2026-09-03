@@ -1429,6 +1429,69 @@ async def test_interrupt_played_bytes_degrades_without_output_truncation() -> No
         assert conn.sent == [CancelResponse()]
 
 
+async def test_interrupt_played_bytes_cancels_a_response_before_its_first_audio() -> None:
+    """Barge-in during the model's think time cancels untruncated instead of no-opping.
+
+    Everything emitted has been heard, so there is nothing to cut off — but the next response has
+    started and is about to speak over the user, which returning `False` would leave running. Only
+    the truncation is skipped: it is what would discard part of the reply the user did hear.
+    """
+    conn = _GatedRealtimeConnection(
+        [AudioDelta(b'a' * _CHUNK), ResponseDone()],
+        [OutputTranscript(text='Sure, one moment')],  # the next reply, still before its first audio
+    )
+    session = RealtimeSession(conn, _noop_runner)
+
+    async with session:
+        stream = session.stream_audio()
+        assert await anext(stream) == b'a' * _CHUNK
+
+        conn.release.set()
+        async for event in session:  # pragma: no branch
+            if (
+                isinstance(event, PartDeltaEvent)
+                and isinstance(delta := event.delta, SpeechPartDelta)
+                and delta.transcript
+            ):
+                break
+
+        assert await session.interrupt(played_bytes=_CHUNK) is True
+        assert conn.sent == [CancelResponse()]
+
+
+async def test_interrupt_played_bytes_leaves_drops_ahead_of_the_device_out_of_the_playhead() -> None:
+    """Chunks overflow-dropped while the device is still on an earlier one do not move the playhead.
+
+    Drop-oldest discards what the consumer would have taken next, so a gap opens *ahead* of the
+    playback position; counting it right away would report a turn as heard further in than the
+    device ever reached, and truncate the model's transcript at that later point.
+    """
+    conn = _GatedRealtimeConnection(
+        [AudioDelta(b'a' * _CHUNK)],
+        # One chunk more than the 32-chunk buffer, so the burst that lands while `a` is playing
+        # overflows by exactly one.
+        [AudioDelta(bytes([i]) * _CHUNK) for i in range(1, 34)],
+    )
+    session = RealtimeSession(conn, _noop_runner)
+
+    async with session:
+        stream = session.stream_audio()
+        assert await anext(stream) == b'a' * _CHUNK  # the device is still playing this chunk
+
+        conn.release.set()
+        async for event in session:  # pragma: no branch
+            if (
+                isinstance(event, PartDeltaEvent)
+                and isinstance(delta := event.delta, SpeechPartDelta)
+                and delta.audio_chunk == bytes([33]) * _CHUNK
+            ):
+                break
+
+        # Nothing has been played yet, and the dropped chunk is one the device had not reached.
+        assert await session.interrupt(played_bytes=0) is True
+        assert conn.sent == [TruncateOutput(audio_end_ms=0), CancelResponse()]
+
+
 async def test_interrupt_rejects_both_playback_positions() -> None:
     conn = FakeRealtimeConnection([])
     session = RealtimeSession(conn, _noop_runner)
