@@ -90,7 +90,7 @@ Never overwrite another session's handoff. One handoff per session:
 .agents/skills/branch-context/append-handoff.sh [--writer <skill>] "<one-line summary>" [path-to-body.md]
 ```
 
-Pass `--writer` when a skill owns the handoff (`--writer manager-handoff`); it tags the index line so a reader can see which writer produced it. Call it again in the same session and it **amends** your existing handoff — same file, same index line — rather than appending a rival entry the next agent would have to choose between.
+Pass `--writer` when a skill owns the handoff rather than the session at large (`--writer <skill-name>`); it tags the index line so a reader can see which writer produced it. Call it again in the same session and it **amends** your existing handoff — same file, same index line — rather than appending a rival entry the next agent would have to choose between.
 
 **Lanes.** Every entry stores an immutable `lane-id:<id>` from the host conversation/thread when
 available (`$CLAUDE_CODE_HOST_SESSION_ID` or `$CODEX_THREAD_ID`), then tmux, with `$HANDOFF_LANE` as

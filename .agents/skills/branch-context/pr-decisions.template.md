@@ -20,8 +20,8 @@ No prose. No multi-paragraph rationale. The Source link carries the full context
 
 - You made a pick between two valid implementations and the reviewer later asked about it
 - A thread resolution chose path A over B
-- A BLOCKED_QUESTIONS answer settled an ambiguity
-- You deviated from `plan-output.md` while coding
+- A maintainer answered an escalation and that answer settled an ambiguity
+- You deviated from the plan while coding (`.claude/plans/<branch>.md`, or `PLAN.md` on a plan-only PR)
 - A CI finding forced a design change
 
 ## When NOT to append

@@ -37,6 +37,18 @@ contents from the count. For a feature or behavior change, use this order:
 Use one collapsed `<details>` section per goal only when the PR has multiple independent goals.
 For a trivial PR, use the issue link, a short summary, and the test plan.
 
+#### User-visible call-path diff
+
+Use one fenced `diff` tree from the public entry point to the changed observable result.
+
+- Format each node as `path/file.py :: Class.method()` or `path/file.py :: function()`.
+- Indent each callee beneath its caller with `└─`. Preserve enough unchanged nodes to show each edge.
+- Collapse irrelevant intermediate calls as `… unchanged machinery …`.
+- Include arguments only when they explain the change.
+- Include results only on relevant leaves.
+- Keep the shared caller prefix unmarked. Mark only diverging nodes, relevant arguments, or results.
+- Target 12 content lines inside the fence. Never exceed 20; collapse secondary branches instead.
+
 ### Publish PR decisions
 
 Include the branch's appended decision entries from
@@ -54,17 +66,7 @@ Do not copy the decisions template's instructions into the PR body. When the loc
 copy `.agents/skills/branch-context/pr-decisions.template.md` to
 `.claude/skills/branch-context/pr-decisions.md`.
 
-#### User-visible call-path diff
-
-Use one fenced `diff` tree from the public entry point to the changed observable result.
-
-- Format each node as `path/file.py :: Class.method()` or `path/file.py :: function()`.
-- Indent each callee beneath its caller with `└─`. Preserve enough unchanged nodes to show each edge.
-- Collapse irrelevant intermediate calls as `… unchanged machinery …`.
-- Include arguments only when they explain the change.
-- Include results only on relevant leaves.
-- Keep the shared caller prefix unmarked. Mark only diverging nodes, relevant arguments, or results.
-- Target 12 content lines inside the fence. Never exceed 20; collapse secondary branches instead.
+### Apply a label
 
 Apply a label — the repo triages and filters by them. Fetch the real list first with
 `gh label list --limit 100`, because the set changes and a guessed label silently fails to
@@ -114,7 +116,16 @@ metadata review does not count against this budget.
 1. Commit the exact state you intend to push. Leave nothing staged, unstaged, or uncommitted unless
    the user's instructions override this.
 2. Fetch the declared target branch. Capture and validate the full policy-base and candidate HEAD
-   SHAs, compute the merge-base SHA, and verify the candidate worktree is clean.
+   SHAs, compute the merge-base SHA, and verify the candidate worktree is clean. Materialize the
+   policy-base checkout the contract above refers to — it does not exist until you make it:
+
+   ```bash
+   git worktree add --detach "$POLICY_BASE_DIR" "$POLICY_BASE_SHA"
+   ```
+
+   Remove it when the gate finishes. A reviewer that only needs to read instructions can use
+   `git show "$POLICY_BASE_SHA":AGENTS.md` instead of a second tree; a reviewer launched with the
+   policy base as its working directory needs the worktree.
 3. Prepare the review bundle under the contract above.
 4. Launch the fresh subagent under the context contract above. Require actionable findings or
    `current at <full-candidate-head-sha>`.
@@ -224,6 +235,8 @@ if the head changes, capture the new SHA and restart the loop.
      complete the current-HEAD CI and hosted-review gates. Then reply with what changed, react 👍,
      and resolve the thread.
    - **Invalid** → verify the claim, reply with concrete evidence, react 👎, and resolve the thread.
+     A repro you could not run — no credentials, no worker, no cassette — is not a refutation. Say
+     what you tried and ask the user driving you; do not react 👎 on an untested claim.
      Refuting a `CI Review` finding does not clear its `REQUEST_CHANGES`, and no push clears it
      either: the workflow's eligibility gate skips whenever the PR's `reviewDecision` is
      `CHANGES_REQUESTED`, which its own standing verdict satisfies. Resolving the threads is not
@@ -242,15 +255,16 @@ if the head changes, capture the new SHA and restart the loop.
          reviewThreads(first:100, after:$endCursor) {
            pageInfo { hasNextPage endCursor }
            nodes { id isResolved isOutdated path
-                   comments(first:100) { nodes { author { login } body url } } } } } } }
+                   comments(first:100) { nodes { databaseId author { login } body url } } } } } } }
      ' -F owner=pydantic -F name=pydantic-ai -F pr="$PR_NUMBER" \
      --jq '.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved | not)'
    ```
 
    Read the whole `comments` list of a thread before deciding — the first comment is the finding,
    the rest may already settle it. Reply on a thread with
-   `gh api repos/pydantic/pydantic-ai/pulls/$PR_NUMBER/comments/<comment-id>/replies -f body=@<file>`,
-   passing the text through a file so contributor-quoted `$(...)` and backticks are not expanded.
+   `gh api repos/pydantic/pydantic-ai/pulls/$PR_NUMBER/comments/<databaseId>/replies -F body=@<file>`
+   — `-F` reads the file, `-f` would post the literal string `@<file>`. Pass the text through a file
+   so contributor-quoted `$(...)` and backticks are never expanded by your shell.
    Then resolve the thread by its node `id`:
 
    ```bash

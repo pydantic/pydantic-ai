@@ -13,6 +13,7 @@ allowed-tools:
   - Bash(git merge-base:*)
   - Bash(git status:*)
   - Bash(git rev-parse:*)
+  - Bash(git show:*)
   - WebSearch
   - WebFetch
 ---
@@ -46,8 +47,10 @@ review rubric independently of any named hosted reviewer:
   pass until remediation.
 - Report only actionable concerns. Be concise, concrete, non-repetitive, and friendly without praise.
 
-Read the stable base checkout's root `AGENTS.md`, `agent_docs/index.md` and its relevant
-topic guides, plus every directory-specific `AGENTS.md` governing a changed file.
+Read the root `AGENTS.md`, `agent_docs/index.md` and its relevant topic guides, plus every
+directory-specific `AGENTS.md` governing a changed file — at the policy-base SHA, not from the
+candidate tree. When you were launched inside the policy-base checkout, read them as ordinary
+files; otherwise read each one with `git show <policy-base-sha>:<path>`.
 
 ## Review the supplied context
 
