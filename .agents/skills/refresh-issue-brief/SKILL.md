@@ -92,7 +92,7 @@ For approved deltas, edit `.claude/skills/branch-context/issue-brief.md`:
 If any delta changed scope/criteria/constraints, append one line to `pr-decisions.md`:
 
 ```bash
-.claude/skills/branch-context/append-pr-decision.sh \
+.agents/skills/branch-context/append-pr-decision.sh \
   "brief refresh: <short title>" \
   "<what changed in the brief>" \
   "<which comment/event triggered it>" \
@@ -100,7 +100,7 @@ If any delta changed scope/criteria/constraints, append one line to `pr-decision
   "-"
 ```
 
-Use iter `-` (this runs outside the ralph loop).
+Use iter `-`: a refresh is a one-shot re-sync, not an iteration of a review loop.
 
 ## Rules
 

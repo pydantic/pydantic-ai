@@ -13,7 +13,7 @@ This directory is the **single home** for durable PR/branch state across session
 | `pr-decisions.md` | Append-only log of non-obvious PR-shaping decisions | Append forever; supersede, never edit |
 | `handoffs/` + `handoffs-index.md` | Append-only session handoffs for the next agent | Never overwrite a handoff file; index points at latest |
 
-Autoload (via `CLAUDE.local.md` `@` imports): brief, decisions, **handoffs-index** (not full handoff bodies). Full handoffs live under `handoffs/` — read the latest path from the index.
+Read the brief, the decisions log and the **handoffs-index** at session start — not full handoff bodies. Full handoffs live under `handoffs/`; read the latest path from the index. A harness that supports file imports can pull those three in automatically; where it does not, read them yourself before acting. "Autoloaded" below means whichever of the two applies.
 
 ## Untrusted source text
 
@@ -35,7 +35,7 @@ the same boundary for every appended entry.
    .agents/skills/branch-context/latest-handoff.sh   # prints one path, or nothing
    ```
 
-   Read exactly the file it prints. If it prints nothing, **your lane has no handoff**: say so and start from the live board. Other lanes' entries are visible in the index and are *not* yours — reading one makes you adopt PRs another manager drives. Never pick an entry by eye off the index; the script resolves the lane for you.
+   Read exactly the file it prints. If it prints nothing, **your lane has no handoff**: say so and start from the live board. Other lanes' entries are visible in the index and are *not* yours — reading one makes you adopt work another agent drives. Never pick an entry by eye off the index; the script resolves the lane for you.
 4. If the brief is still the unfilled template → `/initialize-worktree` or `/adopt-pr` first.
 5. **Load the skills this session runs on before acting.** Always `i-have-adhd` (how the user reads: lead with the result or decision, use the harness's structured question mechanism when available, no preamble/recap/closers). Loading it late costs a half-session of output the user skims past.
 
@@ -91,7 +91,7 @@ Pass `--writer` when a skill owns the handoff (`--writer manager-handoff`); it t
 
 **Lanes.** Every entry stores an immutable `lane-id:<id>` from the host conversation/thread when
 available (`$CLAUDE_CODE_HOST_SESSION_ID` or `$CODEX_THREAD_ID`), then tmux, with `$HANDOFF_LANE` as
-the explicit override. It also carries `lane:<label>` for display. Several managers share this
+the explicit override. It also carries `lane:<label>` for display. Several agents can share one
 worktree and index; `latest-handoff.sh` matches only the exact lane ID. Labels default to a short id
 and live in `handoffs/.lanes` (`<id> <label>`) — rename one there to something human
 (`Manager 2 - daily`) without changing handoff ownership. Start the handoff body with the label and
@@ -134,7 +134,7 @@ Handoff body sections (required):
 **Commitments & constraints is a required check, not an optional extra.** Before writing the handoff, sweep the session for two things and **quote them verbatim — do not paraphrase**:
 
 - **Constraints the user stated** that aren't already in `issue-brief.md`'s Constraints section. Modality is the payload: "always X **unless** Y" and "always X" are different instructions, and a one-line paraphrase is exactly where the qualifier gets dropped.
-- **Promises you made and haven't kept** — to David ("I'll add the regression test next"), or *on the record* in a PR/review comment ("I'll file a follow-up issue", "I'll re-run this once CI clears"). A promise made to a reviewer and then silently dropped across a session boundary is the expensive kind: the next agent can't know it exists, and the reviewer is still waiting.
+- **Promises you made and haven't kept** — to the user ("I'll add the regression test next"), or *on the record* in a PR/review comment ("I'll file a follow-up issue", "I'll re-run this once CI clears"). A promise made to a reviewer and then silently dropped across a session boundary is the expensive kind: the next agent can't know it exists, and the reviewer is still waiting.
 
 A longer, accurate handoff beats a short lossy one. Never compress this section to save space.
 

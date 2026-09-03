@@ -5,12 +5,12 @@ description: Study a problem or GitHub issue in a fresh worktree, plan a fix, op
 
 # Initialize Worktree — From Problem to PR
 
-Study a problem or GitHub issue, research the codebase, plan a fix, optionally implement it, and open the initial PR. Assumes the worktree already exists (created via `pyai-worktree`).
+Study a problem or GitHub issue, research the codebase, plan a fix, optionally implement it, and open the initial PR. Assumes the branch is already checked out.
 
 ## Startup
 
-1. Read `CLAUDE.md` and `CLAUDE.local.md` for project context
-2. Skim the DDD+ protocol + reviewer priority in the autoloaded `CLAUDE.local.md` for shared vocabulary
+1. Read the root `AGENTS.md`, `agent_docs/index.md` and its relevant topic guides, plus every directory-specific `AGENTS.md` governing a file you expect to touch
+2. Read the `pushing-commits-to-the-repo` skill — it owns the PR lifecycle this skill hands off to
 
 ## Step 1 — Parse Input
 
@@ -119,7 +119,7 @@ Ask: 'Based on my research, I assess this as [simple/complex]. [1-2 sentence rea
 1. Write the discussion artifact to repo-root `PLAN.md` so it is tracked in the plan-only PR.
 2. Commit `PLAN.md` only.
 3. Follow the tracked `pushing-commits-to-the-repo` skill through its independent pre-push review,
-   then push and create a ready-for-review PR. Use a draft only when David explicitly asks:
+   then push and create a ready-for-review PR. Use a draft only when the user explicitly asks:
    - Title: concise description of the change
    - Body: follow the tracked `pushing-commits-to-the-repo` skill. Put each closing issue reference
      immediately after the attribution line, then include the plan and note that implementation
@@ -147,8 +147,7 @@ Ask: 'Based on my research, I assess this as [simple/complex]. [1-2 sentence rea
 
 ## Notes
 
-- PR feedback is inspected with the `pr-review-feedback` helpers and handled through the tracked
-  push lifecycle, or by `/pr-orchestrator` from the manager
+- PR feedback is triaged and closed out through `pushing-commits-to-the-repo` step 4
 - Always create a plan regardless of complexity. Complex plan-only PRs commit repo-root `PLAN.md`;
   simple implementation work keeps its plan under ignored `.claude/plans/`.
 - For the PR body, follow the tracked `pushing-commits-to-the-repo` skill and root `AGENTS.md`.

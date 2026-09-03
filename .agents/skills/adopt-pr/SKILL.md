@@ -9,7 +9,7 @@ Populate `issue-brief.md` and `pr-decisions.md` for a worktree whose PR already 
 
 ## When to use
 
-- You just checked out an existing PR as a worktree (`pyai-checkout <pr>`) and the branch-context files are empty templates
+- You just checked out an existing PR's branch and the branch-context files are empty templates
 - You're picking up someone else's PR
 - Your own PR predates the branch-context setup and you want to backfill
 
@@ -17,10 +17,10 @@ Do NOT use this for fresh work — `/initialize-worktree` is the entry point the
 
 ## Startup
 
-**Premise gate — adoption presumes the linked issue is real.** If no premise validation (`/assess-readiness`, or an independent issue-validity assessment derived from the problem alone) preceded this adoption, **STOP and flag to the manager that readiness wasn't run** — don't bootstrap + review on an unvalidated premise. Authorship of the issue or PR (bot, contributor, or an automated/sweep issue) is never proof the bug is real. Proceed only once the manager confirms the premise was validated.
+**Premise gate — adoption presumes the linked issue is real.** Adopting a PR bootstraps context and invites review on top of the issue it claims to close, so validate that premise first: assess the issue's validity from the problem itself. Authorship of the issue or PR — bot, contributor, or an automated sweep — is never proof the bug is real. If that assessment has not been made, **stop and say so** rather than bootstrapping on an unvalidated premise.
 
-1. Read `CLAUDE.md` and `CLAUDE.local.md` for project context
-2. Skim the DDD+ protocol + reviewer priority in the autoloaded `CLAUDE.local.md` for shared vocabulary
+1. Read the root `AGENTS.md`, `agent_docs/index.md`, and every directory-specific `AGENTS.md` governing a changed file
+2. Read the `pushing-commits-to-the-repo` skill — it owns the comment-triage vocabulary this skill hands off to
 3. Verify the branch-context files exist and are still the unfilled templates:
    - If `issue-brief.md` already has populated `issues:` frontmatter → ask: "Brief is already populated. Overwrite? Re-seed decisions? Both? Neither?" before proceeding.
 
@@ -71,7 +71,7 @@ Inspect the diff to map the changes:
 
 ## Step 4 — Write `issue-brief.md`
 
-Use the same schema as `/initialize-worktree` Step 3 (see `.claude/skills/initialize-worktree/SKILL.md`). Specific adaptations for adoption:
+Use the same schema as `/initialize-worktree` Step 3 (see `.agents/skills/initialize-worktree/SKILL.md`). Specific adaptations for adoption:
 
 - `related_pr`: the PR URL (not `TBD` — the PR already exists)
 - `branch`: `git rev-parse --abbrev-ref HEAD`
@@ -127,11 +127,11 @@ why=$(cat <<'EOF'
 <one-line reason, quoting reviewer or author if concise>
 EOF
 )
-.claude/skills/branch-context/append-pr-decision.sh "$title" "$decision" "$why" \
+.agents/skills/branch-context/append-pr-decision.sh "$title" "$decision" "$why" \
   "<thread URL — use the root comment's url>" "-"
 ```
 
-Iteration is `-` because adoption runs outside the ralph loop.
+Iteration is `-`: adoption is a one-shot bootstrap, not an iteration of a review loop.
 
 Decision budget: **aim for ≤10 entries**. If there are more resolved threads than that worth logging, you're probably over-including noise. Re-apply the filter.
 
@@ -139,7 +139,7 @@ Decision budget: **aim for ≤10 entries**. If there are more resolved threads t
 
 Append one final entry documenting the adoption itself:
 ```bash
-.claude/skills/branch-context/append-pr-decision.sh \
+.agents/skills/branch-context/append-pr-decision.sh \
   "adopted PR #<N> at <DATE>" \
   "Branch-context bootstrapped from existing PR + issue(s). Decisions prior to this entry are backfilled from resolved threads." \
   "PR predates the branch-context setup" \
@@ -181,8 +181,8 @@ Adopted PR #<N> — "<title>"
   Unresolved threads (for triage): <count>
 
 Next:
-  - Inspect unresolved threads with `.agents/skills/pr-review-feedback/sweep-unresolved <PR#>`
-  - Then work the feedback (triage → fix → resolve), or hand the PR to `/pr-orchestrator`
+  - Work the unresolved threads through `pushing-commits-to-the-repo` step 4 (triage → fix →
+    reply → react → resolve)
 ```
 
 ## Rules
@@ -192,4 +192,4 @@ Next:
 - Don't log every resolved thread — only decision-bearing ones. The decisions log is meant to reward reading; diluting it with noise defeats the point.
 - Every backfilled decision entry must have a thread URL in `Source:`. If you can't find one, you're over-inferring — skip it.
 - If the existing `issue-brief.md` / `pr-decisions.md` is already populated (not template), the user's confirmation in Startup step 3 governs whether to overwrite.
-- **Fork PRs — push access**: The "pushing to a contributor's fork branch" note under `## PR flow` in `CLAUDE.local.md` applies. Attempt the normal push; if it returns a permission error, flag the exact failure and ask the contributor to enable maintainer edits rather than working around it.
+- **Fork PRs — push access**: attempt the normal push to the contributor's branch, as Step 7 says. Only an actual permission error establishes the restriction; flag that exact failure and ask the contributor to enable **Allow edits from maintainers** rather than working around it.

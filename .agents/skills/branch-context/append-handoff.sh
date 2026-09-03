@@ -8,9 +8,9 @@
 # - Appends one line to handoffs-index.md, tagged with the writing skill
 # - Never overwrites another session's handoff
 #
-# LANES. Several managers share this worktree. A handoff is written FOR ONE LANE
+# LANES. Several agents can share one worktree. A handoff is written FOR ONE LANE
 # and must only ever be read back by that same lane — reading a neighbour's board
-# is how a manager adopts PRs it does not drive. The lane is the host conversation
+# is how an agent adopts work it does not drive. The lane is the host conversation
 # (`$CLAUDE_CODE_HOST_SESSION_ID` or `$CODEX_THREAD_ID`) when available. Override:
 # `$HANDOFF_LANE`. Otherwise it falls back to the tmux session, then to "unlaned"
 # (an unlaned handoff is never matched by a reader — deliberately).
@@ -189,7 +189,7 @@ if [ -f "$LANES" ]; then
     LANE_LABEL="$(awk -v id="$LANE_ID" '$1 == id { $1 = ""; sub(/^ /, ""); print; exit }' "$LANES")"
 fi
 if [ -z "$LANE_LABEL" ]; then
-    # unnamed lane → short, stable, unique label; David can rename it in .lanes any time
+    # unnamed lane → short, stable, unique label; rename it in .lanes any time
     base_label="$(printf '%s' "${LANE_ID#local_}" | cut -c1-8)"
     [ -z "$base_label" ] && base_label='lane'
     LANE_LABEL="$base_label"

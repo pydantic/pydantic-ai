@@ -5,9 +5,9 @@
 #   latest-handoff.sh          # path on stdout, or empty + a reason on stderr
 #   latest-handoff.sh --lane   # print the resolved lane id/label and exit
 #
-# Several managers share this worktree and one handoffs-index.md. Each handoff
+# Several agents can share one worktree and one handoffs-index.md. Each handoff
 # belongs to the lane that wrote it (the host conversation/thread when the
-# harness exposes one). Reading another lane's handoff makes a manager adopt PRs it
+# harness exposes one). Reading another lane's handoff makes an agent adopt work it
 # does not drive, so this script matches ONLY the caller's lane and prints
 # nothing when the lane has no history. Nothing is the correct answer — do not
 # fall back to "the newest handoff overall."

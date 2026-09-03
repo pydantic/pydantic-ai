@@ -66,9 +66,6 @@ AGENTS.override.md
 !.agents/skills/branch-context/latest-handoff.sh
 !.agents/skills/branch-context/pr-decisions.template.md
 !.agents/skills/branch-context/status.sh
-!.agents/skills/branch-context/handoffs/
-.agents/skills/branch-context/handoffs/*
-!.agents/skills/branch-context/handoffs/.gitkeep
 !.agents/skills/file-followup-issue/
 .agents/skills/file-followup-issue/*
 !.agents/skills/file-followup-issue/SKILL.md
