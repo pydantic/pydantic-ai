@@ -19,7 +19,7 @@ from pydantic_ai import (
     ModelRequest,
     ModelResponse,
     ModelRetry,
-    RetryPromptPart,
+    RetryFeedbackPart,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -469,11 +469,12 @@ async def test_request_tool_call(allow_model_requests: None):
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='Wrong location, please try again',
                         tool_name='get_location',
                         tool_call_id='1',
                         timestamp=IsNow(tz=timezone.utc),
+                        outcome='retried',
                     )
                 ],
                 timestamp=IsNow(tz=timezone.utc),
@@ -908,7 +909,7 @@ async def test_zero_argument_tool_call(arguments: str | None, expected_args: str
     parts = [part for message in result.all_messages() for part in message.parts]
     assert ToolCallPart(tool_name='get_current_time', args=expected_args, tool_call_id='tc-1') in parts
     assert any(isinstance(part, ToolReturnPart) and part.tool_name == 'get_current_time' for part in parts)
-    assert not any(isinstance(part, RetryPromptPart) for part in parts)
+    assert not any(isinstance(part, RetryFeedbackPart) for part in parts)
     assert result.output == 'it is noon'
 
 

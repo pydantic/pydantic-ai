@@ -616,13 +616,18 @@ class FallbackExceptionGroup(ExceptionGroup[Any]):
 class ToolRetryError(Exception):
     """Exception used to signal a retry message should be returned to the LLM.
 
-    `tool_retry` is whichever part the retry travels as: a `RetryPromptPart` when it answers a tool
-    call, a `RetryFeedbackPart` when it answers no call at all.
+    `tool_retry` is whichever part the retry travels as: a `ToolReturnPart` with `outcome='retried'`
+    when it answers a tool call, a `RetryFeedbackPart` when it doesn't, or a `RetryPromptPart` when it
+    came from user code (a handler returning one through `DeferredToolResults`).
     """
 
-    def __init__(self, tool_retry: RetryPromptPart | RetryFeedbackPart):
+    def __init__(self, tool_retry: RetryPromptPart | RetryFeedbackPart | ToolReturnPart):
         self.tool_retry = tool_retry
-        if isinstance(tool_retry.content, str):
+        if tool_retry.part_kind == 'tool-return':
+            # A retried tool return already carries its validation details as serialized content, so
+            # there are no `ErrorDetails` left to format.
+            message = tool_retry.model_response_str(wrap_if_error=False)
+        elif isinstance(tool_retry.content, str):
             message = tool_retry.content
         else:
             tool_name = tool_retry.tool_name if tool_retry.part_kind == 'retry-prompt' else None

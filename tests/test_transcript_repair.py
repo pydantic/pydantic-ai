@@ -374,11 +374,11 @@ async def test_trailing_incomplete_tool_call_resumed_with_retry():
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content=[
                             {
                                 'type': 'json_invalid',
-                                'loc': (),
+                                'loc': [],
                                 'msg': 'Invalid JSON: EOF while parsing a string at line 1 column 13',
                                 'input': '{"city": "Mex',
                             }
@@ -386,6 +386,7 @@ async def test_trailing_incomplete_tool_call_resumed_with_retry():
                         tool_name='get_weather',
                         tool_call_id='call_1',
                         timestamp=IsDatetime(),
+                        outcome='retried',
                     )
                 ],
                 timestamp=IsDatetime(),

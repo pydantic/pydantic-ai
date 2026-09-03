@@ -135,8 +135,8 @@ class ChannelLessCase:
     mapper: WireMapper
     success_wire: object
     failed_wire: object
-    retry_prompt_wire: object = None
-    """What a [tool-bound, tool-less] pair of `RetryPromptPart`s maps to."""
+    legacy_retry_wire: object = None
+    """What a user-supplied [tool-bound, tool-less] pair of legacy `RetryPromptPart`s maps to."""
     marks: tuple[pytest.MarkDecorator, ...] = ()
 
 
@@ -149,7 +149,7 @@ _CHANNEL_LESS_CASES = [
         mapper=_map_openai_chat,
         success_wire=_CHAT_SUCCESS_WIRE,
         failed_wire=_CHAT_FAILED_WIRE,
-        retry_prompt_wire=snapshot(
+        legacy_retry_wire=snapshot(
             [
                 {
                     'role': 'tool',
@@ -178,7 +178,7 @@ Fix the errors and try again.\
         mapper=_map_openai_responses,
         success_wire=[{'type': 'function_call_output', 'call_id': 'call_1', 'output': _TOOL_CONTENT}],
         failed_wire=[{'type': 'function_call_output', 'call_id': 'call_1', 'output': _FAILED_WIRE_CONTENT}],
-        retry_prompt_wire=snapshot(
+        legacy_retry_wire=snapshot(
             [
                 {
                     'type': 'function_call_output',
@@ -212,7 +212,7 @@ Fix the errors and try again.\
         mapper=_map_groq,
         success_wire=_CHAT_SUCCESS_WIRE,
         failed_wire=_CHAT_FAILED_WIRE,
-        retry_prompt_wire=snapshot(
+        legacy_retry_wire=snapshot(
             [
                 {
                     'role': 'tool',
@@ -241,7 +241,7 @@ Fix the errors and try again.\
         mapper=_map_mistral,
         success_wire=_CHAT_SUCCESS_WIRE,
         failed_wire=_CHAT_FAILED_WIRE,
-        retry_prompt_wire=snapshot(
+        legacy_retry_wire=snapshot(
             [
                 {
                     'content': """\
@@ -274,7 +274,7 @@ Fix the errors and try again.\
         failed_wire=[
             {'content': [{'text': _FAILED_WIRE_CONTENT}], 'role': 'ROLE_TOOL', 'tool_call_id': 'call_1'},
         ],
-        retry_prompt_wire=snapshot(
+        legacy_retry_wire=snapshot(
             [
                 {
                     'content': [
@@ -311,7 +311,7 @@ Fix the errors and try again.\
         mapper=_map_huggingface,
         success_wire=_CHAT_SUCCESS_WIRE,
         failed_wire=_CHAT_FAILED_WIRE,
-        retry_prompt_wire=snapshot(
+        legacy_retry_wire=snapshot(
             [
                 {
                     'role': 'tool',
@@ -339,7 +339,7 @@ Fix the errors and try again.\
         mapper=_map_cohere,
         success_wire=[_TOOL_CONTENT],
         failed_wire=[_FAILED_WIRE_CONTENT],
-        retry_prompt_wire=snapshot(
+        legacy_retry_wire=snapshot(
             [
                 """\
 Disk full
@@ -360,11 +360,15 @@ Fix the errors and try again.\
 
 
 @pytest.mark.parametrize('case', [pytest.param(case, id=case.id, marks=case.marks) for case in _CHANNEL_LESS_CASES])
-@pytest.mark.parametrize('outcome', ['success', 'failed', 'denied'])
+@pytest.mark.parametrize('outcome', ['success', 'failed', 'denied', 'retried'])
 async def test_channel_less_tool_return_framing(
-    case: ChannelLessCase, outcome: Literal['success', 'failed', 'denied']
+    case: ChannelLessCase, outcome: Literal['success', 'failed', 'denied', 'retried']
 ) -> None:
-    """Direct mapping pins request content that a VCR cassette could fail to distinguish."""
+    """Direct mapping pins request content that a VCR cassette could fail to distinguish.
+
+    `'retried'` frames exactly like `'failed'`: both are errors from the model's point of view, so a
+    provider with no error channel of its own has to see the same `{"error": ...}` wrapper either way.
+    """
     part = ToolReturnPart(
         tool_name='tool',
         content=_TOOL_CONTENT,
@@ -374,18 +378,18 @@ async def test_channel_less_tool_return_framing(
 
     wire = await case.mapper(part)
 
-    assert wire == (case.failed_wire if outcome == 'failed' else case.success_wire)
+    assert wire == (case.failed_wire if outcome in ('failed', 'retried') else case.success_wire)
     assert part.content == _TOOL_CONTENT
 
 
 @pytest.mark.parametrize('case', [pytest.param(case, id=case.id, marks=case.marks) for case in _CHANNEL_LESS_CASES])
-async def test_retry_prompt_part_framing(case: ChannelLessCase) -> None:
-    """Both `RetryPromptPart` shapes, pinned on the providers with no error channel of their own.
+async def test_legacy_retry_prompt_part_framing(case: ChannelLessCase) -> None:
+    """A `RetryPromptPart` out of a stored history still maps exactly as it always did.
 
-    The tool-bound one answering a call is what a tool `ModelRetry` still produces. The tool-less one
-    reaches the model as bare user text, indistinguishable from something the user typed — the
-    confusion [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart] exists to end, so the
-    framework no longer builds it and only a stored history carries one.
+    Nothing the framework emits reaches these branches any more, so only a history a user hands back
+    — or one saved before this release — does. Both shapes are pinned: the tool-bound one answering
+    a call, and the tool-less one that reaches the model as bare user text, which is the confusion
+    [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart] exists to end for new runs.
     """
     parts: list[ModelRequestPart] = [
         RetryPromptPart(content=_TOOL_CONTENT, tool_name='tool', tool_call_id='call_1'),
@@ -394,7 +398,7 @@ async def test_retry_prompt_part_framing(case: ChannelLessCase) -> None:
 
     wire = [item for part in parts for item in await case.mapper(part)]
 
-    assert wire == case.retry_prompt_wire
+    assert wire == case.legacy_retry_wire
 
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
@@ -480,11 +484,13 @@ async def test_failed_tool_return_does_not_sniff_error_key() -> None:
 
 
 @pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
-@pytest.mark.parametrize('outcome,is_error', [('failed', True), ('denied', False), ('success', False)])
+@pytest.mark.parametrize(
+    'outcome,is_error', [('failed', True), ('retried', True), ('denied', False), ('success', False)]
+)
 async def test_anthropic_tool_return_native_error_channel(
-    outcome: Literal['success', 'failed', 'denied'], is_error: bool
+    outcome: Literal['success', 'failed', 'denied', 'retried'], is_error: bool
 ) -> None:
-    """Only `failed` sets Anthropic's `is_error`; `denied`/`success` stay on the success channel."""
+    """`failed` and `retried` set Anthropic's `is_error`; `denied`/`success` stay on the success channel."""
     model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(api_key='test-key'))
     part = ToolReturnPart(
         tool_name='tool',
@@ -528,6 +534,22 @@ async def test_anthropic_tool_return_native_error_channel(
         ),
         pytest.param(
             'us.amazon.nova-micro-v1:0',
+            'retried',
+            {
+                'toolUseId': 'call_1',
+                'content': [{'text': _TOOL_CONTENT}],
+                'status': 'error',
+            },
+            id='native-status-retried',
+        ),
+        pytest.param(
+            'us.writer.palmyra-x4-v1:0',
+            'retried',
+            {'toolUseId': 'call_1', 'content': [{'text': _FAILED_WIRE_CONTENT}]},
+            id='framed-fallback-retried',
+        ),
+        pytest.param(
+            'us.amazon.nova-micro-v1:0',
             'denied',
             {'toolUseId': 'call_1', 'content': [{'text': _TOOL_CONTENT}], 'status': 'success'},
             id='native-denied',
@@ -555,7 +577,7 @@ async def test_anthropic_tool_return_native_error_channel(
 async def test_bedrock_failed_tool_return_signal(
     bedrock_provider: BedrockProvider,
     model_name: str,
-    outcome: Literal['success', 'failed', 'denied'],
+    outcome: Literal['success', 'failed', 'denied', 'retried'],
     expected_tool_result: object,
 ) -> None:
     """Direct mapping distinguishes native status from the no-status fallback despite VCR matching."""
@@ -579,21 +601,21 @@ async def test_bedrock_failed_tool_return_signal(
     ]
 
 
-_RETRY_PROMPT_PARTS: list[ModelRequestPart] = [
+_LEGACY_RETRY_PARTS: list[ModelRequestPart] = [
     RetryPromptPart(content=_TOOL_CONTENT, tool_name='tool', tool_call_id='call_1'),
     RetryPromptPart(content=_TOOL_CONTENT),
 ]
-"""The two shapes a `RetryPromptPart` can take: bound to a tool call, and not."""
+"""The two shapes a stored `RetryPromptPart` can take: bound to a tool call, and not."""
 
 
 @pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
-async def test_anthropic_retry_prompt_part_framing() -> None:
-    """A `RetryPromptPart` takes Anthropic's error channel, and its tool-less shape arrives as plain
-    text, which is why the framework builds a `RetryFeedbackPart` instead of a tool-less retry."""
+async def test_anthropic_legacy_retry_prompt_part_framing() -> None:
+    """A stored `RetryPromptPart` still takes Anthropic's error channel, and its tool-less shape still
+    arrives as plain text — unchanged by the redesign, since only what the framework emits changed."""
     model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(api_key='test-key'))
 
     _, wire = await model._map_message(  # pyright: ignore[reportPrivateUsage]
-        [ModelRequest(parts=_RETRY_PROMPT_PARTS)], ModelRequestParameters(), AnthropicModelSettings()
+        [ModelRequest(parts=_LEGACY_RETRY_PARTS)], ModelRequestParameters(), AnthropicModelSettings()
     )
 
     assert wire == snapshot(
@@ -627,12 +649,12 @@ Fix the errors and try again.\
 
 
 @pytest.mark.skipif(not bedrock_imports_successful(), reason='boto3 not installed')
-async def test_bedrock_retry_prompt_part_framing(bedrock_provider: BedrockProvider) -> None:
+async def test_bedrock_legacy_retry_prompt_part_framing(bedrock_provider: BedrockProvider) -> None:
     """The same for Bedrock's `status` channel."""
     model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
 
     _, wire = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
-        [ModelRequest(parts=_RETRY_PROMPT_PARTS)], ModelRequestParameters(), BedrockModelSettings()
+        [ModelRequest(parts=_LEGACY_RETRY_PARTS)], ModelRequestParameters(), BedrockModelSettings()
     )
 
     assert wire == snapshot(
@@ -670,12 +692,12 @@ Fix the errors and try again.\
 
 
 @pytest.mark.skipif(not google_imports_successful(), reason='google-genai not installed')
-async def test_google_retry_prompt_part_framing() -> None:
+async def test_google_legacy_retry_prompt_part_framing() -> None:
     """The same for Gemini's `error` key on a function response."""
     model = GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key='test-key'))
 
     _, wire = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
-        [ModelRequest(parts=_RETRY_PROMPT_PARTS)], ModelRequestParameters()
+        [ModelRequest(parts=_LEGACY_RETRY_PARTS)], ModelRequestParameters()
     )
 
     assert wire == snapshot(

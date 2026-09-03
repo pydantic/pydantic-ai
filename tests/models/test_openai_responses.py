@@ -1155,11 +1155,12 @@ async def test_openai_responses_model_retry(allow_model_requests: None, openai_a
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='Wrong location, I only know about "London".',
                         tool_name='get_location',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        outcome='retried',
                     ),
                     ToolReturnPart(
                         tool_name='get_location',
@@ -4225,11 +4226,12 @@ async def test_openai_previous_response_id_seed_auto_chains_through_retries(
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content=IsStr(),
                         tool_name='get_weather',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        outcome='retried',
                     )
                 ],
                 timestamp=IsDatetime(),

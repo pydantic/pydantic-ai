@@ -32,7 +32,6 @@ from pydantic_ai import (
     PromptedOutput,
     RequestUsage,
     RetryFeedbackPart,
-    RetryPromptPart,
     RunContext,
     RunUsage,
     SystemPromptPart,
@@ -2296,11 +2295,12 @@ async def test_durability_agent_with_model_retry(allow_model_requests: None, cli
                 ),
                 ModelRequest(
                     parts=[
-                        RetryPromptPart(
+                        ToolReturnPart(
                             content='Did you mean Mexico City?',
                             tool_name='durability_get_weather_in_city',
                             tool_call_id='call_TtLEMpCeAhnG48btCDrw8lhl',
                             timestamp=IsDatetime(),
+                            outcome='retried',
                         )
                     ],
                     timestamp=IsDatetime(),
@@ -4268,7 +4268,10 @@ async def test_durability_static_tool_prepare_runs_only_in_workflow(client: Clie
     assert _prepared_descriptions == snapshot(['prepared 1', 'prepared 2'])
     # The `timeout=0.01` from the workflow-side call is what the activity enforced.
     retry_prompts = [
-        part.content for message in messages for part in message.parts if isinstance(part, RetryPromptPart)
+        part.content
+        for message in messages
+        for part in message.parts
+        if isinstance(part, ToolReturnPart) and part.outcome == 'retried'
     ]
     assert retry_prompts == snapshot(['Timed out after 0.01 seconds.'])
 
@@ -4581,8 +4584,8 @@ class DurabilityRetryFeedbackWorkflow:
 async def test_durability_output_retry_feedback_survives_the_activity_and_a_resume(client: Client):
     """Output that failed validation retries as a durable history fact, in the harness's own voice.
 
-    The retry answers no tool call, so it is a `RetryFeedbackPart` and not the `RetryPromptPart` the
-    tool path carries. It has to cross the model activity's payload boundary, come back out through
+    The retry answers no tool call, so it is a `RetryFeedbackPart` and not the retried
+    `ToolReturnPart` the tool path carries. It has to cross the model activity's payload boundary, come back out through
     the workflow's own result, and go back in as a second execution's argument — the shape a suspend
     and resume leaves behind.
 

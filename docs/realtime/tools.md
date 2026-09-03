@@ -10,9 +10,9 @@ tool calls are covered in [Capabilities and hooks](capabilities.md).
 When a model calls a tool, the session emits
 [`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent], runs the tool, returns the
 result, and emits [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent]. Parse
-failures and [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] produce a
-[`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart], matching a standard agent run. Other tool
-exceptions end the session and propagate from iteration.
+failures and [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] answer the call with a
+[`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] carrying `outcome='retried'`, matching a
+standard agent run. Other tool exceptions end the session and propagate from iteration.
 
 Tool return values reach the model exactly as in a
 [standard run](../tools-advanced.md#advanced-tool-returns): the model receives the string rendering

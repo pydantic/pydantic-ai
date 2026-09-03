@@ -1322,6 +1322,17 @@ cancellation). Shared between the agent graph's history repair and the UI adapte
 so both synthesize the same `outcome='interrupted'` return."""
 
 
+ERROR_OUTCOMES: tuple[Literal['failed', 'retried'], ...] = ('failed', 'retried')
+"""The [`BaseToolReturnPart.outcome`][pydantic_ai.messages.BaseToolReturnPart.outcome] values that
+reach the model as an error.
+
+Both went wrong from the model's point of view — the tool raised, or its call was rejected before it
+could run — so both take the provider's native error channel (Anthropic `is_error`, Bedrock
+`status='error'`, Google's `error` key) and the `{"error": ...}` wrapper where there is none. The
+other outcomes (`'denied'`, `'interrupted'`) are ordinary results whose content says what happened.
+"""
+
+
 @dataclass(repr=False)
 class BaseToolReturnPart:
     """Base class for tool return parts."""
@@ -1359,7 +1370,7 @@ class BaseToolReturnPart:
     timestamp: datetime = field(default_factory=_now_utc)
     """The timestamp, when the tool returned."""
 
-    outcome: Literal['success', 'failed', 'denied', 'interrupted'] = 'success'
+    outcome: Literal['success', 'failed', 'denied', 'interrupted', 'retried'] = 'success'
     """The outcome of the tool call.
 
     - `'success'`: The tool executed successfully.
@@ -1370,11 +1381,16 @@ class BaseToolReturnPart:
       returning [`ToolDenied`][pydantic_ai.tools.ToolDenied].
     - `'interrupted'`: The tool call did not produce a result because the run was interrupted (e.g. a
       cancelled stream or a crash mid-execution); synthesized during message-history repair.
+    - `'retried'`: The tool asked the model to call it again — its arguments failed validation, or it
+      raised [`ModelRetry`][pydantic_ai.exceptions.ModelRetry]. The content is the feedback the model
+      needs to get the call right, and the call still counts against the tool's retry budget.
 
-    Only `'failed'` is mapped to a provider's native error channel (e.g. Anthropic `is_error`,
-    Bedrock `status='error'`). A denial is a deliberate policy decision rather than a runtime error,
-    while an interruption means no result was produced. Both are sent as ordinary results; their
-    content tells the model what happened without suggesting a transient tool failure.
+    `'failed'` and `'retried'` are mapped to a provider's native error channel (e.g. Anthropic
+    `is_error`, Bedrock `status='error'`) — see
+    [`ERROR_OUTCOMES`][pydantic_ai.messages.ERROR_OUTCOMES]. A denial is a deliberate policy decision
+    rather than a runtime error, while an interruption means no result was produced. Both are sent as
+    ordinary results; their content tells the model what happened without suggesting a transient tool
+    failure.
     """
 
     def _split_content(self) -> tuple[list[Any], list[MultiModalContent], bool]:
@@ -1443,11 +1459,13 @@ class BaseToolReturnPart:
                   File items (`MultiModalContent`) pass through unchanged.
                 - `'jsonable'`: Non-file items are serialized to JSON-compatible Python objects
                   via `tool_return_ta`. File items pass through unchanged.
-            wrap_if_error: Whether to wrap failed tool returns in an `{"error": ...}` object (ignored in
-                `'raw'` mode). When `True` (the default), a failed return's non-file data collapses into a
-                single wrapped error item so providers without a native error channel still see the failure
-                explicitly; files pass through unchanged. Set this to `False` when the provider has a native
-                error channel (e.g. Anthropic `is_error`) and should receive the content unwrapped.
+            wrap_if_error: Whether to wrap errored tool returns (see
+                [`ERROR_OUTCOMES`][pydantic_ai.messages.ERROR_OUTCOMES]) in an `{"error": ...}` object
+                (ignored in `'raw'` mode). When `True` (the default), an errored return's non-file data
+                collapses into a single wrapped error item so providers without a native error channel still
+                see the failure explicitly; files pass through unchanged. Set this to `False` when the
+                provider has a native error channel (e.g. Anthropic `is_error`) and should receive the
+                content unwrapped.
         """
         items: list[ToolReturnContent]
         if isinstance(self.content, list):
@@ -1458,7 +1476,7 @@ class BaseToolReturnPart:
         if mode == 'raw':
             return items
 
-        if wrap_if_error and self.outcome == 'failed':
+        if wrap_if_error and self.outcome in ERROR_OUTCOMES:
             wrapped = self.model_response_str() if mode == 'str' else self.model_response_object()
             return [wrapped, *self.files]
 
@@ -1480,7 +1498,8 @@ class BaseToolReturnPart:
         This excludes multimodal files - use `.files` to get those separately.
 
         Args:
-            wrap_if_error: Whether to wrap failed tool returns in an `{"error": ...}` object.
+            wrap_if_error: Whether to wrap errored tool returns (see
+                [`ERROR_OUTCOMES`][pydantic_ai.messages.ERROR_OUTCOMES]) in an `{"error": ...}` object.
                 Set this to `False` when the provider has a native error channel.
         """
         value, _ = self._unwrap_data()
@@ -1491,7 +1510,7 @@ class BaseToolReturnPart:
         else:
             response = tool_return_ta.dump_json(value, by_alias=True).decode()
 
-        if wrap_if_error and self.outcome == 'failed':
+        if wrap_if_error and self.outcome in ERROR_OUTCOMES:
             return tool_return_ta.dump_json({'error': response}).decode()
         return response
 
@@ -1502,10 +1521,11 @@ class BaseToolReturnPart:
         Gemini supports JSON dict return values, but no other JSON types, hence we wrap anything else in a dict.
 
         Args:
-            wrap_if_error: Whether to wrap failed tool returns in an `{"error": ...}` object.
+            wrap_if_error: Whether to wrap errored tool returns (see
+                [`ERROR_OUTCOMES`][pydantic_ai.messages.ERROR_OUTCOMES]) in an `{"error": ...}` object.
                 Set this to `False` when the provider has a native error channel.
         """
-        if wrap_if_error and self.outcome == 'failed':
+        if wrap_if_error and self.outcome in ERROR_OUTCOMES:
             return {'error': self.model_response_str(wrap_if_error=False)}
 
         value, _ = self._unwrap_data()
@@ -1548,7 +1568,8 @@ class BaseToolReturnPart:
         returned file content list ('This is file {id}:' followed by the file).
 
         Args:
-            wrap_if_error: Whether to wrap failed tool returns in an `{"error": ...}` object.
+            wrap_if_error: Whether to wrap errored tool returns (see
+                [`ERROR_OUTCOMES`][pydantic_ai.messages.ERROR_OUTCOMES]) in an `{"error": ...}` object.
                 Set this to `False` when the provider has a native error channel.
         """
         _, files, was_list = self._split_content()
@@ -1566,7 +1587,7 @@ class BaseToolReturnPart:
             elif isinstance(item, str):  # pragma: no branch
                 tool_content_parts.append(item)
 
-        if wrap_if_error and self.outcome == 'failed':
+        if wrap_if_error and self.outcome in ERROR_OUTCOMES:
             error = {'error': self.model_response_str(wrap_if_error=False)}
             file_references = [f'See file {file.identifier}.' for file in files]
             return tool_return_ta.dump_json([error, *file_references]).decode(), file_content
@@ -1709,11 +1730,13 @@ class RetryPromptPart:
     * a tool raised a [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] exception
     * no tool was found for the tool name
 
-    Pydantic AI only emits this part for a retry that answers a tool call. A retry that answers no
-    call — structured output that failed validation, an output validator or function raising
-    [`ModelRetry`][pydantic_ai.exceptions.ModelRetry], or a response with nothing usable as output —
-    is a [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart] instead, because reaching the
-    model as bare user text left it unable to tell harness feedback from something a person wrote.
+    Pydantic AI no longer emits this part: a retry that answers a tool call is now a
+    [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] with `outcome='retried'`, and one that
+    doesn't is a [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart]. Conflating the two
+    left tool-less retries reaching every provider as bare user text the model couldn't tell from
+    something a person wrote. The class stays accepted, deserializable, and rendered exactly as
+    before, so stored histories and code that hands one back through
+    [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] keep working unchanged.
     """
 
     content: list[pydantic_core.ErrorDetails] | str
@@ -1748,10 +1771,11 @@ class RetryPromptPart:
         tool_name: str | None = None,
         tool_call_id: str | None = None,
     ) -> RetryPromptPart:
-        """Build the retry prompt for a failed function-tool or output-tool call.
+        """Build a retry prompt from a validation error or a `ModelRetry`.
 
-        This is the exact message the model receives when the error is handled by the agent loop,
-        so anything else presenting the failure (e.g. instrumentation spans) must build it the same way.
+        Pydantic AI no longer builds one for its own retries, so this is for code that answers a
+        deferred call with a `RetryPromptPart` of its own and wants the same content shape the
+        framework used to produce.
         """
         content = (
             error.errors(include_url=False, include_context=False)
@@ -1806,9 +1830,8 @@ class RetryFeedbackPart:
     tool call, and deliberately carries no tool fields: it covers the retries where the response as a
     whole was unusable — structured output failed validation, an output validator or function raised
     [`ModelRetry`][pydantic_ai.exceptions.ModelRetry], or the response contained nothing that could
-    serve as output. A retry that answers a tool call stays a
-    [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart], which already reaches the model on that
-    call's own result channel.
+    serve as output. A tool call that needs retrying answers its own call as a
+    [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] with `outcome='retried'` instead.
 
     The stored part stays model-neutral; each model renders it at
     [`prepare_messages`][pydantic_ai.models.Model.prepare_messages] time as a mid-conversation

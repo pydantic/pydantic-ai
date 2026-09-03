@@ -11,6 +11,8 @@ from functools import cached_property
 from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeVar, cast
 from unittest.mock import AsyncMock, MagicMock
 
+from pydantic_ai import RetryFeedbackPart
+
 if TYPE_CHECKING:
     from vcr.cassette import Cassette
 
@@ -36,7 +38,6 @@ from pydantic_ai import (
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
-    RetryFeedbackPart,
     RetryPromptPart,
     RunContext,
     SystemPromptPart,
@@ -2229,11 +2230,12 @@ async def test_request_tool_call(allow_model_requests: None):
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='Wrong location, please try again',
                         tool_name='get_location',
                         tool_call_id='1',
                         timestamp=IsNow(tz=timezone.utc),
+                        outcome='retried',
                     )
                 ],
                 instructions='this is the system prompt',

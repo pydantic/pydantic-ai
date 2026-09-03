@@ -1489,11 +1489,7 @@ async def test_tool_ag_ui_parts() -> None:
                 'timestamp': IsInt(),
                 'messageId': IsStr(),
                 'toolCallId': tool_call_id,
-                'content': """\
-Unknown tool name: 'get_weather'. Available tools: 'get_weather_parts'
-
-Fix the errors and try again.\
-""",
+                'content': "Unknown tool name: 'get_weather'. Available tools: 'get_weather_parts'",
                 'role': 'tool',
             },
             {
@@ -8002,11 +7998,12 @@ async def test_client_submitted_tool_call_resolved_by_deferred_results_runs() ->
     assert executed == [{'key': 'prod'}], 'approval-resumed tool call must execute'
 
 
-async def test_deferred_result_handed_back_as_a_retry_prompt_part() -> None:
-    """A `RetryPromptPart` a handler supplies to answer a deferred call streams as a tool result.
+async def test_deferred_result_handed_back_as_a_legacy_retry_prompt_part() -> None:
+    """A `RetryPromptPart` supplied by user code still streams as the tool result it always did.
 
-    The part arrives already bound to nothing, and the adapter has to attach it to the call it
-    answers rather than emit it as a message of its own.
+    Pydantic AI no longer builds one, so this branch is now reachable only from a handler answering
+    a deferred call with a retry of its own — including the `'Fix the errors and try again.'` tail
+    the framework's own retries have dropped.
     """
     agent = Agent(model=TestModel(), output_type=[str, DeferredToolRequests])
 

@@ -443,7 +443,7 @@ Hooks can raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to ask the mod
 
 **Tool hooks** (`before/after_tool_validate`, `before/after_tool_execute`, `wrap_tool_execute`, `on_tool_execute_error`):
 
-- Converted to tool retry prompts, same as when a tool function raises `ModelRetry`
+- Converted to retried tool results, same as when a tool function raises `ModelRetry`
 - Retries count against the tool's `max_retries` limit
 
 **Output hooks** (`before/after_output_validate`, `before/after_output_process`, `wrap_output_process`, `on_output_process_error`):

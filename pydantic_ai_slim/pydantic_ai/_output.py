@@ -118,12 +118,53 @@ def _isinstance_maybe_generic(value: Any, type_: type[Any]) -> bool:
         return origin is not None and isinstance(value, origin)
 
 
+def build_retried_tool_return(
+    error: ValidationError | ModelRetry, *, tool_name: str, tool_call_id: str | None = None
+) -> _messages.ToolReturnPart:
+    """Build the result a tool call that has to be retried is answered with.
+
+    This is the exact result the model receives when the agent loop handles the failure, so anything
+    else presenting the same failure (an instrumentation span, say) must build it the same way.
+
+    A `ValidationError`'s details travel as structured tool-result content: `ctx` is dropped by
+    `include_context=False`, and `input` is kept once per distinct value. Root-level errors share one
+    `input` — the whole arguments object — so serializing it into each multiplies a large payload by
+    the error count, and a partially complete response can blow the context window before the model
+    gets to correct it (https://github.com/pydantic/pydantic-ai/issues/7171). The first root-level
+    error keeps it, so the model still sees the arguments it sent; a later one drops it only when it
+    is that same value. A distinct input is information of its own and stays, as does a nested
+    error's, which is the offending sub-value rather than the whole object.
+    """
+    content: list[Any] | str
+    if isinstance(error, ValidationError):
+        errors = error.errors(include_url=False, include_context=False)
+        exclude: dict[int, set[str]] = {}
+        root_input: Any = None
+        seen_root_error = False
+        for index, detail in enumerate(errors):
+            if len(detail.get('loc', ())) > 1:
+                continue
+            if not seen_root_error:
+                root_input = detail.get('input')
+                seen_root_error = True
+            elif detail.get('input') == root_input:
+                exclude[index] = {'input'}
+        content = _messages.error_details_ta.dump_python(errors, mode='json', exclude=exclude)
+    else:
+        content = error.message
+
+    part = _messages.ToolReturnPart(tool_name=tool_name, content=content, outcome='retried')
+    if tool_call_id:
+        part.tool_call_id = tool_call_id
+    return part
+
+
 def _make_retry_signal(e: ValidationError | ModelRetry, run_context: RunContext[Any]) -> ToolRetryError:
     """Build the retry signal for output that failed validation or asked to be retried.
 
-    An output *tool* call answers its own call, so its retry stays that call's `RetryPromptPart`.
-    Text, native and prompted output have no call to answer, so theirs is harness feedback the model
-    renders in its own voice rather than as a fabricated user turn.
+    An output *tool* call answers its own call, so its retry is a tool result. Text, native and
+    prompted output have no call to answer, so theirs is harness feedback the model renders in its
+    own voice rather than as a fabricated user turn.
     """
     if run_context.tool_name is None:
         if isinstance(e, ValidationError):
@@ -134,8 +175,9 @@ def _make_retry_signal(e: ValidationError | ModelRetry, run_context: RunContext[
             )
         return ToolRetryError(_messages.RetryFeedbackPart(content=e.message, cause='model_retry'))
 
-    m = _messages.RetryPromptPart.from_error(e, tool_name=run_context.tool_name, tool_call_id=run_context.tool_call_id)
-    return ToolRetryError(m)
+    return ToolRetryError(
+        build_retried_tool_return(e, tool_name=run_context.tool_name, tool_call_id=run_context.tool_call_id)
+    )
 
 
 async def run_output_validate_hooks(

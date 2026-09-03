@@ -2948,11 +2948,7 @@ async def test_run_stream_response_error():
             {
                 'type': 'tool-output-error',
                 'toolCallId': IsStr(),
-                'errorText': """\
-Unknown tool name: 'unknown_tool'. No tools available.
-
-Fix the errors and try again.\
-""",
+                'errorText': "Unknown tool name: 'unknown_tool'. No tools available.",
             },
             {'type': 'finish-step'},
             {'type': 'start-step'},
@@ -11313,4 +11309,65 @@ def test_retry_feedback_after_user_content_hoists_above_it():
     assert [msg.role for msg in ui_messages] == snapshot(['system', 'user'])
     assert [type(part).__name__ for part in VercelAIAdapter.load_messages(ui_messages)[0].parts] == snapshot(
         ['RetryFeedbackPart', 'UserPromptPart']
+    )
+
+async def test_retried_tool_return_error_text_carries_no_instruction_framing():
+    """A retry's `errorText` is the feedback itself.
+
+    The old `RetryPromptPart` rendering appended "Fix the errors and try again." to everything a
+    frontend displayed (https://github.com/pydantic/pydantic-ai/pull/4869); a retried tool return
+    sends its own content, and the outcome rides `providerMetadata` so the reload doesn't degrade
+    it to a definitive failure.
+    """
+
+    def respond(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('flaky', {}, tool_call_id='call-1')])
+        return ModelResponse(parts=[TextPart('understood')])
+
+    agent = Agent(FunctionModel(respond))
+
+    @agent.tool_plain
+    def flaky() -> str:
+        raise ModelRetry('the fruit has to be in season')
+
+    result = await agent.run('go')
+
+    ui_messages = VercelAIAdapter.dump_messages(result.all_messages())
+    error_parts = [part for msg in ui_messages for part in msg.parts if isinstance(part, ToolOutputErrorPart)]
+    assert [(part.error_text, part.call_provider_metadata) for part in error_parts] == snapshot(
+        [('the fruit has to be in season', {'pydantic_ai': {'outcome': 'retried'}})]
+    )
+
+    reloaded = message_part(VercelAIAdapter.load_messages(ui_messages), ToolReturnPart, message_index=2)
+    assert (reloaded.outcome, reloaded.content) == snapshot(('retried', 'the fruit has to be in season'))
+
+
+@pytest.mark.parametrize('sdk_version', [5, 6])
+async def test_retried_tool_result_streams_without_instruction_framing(sdk_version: Literal[5, 6]):
+    """Same claim on the streaming protocols: the `tool-output-error` chunk carries the feedback
+    itself on both SDK versions, with no instruction framing the harness didn't author."""
+
+    async def stream_function(messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+        if len(messages) == 1:
+            yield {0: DeltaToolCall(name='flaky', json_args='{}', tool_call_id='call-1')}
+        else:
+            yield 'understood'
+
+    agent = Agent(FunctionModel(stream_function=stream_function))
+
+    @agent.tool_plain
+    def flaky() -> str:
+        raise ModelRetry('the fruit has to be in season')
+
+    request = SubmitMessage(id='foo', messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='go')])])
+    adapter = VercelAIAdapter(agent, request, sdk_version=sdk_version)
+    events: list[dict[str, Any]] = [
+        json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream())
+        if '[DONE]' not in event
+    ]
+
+    assert [event for event in events if 'errorText' in event] == snapshot(
+        [{'type': 'tool-output-error', 'toolCallId': 'call-1', 'errorText': 'the fruit has to be in season'}]
     )

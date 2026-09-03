@@ -436,11 +436,12 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='The country is not supported. Use "La France" instead.',
                         tool_name='get_capital',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        outcome='retried',
                     )
                 ],
                 timestamp=IsNow(tz=timezone.utc),
