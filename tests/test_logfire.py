@@ -4121,6 +4121,32 @@ def test_agent_with_user_provided_instrumented_model(
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+def test_agent_instrument_setter(get_logfire_summary: Callable[[], LogfireSummary]) -> None:
+    """`agent.instrument = settings` configures instrumentation after construction."""
+    agent = Agent(model=TestModel())
+    assert agent.instrument is None
+
+    settings = InstrumentationSettings()
+    agent.instrument = settings
+    assert agent.instrument is settings
+
+    result = agent.run_sync('Hello')
+    assert result.output == snapshot('success (no tool calls)')
+
+    summary = get_logfire_summary()
+    assert summary.traces == snapshot(
+        [
+            {
+                'id': 0,
+                'name': 'invoke_agent agent',
+                'message': 'agent run',
+                'children': [{'id': 1, 'name': 'chat test', 'message': 'chat test'}],
+            }
+        ]
+    )
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
 @pytest.mark.parametrize('source', ['capability_model', 'resolver', 'resolver_with_explicit_instrumentation'])
 def test_agent_run_span_with_instrumented_model_resolved_at_run_time(
     get_logfire_summary: Callable[[], LogfireSummary], source: str

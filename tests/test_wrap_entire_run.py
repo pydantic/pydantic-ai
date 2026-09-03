@@ -364,7 +364,7 @@ async def test_deferred_capability_wrap_entire_run_never_fires(loaded_from: str)
     class DeferredIter(AbstractCapability[Any]):
         @asynccontextmanager
         async def wrap_entire_run(self, ctx: RunPreparationContext[Any]) -> AsyncGenerator[None]:
-            raise AssertionError('wrap_entire_run must not fire for a deferred capability')
+            raise AssertionError('wrap_entire_run must not fire for a deferred capability')  # pragma: no cover
             yield  # pragma: no cover
 
         async def before_run(self, ctx: RunContext[Any]) -> None:
