@@ -2,14 +2,15 @@ from __future__ import annotations as _annotations
 
 import io
 import warnings
-from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator, Mapping
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from functools import cached_property
-from typing import Any, Literal, TypeAlias, cast, overload
+from typing import Any, Literal, TypeAlias, TypeGuard, cast, overload
 
 import pydantic_core
+from opentelemetry.trace import get_current_span
 from pydantic import TypeAdapter
 from typing_extensions import assert_never
 
@@ -68,7 +69,7 @@ from ..native_tools._tool_search import (
     ToolSearchMatch,
     ToolSearchTool,
 )
-from ..profiles import DEFAULT_THINKING_TAGS, ModelProfileSpec, merge_profile
+from ..profiles import DEFAULT_THINKING_TAGS, ModelProfile, ModelProfileSpec, merge_profile
 from ..profiles.anthropic import (
     ANTHROPIC_THINKING_BUDGET_MAP,
     AnthropicCodeExecutionToolVersion,
@@ -217,9 +218,11 @@ try:
         BetaTextEditorCodeExecutionToolResultBlock,
         BetaTextEditorCodeExecutionToolResultBlockParam,
         BetaThinkingBlock,
+        BetaThinkingBlockBindingParam,
         BetaThinkingBlockParam,
         BetaThinkingConfigParam,
         BetaThinkingDelta,
+        BetaThinkingDroppedInputTransformation,
         BetaTokenTaskBudgetParam,
         BetaToolChoiceParam,
         BetaToolParam,
@@ -286,6 +289,17 @@ _FAST_MODE_UNSUPPORTED_CLIENTS = (
     AsyncAnthropicFoundry,
     AsyncAnthropicVertex,
 )
+# `_THINKING_BINDING_UNSUPPORTED_CLIENTS` is a client-class boundary, not a base-URL one: a plain
+# `AsyncAnthropic` carrying a proxy or Pydantic AI Gateway base URL keeps the flag, because gating on the
+# host would strip the recovery from those users. Keeping it costs them nothing — the beta follows
+# `thinking.block_binding`, which is unset by default, and `_is_stale_thinking_block_error` retries only on
+# a 400 whose body carries Anthropic's own `The block is bound to a different conversation`.
+_THINKING_BINDING_UNSUPPORTED_CLIENTS = (
+    AsyncAnthropicBedrock,
+    AsyncAnthropicBedrockMantle,
+    AsyncAnthropicFoundry,
+    AsyncAnthropicVertex,
+)
 # The legacy Bedrock InvokeModel API (`AsyncAnthropicBedrock`) doesn't support the `bm25` tool-search
 # variant — it 400s with `BM25 tool search is not supported on Bedrock. Use tool_search_tool_regex instead.`
 # — so we default to `regex` there. The other transports (Vertex, Foundry, and the Messages-API-based
@@ -316,6 +330,9 @@ _INLINE_SYSTEM_PROMPT_UNSUPPORTED_CLIENTS = (AsyncAnthropicFoundry,)
 
 _ANTHROPIC_SAMPLING_PARAMS = ('temperature', 'top_p', 'top_k')
 _ANTHROPIC_TASK_BUDGETS_BETA = 'task-budgets-2026-03-13'
+_ANTHROPIC_THINKING_BINDING_BETA = 'thinking-binding-controls-2026-08-01'
+_ANTHROPIC_DROP_STALE_THINKING_BLOCKS: BetaThinkingBlockBindingParam = {'prefix_mismatch_behavior': 'drop_block'}
+_STALE_THINKING_BLOCK_MARKER = 'The block is bound to a different conversation'
 _ANTHROPIC_FILES_API_BETA = 'files-api-2025-04-14'
 _ANTHROPIC_COMPACT_EDIT_TYPE = 'compact_20260112'
 
@@ -388,6 +405,25 @@ _ANTHROPIC_SERVER_TOOL_CALLER_DETAIL = 'anthropic_caller'
 
 AnthropicTaskBudget: TypeAlias = BetaTokenTaskBudgetParam
 """Anthropic task budget payload for `output_config.task_budget`."""
+
+
+class AnthropicStaleThinkingBlockWarning(Warning):
+    """Warning raised when Anthropic rejected a replayed thinking block and Pydantic AI retried without it.
+
+    Claude Fable 5.1 binds each thinking block to the conversation prefix that produced it and
+    rejects a replay once that prefix changes — which a dynamic
+    [instructions][pydantic_ai.Agent.instructions] function and a
+    [filtered toolset](../toolsets.md#filtering-tools) both do by design. Anthropic enforces the
+    check for accounts created on or after 2026-08-31; for older accounts it records the mismatch
+    and acts on it only if the request asks it to.
+
+    Pydantic AI therefore asks for nothing by default, so an older account keeps replaying its
+    reasoning untouched. Where the check is enforced, the rejected request is retried once with
+    `thinking.block_binding.prefix_mismatch_behavior='drop_block'`: the stale block is dropped, the
+    run continues, and the drop is recorded on
+    [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details] and as
+    an `anthropic.input_transformations` span event.
+    """
 
 
 class AnthropicModelSettings(ModelSettings, total=False):
@@ -544,8 +580,10 @@ class AnthropicModelSettings(ModelSettings, total=False):
     """
 
 
-def _build_extra_body(model_settings: AnthropicModelSettings) -> object | None:
-    """Merge the sampling settings into `extra_body`, which is how they reach the API now.
+def _build_extra_body(
+    model_settings: AnthropicModelSettings, thinking_override: dict[str, object] | None = None
+) -> object | None:
+    """Merge the sampling settings, and a `thinking` object the SDK cannot type, into `extra_body`.
 
     `anthropic>=1` dropped `temperature`/`top_p`/`top_k` from the `messages.create()` signature, and
     passing one is a `TypeError`. The API still takes them, so they ride in `extra_body` — the route
@@ -555,15 +593,110 @@ def _build_extra_body(model_settings: AnthropicModelSettings) -> object | None:
     An explicit `extra_body` entry wins over the setting of the same name, preserving the precedence
     the SDK gave it while the parameters were still named arguments.
     """
-    sampling = {
+    fields: dict[str, Any] = {
         setting: value for setting in _ANTHROPIC_SAMPLING_PARAMS if (value := model_settings.get(setting)) is not None
     }
+    if thinking_override is not None:
+        fields['thinking'] = thinking_override
     extra_body = model_settings.get('extra_body')
-    if not sampling:
+    if not fields:
         return extra_body
-    if is_str_dict(extra_body):
-        return {**sampling, **extra_body}
-    return sampling
+    if not _is_str_mapping(extra_body):
+        return fields
+    merged = {**fields, **extra_body}
+    if thinking_override is not None:
+        # The override was built from the effective wire object, including any caller-provided
+        # `extra_body['thinking']`, so it must replace that original object to add `block_binding`.
+        merged['thinking'] = thinking_override
+    return merged
+
+
+def _extra_body_thinking(model_settings: AnthropicModelSettings) -> dict[str, object] | None:
+    """The `thinking` object a caller hand-rolled in `extra_body`, if any.
+
+    `extra_body` is how a caller reaches a field the installed SDK cannot type yet, so it can carry
+    `thinking` — including a `block_binding` of their own, which must be honored rather than
+    retried over.
+    """
+    extra_body = model_settings.get('extra_body')
+    if not _is_str_mapping(extra_body):
+        return None
+    thinking = extra_body.get('thinking')
+    if not _is_str_mapping(thinking):
+        return None
+    return dict(thinking)
+
+
+def _is_str_mapping(value: object) -> TypeGuard[Mapping[str, object]]:
+    """Whether a value is a mapping whose keys are all strings."""
+    if not isinstance(value, Mapping):
+        return False
+    return all(isinstance(key, str) for key in value)  # pyright: ignore[reportUnknownVariableType]
+
+
+def _effective_thinking(
+    model_settings: AnthropicModelSettings, thinking: BetaThinkingConfigParam | Omit
+) -> dict[str, object] | Omit:
+    """Resolve the thinking object that reaches the wire after `extra_body` precedence."""
+    if (caller_thinking := _extra_body_thinking(model_settings)) is not None:
+        return caller_thinking
+    return OMIT if isinstance(thinking, Omit) else dict(thinking)
+
+
+def _is_stale_thinking_block_error(
+    profile: ModelProfile,
+    thinking: dict[str, object] | Omit,
+    error: APIStatusError,
+) -> bool:
+    """Whether Anthropic rejected a replayed thinking block that the request can be retried without.
+
+    Scoped to models that bind and to requests that set no `block_binding` of their own, through the
+    typed `thinking` config or through `extra_body`: an explicit `'error'` is a caller asking to
+    fail, and an explicit `'drop_block'` cannot produce this error.
+    """
+    if error.status_code != 400 or not profile.get('anthropic_binds_thinking_blocks', False):
+        return False
+    if not isinstance(thinking, Omit) and 'block_binding' in thinking:
+        return False
+    body: object | None = error.body
+    return (
+        _utils.is_str_dict(body)
+        and _utils.is_str_dict(reported := body.get('error'))
+        and isinstance(message := reported.get('message'), str)
+        and _STALE_THINKING_BLOCK_MARKER in message
+    )
+
+
+def _drop_stale_thinking_blocks(thinking: dict[str, object] | Omit) -> dict[str, object]:
+    """The `thinking` object for the retried request, carrying the caller's own config plus the drop.
+
+    A binding model emits thinking blocks whether or not the request configured thinking, so the
+    retry usually has no `thinking` object for the binding to ride in — and the API accepts one
+    holding `block_binding` alone, which the SDK's discriminated union cannot express. Rather than
+    split the two cases, the retry always sends the whole object through `extra_body`, which reaches
+    the same JSON key without needing a `type` the caller never asked for.
+    """
+    configured: dict[str, object] = {} if isinstance(thinking, Omit) else thinking
+    return {**configured, 'block_binding': _ANTHROPIC_DROP_STALE_THINKING_BLOCKS}
+
+
+def _report_input_transformations(
+    transformations: list[BetaThinkingDroppedInputTransformation],
+) -> list[dict[str, Any]]:
+    """Report Anthropic's input transformations on the current span, and return them for `provider_details`.
+
+    A dropped thinking block is otherwise silent: the model answered without the reasoning we
+    replayed, and nothing in the response says so. `provider_details` keeps it inspectable after the
+    run; the span event surfaces it in the trace, on the model request that lost the reasoning.
+    """
+    reported = [transformation.model_dump() for transformation in transformations]
+    span = get_current_span()
+    if span.is_recording():
+        span.add_event(
+            'anthropic.input_transformations',
+            attributes={'anthropic.input_transformations': pydantic_core.to_json(reported).decode()},
+        )
+    return reported
 
 
 def _resolve_anthropic_service_tier(
@@ -675,7 +808,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         profile's `supported_native_tools` and `anthropic_supports_dynamic_filtering` are narrowed here
         for clients that don't support them (e.g. Bedrock, Vertex). `supports_inline_system_prompts` is
         narrowed the same way, and for the same reason: serving a `{'role': 'system'}` entry is a fact
-        about the transport as much as about the model.
+        about the transport as much as about the model. Thinking-block binding is likewise narrowed, but
+        by client class rather than by base URL: its beta and drop-block retry are verified against
+        Anthropic's Messages API, which a proxied or gateway `AsyncAnthropic` still reaches.
         """
         _profile = super().profile
         client = self._provider.client
@@ -699,6 +834,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 # mid-conversation parts are rewritten before the adapter ever sees them.
                 supports_inline_system_prompts=_profile.get('supports_inline_system_prompts', False)
                 and not isinstance(client, _INLINE_SYSTEM_PROMPT_UNSUPPORTED_CLIENTS),
+                anthropic_binds_thinking_blocks=_profile.get('anthropic_binds_thinking_blocks', False)
+                and not isinstance(client, _THINKING_BINDING_UNSUPPORTED_CLIENTS),
             ),
         )
         return cast(AnthropicModelProfile, _profile)
@@ -894,8 +1031,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         thinking = model_request_parameters.thinking
         if thinking is None or thinking is False:
             return OMIT  # type: ignore[return-value]
-        profile = self.profile
-        if profile.get('anthropic_supports_adaptive_thinking', False):
+        if self.profile.get('anthropic_supports_adaptive_thinking', False):
             return {'type': 'adaptive'}
         return {'type': 'enabled', 'budget_tokens': ANTHROPIC_THINKING_BUDGET_MAP[thinking]}
 
@@ -952,8 +1088,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         )
         output_config = self._build_output_config(model_request_parameters, model_settings)
         anthropic_profile = self.profile
+        thinking = self._translate_thinking(model_settings, model_request_parameters)
+        effective_thinking = _effective_thinking(model_settings, thinking)
         betas, extra_headers = self._get_betas_and_extra_headers(
-            model_settings, anthropic_profile, messages, model_request_parameters
+            model_settings, anthropic_profile, messages, model_request_parameters, effective_thinking
         )
         betas.update(native_tool_betas)
         context_management = self._add_compaction_params(messages, betas, model_settings)
@@ -962,6 +1100,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
         async def create(
             container_param: BetaContainerParams | str | None,
+            thinking: BetaThinkingConfigParam | Omit,
+            betas: set[str],
+            thinking_override: dict[str, object] | None,
         ) -> BetaMessage | AsyncStream[BetaRawMessageStreamEvent]:
             return await self.client.beta.messages.create(
                 max_tokens=model_settings.get('max_tokens', 4096),
@@ -975,7 +1116,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 betas=sorted(betas) or OMIT,
                 stream=stream,
                 cache_control=auto_cache_control or OMIT,
-                thinking=self._translate_thinking(model_settings, model_request_parameters),
+                thinking=thinking,
                 stop_sequences=model_settings.get('stop_sequences', OMIT),
                 timeout=to_httpx2_timeout(model_settings.get('timeout', NOT_GIVEN)),
                 metadata=model_settings.get('anthropic_metadata', OMIT),
@@ -984,24 +1125,60 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 service_tier=_resolve_anthropic_service_tier(model_settings),
                 speed=self._effective_speed(model_settings, anthropic_profile),
                 extra_headers=extra_headers,
-                extra_body=_build_extra_body(model_settings),
+                extra_body=_build_extra_body(model_settings, thinking_override),
             )
 
+        retry_container = container
         with _map_api_errors(self.model_name, self._provider.model_id_namespace):
             try:
-                return await create(container)
-            except APIStatusError as e:
+                return await create(container, thinking, betas, None)
+            except APIStatusError as error:
                 if (
-                    e.status_code != 500
-                    or not container_from_history
-                    or not any(
+                    error.status_code == 500
+                    and container_from_history
+                    and any(
                         is_str_dict(block) and block['type'] == 'container_upload'
                         for message in anthropic_messages
                         for block in message['content']
                     )
                 ):
-                    raise
-                return await create(None)
+                    try:
+                        return await create(None, thinking, betas, None)
+                    except APIStatusError as fallback_error:
+                        # Classify what the fallback hit, not the 500 that caused it, so a stale
+                        # thinking block rejected only on this attempt still reaches the retry
+                        # below. The history-resolved container is gone, so it stays dropped there.
+                        error = fallback_error
+                        retry_container = None
+                if not _is_stale_thinking_block_error(anthropic_profile, effective_thinking, error):
+                    raise error
+
+            result = await create(
+                retry_container,
+                OMIT,
+                betas | {_ANTHROPIC_THINKING_BINDING_BETA},
+                _drop_stale_thinking_blocks(effective_thinking),
+            )
+            warnings.warn(
+                f'{self.model_name!r} rejected a replayed thinking block: the conversation prefix changed '
+                'between requests, which Anthropic enforces for accounts created on or after 2026-08-31. '
+                "Pydantic AI retried with `prefix_mismatch_behavior='drop_block'`, so the run continued "
+                "without that turn's reasoning. The cause is something earlier in the request that is not "
+                'byte-stable between turns — commonly instructions carrying a per-request value such as a '
+                'timestamp, or a tool added, removed or reordered mid-conversation. That same instability '
+                'invalidates the prompt cache on every model and provider, where it raises nothing and '
+                'silently re-charges the whole conversation at uncached rates, so this rejection is the '
+                'loud version of a normally-silent cost. Making the prefix stable is the real fix; to skip '
+                'the rejected request instead, ask for the drop yourself: `model_settings='
+                "{'anthropic_thinking': {'type': 'adaptive', 'block_binding': "
+                "{'prefix_mismatch_behavior': 'drop_block'}}}`. To keep the retry and silence this warning: "
+                "`warnings.simplefilter('ignore', AnthropicStaleThinkingBlockWarning)`. See "
+                'https://pydantic.dev/docs/ai/models/anthropic/#thinking-block-binding and '
+                'https://platform.claude.com/docs/en/build-with-claude/preserved-thinking',
+                AnthropicStaleThinkingBlockWarning,
+                stacklevel=2,
+            )
+            return result
 
     @staticmethod
     def _add_compaction_params(
@@ -1031,6 +1208,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         anthropic_profile: AnthropicModelProfile,
         messages: list[ModelMessage],
         model_request_parameters: ModelRequestParameters,
+        thinking: dict[str, object] | Omit,
     ) -> tuple[set[str], dict[str, str]]:
         """Prepare beta features list and extra headers for API request.
 
@@ -1047,6 +1225,14 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             betas.add('compact-2026-01-12')
         if self._get_task_budget(model_settings) is not None:
             betas.add(_ANTHROPIC_TASK_BUDGETS_BETA)
+
+        # `thinking.block_binding` is a 400 (`Extra inputs are not permitted`) without its beta,
+        # so the beta follows the field rather than the profile flag — a user who sets
+        # `block_binding` through `anthropic_thinking` gets it too.
+        # Membership, not truthiness: `block_binding: {}` is a valid request meaning "every binding
+        # default", and it needs the beta exactly as much as a populated one does.
+        if not isinstance(thinking, Omit) and 'block_binding' in thinking:
+            betas.add(_ANTHROPIC_THINKING_BINDING_BETA)
 
         if model_settings.get('anthropic_speed') == 'fast' and self._client_supports_fast_speed(anthropic_profile):
             betas.add('fast-mode-2026-02-01')
@@ -1220,8 +1406,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         )
         output_config = self._build_output_config(model_request_parameters, model_settings)
         anthropic_profile = self.profile
+        thinking = self._translate_thinking(model_settings, model_request_parameters)
+        effective_thinking = _effective_thinking(model_settings, thinking)
         betas, extra_headers = self._get_betas_and_extra_headers(
-            model_settings, anthropic_profile, messages, model_request_parameters
+            model_settings, anthropic_profile, messages, model_request_parameters, effective_thinking
         )
         betas.update(native_tool_betas)
         context_management = self._add_compaction_params(messages, betas, model_settings)
@@ -1242,7 +1430,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     betas=sorted(betas) or OMIT,
                     output_config=output_config or OMIT,
                     cache_control=auto_cache_control or OMIT,
-                    thinking=self._translate_thinking(model_settings, model_request_parameters),
+                    thinking=thinking,
                     context_management=context_management or OMIT,
                     timeout=to_httpx2_timeout(model_settings.get('timeout', NOT_GIVEN)),
                     speed=self._effective_speed(model_settings, anthropic_profile),
@@ -1261,7 +1449,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 betas=sorted(betas) or OMIT,
                 output_config=output_config or OMIT,
                 cache_control=auto_cache_control or OMIT,
-                thinking=self._translate_thinking(model_settings, model_request_parameters),
+                thinking=thinking,
                 context_management=context_management or OMIT,
                 timeout=to_httpx2_timeout(model_settings.get('timeout', NOT_GIVEN)),
                 speed=self._effective_speed(model_settings, anthropic_profile),
@@ -1361,6 +1549,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if response.container:
             provider_details = provider_details or {}
             provider_details['container_id'] = response.container.id
+        if response.input_transformations:
+            provider_details = provider_details or {}
+            provider_details['input_transformations'] = _report_input_transformations(response.input_transformations)
 
         return ModelResponse(
             parts=items,
@@ -2613,15 +2804,14 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         effort: AnthropicEffort | None = model_settings.get('anthropic_effort')
         # Fall back to unified thinking effort level when anthropic_effort is not set
         # Only map effort level strings; bare True just enables thinking without a specific effort
-        profile = self.profile
         if (
             effort is None
-            and profile.get('anthropic_supports_effort', False)
+            and self.profile.get('anthropic_supports_effort', False)
             and isinstance(model_request_parameters.thinking, str)
         ):
             effort = resolve_anthropic_effort(
                 model_request_parameters.thinking,
-                supports_xhigh=profile.get('anthropic_supports_xhigh_effort', False),
+                supports_xhigh=self.profile.get('anthropic_supports_xhigh_effort', False),
             )
 
         if effort is not None:
@@ -2667,8 +2857,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if task_budget is None:
             return None
 
-        profile = self.profile
-        if not profile.get('anthropic_supports_task_budgets', False):
+        if not self.profile.get('anthropic_supports_task_budgets', False):
             raise UserError(
                 f'Model {self.model_name!r} does not support `anthropic_task_budget`. '
                 'See https://platform.claude.com/docs/en/build-with-claude/task-budgets for the supported models.'
@@ -2906,6 +3095,14 @@ class AnthropicStreamedResponse(StreamedResponse):
                     if event.message.container:
                         self.provider_details = self.provider_details or {}
                         self.provider_details['container_id'] = event.message.container.id
+                    # A live stream reports dropped thinking blocks here, on the opening message.
+                    # The final `message_delta` carries them only when a server-side model fallback
+                    # happened mid-stream, and then it replaces this array rather than extending it.
+                    if event.message.input_transformations:
+                        self.provider_details = self.provider_details or {}
+                        self.provider_details['input_transformations'] = _report_input_transformations(
+                            event.message.input_transformations
+                        )
 
                 elif isinstance(event, BetaRawContentBlockStartEvent):
                     current_block = event.content_block
@@ -3095,6 +3292,14 @@ class AnthropicStreamedResponse(StreamedResponse):
                     if event.delta.container:
                         self.provider_details = self.provider_details or {}
                         self.provider_details['container_id'] = event.delta.container.id
+                    if event.input_transformations:
+                        # Replaces, never extends: a `message_delta` reports this only after a
+                        # mid-stream model fallback, and then it holds the serving model's whole
+                        # array, which repeats the entries `message_start` already reported.
+                        self.provider_details = self.provider_details or {}
+                        self.provider_details['input_transformations'] = _report_input_transformations(
+                            event.input_transformations
+                        )
 
                 elif isinstance(event, BetaRawContentBlockStopEvent):  # pragma: no branch
                     if event.index in ignored_server_tool_use_indices:
@@ -3795,7 +4000,7 @@ def _support_tool_forcing(
     """A forced `tool_choice` ('required'/specific tool) isn't always compatible with Anthropic.
 
     Extended thinking rejects forcing (adaptive thinking does not), and some models
-    (e.g. Claude Fable 5, Claude Mythos Preview) reject it unconditionally.
+    (Claude Fable 5.1, Claude Mythos 5.1) reject it unconditionally.
     We only raise an error if the user explicitly set a forcing value; a forcing value that came
     from the `tool_choice` resolution logic falls back softly to 'auto'.
     Ref: https://platform.claude.com/docs/en/agents-and-tools/tool-use/implement-tool-use#forcing-tool-use

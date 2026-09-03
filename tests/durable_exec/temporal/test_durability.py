@@ -166,6 +166,8 @@ with workflow.unsafe.imports_passed_through():
         Answer,
         BasicSpan,
         Deps,
+        DurableCheckpointEvent,
+        DurableUnserializableEvent,
         DynamicToolsetDeps,
         Response,
         StreamDurableAgentWorkflow,
@@ -1561,6 +1563,128 @@ async def test_durability_process_event_stream_fires_workflow_side(client: Clien
         assert not any(model_events_in_activity)
 
     assert text_chunks == ['ed ', 'response']
+
+
+# --- Capability events emitted workflow-side reach the handler activity ---
+
+
+@dataclass
+class _EmittingCapability(AbstractCapability[Any]):
+    """Emits a capability event from a hook, which runs in workflow code."""
+
+    event_factory: Any = None
+
+    async def before_model_request(
+        self, ctx: RunContext[Any], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        await ctx.emit(self.event_factory())
+        return request_context
+
+
+_emitted_handler_events: list[tuple[str, str, bool]] = []
+
+
+async def _capability_event_handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+    async for event in stream:
+        # `isinstance` against the class this module imported, which is the point: the sandbox
+        # re-executes application modules, and the payload still validates into the host's class.
+        if isinstance(event, DurableCheckpointEvent):
+            _emitted_handler_events.append((type(event).__name__, event.label, activity.in_activity()))
+
+
+_capability_event_agent = Agent(
+    TestModel(custom_output_text='done'),
+    name='durability_capability_event_agent',
+    capabilities=[
+        _EmittingCapability(id='emitter', event_factory=lambda: DurableCheckpointEvent(label='one')),
+        TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG, event_stream_handler=_capability_event_handler),
+    ],
+)
+
+
+@workflow.defn
+class CapabilityEventWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        return (await _capability_event_agent.run(prompt)).output
+
+
+async def test_durability_capability_event_reaches_event_stream_handler_activity(client: Client) -> None:
+    """A capability event emitted workflow-side reaches the handler activity as a typed event.
+
+    This is the one emission path Temporal supports today: hooks run in workflow code, so the event
+    reaches the run's event stream and is dispatched to the durability handler in its own activity,
+    where it has to survive the payload round trip rather than degrading to `UnknownCapabilityEvent`.
+
+    Class identity survives too. The sandbox re-executes application modules, so the workflow side
+    holds its own copy of the event class, but `set_replay_isolation_guard` keeps the host's class
+    registered and the family schema canonicalizes the copy on the way out. The handler's own
+    `isinstance` check is what asserts it.
+    """
+    _emitted_handler_events.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[CapabilityEventWorkflow],
+        plugins=[AgentPlugin(_capability_event_agent)],
+    ):
+        assert (
+            await client.execute_workflow(
+                CapabilityEventWorkflow.run,
+                args=['Hello'],
+                id=CapabilityEventWorkflow.__name__,
+                task_queue=TASK_QUEUE,
+            )
+            == 'done'
+        )
+
+    assert _emitted_handler_events == [('DurableCheckpointEvent', 'one', True)]
+
+
+class _Unserializable:
+    pass
+
+
+_unserializable_event_agent = Agent(
+    TestModel(custom_output_text='done'),
+    name='durability_unserializable_event_agent',
+    capabilities=[
+        _EmittingCapability(id='emitter', event_factory=lambda: DurableUnserializableEvent(blob=_Unserializable())),
+        TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG, event_stream_handler=_capability_event_handler),
+    ],
+)
+
+
+@workflow.defn
+class UnserializableEventWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        return (await _unserializable_event_agent.run(prompt)).output
+
+
+async def test_durability_unserializable_event_payload_names_events(client: Client) -> None:
+    """An event payload that can't be serialized reports the surfaces that ride activity payloads."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[UnserializableEventWorkflow],
+        plugins=[AgentPlugin(_unserializable_event_agent)],
+    ):
+        with workflow_raises(
+            UserError,
+            f'A value passed to a Temporal activity failed to be serialized '
+            f'(Unable to serialize unknown type: {_Unserializable!r}). '
+            "Temporal requires all values that are passed to activities to be serializable using Pydantic's "
+            '`TypeAdapter`. Besides `deps`, this includes `model_settings`, the `RunContext` `metadata` and '
+            '`tool_call_metadata`, tool `metadata`, and the payload fields of any emitted `CustomEvent` or '
+            '`CapabilityEvent`, which ride the event stream handler activity.',
+        ):
+            await client.execute_workflow(
+                UnserializableEventWorkflow.run,
+                args=['Hello'],
+                id=UnserializableEventWorkflow.__name__,
+                task_queue=TASK_QUEUE,
+            )
 
 
 # ==========================================

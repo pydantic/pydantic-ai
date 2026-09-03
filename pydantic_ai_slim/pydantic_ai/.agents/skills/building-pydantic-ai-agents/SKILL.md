@@ -225,7 +225,9 @@ session to consume the **same part/event vocabulary as a streamed run** — `Par
 `FunctionToolCallEvent` / `FunctionToolResultEvent`, plus realtime control events (`RealtimeInputSpeechStartEvent`,
 `RealtimeInputSpeechEndEvent`, `RealtimeResponseInterruptedEvent`, ...). Use `RealtimeTurnCompleteEvent` as the exchange
 boundary, when generation and tool work are complete. This is not always the end of audible speech:
-on WebRTC sidebands, track playback with `RealtimeOutputSpeechStartEvent` and `RealtimeOutputSpeechEndEvent`.
+on WebRTC sidebands, track playback with `RealtimeOutputSpeechStartEvent` and `RealtimeOutputSpeechEndEvent`. Before
+passing raw microphone bytes to `send_audio`, convert them to mono PCM16 at `session.audio_input_sample_rate`; raw
+chunks carry no sample-rate metadata.
 
 ```python {test="skip"}
 from pydantic_ai import Agent
@@ -246,7 +248,8 @@ async def main(microphone_chunk: bytes):
     async with agent.realtime(
         'openai:gpt-realtime', model_settings=settings
     ).session() as session:
-        await session.send_audio(microphone_chunk)  # PCM16 bytes
+        # The chunk must already be mono PCM16 at `session.audio_input_sample_rate`.
+        await session.send_audio(microphone_chunk)
         await session.commit_audio()
         await session.create_response()
         # Input transcription can finish after the model's response.
@@ -261,7 +264,8 @@ async def main(microphone_chunk: bytes):
                     user_turn_complete = True
                 case RealtimeTurnCompleteEvent():
                     turn_complete = True
-                case RealtimeSessionErrorEvent(message=message):
+                case RealtimeSessionErrorEvent(message=message, recoverable=True):
+                    # The connection remains usable, but this turn may not complete.
                     raise RuntimeError(message)
             if turn_complete and user_turn_complete:
                 break

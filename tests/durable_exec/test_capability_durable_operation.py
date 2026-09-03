@@ -5,15 +5,22 @@ import gc
 import re
 import uuid
 import weakref
-from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Mapping
+from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Callable, Generator, Mapping
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
-from pydantic_ai import Agent, ModelMessage, ModelSettings
-from pydantic_ai.capabilities import AbstractCapability, ResolveModelId, WrapperCapability, durable_operation
+from pydantic_ai import Agent, AgentStreamEvent, ModelMessage, ModelSettings
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    ProcessEventStream,
+    ResolveModelId,
+    WrapperCapability,
+    durable_operation,
+)
 from pydantic_ai.durable_exec import DurabilityEngineSpec
 from pydantic_ai.durable_exec._base import BaseDurabilityCapability
 from pydantic_ai.durable_exec._capability_operation import (
@@ -31,7 +38,7 @@ from pydantic_ai.durable_exec._operation_backend import CallableOperationBackend
 from pydantic_ai.durable_exec._operation_names import JournalOperationNamer
 from pydantic_ai.durable_exec._toolset import ToolConfig
 from pydantic_ai.exceptions import ModelRetry, UserError
-from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
+from pydantic_ai.messages import CapabilityEvent, ModelRequest, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.models import (
     ModelRequestContext,
     ModelRequestParameters,
@@ -751,6 +758,55 @@ async def test_recorded_usage_delta_is_applied_once_per_replayed_run() -> None:
             usage.details['custom_units'],
         ) == (2, 2, {'summary_tokens': 3, 'custom_units': 7}, Decimal('0.25'), 7)
     assert capability.calls == 1
+
+
+@dataclass(kw_only=True)
+class OperationCheckpointEvent(CapabilityEvent, namespace='durable_operation_test', name='checkpoint'):
+    label: str
+
+
+class EmittingOperation(AbstractCapability[Any]):
+    id = 'emitting_operation'
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def before_run(self, ctx: RunContext[Any]) -> None:
+        await self.checkpoint(ctx)
+
+    @durable_operation('checkpoint')
+    async def checkpoint(self, ctx: RunContext[Any]) -> None:
+        self.calls += 1
+        await ctx.emit(OperationCheckpointEvent(label='one'))
+
+
+async def test_emit_from_capability_durable_operation_is_not_replayed() -> None:
+    """An event emitted inside a `@durable_operation` isn't part of the operation's recorded result.
+
+    The operation's body is what emits, so a replayed run gets the recorded return value without the
+    event. Pinned rather than fixed: the alternative -- rejecting `emit` inside a durable unit the
+    way `ctx.enqueue()` is rejected -- would stop a capability from reporting what its own operations
+    do, and unlike an enqueued message a missed event doesn't change what the model sees.
+    """
+    observed: list[str] = []
+
+    async def observe(ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            if isinstance(event, OperationCheckpointEvent):
+                observed.append(event.label)
+
+    capability = EmittingOperation()
+    agent = Agent(
+        TestModel(),
+        name='replayed_emit',
+        capabilities=[capability, ProcessEventStream(observe), ReplayingDurability()],
+    )
+
+    await agent.run('test')
+    await agent.run('test')
+
+    assert capability.calls == 1
+    assert observed == ['one']
 
 
 def test_decorated_capability_requires_explicit_stable_id() -> None:
@@ -1518,10 +1574,16 @@ def prefect_test_server() -> Generator[None, None, None]:
     so this module-scoped harness enters and exits before that one starts. Renaming either
     module so this one sorts after test_prefect.py would nest two Prefect harnesses.
     """
+    from prefect.settings import PREFECT_SERVER_SERVICES_TASK_RUN_RECORDER_ENABLED, temporary_settings
     from prefect.testing.utilities import prefect_test_harness
 
-    with prefect_test_harness(server_startup_timeout=60):
-        yield
+    # The task-run recorder is a background writer against the same sqlite file the flows write to.
+    # Prefect PRAGMAs a 60s `busy_timeout` onto every connection, and under CI contention the
+    # recorder's bulk inserts exhaust it, failing the flow whose state it was recording. Nothing
+    # here reads what it records: task run states reach the API through the task engine.
+    with temporary_settings({PREFECT_SERVER_SERVICES_TASK_RUN_RECORDER_ENABLED: False}):
+        with prefect_test_harness(server_startup_timeout=60):
+            yield
 
 
 @requires_prefect
