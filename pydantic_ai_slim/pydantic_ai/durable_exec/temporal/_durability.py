@@ -45,6 +45,7 @@ from pydantic_ai.toolsets.function import FunctionToolsetTool
 from ._event_stream import (
     DurableAgentRunEvents,
     WorkflowStreamTopic,
+    _coerce_workflow_stream_topic,  # pyright: ignore[reportPrivateUsage]
     publish_agent_event,
     publish_agent_result,
     stream_agent_events,
@@ -238,7 +239,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         """
         super().__init__(models=models, event_stream_handler=event_stream_handler, name=name)
         self._event_stream_topic = (
-            WorkflowStreamTopic.coerce(event_stream_topic) if event_stream_topic is not None else None
+            _coerce_workflow_stream_topic(event_stream_topic) if event_stream_topic is not None else None
         )
         self.run_context_type = run_context_type
         self._deps_type = deps_type
@@ -571,7 +572,8 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             output_type: The agent's output type, so the terminal event's result is decoded into it.
             topic: The topic to subscribe to. Defaults to this capability's `event_stream_topic`.
             from_offset: The stream offset to start from, inclusive; pass `offset + 1` to resume.
-            poll_cooldown: How long to wait between polls when no new events are ready.
+            poll_cooldown: How long to wait between polls when no new events are ready. Must be
+                greater than zero.
         """
         topic = topic if topic is not None else self._event_stream_topic
         if topic is None:

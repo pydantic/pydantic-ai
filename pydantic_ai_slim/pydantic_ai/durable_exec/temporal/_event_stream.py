@@ -92,9 +92,9 @@ class WorkflowStreamTopic:
         if self.batch_interval <= timedelta(0):
             raise UserError('The Workflow Stream batch interval must be greater than zero.')
 
-    @staticmethod
-    def coerce(topic: str | WorkflowStreamTopic) -> WorkflowStreamTopic:
-        return topic if isinstance(topic, WorkflowStreamTopic) else WorkflowStreamTopic(topic)
+
+def _coerce_workflow_stream_topic(topic: str | WorkflowStreamTopic) -> WorkflowStreamTopic:
+    return topic if isinstance(topic, WorkflowStreamTopic) else WorkflowStreamTopic(topic)
 
 
 # Workflow code has no per-instance storage a capability can reach, so the stream registers itself
@@ -264,7 +264,7 @@ def workflow_stream_event_handler(
         handler: An optional handler to run alongside publishing. Each event is published and then
             passed on to this handler, which sees exactly the stream it would have seen on its own.
     """
-    topic = WorkflowStreamTopic.coerce(topic)
+    topic = _coerce_workflow_stream_topic(topic)
 
     async def publishing_handler(run_context: RunContext[AgentDepsT], stream: AsyncIterable[AgentStreamEvent]) -> None:
         if not activity.in_activity():
@@ -433,11 +433,13 @@ def stream_agent_events(
         topic: The topic the agent publishes to.
         output_type: The agent's output type, so the terminal event's result is decoded into it.
         from_offset: The stream offset to start from, inclusive; pass `offset + 1` to resume.
-        poll_cooldown: How long to wait between polls when no new events are ready. Passed through to
-            the SDK, including `timedelta(0)`, which busy-polls: that grows the workflow's history
-            toward its limit, so it belongs in tests rather than in a running application.
+        poll_cooldown: How long to wait between polls when no new events are ready. Must be greater
+            than zero.
     """
-    topic = WorkflowStreamTopic.coerce(topic)
+    if poll_cooldown <= timedelta(0):
+        raise UserError('The Workflow Stream poll cooldown must be greater than zero.')
+
+    topic = _coerce_workflow_stream_topic(topic)
     # Pin the subscription to the run the handle refers to, so a reused workflow ID can't redirect us
     # to a different execution: `WorkflowStreamClient.create` resolves a workflow ID to the latest
     # one. Passing `client=` keeps continue-as-new following, which re-targets to the successor.

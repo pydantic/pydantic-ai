@@ -414,15 +414,40 @@ async def handle_chat(request: Request) -> Response:
 Workflow Streams are offset-addressed, so a consumer that drops can resume where it left off — which is more than ordinary in-process streaming can offer. Checkpoint [`offset`][pydantic_ai.durable_exec.temporal.DurableAgentRunEvents.offset] as you go and reconnect with `from_offset=offset + 1`:
 
 ```python {title="temporal_workflow_streams_resume.py" test="skip" lint="skip"}
+import asyncio
+
+from temporalio.client import WorkflowExecutionStatus
+from temporalio.service import RPCError, RPCStatusCode
+
+
 last_offset = -1
 while True:
-    events = durability.stream_agent_events(client, handle, from_offset=last_offset + 1)
-    async for event in events:
-        print(event)  # forward to the frontend over SSE
-        last_offset = events.offset
-    if events.result is not None:
-        break  # the run finished; without a result the workflow ended some other way
+    try:
+        events = durability.stream_agent_events(client, handle, from_offset=last_offset + 1)
+        async for event in events:
+            print(event)  # forward to the frontend over SSE
+            last_offset = events.offset
+        if events.result is not None:
+            break
+
+        task = asyncio.current_task()
+        if task is not None and task.cancelling():
+            raise asyncio.CancelledError
+
+        status = (await handle.describe()).status
+        if status not in {WorkflowExecutionStatus.RUNNING, WorkflowExecutionStatus.CONTINUED_AS_NEW}:
+            break
+    except RPCError as exc:
+        if exc.status != RPCStatusCode.UNAVAILABLE:
+            raise
+        await asyncio.sleep(1)
+
+await handle.result()  # propagate a workflow failure or cancellation
 ```
+
+Only a temporarily unavailable Temporal service is retried; other RPC errors are propagated. If the
+iterator ends without a result, the workflow status distinguishes a transient update timeout from a
+terminal failure or cancellation, which `handle.result()` then propagates.
 
 Offsets run over the whole stream rather than per topic, so a topic-filtered subscription sees gaps wherever the workflow published to another topic — which is why they have to be read off the stream rather than counted.
 
@@ -452,6 +477,7 @@ Under the hood, the live model stream is published by [`workflow_stream_event_ha
     - Model events are published from inside the model-request activity, so if that activity retries, its events are published again at new offsets. Consumers should tolerate duplicates. Events published from workflow code — tool events and the terminal event — are not affected, as replay rebuilds the log rather than appending to it.
     - The stream is durable, so events may be produced and consumed by processes running different Pydantic AI versions. Event shapes are stable within a major version; keep producer and consumer on the same major version.
     - One iterator covers one agent run. A workflow that runs the agent repeatedly publishes a terminal event per run, so a consumer that wants the next one reconnects with `from_offset=offset + 1`.
+    - The initial subscription is pinned to the requested workflow execution, but after continue-as-new the Temporal SDK follows the chain using an unpinned workflow ID. Do not reuse that workflow ID for an independent execution while a subscriber may still be following the chain, or it can attach to the new execution.
     - Live events reach consumers outside the workflow only; `run_stream_events()` inside workflow code still buffers.
 
 Because the model stream is consumed inside the activity, cancelling it from the workflow side (e.g. with [`AgentStream.cancel()`][pydantic_ai.result.AgentStream.cancel]) is not available across the durable boundary. To stop an in-flight model request, cancel the Temporal workflow: the cancellation is delivered to the activity (via its heartbeats), which cancels any server-side job before the activity completes.

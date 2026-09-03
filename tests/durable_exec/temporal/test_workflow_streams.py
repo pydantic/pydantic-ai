@@ -44,6 +44,7 @@ try:
         DurableAgentRunEvents,
         TemporalDurability,
         WorkflowStreamTopic,
+        stream_agent_events,
         workflow_stream_event_handler,
     )
 
@@ -843,6 +844,17 @@ async def test_streaming_without_a_topic_is_rejected(client: Client) -> None:
         durability.stream_agent_events(client, client.get_workflow_handle('some-workflow'))
 
 
+@pytest.mark.parametrize('poll_cooldown', [timedelta(0), timedelta(milliseconds=-1)])
+async def test_streaming_rejects_a_non_positive_poll_cooldown(client: Client, poll_cooldown: timedelta) -> None:
+    with pytest.raises(UserError, match='poll cooldown must be greater than zero'):
+        stream_agent_events(
+            client,
+            client.get_workflow_handle('some-workflow'),
+            TOPIC,
+            poll_cooldown=poll_cooldown,
+        )
+
+
 async def test_the_publisher_passes_a_wrapped_handler_the_stream_outside_an_activity() -> None:
     """Composed explicitly and run outside an activity, the wrapped handler still sees every event."""
     seen: list[AgentStreamEvent] = []
@@ -858,12 +870,6 @@ async def test_the_publisher_passes_a_wrapped_handler_the_stream_outside_an_acti
     )
     assert (await agent.run('Hello')).output == 'done'
     assert any(isinstance(event, PartStartEvent) for event in seen)
-
-
-def test_a_topic_can_be_given_as_a_name_or_an_object() -> None:
-    assert WorkflowStreamTopic.coerce(TOPIC) == WorkflowStreamTopic(TOPIC)
-    topic = WorkflowStreamTopic(TOPIC, batch_interval=timedelta(seconds=1))
-    assert WorkflowStreamTopic.coerce(topic) is topic
 
 
 # --- Driving a UI protocol over the workflow boundary ---------------------------------------------
