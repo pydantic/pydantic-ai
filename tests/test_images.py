@@ -3913,53 +3913,58 @@ async def test_openai_image_generation_rate_limited(openai_mock_client: AsyncMoc
 
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
-async def test_openai_image_generation_moderation_blocked(openai_mock_client: AsyncMock):
+async def test_openai_image_generation_moderation_blocked():
     """A `moderation_blocked` 400 keeps its structured body and is never auto-retried.
 
-    OpenAI returns HTTP 400 with `error.code == 'moderation_blocked'` and a `moderation_details` object
-    (`moderation_stage`, `categories`). The wrapper must preserve that structure as data — so callers can
-    branch on the code and inspect the categories — rather than flattening it into a string. A moderation
-    block reflects the prompt, so retrying the identical request is wrong; we assert a single attempt.
+    OpenAI returns HTTP 400 with an `error` object whose `code` is `moderation_blocked`, carrying a
+    `moderation_details` object (`moderation_stage`, `categories`). The SDK unwraps that envelope when it
+    builds `APIStatusError`, so what the wrapper branches on — and preserves for the caller — is the inner
+    object, not the wire's outer `error` key. The structure must survive as data so callers can inspect the
+    categories rather than parse a string. A moderation block reflects the prompt, so retrying the identical
+    request is wrong; we assert a single attempt.
 
     See https://developers.openai.com/api/docs/guides/image-generation#content-moderation.
 
-    Not a VCR test because provoking a real block means committing a policy-violating prompt to the
-    repository, which the recorded request body would carry verbatim. The response is fixed from
-    OpenAI's documented error format instead.
+    Driven through the real `AsyncOpenAI` over a mock transport so the SDK builds the exception, which is
+    what pins the unwrapped shape. Not a VCR test because provoking a real block means committing a
+    policy-violating prompt to the repository, which the recorded request body would carry verbatim. The
+    response is fixed from OpenAI's documented error format instead.
     """
-    moderation_body = {
-        'error': {
+    requests: list[httpx2.Request] = []
+
+    def handle_request(request: httpx2.Request) -> httpx2.Response:
+        requests.append(request)
+        return httpx2.Response(
+            400,
+            json={
+                'error': {
+                    'code': 'moderation_blocked',
+                    'type': 'image_generation_user_error',
+                    'message': 'Your request was rejected as a result of our safety system.',
+                    'moderation_details': {'moderation_stage': 'input', 'categories': ['violence', 'self-harm']},
+                }
+            },
+        )
+
+    http_client = httpx2.AsyncClient(transport=httpx2.MockTransport(handle_request))
+    openai_client = AsyncOpenAI(api_key='test-api-key', base_url='https://example.com/v1', http_client=http_client)
+    model = OpenAIImageGenerationModel('gpt-image-1', provider=OpenAIProvider(openai_client=openai_client))
+
+    try:
+        with pytest.raises(ContentFilterError) as exc_info:
+            await model.generate('a blocked prompt')
+    finally:
+        await http_client.aclose()
+
+    assert json.loads(exc_info.value.body or '') == snapshot(
+        {
             'code': 'moderation_blocked',
             'type': 'image_generation_user_error',
             'message': 'Your request was rejected as a result of our safety system.',
             'moderation_details': {'moderation_stage': 'input', 'categories': ['violence', 'self-harm']},
         }
-    }
-    openai_mock_client.images.generate.side_effect = APIStatusError(
-        'moderation_blocked',
-        response=httpx2.Response(
-            status_code=400, request=httpx2.Request('POST', 'https://example.com/v1/images/generations')
-        ),
-        body=moderation_body,
     )
-    model = OpenAIImageGenerationModel(
-        'gpt-image-1', provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, openai_mock_client))
-    )
-
-    with pytest.raises(ContentFilterError) as exc_info:
-        await model.generate('a blocked prompt')
-
-    assert json.loads(exc_info.value.body or '') == snapshot(
-        {
-            'error': {
-                'code': 'moderation_blocked',
-                'type': 'image_generation_user_error',
-                'message': 'Your request was rejected as a result of our safety system.',
-                'moderation_details': {'moderation_stage': 'input', 'categories': ['violence', 'self-harm']},
-            }
-        }
-    )
-    openai_mock_client.images.generate.assert_awaited_once()
+    assert len(requests) == 1
 
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')

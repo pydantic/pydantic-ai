@@ -238,7 +238,7 @@ class OpenAIImageGenerationModel(ImageGenerationModel):
         except APIStatusError as e:
             if (status_code := e.status_code) >= 400:
                 match e.body:
-                    case {'error': {'code': 'moderation_blocked'}}:
+                    case {'code': 'moderation_blocked'}:
                         raise ContentFilterError(
                             'OpenAI image generation was blocked for content moderation',
                             json.dumps(e.body),
