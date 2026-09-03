@@ -41,8 +41,10 @@ import argparse
 import json
 import posixpath
 import re
+import shlex
 import subprocess
 import sys
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
@@ -96,9 +98,6 @@ SANDBOX_PATH = re.compile(rf'{re.escape(SANDBOX_PREFIX)}[^\s`\'"()\[\]<>]*')
 
 NEEDS_REFERENCE = re.compile(r'\bneeds\.([A-Za-z_][A-Za-z0-9_-]*)')
 EXPRESSION_BLOCK = re.compile(r'\$\{\{(.*?)\}\}', re.DOTALL)
-RUNNER_STREAM_JSON_ARGUMENT = re.compile(r'--output-format\s+stream-json(?=\s|$)')
-RUNNER_MCP_CONFIG_ARGUMENT = re.compile(r'--mcp-config\s+\S+')
-RUNNER_ALLOWED_TOOLS_ARGUMENT = re.compile(r'--allowed-tools\s+(\S+)(?=\s+--)')
 
 
 @dataclass(frozen=True)
@@ -388,11 +387,21 @@ def check_compiled_runner_contract(lock: Path) -> list[Violation]:
     workflow = _as_mapping(yaml.safe_load(lock.read_text(encoding='utf-8')))
     agent = _as_mapping(_as_mapping(workflow.get('jobs')).get('agent'))
     steps = agent.get('steps')
-    commands: list[str] = []
+    commands: list[list[str]] = []
     for raw_step in cast(list[Any], steps) if isinstance(steps, list) else []:
         run = _as_mapping(raw_step).get('run')
-        if isinstance(run, str) and 'pydantic-ai-runner-launch' in run and '--allowed-tools' in run:
-            commands.append(run)
+        if not isinstance(run, str) or 'pydantic-ai-runner-launch' not in run:
+            continue
+        with suppress(ValueError):
+            outer_arguments = shlex.split(run)
+            for index, argument in enumerate(outer_arguments[:-1]):
+                if argument != '-c' or 'pydantic-ai-runner-launch' not in outer_arguments[index + 1]:
+                    continue
+                with suppress(ValueError):
+                    inner_arguments = shlex.split(outer_arguments[index + 1])
+                    for runner_index, inner_argument in enumerate(inner_arguments):
+                        if inner_argument.endswith('/pydantic-ai-runner-launch'):
+                            commands.append(inner_arguments[runner_index:])
     if len(commands) != 1:
         return [
             Violation(
@@ -405,13 +414,16 @@ def check_compiled_runner_contract(lock: Path) -> list[Violation]:
         ]
 
     command = commands[0]
-    allowed_tools = RUNNER_ALLOWED_TOOLS_ARGUMENT.search(command)
     missing: list[str] = []
-    if RUNNER_STREAM_JSON_ARGUMENT.search(command) is None:
+    if '--output-format' not in command or command.index('--output-format') == len(command) - 1:
         missing.append('`--output-format stream-json`')
-    if RUNNER_MCP_CONFIG_ARGUMENT.search(command) is None:
+    elif command[command.index('--output-format') + 1] != 'stream-json':
+        missing.append('`--output-format stream-json`')
+    if '--mcp-config' not in command or command.index('--mcp-config') == len(command) - 1:
         missing.append('`--mcp-config`')
-    if allowed_tools is None or 'mcp__safeoutputs' not in allowed_tools.group(1):
+    if '--allowed-tools' not in command or command.index('--allowed-tools') == len(command) - 1:
+        missing.append('`mcp__safeoutputs` in `--allowed-tools`')
+    elif 'mcp__safeoutputs' not in command[command.index('--allowed-tools') + 1].split(','):
         missing.append('`mcp__safeoutputs` in `--allowed-tools`')
     if not missing:
         return []

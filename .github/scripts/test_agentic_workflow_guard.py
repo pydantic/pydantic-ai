@@ -659,11 +659,7 @@ jobs:
     steps:
       - name: Run agent
         run: |
-          /tmp/gh-aw/bin/pydantic-ai-runner-launch \
-            --allowed-tools Read \
-            --output-format stream-json \
-            --mcp-config mcp-servers.json
-          echo mcp__safeoutputs
+          awf -- /bin/bash -c '/tmp/gh-aw/bin/pydantic-ai-runner-launch --allowed-tools "Read,mcp__safeoutputs_fake"' --output-format stream-json --mcp-config ignored
 """,
     )
 
@@ -682,10 +678,10 @@ jobs:
     steps:
       - name: Run agent
         run: >-
-          /tmp/gh-aw/bin/pydantic-ai-runner-launch
-          --allowed-tools 'Read,mcp__safeoutputs'
+          awf -- /bin/bash -c '/tmp/gh-aw/bin/pydantic-ai-runner-launch
+          --allowed-tools "Read,mcp__safeoutputs"
           --output-format stream-json
-          --mcp-config mcp-servers.json
+          --mcp-config mcp-servers.json'
 """,
     )
 
@@ -947,10 +943,10 @@ jobs:
   agent:
     steps:
       - run: >-
-          /tmp/gh-aw/bin/pydantic-ai-runner-launch
-          --allowed-tools 'Read,mcp__safeoutputs'
+          awf -- /bin/bash -c '/tmp/gh-aw/bin/pydantic-ai-runner-launch
+          --allowed-tools "Read,mcp__safeoutputs"
           --output-format stream-json
-          --mcp-config mcp-servers.json
+          --mcp-config mcp-servers.json'
 """,
     )
     _write(workflows / 'shared' / 'ctx.md', '---\nname: ctx\n---\nRead /tmp/gh-aw/.review-context/x\n')
