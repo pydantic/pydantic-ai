@@ -1466,7 +1466,7 @@ def test_create_web_app_custom_lifespan():
 @pytest.mark.anyio
 async def test_web_toolset_lifespan(mocker: MockerFixture):
     """Test web_toolset_lifespan enters and exits toolsets."""
-    from pydantic_ai.ui._web import web_toolset_lifespan
+    from pydantic_ai.ui import web_toolset_lifespan
 
     mock_toolset = mocker.MagicMock()
     mock_toolset.__aenter__ = mocker.AsyncMock(return_value=mock_toolset)
@@ -1477,3 +1477,15 @@ async def test_web_toolset_lifespan(mocker: MockerFixture):
         mock_toolset.__aexit__.assert_not_awaited()
 
     mock_toolset.__aexit__.assert_awaited_once()
+
+
+def test_ui_lazy_exports():
+    """Test lazy module attribute access in pydantic_ai.ui."""
+    from pydantic_ai import ui
+
+    assert ui.web_toolset_lifespan is not None
+    assert ui.DEFAULT_HTML_URL is not None
+    assert ui.OFFLINE_HTML_URL is not None
+
+    with pytest.raises(AttributeError, match="has no attribute 'non_existent'"):
+        _ = getattr(ui, 'non_existent')
