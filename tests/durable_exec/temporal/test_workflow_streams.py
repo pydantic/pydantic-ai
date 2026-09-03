@@ -22,25 +22,34 @@ from pydantic_ai import (
     RunContext,
     RunUsage,
 )
-from pydantic_ai.capabilities import ProcessEventStream
+from pydantic_ai.capabilities import Hooks, ProcessEventStream
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.run import AgentRunResultEvent
+from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 
 try:
     from temporalio import workflow
-    from temporalio.client import Client, WorkflowFailureError
+    from temporalio.client import Client, WorkflowFailureError, WorkflowHandle
     from temporalio.contrib.pydantic import pydantic_data_converter
+    from temporalio.contrib.workflow_streams import WorkflowStreamItem
+    from temporalio.exceptions import ApplicationError
+    from temporalio.service import RPCError, RPCStatusCode
     from temporalio.testing import ActivityEnvironment
     from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
 
     from pydantic_ai.durable_exec.temporal import (
         AgentEventStream,
         AgentPlugin,
+        DurableAgentRunEvents,
         TemporalDurability,
         WorkflowStreamTopic,
         workflow_stream_event_handler,
+    )
+
+    # Direct construction covers the consumer's RPC failure branch without a racy server shutdown.
+    from pydantic_ai.durable_exec.temporal._event_stream import (
+        _DurableAgentRunResultEvent,  # pyright: ignore[reportPrivateUsage]
     )
 except ImportError:  # pragma: lax no cover
     pytest.skip('temporal not installed', allow_module_level=True)
@@ -316,6 +325,89 @@ async def test_a_failed_run_ends_the_stream_without_a_result(client: Client) -> 
     assert not any(isinstance(event, AgentRunResultEvent) for event in received)
 
 
+_final_result_hooks = Hooks[bool]()
+
+
+@_final_result_hooks.on.after_run
+async def _replace_final_result(ctx: RunContext[bool], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
+    if ctx.deps:
+        raise ApplicationError('after_run exploded', non_retryable=True)
+    return replace(result, output='finalized')
+
+
+_final_result_durability = TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG, event_stream_topic=TOPIC)
+_final_result_agent = Agent(
+    TestModel(custom_output_text='original'),
+    name='final_result_stream_agent',
+    deps_type=bool,
+    capabilities=[_final_result_hooks, _final_result_durability],
+)
+
+
+@workflow.defn
+class FinalResultWorkflow:
+    @workflow.init
+    def __init__(self, prompt: str) -> None:
+        self.events = AgentEventStream()
+
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        async with self.events:
+            result = await _final_result_agent.run(prompt, deps=prompt == 'fail')
+        return result.output
+
+
+async def test_terminal_event_carries_the_finalized_result(client: Client) -> None:
+    """The terminal event is published after every capability has transformed the result."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[FinalResultWorkflow],
+        plugins=[AgentPlugin(_final_result_agent)],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ):
+        handle = await client.start_workflow(
+            FinalResultWorkflow.run,
+            args=['Hello'],
+            id=f'{FinalResultWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+        received = await _collect(
+            _final_result_durability.stream_agent_events(
+                client, handle, output_type=str, poll_cooldown=timedelta(milliseconds=50)
+            )
+        )
+        output = await handle.result()
+
+    terminal = cast(AgentRunResultEvent[str], received[-1])
+    assert output == 'finalized'
+    assert terminal.result.output == output
+
+
+async def test_after_run_failure_publishes_no_terminal_event(client: Client) -> None:
+    """A later `after_run` failure must not publish a false successful result."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[FinalResultWorkflow],
+        plugins=[AgentPlugin(_final_result_agent)],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ):
+        handle = await client.start_workflow(
+            FinalResultWorkflow.run,
+            args=['fail'],
+            id=f'{FinalResultWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+        events = _final_result_durability.stream_agent_events(client, handle, poll_cooldown=timedelta(milliseconds=50))
+        received = await _collect(events)
+        with pytest.raises(WorkflowFailureError):
+            await handle.result()
+
+    assert events.result is None
+    assert not any(isinstance(event, AgentRunResultEvent) for event in received)
+
+
 _topic_only_durability = TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG, event_stream_topic=TOPIC)
 _topic_only_agent = Agent(
     _model, name='topic_only_stream_agent', tools=[get_answer], capabilities=[_topic_only_durability]
@@ -434,21 +526,26 @@ class TwoRunWorkflow:
     @workflow.init
     def __init__(self, prompt: str) -> None:
         self.events = AgentEventStream()
+        self.finished = False
 
     @workflow.run
     async def run(self, prompt: str) -> str:
         async with self.events:
             await _topic_only_agent.run(prompt)
             second = await _topic_only_agent.run(prompt)
+        self.finished = True
         return second.output
+
+    @workflow.query
+    def runs_finished(self) -> bool:
+        return self.finished
 
 
 async def test_each_run_gets_its_own_terminal_event(client: Client) -> None:
     """One iterator covers one run; the next run is picked up by reconnecting at the next offset.
 
-    The workflow's drain barrier counts terminal events against acknowledgments rather than holding a
-    single flag, so each run waits for its own subscriber instead of being released by an earlier
-    run's acknowledgment.
+    Each terminal event has its own idempotent acknowledgment, so replaying the first event cannot
+    release the second run's drain barrier.
     """
     async with Worker(
         client,
@@ -465,6 +562,11 @@ async def test_each_run_gets_its_own_terminal_event(client: Client) -> None:
         )
         first = _topic_only_durability.stream_agent_events(client, handle, poll_cooldown=timedelta(milliseconds=50))
         first_events = await _collect(first)
+        duplicate = _topic_only_durability.stream_agent_events(
+            client, handle, from_offset=first.offset, poll_cooldown=timedelta(milliseconds=50)
+        )
+        duplicate_events = await _collect(duplicate)
+        assert await handle.query(TwoRunWorkflow.runs_finished) is False
         second = _topic_only_durability.stream_agent_events(
             client, handle, from_offset=first.offset + 1, poll_cooldown=timedelta(milliseconds=50)
         )
@@ -473,10 +575,46 @@ async def test_each_run_gets_its_own_terminal_event(client: Client) -> None:
 
     # Each subscription ends at its own run's terminal event rather than running on into the next.
     assert sum(1 for event in first_events if isinstance(event, AgentRunResultEvent)) == 1
-    assert isinstance(first_events[-1], AgentRunResultEvent)
+    first_terminal = cast(AgentRunResultEvent[str], first_events[-1])
+    assert isinstance(first_terminal, AgentRunResultEvent)
+    assert len(duplicate_events) == 1
+    duplicate_terminal = cast(AgentRunResultEvent[str], duplicate_events[0])
+    assert isinstance(duplicate_terminal, AgentRunResultEvent)
+    assert duplicate_terminal.result.run_id == first_terminal.result.run_id
     assert sum(1 for event in second_events if isinstance(event, AgentRunResultEvent)) == 1
     assert isinstance(second_events[-1], AgentRunResultEvent)
     assert _kinds(first_events) == _kinds(second_events)
+
+
+async def test_acknowledgment_failure_does_not_hide_the_terminal_event() -> None:
+    """A failed drain signal only delays workflow completion; the received result stays usable."""
+
+    async def subscription() -> AsyncIterator[WorkflowStreamItem[AgentStreamEvent | _DurableAgentRunResultEvent[str]]]:
+        result = AgentRunResult(output='done')
+        yield WorkflowStreamItem(
+            topic=TOPIC,
+            data=_DurableAgentRunResultEvent(result, drain_token='run:0'),
+            offset=7,
+        )
+
+    class FailingHandle:
+        async def signal(self, signal: str, arg: str) -> None:
+            raise RPCError('workflow completed', RPCStatusCode.NOT_FOUND, b'')
+
+    stream = DurableAgentRunEvents(
+        cast(
+            'AsyncIterator[WorkflowStreamItem[AgentStreamEvent | AgentRunResultEvent[Any]]]',
+            subscription(),
+        ),
+        cast('WorkflowHandle[Any, Any]', FailingHandle()),
+    )
+    with pytest.warns(RuntimeWarning, match='Failed to acknowledge the terminal agent event'):
+        terminal = await anext(stream)
+
+    assert isinstance(terminal, AgentRunResultEvent)
+    assert terminal.result.output == 'done'
+    assert stream.result is terminal.result
+    assert stream.offset == 7
 
 
 # --- Resuming from an offset ----------------------------------------------------------------------

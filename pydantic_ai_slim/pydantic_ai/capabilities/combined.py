@@ -417,6 +417,16 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                 result = await capability.after_run(cap_ctx, result=result)
         return result
 
+    def _after_run_finalized(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        result: AgentRunResult[Any],
+    ) -> None:
+        for capability in reversed(self.capabilities):
+            if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
+                capability._after_run_finalized(cap_ctx, result=result)
+
     async def wrap_run(
         self,
         ctx: RunContext[AgentDepsT],

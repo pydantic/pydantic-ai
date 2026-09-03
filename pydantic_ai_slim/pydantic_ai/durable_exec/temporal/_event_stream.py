@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import TYPE_CHECKING, Annotated, Any, Generic, cast
 from weakref import WeakValueDictionary
@@ -16,6 +17,7 @@ from temporalio.contrib.workflow_streams import (
     WorkflowStreamItem,
     WorkflowStreamState,
 )
+from temporalio.service import RPCError
 
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.exceptions import UserError
@@ -47,6 +49,13 @@ for driving a UI off a token stream.
 
 _DEFAULT_POLL_COOLDOWN = timedelta(milliseconds=100)
 _DEFAULT_DRAIN_TIMEOUT = timedelta(seconds=30)
+
+
+@dataclass(repr=False)
+class _DurableAgentRunResultEvent(AgentRunResultEvent[OutputDataT]):
+    """Wire event carrying the token that makes its drain acknowledgment idempotent."""
+
+    drain_token: str = field(kw_only=True)
 
 
 @dataclass(frozen=True)
@@ -154,11 +163,8 @@ class AgentEventStream:
         """
         self._stream = stream if stream is not None else WorkflowStream(prior_state)
         self._drain_timeout = drain_timeout
-        # Terminal events published minus acknowledgments received, so a workflow that runs the agent
-        # more than once waits for each run's subscriber. A count rather than a flag because an
-        # acknowledgment carries no payload: a delayed one for an earlier run would otherwise clear
-        # the barrier a later run had just raised.
-        self._undrained = 0
+        self._pending_drains: set[str] = set()
+        self._next_drain_token = 0
         workflow.set_signal_handler(_DRAINED_SIGNAL, self._on_drained)  # pyright: ignore[reportUnknownMemberType]
         _streams[workflow.info().run_id] = self
 
@@ -167,9 +173,9 @@ class AgentEventStream:
         """The underlying `WorkflowStream`, for publishing your own topics or for `continue_as_new()`."""
         return self._stream
 
-    def _on_drained(self) -> None:
+    def _on_drained(self, drain_token: str) -> None:
         # Several subscribers may acknowledge the same terminal event; the barrier only needs one.
-        self._undrained = max(0, self._undrained - 1)
+        self._pending_drains.discard(drain_token)
 
     def _publish(self, topic: str, event: NativeEvent) -> None:
         """Append an event to the log from workflow code.
@@ -177,9 +183,15 @@ class AgentEventStream:
         Workflow-side publishing costs nothing beyond the workflow task that is already running, and
         replay rebuilds the log identically, so these events are delivered exactly once.
         """
-        if isinstance(event, AgentRunResultEvent):
-            self._undrained += 1
         self._stream.topic(topic).publish(event)
+
+    def _publish_result(self, topic: str, result: AgentRunResult[Any]) -> None:
+        """Append a terminal event and raise its execution-scoped drain barrier."""
+        run_id = workflow.info().run_id
+        drain_token = f'{run_id}:{self._next_drain_token}'
+        self._next_drain_token += 1
+        self._stream.topic(topic).publish(_DurableAgentRunResultEvent(result, drain_token=drain_token))
+        self._pending_drains.add(drain_token)
 
     async def __aenter__(self) -> AgentEventStream:
         return self
@@ -190,7 +202,7 @@ class AgentEventStream:
     async def close(self) -> None:
         """Wait for a subscriber to drain the stream, then release any that are still polling."""
         try:
-            await workflow.wait_condition(lambda: self._undrained == 0, timeout=self._drain_timeout)
+            await workflow.wait_condition(lambda: not self._pending_drains, timeout=self._drain_timeout)
         except asyncio.TimeoutError:
             pass
         # A subscription is a long-poll update, and a workflow can't return while one is parked.
@@ -199,11 +211,8 @@ class AgentEventStream:
         await workflow.wait_condition(workflow.all_handlers_finished)
 
 
-def publish_agent_event(topic: str, event: NativeEvent) -> None:
-    """Publish one event to `topic` on the current workflow's `AgentEventStream`.
-
-    Called from workflow code for every event the activity-side publisher doesn't produce.
-    """
+def _get_agent_event_stream() -> AgentEventStream:
+    """Return the stream hosted by the current workflow."""
     stream = _streams.get(workflow.info().run_id)
     if stream is None:
         raise UserError(
@@ -211,7 +220,22 @@ def publish_agent_event(topic: str, event: NativeEvent) -> None:
             "Assign one to an attribute in the workflow's `@workflow.init` method: "
             '`self.events = AgentEventStream()`.'
         )
+    return stream
+
+
+def publish_agent_event(topic: str, event: NativeEvent) -> None:
+    """Publish one event to `topic` on the current workflow's `AgentEventStream`.
+
+    Called from workflow code for every event the activity-side publisher doesn't produce.
+    """
+    stream = _get_agent_event_stream()
     stream._publish(topic, event)  # pyright: ignore[reportPrivateUsage]
+
+
+def publish_agent_result(topic: str, result: AgentRunResult[Any]) -> None:
+    """Publish a terminal event with an idempotent drain token."""
+    stream = _get_agent_event_stream()
+    stream._publish_result(topic, result)  # pyright: ignore[reportPrivateUsage]
 
 
 def workflow_stream_event_handler(
@@ -344,13 +368,25 @@ class DurableAgentRunEvents(Generic[OutputDataT], AsyncIterator['NativeEvent']):
             raise
         self._offset = item.offset
         event = item.data
-        if isinstance(event, AgentRunResultEvent):
-            self._result = cast('AgentRunResult[OutputDataT]', event.result)
+        if isinstance(event, _DurableAgentRunResultEvent):
+            self._result = event.result
             self._done = True
             # Stop polling before acknowledging: the workflow finishes on that signal, and a poll
             # still in flight when it does would fail rather than return.
             await self.aclose()
-            await self._handle.signal(_DRAINED_SIGNAL)
+            try:
+                await self._handle.signal(_DRAINED_SIGNAL, event.drain_token)
+            except RPCError as exc:
+                # The terminal result has already crossed the workflow boundary. An acknowledgment
+                # failure only makes the producer wait for its bounded drain timeout; it must not
+                # turn that received result into a consumer-side stream failure.
+                warnings.warn(
+                    f'Failed to acknowledge the terminal agent event; the workflow may wait for its '
+                    f'`drain_timeout`: {exc}',
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+            return AgentRunResultEvent(event.result)
         return event
 
     async def __aenter__(self) -> DurableAgentRunEvents[OutputDataT]:
@@ -407,11 +443,18 @@ def stream_agent_events(
     # one. Passing `client=` keeps continue-as-new following, which re-targets to the successor.
     run_id = handle.run_id or handle.first_execution_run_id
     pinned = client.get_workflow_handle(handle.id, run_id=run_id) if run_id else handle
-    result_type = Annotated[AgentStreamEvent | AgentRunResultEvent[output_type], pydantic.Discriminator('event_kind')]
+    result_type = Annotated[
+        AgentStreamEvent | _DurableAgentRunResultEvent[output_type], pydantic.Discriminator('event_kind')
+    ]
     subscription = WorkflowStreamClient(pinned, client=client).subscribe(
         [topic.name],
         from_offset=from_offset,
         result_type=cast('type[Any]', result_type),
         poll_cooldown=poll_cooldown,
     )
-    return DurableAgentRunEvents(cast('AsyncIterator[WorkflowStreamItem[NativeEvent]]', subscription), handle)
+    # Polling follows continue-as-new by retargeting to the latest execution. Acknowledgments need
+    # to do the same; their execution-scoped token makes signaling a later reused workflow ID safe.
+    acknowledgment_handle = client.get_workflow_handle(handle.id)
+    return DurableAgentRunEvents(
+        cast('AsyncIterator[WorkflowStreamItem[NativeEvent]]', subscription), acknowledgment_handle
+    )

@@ -36,7 +36,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse
 from pydantic_ai.models import CompletedStreamedResponse, Model, ModelRequestParameters, infer_model
 from pydantic_ai.output import OutputDataT
-from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
+from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, ToolsetTool, WrapperToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
@@ -46,6 +46,7 @@ from ._event_stream import (
     DurableAgentRunEvents,
     WorkflowStreamTopic,
     publish_agent_event,
+    publish_agent_result,
     stream_agent_events,
     workflow_stream_event_handler,
 )
@@ -496,22 +497,10 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         with disable_threads(), set_agent_graph_sleep(workflow.sleep):
             return await handler()
 
-    async def after_run(self, ctx: RunContext[AgentDepsT], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
-        """Publish the run's terminal event.
-
-        The result only exists workflow-side, so this is the one event the activity-side publisher
-        can't produce -- and it's what tells a subscriber the run is over. Published from here rather
-        than from `wrap_run` so it carries the result every capability's `wrap_run` has already shaped.
-        A capability that rewrites the result in its own `after_run` still lands after this one, as
-        durable dispatch is the innermost wrapper and `after_run` runs outermost-last; the workflow's
-        return value remains the authoritative output.
-
-        Not called when the run ends without a result, so a failed or cancelled run publishes no
-        terminal event and its subscribers see the stream simply end.
-        """
+    def _after_run_finalized(self, ctx: RunContext[AgentDepsT], *, result: AgentRunResult[Any]) -> None:
+        """Publish the run's terminal event once every success-path finalizer has accepted it."""
         if (topic := self._event_stream_topic) is not None and self.in_durable_context:
-            publish_agent_event(topic.name, AgentRunResultEvent(result))
-        return result
+            publish_agent_result(topic.name, result)
 
     @property
     def has_wrap_run_event_stream(self) -> bool:
