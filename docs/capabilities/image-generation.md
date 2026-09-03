@@ -72,8 +72,8 @@ provider-prefixed equivalents on the generator. `action='edit'` and `image_model
 fallback raises [`UserError`][pydantic_ai.exceptions.UserError] for `action='edit'`, because the `generate_image` tool
 receives no reference images, and ignores `image_model` with a warning, because `local` already names the image model.
 `native=False` makes the direct generator the only path, so both of those land at construction — the dropped settings as
-a warning and `action='edit'` as the error; with native enabled the native tool still carries them, and only a request
-that routes to the direct generator raises. The direct `local=` generator must return exactly one generated
+a warning and `action='edit'` as the error; with native enabled the native tool still carries them, so a request that
+routes to the direct generator instead is what warns that they went unapplied, and what raises for `action='edit'`. The direct `local=` generator must return exactly one generated
 [`BinaryImage`][pydantic_ai.messages.BinaryImage]; use
 [`ImageGenerator`][pydantic_ai.images.ImageGenerator] directly for multiple images or reference-image editing.
 
@@ -81,7 +81,10 @@ that routes to the direct generator raises. The direct `local=` generator must r
 [Image Generation Tool](../native-tools.md#image-generation-tool) for provider support and configuration). Pass an
 explicit instance through `native=ImageGenerationTool(...)` when you need its full provider-native configuration. Its
 `aspect_ratio` reaches both fallbacks — the `fallback_model` subagent and the direct `local=` generator — while a
-capability-level `aspect_ratio` takes precedence over it.
+capability-level `aspect_ratio` takes precedence over it, as does a capability-level `dimensions`, which is the same
+geometry spelled differently and cannot be combined with it. Only inheritance yields that way: setting both
+`dimensions` and `aspect_ratio` on the capability itself raises [`UserError`][pydantic_ai.exceptions.UserError] at
+construction, once a direct `local` generator is configured to apply them.
 
 Instrumentation is per generator, not per agent: the agent-level
 [`Instrumentation`][pydantic_ai.capabilities.Instrumentation] capability does not reach the direct `local=` generator,

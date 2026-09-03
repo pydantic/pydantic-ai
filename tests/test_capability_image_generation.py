@@ -5,6 +5,7 @@ Split out of `test_capabilities.py` per #7304.
 
 from __future__ import annotations
 
+import dataclasses
 import inspect
 import re
 from collections.abc import Sequence
@@ -51,7 +52,7 @@ from pydantic_ai.native_tools import (
     ImageGenerationTool,
 )
 from pydantic_ai.profiles import ModelProfile
-from pydantic_ai.toolsets.prepared import PreparedToolset
+from pydantic_ai.tools import Tool
 from pydantic_ai.usage import RequestUsage
 
 from ._inline_snapshot import snapshot
@@ -60,15 +61,10 @@ from .conftest import IsDatetime, IsInstance, IsStr, iter_message_parts, try_imp
 with try_import() as logfire_imports_successful:
     from logfire.testing import CaptureLogfire
 
-with try_import() as temporal_imports_successful:
-    from pydantic_ai.durable_exec.temporal import TemporalRunContext
-
 
 class TestImageGenerationCapability:
     def test_image_gen_init_params_cover_builtin_tool_and_direct_geometry(self):
         """ImageGeneration adds direct geometry without dropping existing native-tool fields."""
-        import dataclasses
-
         # partial_images is excluded — not useful for subagent fallback (no streaming).
         # optional is excluded — applies to wire-side dropping, not local-fallback config.
         builtin_fields = {
@@ -109,7 +105,6 @@ class TestImageGenerationCapability:
 
     def test_image_generation_with_custom_local(self):
         """ImageGeneration(local=custom) → provides custom local fallback."""
-        from pydantic_ai.tools import Tool
 
         def my_gen(prompt: str) -> str:
             return 'image_url'  # pragma: no cover
@@ -120,8 +115,6 @@ class TestImageGenerationCapability:
 
     def test_image_generation_accepts_direct_image_model(self):
         """A direct image model is normalized to the local capability tool."""
-        from pydantic_ai.tools import Tool
-
         cap = ImageGeneration(local=TestImageGenerationModel())
 
         assert isinstance(cap.local, Tool)
@@ -129,8 +122,6 @@ class TestImageGenerationCapability:
 
     def test_image_generation_accepts_direct_model_name(self):
         """A direct image model name is resolved as a local capability strategy."""
-        from pydantic_ai.tools import Tool
-
         cap = ImageGeneration(native=False, local='openai:gpt-image-1.5')
 
         assert isinstance(cap.local, Tool)
@@ -500,7 +491,6 @@ class TestImageGenerationCapability:
 
     def test_image_generation_plain_tool_local_is_not_a_direct_generator(self):
         """A `Tool` the capability didn't build itself carries no direct settings, so geometry is dropped."""
-        from pydantic_ai.tools import Tool
 
         def my_gen(prompt: str) -> str:
             return 'image_url'  # pragma: no cover
@@ -508,23 +498,27 @@ class TestImageGenerationCapability:
         with pytest.warns(UserWarning, match='ignored direct-only setting.*dimensions'):
             ImageGeneration(local=Tool(my_gen, name='generate_image'), dimensions=(1280, 720))
 
-    @pytest.mark.skipif(not temporal_imports_successful(), reason='temporalio not installed')
-    async def test_image_generation_native_supersedes_warning_tolerates_durable_run_context(self):
-        """The prepare function is re-run activity-side, where the live model didn't cross the boundary.
+    @pytest.mark.parametrize(
+        ('kwargs', 'ignored'),
+        [
+            ({'dimensions': (1280, 720)}, 'dimensions'),
+            ({'aspect_ratio': '2:1'}, 'aspect_ratio'),
+        ],
+    )
+    def test_image_generation_native_false_with_a_local_of_the_users_own_ignores_direct_only_geometry(
+        self, kwargs: dict[str, Any], ignored: str
+    ):
+        """`native=False` builds no native tool, and a local tool the capability didn't build carries no settings.
 
-        A `DynamicCapability` re-resolves this toolset inside the activity, so reading `ctx.model`
-        there would raise `UserError` on a `TemporalRunContext` — the native-vs-direct routing this
-        warning describes was already decided in the workflow process.
+        The `dimensions` docstring sends users here to guarantee the setting takes effect, so the
+        one arrangement that applies nothing at all cannot be the silent one.
         """
-        capability = ImageGeneration(
-            native=ImageGenerationTool(), local=ImageGenerator(TestImageGenerationModel()), dimensions=(1280, 720)
-        )
-        toolset = capability.get_toolset()
-        assert isinstance(toolset, PreparedToolset)
 
-        prepared = toolset.prepare_func(TemporalRunContext(deps=None, run_id='run', run_step=1), [])
-        assert inspect.isawaitable(prepared)
-        assert await prepared == []
+        def my_gen(prompt: str) -> str:
+            return 'image_url'  # pragma: no cover
+
+        with pytest.warns(UserWarning, match=f'ignored direct-only setting.*{ignored}'):
+            ImageGeneration(native=False, local=my_gen, **kwargs)
 
     async def test_image_generation_callable_native_does_not_warn_about_direct_only_geometry(
         self, allow_model_requests: None
@@ -577,6 +571,106 @@ class TestImageGenerationCapability:
         assert result.output == 'done'
         assert image_model.last_settings == {'dimensions': (1280, 720)}
 
+    async def test_image_generation_dimensions_override_an_inherited_native_aspect_ratio(
+        self, allow_model_requests: None
+    ):
+        """A custom `native` instance is the base for the direct settings, and `dimensions` outranks it.
+
+        The two are mutually exclusive in `ImageGenerationSettings`, so inheriting the ratio
+        alongside `dimensions` would fail the `generate_image` call over a setting the user never
+        passed to the capability.
+        """
+        image_model = TestImageGenerationModel()
+
+        def outer_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if any(isinstance(p, ToolReturnPart) for m in messages if isinstance(m, ModelRequest) for p in m.parts):
+                return ModelResponse(parts=[TextPart(content='done')])
+            return ModelResponse(parts=[ToolCallPart(tool_name='generate_image', args={'prompt': 'tiny robot'})])
+
+        outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
+        agent = Agent(
+            outer_model,
+            capabilities=[
+                ImageGeneration(
+                    native=ImageGenerationTool(aspect_ratio='16:9'),
+                    local=ImageGenerator(image_model),
+                    dimensions=(1280, 720),
+                )
+            ],
+        )
+
+        result = await agent.run('Generate an image')
+
+        assert result.output == 'done'
+        assert image_model.last_settings == snapshot({'dimensions': (1280, 720)})
+
+    def test_image_generation_rejects_dimensions_and_aspect_ratio_set_together(self):
+        """Only inheritance yields to `dimensions`; two geometries the caller set himself stay a conflict.
+
+        Wiring the direct generator settles the pair, so it is refused up front instead of reaching
+        the direct model's own mutual-exclusion check on the first `generate_image` call.
+        """
+        with pytest.raises(UserError, match=r'`dimensions` and `aspect_ratio` are mutually exclusive'):
+            ImageGeneration(
+                local=ImageGenerator(TestImageGenerationModel()),
+                dimensions=(1280, 720),
+                aspect_ratio='16:9',
+            )
+
+    async def test_image_generation_warns_when_the_direct_fallback_drops_native_only_settings(
+        self, allow_model_requests: None
+    ):
+        """With the default `native=True` the direct tool runs on a model with no native support, applying neither.
+
+        The mirror of the native-supersedes notice: the construction-time warning only fires for
+        `native=False`, where the direct generator is provably the only implementation, so this
+        configuration needs the per-request one to say the settings went nowhere.
+        """
+        image_model = TestImageGenerationModel()
+
+        def outer_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if any(isinstance(p, ToolReturnPart) for m in messages if isinstance(m, ModelRequest) for p in m.parts):
+                return ModelResponse(parts=[TextPart(content='done')])
+            return ModelResponse(parts=[ToolCallPart(tool_name='generate_image', args={'prompt': 'tiny robot'})])
+
+        outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
+        agent = Agent(
+            outer_model,
+            capabilities=[ImageGeneration(local=ImageGenerator(image_model), output_format='webp', quality='high')],
+        )
+
+        with pytest.warns(UserWarning, match=r'ignored native-tool setting\(s\): output_format, quality'):
+            result = await agent.run('Generate an image')
+
+        assert result.output == 'done'
+        assert image_model.last_settings == snapshot({})
+
+    async def test_image_generation_native_only_settings_are_silent_when_the_native_tool_runs(
+        self, allow_model_requests: None
+    ):
+        """The other side of the same profile flag: the native tool carries them, so nothing is dropped.
+
+        `filterwarnings = ['error']` turns the absent warning into the assertion.
+        """
+        image_model = TestImageGenerationModel()
+
+        def outer_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[TextPart(content='native path')])
+
+        outer_model = FunctionModel(
+            outer_model_fn,
+            profile=ModelProfile(supported_native_tools=frozenset({ImageGenerationTool})),
+        )
+        agent = Agent(
+            outer_model,
+            capabilities=[ImageGeneration(local=ImageGenerator(image_model), output_format='webp', quality='high')],
+        )
+
+        result = await agent.run('Generate an image')
+
+        assert result.output == 'native path'
+        assert image_model.last_settings is None
+
     async def test_image_generation_warns_when_native_supersedes_non_native_aspect_ratio(
         self, allow_model_requests: None
     ):
@@ -624,8 +718,6 @@ class TestImageGenerationCapability:
 
     def test_image_generation_with_fallback_model(self):
         """ImageGeneration(fallback_model=...) creates a local fallback tool."""
-        from pydantic_ai.tools import Tool
-
         cap = ImageGeneration(fallback_model='openai-responses:gpt-5.4')
         assert isinstance(cap.local, Tool)
         assert cap.get_toolset() is not None
@@ -746,8 +838,6 @@ class TestImageGenerationCapability:
 
     def test_image_generation_fallback_merges_custom_native_with_overrides(self):
         """Custom native tool settings are merged with capability-level overrides for the fallback."""
-        from pydantic_ai.tools import Tool
-
         custom_native = ImageGenerationTool(quality='high', size='1024x1024')
         cap = ImageGeneration(
             native=custom_native,
@@ -805,8 +895,6 @@ class TestImageGenerationCapability:
 
     def test_image_generation_callable_native_with_fallback(self):
         """When native is a callable, the fallback local tool still gets created."""
-        from pydantic_ai.tools import Tool
-
         cap = ImageGeneration(
             native=lambda ctx: ImageGenerationTool(quality='high'),
             fallback_model='openai-responses:gpt-5.4',
@@ -831,8 +919,6 @@ class TestImageGenerationCapability:
 
     async def test_image_generation_callable_fallback_model(self, allow_model_requests: None):
         """ImageGeneration with async callable fallback_model resolves the model per-run."""
-        from pydantic_ai.messages import BinaryImage
-
         image_data = b'\x89PNG\r\n\x1a\n'  # minimal PNG header
 
         def inner_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -1046,6 +1132,7 @@ class TestImageGenerationCapability:
             # xAI has no conversational model that carries the `ImageGenerationTool`, so the
             # suggested alternative crosses providers; `local=` is the way to stay on xAI.
             ('xai', 'grok-imagine-image', 'openai-responses:gpt-5.5'),
+            ('xai', 'grok-imagine-image-2.0', 'openai-responses:gpt-5.5'),
             ('xai', 'grok-imagine-image-quality', 'openai-responses:gpt-5.5'),
         ],
     )
@@ -1065,7 +1152,6 @@ class TestImageGenerationCapability:
     @pytest.mark.vcr()
     async def test_image_generation_local_fallback(self, allow_model_requests: None, openai_api_key: str):
         """ImageGeneration(fallback_model=...) with non-supporting outer model uses subagent fallback."""
-        from pydantic_ai.messages import BinaryImage
         from pydantic_ai.models.openai import OpenAIResponsesModel
         from pydantic_ai.providers.openai import OpenAIProvider
 
@@ -1146,7 +1232,6 @@ class TestImageGenerationCapability:
     async def test_image_generation_local_fallback_google(self, allow_model_requests: None, gemini_api_key: str):
         """ImageGeneration fallback with Google image model."""
         pytest.importorskip('google.genai', reason='google extra not installed')
-        from pydantic_ai.messages import BinaryImage
         from pydantic_ai.models.google import GoogleModel
         from pydantic_ai.providers.google import GoogleProvider
 

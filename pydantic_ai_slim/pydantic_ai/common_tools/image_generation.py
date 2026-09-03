@@ -48,6 +48,7 @@ _IMAGE_ONLY_MODELS: dict[str, str] = {
     # family's suggested alternative crosses providers; `local='xai:grok-imagine-image'` is the way
     # to stay on xAI, which the error's first sentence points at.
     'grok-imagine-image': 'openai-responses:gpt-5.5',
+    'grok-imagine-image-2.0': 'openai-responses:gpt-5.5',
     'grok-imagine-image-2026-03-02': 'openai-responses:gpt-5.5',
     'grok-imagine-image-quality': 'openai-responses:gpt-5.5',
     'grok-imagine-image-quality-20260403': 'openai-responses:gpt-5.5',

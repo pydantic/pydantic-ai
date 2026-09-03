@@ -1921,7 +1921,6 @@ def test_model_json_schema_with_capabilities():
                                     'prefixItems': [{'type': 'integer'}, {'type': 'integer'}],
                                     'type': 'array',
                                 },
-                                {'items': {'type': 'integer'}, 'type': 'array'},
                                 {'type': 'null'},
                             ],
                             'title': 'Dimensions',
