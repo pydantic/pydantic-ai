@@ -100,7 +100,7 @@ app = agent.to_web(toolsets=toolsets)
 
 When serving `agent.to_web()` standalone (e.g. with `uvicorn`), the application automatically manages the MCP toolset connections during its Starlette lifespan, keeping subprocesses alive across requests.
 
-If you mount `agent.to_web()` as a sub-application inside another ASGI app (like FastAPI or a parent Starlette application), ASGI servers only dispatch lifespan events to the root application. You can manage the toolset connections across the parent application's lifetime using [`web_toolset_lifespan`][pydantic_ai.ui._web.web_toolset_lifespan]:
+If you mount `agent.to_web()` as a sub-application inside another ASGI app (like FastAPI or a parent Starlette application), ASGI servers only dispatch lifespan events to the root application. You can manage the toolset connections across the parent application's lifetime using [`web_toolset_lifespan`][pydantic_ai.ui.web_toolset_lifespan]:
 
 ```python {test="skip" lint="skip"}
 from contextlib import asynccontextmanager
@@ -109,7 +109,7 @@ from fastapi import FastAPI
 
 from pydantic_ai import Agent
 from pydantic_ai.mcp import load_mcp_toolsets
-from pydantic_ai.ui._web import web_toolset_lifespan
+from pydantic_ai.ui import web_toolset_lifespan
 
 agent = Agent('openai:gpt-5.2')
 toolsets = load_mcp_toolsets('mcp_servers.json')

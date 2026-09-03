@@ -199,8 +199,10 @@ async def web_toolset_lifespan(
     parent_app.mount('/chat', agent.to_web(toolsets=toolsets))
     ```
 
-    Toolsets are ref-counted, so entering them here and again per-request inside the mounted app is
-    safe and maintains the open connection without reconnecting.
+    MCP toolsets are ref-counted (e.g. `MCPToolset` keeps its session open across nested enters),
+    so entering them here and again per-request inside the mounted app is safe and maintains the
+    open connection without reconnecting. Other `AbstractToolset` implementations are entered and
+    exited around each request's agent run, so they should tolerate per-run enter/exit cycles.
 
     Args:
         toolsets: Sequence of toolsets to enter and keep active.

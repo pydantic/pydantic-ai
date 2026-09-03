@@ -1463,6 +1463,7 @@ def test_create_web_app_custom_lifespan():
     assert stateless_events == ['stateless_startup', 'stateless_shutdown']
 
 
+@pytest.mark.anyio
 async def test_web_toolset_lifespan(mocker: MockerFixture):
     """Test web_toolset_lifespan enters and exits toolsets."""
     from pydantic_ai.ui._web import web_toolset_lifespan
