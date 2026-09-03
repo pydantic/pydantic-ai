@@ -102,7 +102,7 @@ async def main():
 2. Attach durability via `capabilities=[...]`. The capability routes model requests, tool calls, and MCP communication through Prefect tasks when the agent runs inside a flow.
 3. Wrap `agent.run()` in your own `@flow` to make the run durable.
 
-_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 Because the same agent works inside and outside a Prefect flow, [`PrefectDurability`][pydantic_ai.durable_exec.prefect.PrefectDurability] composes with all other [capabilities](../capabilities/overview.md) without each needing a Prefect-specific wrapper variant.
 
@@ -225,6 +225,8 @@ A durability `event_stream_handler=` and a separately registered `ProcessEventSt
 
 A per-run handler passed to `Agent.run(event_stream_handler=...)` also runs flow-side against replayed model events.
 
+Events emitted with [`ctx.emit()`][pydantic_ai.tools.RunContext.emit] from inside a durable task — including a [capability event](../capabilities/overview.md#capability-events) emitted by a capability's own tool — are delivered when the task actually runs, and are *not* re-emitted when its recorded result is replayed on a flow retry or cache hit. Like a log line written inside a task, an emitted event is a side effect of running the task rather than part of its recorded result. Emit from flow-level code, such as a [capability](../capabilities/overview.md) hook, if a listener must see the event on every attempt. Capability listeners registered with [`@on_event`][pydantic_ai.capabilities.on_event] run in flow code rather than in a task, so they re-run on a flow retry and must be deterministic; keep I/O in a durability `event_stream_handler=`, which runs in its own task. Unlike [`ctx.enqueue()`][pydantic_ai.tools.RunContext.enqueue], which is rejected inside a task because dropping it would change what the model sees, a missed event only means an observer wasn't notified. Carrying a durable unit's emitted events in its recorded output, so a replay reproduces them, is tracked in [pydantic-ai#7971](https://github.com/pydantic/pydantic-ai/issues/7971).
+
 Because the model stream is consumed inside the task, cancelling it from the flow side (e.g. with [`AgentStream.cancel()`][pydantic_ai.result.AgentStream.cancel]) is not available across the durable boundary.
 
 [`CancellationToken`][pydantic_ai.CancellationToken] and [`RunContext.cancel()`][pydantic_ai.tools.RunContext.cancel] are same-process cancellation handles and cannot cross the Prefect durable boundary; cancel the Prefect flow instead.
@@ -286,7 +288,7 @@ async def main():
     #> Paris
 ```
 
-_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 ### Retry Considerations
 
@@ -296,7 +298,7 @@ Pydantic AI and provider API clients have their own retry logic. When using Pref
 * Turn off your provider API client's retry logic (e.g., `max_retries=0` on a [custom OpenAI client](../models/openai.md#custom-openai-client))
 * Rely on Prefect's task-level retry configuration for consistency
 
-This prevents requests from being retried multiple times at different layers.
+This prevents requests from being retried multiple times at different layers. The layers *multiply*: see [Retry multiplication](../retries.md#retry-multiplication) for the arithmetic.
 
 ## Caching and Idempotency
 

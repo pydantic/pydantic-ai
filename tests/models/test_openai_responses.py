@@ -57,7 +57,7 @@ from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.direct import model_request as direct_model_request
 from pydantic_ai.exceptions import ContentFilterError, ModelHTTPError, ModelRetry, SuspendedResponseExpired
 from pydantic_ai.messages import INVALID_JSON_KEY, ToolSearchCallPart, ToolSearchReturnPart, sanitize_messages
-from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.native_tools import CodeExecutionTool, FileSearchTool, ImageAspectRatio, MCPServerTool, WebSearchTool
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
@@ -1292,12 +1292,12 @@ async def test_openai_responses_stream(allow_model_requests: None, openai_api_ke
                     parts=[
                         TextPart(
                             content='The capital of France is Paris.',
-                            id='msg_67e554a28bec8191b56d3e2331eff88006c52f0e511c76ed',
+                            id='msg_003440f5ba4dd7f1006a95f3e8cd9087d2b399f7145627ec79',
                             provider_name='openai',
                         )
                     ],
                     usage=RequestUsage(
-                        input_tokens=278, output_tokens=9, output_reasoning_tokens=0, details={'reasoning_tokens': 0}
+                        input_tokens=62, output_tokens=9, output_reasoning_tokens=0, details={'reasoning_tokens': 0}
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
@@ -1305,9 +1305,9 @@ async def test_openai_responses_stream(allow_model_requests: None, openai_api_ke
                     provider_url='https://api.openai.com/v1/',
                     provider_details={
                         'finish_reason': 'completed',
-                        'timestamp': datetime(2025, 3, 27, 13, 37, 38, tzinfo=timezone.utc),
+                        'timestamp': IsDatetime(),
                     },
-                    provider_response_id='resp_67e554a21aa88191b65876ac5e5bbe0406c52f0e511c76ed',
+                    provider_response_id='resp_003440f5ba4dd7f1006a95f3e7961887d2ae83dcea20d24a32',
                     finish_reason='stop',
                 )
             )
@@ -3933,6 +3933,78 @@ async def test_openai_previous_response_id_same_model_history(allow_model_reques
     )
 
 
+async def test_response_scoped_tool_call_id_with_previous_response(allow_model_requests: None) -> None:
+    """The raw provider ID is restored when the qualifying response is held server-side."""
+    response_id = f'resp_{"x" * 83}'
+    qualified_call_id = f'{response_id}:call_0'
+    history: list[ModelRequest | ModelResponse] = [
+        ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='tool',
+                    args='{}',
+                    tool_call_id=qualified_call_id,
+                    id='fc_1',
+                    provider_name='openai',
+                )
+            ],
+            model_name='gpt-5.6-sol',
+            provider_name='openai',
+            provider_response_id=response_id,
+        ),
+        ModelRequest(parts=[ToolReturnPart(tool_name='tool', content='result', tool_call_id=qualified_call_id)]),
+    ]
+    mock_client = MockOpenAIResponses.create_mock(response_message([]))
+    model = OpenAIResponsesModel(
+        'gpt-5.6-sol',
+        provider=OpenAIProvider(openai_client=mock_client),
+        profile=OpenAIModelProfile(openai_responses_tool_call_ids_are_response_scoped=True),
+    )
+
+    await model.request(
+        history,
+        OpenAIResponsesModelSettings(openai_previous_response_id='auto'),
+        ModelRequestParameters(),
+    )
+
+    request_kwargs = get_mock_responses_kwargs(mock_client)[0]
+    assert (request_kwargs['previous_response_id'], request_kwargs['input']) == snapshot(
+        (
+            'resp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
+            [{'type': 'function_call_output', 'call_id': 'call_0', 'output': 'result'}],
+        )
+    )
+
+    compact_kwargs: dict[str, Any] = {}
+
+    async def fake_compact(**kwargs: Any) -> CompactedResponse:
+        compact_kwargs.update(kwargs)
+        return CompactedResponse(
+            id='resp_compact',
+            created_at=0,
+            object='response.compaction',
+            output=[ResponseCompactionItem(id='comp_1', encrypted_content='encrypted', type='compaction')],
+            usage=ResponseUsage.model_construct(input_tokens=1, output_tokens=1, total_tokens=2),
+        )
+
+    model.client.responses.compact = fake_compact
+    await model.compact_messages(
+        ModelRequestContext(
+            model=model,
+            messages=history,
+            model_settings=OpenAIResponsesModelSettings(openai_previous_response_id='auto'),
+            model_request_parameters=ModelRequestParameters(),
+        )
+    )
+
+    assert (compact_kwargs['previous_response_id'], compact_kwargs['input']) == snapshot(
+        (
+            'resp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
+            [{'type': 'function_call_output', 'call_id': 'call_0', 'output': 'result'}],
+        )
+    )
+
+
 async def test_openai_previous_response_id_concrete_seed_without_history(openai_api_key: str):
     """A concrete seed is used as-is when there is no prior response in the history."""
     history = [ModelRequest(parts=[UserPromptPart(content='Continue')])]
@@ -5028,6 +5100,85 @@ async def test_openai_responses_thinking_without_summary(allow_model_requests: N
             },
         ]
     )
+
+
+@pytest.mark.parametrize(
+    ('thinking_part', 'expected_input'),
+    [
+        pytest.param(
+            ThinkingPart(content='thinking', id='reasoning_content', provider_name='openai'),
+            {'role': 'assistant', 'content': '<think>\nthinking\n</think>'},
+            id='chat-reasoning-content-field-id',
+        ),
+        pytest.param(
+            ThinkingPart(content='thinking', id='reasoning', provider_name='openai'),
+            {'role': 'assistant', 'content': '<think>\nthinking\n</think>'},
+            id='chat-reasoning-field-id',
+        ),
+        pytest.param(
+            ThinkingPart(content='thinking', id='content', provider_name='openai'),
+            {'role': 'assistant', 'content': '<think>\nthinking\n</think>'},
+            id='chat-tagged-content-field-id',
+        ),
+        pytest.param(
+            ThinkingPart(content='thinking', id='rs_123', provider_name='openai'),
+            {
+                'id': 'rs_123',
+                'summary': [{'text': 'thinking', 'type': 'summary_text'}],
+                'encrypted_content': None,
+                'type': 'reasoning',
+            },
+            id='openai-responses-id',
+        ),
+        pytest.param(
+            ThinkingPart(content='thinking', id='compatible-api-id', provider_name='openai', signature='encrypted'),
+            {
+                'id': 'compatible-api-id',
+                'summary': [{'text': 'thinking', 'type': 'summary_text'}],
+                'encrypted_content': 'encrypted',
+                'type': 'reasoning',
+            },
+            id='compatible-responses-signature',
+        ),
+        pytest.param(
+            ThinkingPart(
+                content='summary',
+                id='compatible-api-id',
+                provider_name='openai',
+                provider_details={'raw_content': ['raw thinking']},
+            ),
+            {
+                'id': 'compatible-api-id',
+                'summary': [{'text': 'summary', 'type': 'summary_text'}],
+                'encrypted_content': None,
+                'type': 'reasoning',
+                'content': [{'text': 'raw thinking', 'type': 'reasoning_text'}],
+            },
+            id='compatible-responses-raw-cot',
+        ),
+    ],
+)
+async def test_openai_responses_does_not_replay_chat_reasoning_ids(
+    allow_model_requests: None, thinking_part: ThinkingPart, expected_input: object
+) -> None:
+    response = response_message(
+        [
+            ResponseOutputMessage(
+                id='msg_123',
+                content=cast(list[Content], [ResponseOutputText(text='done', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock(response)
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client))
+    history: list[ModelMessage] = [ModelResponse(parts=[thinking_part], provider_name='openai')]
+
+    await model.request(history, None, ModelRequestParameters())
+
+    assert get_mock_responses_kwargs(mock_client)[0]['input'] == [expected_input]
 
 
 async def test_openai_responses_thinking_with_multiple_summaries(allow_model_requests: None):
@@ -13543,8 +13694,6 @@ async def test_openai_responses_compact_replants_standing_prompt(allow_model_req
         )
 
     model.client.responses.compact = fake_compact
-    from pydantic_ai.models import ModelRequestContext
-
     response = await model.compact_messages(
         ModelRequestContext(
             model=model, messages=messages, model_settings=None, model_request_parameters=ModelRequestParameters()
