@@ -59,7 +59,10 @@ are absorbed: on a model without output truncation
 (xAI) the response is cancelled without a truncation point, and when the provider interrupts
 itself without reporting speech onset (Gemini) only the local flush is performed. The events still
 reach your iterator, already handled — react to them for UI state or to flush your audio layer's
-own in-flight block, the one buffer the session cannot reach.
+own in-flight block, the one buffer the session cannot reach. The truncation point is the last
+chunk boundary the device reached, so it attributes at most one chunk less than was really heard,
+never more. Without that single iterator — no `stream_audio()` consumer, or several — there is no
+playback position to attribute, and the flag stands down in favour of the manual paths below.
 
 As an alternative, handle barge-in yourself. The signals: providers whose profile declares
 [`emits_input_speech_events`][pydantic_ai.realtime.RealtimeModelProfile.emits_input_speech_events]

@@ -23,10 +23,11 @@ instead of ending the call.
 Barge-in costs the example no code at all: because playback is a single device-paced
 [`stream_audio()`][pydantic_ai.realtime.RealtimeSession.stream_audio] loop, the session can track
 the playback position itself, so [`handle_barge_in=True`][pydantic_ai.realtime.AgentRealtime.session]
-does the whole thing — dropping the buffered audio the user will never hear, truncating the
+does the local half of it — dropping the buffered audio the user will never hear, truncating the
 provider's transcript to what was really heard, and staying out of the way on an ordinary turn
-where the previous reply was heard in full. Playback loops the session can't follow, and triggers
-you'd rather own yourself, take the manual paths in
+where the previous reply was heard in full. The one thing it can't reach is the block already
+inside the speaker, so up to a chunk of stale audio finishes playing. Playback loops the session
+can't follow, and triggers you'd rather own yourself, take the manual paths in
 [the barge-in guide](../realtime/turns.md#barge-in) instead.
 
 ## Running the Example

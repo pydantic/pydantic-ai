@@ -665,6 +665,15 @@ class RealtimeSession:
         # nanosecond clock, so the `user speech` span can be backdated to it (see
         # `_record_user_speech_span`). `None` while nobody is speaking.
         self._user_speech_started_at: int | None = None
+        # Whether the provider's own turn detection has already cancelled the response now in
+        # flight, because the user spoke over it. A client `CancelResponse` racing the server's own
+        # can be applied to the *next* response and silence the reply to the barge-in, so an
+        # interruption of a response the server is already stopping sends only the truncation.
+        # Latched at speech onset rather than read off the clock: the pump can reach the speech
+        # *end* before the app has even dequeued the start it is reacting to, and the fact this
+        # guards is a property of the response, not of how long the user kept talking. Released
+        # when the next response opens, and by a reconnect that discards the one it referred to.
+        self._server_cancelled_the_response_on_speech = False
         # Set once the provider draws its first speech-end boundary. Gemini never does, so its
         # retained input is only ever consumed by a turn, never trimmed at one.
         self._provider_segments_input = False
@@ -1007,12 +1016,13 @@ class RealtimeSession:
     def played_audio_bytes(self) -> int:
         """The playback position of the session's single [`stream_audio()`][pydantic_ai.realtime.RealtimeSession.stream_audio] consumer, in raw PCM bytes.
 
-        A chunk counts as played once the consumer comes back for the next one, so the value is
-        exact when playback follows the documented pattern — write each chunk to the device and
-        wait until it is consumed before pulling the next. The chunk currently being written is not
-        yet counted, matching what a hand-rolled counter incremented after each write would report.
-        A consumer that instead buffers ahead reads too far; count actual device consumption
-        yourself in that case. Made to be passed to
+        A chunk counts as played once the consumer comes back for the next one, so under the
+        documented playback pattern — write each chunk to the device and wait until it is consumed
+        before pulling the next — this is the position at the last chunk boundary the device
+        reached, the same value a hand-rolled counter incremented after each write would report.
+        The chunk being written is not counted until it is done, so barge-in attributes at most one
+        chunk less than was really heard, never more. A consumer that instead buffers ahead reads
+        too far; count actual device consumption yourself in that case. Made to be passed to
         [`interrupt(played_bytes=...)`][pydantic_ai.realtime.RealtimeSession.interrupt] on
         barge-in. Requires exactly one active `stream_audio()` iterator, like that call.
         """
@@ -1312,7 +1322,7 @@ class RealtimeSession:
             if played_ms is not None:
                 raise UserError('`interrupt()` accepts either `played_ms` or `played_bytes`, not both.')
             return await self._interrupt_at_playback(
-                played_bytes, cancel=not self._server_cancels_the_response_being_spoken_over
+                played_bytes, cancel=not self._server_cancelled_the_response_on_speech
             )
         if played_ms is not None and not self._profile.get('supports_output_truncation', False):
             raise UserError(
@@ -1333,23 +1343,11 @@ class RealtimeSession:
         # the user cut in; it's dropped when absent (a cancel without truncation).
         self._session_instrumentation.record_lifecycle('interrupt', played_ms=played_ms)
 
-    @property
-    def _server_cancels_the_response_being_spoken_over(self) -> bool:
-        """Whether the provider is already cancelling the response, because the user is speaking over it.
-
-        A client `CancelResponse` racing the server's own can be applied to the *next* response and
-        silence the reply to the barge-in, so an interruption raised while the provider has a speech
-        segment open must send only the truncation. Outside a reported speech segment — a stop
-        button, a tool deciding to cut the model off — nothing else is cancelling, so the client
-        cancel is what stops the response.
-        """
-        return self._user_speech_started_at is not None and self._connection.interrupts_response_on_speech
-
     async def _interrupt_at_playback(self, played_bytes: int, *, cancel: bool = True) -> bool:
         """Map a device playback position onto the current turn, flush unheard audio, and interrupt.
 
-        `cancel=False` skips the client-side `CancelResponse`, for the barge-in the provider's own
-        VAD is already cancelling: see `_server_cancels_the_response_being_spoken_over`.
+        `cancel=False` skips the client-side `CancelResponse` for a barge-in the provider's own VAD
+        is already cancelling: see `_server_cancelled_the_response_on_speech`.
         """
         if played_bytes < 0:
             raise UserError(f'`played_bytes` must be a non-negative playback position, not {played_bytes}.')
@@ -1438,7 +1436,7 @@ class RealtimeSession:
         if isinstance(event, RealtimeInputSpeechStartEvent):
             if self._profile.get('supports_interruption', False):
                 await self._interrupt_at_playback(
-                    tap.played_bytes, cancel=not self._server_cancels_the_response_being_spoken_over
+                    tap.played_bytes, cancel=not self._server_cancelled_the_response_on_speech
                 )
         elif isinstance(event, RealtimeResponseInterruptedEvent):
             self._flush_tap(tap)
@@ -1513,6 +1511,9 @@ class RealtimeSession:
                 self._active_assistant_item_id = item_id
             return events
         self._ensure_chat_span()
+        # A new response is not the one the provider cancelled on speech onset, so interrupting it
+        # is once again the client's job.
+        self._server_cancelled_the_response_on_speech = False
         part: SpeechPart | TextPart = (
             TextPart(content='') if output_text else SpeechPart(speaker='assistant', transcript='')
         )
@@ -2164,6 +2165,9 @@ class RealtimeSession:
         `Agent.run(message_history=...)` handoff instead of dropping the tail of the conversation or
         ending on a dangling `ToolCallPart`.
         """
+        # The response the provider was cancelling on speech onset is one of the things being
+        # settled here, so interrupting whatever comes next is the client's job again.
+        self._server_cancelled_the_response_on_speech = False
         events = self._finalize_user()
         for item_id, turn in list(self._user_turns.items()):
             if item_id is not None and not turn.finalized:
@@ -2210,6 +2214,8 @@ class RealtimeSession:
         self._open_user_turn_anchor()
         self._user_turn_active = True
         self._user_speech_started_at = time_ns()
+        # Whatever response was in flight, the provider's own turn detection is cancelling it now.
+        self._server_cancelled_the_response_on_speech = self._connection.interrupts_response_on_speech
         return [event]
 
     def _handle_conversation_item(self, event: ConversationItemCreated) -> None:

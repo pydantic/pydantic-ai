@@ -1292,7 +1292,9 @@ class _CancelGatedRealtimeConnection(FakeRealtimeConnection):
 
     async def send(self, content: RealtimeInput) -> None:
         await super().send(content)
-        if isinstance(content, CancelResponse):
+        # The think-time barge-in this gate exists for sends the cancel on its own, with no
+        # truncation beside it, so nothing else reaches this fake.
+        if isinstance(content, CancelResponse):  # pragma: no branch
             self.cancelled.set()
 
     async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
@@ -1307,13 +1309,18 @@ class _CancelGatedRealtimeConnection(FakeRealtimeConnection):
 # millisecond counts (4800 bytes == 100 ms).
 _CHUNK = 4800
 
+# The barge-in playback-accounting tests below are unit tests for a shared reason: every claim is
+# about state a recording cannot contain. What a tap delivered, what it dropped, how a device
+# position maps onto a turn, and when the consumer resumed the iterator are local to the session and
+# to the timing of a *consumer* that no cassette replays. A recording can only show the frames that
+# resulted, which is what the cassette-backed `test_handle_barge_in_over_live_speech` in each
+# provider's WS module pins; these fix the bookkeeping that decides which frames those are, and the
+# sequences (overflow bursts, a straggler racing a cancel, a turn heard in full) are ones a live
+# session produces only by luck.
+
 
 async def test_interrupt_played_bytes_flushes_and_attributes_to_the_current_turn() -> None:
-    """`interrupt(played_bytes=...)` owns the whole barge-in: attribution, flush, and stragglers.
-
-    Unit test: the claim is about the session's local bookkeeping (what the audio tap delivers and
-    how a device position maps onto turns), which no wire recording can show.
-    """
+    """`interrupt(played_bytes=...)` owns the whole barge-in: attribution, flush, and stragglers."""
     conn = _GatedRealtimeConnection(
         [
             AudioDelta(b'a' * _CHUNK),
@@ -1495,10 +1502,14 @@ async def test_interrupt_played_bytes_skips_the_cancel_while_the_server_interrup
     server's own can be applied to the *next* response and silence the reply to the barge-in. The
     sibling test below pins that an interruption raised outside a speech segment still cancels,
     since nothing else is stopping the response then.
+
+    The user's whole utterance is replayed — start *and* end — before the app acts, which is the
+    ordering that matters: the pump can reach the speech end long before the app dequeues the start
+    it is reacting to, so the rule cannot be read off "is the user speaking right now".
     """
     conn = _GatedRealtimeConnection(
         [AudioDelta(b'a' * _CHUNK), AudioDelta(b'b' * _CHUNK)],
-        [RealtimeInputSpeechStartEvent()],
+        [RealtimeInputSpeechStartEvent(), RealtimeInputSpeechEndEvent()],
         interrupts_response_on_speech=True,
     )
     session = RealtimeSession(conn, _noop_runner)
@@ -1509,11 +1520,36 @@ async def test_interrupt_played_bytes_skips_the_cancel_while_the_server_interrup
 
         conn.release.set()
         async for event in session:  # pragma: no branch
-            if isinstance(event, RealtimeInputSpeechStartEvent):
+            if isinstance(event, RealtimeInputSpeechEndEvent):
                 break
 
         assert await session.interrupt(played_bytes=0) is True
         assert conn.sent == [TruncateOutput(audio_end_ms=0)]
+
+
+async def test_interrupt_played_bytes_cancels_once_the_next_response_has_started() -> None:
+    """The provider only cancelled the response the user spoke over, not the reply that follows it.
+
+    An app that interrupts again after the barge-in's reply has started is asking to stop a
+    response nothing else is stopping, so the client cancel goes out — the suppression is scoped to
+    one response, not latched for the rest of the session.
+    """
+    conn = _GatedRealtimeConnection(
+        [AudioDelta(b'a' * _CHUNK), RealtimeInputSpeechStartEvent(), RealtimeInputSpeechEndEvent()],
+        [ResponseDone(interrupted=True), AudioDelta(b'r' * _CHUNK), AudioDelta(b's' * _CHUNK)],
+        interrupts_response_on_speech=True,
+    )
+    session = RealtimeSession(conn, _noop_runner)
+
+    async with session:
+        stream = session.stream_audio()
+        assert await anext(stream) == b'a' * _CHUNK
+
+        conn.release.set()
+        assert await anext(stream) == b'r' * _CHUNK  # the reply to the barge-in is playing; `s` is not
+
+        assert await session.interrupt(played_bytes=_CHUNK) is True
+        assert conn.sent == [TruncateOutput(audio_end_ms=0), CancelResponse()]
 
 
 async def test_interrupt_played_bytes_cancels_outside_a_speech_segment() -> None:
