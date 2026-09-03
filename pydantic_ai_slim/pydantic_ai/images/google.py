@@ -193,7 +193,7 @@ class GoogleImageGenerationModel(ImageGenerationModel):
         prompt, images, settings = self.prepare_generate(prompt, images=images, settings=settings)
         google_settings = cast(GoogleImageGenerationSettings, settings)
         resolved = _resolve_google_settings(google_settings, model_name=self.model_name)
-        warn_image_generation_settings(self.system, conflicts=resolved.conflicts)
+        warn_image_generation_settings(self.system, ignored=resolved.ignored, conflicts=resolved.conflicts)
         contents = await self._map_contents(prompt, images)
 
         try:
@@ -358,6 +358,7 @@ class GoogleImageGenerationModel(ImageGenerationModel):
 @dataclass
 class _GoogleResolvedSettings:
     config: GenerateContentConfigDict
+    ignored: list[str]
     conflicts: list[str]
 
 
@@ -376,11 +377,16 @@ def _resolve_google_settings(settings: GoogleImageGenerationSettings, *, model_n
     if geometry.image_size is not None:
         image_config['image_size'] = geometry.image_size
 
+    ignored: list[str] = []
     http_options: HttpOptionsDict = {}
     if extra_headers := settings.get('extra_headers'):
         http_options['headers'] = dict(extra_headers)
-    if is_str_dict(extra_body := settings.get('extra_body')):
-        http_options['extra_body'] = extra_body
+    # `extra_body` is typed `object`, and only a string-keyed mapping can be merged into a JSON body.
+    if extra_body := settings.get('extra_body'):
+        if is_str_dict(extra_body):
+            http_options['extra_body'] = extra_body
+        else:
+            ignored.append('extra_body')
 
     return _GoogleResolvedSettings(
         config=GenerateContentConfigDict(
@@ -388,6 +394,7 @@ def _resolve_google_settings(settings: GoogleImageGenerationSettings, *, model_n
             image_config=image_config or None,
             http_options=http_options or None,
         ),
+        ignored=ignored,
         conflicts=geometry.conflicts,
     )
 

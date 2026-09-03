@@ -11,6 +11,10 @@ from .settings import (
     ImageGenerationSettings,
 )
 
+# Keyed by the members of the gRPC `ImageAspectRatio` enum, the only ratio vocabulary the image RPC
+# accepts. A portable ratio the enum omits — `21:9` is the one `ImageGenerationAspectRatio` carries —
+# has no wire representation at all, and bumping the `xai-sdk` floor does not add it: 1.19.0, the
+# newest published release, generates the same 13 members as the locked 1.18.0.
 _XAI_GEOMETRIES: dict[ImageAspectRatio, dict[ImageResolution, ImageDimensions]] = {
     '1:1': {'1k': (1024, 1024), '2k': (2048, 2048)},
     '3:4': {'1k': (864, 1152), '2k': (1776, 2368)},
@@ -117,7 +121,7 @@ def resolve_xai_aspect_ratio(aspect_ratio: ImageGenerationAspectRatio) -> ImageA
     if mapped is None:
         supported = ', '.join(f'`{value}`' for value in _XAI_ASPECT_RATIOS)
         raise UserError(
-            f'xAI image generation does not support `aspect_ratio={aspect_ratio!r}`. '
-            f'Supported aspect ratios are: {supported}.'
+            f'The `xai_sdk` `ImageAspectRatio` enum has no member for `aspect_ratio={aspect_ratio!r}`, '
+            f'so the gRPC image request cannot carry it. Supported aspect ratios are: {supported}.'
         )
     return mapped

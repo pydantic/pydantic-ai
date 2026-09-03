@@ -40,7 +40,11 @@ This dict is populated automatically via `__init_subclass__` when tool classes a
 """
 
 ImageAspectRatio = Literal['21:9', '16:9', '4:3', '3:2', '1:1', '9:16', '3:4', '2:3', '5:4', '4:5']
-"""Supported aspect ratios for image generation tools."""
+"""Supported aspect ratios for image generation tools.
+
+The direct image API takes the wider
+[`ImageGenerationAspectRatio`][pydantic_ai.images.ImageGenerationAspectRatio], of which these ten are a subset.
+"""
 
 ImageSize = Literal['auto', '1024x1024', '1024x1536', '1536x1024', '512', '1K', '2K', '4K']
 """Supported sizes for image generation tools."""

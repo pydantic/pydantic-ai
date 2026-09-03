@@ -24,6 +24,11 @@ class ImageGenerationModel(ABC):
         *,
         settings: ImageGenerationSettings | None = None,
     ) -> None:
+        """Initialize the model with optional settings.
+
+        Args:
+            settings: Model-specific settings that will be used as defaults for this model.
+        """
         self._settings = settings
 
     @property

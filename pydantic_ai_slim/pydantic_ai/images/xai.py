@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 import base64
-from collections.abc import Generator, Sequence
-from contextlib import contextmanager
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Literal, cast
 
@@ -10,8 +9,6 @@ from typing_extensions import assert_never
 
 from pydantic_ai.exceptions import (
     ContentFilterError,
-    ModelAPIError,
-    ModelHTTPError,
     UnexpectedModelBehavior,
     UserError,
 )
@@ -39,6 +36,7 @@ try:
 
     from pydantic_ai.models.xai import (
         _GRPC_STATUS_TO_HTTP as _CHAT_GRPC_STATUS_TO_HTTP,  # pyright: ignore[reportPrivateUsage]
+        _map_api_errors,  # pyright: ignore[reportPrivateUsage]
     )
 
     from ._xai_geometry import resolve_xai_geometry
@@ -73,6 +71,20 @@ class XaiImageGenerationSettings(ImageGenerationSettings, total=False):
 
     xai_resolution: ImageResolution
     """The resolution tier of the generated image."""
+
+
+@dataclass
+class _XaiInputImages:
+    """The reference-image arguments `image.sample` and `image.sample_batch` take.
+
+    Named rather than a tuple because the singular and plural forms share their types pairwise, so a
+    transposed pair would typecheck and send reference URLs as file IDs.
+    """
+
+    image_url: str | None = None
+    image_file_id: str | None = None
+    image_urls: list[str] | None = None
+    image_file_ids: list[str] | None = None
 
 
 @dataclass(init=False)
@@ -167,18 +179,18 @@ class XaiImageGenerationModel(ImageGenerationModel):
         xai_settings = cast(XaiImageGenerationSettings, settings)
         resolved = _resolve_xai_settings(xai_settings, model_name=self.model_name)
         warn_image_generation_settings(self.system, ignored=resolved.ignored, conflicts=resolved.conflicts)
-        image_url, image_file_id, image_urls, image_file_ids = await self._map_input_images(images)
+        input_images = await self._map_input_images(images)
         n = xai_settings.get('xai_n') or 1
 
-        with _map_api_errors(self.model_name):
+        with _map_api_errors(self.model_name, status_map=_GRPC_STATUS_TO_HTTP):
             if n == 1:
                 response = await self._client.image.sample(
                     prompt,
                     self.model_name,
-                    image_url=image_url,
-                    image_file_id=image_file_id,
-                    image_urls=image_urls,
-                    image_file_ids=image_file_ids,
+                    image_url=input_images.image_url,
+                    image_file_id=input_images.image_file_id,
+                    image_urls=input_images.image_urls,
+                    image_file_ids=input_images.image_file_ids,
                     user=xai_settings.get('xai_user'),
                     image_format='base64',
                     aspect_ratio=resolved.aspect_ratio,
@@ -191,10 +203,10 @@ class XaiImageGenerationModel(ImageGenerationModel):
                         prompt,
                         self.model_name,
                         n,
-                        image_url=image_url,
-                        image_file_id=image_file_id,
-                        image_urls=image_urls,
-                        image_file_ids=image_file_ids,
+                        image_url=input_images.image_url,
+                        image_file_id=input_images.image_file_id,
+                        image_urls=input_images.image_urls,
+                        image_file_ids=input_images.image_file_ids,
                         user=xai_settings.get('xai_user'),
                         image_format='base64',
                         aspect_ratio=resolved.aspect_ratio,
@@ -204,9 +216,7 @@ class XaiImageGenerationModel(ImageGenerationModel):
 
         return self._map_response(prompt, settings, responses)
 
-    async def _map_input_images(
-        self, images: Sequence[ImageGenerationInput]
-    ) -> tuple[str | None, str | None, list[str] | None, list[str] | None]:
+    async def _map_input_images(self, images: Sequence[ImageGenerationInput]) -> _XaiInputImages:
         image_references: list[str] = []
         file_ids: list[str] = []
         seen_reference = False
@@ -233,8 +243,8 @@ class XaiImageGenerationModel(ImageGenerationModel):
 
         if len(images) == 1:
             if file_ids:
-                return None, file_ids[0], None, None
-            return image_references[0], None, None, None
+                return _XaiInputImages(image_file_id=file_ids[0])
+            return _XaiInputImages(image_url=image_references[0])
 
         # Reported after the loop so a per-image validation error takes precedence over the ordering.
         if order_violated:
@@ -243,7 +253,7 @@ class XaiImageGenerationModel(ImageGenerationModel):
                 'Place all `UploadedFile` inputs first to preserve reference-image order.'
             )
 
-        return None, None, image_references or None, file_ids or None
+        return _XaiInputImages(image_urls=image_references or None, image_file_ids=file_ids or None)
 
     def _map_response(
         self,
@@ -396,18 +406,6 @@ def _response_provider_details(response: ImageResponse) -> dict[str, object]:
     if (cost_usd := response.cost_usd) is not None:
         provider_details['cost_usd'] = cost_usd
     return provider_details
-
-
-@contextmanager
-def _map_api_errors(model_name: str) -> Generator[None]:
-    try:
-        yield
-    except grpc.RpcError as e:
-        status_code = _GRPC_STATUS_TO_HTTP.get(e.code())
-        details = e.details() or str(e)
-        if status_code is not None:
-            raise ModelHTTPError(status_code=status_code, model_name=model_name, body=details) from e
-        raise ModelAPIError(model_name=model_name, message=details) from e
 
 
 # The image path additionally maps `INVALID_ARGUMENT` to 400, which the chat table leaves unmapped.

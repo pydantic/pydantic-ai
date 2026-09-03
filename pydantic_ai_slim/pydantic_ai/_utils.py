@@ -1085,6 +1085,6 @@ def estimate_string_tokens(text: str) -> int:
     """Roughly estimate the number of tokens in a string by splitting on whitespace and punctuation.
 
     Shared by the test models, which report a plausible usage count without pulling in a tokenizer.
-    Blank text counts as one token, so a caller that can be handed one guards it itself.
+    Blank text counts as one token, so a caller that wants zero for it guards the call itself.
     """
     return len(_TOKEN_SPLIT_PATTERN.split(text.strip()))

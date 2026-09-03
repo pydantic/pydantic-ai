@@ -4,7 +4,7 @@ import base64
 import json
 import os
 import re
-from collections.abc import AsyncGenerator, Callable
+from collections.abc import AsyncGenerator, Callable, Mapping
 from contextlib import asynccontextmanager
 from decimal import Decimal
 from pathlib import Path
@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import httpx2
 import pytest
+from dirty_equals import IsBytes
 from genai_prices.types import PriceCalculation
 
 import pydantic_ai.images as images_module
@@ -64,7 +65,7 @@ with try_import() as logfire_imports_successful:
     from logfire.testing import CaptureLogfire
 
 with try_import() as openai_imports_successful:
-    from openai import APIConnectionError, APIStatusError, AsyncOpenAI
+    from openai import APIConnectionError, APIStatusError, AsyncOpenAI, Omit
     from openai.types.image import Image
     from openai.types.images_response import ImagesResponse, Usage, UsageInputTokensDetails, UsageOutputTokensDetails
 
@@ -700,6 +701,22 @@ def test_openai_geometry_conflicts_and_invalid_compatibility_sizes():
     assert openai_geometry.parse_dimensions('0x10') is None
 
 
+def test_openai_geometry_reports_a_conflict_for_non_dimensional_provider_size():
+    """`openai_size='auto'` names no shape, so any `aspect_ratio` beside it is reported as overridden.
+
+    `'auto'` is OpenAI's own default and a documented `openai_size` value, and it is the one provider
+    size that cannot agree with a ratio: `parse_dimensions` returns `None` for it, so the compatibility
+    check can only fail. The warning is the honest answer — the ratio really is being dropped.
+    """
+    geometry = openai_geometry.resolve_openai_geometry(
+        'gpt-image-1',
+        {'aspect_ratio': '1:1'},
+        provider_size='auto',
+    )
+
+    assert (geometry.size, geometry.conflicts) == snapshot(('auto', ['aspect_ratio']))
+
+
 @pytest.mark.skipif(not xai_imports_successful(), reason='xAI SDK not installed')
 def test_xai_geometry_reports_provider_conflicts_with_dimensions():
     geometry = xai_geometry.resolve_xai_geometry(
@@ -1052,6 +1069,41 @@ async def test_google_image_generation_wires_extra_body():
 
 
 @pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
+async def test_google_image_generation_warns_for_unmergeable_extra_body():
+    """`extra_body` is typed `object`, and only a string-keyed mapping can be merged into a JSON body.
+
+    Anything else is dropped, and dropping an explicitly-set portable setting without saying so is what
+    the xAI sibling already warns about for the same field.
+    """
+    requests: list[httpx2.Request] = []
+
+    def handle_request(request: httpx2.Request) -> httpx2.Response:
+        requests.append(request)
+        return httpx2.Response(
+            200,
+            json={
+                'candidates': [
+                    {
+                        'content': {
+                            'parts': [{'inlineData': {'data': 'aGVsbG8=', 'mimeType': 'image/png'}}],
+                            'role': 'model',
+                        },
+                        'finishReason': 'STOP',
+                    }
+                ]
+            },
+        )
+
+    async with _mock_google_provider(handle_request) as provider:
+        model = GoogleImageGenerationModel('gemini-2.5-flash-image', provider=provider)
+
+        with pytest.warns(UserWarning, match=r'ignored unsupported settings: `extra_body`'):
+            await model.generate('a robot', settings={'extra_body': ['not-a-mapping']})
+
+    assert 'not-a-mapping' not in requests[0].content.decode()
+
+
+@pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
 async def test_google_image_generation_downloads_image_url(monkeypatch: pytest.MonkeyPatch):
     download_mock = AsyncMock(return_value={'data': b'downloaded', 'data_type': 'image/webp'})
     monkeypatch.setattr(google_images, 'download_item', download_mock)
@@ -1145,6 +1197,53 @@ async def test_google_cloud_image_generation_downloads_files_api_url(monkeypatch
     body = json.loads(requests[0].content)
     blob = body['contents'][0]['parts'][1]['inlineData']
     assert (blob['data'], blob.get('mimeType') or blob.get('mime_type')) == ('ZG93bmxvYWRlZA==', 'image/webp')
+
+
+@pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
+async def test_google_image_generation_force_download_beats_files_api_shortcut(monkeypatch: pytest.MonkeyPatch):
+    """`force_download=True` inlines a Files API URL that the Gemini transport would otherwise forward.
+
+    The `fileData` shortcut is guarded by three conjuncts, and the other two — the transport and the URL
+    prefix — are each pinned both ways by the neighbouring tests, so line coverage stays at 100% while
+    this one goes unvisited. Forwarding here would silently drop an explicitly requested download.
+    """
+    download_mock = AsyncMock(return_value={'data': b'downloaded', 'data_type': 'image/webp'})
+    monkeypatch.setattr(google_images, 'download_item', download_mock)
+    requests: list[httpx2.Request] = []
+
+    def handle_request(request: httpx2.Request) -> httpx2.Response:
+        requests.append(request)
+        return httpx2.Response(
+            200,
+            json={
+                'candidates': [
+                    {
+                        'content': {
+                            'parts': [{'inlineData': {'data': 'aGVsbG8=', 'mimeType': 'image/png'}}],
+                            'role': 'model',
+                        },
+                        'finishReason': 'STOP',
+                    }
+                ]
+            },
+        )
+
+    image_url = ImageUrl(
+        'https://generativelanguage.googleapis.com/v1beta/files/abc123',
+        media_type='image/png',
+        force_download=True,
+    )
+
+    async with _mock_google_provider(handle_request) as provider:
+        model = GoogleImageGenerationModel('gemini-2.5-flash-image', provider=provider)
+
+        await model.generate('edit this image', images=[image_url])
+
+    download_mock.assert_awaited_once_with(image_url, data_format='bytes')
+    body = json.loads(requests[0].content)
+    assert body['contents'][0]['parts'][1] == snapshot(
+        {'inlineData': {'data': 'ZG93bmxvYWRlZA==', 'mimeType': 'image/webp'}}
+    )
 
 
 @pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
@@ -2145,7 +2244,10 @@ async def test_xai_image_generation_sdk_call_and_response_mapping():
     # Without an override there is nothing to carry `4:5`, so the request cannot be built at all.
     with pytest.raises(
         UserError,
-        match=r"xAI image generation does not support `aspect_ratio='4:5'`\. Supported aspect ratios are: `1:1`, ",
+        match=(
+            r"The `xai_sdk` `ImageAspectRatio` enum has no member for `aspect_ratio='4:5'`, so the gRPC image "
+            r'request cannot carry it\. Supported aspect ratios are: `1:1`, '
+        ),
     ):
         await model.generate(
             'inexpressible aspect ratio',
@@ -2772,6 +2874,16 @@ def openai_mock_client() -> AsyncMock:
     return mock_client
 
 
+def _openai_sent_kwargs(kwargs: Mapping[str, object]) -> dict[str, object]:
+    """The subset of a recorded call's keyword arguments that actually reaches the wire.
+
+    The adapter hands the SDK its `omit` sentinel for every unset argument, so dropping the sentinels
+    leaves the request. They also cannot be snapshotted: `inline_snapshot` deep-copies the value it
+    stores, and an `Omit` copy does not compare equal to the original.
+    """
+    return {key: value for key, value in kwargs.items() if not isinstance(value, Omit)}
+
+
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
 async def test_openai_image_generation_response_mapping(openai_mock_client: AsyncMock):
     openai_mock_client.images.generate.return_value = ImagesResponse.model_construct(
@@ -2840,12 +2952,23 @@ async def test_openai_image_generation_response_mapping(openai_mock_client: Asyn
             provider_url='https://api.openai.com/v1/',
         )
     )
-    assert 'response_format' not in openai_mock_client.images.generate.await_args.kwargs
-    assert openai_mock_client.images.generate.await_args.kwargs['size'] == 'auto'
-    assert openai_mock_client.images.generate.await_args.kwargs['background'] == 'opaque'
-    assert openai_mock_client.images.generate.await_args.kwargs['moderation'] == 'low'
-    assert openai_mock_client.images.generate.await_args.kwargs['quality'] == 'low'
-    assert openai_mock_client.images.generate.await_args.kwargs['output_compression'] == 80
+    # Snapshotted whole so a kwarg the adapter starts sending shows up here, and so the absence of
+    # `response_format` — which would switch the response away from base64 — is expressed by the payload.
+    assert _openai_sent_kwargs(openai_mock_client.images.generate.await_args.kwargs) == snapshot(
+        {
+            'prompt': 'tiny robot',
+            'model': 'gpt-image-1',
+            'n': 1,
+            'size': 'auto',
+            'output_format': 'png',
+            'quality': 'low',
+            'background': 'opaque',
+            'moderation': 'low',
+            'output_compression': 80,
+            'extra_headers': None,
+            'extra_body': None,
+        }
+    )
 
     with pytest.warns(UserWarning, match=r'ignored unsupported settings: `input_fidelity`'):
         await model.generate(
@@ -3129,13 +3252,14 @@ def test_openai_image_generation_rejects_dalle_models(model_name: str):
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
 @pytest.mark.parametrize('model_name', ['gpt-image-2', 'gpt-image-2-2026-04-21'])
 async def test_openai_forwards_unvalidated_transparent_background(model_name: str, openai_mock_client: AsyncMock):
-    """`openai_background` is forwarded verbatim even where OpenAI documents it as unsupported.
+    """`openai_background` is forwarded verbatim, whatever the pinned SDK believes about the model.
 
-    OpenAI's image-generation guide states GPT Image 2 does not support transparent backgrounds.
-    We still forward the provider-prefixed setting the user opted into rather than guarding on an
-    assumed capability limit, per the `models/` rule that the provider API is the authority on what
-    it currently supports. This pins the passthrough, NOT a claim that the request succeeds — the
-    mock returns success, so a real 400 would not be caught here.
+    The `openai` SDK's `background` docstring says `gpt-image-2` does not support transparent
+    backgrounds; OpenAI's image-generation guide says they are available for it in preview. We forward
+    the provider-prefixed setting the user opted into rather than guarding on either claim, per the
+    `models/` rule that the provider API is the authority on what it currently supports. This pins the
+    passthrough, NOT a claim that the request succeeds — the mock returns success, so a real 400 would
+    not be caught here.
     """
     openai_mock_client.images.generate.return_value = _openai_png_response()
     model = OpenAIImageGenerationModel(
@@ -3365,24 +3489,28 @@ async def test_openai_image_edit_request(openai_mock_client: AsyncMock):
 
     openai_mock_client.images.generate.assert_not_awaited()
     openai_mock_client.images.edit.assert_awaited_once()
-    kwargs = openai_mock_client.images.edit.await_args.kwargs
-    assert kwargs['image'] == [
-        ('image-0.png', TINY_PNG, 'image/png'),
-        ('image-1.jpg', _JPEG_MAGIC_BYTES, 'image/jpeg'),
-    ]
-    assert kwargs['prompt'] == 'turn these into one image'
-    assert kwargs['model'] == 'gpt-image-1'
-    assert kwargs['n'] == 1
-    assert kwargs['size'] == '1024x1024'
-    assert kwargs['output_format'] == 'webp'
-    assert kwargs['quality'] == 'high'
-    assert kwargs['background'] == 'opaque'
-    assert kwargs['input_fidelity'] == 'high'
-    assert kwargs['output_compression'] == 80
-    assert kwargs['user'] == 'user-123'
-    assert kwargs['extra_headers'] == {'x-test': 'header'}
-    assert kwargs['extra_body'] == {'provider_option': True}
-    assert 'moderation' not in kwargs
+    # Snapshotted whole so a kwarg the adapter starts sending shows up here, and so the absence of
+    # `moderation` — dropped on the edit endpoint — is expressed by the payload rather than asserted.
+    assert _openai_sent_kwargs(openai_mock_client.images.edit.await_args.kwargs) == snapshot(
+        {
+            'image': [
+                ('image-0.png', IsBytes(), 'image/png'),
+                ('image-1.jpg', b'\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00', 'image/jpeg'),
+            ],
+            'prompt': 'turn these into one image',
+            'model': 'gpt-image-1',
+            'n': 1,
+            'size': '1024x1024',
+            'output_format': 'webp',
+            'quality': 'high',
+            'background': 'opaque',
+            'input_fidelity': 'high',
+            'output_compression': 80,
+            'user': 'user-123',
+            'extra_headers': {'x-test': 'header'},
+            'extra_body': {'provider_option': True},
+        }
+    )
     assert result.images[0].content == BinaryImage(data=TINY_PNG, media_type='image/png')
     assert result.provider_details == {'created': 456}
 
@@ -3920,16 +4048,40 @@ async def test_instrumentation_records_complete_response_metrics(
 
     spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
     span = next(span for span in spans if 'image_generation' in span['name'])
-    attributes = span['attributes']
-    assert attributes['server.address'] == 'example.com'
-    assert attributes['gen_ai.usage.output_tokens'] == 3
-    assert attributes['gen_ai.response.model'] == 'response-model'
-    assert attributes['image.0.size'] == '1024x1024'
-    assert attributes['image.0.quality'] == 'high'
-    assert attributes['image.0.output_format'] == 'png'
-    assert attributes['image.0.background'] == 'transparent'
-    assert attributes['operation.cost'] == 0.25
-    assert 'gen_ai.response.id' not in attributes
+    # Snapshotted whole so the absent `gen_ai.response.id` — the result carries no provider id — is
+    # expressed by the payload, and a new attribute cannot slip in unnoticed.
+    assert span['attributes'] == snapshot(
+        {
+            'gen_ai.operation.name': 'image_generation',
+            'gen_ai.output.type': 'image',
+            'gen_ai.provider.name': 'test',
+            'gen_ai.request.model': 'test',
+            'server.address': 'example.com',
+            'prompt_length': 10,
+            'input_image_count': 0,
+            'prompt': 'tiny robot',
+            'logfire.json_schema': {
+                'type': 'object',
+                'properties': {
+                    'prompt_length': {'type': 'integer'},
+                    'input_image_count': {'type': 'integer'},
+                    'image_count': {'type': 'integer'},
+                    'prompt': {'type': 'string'},
+                },
+            },
+            'logfire.span_type': 'span',
+            'logfire.msg': 'image_generation test',
+            'gen_ai.usage.output_tokens': 3,
+            'gen_ai.response.model': 'response-model',
+            'image_count': 1,
+            'image.0.size': '1024x1024',
+            'image.0.quality': 'high',
+            'image.0.output_format': 'png',
+            'image.0.background': 'transparent',
+            'image.0.media_type': 'image/png',
+            'operation.cost': 0.25,
+        }
+    )
 
     metrics = capfire.get_collected_metrics()
     assert [metric['name'] for metric in metrics] == [
@@ -4002,10 +4154,33 @@ async def test_instrumentation_respects_content_and_request_parameter_flags(capf
 
     spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
     span = next(span for span in spans if 'image_generation' in span['name'])
-    attributes = span['attributes']
-
-    assert 'prompt' not in attributes
-    assert 'image_generation_settings' not in attributes
-    assert 'image_generation_settings' not in attributes['logfire.json_schema']['properties']
-    assert 'image.0.media_type' in attributes
+    # Snapshotted whole because every assertion here is about what the flags keep OUT: neither `prompt`
+    # nor `image_generation_settings` may appear, in the attributes or in the JSON schema.
+    assert span['attributes'] == snapshot(
+        {
+            'gen_ai.operation.name': 'image_generation',
+            'gen_ai.output.type': 'image',
+            'gen_ai.provider.name': 'test',
+            'gen_ai.request.model': 'test',
+            'prompt_length': 10,
+            'input_image_count': 0,
+            'logfire.json_schema': {
+                'type': 'object',
+                'properties': {
+                    'prompt_length': {'type': 'integer'},
+                    'input_image_count': {'type': 'integer'},
+                    'image_count': {'type': 'integer'},
+                },
+            },
+            'logfire.span_type': 'span',
+            'logfire.msg': 'image_generation test',
+            'gen_ai.usage.input_tokens': 2,
+            'gen_ai.response.model': 'test',
+            'image_count': 1,
+            'image.0.size': '1x1',
+            'image.0.output_format': 'png',
+            'image.0.media_type': 'image/png',
+            'gen_ai.response.id': IsStr(),
+        }
+    )
     assert 'data' not in str(span)

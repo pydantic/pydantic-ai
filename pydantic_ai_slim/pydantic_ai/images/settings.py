@@ -45,6 +45,10 @@ which validates it itself; OpenAI and xAI have no way to carry it and raise
 `UserError`. See the
 [Image Generation guide](../image-generation.md#canonical-dimensions-for-aspect_ratio)
 for the ratio-to-dimensions matrix.
+
+This is the direct image API's vocabulary. The native image generation tool takes
+[`ImageAspectRatio`][pydantic_ai.native_tools.ImageAspectRatio] instead, whose ten
+values are a subset of these twenty.
 """
 
 

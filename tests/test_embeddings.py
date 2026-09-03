@@ -193,6 +193,20 @@ async def test_test_embedding_model_is_exempt_from_request_guard():
     assert result.embeddings == snapshot([[1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]])
 
 
+async def test_test_embedding_model_counts_blank_input_as_zero_tokens():
+    """Blank input reports no tokens on both methods.
+
+    The estimator behind them is shared with the other test models, and it counts blank text as one
+    token; `TestEmbeddingModel` guards that, so a blank input contributes nothing to the reported
+    usage instead of one phantom token per empty string in the batch.
+    """
+    model = TestEmbeddingModel()
+
+    assert await model.count_tokens('') == snapshot(0)
+    result = await model.embed(['', 'hi there'], input_type='document')
+    assert result.usage.input_tokens == snapshot(2)
+
+
 STSB_BERT_TINY_MODEL = 'sentence-transformers-testing/stsb-bert-tiny-safetensors'
 # Pinned so a warm HF cache is served without revalidating files against the Hub.
 # Keep in sync with the HF cache keys and warmup commands in .github/workflows/ci.yml;

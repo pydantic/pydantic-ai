@@ -127,7 +127,7 @@ class InstrumentedImageGenerationModel(WrapperImageGenerationModel):
                     )
                     nonlocal record_metrics
                     record_metrics = self._metric_recorder(
-                        provider_name, request_model, response_model, result, price_calculation
+                        operation, provider_name, request_model, response_model, result, price_calculation
                     )
 
                     if not span.is_recording():
@@ -142,6 +142,7 @@ class InstrumentedImageGenerationModel(WrapperImageGenerationModel):
 
     def _metric_recorder(
         self,
+        operation: str,
         provider_name: str,
         request_model: str,
         response_model: str,
@@ -151,7 +152,7 @@ class InstrumentedImageGenerationModel(WrapperImageGenerationModel):
         def record_metrics() -> None:
             metric_attributes = {
                 GEN_AI_PROVIDER_NAME_ATTRIBUTE: provider_name,
-                'gen_ai.operation.name': 'image_generation',
+                'gen_ai.operation.name': operation,
                 GEN_AI_REQUEST_MODEL_ATTRIBUTE: request_model,
                 'gen_ai.response.model': response_model,
             }

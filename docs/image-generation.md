@@ -237,8 +237,9 @@ async def main():
 
 Four settings can be dropped with a warning, because the selected request has no field for them: `openai_moderation`
 on an edit and `openai_input_fidelity` on a generation, and `extra_headers` and `extra_body` on xAI, whose gRPC
-transport has no per-request header or body escape hatch. Everything else is either forwarded to the provider or, for
-geometry, rejected before the request — see [Output Geometry](#output-geometry).
+transport has no per-request header or body escape hatch. Google drops `extra_body` with the same warning when it is
+not a string-keyed mapping, since only a mapping can be merged into the JSON request body. Everything else is either
+forwarded to the provider or, for geometry, rejected before the request — see [Output Geometry](#output-geometry).
 
 OpenAI transparent backgrounds require `openai_output_format='png'` or `'webp'`, and model support varies.
 Provider-specific settings are forwarded so the provider remains the authority on current model support; see the
@@ -285,7 +286,8 @@ When only `aspect_ratio` is provided, these are the canonical exact dimensions. 
 which has no ratio field to carry one; Gemini and Grok Imagine take the ratio and a size tier as native request fields,
 and the table records the shape they return for it. A dash means the model family names no canonical shape for that
 ratio: OpenAI and Grok Imagine raise [`UserError`][pydantic_ai.exceptions.UserError], while Gemini still receives the
-ratio and answers for itself.
+ratio and answers for itself. Grok Imagine's `21:9` dash is the transport rather than the model — the gRPC
+`ImageAspectRatio` enum `xai-sdk` generates has no member for that ratio, so the request cannot carry it.
 
 | Ratio | GPT Image 1.x | GPT Image 2 | Gemini 2.5 Flash | Gemini 3 Pro | Gemini 3.1 Flash / Flash Lite | Grok Imagine |
 | --- | --- | --- | --- | --- | --- | --- |

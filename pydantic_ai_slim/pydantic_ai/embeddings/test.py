@@ -10,6 +10,14 @@ from .result import EmbeddingResult, EmbedInputType
 from .settings import EmbeddingSettings
 
 
+def _estimate_tokens(text: str) -> int:
+    """Estimate the tokens in `text`, reporting zero for blank input.
+
+    The shared estimator counts blank text as one token; this model reports none.
+    """
+    return estimate_string_tokens(text) if text else 0
+
+
 @dataclass(init=False)
 class TestEmbeddingModel(EmbeddingModel):
     """A mock embedding model for testing.
@@ -92,7 +100,7 @@ class TestEmbeddingModel(EmbeddingModel):
             embeddings=[[1.0] * dimensions] * len(inputs),
             inputs=inputs,
             input_type=input_type,
-            usage=RequestUsage(input_tokens=sum(estimate_string_tokens(text) for text in inputs)),
+            usage=RequestUsage(input_tokens=sum(_estimate_tokens(text) for text in inputs)),
             model_name=self.model_name,
             provider_name=self.system,
             provider_response_id=str(uuid.uuid4()),
@@ -102,4 +110,4 @@ class TestEmbeddingModel(EmbeddingModel):
         return 1024
 
     async def count_tokens(self, text: str) -> int:
-        return estimate_string_tokens(text)
+        return _estimate_tokens(text)
