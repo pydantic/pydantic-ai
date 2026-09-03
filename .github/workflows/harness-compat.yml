@@ -29,9 +29,10 @@ name: Harness Compat
 # instead of `main` — the pairing that will exist once both merge, which is the
 # state actually worth verifying. Everything else keeps testing `main`.
 #
-# The label is the carrier on purpose: applying one needs write access, so a
-# fork PR cannot redirect the harness ref, and the value never reaches a shell
-# or a template unquoted (read from `env` and parsed with `jq`).
+# The label is the carrier on purpose: applying one needs triage or write access
+# (creating a new `harness-ref:*` label needs write), so a fork PR cannot redirect
+# the harness ref, and the value never reaches a shell or a template unquoted
+# (read from `env` and parsed with `jq`).
 #
 # Drop the label once the harness branch has merged.
 
@@ -50,10 +51,20 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  # PRs: one group per ref, so applying then removing the label cancels the superseded
+  # run instead of letting it land as the required check for a label state that is gone.
+  # push/tag: one group per run_id, matching `ci.yml`, so main and tag runs never share one.
+  group: harness-compat-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   resolve-harness-ref:
     name: resolve harness ref
     runs-on: ubuntu-latest
+    # The label comes off the event payload, so this job needs no token at all. Dropping the
+    # inherited `contents: read` also makes any later edit that starts needing one fail loudly.
+    permissions: {}
     outputs:
       ref: ${{ steps.resolve.outputs.ref }}
     steps:
