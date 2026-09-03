@@ -5610,45 +5610,6 @@ def test_azure_prompt_filter_error(allow_model_requests: None) -> None:
     )
 
 
-def enable_document_input(default: ModelProfile) -> ModelProfile:
-    return merge_profile(default, OpenAIModelProfile(openai_chat_supports_document_input=True))
-
-
-def replace_document_profile(_default: ModelProfile) -> ModelProfile:
-    return ModelProfile()
-
-
-@pytest.mark.parametrize('provider_name', ['azure', 'openai'])
-@pytest.mark.parametrize(
-    'profile, expected',
-    [
-        (None, False),
-        ({}, False),
-        (OpenAIModelProfile(openai_chat_supports_document_input=False), False),
-        (OpenAIModelProfile(openai_chat_supports_document_input=True), True),
-        (enable_document_input, True),
-        (replace_document_profile, None),
-    ],
-    ids=['default', 'partial', 'disabled', 'enabled', 'callable-override', 'callable-replacement'],
-)
-async def test_azure_document_profile_override(
-    provider_name: Literal['azure', 'openai'],
-    profile: ModelProfile | Callable[[ModelProfile], ModelProfile] | None,
-    expected: bool | None,
-) -> None:
-    """Profile resolution is local configuration, independent of Azure's live API capabilities."""
-    async with AsyncAzureOpenAI(
-        api_version='2024-12-01-preview',
-        azure_endpoint='https://example.openai.azure.com/',
-        api_key='test',
-    ) as client:
-        provider = (
-            AzureProvider(openai_client=client) if provider_name == 'azure' else OpenAIProvider(openai_client=client)
-        )
-        model = OpenAIChatModel('gpt-5-mini', provider=provider, profile=profile)
-        assert model.profile.get('openai_chat_supports_document_input') is expected
-
-
 @pytest.mark.parametrize('provider_name', ['azure', 'openai'])
 @pytest.mark.parametrize('model_type', ['chat', 'responses'])
 @pytest.mark.vcr(ignore_hosts=['example.openai.azure.com'])
@@ -5685,6 +5646,17 @@ async def test_openai_provider_with_azure_client_uses_azure_behavior(
             assert model.profile.get('openai_chat_supports_document_input') is False
             with pytest.raises(UserError, match="Azure's Chat Completions API does not support document input"):
                 await Agent(model).run([BinaryContent(data=b'%PDF-1.4 test', media_type='application/pdf')])
+
+            profiles: list[tuple[ModelProfile | Callable[[ModelProfile], ModelProfile], bool | None]] = [
+                ({}, False),
+                (OpenAIModelProfile(openai_chat_supports_document_input=False), False),
+                (OpenAIModelProfile(openai_chat_supports_document_input=True), True),
+                (lambda _default: OpenAIModelProfile(openai_chat_supports_document_input=True), True),
+                (lambda _default: ModelProfile(), None),
+            ]
+            for profile, expected in profiles:
+                configured = OpenAIChatModel('gpt-5-mini', provider=provider, profile=profile)
+                assert configured.profile.get('openai_chat_supports_document_input') is expected
 
         with pytest.raises(
             ContentFilterError, match=r"Content filter triggered. Finish reason: 'content_filter'"
