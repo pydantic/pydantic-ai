@@ -1622,15 +1622,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
             async def _close_sandbox_connection(facade: Sandbox) -> None:
                 with anyio.CancelScope(shield=True):
-                    await facade._close_connected_backend()  # pyright: ignore[reportPrivateUsage]
+                    await facade._close_connection()  # pyright: ignore[reportPrivateUsage]
 
             # Resolve the sandbox before `for_run` so every hook sees the final `ctx.sandbox`; its
             # release and connection close go on `stack` first so they run after the run's own teardown.
             if isinstance(sandbox, SandboxRef):
                 connectors = active_leaves(bootstrap_capability)
-                sandbox_facade = Sandbox._from_ref(  # pyright: ignore[reportPrivateUsage]
-                    sandbox, lambda ref: connect_sandbox_ref(connectors, initial_ctx, ref)
-                )
+                backend = connect_sandbox_ref(connectors, initial_ctx, sandbox)
+                sandbox_facade = Sandbox(backend, ref=sandbox)
                 stack.push_async_callback(_close_sandbox_connection, sandbox_facade)
             elif sandbox is not None:
                 sandbox_facade = Sandbox.wrap(sandbox)
@@ -1639,9 +1638,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 acquired = await acquire_run_sandbox(bootstrap_capability, initial_ctx)
                 if acquired is not None:
                     supplier, sandbox_ref = acquired
-                    sandbox_facade = Sandbox._from_ref(  # pyright: ignore[reportPrivateUsage]
-                        sandbox_ref, lambda ref: connect_sandbox_ref([supplier], initial_ctx, ref)
-                    )
+                    backend = connect_sandbox_ref([supplier], initial_ctx, sandbox_ref)
+                    sandbox_facade = Sandbox(backend, ref=sandbox_ref)
+                    sandbox_facade._supplier_id = supplier.id  # pyright: ignore[reportPrivateUsage]
                     stack.push_async_callback(release_run_sandbox, supplier, initial_ctx, sandbox_ref)
                     # Detach the live connection before releasing ownership of the environment.
                     stack.push_async_callback(_close_sandbox_connection, sandbox_facade)

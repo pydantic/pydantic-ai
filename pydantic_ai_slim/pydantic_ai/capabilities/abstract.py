@@ -550,13 +550,17 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """
         return None
 
-    async def get_sandbox(self, ctx: RunContext[AgentDepsT], ref: SandboxRef) -> SandboxBackend | None:
-        """Connect to the sandbox identified by `ref` and return a live backend; never create one.
+    def get_sandbox(self, ctx: RunContext[AgentDepsT], ref: SandboxRef) -> SandboxBackend | None:
+        """Construct a backend object for `ref`, or return `None` if this capability cannot serve it.
 
-        Return `None` if this capability cannot serve `ref`. Return a fresh handle on every call; the run
-        closes it with `close(terminate=False)` when the backend supports it. Fail if the sandbox is gone.
-        Never a durable operation: a live handle cannot be replayed, so durable engines call this inside
-        each durable unit, with the engine's restricted `ctx` (`ctx.deps` is always available).
+        This method must not connect, probe liveness, resume, start, or create an environment. Any client
+        the backend needs must be created lazily on its first operation. If the environment is gone, the
+        backend raises [`SandboxUnavailableError`][pydantic_ai.sandboxes.SandboxUnavailableError] from
+        [`run`][pydantic_ai.sandboxes.SandboxBackend.run] or a filesystem operation.
+
+        The run closes the returned backend with `close(terminate=False)` when supported, once per
+        in-process run and once per Temporal activity. This hook is never a durable operation: it is
+        construct-only and runs inside every durable unit.
         """
         return None
 

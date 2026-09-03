@@ -67,6 +67,22 @@ async def test_sandbox_resolve_rejects_relative_base():
         await sandbox.resolve('file.txt', base='relative')
 
 
+async def test_working_dir_is_cached():
+    class CountingBackend(FakeSandbox):
+        calls = 0
+
+        async def working_dir(self) -> str:
+            self.calls += 1
+            return await super().working_dir()
+
+    backend = CountingBackend('working-dir')
+    sandbox = Sandbox(backend)
+
+    assert await sandbox.working_dir() == '/workspace'
+    assert await sandbox.resolve('file.txt') == '/workspace/file.txt'
+    assert backend.calls == 1
+
+
 class _ClosableFakeSandbox(FakeSandbox):
     def __init__(self, name: str, close_calls: list[bool]) -> None:
         super().__init__(name)
@@ -539,7 +555,7 @@ class SandboxCapability(AbstractCapability[Any]):
         self.backend = FakeSandbox(self.name)
         return SandboxRef(sandbox_id=self.backend.sandbox_id)
 
-    async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
+    def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
         if self.backend is None or ref.sandbox_id != self.backend.sandbox_id:
             return None
         self.events.append(f'{self.name}:connect')
@@ -549,7 +565,7 @@ class SandboxCapability(AbstractCapability[Any]):
         self.events.append(f'{self.name}:release')
 
 
-async def test_sandbox_ref_connects_once_and_exposes_identity_before_connection():
+async def test_sandbox_ref_connects_once_and_exposes_identity():
     connector = ConnectOnlySandboxCapability()
     observed: list[Sandbox] = []
     agent: Agent = Agent(_tool_call_then_text(), capabilities=[connector])
@@ -559,10 +575,8 @@ async def test_sandbox_ref_connects_once_and_exposes_identity_before_connection(
         sandbox = ctx.sandbox
         observed.append(sandbox)
         assert sandbox.sandbox_id == 'fake-deferred'
-        with pytest.raises(UserError, match='has not connected yet'):
-            sandbox.backend
-        deferred_fs = sandbox.fs
-        assert sandbox.fs is deferred_fs  # the pre-connection adapter is cached
+        assert sandbox.ref == SandboxRef(sandbox_id='fake-deferred')
+        assert sandbox.backend is connector.backends[0]
 
         run_results = await asyncio.gather(
             sandbox.run(['one']),
@@ -571,7 +585,6 @@ async def test_sandbox_ref_connects_once_and_exposes_identity_before_connection(
         )
         assert [result.stdout for result in run_results[:2]] == ['connected', 'connected']
         assert run_results[2] == '/workspace'
-        assert sandbox.backend is connector.backends[0]
         return 'ok'
 
     result = await agent.run('go', sandbox=SandboxRef(sandbox_id='fake-deferred'))
@@ -588,7 +601,7 @@ async def test_capability_connection_is_detached_without_terminating_sandbox(san
         async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
             return SandboxRef(sandbox_id='fake-connected')
 
-        async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
+        def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
             return _ClosableFakeSandbox('connected', close_calls)
 
     await make_connecting_probe_agent([], capabilities=[Connector()]).run('go', sandbox=sandbox_arg)
@@ -604,9 +617,8 @@ async def test_caller_owned_backend_is_not_closed_by_run():
     assert close_calls == []
 
 
-async def test_deferred_filesystem_proxy_serves_every_operation():
-    """A file operation as the first act on a capability-supplied sandbox connects and works,
-    and an `fs` handle obtained before connection stays valid afterwards."""
+async def test_capability_sandbox_filesystem_serves_every_operation():
+    """A capability-constructed backend exposes its filesystem for the whole run."""
     backend = FakeSandbox('proxy')
     connected: list[str] = []
 
@@ -614,7 +626,7 @@ async def test_deferred_filesystem_proxy_serves_every_operation():
         async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
             return SandboxRef(sandbox_id=backend.sandbox_id)
 
-        async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
+        def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
             connected.append(ref.sandbox_id)
             return backend
 
@@ -622,10 +634,9 @@ async def test_deferred_filesystem_proxy_serves_every_operation():
 
     @agent.tool
     async def probe(ctx: RunContext[Any]) -> str:
-        fs = ctx.sandbox.fs  # obtained before any connection
-        assert connected == []
+        fs = ctx.sandbox.fs
+        assert connected == ['fake-proxy']
         await fs.write_bytes('/workspace/notes.txt', b'hello')
-        assert connected == ['fake-proxy']  # the first operation connected
         assert await fs.read_bytes('/workspace/notes.txt') == b'hello'
         assert (await fs.stat('/workspace/notes.txt')).size == 5
         assert [entry.path for entry in await fs.list_dir('/workspace')] == ['/workspace/notes.txt']
@@ -664,8 +675,7 @@ async def test_sandbox_ref_connection_failure_is_chained():
 
     @dataclass
     class FailingConnectCapability(AbstractCapability[Any]):
-        async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
-            await asyncio.sleep(0)
+        def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
             raise error
 
     agent = make_connecting_probe_agent([], capabilities=[FailingConnectCapability()])
@@ -679,7 +689,7 @@ async def test_sandbox_ref_connection_failure_is_chained():
 
 async def test_sandbox_ref_user_error_is_preserved():
     class UserErrorConnector(AbstractCapability[Any]):
-        async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
+        def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
             raise UserError('credentials are missing')
 
     agent = Agent(_tool_call_then_text(), capabilities=[UserErrorConnector()])
@@ -738,7 +748,7 @@ async def test_lifecycle_capability_creates_at_run_start_and_tears_down_at_run_e
     async def probe(ctx: RunContext[Any]) -> str:
         seen.append(ctx.sandbox.sandbox_id)
         # Created but not yet torn down while the run is still going.
-        assert lifecycle.events == ['acquire:created-1']
+        assert lifecycle.events == ['acquire:created-1', 'connect:created-1']
         await ctx.sandbox.run(['echo', 'hello'])
         assert lifecycle.events == ['acquire:created-1', 'connect:created-1']
         return 'ok'
@@ -795,7 +805,7 @@ async def test_sandbox_is_released_when_the_run_fails(failure: str):
 
     with pytest.raises(RuntimeError, match='boom'):
         await agent.run('go', **run_kwargs)
-    assert lifecycle.events == ['acquire:created-1', 'release:created-1']
+    assert lifecycle.events == ['acquire:created-1', 'connect:created-1', 'release:created-1']
 
 
 @pytest.mark.parametrize('run_mode', ['run', 'iter', 'run_stream'])
@@ -818,6 +828,10 @@ async def test_sandbox_lifecycle_brackets_the_run(run_mode: str) -> None:
         async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
             events.append('acquire_sandbox')
             return SandboxRef(sandbox_id='lifecycle')
+
+        def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
+            events.append('get_sandbox')
+            return FakeSandbox('lifecycle')
 
         async def release_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
             events.append('release_sandbox')
@@ -852,7 +866,15 @@ async def test_sandbox_lifecycle_brackets_the_run(run_mode: str) -> None:
         async with agent.run_stream('hello') as stream:
             await stream.get_output()
 
-    assert events == ['acquire_sandbox', 'for_run', 'toolset_enter', 'model', 'toolset_exit', 'release_sandbox']
+    assert events == [
+        'acquire_sandbox',
+        'get_sandbox',
+        'for_run',
+        'toolset_enter',
+        'model',
+        'toolset_exit',
+        'release_sandbox',
+    ]
 
 
 async def test_duplicate_per_run_supplier_ids_fail_and_release():
@@ -864,7 +886,7 @@ async def test_duplicate_per_run_supplier_ids_fail_and_release():
 
     with pytest.raises(UserError, match=r"Capability id 'duplicate' is used by multiple capabilities"):
         await agent.run('go', capabilities=[decliner])
-    assert creator.events == ['acquire:created-1', 'release:created-1']
+    assert creator.events == ['acquire:created-1', 'connect:created-1', 'release:created-1']
 
 
 async def test_acquire_only_capability_leans_on_platform_reaping():
@@ -877,7 +899,7 @@ async def test_acquire_only_capability_leans_on_platform_reaping():
     result = await agent.run('go')
     assert result.output == 'done'
     assert seen == ['created-1']
-    assert creator.events == ['acquire:created-1']
+    assert creator.events == ['acquire:created-1', 'connect:created-1']
 
 
 @pytest.mark.parametrize('failure', ['raise', 'return-none'])
@@ -889,7 +911,7 @@ async def test_acquired_sandbox_connection_failure_is_explained(failure: str):
         async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
             return SandboxRef(sandbox_id='owned')
 
-        async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
+        def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
             if failure == 'raise':
                 raise error
             return None
@@ -968,11 +990,11 @@ async def test_capability_supplied_sandbox_is_exposed_through_facade():
     assert cap.events == ['cap:acquire', 'cap:connect', 'cap:release']
 
 
-async def test_capability_supplied_sandbox_connects_lazily():
-    """A run that never touches `ctx.sandbox` pays acquisition and release, but no connection."""
+async def test_capability_supplied_sandbox_is_constructed_eagerly():
+    """A run constructs the backend before hooks even when no sandbox operation follows."""
     cap = SandboxCapability()
     await make_probe_agent([], capabilities=[cap]).run('go')
-    assert cap.events == ['cap:acquire', 'cap:release']
+    assert cap.events == ['cap:acquire', 'cap:connect', 'cap:release']
 
 
 async def test_capability_sandbox_live_through_after_run():
@@ -986,7 +1008,7 @@ async def test_capability_sandbox_live_through_after_run():
 
     cap = ContributingWatcher()
     await make_probe_agent([], capabilities=[cap]).run('go')
-    assert cap.events == ['cap:acquire', 'after_run:cap', 'cap:release']
+    assert cap.events == ['cap:acquire', 'cap:connect', 'after_run:cap', 'cap:release']
 
 
 async def test_run_argument_wins_over_capability():
@@ -1045,7 +1067,7 @@ async def test_warm_sandbox_shared_across_runs():
         async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
             return SandboxRef(sandbox_id=warm.sandbox_id)
 
-        async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
+        def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
             return warm if ref.sandbox_id == warm.sandbox_id else None
 
     observed: list[Sandbox] = []
@@ -1085,7 +1107,7 @@ async def test_failing_release_propagates():
     agent = make_probe_agent([], capabilities=[failing])
     with pytest.raises(RuntimeError, match="sandbox 'created-1' is already gone"):
         await agent.run('go')
-    assert failing.events == ['acquire:created-1', 'release-failed:created-1']
+    assert failing.events == ['acquire:created-1', 'connect:created-1', 'release-failed:created-1']
 
 
 async def test_release_survives_run_cancellation():

@@ -2730,8 +2730,14 @@ def test_temporal_run_context_without_sandbox_state_has_no_sandbox(state: dict[s
 
 
 async def test_temporal_run_context_reconnects_sandbox_ref_through_agent():
+    class DecliningConnector(ConnectOnlySandboxCapability):
+        def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
+            self.sandbox_ids.append(ref.sandbox_id)
+            return None
+
+    declining = DecliningConnector()
     connector = ConnectOnlySandboxCapability()
-    agent = Agent(TestModel(), capabilities=[connector])
+    agent = Agent(TestModel(), capabilities=[declining, connector])
     ref = SandboxRef(sandbox_id='temporal-ref')
 
     sandbox = ref_sandbox(ref)
@@ -2740,22 +2746,43 @@ async def test_temporal_run_context_reconnects_sandbox_ref_through_agent():
     reconstructed = deserialize_run_context(TemporalRunContext, serialized, deps=None, agent=agent)
 
     assert (await reconstructed.sandbox.run(['true'])).stdout == 'connected'
+    assert declining.sandbox_ids == ['temporal-ref']
     assert connector.sandbox_ids == ['temporal-ref']
+
+
+async def test_temporal_run_context_reconnects_through_serialized_supplier_only():
+    first = ConnectOnlySandboxCapability()
+    first.id = 'first'
+    supplier = ConnectOnlySandboxCapability()
+    supplier.id = 'supplier'
+    agent = Agent(TestModel(), capabilities=[first, supplier])
+    sandbox = ref_sandbox(SandboxRef(sandbox_id='owned'))
+    sandbox._supplier_id = supplier.id  # pyright: ignore[reportPrivateUsage]
+
+    reconstructed = deserialize_run_context(
+        TemporalRunContext,
+        TemporalRunContext.serialize_run_context(_sandbox_context(sandbox)),
+        deps=None,
+        agent=agent,
+    )
+
+    assert reconstructed.sandbox.ref == SandboxRef(sandbox_id='owned')
+    assert reconstructed.sandbox.backend is supplier.backends[0]
+    assert first.sandbox_ids == []
+    assert supplier.sandbox_ids == ['owned']
 
 
 async def test_temporal_run_context_ref_without_agent_cannot_connect():
     ref = SandboxRef(sandbox_id='orphan')
 
     sandbox = ref_sandbox(ref)
-    reconstructed = deserialize_run_context(
-        TemporalRunContext,
-        TemporalRunContext.serialize_run_context(_sandbox_context(sandbox)),
-        deps=None,
-        agent=None,
-    )
-
     with pytest.raises(UserError, match='no agent is attached'):
-        await reconstructed.sandbox.run(['true'])
+        deserialize_run_context(
+            TemporalRunContext,
+            TemporalRunContext.serialize_run_context(_sandbox_context(sandbox)),
+            deps=None,
+            agent=None,
+        )
 
 
 async def test_temporal_run_context_closes_reconnected_sandbox_when_scope_is_cancelled():
@@ -2771,7 +2798,7 @@ async def test_temporal_run_context_closes_reconnected_sandbox_when_scope_is_can
     backend = ClosableBackend()
 
     class Provider(Capability[Any]):
-        async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
+        def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
             return backend
 
     provider = Provider(id='provider')
@@ -2804,7 +2831,7 @@ async def test_temporal_activity_closes_deferred_sandbox_connections():
     backend = ClosableBackend()
 
     class Provider(Capability[Any]):
-        async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
+        def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
             return backend
 
     async def use_sandbox(ctx: RunContext[None]) -> str:
@@ -2860,7 +2887,7 @@ async def test_temporal_activity_sandbox_close_error_does_not_mask_handler_error
     backend = FailingCloseBackend()
 
     class Provider(Capability[Any]):
-        async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
+        def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
             return backend
 
     agent = Agent(TestModel(), capabilities=[Provider(id='provider')])
@@ -2894,7 +2921,7 @@ async def test_temporal_activity_sandbox_close_raises_the_first_failure_after_cl
     backends = iter([FailingCloseBackend('first'), FailingCloseBackend('second')])
 
     class Provider(Capability[Any]):
-        async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
+        def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
             return next(backends)
 
     agent = Agent(TestModel(), capabilities=[Provider(id='provider')])

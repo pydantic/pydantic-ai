@@ -7,7 +7,6 @@ import anyio
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.sandboxes import SandboxBackend, SandboxRef
-from pydantic_ai.sandboxes._connection import close_backend_connection
 from pydantic_ai.tools import AgentDepsT
 
 from ._durable_operation import invoke_durable_operation
@@ -48,14 +47,14 @@ async def release_run_sandbox(
         await invoke_durable_operation(supplier, 'release_sandbox', ctx, supplier.release_sandbox, (ctx, ref), {})
 
 
-async def connect_sandbox_ref(
+def connect_sandbox_ref(
     capabilities: Sequence[AbstractCapability[AgentDepsT]], ctx: RunContext[AgentDepsT], ref: SandboxRef
 ) -> SandboxBackend:
     """Connect to `ref` through `capabilities`; exactly one may answer."""
     connected: list[SandboxBackend] = []
     for capability in capabilities:
         try:
-            backend = await capability.get_sandbox(ctx, ref)
+            backend = capability.get_sandbox(ctx, ref)
         except UserError:
             raise
         except Exception as error:
@@ -64,8 +63,6 @@ async def connect_sandbox_ref(
             connected.append(backend)
     if len(connected) == 1:
         return connected[0]
-    for backend in connected:
-        await close_backend_connection(backend)
     if connected:
         raise UserError(f'Exactly one capability may connect to sandbox {ref.sandbox_id!r}; {len(connected)} did.')
     raise UserError(
