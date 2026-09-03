@@ -276,6 +276,24 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
     name: str
     """Unique name used to identify the agent's durable units (activities/steps/tasks). Defaults to the agent's `name`."""
 
+    @classmethod
+    def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
+        """Reject a second durability engine rather than composing it.
+
+        Each concrete engine declares a default `id`, which says an agent has one of it. There is
+        nothing to merge behind that: two engines each wrap the agent's model and toolsets and
+        register their own durable units, so the second registration is at best redundant and at
+        worst a name conflict the engine reports and then continues past. Combining their fields
+        would produce one capability whose `name` came from whichever was written last, silently.
+        """
+        names = ', '.join(repr(capability.id) for capability in capabilities[:1])
+        raise UserError(
+            f'An agent has one durability engine, but {len(capabilities)} {cls.__name__} capabilities '
+            f'were attached under {names}. Each engine wraps the agent and registers its own '
+            f'{cls.engine_spec.durable_unit_plural}, so a second one duplicates that registration '
+            'rather than adding anything. Attach one.'
+        )
+
     def __init__(
         self,
         *,
