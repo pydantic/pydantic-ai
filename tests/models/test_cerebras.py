@@ -15,8 +15,7 @@ from pydantic_ai.profiles import DEFAULT_THINKING_TAGS
 from pydantic_ai.settings import ServiceTier
 from pydantic_ai.tools import ToolDefinition
 
-from ..conftest import iter_message_parts, try_import
-from .conftest import RequestCapture
+from ..conftest import RequestCapture, iter_message_parts, try_import
 
 with try_import() as imports_successful:
     from pydantic_ai.models.cerebras import (

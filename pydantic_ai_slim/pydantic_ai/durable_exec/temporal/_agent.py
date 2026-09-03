@@ -240,7 +240,12 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             id = toolset.id
             if id is None:
                 raise UserError(
-                    "Toolsets that are 'leaves' (i.e. those that implement their own tool listing and calling) need to have a unique `id` in order to be used with Temporal. The ID will be used to identify the toolset's activities within the workflow."
+                    "Toolsets that are 'leaves' (i.e. those that implement their own tool listing and calling) "
+                    'need to have a unique `id` in order to be used with Temporal. '
+                    "The ID will be used to identify the toolset's activities within the workflow. "
+                    'Set it on the toolset itself with `FunctionToolset(id=...)` or `MCPToolset(..., id=...)`, '
+                    "or, when the toolset is contributed by a capability, set the capability's `id` "
+                    "(for example, `WebSearch(local='duckduckgo', id='search')` or `MCP(url='...', id='...')`)."
                 )
 
             args: tuple[Any, ...] = (

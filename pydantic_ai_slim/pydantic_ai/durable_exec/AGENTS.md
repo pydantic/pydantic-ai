@@ -37,9 +37,9 @@ journaling them.
 Persisted operation names are compatibility data, independent of Python class names. Prefer
 `JournalOperationNamer` when its convention fits. Otherwise implement `DurableOperationNamer` and
 keep its output stable. Before refactoring agent, model, toolset, or capability identity, pin the
-complete name set using the `tests/test_durable_exec_compat.py` pattern. Never update those pins as
-part of an implementation rename unless the migration of in-flight executions is intentional and
-reviewed.
+complete name set using the `tests/durable_exec/test_durable_exec_compat.py` pattern. Never update
+those pins as part of an implementation rename unless the migration of in-flight executions is
+intentional and reviewed.
 
 Resolve base and per-tool configuration with `OperationConfigRole` and `DurableOperationId`.
 Handle known ID variants and retain a default branch because the public union grows in minor

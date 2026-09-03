@@ -24,6 +24,9 @@ class DurabilityEngineSpec:
     durable_container_noun: str
     """Name for the durable container, such as `'workflow'` or `'flow'`."""
 
+    durable_unit_plural: str | None = None
+    """Plural name for durable units of work; defaults to `durable_unit_noun + 's'`."""
+
     codec: DurabilityCodec = IDENTITY_CODEC
     """How the base serializes at every durable boundary. Identity for object-passing engines
     (Temporal/DBOS/Prefect), JSON for journal engines (Restate/Lambda/Absurd)."""
@@ -62,8 +65,8 @@ class DurabilityEngineSpec:
 
     journal_discovery: bool = True
     """Whether toolset discovery (`get_tools`/`get_instructions`) runs in its own durable unit.
-    Journal engines (Restate/Lambda/Absurd) journal it; Prefect deliberately runs discovery in
-    flow code (flow retries re-resolve anyway) and journals only tool calls."""
+    Durable engines normally journal discovery; integrations may disable it when discovery must
+    run in the durable container itself."""
 
     sequential_tools_in_durable_context: bool = False
     """Whether tool calls must run sequentially inside the durable container."""
@@ -78,6 +81,8 @@ class DurabilityEngineSpec:
         errors: list[str] = []
         if not self.durable_unit_noun:
             errors.append('`durable_unit_noun` must not be empty')
+        if self.durable_unit_plural == '':
+            errors.append('`durable_unit_plural` must not be empty')
         if not self.durable_container_noun:
             errors.append('`durable_container_noun` must not be empty')
         missing_lifecycles = self.wrapped_toolset_kinds - self.toolset_lifecycles.keys()

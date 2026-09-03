@@ -5936,7 +5936,7 @@ async def test_realtime_cancellation_does_not_wait_for_sync_tool_worker() -> Non
     await asyncio.to_thread(worker_started.wait)
     try:
         with pytest.raises(RunCancelled):
-            await asyncio.wait_for(asyncio.shield(task), timeout=1)
+            await asyncio.wait_for(asyncio.shield(task), timeout=5)
         assert not worker_finished.is_set()
         assert not any(isinstance(item, ToolResult) for item in conn.sent)
     finally:

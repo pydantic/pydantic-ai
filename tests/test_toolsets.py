@@ -1094,6 +1094,13 @@ async def test_toolset_max_retries_inherits_from_agent():
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
+            ModelRequest(
+                parts=[],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+                state='interrupted',
+            ),
         ]
     )
 
@@ -1118,7 +1125,15 @@ async def test_toolset_explicit_max_retries_overrides_agent():
     # Initial call + 2 retries = 3 attempts.
     assert len(attempts) == 3
     assert [type(m).__name__ for m in messages] == snapshot(
-        ['ModelRequest', 'ModelResponse', 'ModelRequest', 'ModelResponse', 'ModelRequest', 'ModelResponse']
+        [
+            'ModelRequest',
+            'ModelResponse',
+            'ModelRequest',
+            'ModelResponse',
+            'ModelRequest',
+            'ModelResponse',
+            'ModelRequest',
+        ]
     )
     retry_parts = [p for m in messages for p in getattr(m, 'parts', []) if isinstance(p, RetryPromptPart)]
     assert [p.content for p in retry_parts] == snapshot(['Always fails', 'Always fails'])
@@ -1233,7 +1248,7 @@ async def test_toolset_tool_max_retries_none_uses_tool_retries_not_output_retrie
     # retries=1 means initial call + 1 retry = 2 attempts, not 6 (which would be output_retries).
     assert len(attempts) == 2
     assert [type(m).__name__ for m in messages] == snapshot(
-        ['ModelRequest', 'ModelResponse', 'ModelRequest', 'ModelResponse']
+        ['ModelRequest', 'ModelResponse', 'ModelRequest', 'ModelResponse', 'ModelRequest']
     )
     retry_parts = [p for m in messages for p in getattr(m, 'parts', []) if isinstance(p, RetryPromptPart)]
     assert [p.content for p in retry_parts] == snapshot(['Always fails'])

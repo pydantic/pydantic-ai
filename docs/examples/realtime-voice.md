@@ -30,7 +30,7 @@ speech-start event also fires on ordinary turns where nothing is playing).
 
 ## Running the Example
 
-The examples dependencies include
+The example's dependencies include
 [`listentome`](https://github.com/Kludex/listentome) for microphone and speaker access. It
 also requires the PortAudio system library: `brew install portaudio` on macOS,
 `apt install libportaudio2` on Debian/Ubuntu.
