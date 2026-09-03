@@ -530,11 +530,12 @@ class _CarriesUncomparable(AbstractCapability[Any]):
 
 
 def test_a_plain_class_capability_cannot_silently_lose_its_configuration() -> None:
-    """A merge can only reconcile what dataclass fields declare, so invisible configuration is refused.
+    """A merge keeps a value only one side states, and cannot do that for an undeclared attribute.
 
-    A plain class keeps its configuration in plain attributes: `merge_capability_fields` would see
-    no fields to reconcile, keep the last instance whole, and silently drop the rest. Raising turns
-    the silent loss into a decision: declare the configuration as fields, or override `combine`.
+    A plain class keeps its configuration in plain attributes. `replace_no_init` copies the last
+    instance, so such an attribute does get *a* value -- the last one -- but not the one the table
+    promises, where a value only an earlier instance stated survives. Raising turns that silent
+    difference into a decision.
     """
 
     class Retries(AbstractCapability[Any]):
@@ -543,8 +544,48 @@ def test_a_plain_class_capability_cannot_silently_lose_its_configuration() -> No
         def __init__(self, limit: int) -> None:
             self.limit = limit
 
-    with pytest.raises(UserError, match='outside dataclass fields'):
+    with pytest.raises(UserError, match='sets limit outside its dataclass fields'):
         Retries.combine([Retries(1), Retries(9)])
+
+
+def test_the_undeclared_attribute_error_names_the_underscore_way_out() -> None:
+    """The message has to name every way out, because two of the three are usually wrong.
+
+    Internal state a `__post_init__` derives is the common case, not configuration -- declaring it
+    as a field or writing a `combine` for it are both the wrong advice there, and renaming it is
+    the whole fix. An error that only says "declare it as a field" sends that user the wrong way.
+    """
+
+    @dataclass
+    class Derived(AbstractCapability[Any]):
+        limit: int = 3
+        _: KW_ONLY
+        id: str | None = 'derived'
+
+        def __post_init__(self) -> None:
+            self.doubled = self.limit * 2
+
+    with pytest.raises(UserError) as exc_info:
+        Derived.combine([Derived(limit=1), Derived(limit=2)])
+
+    message = str(exc_info.value)
+    assert 'leading underscore' in message, 'the rename is the fix for internal state'
+    assert 'dataclass fields' in message, 'declaring it is the fix for real configuration'
+    assert '`combine`' in message, 'writing a merge is the fix for something neither covers'
+
+    # And the rename is genuinely a way out, not just advice.
+    @dataclass
+    class Underscored(AbstractCapability[Any]):
+        limit: int = 3
+        _: KW_ONLY
+        id: str | None = 'underscored'
+
+        def __post_init__(self) -> None:
+            self._doubled = self.limit * 2
+
+    merged = Underscored.combine([Underscored(limit=1), Underscored(limit=2)])
+    assert isinstance(merged, Underscored)
+    assert merged.limit == 2
 
 
 def test_a_field_whose_equality_raises_takes_the_later_value() -> None:
