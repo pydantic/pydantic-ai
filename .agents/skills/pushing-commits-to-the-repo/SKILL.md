@@ -137,7 +137,38 @@ review. This is the only exception to requiring a pre-push review of the exact p
 
 Immediately before pushing, verify HEAD still equals the reviewed full candidate SHA and the
 worktree is clean. After third-review remediation, verify HEAD equals the locally checked
-remediation commit instead. Any other mismatch restarts the gate while the budget remains.
+remediation commit instead. Any other mismatch restarts the gate while the budget remains, unless
+the delta is exempt below.
+
+### When a later push does not need another review
+
+A push is exempt when the delta since the last **reviewed** SHA cannot move any rung of the review
+rubric above one a machine has already checked. The rubric's order is public API, then concepts and
+behavior, documentation, tests, code quality — so a test closing a coverage gap lands on the bottom
+rung CI just measured, and formatter output sits below the rubric entirely.
+
+Compute that delta from the last **reviewed** SHA, never from the last pushed one, and record which
+reviewed SHA the exemption chains from beside the budget count. Otherwise consecutive exempt pushes
+drift arbitrarily far from anything a reviewer read, each hop defensible on its own.
+
+| Exempt delta since the reviewed SHA | Check |
+|---|---|
+| Tests only, closing a coverage gap on behavior already reviewed | `git diff --name-only <reviewed>..HEAD` touches only `tests/` |
+| Output of the repo's own tooling (`make format`, lint autofix) | run that tooling on the reviewed SHA in a scratch checkout; its tree equals HEAD's |
+| Comments or docstrings only, no `docs/**` page | no non-comment line appears in `git diff <reviewed>..HEAD` |
+| Target-branch merge with no conflict resolution | `git diff <old-base>..<reviewed-head>` equals `git diff <new-base>..HEAD` |
+| Revert to a tree that was already reviewed | `git rev-parse HEAD^{tree}` equals a recorded reviewed tree |
+| Lockfile-only dependency bump | only lock and manifest paths changed |
+
+Anything not named above re-reviews. Size is never the test: a one-line production fix is the shape a
+wrong fix hides in, which is why the root `AGENTS.md` requires reproducing the defect first. Four
+deltas that look exempt and are not — a cassette re-record whose request body changed (a
+wire-contract change wearing a test path), a conflict resolution inside an otherwise-exempt merge,
+applying a review finding even when the finding named the exact edit, and any change to public API
+including a rename.
+
+To claim an exemption the table does not name, write down the rubric rung the delta could touch and
+why it cannot, in `pr-decisions.md`.
 
 Never use the implementing agent as the reviewer. Never treat this gate as test execution.
 
