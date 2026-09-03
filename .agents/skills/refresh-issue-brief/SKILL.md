@@ -1,5 +1,6 @@
 ---
 name: refresh-issue-brief
+user-invocable: true
 description: Re-fetch the GitHub issue(s) linked in issue-brief.md and update the brief if new comments shift scope, criteria, or constraints. User-invoked only — never run automatically. Use when the user flags new issue activity (e.g. "check the latest comments on the issue").
 ---
 

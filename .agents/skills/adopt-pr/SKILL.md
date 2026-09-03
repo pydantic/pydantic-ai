@@ -1,5 +1,6 @@
 ---
 name: adopt-pr
+user-invocable: true
 description: Bootstrap branch-context on an existing PR that wasn't started via /initialize-worktree. Writes issue-brief.md from the linked issue(s) + current PR state, and backfills pr-decisions.md with decision-bearing entries from already-resolved review threads. Use when picking up a PR mid-flight (either yours or someone else's) without prior local context.
 ---
 
@@ -9,7 +10,7 @@ Populate `issue-brief.md` and `pr-decisions.md` for a worktree whose PR already 
 
 ## When to use
 
-- You just checked out an existing PR's branch and the branch-context files are empty templates
+- You just checked out an existing PR's branch and the branch-context files are missing or still empty templates
 - You're picking up someone else's PR
 - Your own PR predates the branch-context setup and you want to backfill
 
@@ -21,7 +22,7 @@ Do NOT use this for fresh work — `/initialize-worktree` is the entry point the
 
 1. Read the root `AGENTS.md`, `agent_docs/index.md`, and every directory-specific `AGENTS.md` governing a changed file
 2. Read the `pushing-commits-to-the-repo` skill — it owns the comment-triage vocabulary this skill hands off to
-3. Verify the branch-context files exist and are still the unfilled templates:
+3. Verify the branch-context files are missing or still the unfilled templates — on a clean checkout `.claude/skills/branch-context/` holds only the templates and helpers, and the live files do not exist yet:
    - If `issue-brief.md` already has populated `issues:` frontmatter → ask: "Brief is already populated. Overwrite? Re-seed decisions? Both? Neither?" before proceeding.
 
 ## Step 1 — Resolve the PR
@@ -95,13 +96,17 @@ Paraphrase every reported `@`-import token without `@`, then rerun the check unt
 
 Fetch all review threads:
 ```bash
-.agents/skills/adopt-pr/fetch-resolved-threads $PR_NUMBER > /tmp/adopt-pr-threads.json
+threads="$(mktemp)"
+.agents/skills/adopt-pr/fetch-resolved-threads $PR_NUMBER > "$threads"
 ```
+
+Use `mktemp`, not a fixed name: two adoptions running at once would clobber one shared path, and a
+predictable world-writable one can be pre-planted as a symlink.
 
 The helper returns every resolved thread with its complete comment conversation. Inspect each
 thread directly:
 ```bash
-jq '.[] | {id, comments}' /tmp/adopt-pr-threads.json
+jq '.[] | {id, comments}' "$threads"
 ```
 
 For each resolved thread, read the full conversation. Then classify:
@@ -184,6 +189,9 @@ Next:
   - Work the unresolved threads through `pushing-commits-to-the-repo` step 4 (triage → fix →
     reply → react → resolve)
 ```
+
+The helper above returns only resolved threads. Get the unresolved count from the enumeration
+query in `pushing-commits-to-the-repo` step 4, which is the same query with the filter inverted.
 
 ## Rules
 

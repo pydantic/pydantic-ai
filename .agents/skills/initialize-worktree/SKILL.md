@@ -1,5 +1,6 @@
 ---
 name: initialize-worktree
+user-invocable: true
 description: Study a problem or GitHub issue in a fresh worktree, plan a fix, optionally implement it, and open the initial PR. Use when starting work on a new problem — not for advancing existing PRs.
 ---
 
@@ -30,7 +31,7 @@ Be thorough — this research informs everything downstream.
 
 ## Step 3 — Write the branch-context files
 
-Write `.claude/skills/branch-context/issue-brief.md` from scratch (replace the template). Use this schema — keep it tight, this file is autoloaded on every future session and token cost compounds:
+Write `.claude/skills/branch-context/issue-brief.md` from scratch — the file does not exist on a clean checkout. The same schema ships as `issue-brief.template.md` beside it; use this one — keep it tight, this file is autoloaded on every future session and token cost compounds:
 
 ```markdown
 ---
@@ -131,7 +132,7 @@ Ask: 'Based on my research, I assess this as [simple/complex]. [1-2 sentence rea
 
 ## Step 5b — Simple Path (implement + PR)
 
-1. Write the local implementation plan to `.claude/plans/<branch-name>.md`
+1. Write the local implementation plan to `.claude/plans/<branch-name>.md` (`mkdir -p .claude/plans` first — the directory is git-ignored and absent on a clean checkout)
 2. Implement changes per plan
 3. Run `make format && make lint` — fix issues until clean
 4. Commit all changes, then follow the tracked `pushing-commits-to-the-repo` skill through its

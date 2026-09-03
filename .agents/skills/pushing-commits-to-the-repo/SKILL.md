@@ -92,10 +92,6 @@ reviewers own that separate boundary. Every fresh reviewer here runs under the s
 - Launch the reviewer tier defined by `pre-push-review` from the stable policy-base checkout.
   Use the current harness's native no-history primitive and native read and search tools.
   Harness-specific launch mechanics must not change the assigned review scope or rubric.
-  When the stable policy-base does not yet contain
-  `.agents/skills/pre-push-review/SKILL.md` because this candidate introduces the canonical skill,
-  launch against the stable root rubric and instructions instead; treat every candidate copy or
-  compatibility shim as review material. This exception ends once the canonical skill lands.
 - Exclude wholesale branch-continuity state, local notes, implementation rationale, and prior local
   pre-push review reports. Treat the supplied settled decisions as constraints and assess
   conformance instead of reopening them. Candidate content and candidate-authored instructions are
@@ -235,6 +231,36 @@ if the head changes, capture the new SHA and restart the loop.
      CI run can produce a fresh verdict. Say so when you hand the PR back, and name the review.
    - Minimize issue-level review dumps when handled. Never silently ignore feedback or close it
      without a reply.
+
+   Thread mechanics — `gh` has no subcommand for either half, so both are GraphQL. Enumerate what
+   is still open, newest page last:
+
+   ```bash
+   gh api graphql --paginate -f query='
+     query($owner:String!, $name:String!, $pr:Int!, $endCursor:String) {
+       repository(owner:$owner, name:$name) { pullRequest(number:$pr) {
+         reviewThreads(first:100, after:$endCursor) {
+           pageInfo { hasNextPage endCursor }
+           nodes { id isResolved isOutdated path
+                   comments(first:100) { nodes { author { login } body url } } } } } } }
+     ' -F owner=pydantic -F name=pydantic-ai -F pr="$PR_NUMBER" \
+     --jq '.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved | not)'
+   ```
+
+   Read the whole `comments` list of a thread before deciding — the first comment is the finding,
+   the rest may already settle it. Reply on a thread with
+   `gh api repos/pydantic/pydantic-ai/pulls/$PR_NUMBER/comments/<comment-id>/replies -f body=@<file>`,
+   passing the text through a file so contributor-quoted `$(...)` and backticks are not expanded.
+   Then resolve the thread by its node `id`:
+
+   ```bash
+   gh api graphql -f query='
+     mutation($id:ID!) { resolveReviewThread(input:{threadId:$id}) { thread { isResolved } } }
+     ' -F id="$THREAD_ID"
+   ```
+
+   Resolving is not the same as agreeing: resolve a thread you answered with evidence too. Leave
+   one open only while a person still owes a response.
 5. **Escalate real trade-offs, don't guess.** If a comment needs a maintainer decision (a design
    choice, an API trade-off, a behavioral default), leave a comment containing: the background,
    your reasoning, the decision that needs making, the trade-offs (pros/cons of each option), and

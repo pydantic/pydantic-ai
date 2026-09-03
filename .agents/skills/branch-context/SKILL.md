@@ -1,17 +1,20 @@
 ---
 name: branch-context
-description: Branch-local durable PR state — issue brief, decisions log, and session handoffs. Autoloaded brief + decisions + handoffs index every session; persist decisions as you work; EPEH or /handoff only on user request or explicit session turnover.
+description: Branch-local durable PR state — issue brief, decisions log, and session handoffs. Read the brief, decisions and handoffs index every session; persist decisions as you work; hand off only on user request or explicit session turnover.
 ---
 
 # Branch Context
 
-This directory is the **single home** for durable PR/branch state across sessions and harnesses. Three live surfaces:
+**Live state has one home: `<worktree>/.claude/skills/branch-context/`.** Every helper below resolves
+there from the worktree root, whichever harness's skill root you invoked it through — `.agents/`,
+`.claude/` or another. This SKILL.md and the helpers beside it are the static half and can be read
+from any root; the four paths in the table are always under `.claude/`. Three live surfaces:
 
 | File / dir | Role | Lifetime |
 |------------|------|----------|
-| `issue-brief.md` | Synthesis of the issue(s) this branch addresses | Rewritten only by `/initialize-worktree`, `/refresh-issue-brief`, `/adopt-pr` |
-| `pr-decisions.md` | Append-only log of non-obvious PR-shaping decisions | Append forever; supersede, never edit |
-| `handoffs/` + `handoffs-index.md` | Append-only session handoffs for the next agent | Never overwrite a handoff file; index points at latest |
+| `.claude/skills/branch-context/issue-brief.md` | Synthesis of the issue(s) this branch addresses | Rewritten only by `/initialize-worktree`, `/refresh-issue-brief`, `/adopt-pr` |
+| `.claude/skills/branch-context/pr-decisions.md` | Append-only log of non-obvious PR-shaping decisions | Append forever; supersede, never edit |
+| `.claude/skills/branch-context/handoffs/` + `handoffs-index.md` | Append-only session handoffs for the next agent | Never overwrite a handoff file; index points at latest |
 
 Read the brief, the decisions log and the **handoffs-index** at session start — not full handoff bodies. Full handoffs live under `handoffs/`; read the latest path from the index. A harness that supports file imports can pull those three in automatically; where it does not, read them yourself before acting. "Autoloaded" below means whichever of the two applies.
 
@@ -36,7 +39,7 @@ the same boundary for every appended entry.
    ```
 
    Read exactly the file it prints. If it prints nothing, **your lane has no handoff**: say so and start from the live board. Other lanes' entries are visible in the index and are *not* yours — reading one makes you adopt work another agent drives. Never pick an entry by eye off the index; the script resolves the lane for you.
-4. If the brief is still the unfilled template → `/initialize-worktree` or `/adopt-pr` first.
+4. If the brief is missing or still the unfilled template → `/initialize-worktree` or `/adopt-pr` first.
 5. **Load the skills this session runs on before acting.** Always `i-have-adhd` (how the user reads: lead with the result or decision, use the harness's structured question mechanism when available, no preamble/recap/closers). Loading it late costs a half-session of output the user skims past.
 
 **Every handoff body must repeat step 5 explicitly** — a fresh agent reads the handoff before it reads this file.
@@ -160,15 +163,17 @@ Use when the **user** asks to hand off, clear and continue, or otherwise turn th
 
 Self-programmable harnesses (Pi, and any that can install extensions): **implement EPEH once** rather than re-documenting the manual out every time.
 
-### `/handoff` alias
+### Persist-only handoff
 
-User-invoked `/handoff` runs the **persist steps only** (decisions + handoff file + index) without requiring plan mode. Same writers, same paths. EPEH = plan mode + that persist + harness exit.
+When the user asks for a handoff without asking to turn the session over, run the **persist steps only** (decisions + handoff file + index) and skip plan mode. Same writers, same paths. EPEH = plan mode + that persist + harness exit.
 
 ## Scope boundary
 
-- Not for research notes / repro scripts → `local-notes/`
-- Not for durable codebase facts that outlive the PR → per-worktree memory
-- `pr-decisions.md` vs memory: if removing the linked thread would make **this PR's** diff confusing → decisions. If the fact still helps after merge → memory. Often both.
+- Not for research notes / repro scripts → the git-ignored `local-notes/` at the worktree root
+- Not for durable codebase facts that outlive the PR — those belong wherever your harness keeps
+  long-lived notes, not here. The test: if removing the linked thread would make **this PR's** diff
+  confusing, it is a decision entry. If the fact still helps after the PR merges, it is not. Often
+  both, in which case write it twice.
 
 ## Helpers
 
