@@ -375,7 +375,7 @@ Dynamic selection is not currently supported by durable execution capabilities. 
 | [`get_wrapper_toolset()`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_toolset] | [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset] `| None` | [Wrap the agent's assembled toolset](#toolset-wrapping) |
 | [`get_instructions()`][pydantic_ai.capabilities.AbstractCapability.get_instructions] | [`AgentInstructions`][pydantic_ai.agent.AgentInstructions] `| None` | [Instructions](../agent.md#instructions) (static strings, [template strings](../agent-spec.md#template-strings), or callables) |
 | [`get_model_settings()`][pydantic_ai.capabilities.AbstractCapability.get_model_settings] | [`AgentModelSettings`][pydantic_ai.agent.AgentModelSettings] `| None` | [Model settings](../agent.md#model-run-settings) dict, or a callable for per-step settings |
-| [`acquire_sandbox()`][pydantic_ai.capabilities.AbstractCapability.acquire_sandbox] | [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] `| None` | Optionally acquire a [sandbox](../sandbox.md) for the run; the same capability's `get_sandbox(ctx, ref)` connects it and `release_sandbox()` releases ownership. Exactly one capability may return a ref. |
+| [`acquire_sandbox()`][pydantic_ai.capabilities.AbstractCapability.acquire_sandbox] | [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] `| None` | Optionally acquire a [sandbox](../sandbox.md) for the run. The first capability returning a ref wins; the framework stamps its ID in `SandboxRef.capability_id` and routes `get_sandbox()` and `release_sandbox()` back to it. |
 | [`get_sandbox()`][pydantic_ai.capabilities.AbstractCapability.get_sandbox] | [`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] `| None` | Construct a backend for a sandbox reference without connecting or performing I/O |
 | [`get_wrapper_sandbox()`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_sandbox] | [`Sandbox`][pydantic_ai.sandboxes.Sandbox] `| None` | Wrap the resolved sandbox facade for the run |
 | [`get_model()`][pydantic_ai.capabilities.AbstractCapability.get_model] | [`AgentModel`][pydantic_ai.capabilities.AgentModel] `| None` | Static or per-step [model selection](#selecting-the-model) |
@@ -428,7 +428,7 @@ Capabilities passed directly to [`run()`][pydantic_ai.agent.AbstractAgent.run] o
 
 Binding hooks establish which capability participates in a run; lifecycle hooks then intercept the work it performs. The high-level order is:
 
-`for_agent()` → bootstrap model selection and resolution → `acquire_sandbox()` → `get_sandbox()` → `get_wrapper_sandbox()` → `for_run()` → per-step selection and preparation → model request → tool/output processing → run completion → `release_sandbox()`
+`for_agent()` → bootstrap model selection and resolution → first non-`None` `acquire_sandbox()` → routed `get_sandbox()` → `get_wrapper_sandbox()` → `for_run()` → per-step selection and preparation → model request → tool/output processing → run completion → routed `release_sandbox()`
 
 | Phase | Capability work | What is available |
 |---|---|---|

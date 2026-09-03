@@ -58,9 +58,9 @@ Backends raise `SandboxError` for deliberate recoverable operation failures,
 A capability can create an environment for each run, reconnect an existing one, share a warm
 environment, or manage a pool. It does this through three hooks:
 
-- `acquire_sandbox`: return a ref synchronously without I/O, or use `async def` to provision or check out.
+- `acquire_sandbox`: return a ref or `None`; decorate it with `@durable_operation` when provisioning or checkout performs I/O.
 - `get_sandbox`: synchronously construct a backend whose client connects lazily on its first operation.
-- `release_sandbox`: use `async def` for I/O such as destroying or returning an environment.
+- `release_sandbox`: destroy, return, or do nothing; decorate it with `@durable_operation` when it performs I/O.
 
 When acquisition returns a `SandboxRef`, the run stores that serializable identity and constructs
 the backend before run hooks:
@@ -101,8 +101,9 @@ Choose the lifecycle that matches the application:
 - For a sandbox provisioned elsewhere, implement `get_sandbox` to connect its `SandboxRef`; the
   caller owns its lifecycle.
 
-Exactly one capability may return a ref from `acquire_sandbox`, and exactly one may connect a given
-ref; more raises `UserError`. Deferred capabilities take no part until loaded.
+Capabilities are asked in list order and the first ref returned from `acquire_sandbox` wins. The
+framework stamps its capability ID on the ref and routes connection and release back to it. For a
+caller-built unstamped ref, exactly one capability may connect. Deferred capabilities take no part.
 
 Pydantic AI closes the backend `get_sandbox` returned when the run ends; a live backend passed
 through `sandbox=` stays open and caller-owned.
@@ -125,8 +126,8 @@ a live backend or `LocalSandboxBackend` into a durable run.
 
 Capability author rules:
 
-- Only async `acquire_sandbox` and `release_sandbox` become durable units; sync hooks run inline,
-  must be deterministic, and must not perform I/O.
+- Decorate `acquire_sandbox` and `release_sandbox` with `@durable_operation` to make them durable
+  units. Undecorated overrides run inline and must be deterministic and free of I/O.
 - `get_sandbox` must be construct-only. Its backend should raise `SandboxUnavailableError` from
   the first operation when the environment has expired, never silently create a replacement.
 - Async `release_sandbox` must be idempotent. It may destroy the sandbox, return it to a pool,

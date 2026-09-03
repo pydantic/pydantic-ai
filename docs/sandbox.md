@@ -92,8 +92,8 @@ Pydantic AI chooses one sandbox for the run, in this order:
 2. The environment supplied by one active capability.
 3. The unavailable default, which explains how to attach one when a tool tries to use it.
 
-If more than one capability returns a reference, the run releases them all and raises. Deferred
-capabilities are not asked, because they load after the sandbox is chosen.
+Capabilities are asked in list order and the first reference wins. Later and deferred capabilities
+are not asked, because deferred capabilities load after the sandbox is chosen.
 
 ### Pass a backend or reference directly
 
@@ -107,12 +107,13 @@ A capability supplies a sandbox automatically for each run. Use `LocalSandbox()`
 environment fixed by configuration. Custom providers use three hooks:
 
 - [`acquire_sandbox`][pydantic_ai.capabilities.AbstractCapability.acquire_sandbox] returns its
-  serializable identity, or `None` to decline. A synchronous override must be deterministic and
-  perform no I/O. Use `async def` when provisioning or checking out requires I/O.
+  serializable identity, or `None` to decline. Decorate it with `@durable_operation` when
+  provisioning or checking out performs I/O.
 - [`get_sandbox`][pydantic_ai.capabilities.AbstractCapability.get_sandbox] synchronously constructs
   a backend object without connecting, probing liveness, resuming, starting, or creating anything.
 - [`release_sandbox`][pydantic_ai.capabilities.AbstractCapability.release_sandbox] cleans up after
-  a run whose acquisition returned a reference. Use `async def` when cleanup performs I/O.
+  a run whose acquisition returned a reference. Decorate it with `@durable_operation` when cleanup
+  performs I/O.
 
 ```python {title="sandbox_capability.py"}
 from dataclasses import dataclass
@@ -122,13 +123,16 @@ from my_sandboxes import SandboxClient
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.durable_exec import durable_operation
 from pydantic_ai.sandboxes import SandboxBackend, SandboxRef
 
 
 @dataclass
 class MySandboxCapability(AbstractCapability[Any]):
+    id = 'my-sandbox'
     client: SandboxClient  # credentials stay here, never in the ref
 
+    @durable_operation('acquire_sandbox')
     async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
         sandbox = await self.client.create(idempotency_key=ctx.run_id)
         return SandboxRef(sandbox_id=sandbox.sandbox_id)
@@ -137,6 +141,7 @@ class MySandboxCapability(AbstractCapability[Any]):
         # Construct only: the returned handle creates its client lazily on its first operation.
         return self.client.sandbox(ref.sandbox_id)
 
+    @durable_operation('release_sandbox')
     async def release_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
         await self.client.destroy(ref.sandbox_id)
 
@@ -154,10 +159,10 @@ Choose the lifecycle that matches your application:
 
 | Lifecycle | `acquire_sandbox` | `get_sandbox` | `release_sandbox` |
 |---|---|---|---|
-| Fresh sandbox per run | async: provision and return its ref | construct a lazy client handle | async: destroy |
-| Warm environment shared across runs | sync: return its ref | construct a lazy client handle | inherited no-op |
-| Pooled per conversation | async: check out or create by `ctx.conversation_id` | construct a lazy client handle | async: return to pool or decrement a reference count |
-| Environment fixed by configuration | sync: return the ref | construct a lazy client handle | don't override |
+| Fresh sandbox per run | `@durable_operation`: provision and return its ref | construct a lazy client handle | `@durable_operation`: destroy |
+| Warm environment shared across runs | return its ref | construct a lazy client handle | inherited no-op |
+| Pooled per conversation | `@durable_operation`: check out or create by `ctx.conversation_id` | construct a lazy client handle | `@durable_operation`: return to pool or decrement a reference count |
+| Environment fixed by configuration | return the ref | construct a lazy client handle | don't override |
 | Connect-only (the caller passes a `SandboxRef`) | don't override | construct a lazy client handle | don't override |
 
 If a workspace must survive several runs, use a warm or pooled lifecycle rather than creating a
@@ -271,10 +276,11 @@ connect the reference. Because the caller owns this sandbox, the run does not ac
 it. Do not pass a live backend or `LocalSandboxBackend` into a durable run; they cannot cross the
 durable boundary.
 
-Only async `acquire_sandbox` and `release_sandbox` hooks become durable units. Synchronous lifecycle
-hooks run inline and therefore must be deterministic and perform no I/O. `get_sandbox` runs inside
-every durable unit and must remain construct-only; liveness is the first `run` or `fs` operation's
-problem.
+Decorate `acquire_sandbox` and `release_sandbox` with `@durable_operation` so they run as durable
+units. Undecorated overrides run inline in workflow code and must be deterministic and free of I/O.
+`get_sandbox` runs inside every durable unit and must remain construct-only; liveness is the first
+`run` or `fs` operation's problem. The framework stamps the acquiring capability's ID on
+`SandboxRef.capability_id` and routes `get_sandbox` and `release_sandbox` back to it.
 
 For reliable durable lifecycles:
 
