@@ -855,15 +855,15 @@ async def test_sandbox_lifecycle_brackets_the_run(run_mode: str) -> None:
     assert events == ['acquire_sandbox', 'for_run', 'toolset_enter', 'model', 'toolset_exit', 'release_sandbox']
 
 
-async def test_duplicate_per_run_supplier_ids_fail_and_release():
+async def test_run_capability_overrides_agent_capability_and_releases_sandbox():
     creator = LifecycleSandboxCapability()
     creator.id = 'duplicate'
     decliner = DecliningSandboxCapability()
     decliner.id = 'duplicate'
     agent = Agent(TestModel(), capabilities=[creator])
 
-    with pytest.raises(UserError, match=r"Capability id 'duplicate' is used by multiple capabilities"):
-        await agent.run('go', capabilities=[decliner])
+    result = await agent.run('go', capabilities=[decliner])
+    assert result.output == 'success (no tool calls)'
     assert creator.events == ['acquire:created-1', 'release:created-1']
 
 
