@@ -103,7 +103,6 @@ class TestImageGenerationModel(ImageGenerationModel):
             images=[
                 GeneratedImage(
                     content=BinaryImage(data=_TINY_PNG, media_type='image/png'),
-                    size='1x1',
                     output_format='png',
                 )
             ],

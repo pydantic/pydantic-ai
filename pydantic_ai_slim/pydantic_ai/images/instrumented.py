@@ -186,14 +186,8 @@ class InstrumentedImageGenerationModel(WrapperImageGenerationModel):
 
         for image_index, image in enumerate(result.images):
             prefix = f'image.{image_index}'
-            if image.size:
-                attributes[f'{prefix}.size'] = image.size
-            if image.quality:
-                attributes[f'{prefix}.quality'] = image.quality
             if image.output_format:
                 attributes[f'{prefix}.output_format'] = image.output_format
-            if image.background:
-                attributes[f'{prefix}.background'] = image.background
             attributes[f'{prefix}.media_type'] = image.content.media_type
 
         if price_calculation:

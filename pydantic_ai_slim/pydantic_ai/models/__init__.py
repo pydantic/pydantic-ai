@@ -941,11 +941,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
 
     def _validate_uploaded_file_provider(self, item: UploadedFile) -> None:
         """Raise `UserError` if an `UploadedFile` references a different provider than this model."""
-        if item.provider_name != self.system:
-            raise UserError(
-                f'UploadedFile with `provider_name={item.provider_name!r}` cannot be used with {type(self).__name__}. '
-                f'Expected `provider_name` to be `{self.system!r}`.'
-            )
+        _utils.validate_uploaded_file_provider(item, system=self.system, model_type_name=type(self).__name__)
 
     @staticmethod
     def _get_instruction_parts(

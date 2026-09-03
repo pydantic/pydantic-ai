@@ -5,6 +5,9 @@ from pydantic_ai.exceptions import UserError
 
 from .settings import ImageGenerationSettings
 
+# Shared with the `ImageGeneration` capability, which can decide the same conflict at construction.
+DIMENSIONS_ASPECT_RATIO_CONFLICT = 'Image generation `dimensions` and `aspect_ratio` are mutually exclusive'
+
 
 def validate_image_generation_settings(settings: ImageGenerationSettings) -> None:
     """Validate provider-independent image generation setting invariants."""
@@ -13,7 +16,7 @@ def validate_image_generation_settings(settings: ImageGenerationSettings) -> Non
         return
 
     if settings.get('aspect_ratio') is not None:
-        raise UserError('Image generation `dimensions` and `aspect_ratio` are mutually exclusive')
+        raise UserError(DIMENSIONS_ASPECT_RATIO_CONFLICT)
 
     if (
         not isinstance(dimensions, tuple)

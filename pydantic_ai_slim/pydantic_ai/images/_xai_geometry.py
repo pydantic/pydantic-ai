@@ -33,6 +33,9 @@ _XAI_GEOMETRIES: dict[ImageAspectRatio, dict[ImageResolution, ImageDimensions]] 
 # Both canonical models share the single `_XAI_GEOMETRIES` table, so an alias needs no geometry data
 # of its own — it only has to be recognized here. Enumerated rather than matched by prefix so an
 # unknown future model still falls through to the error, the way `grok-imagine-image-9` should.
+# `grok-imagine-image-2.0` is a third model rather than an alias of either, and xAI publishes no
+# ratio-to-pixel mapping for it, so `dimensions` keeps raising there until someone probes it; its
+# `aspect_ratio` and provider-prefixed settings work regardless, since neither consults this set.
 # https://docs.x.ai/developers/models/grok-imagine-image
 # https://docs.x.ai/developers/models/grok-imagine-image-quality
 _XAI_GEOMETRY_MODELS = frozenset(

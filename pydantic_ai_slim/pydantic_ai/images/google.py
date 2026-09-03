@@ -50,7 +50,19 @@ except ImportError as _import_error:
     ) from _import_error
 
 
-GoogleImageGenerationModelName = str
+LatestGoogleImageGenerationModelNames = Literal[
+    'gemini-2.5-flash-image',
+    'gemini-3-pro-image',
+    'gemini-3.1-flash-image',
+    'gemini-3.1-flash-lite-image',
+]
+"""Latest Gemini image generation models, served identically by the Gemini API and Google Cloud (Vertex AI).
+
+See the [Gemini image generation documentation](https://ai.google.dev/gemini-api/docs/image-generation)
+for available models and their capabilities.
+"""
+
+GoogleImageGenerationModelName = str | LatestGoogleImageGenerationModelNames
 """Possible Google image generation model names."""
 
 _CONTENT_FILTER_FINISH_REASONS = frozenset(

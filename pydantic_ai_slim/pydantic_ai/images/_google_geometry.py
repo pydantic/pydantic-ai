@@ -51,16 +51,10 @@ class _GoogleImageGeometryProfile:
     default_size: str | None
 
 
-def _scaled_dimensions(
-    base: dict[ImageGenerationAspectRatio, ImageDimensions], scales: dict[str, int]
-) -> dict[ImageGenerationAspectRatio, dict[str | None, ImageDimensions]]:
-    return {
-        ratio: {size: (width * scale, height * scale) for size, scale in scales.items()}
-        for ratio, (width, height) in base.items()
-    }
-
-
-_GEMINI_31_FLASH_DIMENSIONS = _scaled_dimensions(_GEMINI_31_512_DIMENSIONS, {'512': 1, '1K': 2, '2K': 4, '4K': 8})
+_GEMINI_31_FLASH_DIMENSIONS: dict[ImageGenerationAspectRatio, dict[str | None, ImageDimensions]] = {
+    ratio: {tier: (width * scale, height * scale) for tier, scale in (('512', 1), ('1K', 2), ('2K', 4), ('4K', 8))}
+    for ratio, (width, height) in _GEMINI_31_512_DIMENSIONS.items()
+}
 _GEMINI_31_FLASH_DIMENSIONS.update(_GEMINI_31_EXPLICIT_DIMENSIONS)
 _GEMINI_31_FLASH_PROFILE = _GoogleImageGeometryProfile(
     dimensions=_GEMINI_31_FLASH_DIMENSIONS,
@@ -145,7 +139,7 @@ def _google_image_geometry_profile(model_name: str) -> _GoogleImageGeometryProfi
         return _GEMINI_31_FLASH_LITE_PROFILE
     if 'gemini-3.1-flash-image' in model_name:
         return _GEMINI_31_FLASH_PROFILE
-    if 'gemini-3-pro-image' in model_name or 'gemini-3.1-pro-image' in model_name:
+    if 'gemini-3-pro-image' in model_name:
         return _GEMINI_31_PRO_PROFILE
     if 'gemini-2.5-flash-image' in model_name:
         return _GEMINI_25_FLASH_PROFILE

@@ -46,6 +46,9 @@ for `dall-e-3`, and use a `standard`/`hd` quality vocabulary. Rejecting them by 
 actionable while leaving unrecognized future models to fall through to the provider.
 """
 
+_INPUT_EXTENSIONS = {'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp'}
+"""Filename extension per media type the image-edit endpoint accepts, which reads the format off the name."""
+
 
 OpenAIImageOutputFormat = Literal['png', 'webp', 'jpeg']
 """The image formats OpenAI's image endpoints accept as a requested output format.
@@ -258,6 +261,9 @@ class OpenAIImageGenerationModel(ImageGenerationModel):
         mapped_images: list[tuple[str, bytes, str]] = []
         for index, image in enumerate(images):
             if isinstance(image, UploadedFile):
+                # Every `UploadedFile` is rejected, but a file uploaded to another provider is rejected
+                # for that reason first: the mismatch is the actionable error, and the endpoint's lack of
+                # file-id support is only what is left once the file does belong to OpenAI.
                 self._validate_uploaded_file_provider(image)
                 raise UserError(
                     'OpenAI image editing requires file content and does not accept `UploadedFile.file_id`; '
@@ -273,7 +279,11 @@ class OpenAIImageGenerationModel(ImageGenerationModel):
             else:
                 assert_never(image)
 
-            extension = _openai_input_extension(media_type)
+            extension = _INPUT_EXTENSIONS.get(media_type)
+            if extension is None:
+                raise UserError(
+                    f'OpenAI image editing only supports PNG, JPEG, or WebP input images, got media type {media_type!r}'
+                )
             mapped_images.append((f'image-{index}.{extension}', data, media_type))
 
         return mapped_images
@@ -312,10 +322,7 @@ class OpenAIImageGenerationModel(ImageGenerationModel):
                 GeneratedImage(
                     content=BinaryImage(data=image_data, media_type=sniffed_media_type),
                     revised_prompt=image.revised_prompt,
-                    size=response.size,
-                    quality=response.quality,
                     output_format=output_format_from_media_type(sniffed_media_type),
-                    background=response.background,
                 )
             )
 
@@ -329,18 +336,6 @@ class OpenAIImageGenerationModel(ImageGenerationModel):
             settings=settings,
             provider_details=_response_provider_details(response),
         )
-
-
-def _openai_input_extension(media_type: str) -> str:
-    if media_type == 'image/png':
-        return 'png'
-    if media_type == 'image/jpeg':
-        return 'jpg'
-    if media_type == 'image/webp':
-        return 'webp'
-    raise UserError(
-        f'OpenAI image editing only supports PNG, JPEG, or WebP input images, got media type {media_type!r}'
-    )
 
 
 @dataclass
@@ -381,6 +376,15 @@ def _response_provider_details(response: ImagesResponse) -> dict[str, object]:
     provider_details: dict[str, object] = {}
     if response.created:
         provider_details['created'] = response.created
+    # `size`, `quality` and `background` are the request parameters echoed back, not measurements of
+    # the returned bytes — the same echo that made `output_format` unreliable (openai-node#1850) — so
+    # they stay provider detail rather than normalized fields on `GeneratedImage`.
+    if response.size:
+        provider_details['size'] = response.size
+    if response.quality:
+        provider_details['quality'] = response.quality
+    if response.background:
+        provider_details['background'] = response.background
     return provider_details
 
 

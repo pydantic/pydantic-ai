@@ -25,17 +25,8 @@ class GeneratedImage:
     revised_prompt: str | None = None
     """Provider-revised or enhanced prompt, if available."""
 
-    size: str | None = None
-    """Generated image size, if reported by the provider."""
-
-    quality: str | None = None
-    """Generated image quality, if reported by the provider."""
-
     output_format: str | None = None
-    """Generated image output format, if reported by the provider."""
-
-    background: str | None = None
-    """Generated image background mode, if reported by the provider."""
+    """Generated image output format, derived from the bytes the provider returned."""
 
     provider_details: dict[str, Any] | None = None
     """Provider-specific details for this generated image."""

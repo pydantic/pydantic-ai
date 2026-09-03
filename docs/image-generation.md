@@ -58,7 +58,7 @@ does best.
 | OpenAI | `openai:gpt-image-2`, `openai:gpt-image-1.5`, `openai:gpt-image-1`, `openai:gpt-image-1-mini` |
 | Google Gemini API | `google:gemini-3.1-flash-image`, `google:gemini-3.1-flash-lite-image`, `google:gemini-3-pro-image`, `google:gemini-2.5-flash-image` |
 | Google Cloud (Vertex AI) | The same four Gemini models under the `google-cloud:` prefix, or `gateway/google:` through the [Pydantic AI Gateway](gateway.md) |
-| xAI | `xai:grok-imagine-image`, `xai:grok-imagine-image-quality` |
+| xAI | `xai:grok-imagine-image`, `xai:grok-imagine-image-2.0`, `xai:grok-imagine-image-quality` |
 
 The exact shapes each family can produce differ, so check
 [Canonical Dimensions for `aspect_ratio`](#canonical-dimensions-for-aspect_ratio) before committing to a model for a
@@ -99,7 +99,7 @@ Of the providers below only OpenAI exposes that primitive, so there is nothing p
 | OpenAI | ✅ | ✅ | ❌ | ✅ | Reference images must be PNG, JPEG, or WebP; any other media type raises [`UserError`][pydantic_ai.exceptions.UserError]. |
 | Google Gemini API | ✅ | ✅ | ✅ | ❌ | [`UploadedFile.file_id`][pydantic_ai.messages.UploadedFile] must be the Files API URI (`file.uri`, which starts with `https://`), not the `files/...` resource name; any other value raises [`UserError`][pydantic_ai.exceptions.UserError]. A Files API URL passed as an `ImageUrl` instead needs an explicit `media_type`, since those URLs carry no file extension. See [Uploaded Files](input.md#uploaded-files). |
 | Google Cloud (Vertex AI) | ✅ | ✅ | ❌ | ❌ | The Gemini Files API is not available on Vertex AI, and the adapter does not accept the `gs://` URIs Vertex uses instead, so pass reference images as `BinaryImage` or `ImageUrl`. Whether a client targets Vertex is read off the client, not the provider name. |
-| xAI | ✅ | ✅ | ✅ | ✅ | xAI documents up to five reference images and enforces the limit itself, so an over-limit request comes back as a 400 [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError]. Every `UploadedFile` must come before any `ImageUrl` or `BinaryImage`, because xAI sends file IDs ahead of URL and binary inputs; another order raises [`UserError`][pydantic_ai.exceptions.UserError] rather than silently resequencing them. `extra_headers` and `extra_body` are ignored with a warning: the transport is gRPC, which has no per-request header or body escape hatch. |
+| xAI | ✅ | ✅ | ✅ | ✅ | xAI documents up to five reference images and enforces the limit itself: six references to `grok-imagine-image` come back as `INVALID_ARGUMENT` with `This model supports at most 5 input image(s), but 6 were provided.`, which surfaces as a 400 [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError]. Every `UploadedFile` must come before any `ImageUrl` or `BinaryImage`, because xAI sends file IDs ahead of URL and binary inputs; another order raises [`UserError`][pydantic_ai.exceptions.UserError] rather than silently resequencing them. `extra_headers` and `extra_body` are ignored with a warning: the transport is gRPC, which has no per-request header or body escape hatch. |
 
 `google:` is the Gemini Developer API (Google AI Studio) and `google-cloud:` is Vertex AI, exactly as for
 conversational models. `gateway/google:` routes Gemini through the [Pydantic AI Gateway](gateway.md), which serves it
@@ -326,7 +326,7 @@ them exactly:
 | Gemini 3.1 Flash Lite Image | The fourteen `1K` dimensions shown in its column above. This model serves no other tier. |
 | Gemini 3 Pro Image | The ten `1K` dimensions shown above, plus `2K` and `4K` variants obtained by multiplying both sides by 2 or 4. |
 | Gemini 3.1 Flash Image | The ten standard `1K` dimensions shown above, their `2K` and `4K` variants obtained by multiplying both sides by 2 or 4, and their `512` variants obtained by halving both sides — plus the five rows in the table below, whose tiers do not scale uniformly. |
-| Grok Imagine | The verified `1k` and `2k` dimensions in the table below. |
+| Grok Imagine (`grok-imagine-image`, `grok-imagine-image-quality`) | The verified `1k` and `2k` dimensions in the table below. |
 
 These Gemini 3.1 rows were verified against the live API, which returns shapes different from Google's published table
 for the four extended ratios. Flash Lite serves only their `1K` column:
@@ -340,7 +340,9 @@ for the four extended ratios. Flash Lite serves only their `1K` column:
 | `21:9` | `784×336` | `1584×672` | `3168×1344` | `6336×2688` |
 
 xAI documents the ratios and resolution tiers but not their complete exact pixel mapping. These dimensions were verified
-against both `grok-imagine-image` and `grok-imagine-image-quality`:
+against both `grok-imagine-image` and `grok-imagine-image-quality`. `grok-imagine-image-2.0` is a separate model that
+nobody has probed, so `dimensions` raises [`UserError`][pydantic_ai.exceptions.UserError] there; use `aspect_ratio` or
+the `xai_`-prefixed settings, which xAI validates itself:
 
 | Ratio | `1k` | `2k` |
 | --- | --- | --- |
@@ -427,6 +429,10 @@ async def main():
 ```
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`.)_
+
+OpenAI's `provider_details` carries the `size`, `quality`, and `background` values the API echoes back. Those are the
+request parameters, not measurements of the returned bytes, so the only geometry-adjacent field on
+[`GeneratedImage`][pydantic_ai.images.GeneratedImage] is `output_format`, which is derived from the bytes themselves.
 
 xAI's `provider_details` can contain `cost_usd` reported by xAI. This is provider metadata, not a portable cost
 calculation, and is kept separate from [`cost()`][pydantic_ai.images.ImageGenerationResult.cost].

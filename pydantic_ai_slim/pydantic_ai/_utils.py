@@ -569,6 +569,15 @@ def fill_run_metadata(message: _messages.ModelMessage, *, run_id: str | None, co
     message.conversation_id = message.conversation_id or conversation_id
 
 
+def validate_uploaded_file_provider(item: _messages.UploadedFile, *, system: str, model_type_name: str) -> None:
+    """Raise `UserError` if an `UploadedFile` references a different provider than the model it was passed to."""
+    if item.provider_name != system:
+        raise UserError(
+            f'UploadedFile with `provider_name={item.provider_name!r}` cannot be used with {model_type_name}. '
+            f'Expected `provider_name` to be `{system!r}`.'
+        )
+
+
 def guard_tool_call_id(
     t: _messages.ToolCallPart
     | _messages.ToolReturnPart
