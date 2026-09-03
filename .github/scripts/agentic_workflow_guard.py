@@ -101,8 +101,10 @@ JOB_TIMEOUT_HEADROOM_MINS = 2
 # wherever a prompt actually writes one.
 SANDBOX_PATH = re.compile(rf'{re.escape(SANDBOX_PREFIX)}[^\s`\'"()\[\]<>]*')
 
-# The version argument of the hand-written AWF install step, quoted or bare.
-AWF_INSTALL_VERSION = re.compile(r'install_awf_binary\.sh"?\s+(\S+)')
+# The version argument of the hand-written AWF install step. Both the script path and
+# the version may be quoted, and the capture must not swallow those quotes: a pin that
+# only differs from the compiled version by a pair of them is the same pin.
+AWF_INSTALL_VERSION = re.compile(r'install_awf_binary\.sh"?\s+"?([^"\s]+)')
 
 NEEDS_REFERENCE = re.compile(r'\bneeds\.([A-Za-z_][A-Za-z0-9_-]*)')
 EXPRESSION_BLOCK = re.compile(r'\$\{\{(.*?)\}\}', re.DOTALL)
@@ -461,8 +463,11 @@ def check_awf_binary_version(lock: Path) -> list[Violation]:
         for raw_step in cast(list[Any], steps) if isinstance(steps, list) else []:
             step = _as_mapping(raw_step)
             run = step.get('run')
-            if isinstance(run, str) and (match := AWF_INSTALL_VERSION.search(run)):
-                pinned.add(match.group(1))
+            # `finditer`, not `search`: a multi-line `run` that installs twice is pinned by
+            # its *last* invocation, so stopping at the first would pass a stale pin that
+            # then overwrites the binary the agent actually uses.
+            if isinstance(run, str):
+                pinned.update(match.group(1) for match in AWF_INSTALL_VERSION.finditer(run))
             version = _as_mapping(step.get('env')).get('GH_AW_INFO_AWF_VERSION')
             if isinstance(version, str):
                 bundled.add(version)

@@ -725,6 +725,37 @@ def test_awf_binary_version_accepts_a_matched_pin(tmp_path: Path):
     assert check_awf_binary_version(lock) == []
 
 
+def test_awf_binary_version_accepts_a_quoted_version(tmp_path: Path):
+    """The pin is hand-written, so a quoted argument is a shape a maintainer will produce."""
+    lock = _write(tmp_path / 'w.lock.yml', _AWF_LOCK.format(pinned='"v0.27.44"'))
+
+    assert check_awf_binary_version(lock) == []
+
+
+def test_awf_binary_version_reads_every_installer_invocation_in_one_step(tmp_path: Path):
+    """The last install wins, so a stale second call must not hide behind a correct first."""
+    lock = _write(
+        tmp_path / 'w.lock.yml',
+        """
+jobs:
+  agent:
+    steps:
+      - name: Setup Scripts
+        env:
+          GH_AW_INFO_AWF_VERSION: "v0.27.44"
+      - name: Install AWF firewall binary (skipped by custom engine.command)
+        run: |
+          bash "${RUNNER_TEMP}/gh-aw/actions/install_awf_binary.sh" v0.27.44
+          bash "${RUNNER_TEMP}/gh-aw/actions/install_awf_binary.sh" v0.27.42
+""",
+    )
+
+    violations = check_awf_binary_version(lock)
+
+    assert [v.check for v in violations] == ['awf-binary-version']
+    assert 'v0.27.42' in violations[0].message
+
+
 def test_awf_binary_version_ignores_a_lock_without_the_hand_written_install(tmp_path: Path):
     """Only workflows setting `engine.command` re-run the installer themselves."""
     lock = _write(
