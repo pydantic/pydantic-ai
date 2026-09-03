@@ -2,14 +2,27 @@
 
 from __future__ import annotations
 
+import base64
+import json
 import warnings
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
 import httpx2
 import pytest
+from opentelemetry import trace
 
-from pydantic_ai import Agent, ModelHTTPError, ModelMessage, ModelResponse, ModelSettings, ThinkingPart
+from pydantic_ai import (
+    Agent,
+    ModelHTTPError,
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    ModelSettings,
+    ThinkingPart,
+    UsageLimits,
+)
+from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.instrumented import InstrumentedModel
 
 from ..._inline_snapshot import snapshot
@@ -34,6 +47,7 @@ with try_import() as anthropic_imports_successful:
     from anthropic.types.beta import (
         BetaMessage,
         BetaMessageDeltaUsage,
+        BetaMessageTokensCount,
         BetaRawContentBlockStartEvent,
         BetaRawContentBlockStopEvent,
         BetaRawMessageDeltaEvent,
@@ -86,6 +100,23 @@ def stale_thinking_block_error() -> APIStatusError:
             },
         },
     )
+
+
+def recovered_thinking_history() -> list[ModelMessage]:
+    """History after Anthropic has dropped a stale thinking block once."""
+    return [
+        ModelRequest.user_text_prompt('First turn'),
+        ModelResponse(
+            parts=[ThinkingPart(content='reasoning', signature='signature', provider_name='anthropic')],
+            provider_name='anthropic',
+            provider_details={
+                'input_transformations': [
+                    {'path': 'messages.1.content.0', 'reason': 'prefix_binding_mismatch', 'type': 'thinking_dropped'}
+                ]
+            },
+        ),
+        ModelRequest.user_text_prompt('Third turn'),
+    ]
 
 
 @pytest.mark.parametrize('model_name', ['claude-fable-5-1', 'claude-fable-5'])
@@ -163,6 +194,179 @@ async def test_anthropic_retries_a_stale_thinking_block_streamed(allow_model_req
         {'thinking': {'block_binding': {'prefix_mismatch_behavior': 'drop_block'}}}
     )
     assert _THINKING_BINDING_BETA in retried['betas']
+
+
+async def test_anthropic_keeps_dropping_stale_thinking_blocks_for_the_rest_of_the_session(
+    allow_model_requests: None,
+):
+    """A later turn carrying the recovery response must not pay for another rejected request."""
+    mock_client = MockAnthropic.create_mock(
+        completion_message([BetaTextBlock(text='6', type='text')], usage=BetaUsage(input_tokens=12, output_tokens=1))
+    )
+    model = AnthropicModel('claude-fable-5-1', provider=AnthropicProvider(anthropic_client=mock_client))
+
+    await model.request(recovered_thinking_history(), None, ModelRequestParameters())
+
+    request = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert request['extra_body'] == snapshot(
+        {'thinking': {'block_binding': {'prefix_mismatch_behavior': 'drop_block'}}}
+    )
+    assert _THINKING_BINDING_BETA in request['betas']
+
+
+async def test_anthropic_keeps_dropping_stale_thinking_blocks_for_the_rest_of_a_streamed_session(
+    allow_model_requests: None,
+):
+    """History-scoped recovery has the same first-attempt behavior for streaming."""
+    mock_client = MockAnthropic.create_stream_mock(dropped_thinking_stream())
+    model = AnthropicModel('claude-fable-5-1', provider=AnthropicProvider(anthropic_client=mock_client))
+
+    async with model.request_stream(recovered_thinking_history(), None, ModelRequestParameters()) as response:
+        async for _ in response:
+            pass
+
+    request = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert request['extra_body'] == snapshot(
+        {'thinking': {'block_binding': {'prefix_mismatch_behavior': 'drop_block'}}}
+    )
+    assert _THINKING_BINDING_BETA in request['betas']
+
+
+async def test_anthropic_count_tokens_retries_a_stale_thinking_block(allow_model_requests: None):
+    """Token counting runs the same prefix check, so it needs the same one-retry recovery."""
+    mock_client = MockAnthropic.create_mock(
+        completion_message(
+            [BetaTextBlock(text='unused', type='text')], usage=BetaUsage(input_tokens=1, output_tokens=1)
+        )
+    )
+    requests: list[dict[str, Any]] = []
+
+    async def count_tokens(**kwargs: Any) -> BetaMessageTokensCount:
+        requests.append(kwargs)
+        if len(requests) == 1:
+            raise stale_thinking_block_error()
+        return BetaMessageTokensCount(input_tokens=10)
+
+    mock_client.beta.messages.count_tokens = count_tokens
+    model = AnthropicModel('claude-fable-5-1', provider=AnthropicProvider(anthropic_client=mock_client))
+
+    with pytest.warns(AnthropicStaleThinkingBlockWarning, match='rejected a replayed thinking block'):
+        result = await model.count_tokens([ModelRequest.user_text_prompt('Count this')], None, ModelRequestParameters())
+
+    assert result.input_tokens == 10
+    assert requests[0].get('extra_body') is None
+    assert requests[1]['extra_body'] == snapshot(
+        {'thinking': {'block_binding': {'prefix_mismatch_behavior': 'drop_block'}}}
+    )
+    assert _THINKING_BINDING_BETA in requests[1]['betas']
+
+
+async def test_anthropic_count_tokens_recovery_carries_into_inference_and_later_turns(allow_model_requests: None):
+    """A pre-request count recovery must prevent inference and the next turn from rejecting again."""
+    mock_client = MockAnthropic.create_mock(
+        completion_message([BetaTextBlock(text='4', type='text')], usage=BetaUsage(input_tokens=10, output_tokens=1))
+    )
+    count_requests: list[dict[str, Any]] = []
+
+    async def count_tokens(**kwargs: Any) -> BetaMessageTokensCount:
+        count_requests.append(kwargs)
+        if len(count_requests) == 1:
+            raise stale_thinking_block_error()
+        return BetaMessageTokensCount(input_tokens=10)
+
+    mock_client.beta.messages.count_tokens = count_tokens
+    model = AnthropicModel('claude-fable-5-1', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(model)
+
+    with warnings.catch_warnings(record=True) as caught_warnings:
+        warnings.filterwarnings('always', category=AnthropicStaleThinkingBlockWarning)
+        first = await agent.run(
+            'What is 2+2?', usage_limits=UsageLimits(count_tokens_before_request=True, input_tokens_limit=100)
+        )
+        await agent.run('And again?', message_history=first.all_messages())
+
+    assert len(caught_warnings) == 1
+    first_inference, next_turn = get_mock_chat_completion_kwargs(mock_client)
+    expected_thinking = snapshot({'thinking': {'block_binding': {'prefix_mismatch_behavior': 'drop_block'}}})
+    assert first_inference['extra_body'] == expected_thinking
+    assert next_turn['extra_body'] == expected_thinking
+
+
+async def test_anthropic_count_tokens_does_not_retry_an_unrelated_bad_request(allow_model_requests: None):
+    """Token counting only recovers the exact stale-binding rejection."""
+    mock_client = MockAnthropic.create_mock(
+        completion_message(
+            [BetaTextBlock(text='unused', type='text')], usage=BetaUsage(input_tokens=1, output_tokens=1)
+        )
+    )
+    requests: list[dict[str, Any]] = []
+
+    async def count_tokens(**kwargs: Any) -> BetaMessageTokensCount:
+        requests.append(kwargs)
+        raise APIStatusError(
+            'bad request',
+            response=httpx2.Response(status_code=400, request=httpx2.Request('POST', 'https://example.com/v1')),
+            body={'type': 'error', 'error': {'type': 'invalid_request_error', 'message': 'max_tokens: too large'}},
+        )
+
+    mock_client.beta.messages.count_tokens = count_tokens
+    model = AnthropicModel('claude-fable-5-1', provider=AnthropicProvider(anthropic_client=mock_client))
+
+    with pytest.raises(ModelHTTPError, match='max_tokens: too large'):
+        await model.count_tokens([ModelRequest.user_text_prompt('Count this')], None, ModelRequestParameters())
+
+    assert len(requests) == 1
+
+
+async def test_anthropic_count_tokens_keeps_dropping_after_recovery(allow_model_requests: None):
+    """Counting a later turn follows the same history-scoped recovery as inference."""
+    mock_client = MockAnthropic.create_mock(
+        completion_message(
+            [BetaTextBlock(text='unused', type='text')], usage=BetaUsage(input_tokens=1, output_tokens=1)
+        )
+    )
+    model = AnthropicModel('claude-fable-5-1', provider=AnthropicProvider(anthropic_client=mock_client))
+
+    await model.count_tokens(recovered_thinking_history(), None, ModelRequestParameters())
+
+    request = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert request['extra_body'] == snapshot(
+        {'thinking': {'block_binding': {'prefix_mismatch_behavior': 'drop_block'}}}
+    )
+    assert _THINKING_BINDING_BETA in request['betas']
+
+
+async def test_anthropic_count_tokens_preserves_an_explicit_binding_after_recovery(allow_model_requests: None):
+    """A history marker never overrides the caller's typed choice for token counting."""
+    mock_client = MockAnthropic.create_mock(
+        completion_message(
+            [BetaTextBlock(text='unused', type='text')], usage=BetaUsage(input_tokens=1, output_tokens=1)
+        )
+    )
+    settings = AnthropicModelSettings(
+        anthropic_thinking={'type': 'adaptive', 'block_binding': {'prefix_mismatch_behavior': 'error'}}
+    )
+    model = AnthropicModel('claude-fable-5-1', provider=AnthropicProvider(anthropic_client=mock_client))
+
+    await model.count_tokens(recovered_thinking_history(), settings, ModelRequestParameters())
+
+    request = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert request['thinking'] == snapshot({'type': 'adaptive', 'block_binding': {'prefix_mismatch_behavior': 'error'}})
+    assert request.get('extra_body') is None
+
+
+async def test_anthropic_bedrock_count_tokens_sends_persisted_binding_on_the_wire(allow_model_requests: None):
+    """Legacy Bedrock carries the documented beta in its InvokeModel-style JSON body."""
+    client = mock_anthropic_client(AsyncAnthropicBedrock, 'https://example.com')
+    client.post.return_value = {'inputTokens': 10}
+    model = AnthropicModel('claude-fable-5-1', provider=AnthropicProvider(anthropic_client=client))
+
+    await model.count_tokens(recovered_thinking_history(), None, ModelRequestParameters())
+
+    content = json.loads(client.post.await_args.kwargs['content'])
+    invoke_model_body = json.loads(base64.b64decode(content['input']['invokeModel']['body']))
+    assert invoke_model_body['anthropic_beta'] == [_THINKING_BINDING_BETA]
+    assert invoke_model_body['thinking'] == snapshot({'block_binding': {'prefix_mismatch_behavior': 'drop_block'}})
 
 
 async def test_anthropic_retry_carries_the_configured_thinking_forward(allow_model_requests: None):
@@ -253,14 +457,16 @@ async def test_anthropic_respects_block_binding_in_mapping_extra_body(allow_mode
     'client_cls,binds_thinking_blocks',
     [
         pytest.param(MockAnthropic, True, id='direct'),
-        pytest.param(AsyncAnthropicBedrock, False, id='bedrock'),
+        pytest.param(AsyncAnthropicBedrock, True, id='bedrock'),
         pytest.param(AsyncAnthropicBedrockMantle, False, id='bedrock-mantle'),
         pytest.param(AsyncAnthropicFoundry, False, id='foundry'),
-        pytest.param(AsyncAnthropicVertex, False, id='vertex'),
+        pytest.param(AsyncAnthropicVertex, True, id='vertex'),
     ],
 )
-def test_anthropic_thinking_block_binding_profile_is_direct_only(client_cls: type, binds_thinking_blocks: bool) -> None:
-    """The binding beta and automatic retry are verified only on Anthropic's direct API."""
+def test_anthropic_thinking_block_binding_profile_matches_verified_transports(
+    client_cls: type, binds_thinking_blocks: bool
+) -> None:
+    """Enable only transports whose documented and SDK wire paths carry the binding beta."""
     client = mock_anthropic_client(client_cls, 'https://example.com')
     model = AnthropicModel('claude-fable-5-1', provider=AnthropicProvider(anthropic_client=client))
 
@@ -623,6 +829,30 @@ async def test_anthropic_dropped_thinking_blocks_reach_the_trace_streamed(
             }
         ]
     )
+
+
+async def test_anthropic_dropped_thinking_blocks_do_not_reach_an_unrelated_ambient_span(
+    allow_model_requests: None, capfire: CaptureLogfire
+):
+    """Provider response parsing must not mutate a caller's arbitrary active span."""
+    mock_client = MockAnthropic.create_mock(
+        BetaMessage(
+            id='123',
+            content=[BetaTextBlock(text='4', type='text')],
+            model='claude-fable-5-1',
+            role='assistant',
+            stop_reason='end_turn',
+            type='message',
+            usage=BetaUsage(input_tokens=5, output_tokens=10),
+            input_transformations=[dropped_thinking_transformation()],
+        )
+    )
+    model = AnthropicModel('claude-fable-5-1', provider=AnthropicProvider(anthropic_client=mock_client))
+
+    with trace.get_tracer(__name__).start_as_current_span('ambient'):
+        await Agent(model).run('What is 2+2?')
+
+    assert dropped_thinking_span_events(capfire) == []
 
 
 _STALE_THINKING_BLOCK_PREFIX_CHANGE = pytest.mark.moves_cache_prefix(
