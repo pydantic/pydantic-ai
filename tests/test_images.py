@@ -6,6 +6,7 @@ import os
 import re
 from collections.abc import AsyncGenerator, Callable, Mapping
 from contextlib import asynccontextmanager
+from copy import deepcopy
 from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
@@ -344,6 +345,16 @@ async def test_wrapper_image_generation_model_delegates_properties():
     assert model.system == wrapped.system
     assert model.settings == {'dimensions': (1024, 1024)}
     assert model.base_url is None
+
+
+def test_wrapper_image_generation_model_deepcopy():
+    model = WrapperImageGenerationModel(TestImageGenerationModel(settings={'dimensions': (1024, 1024)}))
+
+    copied = deepcopy(model)
+
+    assert copied is not model
+    assert copied.wrapped is not model.wrapped
+    assert copied.settings == {'dimensions': (1024, 1024)}
 
 
 def test_image_generator_sync_forwards_reference_images():
