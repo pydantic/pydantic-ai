@@ -11,7 +11,7 @@ from pydantic_core import PydanticCustomError, PydanticSerializationError, to_js
 from typing_extensions import Self, assert_never
 
 from pydantic_ai import AbstractToolset, FunctionToolset, ToolsetTool, WrapperToolset
-from pydantic_ai._agent_graph import build_validation_context
+from pydantic_ai._agent_graph.state import build_validation_context
 from pydantic_ai._cancel import RunCancellation
 from pydantic_ai._enqueue import PendingMessage
 from pydantic_ai._utils import is_str_dict

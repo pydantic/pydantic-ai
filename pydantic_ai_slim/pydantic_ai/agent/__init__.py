@@ -43,12 +43,14 @@ from .. import (
 )
 from .._agent_graph import (
     CallToolsNode,
-    EndStrategy,
     ModelRequestNode,
     UserPromptNode,
     build_run_context,
     capture_run_messages,
+    graph as _graph,
+    state as _state,
 )
+from .._agent_graph.state import EndStrategy
 from .._cancel import CancellationToken, RunBinding, RunCancellation, take_run_binding
 from .._deferred_capabilities import registered_loaded_capability_ids
 from .._instructions import AgentInstructions
@@ -1564,7 +1566,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             output_toolset.max_retries = effective_output_toolset_max_retries
 
         # Build the graph
-        graph = _agent_graph.build_agent_graph(self.name, self._deps_type, output_type_)
+        graph = _graph.build_agent_graph(self.name, self._deps_type, output_type_)
 
         # Build the initial state
         state = _agent_graph.GraphAgentState(
@@ -3211,7 +3213,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # Both need the context that only exists once it's built, so they're assigned rather than passed —
         # the graph does the same via `replace`. Without them a tool validated in a session sees a
         # different Pydantic context, and a capability introspecting the chain sees none, than in a run.
-        run_context.validation_context = _agent_graph.build_validation_context(self._validation_context, run_context)
+        run_context.validation_context = _state.build_validation_context(self._validation_context, run_context)
 
         # Instrumentation: inject an `Instrumentation` capability (outermost) so tool spans flow through
         # `ToolManager.handle_call`'s `wrap_tool_execute` hook — the single, canonical source of tool
@@ -3963,7 +3965,7 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
         @asynccontextmanager
         async def _translate_cancellation() -> AsyncGenerator[None]:
             def _run_cancelled(message: str) -> exceptions.RunCancelled:
-                return _agent_graph.run_cancelled_snapshot(message, state, graph_deps)
+                return _state.run_cancelled_snapshot(message, state, graph_deps)
 
             try:
                 yield

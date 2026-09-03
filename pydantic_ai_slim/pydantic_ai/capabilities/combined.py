@@ -40,7 +40,7 @@ from .abstract import (
 )
 
 if TYPE_CHECKING:
-    from pydantic_ai import _agent_graph
+    from pydantic_ai._agent_graph import graph as _graph
     from pydantic_ai.agent.abstract import AbstractAgent
     from pydantic_ai.models import KnownModelName, Model, ModelRequestContext, ModelResolutionContext
     from pydantic_ai.output import OutputContext
@@ -467,8 +467,8 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         self,
         ctx: RunContext[AgentDepsT],
         *,
-        node: _agent_graph.AgentNode[AgentDepsT, Any],
-    ) -> _agent_graph.AgentNode[AgentDepsT, Any]:
+        node: _graph.AgentNode[AgentDepsT, Any],
+    ) -> _graph.AgentNode[AgentDepsT, Any]:
         for capability in self.capabilities:
             if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
                 node = await capability.before_node_run(cap_ctx, node=node)
@@ -478,9 +478,9 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         self,
         ctx: RunContext[AgentDepsT],
         *,
-        node: _agent_graph.AgentNode[AgentDepsT, Any],
-        result: _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]],
-    ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
+        node: _graph.AgentNode[AgentDepsT, Any],
+        result: _graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]],
+    ) -> _graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
         for capability in reversed(self.capabilities):
             if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
                 result = await capability.after_node_run(cap_ctx, node=node, result=result)
@@ -490,12 +490,12 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         self,
         ctx: RunContext[AgentDepsT],
         *,
-        node: _agent_graph.AgentNode[AgentDepsT, Any],
+        node: _graph.AgentNode[AgentDepsT, Any],
         handler: Callable[
-            [_agent_graph.AgentNode[AgentDepsT, Any]],
-            Awaitable[_agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]],
+            [_graph.AgentNode[AgentDepsT, Any]],
+            Awaitable[_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]],
         ],
-    ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
+    ) -> _graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
         chain = handler
         for capability in reversed(self.capabilities):
             if capability._has_wrap_node_run and _ctx_for_active_cap(capability, ctx) is not None:
@@ -506,9 +506,9 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         self,
         ctx: RunContext[AgentDepsT],
         *,
-        node: _agent_graph.AgentNode[AgentDepsT, Any],
+        node: _graph.AgentNode[AgentDepsT, Any],
         error: Exception,
-    ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
+    ) -> _graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
         for capability in reversed(self.capabilities):
             if not capability._has_on_node_run_error:
                 continue
@@ -941,16 +941,16 @@ def _make_node_run_wrap(
     cap: AbstractCapability[AgentDepsT],
     ctx: RunContext[AgentDepsT],
     inner: Callable[
-        [_agent_graph.AgentNode[AgentDepsT, Any]],
-        Awaitable[_agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]],
+        [_graph.AgentNode[AgentDepsT, Any]],
+        Awaitable[_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]],
     ],
 ) -> Callable[
-    [_agent_graph.AgentNode[AgentDepsT, Any]],
-    Awaitable[_agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]],
+    [_graph.AgentNode[AgentDepsT, Any]],
+    Awaitable[_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]],
 ]:
     async def wrapped(
-        node: _agent_graph.AgentNode[AgentDepsT, Any],
-    ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
+        node: _graph.AgentNode[AgentDepsT, Any],
+    ) -> _graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
         return await cap.wrap_node_run(_ctx_for_cap(cap, ctx), node=node, handler=inner)
 
     return wrapped

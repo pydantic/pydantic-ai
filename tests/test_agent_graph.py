@@ -6,6 +6,7 @@ from typing import Protocol, cast
 import pydantic_ai
 import pydantic_ai.agent
 from pydantic_ai import _agent_graph
+from pydantic_ai._agent_graph import graph as _graph
 
 
 class _NodeClass(Protocol):
@@ -51,4 +52,4 @@ def test_agent_graph_node_type_hints_are_resolvable() -> None:
     ):
         assert_type_hints_resolve(cast(_NodeClass, node_class).run)
 
-    assert_type_hints_resolve(_agent_graph.build_agent_graph)
+    assert_type_hints_resolve(_graph.build_agent_graph)
