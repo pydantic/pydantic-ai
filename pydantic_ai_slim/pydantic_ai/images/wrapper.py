@@ -65,4 +65,4 @@ class WrapperImageGenerationModel(ImageGenerationModel):
     def __getattr__(self, item: str):
         if item == 'wrapped':
             raise AttributeError(item)
-        return getattr(self.wrapped, item)  # pragma: no cover
+        return getattr(self.wrapped, item)
