@@ -5,7 +5,7 @@ from collections import Counter
 from collections.abc import AsyncIterable, Awaitable, Callable, Collection, Sequence
 from dataclasses import KW_ONLY, dataclass
 from itertools import chain
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypeAlias
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, NamedTuple, TypeAlias
 from weakref import WeakValueDictionary
 
 from pydantic import ValidationError
@@ -1383,6 +1383,13 @@ def _combination_roots(capability: AbstractCapability[AgentDepsT]) -> Sequence[A
     return capability.capabilities if isinstance(capability, CombinedCapability) else [capability]
 
 
+class _CapabilityOccurrence(NamedTuple, Generic[AgentDepsT]):
+    capability: AbstractCapability[AgentDepsT]
+    occurrence_index: int
+    layer_index: int
+    position: int
+
+
 def _combine_duplicate_capabilities(  # pyright: ignore[reportUnusedFunction]
     capability: AbstractCapability[AgentDepsT],
     layers: Sequence[Sequence[AbstractCapability[AgentDepsT]]],
@@ -1438,7 +1445,7 @@ def _combine_duplicate_capabilities(  # pyright: ignore[reportUnusedFunction]
             root_locations.setdefault(id(root), []).append((layer_index, leaf_positions))
 
     occurrence_counts: dict[int, int] = {}
-    by_id: dict[str, list[tuple[AbstractCapability[AgentDepsT], int, int, int]]] = {}
+    by_id: dict[str, list[_CapabilityOccurrence[AgentDepsT]]] = {}
     for root in _combination_roots(capability):
         layer_index, leaf_positions = root_locations[id(root)].pop(0)
         for leaf in leaf_capabilities(root):
@@ -1446,11 +1453,12 @@ def _combine_duplicate_capabilities(  # pyright: ignore[reportUnusedFunction]
                 occurrence_index = occurrence_counts.get(id(leaf), 0)
                 occurrence_counts[id(leaf)] = occurrence_index + 1
                 position = leaf_positions[id(leaf)].pop(0)
-                by_id.setdefault(leaf.id, []).append((leaf, occurrence_index, layer_index, position))
+                occurrence = _CapabilityOccurrence(leaf, occurrence_index, layer_index, position)
+                by_id.setdefault(leaf.id, []).append(occurrence)
     duplicate_groups = dict(filter(lambda item: len(item[1]) > 1, by_id.items()))
     for duplicates in duplicate_groups.values():
         # Stable, so duplicates the application order does not distinguish keep their tree order.
-        duplicates.sort(key=lambda occurrence: occurrence[3])
+        duplicates.sort(key=lambda occurrence: occurrence.position)
 
     # The combined capability takes the last occurrence's place, so what survives keeps the position
     # the run's last word on that id had; the earlier occurrences are removed.
@@ -1462,22 +1470,23 @@ def _combine_duplicate_capabilities(  # pyright: ignore[reportUnusedFunction]
     # per visit lines the decisions up with the occurrences they were made for.
     replacements: dict[int, list[AbstractCapability[AgentDepsT] | None]] = {}
     for capability_id, duplicates in duplicate_groups.items():
-        _reject_class_crossing_id(capability_id, {type(duplicate[0]) for duplicate in duplicates})
+        _reject_class_crossing_id(capability_id, {type(duplicate.capability) for duplicate in duplicates})
         # Only the last layer to state this id has a say; everything an earlier layer said under it
         # is overridden, not merged in. `combine` then settles what the survivors within that one
         # layer mean -- and with a single survivor there is nothing to settle, so it isn't called.
-        last_layer = max(duplicate[2] for duplicate in duplicates)
-        surviving = [duplicate[0] for duplicate in duplicates if duplicate[2] == last_layer]
+        last_layer = max(duplicate.layer_index for duplicate in duplicates)
+        surviving = [duplicate.capability for duplicate in duplicates if duplicate.layer_index == last_layer]
         # With a single survivor there is nothing to settle, so `combine` isn't called.
         combined_duplicate = surviving[-1]
         if len(surviving) > 1:
             if not _declares_default_id(type(combined_duplicate)):
                 raise UserError(_repeated_id_message(capability_id))
             combined_duplicate = combined_duplicate.combine(surviving)
-        for duplicate, _, _, _ in duplicates:
-            replacements.setdefault(id(duplicate), [None] * occurrence_counts[id(duplicate)])
-        last_duplicate, last_occurrence_index, _, _ = duplicates[-1]
-        replacements[id(last_duplicate)][last_occurrence_index] = combined_duplicate
+        for duplicate in duplicates:
+            capability_identity = id(duplicate.capability)
+            replacements.setdefault(capability_identity, [None] * occurrence_counts[capability_identity])
+        last_duplicate = duplicates[-1]
+        replacements[id(last_duplicate.capability)][last_duplicate.occurrence_index] = combined_duplicate
 
     if not replacements:
         return capability
