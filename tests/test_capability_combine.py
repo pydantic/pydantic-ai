@@ -857,3 +857,25 @@ def test_mcp_takes_the_same_derived_id_as_the_toolset_it_contributes() -> None:
     # derive from, so it stays anonymous and the run tells duplicates apart itself.
     assert MCP[Any](url='https://mcp.example.com/sse', id='docs').id == 'docs'
     assert MCP[Any](local=lambda: FunctionToolset[Any]()).id is None
+
+
+def test_a_deferred_mcp_capability_still_demands_an_id_of_its_own() -> None:
+    """A deferred capability's id is shown to the model, so it may not be derived from the URL.
+
+    The `load_capability` catalog lists every deferred capability by `id` as a dynamic instruction,
+    and the derived id carries the URL's last path segment. Deriving one for a deferred `MCP` would
+    put a signed path -- or a token-in-path server's token -- in the prompt, where a model can be
+    talked into repeating it. Naming a durable operation is ours to do; naming something the model
+    reads is the user's, so this keeps raising exactly as it did before ids were derived at all.
+    """
+    assert MCP[Any](url='https://mcp.example.com/s/sk-live-secret', defer_loading=True).id is None
+
+    with pytest.raises(UserError, match='Deferred capabilities must use stable explicit `id` values'):
+        Agent(
+            TestModel(),
+            capabilities=[MCP[Any](url='https://mcp.example.com/s/sk-live-secret', defer_loading=True)],
+        )
+
+    # An explicit `id=` is all it ever needed, and the URL is then nowhere near the prompt.
+    deferred = MCP[Any](url='https://mcp.example.com/s/sk-live-secret', defer_loading=True, id='docs')
+    assert deferred.id == 'docs'

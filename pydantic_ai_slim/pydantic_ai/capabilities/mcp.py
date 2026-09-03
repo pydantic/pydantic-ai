@@ -90,7 +90,13 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
         # -- no use as a durable-operation name or an instruction key, and nothing a user could
         # write down. `None` stays `None` when there is nothing to derive from (a local client that
         # carries its own connection, with no `url=` and no explicit `native=MCPServerTool(...)`).
-        self.id = id if id is not None else self._derive_id(url)
+        #
+        # Not derived for a deferred capability, which keeps needing an explicit `id`. A deferred
+        # capability's id is listed for the model in the `load_capability` catalog, and the derived
+        # one carries the URL's last path segment -- a signed path or a token-in-path server would
+        # be disclosing that segment to the model. Deriving an id is for naming a durable operation,
+        # which is ours to see; putting one in the prompt is the user's call to make deliberately.
+        self.id = id if id is not None else (None if defer_loading else self._derive_id(url))
         # Non-string runtime `local=` inputs the base class doesn't recognize (Path, transport,
         # FastMCP server, pre-built `fastmcp.Client`, `AnyUrl`, etc.) are wrapped into an
         # `MCPToolset` here. Strings flow through `_resolve_local_strategy` below; pre-built
