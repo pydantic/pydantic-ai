@@ -80,7 +80,12 @@ _CONTENT_FILTER_FINISH_REASONS = frozenset(
         'MODEL_ARMOR',
     }
 )
-"""`FinishReason` values that indicate the model refused for content-policy reasons rather than a benign no-output."""
+"""`FinishReason` values that indicate the model refused for content-policy reasons rather than a benign no-output.
+
+`NO_IMAGE` and `IMAGE_OTHER` are deliberately absent: neither names a content-policy refusal, so both take the
+generic empty-response error instead of the moderation block that the capability converts into a prompt-rephrasing
+retry — `models/google.py` likewise leaves `IMAGE_OTHER` unmapped.
+"""
 
 
 class GoogleImageGenerationSettings(ImageGenerationSettings, total=False):

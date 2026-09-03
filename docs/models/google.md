@@ -392,6 +392,10 @@ passed to [`GoogleCloudProvider`][pydantic_ai.providers.google_cloud.GoogleCloud
 image-only response because [`ImageGenerator`][pydantic_ai.images.ImageGenerator] returns generated images rather than
 Gemini's optional conversational text.
 
+Every generated image carries an unconditional
+[SynthID watermark](https://ai.google.dev/responsible/docs/safeguards/synthid). The Gemini 3 image models are thinking
+models: thinking is always on and billed, and its tokens are included in the result's `usage`.
+
 ## Model settings
 
 You can customize model behavior using [`GoogleModelSettings`][pydantic_ai.models.google.GoogleModelSettings]:

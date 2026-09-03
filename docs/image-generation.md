@@ -60,6 +60,12 @@ does best.
 | Google Cloud (Vertex AI) | The same four Gemini models under the `google-cloud:` prefix, or `gateway/google:` through the [Pydantic AI Gateway](gateway.md) |
 | xAI | `xai:grok-imagine-image`, `xai:grok-imagine-image-2.0`, `xai:grok-imagine-image-quality` |
 
+Some listed names are already on their providers' retirement clocks: OpenAI shuts down `gpt-image-1` on 2026-10-23 and
+`gpt-image-1.5` and `gpt-image-1-mini` on 2026-12-01, Google shuts down `gemini-2.5-flash-image` on 2026-10-02, and from
+2026-11-02 xAI redirects `grok-imagine-image-quality` to `grok-imagine-image-2.0` at its `low` quality rate. They stay
+listed because they still resolve today; for new work prefer `gpt-image-2`, the Gemini 3.1 image models, and
+`grok-imagine-image-2.0`.
+
 The exact shapes each family can produce differ, so check
 [Canonical Dimensions for `aspect_ratio`](#canonical-dimensions-for-aspect_ratio) before committing to a model for a
 fixed layout.
@@ -480,6 +486,9 @@ _(This example is complete, it can be run "as is" — you'll need to add `asynci
 xAI is the exception to the all-or-nothing rule: it moderates silently, so a partially blocked batch returns the clean
 images and reports the blocked positions instead of raising. See the
 [xAI image-generation notes](models/xai.md#image-generation).
+
+Image generation is slow: complex prompts can take minutes, and fronting proxies often cut connections at 60-180
+seconds, so keep client and proxy timeouts above the worst case.
 
 ## Instrumentation
 

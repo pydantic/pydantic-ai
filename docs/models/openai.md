@@ -128,6 +128,9 @@ by model and requires PNG or WebP output. Provider-specific settings are forward
 are not blocked by stale client-side checks. See the [image-generation guide](../image-generation.md) for generation,
 editing, geometry, and normalized settings.
 
+GPT Image models require a verified organization on a paid usage tier: on an unverified organization every request fails
+with a rate-limit error before anything generates. Complex prompts can take up to two minutes to process.
+
 ## Model settings
 
 You can customize model behavior using [`OpenAIResponsesModelSettings`][pydantic_ai.models.openai.OpenAIResponsesModelSettings]:

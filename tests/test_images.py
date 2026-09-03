@@ -1863,6 +1863,62 @@ async def test_google_image_edit_binary_image_vcr(image_content: BinaryImage, re
     assert result.provider_response_id
 
 
+@pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
+async def test_google_multi_image_response():
+    """A response with two `inlineData` parts surfaces as two `GeneratedImage`s, in part order.
+
+    Live multi-image output is not reliably elicitable through the image-only `responseModalities`
+    the adapter requests, so the multi-part loop is pinned with a scripted response; the single-image
+    wire behavior is covered by the VCR recordings.
+    """
+
+    def handle_request(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
+            200,
+            json={
+                'candidates': [
+                    {
+                        'content': {
+                            'role': 'model',
+                            'parts': [
+                                {
+                                    'inlineData': {
+                                        'mimeType': 'image/png',
+                                        'data': base64.b64encode(b'red circle bytes').decode(),
+                                    }
+                                },
+                                {
+                                    'inlineData': {
+                                        'mimeType': 'image/png',
+                                        'data': base64.b64encode(b'blue square bytes').decode(),
+                                    }
+                                },
+                            ],
+                        },
+                        'finishReason': 'STOP',
+                    }
+                ],
+                'modelVersion': 'gemini-3-pro-image',
+                'responseId': 'multi-image-response',
+                'usageMetadata': {'promptTokenCount': 12, 'candidatesTokenCount': 2240, 'totalTokenCount': 2252},
+            },
+        )
+
+    async with _mock_google_provider(handle_request) as provider:
+        model = GoogleImageGenerationModel('gemini-3-pro-image', provider=provider)
+
+        result = await model.generate('A two-page picture book: a red circle page and a blue square page.')
+
+    assert [image.content.data for image in result.images] == [b'red circle bytes', b'blue square bytes']
+    assert [image.content.media_type for image in result.images] == ['image/png', 'image/png']
+    assert [image.output_format for image in result.images] == ['png', 'png']
+    assert result.model_name == 'gemini-3-pro-image'
+    assert result.provider_details == {'finish_reason': 'STOP'}
+    assert result.usage.output_tokens == 2240
+    assert result.provider_response_id == 'multi-image-response'
+    assert result.provider_url == 'https://example.com'
+
+
 def _jpeg_dimensions(data: bytes) -> tuple[int, int]:
     """The `(width, height)` a JPEG's start-of-frame segment declares.
 
