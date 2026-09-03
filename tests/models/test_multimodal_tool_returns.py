@@ -22,7 +22,6 @@ from typing import Any, Literal, cast
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from mistralai.client.models import TextChunk
 from typing_extensions import assert_never
 
 from pydantic_ai import Agent, BinaryContent, BinaryImage
