@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Callable, Sequence
+from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Callable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager, nullcontext
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, cast
@@ -91,22 +91,49 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         self._instruction_sources = instruction_sources
         self.__normalize_capabilities()
 
-    def _rebound(self, new_capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> CombinedCapability[AgentDepsT]:
+    def _rebound(
+        self,
+        new_capabilities: Sequence[AbstractCapability[AgentDepsT]],
+        replacements: Mapping[int, Sequence[AbstractCapability[AgentDepsT] | None]] | None = None,
+    ) -> CombinedCapability[AgentDepsT]:
         """A shallow copy holding `new_capabilities`, with the composition view carried across.
 
         The only supported way to swap a container's children. `replace()` would re-run
         `__post_init__`, which rebuilds `_instruction_sources` from the already-flattened
         `capabilities` — and flattening is what drops a nested container that overrides
         `get_instructions`, so rebuilding is exactly what loses it.
+
+        `replacements` maps each old child by `id()` to what replaced it, or to `None` when it was
+        removed. One decision per *occurrence*, in the order the children were visited: the same
+        object may sit in `capabilities` more than once, and a merge that keeps the first and drops
+        the rest has a different answer for each. Keying by `id()` alone would collapse those into
+        one, so every occurrence would take the surviving decision and contribute its instructions
+        again. It defaults to pairing the old children with the new ones positionally, which only
+        holds when every child was replaced one-for-one;
+        [`visit_and_replace`][pydantic_ai.capabilities.AbstractCapability.visit_and_replace] can
+        drop children, so it passes the mapping explicitly.
         """
         new_self = replace_no_init(self, capabilities=list(new_capabilities))
         # Keep ordinary sources aligned with their bound replacements while retained combined
         # overrides continue to represent the container that owns the public method.
-        replacements = {id(old): new for old, new in zip(self.capabilities, new_capabilities)}
+        if replacements is None:
+            positional: dict[int, list[AbstractCapability[AgentDepsT] | None]] = {}
+            for old, new in zip(self.capabilities, new_capabilities):
+                positional.setdefault(id(old), []).append(new)
+            replacements = positional
+        # Consumed as a queue so repeats of one object take their decisions in turn. The i-th
+        # occurrence here is the i-th occurrence there: `_instruction_sources` and `capabilities`
+        # are built from the same list, and `sort_capabilities` is stable, so neither reorders one
+        # occurrence of an object past another.
+        pending = {key: list(decisions) for key, decisions in replacements.items()}
 
-        def rebind(source: AbstractCapability[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
-            if (replacement := replacements.get(id(source))) is not None:
-                return replacement
+        def take(capability: AbstractCapability[AgentDepsT]) -> AbstractCapability[AgentDepsT] | None:
+            decisions = pending[id(capability)]
+            return decisions.pop(0) if len(decisions) > 1 else decisions[0]
+
+        def rebind(source: AbstractCapability[AgentDepsT]) -> AbstractCapability[AgentDepsT] | None:
+            if id(source) in replacements:
+                return take(source)
             # Anything else is a retained container: `_instruction_sources` holds either direct
             # children, replaced above, or the containers flattening splatted out. Those are not in
             # `capabilities` and so not in `replacements`, and left alone one would keep answering
@@ -114,9 +141,17 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
             # positions sorting its part last. Its children *are* in `replacements`, having been
             # flattened into the very list that was just rebound, so rebuild it from those.
             assert isinstance(source, CombinedCapability)
-            return source._rebound([replacements.get(id(child), child) for child in source.capabilities])
+            rebound_children = [
+                child if id(child) not in replacements else take(child) for child in source.capabilities
+            ]
+            surviving = [child for child in rebound_children if child is not None]
+            # A retained container that lost every child contributes no instructions any more, so
+            # it drops out of the composition view rather than lingering as an empty source.
+            return source._rebound(surviving, replacements) if surviving else None
 
-        new_self._instruction_sources = [rebind(source) for source in new_self._instruction_sources]
+        new_self._instruction_sources = [
+            rebound for source in new_self._instruction_sources if (rebound := rebind(source)) is not None
+        ]
         new_self.__normalize_capabilities()
         return new_self
 
@@ -140,6 +175,36 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     def apply(self, visitor: Callable[[AbstractCapability[AgentDepsT]], None]) -> None:
         for cap in self.capabilities:
             cap.apply(visitor)
+
+    def visit_and_replace(
+        self, visitor: Callable[[AbstractCapability[AgentDepsT]], AbstractCapability[AgentDepsT] | None]
+    ) -> AbstractCapability[AgentDepsT] | None:
+        """Visit each child and rebuild the container from the survivors.
+
+        A child the visitor removed is reported to `_rebound` so the composition view drops it
+        too; see
+        [`AbstractCapability.visit_and_replace`][pydantic_ai.capabilities.AbstractCapability.visit_and_replace]
+        for the tree-walking contract.
+        """
+        new_caps: list[AbstractCapability[AgentDepsT]] = []
+        # `_rebound` needs to know which children were removed, not just which survived, so the
+        # composition view can drop them too; a positional pairing can't express a removal.
+        replacements: dict[int, list[AbstractCapability[AgentDepsT] | None]] = {}
+        unchanged = True
+        for cap in self.capabilities:
+            new_cap = cap.visit_and_replace(visitor)
+            replacements.setdefault(id(cap), []).append(new_cap)
+            if new_cap is not cap:
+                unchanged = False
+            if new_cap is not None:
+                new_caps.append(new_cap)
+        if unchanged:
+            return self
+        if not new_caps:
+            # A container that lost every child contributes nothing, and reporting it as removed is
+            # what lets an enclosing wrapper or container drop it in turn.
+            return None
+        return self._rebound(new_caps, replacements)
 
     @property
     def _has_wrap_node_run(self) -> bool:

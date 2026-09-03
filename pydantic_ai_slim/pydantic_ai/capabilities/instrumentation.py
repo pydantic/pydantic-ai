@@ -6,8 +6,8 @@ import sys
 import warnings
 from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Any, ClassVar
+from dataclasses import KW_ONLY, dataclass, field, replace
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from opentelemetry.baggage import get_all as _otel_get_all_baggage, set_baggage as _otel_set_baggage
 from opentelemetry.context import attach as _otel_attach, detach as _otel_detach
@@ -120,6 +120,14 @@ class Instrumentation(AbstractCapability[Any]):
     inherit the token so their hooks read the same per-run state through `get_run_scope`."""
     # Resolved from `self.settings.version` whenever `__post_init__` runs, including on
     # the per-run copy created by `dataclasses.replace`.
+    _: KW_ONLY
+
+    id: str | None = 'instrumentation'
+    """One-off: an agent has a single instrumentation configuration, so the id is fixed by default.
+
+    Two of them resolve to one via [`combine`][pydantic_ai.capabilities.AbstractCapability.combine],
+    which keeps the last. Pass a distinct `id` to keep both, or `id=None` for derived ids.
+    """
     _instrumentation_names: InstrumentationNames = field(
         default_factory=lambda: InstrumentationNames.for_version(DEFAULT_INSTRUMENTATION_VERSION),
         repr=False,
@@ -134,11 +142,20 @@ class Instrumentation(AbstractCapability[Any]):
         return CapabilityOrdering(position='outermost')
 
     @classmethod
-    def from_spec(cls, **kwargs: Any) -> Instrumentation:
+    def from_spec(
+        cls,
+        *,
+        id: str | None = 'instrumentation',
+        include_binary_content: bool = True,
+        include_content: bool = True,
+        version: Literal[2, 3, 4, 5, 6] = DEFAULT_INSTRUMENTATION_VERSION,
+        use_aggregated_usage_attribute_names: bool = True,
+    ) -> Instrumentation:
         """Build an `Instrumentation` capability from a YAML/JSON spec.
 
-        Accepts the serializable subset of [`InstrumentationSettings`][pydantic_ai.models.instrumented.InstrumentationSettings]
-        kwargs (`include_binary_content`, `include_content`, `version`,
+        Accepts an optional `id` plus the serializable subset of
+        [`InstrumentationSettings`][pydantic_ai.models.instrumented.InstrumentationSettings]
+        options (`include_binary_content`, `include_content`, `version`,
         `use_aggregated_usage_attribute_names`). The OTel `tracer_provider` and `meter_provider`
         fields can't be expressed in YAML and default to the global providers (typically configured
         via `logfire.configure()`).
@@ -148,12 +165,21 @@ class Instrumentation(AbstractCapability[Any]):
             capabilities:
               - Instrumentation: {}                # default settings
               - Instrumentation:
+                  id: monitoring                   # optional; defaults to 'instrumentation'
                   version: 2
                   include_content: false
         """
         from pydantic_ai.models.instrumented import InstrumentationSettings
 
-        return cls(settings=InstrumentationSettings(**kwargs))
+        return cls(
+            id=id,
+            settings=InstrumentationSettings(
+                include_binary_content=include_binary_content,
+                include_content=include_content,
+                version=version,
+                use_aggregated_usage_attribute_names=use_aggregated_usage_attribute_names,
+            ),
+        )
 
     async def for_run(self, ctx: RunContext[Any]) -> Instrumentation:
         """Return a fresh copy for per-run state isolation and record the resolved run context."""

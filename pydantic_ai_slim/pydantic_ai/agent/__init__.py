@@ -66,9 +66,15 @@ from ..capabilities import (
     ToolSearch as ToolSearchCap,
 )
 from ..capabilities._dynamic import wrap_capability_funcs
-from ..capabilities._ordering import find_capability, has_capability_type
+from ..capabilities._ordering import has_capability_type
 from ..capabilities._pending_messages import PendingMessageDrainCapability
-from ..capabilities.abstract import leaf_capabilities
+from ..capabilities.abstract import (
+    _combine_duplicate_capabilities,  # pyright: ignore[reportPrivateUsage]
+    _declares_default_id,  # pyright: ignore[reportPrivateUsage]
+    _reject_class_crossing_id,  # pyright: ignore[reportPrivateUsage]
+    _repeated_id_message,  # pyright: ignore[reportPrivateUsage]
+    leaf_capabilities,
+)
 from ..capabilities.combined import bind_capabilities_tier
 from ..capabilities.instrumentation import Instrumentation as InstrumentationCap
 from ..models.instrumented import InstrumentationSettings, InstrumentedModel
@@ -652,6 +658,17 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         self._root_capability = CombinedCapability(capabilities)
         _validate_capability_ids(self._root_capability.capabilities)
+        # Two capabilities the agent itself was given meet under their shared id here, before
+        # anything reads what they contribute: `for_agent`, toolset extraction and native-tool
+        # validation all run below, and each would otherwise see a pair that is really one --
+        # native tools most visibly, since two differently configured `WebSearch` instances carry
+        # the same native tool id and reading them as two makes that a conflict. Duplicates
+        # *across* layers stay with run setup, where the run-level list first exists.
+        combined = _combine_duplicate_capabilities(self._root_capability, [capabilities])
+        # `visit_and_replace` on a container rebuilds a container, and combining keeps one
+        # occurrence of every id, so it can neither change shape nor empty the tree.
+        assert isinstance(combined, CombinedCapability), 'combining the agent capabilities kept a container'
+        self._root_capability = combined
         _validate_instruction_source_ids([self._root_capability])
 
         # Keep the constructor value untouched while capabilities bind. A capability may interpret
@@ -714,6 +731,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             for toolset in agent_toolsets
             if not isinstance(toolset, AbstractToolset)
         ]
+        self._constructor_dynamic_toolset_count = len(self._dynamic_toolsets)
         self._user_toolsets = [toolset for toolset in agent_toolsets if isinstance(toolset, AbstractToolset)]
 
         # Populated by durable-execution subclasses; base agents use the run-level kwarg.
@@ -2758,8 +2776,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         Args:
             func: The toolset function to register.
             per_run_step: Whether to re-evaluate the toolset for each run step. Defaults to True.
-            id: An optional unique ID for the dynamic toolset. Required for use with durable execution
-                environments like Temporal, where the ID identifies the toolset's activities within the workflow.
+            id: An optional unique ID for the dynamic toolset. Under durable execution, construct a
+                [`DynamicToolset`][pydantic_ai.toolsets.DynamicToolset] with this ID and pass it to
+                `Agent(toolsets=[...])` instead; decorator registrations cannot be used inside a
+                workflow or flow because they happen after durable units are created.
         """
 
         def toolset_decorator(func_: ToolsetFunc[AgentDepsT]) -> ToolsetFunc[AgentDepsT]:
@@ -2969,12 +2989,35 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # The extras are the tail of `run_layers` (instrumentation, if added, is at the front). Slicing
         # from the front avoids the `[-0:]` full-list pitfall when there are no extras.
         resolved_extras = resolved_layers[len(resolved_layers) - len(extra_capabilities) :]
-        run_capability = CombinedCapability(resolved_layers) if len(resolved_layers) > 1 else resolved_layers[0]
+        # Two capabilities under one `id` name the same thing, so the tree is resolved down to one
+        # each before anything reads it. Duplicates *within* a layer are one configuration stated
+        # twice and `combine` settles them; they are combined here, exactly once, and the merged
+        # survivor is the only form anyone reads -- the per-layer native-tool validation below and
+        # the contributions above draw on the same trees, so validation and advertisement cannot
+        # see different merged instances. The agent's capabilities and the run's are then settled
+        # against each other as separate layers: a run-level capability overrides its agent-level
+        # namesake outright -- `run(capabilities=[WebSearch(allowed_domains=[...])])` states what
+        # this run may reach, and merging it into the agent's list would widen the restriction it
+        # was passed to impose.
+        combined_layers = [
+            _combine_duplicate_capabilities(CombinedCapability(list(layer)) if len(layer) > 1 else layer[0], [layer])
+            for layer in (resolved_layers[: len(resolved_layers) - len(extra_capabilities)], resolved_extras)
+            if layer
+        ]
+        run_capability = (
+            _combine_duplicate_capabilities(
+                CombinedCapability(combined_layers) if len(combined_layers) > 1 else combined_layers[0],
+                [[layer] for layer in combined_layers],
+            )
+            if len(combined_layers) > 1
+            else combined_layers[0]
+        )
         # Not covered by the construction-time check: a run's capabilities compose with a retained
         # overriding container exactly as a registered sibling does, and `for_run` may hand back a
         # capability whose `id` differs from the one that was validated, so the resolved tree is
-        # checked even when no additional layer was composed.
-        _validate_instruction_source_ids(resolved_layers)
+        # checked even when no additional layer was composed. Reads the *combined* tree, so a
+        # duplicate `combine` has already resolved is not reported twice over.
+        _validate_instruction_source_ids([run_capability])
 
         # Re-extract get_*() from the resolved capability if anything is contributed per-run.
         capabilities = _build_run_capabilities(run_capability)
@@ -3011,22 +3054,17 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             model_settings = self._cap_model_settings
             toolsets = None
 
-        # Native tool ids are validated per layer, from each layer's *resolved* form (contributions
-        # from e.g. capability functions only materialize in `for_run`). Conflicting definitions
-        # sharing a `unique_id` *within* a layer are ambiguous; last-wins *across* layers is the
-        # intentional override mechanism. Instrumentation contributes no native tools.
-        base_native_tools = [
-            tool
-            for cap in resolved_layers[: len(resolved_layers) - len(extra_capabilities)]
-            for tool in cap.get_native_tools()
-        ]
+        # Native tool ids are validated per layer, off each layer's *combined* form above -- the
+        # same merged trees the run tree is built from, so validation and advertisement read one
+        # instance. Conflicting definitions sharing a `unique_id` *within* a layer are ambiguous;
+        # last-wins *across* layers is the intentional override mechanism. Instrumentation
+        # contributes no native tools.
+        base_native_tools = list(combined_layers[0].get_native_tools())
         _validate_native_tool_ids(
             base_native_tools,
             source='override spec capabilities' if base_is_override else 'agent capabilities',
         )
-        extra_native_tools: list[AgentNativeTool[AgentDepsT]] = [
-            tool for cap in resolved_extras for tool in cap.get_native_tools()
-        ]
+        extra_native_tools = list(combined_layers[1].get_native_tools()) if len(combined_layers) > 1 else []
         _validate_native_tool_ids(extra_native_tools, source='run capabilities')
 
         # `override(native_tools=...)` replaces the agent's *baseline* native tools while still
@@ -3164,14 +3202,31 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         """
         return self._build_toolset_list()
 
+    @property
+    def _construction_toolsets(self) -> Sequence[AbstractToolset[AgentDepsT]]:
+        """The toolsets this agent was built with, ignoring anything added afterwards.
+
+        Read by `pydantic_ai.durable_exec` through `construction_toolsets`, which is where the
+        reason it exists is written down.
+        """
+        return self._build_toolset_list(ignore_overrides=True)
+
     def _build_toolset_list(
         self,
         cap_toolsets: Sequence[AgentToolset[AgentDepsT]] | None = None,
+        *,
+        ignore_overrides: bool = False,
     ) -> list[AbstractToolset[AgentDepsT]]:
-        """Build the list of toolsets, optionally with per-run capability toolsets."""
+        """Build the list of toolsets, optionally with per-run capability toolsets.
+
+        With `ignore_overrides`, active `override(tools=...)`/`override(toolsets=...)` values and
+        dynamic toolsets added with `@agent.toolset` after construction are skipped, so the result
+        is what the agent was built with. See
+        `Agent._construction_toolsets`.
+        """
         toolsets: list[AbstractToolset[AgentDepsT]] = []
 
-        if some_tools := self._override_tools.get():
+        if not ignore_overrides and (some_tools := self._override_tools.get()):
             # `max_retries=None` for the same reason as the agent's own function toolset: the
             # tool-retry default rides `ToolManager.default_max_retries` rather than being baked here.
             function_toolset = _AgentFunctionToolset(
@@ -3184,11 +3239,16 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             function_toolset = self._function_toolset
         toolsets.append(function_toolset)
 
-        if some_user_toolsets := self._override_toolsets.get():
+        if not ignore_overrides and (some_user_toolsets := self._override_toolsets.get()):
             toolsets.extend(some_user_toolsets.value)
         else:
             toolsets.extend(self._user_toolsets)
-            toolsets.extend(self._dynamic_toolsets)
+            dynamic_toolsets = (
+                self._dynamic_toolsets[: self._constructor_dynamic_toolset_count]
+                if ignore_overrides
+                else self._dynamic_toolsets
+            )
+            toolsets.extend(dynamic_toolsets)
             for cap_ts in cap_toolsets if cap_toolsets is not None else self._cap_toolsets:
                 if isinstance(cap_ts, AbstractToolset):
                     toolsets.append(cap_ts)  # pyright: ignore[reportUnknownArgumentType]
@@ -3300,9 +3360,22 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # will actually win: an explicit `Instrumentation` capability's (agent- or call-level) over the
         # `instrument=`-derived ones, matching the precedence `_resolve_run_capabilities` applies to the
         # tool spans.
-        explicit_instrumentation = find_capability(
-            [self._effective_root_capability(), *extra_capabilities], InstrumentationCap
-        )
+        # The winner is *selected* here, not combined: `combine` settles duplicates *within* one
+        # layer and never runs across the agent-to-run boundary, so the session reads the
+        # configuration off the instance `_resolve_run_capabilities` would keep -- the last
+        # explicit `Instrumentation` in application order (a call-level one supersedes the
+        # agent-level one, and within a layer the guarded combine resolves to the last instance's
+        # values). Taking the first match would drive the session spans from settings the
+        # effective configuration had already turned off. Id guards apply once, where the layers
+        # actually combine.
+        instrumentation_layers = [self._effective_root_capability(), *extra_capabilities]
+        explicit_instrumentations = [
+            leaf
+            for layer in instrumentation_layers
+            for leaf in leaf_capabilities(layer)
+            if isinstance(leaf, InstrumentationCap)
+        ]
+        explicit_instrumentation = explicit_instrumentations[-1] if explicit_instrumentations else None
         session_instrumentation_settings = (
             explicit_instrumentation.settings if explicit_instrumentation is not None else instrumentation_settings
         )
@@ -4214,13 +4287,19 @@ def _inject_auto_capabilities(capabilities: list[AbstractCapability[Any]]) -> No
 def _validate_capability_ids(capabilities: Sequence[AbstractCapability[Any]]) -> set[str]:
     """Validate capability `id`s and return the set of explicit ones.
 
-    Rejects deferred capabilities that lack an explicit `id` and explicit ids used by more than
-    one capability. Shared by two call sites: construction-time validation over the
-    statically-provided capabilities (so misconfiguration fails fast in `Agent(...)` rather than
-    on the first run), and run-time assembly in `_build_run_capabilities`, which also covers
-    capabilities supplied per-run or returned by `for_run` and so can't be checked at construction.
+    Rejects deferred capabilities that lack an explicit `id`, and ids shared by capabilities that
+    have not said how they compose. Capabilities whose class declares a default `id` (what
+    `_declares_default_id` reads off the class body -- `Thinking` declares one and overrides
+    nothing) are allowed to repeat: their duplication is resolved over the whole composed tree at
+    run setup by `_combine_duplicate_capabilities`, the only place `combine` is called. Rejecting
+    the rest here means the common mistake still surfaces in `Agent(...)` rather than on the first
+    run.
+
+    Shared by construction-time validation over the statically-provided capabilities and run-time
+    assembly, which also covers capabilities supplied per-run or returned by `for_run` and so can't
+    be checked at construction.
     """
-    explicit_ids: set[str] = set()
+    owners: dict[str, type[AbstractCapability[Any]]] = {}
     for cap in capabilities:
         if cap.defer_loading is True and cap.id is None:
             raise exceptions.UserError(
@@ -4230,13 +4309,16 @@ def _validate_capability_ids(capabilities: Sequence[AbstractCapability[Any]]) ->
         if cap.id is None:
             continue
         _instructions.validate_instruction_id_segment(cap.id, kind='Capability id')
-        if cap.id in explicit_ids:
-            raise exceptions.UserError(
-                f'Capability id {cap.id!r} is used by multiple capabilities. '
-                'Capability ids must be unique within a run.'
-            )
-        explicit_ids.add(cap.id)
-    return explicit_ids
+        # Both classes decide, not just the one that happens to come second: whether an id can
+        # repeat is a property of the pair, so reading it off the later capability alone would let
+        # one order through and reject the other.
+        owner = owners.get(cap.id)
+        if owner is not None:
+            _reject_class_crossing_id(cap.id, {owner, type(cap)})
+            if not _declares_default_id(type(cap)):
+                raise exceptions.UserError(_repeated_id_message(cap.id))
+        owners.setdefault(cap.id, type(cap))
+    return set(owners)
 
 
 def _validate_instruction_source_ids(capabilities: Sequence[AbstractCapability[Any]]) -> None:
@@ -4252,6 +4334,11 @@ def _validate_instruction_source_ids(capabilities: Sequence[AbstractCapability[A
     The last of those is not redundant: a capability passed to `run()` joins the retained container
     the same way a registered sibling does, and `for_run` may hand back a capability carrying a
     different `id` than the one construction saw.
+
+    Sources whose class declares a default `id` are exempt at construction for the same reason they
+    are in `_validate_capability_ids`: the run resolves them to one source before any instructions
+    are collected, so the `capability:<id>` key is unambiguous by the time it is used. The run-setup
+    call sees the already-combined tree, where a surviving duplicate is a genuine conflict.
     """
     sources_by_id: dict[str, AbstractCapability[Any]] = {}
     for capability in capabilities:
@@ -4263,7 +4350,9 @@ def _validate_instruction_source_ids(capabilities: Sequence[AbstractCapability[A
         for source in sources:
             if source.id is None:
                 continue
-            if (existing := sources_by_id.setdefault(source.id, source)) is not source:
+            if (existing := sources_by_id.setdefault(source.id, source)) is not source and not _declares_default_id(
+                type(source)
+            ):
                 raise exceptions.UserError(
                     f'Capability id {existing.id!r} is used by multiple capabilities that contribute '
                     'instructions. Capability ids must be unique within a run.'
@@ -4344,6 +4433,10 @@ def _build_run_capabilities(capability: AbstractCapability[AgentDepsT]) -> dict[
     capabilities: list[AbstractCapability[AgentDepsT]] = []
     capability.apply(capabilities.append)
 
+    # Runs on the tree `_combine_duplicate_capabilities` has already resolved, so a shared id that
+    # survives to here is one no `combine` accepted. Still needed at run time, not just at
+    # construction: `defer_loading` and `id` can be set after the agent was built, and `for_run` may
+    # hand back a capability carrying neither of the values construction saw.
     explicit_ids = _validate_capability_ids(capabilities)
 
     by_id: dict[str, AbstractCapability[AgentDepsT]] = {}
