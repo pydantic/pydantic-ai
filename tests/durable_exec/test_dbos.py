@@ -48,7 +48,7 @@ from pydantic_ai import (
 )
 from pydantic_ai._run_context import get_current_run_context
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
-from pydantic_ai.capabilities import MCP, Capability, DynamicCapability
+from pydantic_ai.capabilities import MCP, Capability, DynamicCapability, durable_operation
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.direct import model_request_stream
@@ -84,6 +84,7 @@ from pydantic_ai.sandboxes import SandboxRef
 from pydantic_ai.usage import RequestUsage, UsageLimits
 
 from ..conftest import IsDatetime, IsNow, IsStr
+from ..sandbox_fakes import RecordingSandboxBackend
 
 try:
     from dbos import DBOS, DBOSConfig, SetWorkflowID
@@ -4662,7 +4663,7 @@ async def test_dbos_agent_run_sync_from_sync_tool_is_rejected():
 
 
 async def test_dbos_durability_runs_sandbox_lifecycle_in_steps(dbos: DBOS) -> None:
-    """Inherited sandbox lifecycle operations execute as DBOS steps."""
+    """Decorated sandbox lifecycle operations execute as DBOS steps."""
 
     class SandboxCapability(AbstractCapability[Any]):
         id = 'sandbox'
@@ -4670,10 +4671,15 @@ async def test_dbos_durability_runs_sandbox_lifecycle_in_steps(dbos: DBOS) -> No
         def __init__(self) -> None:
             self.in_step: list[bool] = []
 
+        @durable_operation('acquire_sandbox')
         async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
             self.in_step.append(DBOS.step_id is not None)
             return SandboxRef(sandbox_id=ctx.run_id or 'run')
 
+        def resolve_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> RecordingSandboxBackend:
+            return RecordingSandboxBackend(ref.sandbox_id)
+
+        @durable_operation('release_sandbox')
         async def release_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
             self.in_step.append(DBOS.step_id is not None)
 

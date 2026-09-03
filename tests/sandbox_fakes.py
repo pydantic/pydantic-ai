@@ -144,17 +144,8 @@ class RecordingSandboxBackend:
 
 
 def ref_sandbox(ref: SandboxRef) -> Sandbox:
-    """A not-yet-connected `Sandbox` for `ref`, as a run holds before the first operation.
-
-    For serialization tests only: connecting through it fails, so a test that needs a live
-    backend must reconnect through a capability's `get_sandbox`.
-    """
-
-    async def never_connects(_ref: SandboxRef) -> SandboxBackend:
-        # This resolver is only supplied to serialization tests; connecting through it is impossible by design.
-        raise AssertionError('the deferred sandbox must be reconnected through a capability')  # pragma: no cover
-
-    return Sandbox._from_ref(ref, never_connects)  # pyright: ignore[reportPrivateUsage]
+    """A connected fake `Sandbox` carrying `ref`, primarily for serialization tests."""
+    return Sandbox(RecordingSandboxBackend(ref.sandbox_id), ref=ref)
 
 
 class ConnectOnlySandboxCapability(AbstractCapability[Any]):
@@ -164,7 +155,7 @@ class ConnectOnlySandboxCapability(AbstractCapability[Any]):
         self.sandbox_ids: list[str] = []
         self.backends: list[RecordingSandboxBackend] = []
 
-    async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
+    def resolve_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
         self.sandbox_ids.append(ref.sandbox_id)
         backend = RecordingSandboxBackend(ref.sandbox_id)
         self.backends.append(backend)
@@ -191,7 +182,7 @@ class AcquireOnlySandboxCapability(AbstractCapability[Any]):
         self.events.append(f'acquire:{sandbox_id}')
         return SandboxRef(sandbox_id=sandbox_id)
 
-    async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
+    def resolve_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
         self.events.append(f'connect:{ref.sandbox_id}')
         backend = RecordingSandboxBackend(ref.sandbox_id)
         self.backends.append(backend)

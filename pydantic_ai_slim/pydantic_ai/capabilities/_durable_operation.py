@@ -18,8 +18,7 @@ ResultT = TypeVar('ResultT')
 class DurableOperationMarker:
     name: str
     _: KW_ONLY
-    function: Callable[..., Awaitable[Any]]
-    base_hook: bool = False
+    function: Callable[..., Any]
 
 
 _MARKER_ATTRIBUTE = '__pydantic_ai_durable_operation__'
@@ -41,26 +40,6 @@ def validate_operation_name(name: object) -> str:
     if not name:
         raise ValueError('`durable_operation` name must not be empty')
     return name
-
-
-def base_hook_durable_operation(
-    name: str,
-) -> Callable[[Callable[..., Awaitable[ResultT]]], Callable[..., Awaitable[ResultT]]]:
-    """Mark a base hook so every override inherits durable execution automatically."""
-    name = validate_operation_name(name)
-
-    def decorate(function: Callable[..., Awaitable[ResultT]]) -> Callable[..., Awaitable[ResultT]]:
-        set_durable_operation_marker(
-            function,
-            DurableOperationMarker(
-                name=name,
-                function=cast(Callable[..., Awaitable[Any]], function),
-                base_hook=True,
-            ),
-        )
-        return function
-
-    return decorate
 
 
 async def invoke_durable_operation(

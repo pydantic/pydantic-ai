@@ -17,14 +17,12 @@ from pydantic_ai._function_schema import (
 from pydantic_ai._run_context import get_current_run_context
 from pydantic_ai.capabilities._durable_operation import (
     DurableOperationMarker,
-    base_hook_durable_operation as base_hook_durable_operation,
     get_durable_operation_marker,
     invoke_durable_operation,
     set_durable_operation_marker,
     validate_operation_name as _validate_operation_name,
 )
 from pydantic_ai.capabilities.abstract import AbstractCapability, leaf_capabilities
-from pydantic_ai.capabilities.wrapper import WrapperCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
@@ -39,7 +37,7 @@ ResultT = TypeVar('ResultT')
 P = ParamSpec('P')
 A = TypeVar('A', bound=Awaitable[Any])
 
-_SYNC_NEVER_DURABLE_HOOKS = frozenset({'get_toolset', 'get_wrapper_toolset'})
+_SYNC_NEVER_DURABLE_HOOKS = frozenset({'get_toolset', 'get_wrapper_toolset', 'resolve_sandbox', 'get_wrapper_sandbox'})
 """Sync hooks marked so collection can report why they cannot be durable.
 
 The decorator still attaches a marker to these sync hooks so binding raises the specific
@@ -62,7 +60,8 @@ _NEVER_DURABLE_HOOKS = {
     'wrap_run_event_stream': '`wrap_run_event_stream` receives a live stream and cannot be a durable operation.',
     'get_toolset': '`get_toolset` returns a live toolset and cannot be a durable operation.',
     'get_wrapper_toolset': '`get_wrapper_toolset` returns a live toolset and cannot be a durable operation.',
-    'get_sandbox': '`get_sandbox` returns a live sandbox handle and cannot be a durable operation.',
+    'resolve_sandbox': '`resolve_sandbox` is construct-only and runs inside every durable unit.',
+    'get_wrapper_sandbox': '`get_wrapper_sandbox` returns a live sandbox handle and cannot be a durable operation.',
 }
 
 
@@ -264,38 +263,11 @@ def durable_operation(name: str) -> Callable[[Callable[P, A]], Callable[P, A]]:
 def collect_capability_operations(
     capability: AbstractCapability[Any],
 ) -> dict[str, CapabilityMethodDeclaration]:
-    """Collect durable declarations with a two-phase MRO scan.
-
-    The first phase finds overridden base hooks marked durable. The second finds directly marked
-    methods, validates never-durable hooks and duplicate names, then builds typed declarations.
-    """
+    """Collect directly marked durable declarations from a capability."""
     handlers: dict[str, Callable[..., Awaitable[Any]]] = {}
-    for base in type(capability).__mro__[1:]:
-        for method_name, base_member in vars(base).items():
-            marker = get_durable_operation_marker(base_member)
-            if marker is None or not marker.base_hook:
-                continue
-            member = getattr(type(capability), method_name)
-            if member is not base_member:
-                if isinstance(capability, WrapperCapability) and member is getattr(
-                    WrapperCapability, method_name, None
-                ):
-                    wrapped = capability.wrapped
-                    wrapper_member = getattr(WrapperCapability, method_name, None)
-                    while (
-                        isinstance(wrapped, WrapperCapability)
-                        and getattr(type(wrapped), method_name, None) is wrapper_member
-                    ):
-                        wrapped = wrapped.wrapped
-                    if getattr(type(wrapped), method_name, None) is base_member:
-                        continue
-                handlers[marker.name] = cast(Callable[..., Awaitable[Any]], member)
-
     for method_name, member in inspect.getmembers(type(capability)):
         marker = get_durable_operation_marker(member)
         if marker is None:
-            continue
-        if marker.base_hook and member is marker.function:
             continue
         if reason := _NEVER_DURABLE_HOOKS.get(method_name):
             raise UserError(reason)

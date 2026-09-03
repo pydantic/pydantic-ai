@@ -26,7 +26,7 @@ from pydantic_ai.messages import (
     ModelResponse,
     ToolCallPart,
 )
-from pydantic_ai.sandboxes import SandboxBackend, SandboxRef
+from pydantic_ai.sandboxes import Sandbox, SandboxBackend, SandboxRef
 from pydantic_ai.tools import (
     AgentDepsT,
     AgentNativeTool,
@@ -38,7 +38,6 @@ from pydantic_ai.tools import (
 )
 from pydantic_ai.toolsets import AbstractToolset, AgentToolset
 
-from ._durable_operation import base_hook_durable_operation
 from ._merge import merge_capability_fields
 from ._on_event import collect_on_event_methods, marked_listens_to
 
@@ -623,35 +622,56 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """Return native tools to register with the agent."""
         return []
 
-    @base_hook_durable_operation('acquire_sandbox')
     async def acquire_sandbox(self, ctx: RunContext[AgentDepsT]) -> SandboxRef | None:
-        """Return the identity of this run's sandbox, creating or reusing an environment, or `None` to not contribute.
+        """Return the identity of this run's sandbox, or `None` to not contribute.
 
         Called once at run start, before any hook sees [`ctx.sandbox`][pydantic_ai.tools.RunContext.sandbox],
-        and skipped when a `sandbox=` run argument was passed. Exactly one capability may return a ref.
-        Durable engines record it in a durable unit that may retry after a crash, so make it idempotent:
-        create-or-reuse keyed by [`ctx.run_id`][pydantic_ai.tools.RunContext.run_id].
+        and skipped when a `sandbox=` run argument was passed. Capabilities are asked in list order;
+        the first one that returns a ref wins, and later capabilities are not asked.
+
+        Decorate an override with `@durable_operation('acquire_sandbox')` when it performs I/O,
+        such as provisioning or checking out from a pool, so durability capabilities run it as a
+        durable unit. Durable acquisition must be idempotent keyed by
+        [`ctx.run_id`][pydantic_ai.tools.RunContext.run_id].
         """
         return None
 
-    async def get_sandbox(self, ctx: RunContext[AgentDepsT], ref: SandboxRef) -> SandboxBackend | None:
-        """Connect to the sandbox identified by `ref` and return a live backend; never create one.
+    def resolve_sandbox(self, ctx: RunContext[AgentDepsT], ref: SandboxRef) -> SandboxBackend | None:
+        """Construct a backend object for `ref`, or return `None` if this capability cannot serve it.
 
-        Return `None` if this capability cannot serve `ref`. Return a fresh handle on every call; the run
-        closes it with `close(terminate=False)` when the backend supports it. Fail if the sandbox is gone.
-        Never a durable operation: a live handle cannot be replayed, so durable engines call this inside
-        each durable unit, with the engine's restricted `ctx` (`ctx.deps` is always available).
+        This method must not connect, probe liveness, resume, start, or create an environment. Any client
+        the backend needs must be created lazily on its first operation. If the environment is gone, the
+        backend raises [`SandboxUnavailableError`][pydantic_ai.sandboxes.SandboxUnavailableError] from
+        [`run`][pydantic_ai.sandboxes.SandboxBackend.run] or a filesystem operation.
+
+        The run closes the returned backend with `close(terminate=False)` when supported, once per
+        in-process run and once per Temporal activity. This hook is never a durable operation: it is
+        construct-only and runs inside every durable unit.
         """
         return None
 
-    @base_hook_durable_operation('release_sandbox')
+    def get_wrapper_sandbox(self, ctx: RunContext[AgentDepsT], sandbox: Sandbox) -> Sandbox | None:
+        """Wrap the resolved sandbox for this run, or return `None` to leave it unchanged.
+
+        Called once per run after the backend is resolved and before
+        [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run]. The facade's
+        [`backend`][pydantic_ai.sandboxes.Sandbox.backend] and
+        [`ref`][pydantic_ai.sandboxes.Sandbox.ref] are available for inspection. A replacement
+        typically wraps the backend as `Sandbox(WrappedBackend(sandbox.backend), ref=sandbox.ref)`.
+        When multiple capabilities wrap, the first capability in the list is outermost.
+        """
+        return None
+
     async def release_sandbox(self, ctx: RunContext[AgentDepsT], ref: SandboxRef) -> None:
         """Release the run's ownership of `ref`: destroy it, return it to a pool, or do nothing.
 
         Called after the run ends, success or failure, only on the capability whose `acquire_sandbox`
-        returned `ref`, and never for a `sandbox=` run argument. Durable engines may retry it, so make it
-        idempotent.
+        returned `ref`, and never for a `sandbox=` run argument. Decorate an override with
+        `@durable_operation('release_sandbox')` when it performs I/O, such as destroying the
+        environment or returning it to a pool, so durability capabilities run it as a durable unit.
+        Durable release must be idempotent keyed by `ctx.run_id`.
         """
+        return None
 
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
         """Wrap the agent's assembled toolset, or return None to leave it unchanged.

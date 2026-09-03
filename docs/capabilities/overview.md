@@ -33,6 +33,7 @@ The workspace the agent acts in: the files it edits and the commands it runs, lo
 
 | Capability | Package | What it does |
 |---|---|---|
+| [Local Sandbox](../sandbox.md) | Core | Run commands and access files on the host machine for trusted development and tests |
 | [FileSystem](https://pydantic.dev/docs/ai/harness/filesystem/) | Harness | Read, write, edit, search files under a root; path-traversal and symlink safe, secrets read-only |
 | [Shell](https://pydantic.dev/docs/ai/harness/shell/) | Harness | Command execution with allowlists, denylists, timeouts, and credential-stripping |
 | [Modal Sandbox](https://pydantic.dev/docs/ai/harness/modal-sandbox/) | Harness | Commands and files in an isolated [Modal](https://modal.com) cloud sandbox |

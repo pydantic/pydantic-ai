@@ -166,7 +166,7 @@ from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsSameStr, IsStr
 from ..continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
 from ..model_lifecycle_utils import LifecycleTrackingModel
-from ..sandbox_fakes import ref_sandbox
+from ..sandbox_fakes import RecordingSandboxBackend, ref_sandbox
 
 
 def test_durability_codecs() -> None:
@@ -4750,11 +4750,16 @@ async def test_prefect_durability_runs_sandbox_lifecycle_in_tasks(blockbuster_en
             self.events: list[tuple[str, str, bool]] = []
             self.created = itertools.count(1)
 
+        @durable_operation('acquire_sandbox')
         async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
             sandbox_id = f'sandbox-{next(self.created)}'
             self.events.append(('acquire', sandbox_id, TaskRunContext.get() is not None))
             return SandboxRef(sandbox_id=sandbox_id)
 
+        def resolve_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> RecordingSandboxBackend:
+            return RecordingSandboxBackend(ref.sandbox_id)
+
+        @durable_operation('release_sandbox')
         async def release_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
             self.events.append(('release', ref.sandbox_id, TaskRunContext.get() is not None))
 

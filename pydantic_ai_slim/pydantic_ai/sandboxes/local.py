@@ -1,6 +1,6 @@
 """The default local implementation of the [sandbox backend protocol][pydantic_ai.sandboxes.SandboxBackend].
 
-[`LocalSandbox`][pydantic_ai.sandboxes.LocalSandbox] runs commands as plain host subprocesses —
+[`LocalSandboxBackend`][pydantic_ai.sandboxes.LocalSandboxBackend] runs commands as plain host subprocesses —
 it **isolates nothing** — and doubles as the reference implementation of the protocol.
 """
 
@@ -13,7 +13,7 @@ import signal
 import tempfile
 import time
 import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import suppress
 from pathlib import Path
 from types import TracebackType
@@ -29,13 +29,16 @@ from .protocol import CommandResult, FileEntry, SandboxCommand, SandboxError, Sa
 if TYPE_CHECKING:
     from .protocol import SandboxBackend, SupportsFilesystem
 
-__all__ = ('LocalSandbox',)
+__all__ = ('LocalSandboxBackend',)
 
 _MAX_CAPTURE_BYTES = 10 * 1024 * 1024
 _OUTPUT_DRAIN_GRACE = 2.0
 
 
 class _LocalFilesystem:
+    def __init__(self, ensure_root: Callable[[], Awaitable[Path]]) -> None:
+        self._ensure_root = ensure_root
+
     @staticmethod
     def _path(path: str) -> Path:
         target = Path(path)
@@ -44,9 +47,12 @@ class _LocalFilesystem:
         return target
 
     async def read_bytes(self, path: str) -> bytes:
+        await self._ensure_root()
         return await run_in_executor(self._path(path).read_bytes)
 
     async def write_bytes(self, path: str, data: bytes) -> None:
+        await self._ensure_root()
+
         def write() -> None:
             target = self._path(path)
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -55,6 +61,8 @@ class _LocalFilesystem:
         await run_in_executor(write)
 
     async def stat(self, path: str) -> FileEntry:
+        await self._ensure_root()
+
         def stat() -> FileEntry:
             target = self._path(path)
             size = target.stat().st_size
@@ -64,6 +72,8 @@ class _LocalFilesystem:
         return await run_in_executor(stat)
 
     async def list_dir(self, path: str) -> Sequence[FileEntry]:
+        await self._ensure_root()
+
         def list_entries() -> list[FileEntry]:
             entries: list[FileEntry] = []
             for child in sorted(self._path(path).iterdir()):
@@ -80,9 +90,12 @@ class _LocalFilesystem:
         return await run_in_executor(list_entries)
 
     async def make_dir(self, path: str) -> None:
+        await self._ensure_root()
         await run_in_executor(lambda: self._path(path).mkdir(parents=True, exist_ok=True))
 
     async def remove(self, path: str) -> None:
+        await self._ensure_root()
+
         def remove() -> None:
             target = self._path(path)
             if target.is_dir() and not target.is_symlink():
@@ -93,10 +106,11 @@ class _LocalFilesystem:
         await run_in_executor(remove)
 
     async def exists(self, path: str) -> bool:
+        await self._ensure_root()
         return await run_in_executor(self._path(path).exists)
 
 
-class LocalSandbox:
+class LocalSandboxBackend:
     """[`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] over host subprocesses and the host filesystem.
 
     Isolates nothing: commands run as host subprocesses with the host process's privileges.
@@ -127,14 +141,14 @@ class LocalSandbox:
     def __init__(self, root: str | Path | None = None):
         if os.name != 'posix':
             raise NotImplementedError(
-                'LocalSandbox only supports POSIX platforms: its timeout contract kills the whole '
+                'LocalSandboxBackend only supports POSIX platforms: its timeout contract kills the whole '
                 'process group. On other platforms, attach a container- or VM-based sandbox instead.'
             )
         if root is not None and not Path(root).is_absolute():
             raise ValueError(
                 f'root must be an absolute path, got {str(root)!r}: a relative root would depend on '
                 "the host process's working directory at some later moment. Make the intent explicit "
-                "at the call site instead, e.g. `LocalSandbox(Path.cwd() / 'work')`."
+                "at the call site instead, e.g. `LocalSandboxBackend(Path.cwd() / 'work')`."
             )
         self._owns_root = root is None
         self._given_root = None if root is None else Path(root)
@@ -145,13 +159,13 @@ class LocalSandbox:
         self._root: Path | None = None
         self._root_lock = anyio.Lock()
         self._id = f'local-{uuid.uuid4().hex}'
-        self.fs = _LocalFilesystem()
+        self.fs = _LocalFilesystem(self._ensure_root)
 
     @property
     def sandbox_id(self) -> str:
         return self._id
 
-    async def _root_path(self) -> Path:
+    async def _ensure_root(self) -> Path:
         # The default temp root is created lazily, so a constructed-but-unused sandbox doesn't
         # leak a directory, and off the event loop, since `mkdtemp` and `resolve` are blocking
         # syscalls. The lock is what makes the two safe together: without it, two concurrent
@@ -163,7 +177,13 @@ class LocalSandbox:
                         lambda: Path(tempfile.mkdtemp(prefix='pydantic-ai-sandbox-')).resolve()
                     )
                 else:
-                    self._root = await run_in_executor(self._given_root.resolve)
+                    given_root = self._given_root
+
+                    def ensure_given_root() -> Path:
+                        given_root.mkdir(parents=True, exist_ok=True)
+                        return given_root.resolve()
+
+                    self._root = await run_in_executor(ensure_given_root)
             return self._root
 
     async def __aenter__(self) -> Self:
@@ -172,7 +192,7 @@ class LocalSandbox:
     async def __aexit__(
         self, exc_type: type[BaseException] | None, exc: BaseException | None, tb: TracebackType | None
     ) -> None:
-        # Under the root lock: an unlocked clear would race `_root_path()` — a first use
+        # Under the root lock: an unlocked clear would race `_ensure_root()` — a first use
         # blocked on the lock could otherwise recreate a root mid-teardown that nothing
         # would ever remove.
         async with self._root_lock:
@@ -188,12 +208,12 @@ class LocalSandbox:
                     pass
 
     async def working_dir(self) -> str:
-        return str(await self._root_path())
+        return str(await self._ensure_root())
 
     async def _spawn_process(
         self, command: SandboxCommand, shell: bool, cwd: str | None, env: Mapping[str, str]
     ) -> asyncio.subprocess.Process:
-        process_cwd = cwd or await self._root_path()
+        process_cwd = cwd or await self._ensure_root()
         if shell:
             # The type check in `run()` narrows `command` for the shell branch.
             assert isinstance(command, str)
@@ -459,5 +479,5 @@ class LocalSandbox:
 
 if TYPE_CHECKING:
     # Pins full structural conformance — signatures included — which `isinstance` cannot check.
-    _conforms: SandboxBackend = LocalSandbox()
-    _filesystem_backend_conforms: SupportsFilesystem = LocalSandbox()
+    _conforms: SandboxBackend = LocalSandboxBackend()
+    _filesystem_backend_conforms: SupportsFilesystem = LocalSandboxBackend()

@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ._base import BaseDurabilityCapability
+    from ._capability_operation import durable_operation
     from ._codec import IDENTITY_CODEC, JSON_CODEC, DurabilityCodec
     from ._operation import (
         CapabilityOperationId,
@@ -52,6 +53,7 @@ __all__ = [
     'DurableOperationBackend',
     'DurableOperationId',
     'DurableOperationNamer',
+    'durable_operation',
     'EventStreamHandlerId',
     'ToolsetGetInstructionsId',
     'ToolsetGetToolsId',
@@ -68,6 +70,7 @@ __all__ = [
 ]
 
 _exports = {
+    'durable_operation': ('._capability_operation', 'durable_operation'),
     'BaseDurabilityCapability': ('._base', 'BaseDurabilityCapability'),
     'DurabilityCodec': ('._codec', 'DurabilityCodec'),
     'DurabilityEngineSpec': ('._spec', 'DurabilityEngineSpec'),

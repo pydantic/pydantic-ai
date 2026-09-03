@@ -80,6 +80,7 @@ def test_public_engine_builder_exports() -> None:
         'DurableOperationBackend',
         'DurableOperationId',
         'DurableOperationNamer',
+        'durable_operation',
         'EventStreamHandlerId',
         'ToolsetGetInstructionsId',
         'ToolsetGetToolsId',
@@ -216,9 +217,11 @@ class CompatCapability(AbstractCapability[Any]):
     async def operation(self, ctx: RunContext[Any]) -> None:
         pass
 
+    @durable_operation('acquire_sandbox')
     async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef | None:
         return None
 
+    @durable_operation('release_sandbox')
     async def release_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
         pass
 

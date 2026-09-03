@@ -21,7 +21,6 @@ from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, cast, overloa
 
 import anyio
 from opentelemetry.trace import NoOpTracer
-from pydantic.alias_generators import to_snake
 from pydantic.json_schema import GenerateJsonSchema
 from typing_extensions import Self, TypeIs, TypeVar
 
@@ -68,12 +67,7 @@ from ..capabilities import (
 from ..capabilities._dynamic import wrap_capability_funcs
 from ..capabilities._ordering import find_capability, has_capability_type
 from ..capabilities._pending_messages import PendingMessageDrainCapability
-from ..capabilities._sandbox import (
-    acquire_run_sandbox,
-    active_leaves,
-    connect_sandbox_ref,
-    release_run_sandbox,
-)
+from ..capabilities._sandbox import resolve_sandbox_ref
 from ..capabilities.abstract import (
     _combine_duplicate_capabilities,  # pyright: ignore[reportPrivateUsage]
     _declares_default_id,  # pyright: ignore[reportPrivateUsage]
@@ -81,7 +75,7 @@ from ..capabilities.abstract import (
     _repeated_id_message,  # pyright: ignore[reportPrivateUsage]
     leaf_capabilities,
 )
-from ..capabilities.combined import bind_capabilities_tier
+from ..capabilities.combined import bind_capabilities_tier, effective_capability_ids
 from ..capabilities.instrumentation import Instrumentation as InstrumentationCap
 from ..models.instrumented import InstrumentationSettings, InstrumentedModel
 from ..native_tools import AbstractNativeTool
@@ -411,7 +405,7 @@ _PreparedOutputT = TypeVar('_PreparedOutputT')
 NoneType = type(None)
 
 _NO_SANDBOX_REASON = (
-    'No sandbox is attached to this run. Pass `sandbox=LocalSandbox()` to the run method to use the '
+    'No sandbox is attached to this run. Pass `LocalSandbox()` through `capabilities=[...]` to use the '
     'local machine (unsafe: commands and file operations run with the full permissions of this process), '
     'attach a capability that supplies a sandbox through its `acquire_sandbox` hook, or pass a `SandboxRef` '
     'to connect to an existing environment. See https://ai.pydantic.dev/sandbox/ for details.'
@@ -420,7 +414,14 @@ _NO_SANDBOX_REASON = (
 
 async def _close_sandbox_connection(facade: Sandbox) -> None:
     with anyio.CancelScope(shield=True):
-        await facade._close_connected_backend()  # pyright: ignore[reportPrivateUsage]
+        await facade._close_connection()  # pyright: ignore[reportPrivateUsage]
+
+
+async def _release_sandbox(
+    capability: AbstractCapability[AgentDepsT], ctx: RunContext[AgentDepsT], ref: SandboxRef
+) -> None:
+    with anyio.CancelScope(shield=True):
+        await capability.release_sandbox(ctx, ref)
 
 
 @dataclasses.dataclass
@@ -1691,38 +1692,44 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             conversation_id=state.conversation_id,
             _cancellation=cancellation,
             sandbox=Sandbox.wrap(UnavailableSandbox(_NO_SANDBOX_REASON)),
+            capabilities=_build_capability_registry(bootstrap_capability),
         )
 
         sandbox_facade: Sandbox
         sandbox_connection = False
-        sandbox_release: tuple[AbstractCapability[AgentDepsT], RunContext[AgentDepsT], SandboxRef] | None = None
+        sandbox_release: tuple[RunContext[AgentDepsT], SandboxRef] | None = None
         # Resolve the sandbox before `for_run` so every hook sees the final `ctx.sandbox`. The callbacks are
         # registered by `_PreparedAgentRun.open()` so their lifetime is tied to the run's exit stack.
         if isinstance(sandbox, SandboxRef):
-            connectors = active_leaves(bootstrap_capability)
-            sandbox_facade = Sandbox._from_ref(  # pyright: ignore[reportPrivateUsage]
-                sandbox, lambda ref: connect_sandbox_ref(connectors, initial_ctx, ref)
-            )
+            backend = resolve_sandbox_ref(bootstrap_capability, initial_ctx, sandbox)
+            sandbox_facade = Sandbox(backend, ref=sandbox)
             sandbox_connection = True
+        elif isinstance(sandbox, AbstractCapability):
+            raise exceptions.UserError(
+                '`sandbox=` takes a `SandboxRef` or a `SandboxBackend`, not a capability. '
+                f'Pass `{type(sandbox).__name__}` through `capabilities=[...]` so Pydantic AI can manage its lifecycle.'
+            )
         elif sandbox is not None:
             sandbox_facade = Sandbox.wrap(sandbox)
         else:
             sandbox_facade = initial_ctx.sandbox
-            acquired = await acquire_run_sandbox(bootstrap_capability, initial_ctx)
-            if acquired is not None:
-                supplier, sandbox_ref = acquired
-                sandbox_facade = Sandbox._from_ref(  # pyright: ignore[reportPrivateUsage]
-                    sandbox_ref, lambda ref: connect_sandbox_ref([supplier], initial_ctx, ref)
-                )
-                sandbox_release = (supplier, initial_ctx, sandbox_ref)
+            sandbox_ref = await bootstrap_capability.acquire_sandbox(initial_ctx)
+            if sandbox_ref is not None:
+                backend = resolve_sandbox_ref(bootstrap_capability, initial_ctx, sandbox_ref)
+                sandbox_facade = Sandbox(backend, ref=sandbox_ref)
+                sandbox_release = (initial_ctx, sandbox_ref)
                 sandbox_connection = True
+
+        if not isinstance(sandbox_facade.backend, UnavailableSandbox):
+            if wrapped_sandbox := bootstrap_capability.get_wrapper_sandbox(initial_ctx, sandbox_facade):
+                sandbox_facade = wrapped_sandbox
         initial_ctx.sandbox = sandbox_facade
 
         async def _cleanup_sandbox() -> None:
             if sandbox_connection:
                 await _close_sandbox_connection(sandbox_facade)
             if sandbox_release is not None:
-                await release_run_sandbox(*sandbox_release)
+                await _release_sandbox(bootstrap_capability, *sandbox_release)
 
         # Resolve run metadata up front so capability and toolset `for_run` hooks
         # can see it on `RunContext.metadata`. Metadata factories receive the
@@ -1928,6 +1935,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             run_capability=run_capability,
             toolset=toolset,
             sandbox_facade=sandbox_facade,
+            sandbox_capability=bootstrap_capability,
             sandbox_connection=sandbox_connection,
             sandbox_release=sandbox_release,
             usage_limits=usage_limits,
@@ -4097,8 +4105,9 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
     run_capability: AbstractCapability[_PreparedDepsT]
     toolset: AbstractToolset[_PreparedDepsT]
     sandbox_facade: Sandbox
+    sandbox_capability: AbstractCapability[_PreparedDepsT]
     sandbox_connection: bool
-    sandbox_release: tuple[AbstractCapability[_PreparedDepsT], RunContext[_PreparedDepsT], SandboxRef] | None
+    sandbox_release: tuple[RunContext[_PreparedDepsT], SandboxRef] | None
     usage_limits: _usage.UsageLimits
     concurrency_limiter: _concurrency.AbstractConcurrencyLimiter | None
     resolve_metadata: Callable[
@@ -4110,7 +4119,7 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
         # Register sandbox cleanup before the run contexts so it executes after the run's own teardown.
         # Push release first so the live connection is detached before ownership of the environment ends.
         if self.sandbox_release is not None:
-            stack.push_async_callback(release_run_sandbox, *self.sandbox_release)
+            stack.push_async_callback(_release_sandbox, self.sandbox_capability, *self.sandbox_release)
         if self.sandbox_connection:
             stack.push_async_callback(_close_sandbox_connection, self.sandbox_facade)
 
@@ -4427,29 +4436,20 @@ def _layer_model_settings(
 
 
 def _build_run_capabilities(capability: AbstractCapability[AgentDepsT]) -> dict[str, AbstractCapability[AgentDepsT]]:
-    capabilities: list[AbstractCapability[AgentDepsT]] = []
-    capability.apply(capabilities.append)
-
+    capabilities = leaf_capabilities(capability)
     # Runs on the tree `_combine_duplicate_capabilities` has already resolved, so a shared id that
     # survives to here is one no `combine` accepted. Still needed at run time, not just at
     # construction: `defer_loading` and `id` can be set after the agent was built, and `for_run` may
     # hand back a capability carrying neither of the values construction saw.
-    explicit_ids = _validate_capability_ids(capabilities)
+    _validate_capability_ids(capabilities)
+    return dict(zip(effective_capability_ids(capabilities), capabilities))
 
-    by_id: dict[str, AbstractCapability[AgentDepsT]] = {}
-    for cap in capabilities:
-        capability_id = cap.id
-        if capability_id is None:
-            base_id = to_snake(type(cap).__name__)
-            capability_id = base_id
-            suffix = 2
-            while capability_id in by_id or capability_id in explicit_ids:
-                capability_id = f'{base_id}_{suffix}'
-                suffix += 1
 
-        by_id[capability_id] = cap
-
-    return by_id
+def _build_capability_registry(
+    capability: AbstractCapability[AgentDepsT],
+) -> dict[str, AbstractCapability[AgentDepsT]]:
+    capabilities = leaf_capabilities(capability)
+    return dict(zip(effective_capability_ids(capabilities), capabilities))
 
 
 def _validate_spec(

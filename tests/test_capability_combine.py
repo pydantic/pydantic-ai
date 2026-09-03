@@ -13,6 +13,7 @@ import pkgutil
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import KW_ONLY, dataclass, field
+from pathlib import Path
 from typing import Any, NamedTuple, TypeGuard, cast
 
 import pytest
@@ -26,6 +27,7 @@ from pydantic_ai.capabilities import (
     CapabilityOrdering,
     ImageGeneration,
     Instrumentation,
+    LocalSandbox,
     RaiseContentFilterError,
     ReinjectSystemPrompt,
     Thinking,
@@ -136,6 +138,10 @@ def _check_thread_executor(merged: UseThreadExecutor) -> None:
     assert merged.executor is _SECOND_EXECUTOR, 'the executor that would have shadowed the other'
 
 
+def _check_local_sandbox(merged: LocalSandbox[Any]) -> None:
+    assert merged.root == Path('/second'), 'a scalar takes the later value'
+
+
 COMBINE_POLICY: dict[str, Policy] = {
     # -- One per agent: a default `id`, and `combine` says what two of them mean. --
     'Thinking': Combines(
@@ -196,6 +202,11 @@ COMBINE_POLICY: dict[str, Policy] = {
         'exactly one executor is in effect; nesting already made this last-wins implicitly',
         lambda: (UseThreadExecutor(_FIRST_EXECUTOR), UseThreadExecutor(_SECOND_EXECUTOR)),
         _check_thread_executor,
+    ),
+    'LocalSandbox': Combines(
+        'an agent has one local sandbox root',
+        lambda: (LocalSandbox(root=Path('/first')), LocalSandbox(root=Path('/second'))),
+        _check_local_sandbox,
     ),
     # -- Several of these is the normal case, so they stay anonymous. --
     'Capability': Anonymous('a generic bundle; several per agent is the usual shape'),

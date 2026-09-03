@@ -57,6 +57,7 @@ from pydantic_ai.capabilities import (
     ResolveModelId,
     Toolset,
     WrapperCapability,
+    durable_operation,
 )
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.capabilities.combined import CombinedCapability
@@ -91,6 +92,7 @@ from pydantic_graph import GraphBuilder, StepContext
 
 from ..._inline_snapshot import snapshot
 from ...continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
+from ...sandbox_fakes import RecordingSandboxBackend
 
 try:
     from temporalio import activity, workflow
@@ -1183,10 +1185,15 @@ async def test_durability_runs_sandbox_lifecycle_as_activities(monkeypatch: pyte
         def __init__(self) -> None:
             self.events: list[str] = []
 
+        @durable_operation('acquire_sandbox')
         async def acquire_sandbox(self, ctx: RunContext[None]) -> SandboxRef:
             self.events.append('acquire')
             return SandboxRef(sandbox_id='temporal-sandbox')
 
+        def resolve_sandbox(self, ctx: RunContext[None], ref: SandboxRef) -> RecordingSandboxBackend:
+            return RecordingSandboxBackend(ref.sandbox_id)
+
+        @durable_operation('release_sandbox')
         async def release_sandbox(self, ctx: RunContext[None], ref: SandboxRef) -> None:
             self.events.append(f'release:{ref.sandbox_id}')
 
@@ -1216,6 +1223,34 @@ async def test_durability_runs_sandbox_lifecycle_as_activities(monkeypatch: pyte
         'agent__sandbox_lifecycle__capability__sandbox__release_sandbox',
     ]
     assert supplier.events == ['acquire', 'release:temporal-sandbox']
+
+
+async def test_undecorated_sandbox_acquire_runs_inline():
+    class _SkipRequest(AbstractCapability[None]):
+        async def before_model_request(
+            self, ctx: RunContext[None], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            raise SkipModelRequest(ModelResponse(parts=[TextPart(content='skipped')]))
+
+    class SandboxSupplier(AbstractCapability[None]):
+        id = 'inline-sandbox'
+
+        async def acquire_sandbox(self, ctx: RunContext[None]) -> SandboxRef:
+            return SandboxRef(sandbox_id='inline')
+
+        def resolve_sandbox(self, ctx: RunContext[None], ref: SandboxRef) -> RecordingSandboxBackend:
+            return RecordingSandboxBackend(ref.sandbox_id)
+
+    agent = Agent(
+        TestModel(),
+        name='inline_sandbox_lifecycle',
+        deps_type=type(None),
+        capabilities=[_SkipRequest(), TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG), SandboxSupplier()],
+    )
+    with patch('pydantic_ai.durable_exec.temporal._durability.workflow.in_workflow', return_value=True):
+        result = await agent.run('hello')
+
+    assert result.output == 'skipped'
 
 
 # --- get_serialization_name returns None ---

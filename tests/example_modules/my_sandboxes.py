@@ -50,7 +50,7 @@ class SandboxClient:
     async def create(self, *, idempotency_key: str | None = None) -> DockerSandbox:
         return DockerSandbox()
 
-    async def connect(self, sandbox_id: str) -> DockerSandbox:
+    def sandbox(self, sandbox_id: str) -> DockerSandbox:
         return DockerSandbox(sandbox_id=sandbox_id)
 
     async def destroy(self, sandbox_id: str) -> None:

@@ -10,7 +10,7 @@ from pydantic_ai._instructions import AgentInstructions, SourcedInstruction, nor
 from pydantic_ai._utils import aclose_all, replace_no_init
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
-from pydantic_ai.sandboxes import SandboxBackend, SandboxRef
+from pydantic_ai.sandboxes import Sandbox, SandboxBackend, SandboxRef
 from pydantic_ai.tools import (
     AgentDepsT,
     AgentNativeTool,
@@ -258,11 +258,14 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
     async def acquire_sandbox(self, ctx: RunContext[AgentDepsT]) -> SandboxRef | None:
         return await self.wrapped.acquire_sandbox(ctx)
 
-    async def get_sandbox(self, ctx: RunContext[AgentDepsT], ref: SandboxRef) -> SandboxBackend | None:
-        return await self.wrapped.get_sandbox(ctx, ref)
+    def resolve_sandbox(self, ctx: RunContext[AgentDepsT], ref: SandboxRef) -> SandboxBackend | None:
+        return self.wrapped.resolve_sandbox(ctx, ref)
+
+    def get_wrapper_sandbox(self, ctx: RunContext[AgentDepsT], sandbox: Sandbox) -> Sandbox | None:
+        return self.wrapped.get_wrapper_sandbox(ctx, sandbox)
 
     async def release_sandbox(self, ctx: RunContext[AgentDepsT], ref: SandboxRef) -> None:
-        await self.wrapped.release_sandbox(ctx, ref)
+        return await self.wrapped.release_sandbox(ctx, ref)
 
     async def prepare_tools(
         self,
