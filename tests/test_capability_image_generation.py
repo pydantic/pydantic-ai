@@ -158,6 +158,20 @@ class TestImageGenerationCapability:
 
         assert [warning.filename for warning in recorded] == [inspect.getsourcefile(ImageGeneration)]
 
+    def test_image_generation_native_only_settings_are_not_ignored_when_native_is_enabled(self):
+        """With native enabled these settings reach the native tool, so reporting them as dropped is wrong.
+
+        `filterwarnings = ['error']` turns the absent warning into the assertion: whether the direct
+        generator is used at all is decided per request against the model's profile, and on the
+        requests that drop it the native tool carries every one of these values.
+        """
+        capability = ImageGeneration(local=ImageGenerator(TestImageGenerationModel()), quality='high', size='1024x1024')
+
+        native_tool = capability.get_native_tools()[0]
+        assert isinstance(native_tool, ImageGenerationTool)
+        assert native_tool.quality == 'high'
+        assert native_tool.size == '1024x1024'
+
     async def test_image_generation_direct_fallback(self, allow_model_requests: None):
         """The direct fallback applies portable settings and warns for native-only settings."""
         image_model = TestImageGenerationModel(
@@ -298,8 +312,18 @@ class TestImageGenerationCapability:
         assert tool_result['media_type'] == 'image/png'
         assert 'data' not in tool_result
 
+    def test_image_generation_direct_only_rejects_edit_action_at_construction(self):
+        """`native=False` makes the prompt-only direct tool the only path, so the edit is refused up front."""
+        with pytest.raises(UserError, match='cannot honor `action="edit"`'):
+            ImageGeneration(native=False, local=TestImageGenerationModel(), action='edit')
+
     async def test_image_generation_direct_fallback_rejects_edit_action(self, allow_model_requests: None):
-        """The prompt-only capability tool cannot silently turn a requested edit into generation."""
+        """The prompt-only capability tool cannot silently turn a requested edit into generation.
+
+        With native enabled the native tool honors `action='edit'` on the models that carry it, so
+        the configuration is only unserviceable once a model without native image generation routes
+        the call to the direct tool instead.
+        """
 
         def outer_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             return ModelResponse(parts=[ToolCallPart(tool_name='generate_image', args={'prompt': 'tiny robot'})])
@@ -307,11 +331,33 @@ class TestImageGenerationCapability:
         outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
         agent = Agent(
             outer_model,
-            capabilities=[ImageGeneration(native=False, local=TestImageGenerationModel(), action='edit')],
+            capabilities=[ImageGeneration(local=TestImageGenerationModel(), action='edit')],
         )
 
         with pytest.raises(UserError, match='cannot honor `action="edit"`'):
             await agent.run('Edit an image')
+
+    async def test_image_generation_native_edit_action_survives_a_direct_generator(self, allow_model_requests: None):
+        """A configured direct generator does not disqualify an edit the native tool can still perform."""
+        image_model = TestImageGenerationModel()
+
+        def outer_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            assert info.function_tools == []
+            return ModelResponse(parts=[TextPart(content='native path')])
+
+        outer_model = FunctionModel(
+            outer_model_fn,
+            profile=ModelProfile(supported_native_tools=frozenset({ImageGenerationTool})),
+        )
+        capability = ImageGeneration(local=ImageGenerator(image_model), action='edit')
+        agent = Agent(outer_model, capabilities=[capability])
+
+        result = await agent.run('Edit an image')
+
+        assert result.output == 'native path'
+        native_tool = capability.get_native_tools()[0]
+        assert isinstance(native_tool, ImageGenerationTool)
+        assert native_tool.action == 'edit'
 
     async def test_image_generation_direct_fallback_warns_for_image_model(self, allow_model_requests: None):
         """The direct model is selected by `local`, so the legacy model override is explicit about being ignored."""
@@ -341,7 +387,16 @@ class TestImageGenerationCapability:
     def test_image_generation_rejects_local_true(self):
         """Unlike named image models, `local=True` is not an image generation strategy."""
         with pytest.raises(UserError, match=r'`local=True` is not supported'):
-            ImageGeneration(local=True)  # type: ignore[arg-type]
+            ImageGeneration(local=True)  # pyright: ignore[reportArgumentType]
+
+    def test_image_generation_rejects_local_string_without_provider_prefix(self):
+        """A `local` string that is not a `provider:model` id is rejected where every other one is.
+
+        Only the direct image model resolution behind a well-formed id is deferred to the first
+        generate call; a name no provider prefix can be split out of never gets that far.
+        """
+        with pytest.raises(UserError, match=r"`local='duckduckgo'` is not supported"):
+            ImageGeneration(native=False, local='duckduckgo')
 
     async def test_image_generation_direct_fallback_rejects_multiple_images(self, allow_model_requests: None):
         """The single-image capability contract never silently discards direct API outputs."""
@@ -416,6 +471,42 @@ class TestImageGenerationCapability:
 
         assert result.output == 'native path'
         assert image_model.last_settings is None
+
+    async def test_image_generation_direct_generator_survives_dataclass_replace(self, allow_model_requests: None):
+        """`dataclasses.replace()` re-enters `__init__` with the already-converted `local`.
+
+        The shipped capability skill tells users to reconfigure a capability that way, so the copy
+        has to stay a direct generator on both counts: no construction-time `ignored direct-only
+        setting(s)` warning, and the per-request native-supersedes notice still installed.
+        """
+        image_model = TestImageGenerationModel()
+
+        def outer_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[TextPart(content='native path')])
+
+        outer_model = FunctionModel(
+            outer_model_fn,
+            profile=ModelProfile(supported_native_tools=frozenset({ImageGenerationTool})),
+        )
+        capability = ImageGeneration(local=ImageGenerator(image_model), dimensions=(1280, 720))
+
+        copy = replace(capability, aspect_ratio=None)
+
+        agent = Agent(outer_model, capabilities=[copy])
+        with pytest.warns(UserWarning, match=r'direct-only setting\(s\) go unapplied: dimensions'):
+            result = await agent.run('Generate an image')
+
+        assert result.output == 'native path'
+
+    def test_image_generation_plain_tool_local_is_not_a_direct_generator(self):
+        """A `Tool` the capability didn't build itself carries no direct settings, so geometry is dropped."""
+        from pydantic_ai.tools import Tool
+
+        def my_gen(prompt: str) -> str:
+            return 'image_url'  # pragma: no cover
+
+        with pytest.warns(UserWarning, match='ignored direct-only setting.*dimensions'):
+            ImageGeneration(local=Tool(my_gen, name='generate_image'), dimensions=(1280, 720))
 
     @pytest.mark.skipif(not temporal_imports_successful(), reason='temporalio not installed')
     async def test_image_generation_native_supersedes_warning_tolerates_durable_run_context(self):
@@ -542,9 +633,16 @@ class TestImageGenerationCapability:
         assert len(builtins) == 1
         assert isinstance(builtins[0], ImageGenerationTool)
 
-    def test_image_generation_fallback_model_warns_for_direct_only_geometry(self):
+    @pytest.mark.parametrize('native', [True, False])
+    def test_image_generation_fallback_model_warns_for_direct_only_geometry(self, native: bool):
+        """The subagent fallback can't carry `dimensions` whether or not the native tool is also built.
+
+        `native=False` is the only configuration that reaches the check through the `fallback_model`
+        term alone, so both spellings have to warn.
+        """
         with pytest.warns(UserWarning, match='ignored direct-only setting.*dimensions'):
             cap = ImageGeneration(
+                native=native,
                 fallback_model='openai-responses:gpt-5.4',
                 dimensions=(2048, 1152),
             )

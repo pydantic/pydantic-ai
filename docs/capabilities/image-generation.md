@@ -71,7 +71,9 @@ settings went unapplied. Native-tool-only settings such as
 provider-prefixed equivalents on the generator. `action='edit'` and `image_model` do not apply either: the direct
 fallback raises [`UserError`][pydantic_ai.exceptions.UserError] for `action='edit'`, because the `generate_image` tool
 receives no reference images, and ignores `image_model` with a warning, because `local` already names the image model.
-The direct `local=` generator must return exactly one generated
+`native=False` makes the direct generator the only path, so both of those land at construction — the dropped settings as
+a warning and `action='edit'` as the error; with native enabled the native tool still carries them, and only a request
+that routes to the direct generator raises. The direct `local=` generator must return exactly one generated
 [`BinaryImage`][pydantic_ai.messages.BinaryImage]; use
 [`ImageGenerator`][pydantic_ai.images.ImageGenerator] directly for multiple images or reference-image editing.
 
@@ -80,6 +82,21 @@ The direct `local=` generator must return exactly one generated
 explicit instance through `native=ImageGenerationTool(...)` when you need its full provider-native configuration. Its
 `aspect_ratio` reaches both fallbacks — the `fallback_model` subagent and the direct `local=` generator — while a
 capability-level `aspect_ratio` takes precedence over it.
+
+Instrumentation is per generator, not per agent: the agent-level
+[`Instrumentation`][pydantic_ai.capabilities.Instrumentation] capability does not reach the direct `local=` generator,
+so a run records no `image_generation` span unless the generator carries its own. Pass `instrument=` when you construct
+it, or switch it on globally with
+[`ImageGenerator.instrument_all()`][pydantic_ai.images.ImageGenerator.instrument_all]:
+
+```python {title="instrumented_image_generation_capability.py"}
+from pydantic_ai import ImageGenerator
+from pydantic_ai.capabilities import ImageGeneration
+
+ImageGeneration(native=False, local=ImageGenerator('openai:gpt-image-2', instrument=True))
+```
+
+See [Instrumentation](../image-generation.md#instrumentation) for what those spans carry.
 
 !!! warning "Durable execution with Temporal"
     Generated images have to cross Temporal's activity boundary, where the payload size limit leaves roughly 1.5MB for raw image bytes. A larger image fails with a `UserError` — naming the tool when it came from a local generator (a direct `local=` image model or [`ImageGenerator`][pydantic_ai.images.ImageGenerator], the subagent fallback, or your own `local=` callable or toolset), or naming the model when the native tool put it on the response. See [Large Payloads](../durable_execution/temporal.md#large-payloads) for the options.

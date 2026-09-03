@@ -35,6 +35,12 @@ if TYPE_CHECKING:
 _NATIVE_IMAGE_SIZES = frozenset(get_args(ImageSize))
 _NATIVE_IMAGE_ASPECT_RATIOS = frozenset(get_args(ImageAspectRatio))
 
+_EDIT_ACTION_UNSUPPORTED = (
+    'The direct `ImageGeneration` fallback cannot honor `action="edit"` because the '
+    '`generate_image` tool does not receive reference images. Use '
+    '`ImageGenerator.generate(..., images=...)` directly for image editing.'
+)
+
 
 @dataclass(kw_only=True)
 class _DirectImageGenerationTool:
@@ -47,11 +53,10 @@ class _DirectImageGenerationTool:
 
     async def __call__(self, prompt: str) -> BinaryImage:
         if self.action == 'edit':
-            raise UserError(
-                'The direct `ImageGeneration` fallback cannot honor `action="edit"` because the '
-                '`generate_image` tool does not receive reference images. Use '
-                '`ImageGenerator.generate(..., images=...)` directly for image editing.'
-            )
+            # `_direct_local_tool` already rejected this at construction when `native=False`. With
+            # native enabled the native tool can honor the edit, so whether it is unserviceable is
+            # only known once the model has dropped the native tool and called this one instead.
+            raise UserError(_EDIT_ACTION_UNSUPPORTED)
         if self.image_model is not None:
             warnings.warn(
                 'Direct `ImageGeneration` fallback ignored `image_model`; `local` already selects the direct image model',
@@ -118,48 +123,65 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
     """Whether to generate a new image or edit an existing image.
 
     Supported by: OpenAI Responses. Default: `'auto'`.
+
+    The direct `local=` generator receives no reference images, so `'edit'` raises `UserError`: at
+    construction with `native=False`, and when the tool runs otherwise.
     """
 
     background: Literal['transparent', 'opaque', 'auto'] | None
     """Background type for the generated image.
 
     Supported by: OpenAI Responses.
+
+    The direct `local=` generator ignores it; set the provider-prefixed equivalent on the generator instead.
     """
 
     input_fidelity: Literal['high', 'low'] | None
     """Input fidelity for matching style/features of input images.
 
     Supported by: OpenAI Responses. Default: `'low'`.
+
+    The direct `local=` generator ignores it; set the provider-prefixed equivalent on the generator instead.
     """
 
     moderation: Literal['auto', 'low'] | None
     """Moderation level for the generated image.
 
     Supported by: OpenAI Responses.
+
+    The direct `local=` generator ignores it; set the provider-prefixed equivalent on the generator instead.
     """
 
     image_model: ImageGenerationModelName | None
     """The image generation model to use.
 
     Supported by: OpenAI Responses.
+
+    The direct `local=` generator ignores it with a warning, because `local` already names the model.
     """
 
     output_compression: int | None
     """Compression level for the output image.
 
     Supported by: OpenAI Responses (jpeg/webp, default: 100), Google Cloud (jpeg, default: 75).
+
+    The direct `local=` generator ignores it; set the provider-prefixed equivalent on the generator instead.
     """
 
     output_format: Literal['png', 'webp', 'jpeg'] | None
     """Output format of the generated image.
 
     Supported by: OpenAI Responses (default: `'png'`), Google Cloud.
+
+    The direct `local=` generator ignores it; set the provider-prefixed equivalent on the generator instead.
     """
 
     quality: Literal['low', 'medium', 'high', 'auto'] | None
     """Quality of the generated image.
 
     Supported by: OpenAI Responses.
+
+    The direct `local=` generator ignores it; set the provider-prefixed equivalent on the generator instead.
     """
 
     size: ImageSize | None
@@ -399,41 +421,61 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
 
     def _resolve_local_strategy(self, name: str | bool) -> Tool[AgentDepsT] | AbstractToolset[AgentDepsT]:
         if isinstance(name, str):
+            if ':' not in name:
+                # The provider prefix is the only part of the id resolvable without credentials, so
+                # checking it here keeps the unsupported-strategy rejection at construction while the
+                # model itself stays deferred to the first generate call.
+                raise UserError(
+                    f'{type(self).__name__}: `local={name!r}` is not supported. Name a direct image '
+                    "model as `local='provider:model'`, or pass a `Tool`, `AbstractToolset`, or "
+                    'callable directly.'
+                )
             # user → `__init__` → `__post_init__` → `NativeOrLocalTool.__post_init__` → here → helper → `warn`.
             return self._direct_local_tool(ImageGenerator(name), stacklevel=6)
         return super()._resolve_local_strategy(name)
 
     def _direct_local_tool(self, generator: ImageGenerator | ImageGenerationModel, *, stacklevel: int) -> Tool[Any]:
-        """Wrap a direct generator in the `generate_image` tool, warning about native-only settings.
+        """Wrap a direct generator in the `generate_image` tool, rejecting what only it could serve.
+
+        `native=False` is the one configuration whose routing is settled here: the direct generator
+        is the only implementation, so an `action='edit'` it cannot serve and the native-only
+        settings it cannot apply are both decidable at construction. Everywhere else the native tool
+        is built too, carries every one of those settings, and supersedes the generator per request
+        in `Model._resolve_native_tool_swap` — reporting them as dropped would be wrong for exactly
+        the configurations that apply them. `_DirectImageGenerationTool.__call__` still rejects the
+        edit action, at the point where the direct tool is provably the one running.
 
         `stacklevel` selects the frame the warning points at, since the two paths that get here sit
         at different depths: a generator instance is converted straight from `__init__`, while a
         `local='provider:model'` name is resolved several frames deeper, from `__post_init__`. Both
         count from a direct `ImageGeneration(...)` call, so `from_spec` lands one frame short.
         """
-        ignored: list[str] = []
-        if self.background is not None:
-            ignored.append('background')
-        if self.input_fidelity is not None:
-            ignored.append('input_fidelity')
-        if self.moderation is not None:
-            ignored.append('moderation')
-        if self.output_compression is not None:
-            ignored.append('output_compression')
-        if self.output_format is not None:
-            ignored.append('output_format')
-        if self.quality is not None:
-            ignored.append('quality')
-        if self.size is not None:
-            ignored.append('size')
-        if ignored:
-            warnings.warn(
-                'The direct `ImageGeneration` fallback ignored native-tool setting(s): '
-                f'{", ".join(ignored)}. Configure provider-specific direct settings on the '
-                '`ImageGenerator` or `ImageGenerationModel` instead.',
-                UserWarning,
-                stacklevel=stacklevel,
-            )
+        if self.native is False:
+            if self.action == 'edit':
+                raise UserError(_EDIT_ACTION_UNSUPPORTED)
+            # Collected as a table rather than a chain of `if`s to keep this method under the
+            # complexity limit now that the native gate above adds two more branches.
+            ignored: list[str] = [
+                name
+                for name, value in (
+                    ('background', self.background),
+                    ('input_fidelity', self.input_fidelity),
+                    ('moderation', self.moderation),
+                    ('output_compression', self.output_compression),
+                    ('output_format', self.output_format),
+                    ('quality', self.quality),
+                    ('size', self.size),
+                )
+                if value is not None
+            ]
+            if ignored:
+                warnings.warn(
+                    'The direct `ImageGeneration` fallback ignored native-tool setting(s): '
+                    f'{", ".join(ignored)}. Configure provider-specific direct settings on the '
+                    '`ImageGenerator` or `ImageGenerationModel` instead.',
+                    UserWarning,
+                    stacklevel=stacklevel,
+                )
         settings: ImageGenerationSettings = {}
         if self.dimensions is not None:
             settings['dimensions'] = self.dimensions
@@ -478,16 +520,24 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         toolset = super().get_toolset()
         # A callable `native` is resolved per request by the framework, so whether it yields a tool
         # that supersedes the generator can't be known here without invoking it a second time.
-        if toolset is None or not isinstance(self.native, ImageGenerationTool) or not self._has_direct_generator:
+        # A resolved `native` tool also means the base wrapped the local toolset for `unless_native`,
+        # so the diagnostic joins that prepare function instead of nesting a second wrapper.
+        if (
+            not isinstance(toolset, PreparedToolset)
+            or not isinstance(self.native, ImageGenerationTool)
+            or not self._has_direct_generator
+        ):
             return toolset
 
         direct_only = self._direct_only_geometry()
         if not direct_only:
             return toolset
 
-        async def _warn_when_native_supersedes_direct(
+        add_unless_native = toolset.prepare_func
+
+        def _warn_when_native_supersedes_direct(
             ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]
-        ) -> list[ToolDefinition]:
+        ) -> Awaitable[list[ToolDefinition]] | list[ToolDefinition]:
             # Read through `__dict__` because a run context rehydrated across a durable boundary
             # (`TemporalRunContext` inside an activity, where a `DynamicCapability` re-resolves this
             # toolset) deliberately doesn't carry the live model and raises on attribute access.
@@ -507,6 +557,6 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
                     # misreporting an arbitrary internal frame as the user's.
                     stacklevel=2,
                 )
-            return tool_defs
+            return add_unless_native(ctx, tool_defs)
 
-        return PreparedToolset(wrapped=toolset, prepare_func=_warn_when_native_supersedes_direct)
+        return replace(toolset, prepare_func=_warn_when_native_supersedes_direct)
