@@ -611,7 +611,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 overridable via [`ToolOutput(max_retries=...)`][pydantic_ai.output.ToolOutput.max_retries].
                 Both budgets can be overridden per run via `agent.run(retries=...)` (and friends), passing
                 an `AgentRetries` dict (e.g. `retries={'tools': 3}`) for per-category control.
-                For model request retries, see the [HTTP Request Retries](../models/http-request-retries.md) documentation.
+                For model request retries, see the [transport retries](../retries.md#transport-retries) documentation.
             validation_context: Pydantic [validation context](https://docs.pydantic.dev/latest/concepts/validators/#validation-context) used to validate tool arguments and outputs.
             tools: Tools to register with the agent, you can also register tools via the decorators
                 [`@agent.tool`][pydantic_ai.agent.Agent.tool] and [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain].
