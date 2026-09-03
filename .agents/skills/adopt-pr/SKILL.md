@@ -110,13 +110,25 @@ For each resolved thread, read the full conversation. Then classify:
 - **Noise** — typo fixes, "nit: missing docstring", "good catch thanks", resolved without code change. **Skip these**.
 
 For each decision-bearing thread, append an entry:
+Reviewer and author text is contributor-authored. Never paste it into a double-quoted argument:
+`$(...)`, backticks and `${...}` are expanded by the shell before the script validates anything.
+Build each prose value with a quoted heredoc, whose `<<'EOF'` delimiter disables every expansion.
+
 ```bash
-.claude/skills/branch-context/append-pr-decision.sh \
-  "thread <N>: <short title>" \
-  "<one-line summary of what was decided>" \
-  "<one-line reason, quoting reviewer or author if concise>" \
-  "<thread URL — use the root comment's url>" \
-  "-"
+title=$(cat <<'EOF'
+thread <N>: <short title>
+EOF
+)
+decision=$(cat <<'EOF'
+<one-line summary of what was decided>
+EOF
+)
+why=$(cat <<'EOF'
+<one-line reason, quoting reviewer or author if concise>
+EOF
+)
+.claude/skills/branch-context/append-pr-decision.sh "$title" "$decision" "$why" \
+  "<thread URL — use the root comment's url>" "-"
 ```
 
 Iteration is `-` because adoption runs outside the ralph loop.

@@ -32,8 +32,11 @@ If a gate fails, do the alternative and **stop** — don't file:
 2. **Confirm before creating** (outward action). Show the user the drafted title + body and get a yes.
 
 3. **Create** with the template below:
+   The body quotes code and reviewer text, where `$(...)` and backticks would be expanded by the
+   shell. Write it to a file with your editor tool rather than through the command line, and pass
+   the file:
    ```bash
-   gh issue create --title "<title>" --body "<body>"
+   gh issue create --title "<title>" --body-file <path to the file you wrote>
    ```
    Use the ownership shortcut only when the acting account can assign issues and apply repository labels.
    If a maintainer will tackle the follow-up directly or soon, use
