@@ -24,6 +24,8 @@ from pydantic_ai import (
     Agent,
     AgentStreamEvent,
     CancellationToken,
+    CapabilityEvent,
+    CustomEvent,
     FinalResultEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
@@ -2701,6 +2703,91 @@ async def test_dbos_dynamic_tool_rejects_enqueue_in_workflow(dbos: DBOS) -> None
         await run_workflow()
 
     await agent.run('run')
+
+
+@dataclass(kw_only=True)
+class DBOSCheckpointEvent(CapabilityEvent, namespace='dbos_test', name='checkpoint'):
+    label: str
+
+
+@dataclass(kw_only=True)
+class DBOSStepProgressEvent(CustomEvent, name='dbos_step_progress'):
+    label: str
+
+
+async def test_dbos_workflow_level_emit_reaches_durable_handler(dbos: DBOS) -> None:
+    """A capability event emitted at workflow level reaches the durability handler's own step."""
+    seen: list[str] = []
+
+    async def handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            if isinstance(event, DBOSCheckpointEvent):
+                seen.append(event.label)
+
+    class EmittingCapability(AbstractCapability[object]):
+        id = 'dbos_emitter'
+
+        async def before_run(self, ctx: RunContext[object]) -> None:
+            await ctx.emit(DBOSCheckpointEvent(label='start'))
+
+    agent = Agent(
+        TestModel(),
+        deps_type=object,
+        name='dbos_workflow_emit',
+        capabilities=[EmittingCapability(), DBOSDurability[object](event_stream_handler=handler)],
+    )
+
+    @DBOS.workflow()
+    async def run_workflow() -> None:
+        await agent.run('run')
+
+    await run_workflow()
+
+    assert seen == ['start']
+
+
+async def test_dbos_step_emit_is_allowed(dbos: DBOS) -> None:
+    """`ctx.emit()` from inside a step is allowed, unlike `ctx.enqueue()`.
+
+    Enqueueing is rejected because a replayed step drops the message and changes what the model
+    sees; an emitted event only notifies observers, so it's a side effect of running the step, like
+    a log line. That costs re-delivery on recovery, which replays the step's recorded output without
+    re-running the body -- pinned for the equivalent Prefect cache hit in
+    `test_prefect_task_wrapped_tool_emit_is_not_replayed`, since a real DBOS recovery would need the
+    process killed mid-workflow.
+    """
+    observed: list[str] = []
+
+    @DBOS.step()
+    async def record(label: str) -> str:
+        ctx = get_current_run_context()
+        assert ctx is not None
+        await ctx.emit(DBOSStepProgressEvent(label=label))
+        return 'done'
+
+    async def emitter() -> str:
+        return await record('one')
+
+    async def observe(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            if isinstance(event, DBOSStepProgressEvent):
+                observed.append(event.label)
+
+    agent = Agent(
+        TestModel(),
+        deps_type=object,
+        name='dbos_step_emit',
+        tools=[emitter],
+        capabilities=[ProcessEventStream(observe), DBOSDurability[object]()],
+    )
+
+    @DBOS.workflow()
+    async def run_workflow() -> None:
+        await agent.run('run')
+
+    await run_workflow()
+
+    assert observed == ['one']
 
 
 async def test_dbos_non_streaming_model_request_rejects_enqueue(dbos: DBOS) -> None:

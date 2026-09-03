@@ -38,6 +38,7 @@ from pydantic_ai.tools import (
 from pydantic_ai.toolsets import AbstractToolset, AgentToolset
 
 from ._merge import merge_capability_fields
+from ._on_event import collect_on_event_methods, marked_listens_to
 
 if TYPE_CHECKING:
     from pydantic_ai import _agent_graph
@@ -255,6 +256,14 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     in [#5477](https://github.com/pydantic/pydantic-ai/issues/5477).
     """
 
+    @property
+    def _emits_app_events(self) -> bool:
+        """Whether this app-facing capability may emit `CustomEvent`s while dispatching callbacks.
+
+        A property rather than a flag so wrappers can derive it from the capability they wrap.
+        """
+        return False
+
     _: KW_ONLY
 
     id: str | None = None
@@ -385,6 +394,22 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     def has_wrap_run_event_stream(self) -> bool:
         """Whether this capability (or any sub-capability) overrides wrap_run_event_stream."""
         return type(self).wrap_run_event_stream is not AbstractCapability.wrap_run_event_stream
+
+    @property
+    def has_on_event(self) -> bool:
+        """Whether this capability handles run events dynamically or with marked methods."""
+        return type(self).on_event is not AbstractCapability.on_event or bool(collect_on_event_methods(type(self)))
+
+    def listens_to(self, event: AgentStreamEvent) -> bool:
+        """Whether [`on_event`][pydantic_ai.capabilities.AbstractCapability.on_event] would reach a listener for `event`.
+
+        Dispatch asks this before descending, so a capability that listens to a few event classes
+        isn't woken for every event in the run. The default reports `True` for any event a
+        [`@on_event`][pydantic_ai.capabilities.on_event]-marked method accepts, and for every event
+        when `on_event` is overridden directly, since what an override dispatches to isn't knowable
+        here. Override this alongside `on_event` when you can report something narrower.
+        """
+        return type(self).on_event is not AbstractCapability.on_event or marked_listens_to(type(self), event)
 
     @classmethod
     def get_serialization_name(cls) -> str | None:
@@ -837,7 +862,23 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """
         raise error
 
-    # --- Event stream hook ---
+    # --- Event hooks ---
+
+    async def on_event(self, ctx: RunContext[AgentDepsT], *, event: AgentStreamEvent) -> None:
+        """React to every event in the run's event stream.
+
+        This includes model response stream events, tool events, deferred and enqueued-message events,
+        [`CustomEvent`][pydantic_ai.messages.CustomEvent]s, and
+        [`CapabilityEvent`][pydantic_ai.messages.CapabilityEvent]s. The default implementation dispatches
+        to methods marked with [`on_event`][pydantic_ai.capabilities.on_event], in definition order.
+
+        Override this method for fully dynamic handling. Call `super().on_event(...)` to retain marked
+        method dispatch. A capability receives events it emits itself. Events emitted by a listener
+        enter the stream after the event being handled.
+        """
+        for method in collect_on_event_methods(type(self)):
+            if not method.event_types or isinstance(event, method.event_types):
+                await method.__get__(self, type(self))(ctx, event)
 
     async def wrap_run_event_stream(
         self,

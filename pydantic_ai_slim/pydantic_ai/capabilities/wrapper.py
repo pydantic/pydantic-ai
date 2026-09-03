@@ -20,6 +20,7 @@ from pydantic_ai.tools import (
 )
 from pydantic_ai.toolsets import AbstractToolset, AgentToolset
 
+from ._on_event import collect_on_event_methods, marked_listens_to
 from .abstract import (
     AbstractCapability,
     AgentModel,
@@ -172,6 +173,28 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
             or self.wrapped.has_wrap_run_event_stream
         )
 
+    @property
+    def has_on_event(self) -> bool:
+        return (
+            type(self).on_event is not WrapperCapability.on_event
+            or bool(collect_on_event_methods(type(self)))
+            or self.wrapped.has_on_event
+        )
+
+    def listens_to(self, event: AgentStreamEvent) -> bool:
+        return (
+            type(self).on_event is not WrapperCapability.on_event
+            or marked_listens_to(type(self), event)
+            or self.wrapped.listens_to(event)
+        )
+
+    @property
+    def _emits_app_events(self) -> bool:
+        # The `RunContext.emit` gate must see through wrappers: wrapping an app-facing
+        # `Hooks`/`ProcessEventStream` must not revoke its user callbacks' permission to emit
+        # `CustomEvent`s.
+        return self.wrapped._emits_app_events
+
     def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> AbstractCapability[AgentDepsT]:
         new_wrapped = self.wrapped.for_agent(agent)
         if new_wrapped is self.wrapped:
@@ -319,7 +342,12 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
     ) -> NodeResult[AgentDepsT]:
         return await self.wrapped.on_node_run_error(ctx, node=node, error=error)
 
-    # --- Event stream hook ---
+    # --- Event hooks ---
+
+    async def on_event(self, ctx: RunContext[AgentDepsT], *, event: AgentStreamEvent) -> None:
+        await super().on_event(ctx, event=event)
+        if self.wrapped.listens_to(event):
+            await self.wrapped.on_event(ctx, event=event)
 
     async def wrap_run_event_stream(
         self,
