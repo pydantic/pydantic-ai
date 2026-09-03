@@ -1156,7 +1156,14 @@ class GoogleModel(Model[Client]):
                     else:
                         assert_never(part)
 
-                message_parts.extend(tool_return_media)
+                if tool_return_media:
+                    # After the last `function_response`, not after every part: a `ToolReturn.content`
+                    # user part trails the tool returns in the same request, and appending to the end
+                    # would put the developer's message between a call and the file it produced.
+                    # Anywhere earlier and the split below would leave media sharing a `Content` with
+                    # a later `function_response`.
+                    after_last_response = max(i for i, p in enumerate(message_parts) if 'function_response' in p) + 1
+                    message_parts[after_last_response:after_last_response] = tool_return_media
 
                 # Work around a Gemini bug where content objects containing functionResponse parts are treated as
                 # role=model even when role=user is explicitly specified.

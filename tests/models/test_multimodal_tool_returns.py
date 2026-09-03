@@ -1485,6 +1485,64 @@ async def test_tool_media_is_framed_with_its_originating_call(case: ToolMediaWir
     assert ('</tool_result>' in rendered) is case.framed
 
 
+@pytest.mark.skipif(not google_available(), reason='google not installed')
+async def test_google_framed_media_precedes_tool_return_content() -> None:
+    """A tool's own file reaches Gemini before the `ToolReturn.content` the developer sent with it.
+
+    Gemini reads any `Content` holding a `function_response` as model-authored (#4210), so framed
+    media is held back past the request's `function_response`s rather than emitted beside its call.
+    Held back to the very end it would land after the `ToolReturn.content` user part that trails the
+    tool returns, putting the developer's message between a call and the file it produced.
+    """
+    audio = BinaryContent(data=b'aud', media_type='audio/mpeg', identifier='clip')
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='go')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='get_clip', args={}, tool_call_id='c1')]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name='get_clip', content=audio, tool_call_id='c1'),
+                UserPromptPart(content='and here is my note'),
+            ]
+        ),
+    ]
+
+    assert await _wire_google_2_5(messages) == snapshot(
+        [
+            {'role': 'user', 'parts': [{'text': 'go'}]},
+            {
+                'role': 'model',
+                'parts': [
+                    {
+                        'function_call': {'name': 'get_clip', 'args': {}, 'id': 'c1'},
+                        'thought_signature': b'skip_thought_signature_validator',
+                    }
+                ],
+            },
+            {
+                'role': 'user',
+                'parts': [
+                    {
+                        'function_response': {
+                            'name': 'get_clip',
+                            'response': {'output': [{}, 'See file clip.']},
+                            'id': 'c1',
+                        }
+                    }
+                ],
+            },
+            {
+                'role': 'user',
+                'parts': [
+                    {'text': '<tool_result tool_name="get_clip" tool_call_id="c1" file_id="clip">'},
+                    {'inline_data': {'data': b'aud', 'mime_type': 'audio/mpeg'}},
+                    {'text': '</tool_result>'},
+                    {'text': 'and here is my note'},
+                ],
+            },
+        ]
+    )
+
+
 SPILLING_PROVIDERS = [pytest.param(name, id=name) for name in ('openai_chat', 'mistral', 'xai', 'google_2_5')]
 """Providers in `SUPPORT_MATRIX` whose tool result channel is text-only, so images are framed.
 
