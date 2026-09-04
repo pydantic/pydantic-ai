@@ -115,7 +115,8 @@ transcription its user turns contain no spoken text.
 Beyond audio and text, a session accepts the same image content as
 [multimodal input](../input.md#image-input) to a standard run. Send an image as context with
 [`send()`][pydantic_ai.realtime.RealtimeSession.send]. An image does not trigger a response by
-itself; the model uses it on the next voice, text, or manually-created turn.
+itself; the model uses it on the next voice, text, or manually-created turn. Pass `respond=True` to
+ask for a response to the image; see [Text turns](turns.md#text-turns) for the `respond` behavior.
 
 ```python
 from pydantic_ai import BinaryContent

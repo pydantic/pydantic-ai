@@ -98,6 +98,7 @@ from pydantic_ai.realtime.codec import (
     RealtimeInput,
     ResponseDone,
     SessionUsage,
+    TextContext,
     ToolCall,
     ToolCallCancelled,
     ToolResult,
@@ -3181,6 +3182,98 @@ async def test_send_accepts_sequence() -> None:
     await session.send(['look at this', BinaryImage(data=b'image', media_type='image/png')])
 
     assert conn.sent == ['look at this', BinaryImage(data=b'image', media_type='image/png')]
+
+
+async def test_send_respond_controls_text_and_image_turns() -> None:
+    conn = FakeRealtimeConnection([])
+    session = RealtimeSession(conn, _noop_runner)
+    image = BinaryImage(data=b'image', media_type='image/png')
+
+    await session.send('default')
+    await session.send('explicit', respond=True)
+    await session.send('context', respond=False)
+    await session.send(image)
+    await session.send(image, respond=False)
+    await session.send(image, respond=True)
+
+    assert conn.sent == snapshot(
+        [
+            'default',
+            'explicit',
+            TextContext(text='context'),
+            BinaryImage(data=b'image', media_type='image/png'),
+            BinaryImage(data=b'image', media_type='image/png'),
+            BinaryImage(data=b'image', media_type='image/png'),
+            CreateResponse(),
+        ]
+    )
+    assert session._pending_response_requests == 3  # pyright: ignore[reportPrivateUsage]
+    assert len(session.new_messages()) == 6
+
+
+async def test_send_respond_sequence_contextualizes_all_but_last() -> None:
+    conn = FakeRealtimeConnection([])
+    session = RealtimeSession(conn, _noop_runner)
+    image = BinaryImage(data=b'image', media_type='image/png')
+
+    await session.send(['first', image, 'last'], respond=True)
+
+    assert conn.sent == [TextContext('first'), image, 'last']
+    assert session._pending_response_requests == 1  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_send_respond_rejects_audio_and_unsupported_image_response() -> None:
+    conn = FakeRealtimeConnection([])
+    session = RealtimeSession(conn, _noop_runner)
+
+    for audio in (_wav_content(b'\x01\x02'), BinaryContent(data=b'\x01\x02', media_type='audio/pcm')):
+        with pytest.raises(UserError, match='`respond` cannot be used with audio'):
+            await session.send(audio, respond=False)
+
+    unsupported = RealtimeSession(conn, _noop_runner, profile=_profile(supports_manual_turn_control=False))
+    with pytest.raises(UserError, match='does not support manual turn-taking'):
+        await unsupported.send(BinaryImage(data=b'image', media_type='image/png'), respond=True)
+    assert conn.sent == []
+
+
+async def test_image_respond_frames_cannot_be_interleaved() -> None:
+    image_started = asyncio.Event()
+    release_image = asyncio.Event()
+
+    class _PausedImageConnection(FakeRealtimeConnection):
+        async def send(self, content: RealtimeInput) -> None:
+            if isinstance(content, BinaryImage):
+                image_started.set()
+                await release_image.wait()
+            await super().send(content)
+
+    conn = _PausedImageConnection([])
+    session = RealtimeSession(conn, _noop_runner)
+    image_task = asyncio.create_task(session.send(BinaryImage(data=b'image', media_type='image/png'), respond=True))
+    await image_started.wait()
+    text_task = asyncio.create_task(session.send('later'))
+    await asyncio.sleep(0)
+    release_image.set()
+    await asyncio.gather(image_task, text_task)
+
+    assert conn.sent == [BinaryImage(data=b'image', media_type='image/png'), CreateResponse(), 'later']
+
+
+async def test_respond_send_failures_roll_back_history_and_reservations() -> None:
+    class _FailingConnection(FakeRealtimeConnection):
+        async def send(self, content: RealtimeInput) -> None:
+            raise RuntimeError('send failed')
+
+    conn = _FailingConnection([])
+    session = RealtimeSession(conn, _noop_runner)
+
+    with pytest.raises(RuntimeError, match='send failed'):
+        await session.send('context', respond=False)
+    with pytest.raises(RuntimeError, match='send failed'):
+        await session.send(BinaryImage(data=b'image', media_type='image/png'), respond=True)
+
+    assert session.new_messages() == []
+    assert session._pending_response_requests == 0  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_image_history_retention_samples_and_round_trips() -> None:

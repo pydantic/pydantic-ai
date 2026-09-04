@@ -17,6 +17,11 @@ Send mono PCM16 at `session.audio_input_sample_rate` and play it at
 In push-to-talk mode, call `commit_audio()` and then `create_response()` after sending audio. See
 [push-to-talk](turns.md#push-to-talk).
 
+## The model says the same thing twice
+
+`send('...')` already asks the model to reply. Do not follow it with `create_response()`, which asks
+for a second response. See [text turns](turns.md#text-turns).
+
 ## The model interrupts itself
 
 The microphone is probably hearing speaker output. Add echo cancellation in the device/WebRTC

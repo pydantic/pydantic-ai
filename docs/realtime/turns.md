@@ -26,6 +26,31 @@ Their accepted values, defaults, and limitations are documented on the
 [OpenAI](openai.md#settings), [Azure OpenAI](azure.md#settings),
 [Google Gemini](gemini.md#settings), and [xAI](xai.md#settings) pages.
 
+## Text turns
+
+Sending a string creates a complete user turn and asks the model to reply:
+
+```python
+from pydantic_ai import BinaryImage
+from pydantic_ai.realtime import RealtimeSession
+
+
+async def send_turns(session: RealtimeSession, image: BinaryImage) -> None:
+    await session.send('Greet the visitor.')
+
+    # Add context for a later voice or text turn without asking for a reply.
+    await session.send('The visitor is called Ada.', respond=False)
+
+    # Show an image and ask for a reply in one operation.
+    await session.send(image, respond=True)
+```
+
+Images are context-only by default. Asking for a response to an image requires a model that supports
+manual turn control.
+
+Do not call `create_response()` after `send('...')`: the text turn already asks for a response, so
+the pair asks twice and can make the model say the same thing twice.
+
 ## Barge-in
 
 With server-side turn detection, providers interrupt the model when they detect new user speech.

@@ -114,6 +114,7 @@ from .codec import (
     RealtimeInput,
     ResponseDone,
     SessionUsage,
+    TextContext,
     ToolCall,
     ToolCallCancelled,
     ToolResult,
@@ -1087,6 +1088,11 @@ class GoogleRealtimeConnection(RealtimeConnection):
             await self._session.send_client_content(
                 turns=genai_types.Content(role='user', parts=[genai_types.Part(text=content)]),
                 turn_complete=True,
+            )
+        elif isinstance(content, TextContext):
+            await self._session.send_client_content(
+                turns=genai_types.Content(role='user', parts=[genai_types.Part(text=content.text)]),
+                turn_complete=False,
             )
         elif isinstance(content, BinaryImage):
             await self._session.send_realtime_input(  # pyright: ignore[reportUnknownMemberType]
