@@ -308,7 +308,14 @@ class RunContext(Generic[RunContextAgentDepsT]):
     """
 
     capabilities: dict[str, AbstractCapability[RunContextAgentDepsT]] = field(default_factory=lambda: {})
-    """All capabilities registered for the current run, including deferred ones."""
+    """All capabilities registered for the current run, including deferred ones.
+
+    A capability that declares an `id` is keyed by it. One that does not is keyed by a synthetic
+    handle the framework mints for this run — `'<thinking:4f3a9c>'` — which is not an `id`, is not
+    the same from one run to the next, and must not be written down anywhere. Match on the values
+    instead, or give the capability an explicit `id`; a capability that needs a stable name across
+    runs (any `defer_loading=True` one) is already required to have one.
+    """
 
     loaded_capability_ids: set[str] = field(default_factory=set[str])
     """IDs of the deferred capabilities the model has explicitly loaded via the `load_capability` tool.
