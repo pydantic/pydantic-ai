@@ -2748,26 +2748,64 @@ async def test_upstream_error_surfaces_at_close_when_the_stream_was_never_iterat
             raise ValueError('mine')
 
 
-async def test_tool_error_surfaces_at_close_when_the_stream_was_never_iterated() -> None:
-    """A failed tool reaches the consumer through the queue, which has no reader here.
-
-    Like the pump-error case above, `close()` is the only place left for it to surface: without this
-    a caller using only `send()` and the audio/transcript views would exit cleanly from a tool that
-    actually crashed.
-    """
+async def test_tool_error_ends_views_when_the_stream_was_never_iterated() -> None:
+    """A failed tool ends taps so a taps-only caller reaches `close()` and receives the error."""
 
     async def runner(*args: Any) -> str:
-        raise RuntimeError('tool exploded')
+        raise ValueError('tool exploded')
 
     session = RealtimeSession(
-        FakeRealtimeConnection([ToolCall(tool_call_id='tc1', tool_name='noop', args='{}')]),
+        BlockingRealtimeConnection([ToolCall(tool_call_id='tc1', tool_name='noop', args='{}')]),
         runner=runner,
     )
-    with pytest.raises(RuntimeError, match='tool exploded'):
+    with pytest.raises(ValueError, match='tool exploded'):
         async with session:
-            # Drive the pump through an audio view alone, like the quickstart's playback task.
-            assert [chunk async for chunk in session.stream_audio()] == []
-            await asyncio.sleep(0.05)  # let the failed tool's error reach the queue
+            assert await asyncio.wait_for(_collect(session.stream_audio()), timeout=1) == []
+            # A view subscribed after the failure also ends immediately.
+            assert await asyncio.wait_for(_collect(session.stream_transcripts()), timeout=1) == []
+
+
+async def test_tool_retry_exhaustion_ends_views_when_the_stream_was_never_iterated() -> None:
+    async def runner(*args: Any) -> str:
+        raise UnexpectedModelBehavior('retry budget exhausted')
+
+    session = RealtimeSession(
+        BlockingRealtimeConnection([ToolCall(tool_call_id='tc1', tool_name='noop', args='{}')]),
+        runner=runner,
+    )
+    with pytest.raises(UnexpectedModelBehavior, match='retry budget exhausted'):
+        async with session:
+            assert await asyncio.wait_for(_collect(session.stream_transcripts()), timeout=1) == []
+
+
+async def test_tool_error_leaves_views_open_for_an_iterating_consumer() -> None:
+    async def runner(*args: Any) -> str:
+        raise ValueError('tool exploded')
+
+    session = RealtimeSession(
+        BlockingRealtimeConnection([ToolCall(tool_call_id='tc1', tool_name='noop', args='{}')]),
+        runner=runner,
+    )
+    async with session:
+        audio = session.stream_audio()
+
+        async def consume_events() -> None:
+            with pytest.raises(ValueError, match='tool exploded'):
+                async for _ in session:
+                    pass
+
+        consumer = asyncio.create_task(consume_events())
+        await asyncio.sleep(0)
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(anext(audio), timeout=0.05)
+        await consumer
+        assert session._pump_task is not None and not session._pump_task.done()  # pyright: ignore[reportPrivateUsage]
+    with pytest.raises(StopAsyncIteration):
+        await anext(audio)
+
+
+async def _collect(iterator: AsyncIterator[Any]) -> list[Any]:
+    return [item async for item in iterator]
 
 
 async def test_upstream_error_does_not_wait_for_running_tool() -> None:
@@ -6935,6 +6973,38 @@ async def test_agent_realtime_session_capability_tool_hooks() -> None:
     result = next(e for e in events if isinstance(e, FunctionToolResultEvent))
     assert result.part.content == '[hooked] hi'
     assert cap.events == ['before:greet', 'after:hi']
+
+
+async def test_agent_realtime_session_capability_recovers_tool_error_for_taps_only_consumer() -> None:
+    class RecoverToolError(AbstractCapability[object]):
+        async def on_tool_execute_error(
+            self,
+            ctx: RunContext[object],
+            *,
+            call: ToolCallPart,
+            tool_def: ToolDefinition,
+            args: dict[str, Any],
+            error: Exception,
+        ) -> str:
+            assert str(error) == 'service unavailable'
+            return 'fallback result'
+
+    agent: Agent[None, str] = Agent()
+
+    @agent.tool_plain
+    def lookup() -> str:
+        raise ValueError('service unavailable')
+
+    conn = BlockingRealtimeConnection([ToolCall(tool_call_id='t1', tool_name='lookup', args='{}'), ResponseDone()])
+    model = FakeRealtimeModel(conn)
+    async with agent.realtime(model, capabilities=[RecoverToolError()]).session() as session:
+        audio = asyncio.create_task(_collect(session.stream_audio()))
+        with anyio.fail_after(1):
+            while not conn.sent:
+                await asyncio.sleep(0)
+
+    assert conn.sent == [ToolResult(tool_call_id='t1', output='fallback result')]
+    assert await audio == []
 
 
 async def test_agent_realtime_session_metadata_and_conversation_id() -> None:
