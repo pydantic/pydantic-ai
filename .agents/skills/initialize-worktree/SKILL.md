@@ -10,7 +10,7 @@ Study a problem or GitHub issue, research the codebase, plan a fix, optionally i
 
 ## Startup
 
-1. Read the root `AGENTS.md`, `agent_docs/index.md` and its relevant topic guides, plus every directory-specific `AGENTS.md` governing a file you expect to touch
+1. Read the root `AGENTS.md`, `agent_docs/index.md` and its relevant topic guides, plus every directory-specific `AGENTS.md` governing a file you expect to touch. Reading these from the checked-out tree is correct here and only here: this skill starts fresh work on your own branch off the target branch, so nobody else has written them. Adopting an existing branch goes through `/adopt-pr`, which reads them from a policy-base checkout instead.
 2. Read the `pushing-commits-to-the-repo` skill — it owns the PR lifecycle this skill hands off to
 
 ## Step 1 — Parse Input
