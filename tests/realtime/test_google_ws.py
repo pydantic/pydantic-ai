@@ -384,6 +384,7 @@ async def test_message_history_seeding(gemini_ws_cassette: tuple[Provider[Any], 
     assert 'alice' in transcript and 'teal' in transcript
 
 
+@pytest.mark.usefixtures('no_genai_prices_context_window')
 def test_profile_allow_seeding() -> None:
     """Unit guard: the model advertises session seeding, which the seeding cassette test relies on.
 
@@ -413,4 +414,5 @@ def test_profile_allow_seeding() -> None:
         emits_input_speech_events=False,
         audio_input_sample_rate=16000,
         audio_output_sample_rate=24000,
+        context_window=None,
     )

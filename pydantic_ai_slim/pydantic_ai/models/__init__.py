@@ -26,7 +26,7 @@ from typing_extensions import Self, TypeAliasType, TypedDict, deprecated
 from typing_inspection.introspection import get_literal_values
 
 from .. import _utils
-from .._cost import preload_pricing_data
+from .._genai_prices import lookup_context_window, preload_pricing_data
 from .._http import DEFAULT_HTTP_TIMEOUT as DEFAULT_HTTP_TIMEOUT, legacy_httpx
 from .._json_schema import JsonSchemaTransformer
 from .._output import StructuredTextOutputSchema
@@ -141,6 +141,7 @@ OpenAIChatCompatibleProvider = TypeAliasType(
         'snowflake',
         'together',
         'vercel',
+        'vllm',
         'zai',
     ],
 )
@@ -880,6 +881,11 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         """
         return frozenset()
 
+    @property
+    def context_window(self) -> int | None:
+        """The resolved profile's [`context_window`][pydantic_ai.profiles.ModelProfile.context_window]."""
+        return self.profile.get('context_window')
+
     @cached_property
     def profile(self) -> ModelProfile:
         """The model profile.
@@ -888,7 +894,10 @@ class Model(AbstractModel, Generic[InterfaceClient]):
           1. `DEFAULT_PROFILE` — base values for every key in `ModelProfile`.
           2. The provider's `model_profile(model_name)` result — provider-specific defaults
              for this model.
-          3. The user's `profile=` argument — partial dict merged on top, OR a callable
+          3. A best-effort `context_window` value from
+             [genai-prices](https://github.com/pydantic/genai-prices), unless the provider or a
+             partial user profile explicitly set the field (including to `None`).
+          4. The user's `profile=` argument — partial dict merged on top, OR a callable
              `(default) -> profile` for full control.
 
         After resolution we compute the intersection of the profile's `supported_native_tools`
@@ -901,8 +910,17 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             provider_profile = provider.model_profile(self.model_name) or {}
         resolved = merge_profile(DEFAULT_PROFILE, provider_profile)
 
-        # Step 3: user override
+        # Step 3: fill `context_window` from genai-prices when no provider or partial user layer set it.
         user = self._profile
+        context_window_set = 'context_window' in provider_profile or (
+            user is not None and not callable(user) and 'context_window' in user
+        )
+        if not context_window_set:
+            context_window = lookup_context_window(self)
+            if context_window is not None:
+                resolved = merge_profile(resolved, ModelProfile(context_window=context_window))
+
+        # Step 4: user override
         if user is None:
             pass
         elif callable(user):
@@ -913,7 +931,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             # Partial dict — merge on top
             resolved = merge_profile(resolved, user)
 
-        # Step 4: native tools intersection — profile's allowed tools & model's implemented tools
+        # Step 5: native tools intersection — profile's allowed tools & model's implemented tools
         model_supported = self.__class__.supported_native_tools()
         profile_supported = resolved.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
         effective_tools = profile_supported & model_supported
@@ -1516,7 +1534,8 @@ def _suggest_known_model_id_from_provider_error(  # pyright: ignore[reportUnused
 def infer_model_profile(model: str) -> ModelProfile:
     """Infer the model profile from a model id string without constructing a provider.
 
-    Uses `Provider.model_profile` to look up the profile for the given model.
+    Uses `Provider.model_profile` to look up the profile for the given model, then fills an unset
+    `context_window` from genai-prices when available.
     Returns `DEFAULT_PROFILE` for unknown or unrecognized providers.
 
     Note: This returns the raw provider profile **without** intersecting with
@@ -1534,6 +1553,12 @@ def infer_model_profile(model: str) -> ModelProfile:
     provider, model_name = parse_model_id(model)
     if provider is None:
         return DEFAULT_PROFILE
+    if provider.startswith('gateway/'):
+        # Resolve the gateway prefix once, here: `infer_provider_class` would do it for the class lookup,
+        # but genai-prices needs the upstream name too, and `gateway/chat` doesn't contain one.
+        from ..providers.gateway import normalize_gateway_provider
+
+        provider = normalize_gateway_provider(provider)
 
     try:
         provider_class = infer_provider_class(provider)
@@ -1541,9 +1566,16 @@ def infer_model_profile(model: str) -> ModelProfile:
         return DEFAULT_PROFILE
 
     try:
-        return provider_class.model_profile(model_name) or DEFAULT_PROFILE
+        provider_profile = provider_class.model_profile(model_name)
     except (ValueError, UserError):
         return DEFAULT_PROFILE
+    profile = provider_profile or DEFAULT_PROFILE
+
+    if 'context_window' not in (provider_profile or {}):
+        context_window = lookup_context_window(model_name, provider_name=provider)
+        if context_window is not None:
+            profile = merge_profile(profile, ModelProfile(context_window=context_window))
+    return profile
 
 
 def infer_model(  # noqa: C901

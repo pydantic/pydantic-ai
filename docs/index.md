@@ -3,8 +3,6 @@ title: Pydantic AI
 description: "How Python does AI: agents, realtime voice, image generation, embeddings. Every model, every interface, typed end to end."
 ---
 
-# Pydantic AI {.hide}
-
 <div style="text-align: center">
   <img class="off-glb only-dark" src="./img/pydantic-ai-dark.svg" alt="Pydantic AI" />
 </div>
@@ -19,7 +17,7 @@ description: "How Python does AI: agents, realtime voice, image generation, embe
     <img src="https://github.com/pydantic/pydantic-ai/actions/workflows/ci.yml/badge.svg?event=push" alt="CI" />
   </a>
   <a href="https://coverage-badge.samuelcolvin.workers.dev/redirect/pydantic/pydantic-ai">
-    <img src="https://coverage-badge.samuelcolvin.workers.dev/pydantic/pydantic-ai.svg" alt="Coverage" />
+    <img src="https://img.shields.io/badge/coverage-100%25-brightgreen.svg" alt="Coverage" />
   </a>
   <a href="https://pypi.python.org/pypi/pydantic-ai">
     <img src="https://img.shields.io/pypi/v/pydantic-ai.svg" alt="PyPI" />
@@ -52,7 +50,7 @@ From simple typed data extraction to complex, long-running multi-agent collabora
     A complete coding agent in your terminal: workspace-rooted [file access](https://pydantic.dev/docs/ai/harness/filesystem/), allowlisted [shell](https://pydantic.dev/docs/ai/harness/shell/), [repo orientation](https://pydantic.dev/docs/ai/harness/repo-context/), [planning](https://pydantic.dev/docs/ai/harness/planning/), and [context management](https://pydantic.dev/docs/ai/harness/compaction/) that survives long sessions. Here with [web search](capabilities/web-search.md) and a second-opinion [advisor](https://pydantic.dev/docs/ai/harness/advisor/) snapped on alongside:
 
     ```bash
-    uv add pydantic-ai pydantic-ai-harness
+    pip/uv-add pydantic-ai pydantic-ai-harness
     ```
 
     ```python {test="skip" lint="skip"}
@@ -93,7 +91,7 @@ From simple typed data extraction to complex, long-running multi-agent collabora
     Give the agent an [output type](output.md) and [tools](tools.md), and every run comes back validated and typed:
 
     ```bash
-    uv add pydantic-ai
+    pip/uv-add pydantic-ai
     ```
 
     ```python {title="review_sentiment.py"}
@@ -127,47 +125,12 @@ From simple typed data extraction to complex, long-running multi-agent collabora
 
     **Build this →** [Agents](agent.md), [Function Tools](tools.md), and [Structured Output](output.md)
 
-=== "Realtime voice"
+=== "Durable workflow"
 
-    Put the same agent on a live voice session, [tools](realtime/tools.md) and [capabilities](realtime/capabilities.md) included:
-
-    ```bash
-    uv add "pydantic-ai[openai-realtime]"
-    ```
-
-    ```python {test="skip" lint="skip"}
-    import asyncio
-
-    from pydantic_ai import Agent
-    from pydantic_ai.capabilities import MCP
-
-    agent = Agent(
-        instructions='You are a helpful voice assistant.',
-        capabilities=[MCP('https://internal.example.com/mcp')],  # capabilities work in voice too
-    )
-
-    @agent.tool_plain
-    def order_status(order_id: str) -> str:
-        """Look up the status of an order."""
-        return f'Order {order_id}: shipped, arriving Thursday.'
-
-    async with agent.realtime('openai:gpt-realtime-2.1').session() as session:
-        microphone = asyncio.create_task(session.send_audio(microphone_chunks()))  # your microphone → the model
-        speaker = asyncio.create_task(play_audio(session.stream_audio()))  # model audio → your speaker
-        async for part in session.stream_transcripts():
-            print(f'{part.speaker}: {part.transcript}')
-    ```
-
-    The model calls your tools mid-conversation while it keeps talking, and every session is [instrumented](logfire.md); voice is just another frontend, on OpenAI Realtime, Gemini Live, Azure, and xAI Grok Voice.
-
-    **Build this →** [Realtime Voice](realtime/overview.md), starting from the [voice assistant example](examples/realtime-voice.md)
-
-=== "Durable background agent"
-
-    Attach [`TemporalDurability`](durable_execution/temporal.md) and the same agent runs inside a [Temporal](durable_execution/temporal.md) workflow: every model and tool call becomes a durable activity, so a run working through a background queue survives restarts, failures, and long waits:
+    Attach [`TemporalDurability`](durable_execution/temporal.md) and the same agent runs inside a [Temporal](durable_execution/temporal.md) workflow under [durable execution](durable_execution/overview.md): every model and tool call becomes a durable activity, so a run working through a background queue survives restarts, failures, and long waits:
 
     ```bash
-    uv add "pydantic-ai[temporal]"
+    pip/uv-add "pydantic-ai[temporal]"
     ```
 
     ```python {title="durable_research.py"}
@@ -199,12 +162,47 @@ From simple typed data extraction to complex, long-running multi-agent collabora
 
     **Build this →** [Durable Execution](durable_execution/overview.md)
 
-=== "Image generation"
+=== "Realtime voice"
+
+    Put the same agent on a live voice session, [tools](realtime/tools.md) and [capabilities](realtime/capabilities.md) included:
+
+    ```bash
+    pip/uv-add "pydantic-ai[openai-realtime]"
+    ```
+
+    ```python {test="skip" lint="skip"}
+    import asyncio
+
+    from pydantic_ai import Agent
+    from pydantic_ai.capabilities import MCP
+
+    agent = Agent(
+        instructions='You are a helpful voice assistant.',
+        capabilities=[MCP('https://internal.example.com/mcp')],  # capabilities work in voice too
+    )
+
+    @agent.tool_plain
+    def order_status(order_id: str) -> str:
+        """Look up the status of an order."""
+        return f'Order {order_id}: shipped, arriving Thursday.'
+
+    async with agent.realtime('openai:gpt-realtime-2.1').session() as session:
+        microphone = asyncio.create_task(session.send_audio(microphone_chunks()))  # your microphone → the model
+        speaker = asyncio.create_task(play_audio(session.stream_audio()))  # model audio → your speaker
+        async for part in session.stream_transcripts():
+            print(f'{part.speaker}: {part.transcript}')
+    ```
+
+    The model calls your tools mid-conversation while it keeps talking, and every session is [instrumented](logfire.md); voice is just another frontend, on OpenAI Realtime, Gemini Live, Azure, and xAI Grok Voice.
+
+    **Build this →** [Realtime Voice](realtime/overview.md), starting from the [voice assistant example](examples/realtime-voice.md)
+
+=== "Image gen"
 
     Ask for an image and make it the run's typed [output](output.md):
 
     ```bash
-    uv add pydantic-ai
+    pip/uv-add pydantic-ai
     ```
 
     ```python {title="logo_generation.py"}
@@ -221,23 +219,6 @@ From simple typed data extraction to complex, long-running multi-agent collabora
 
     **Build this →** [Image Generation](capabilities/image-generation.md)
 
-=== "Embeddings"
-
-    Embed documents and queries for semantic search or a [RAG pipeline](examples/rag.md):
-
-    ```python {title="embeddings_quickstart.py"}
-    from pydantic_ai import Embedder
-
-    embedder = Embedder('openai:text-embedding-3-small')
-    result = embedder.embed_query_sync('What is machine learning?')
-    print(len(result.embeddings[0]))
-    #> 1536
-    ```
-
-    Seven providers behind one typed API, [instrumented](logfire.md) like everything else. It lives next to the agent that will use the results.
-
-    **Build this →** [Embeddings](embeddings.md), then the [RAG example](examples/rag.md)
-
 !!! tip "No API key yet?"
     You don't need a provider API key to try any of this. Pass the built-in [`'test'` model](testing.md#unit-testing-with-testmodel) (`Agent('test')`), which runs entirely offline without calling an LLM, so you can exercise your agent, tools, and outputs first. When you're ready for a real model, see [Models and Providers](models/overview.md) to pick a provider and set its API key.
 
@@ -253,7 +234,7 @@ From simple typed data extraction to complex, long-running multi-agent collabora
 
 - **[Every interface](interfaces.md).** One agent definition runs as a [CLI](cli.md), a [built-in web chat](web.md), or [realtime speech](realtime/overview.md); [UI event streams](ui/overview.md) (AG-UI, Vercel AI) connect it to your own frontend or anything else; and [ACP](https://pydantic.dev/docs/ai/harness/acp/) *(experimental)* serves it as an editor agent.
 
-- **Durable execution.** First-party, co-maintained [durable execution](durable_execution/overview.md) on Temporal, DBOS, or Prefect, with [Restate, Kitaru, and Airflow](durable_execution/overview.md) integrations and more coming. Agents survive restarts and run for days on the engine you already operate, with [human-in-the-loop approval](deferred-tools.md#human-in-the-loop-tool-approval) built in.
+- **Durable execution.** First-party, co-maintained [durable execution](durable_execution/overview.md) on Temporal, DBOS, Prefect, and Restate, plus external SDK integrations for Kitaru and Airflow. Agents survive restarts and run for days on the engine you already operate, with [human-in-the-loop approval](deferred-tools.md#human-in-the-loop-tool-approval) built in.
 
 Built by the [Pydantic](https://docs.pydantic.dev) team: [Pydantic Validation](https://pydantic.dev/docs/) is the validation layer of the OpenAI SDK, the Anthropic SDK, the Google ADK, LangChain, and most of the AI ecosystem (and the foundation FastAPI was built on). Pydantic AI brings that same feeling to agents.
 
