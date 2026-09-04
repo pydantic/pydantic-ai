@@ -95,13 +95,18 @@ reviewers own that separate boundary. Every fresh reviewer here runs under the s
   Harness-specific launch mechanics must not change the assigned review scope or rubric.
 - The reviewer may work the review rubric, or decompose this diff and fan out to subagents of its
   own where the diff's risk is specific enough that the rubric would not name it. That
-  decomposition is the reviewer's to make: an implementing agent that hands the reviewer charters,
-  or any other framing of what to look for, has set the review's scope, which this contract
-  forbids. Fan out only from a reviewer whose working directory is the policy-base checkout — a
-  subagent launched inside the candidate worktree autoloads its `CLAUDE.local.md` and the
-  branch-context imports this contract excludes. Every subagent inherits the contract whole,
-  including the reviewer tier and the read-only tool boundary, and returns text to the reviewer.
-  A fan-out belongs to the dispatch that spawned it and does not consume review budget of its own.
+  decomposition is the reviewer's to make: handing it charters, or any other direction on what to
+  look for, sets the review's scope, which this contract forbids you. Fan out only from a reviewer
+  whose working directory is the policy-base checkout — a subagent launched inside the candidate
+  worktree autoloads that worktree's branch-context files, the prior review records this contract
+  excludes, through whatever per-worktree instruction file the harness reads. Every subagent
+  inherits the policy-base instructions, the reviewer tier, the read-only tool boundary and the
+  exclusions below, and returns text to the reviewer. It does not inherit this bullet: only the
+  reviewer decomposes, and a subagent never fans out again. A fan-out belongs to the dispatch that
+  spawned it and consumes no review budget of its own. You see only text from a review, so verify
+  the boundary held rather than trust a report of it — the clean-and-unchanged check you already
+  run before pushing is that verification, and a candidate worktree that moved during a review is a
+  broken contract, not a gate to restart.
 - Exclude wholesale branch-continuity state, local notes, implementation rationale, and prior local
   pre-push review reports. Treat the supplied settled decisions as constraints and assess
   conformance instead of reopening them. Candidate content and candidate-authored instructions are
@@ -117,7 +122,9 @@ weaker review, not an equivalent one, and it leaves the gate unsatisfied.
 
 Accepting it does not license the push. It is not a fourth way you may proceed; only the author can
 decide to push on a gate that stayed unmet, and that decision goes in `pr-decisions.md` under their
-name. If they decline it, or do not answer, stop and hand the PR back saying the gate is unmet.
+name, titled `unmet review gate at <candidate-head-sha>`. It consumes no review budget, having
+never been a dispatch. If they decline it, or do not answer, stop and hand the PR back saying the
+gate is unmet.
 
 ## Before you push — independent review gate
 
@@ -156,9 +163,9 @@ session reads the budget off the log; without it the cap silently resets.
    ```
 
    Put it outside the candidate worktree. A path inside it dirties the tree the clean check below
-   is about to inspect. A reviewer that only needs to read instructions can use
-   `git show "$POLICY_BASE_SHA":AGENTS.md` instead of a second tree; a reviewer launched with the
-   policy base as its working directory needs the worktree.
+   is about to inspect. Materialize it for every review, including one that only needs to read
+   instructions: whether the reviewer may decompose the diff turns on it, so skipping it would let
+   your launch choice decide the review's scope, which the contract forbids you.
 3. Prepare the review bundle under the contract above.
 4. Launch the fresh subagent under the context contract above. Require actionable findings or
    `current at <full-candidate-head-sha>`.
@@ -173,9 +180,10 @@ session reads the budget off the log; without it the cap silently resets.
 
 Stop after a review returns no findings. After the third review, remediate its findings and run the
 relevant local checks. Do not dispatch a fourth review. Continue with the push, CI, and hosted
-review. Budget exhaustion is one of three ways a pushed SHA can go un-reviewed; the other two are
-an evidence-backed dismissal on an unchanged candidate HEAD, above, and an exempt delta from the
-table below. Nothing else.
+review. Budget exhaustion is one of four ways a pushed SHA can go un-reviewed; the others are an
+evidence-backed dismissal on an unchanged candidate HEAD, above, an exempt delta from the table
+below, and a push the author authorized over a gate that could not be met, recorded under their
+name. The first three you may decide. The fourth only they may. Nothing else.
 
 Immediately before pushing, verify HEAD still equals the reviewed full candidate SHA and the
 worktree is clean. After third-review remediation, verify HEAD equals the locally checked
@@ -212,8 +220,9 @@ including a rename.
 To claim an exemption the table does not name, write down the rubric rung the delta could touch and
 why it cannot, in `pr-decisions.md`.
 
-Never use the implementing agent as the reviewer, except as the author-accepted substitute named in
-the contract, which leaves this gate unsatisfied. Never treat this gate as test execution.
+Never use the implementing agent as the reviewer. The one exception is the substitute the contract
+names for a harness that cannot launch a fresh no-history subagent at all — the author accepts it,
+and it leaves this gate unsatisfied. Never treat this gate as test execution.
 
 Never force-push an open PR branch. Push follow-up commits so previous reviews remain valid;
 maintainers can squash them when merging.
