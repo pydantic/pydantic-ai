@@ -2419,6 +2419,32 @@ Would you like detail on any specific method?\
     )
 
 
+async def test_bedrock_sonnet_5_adaptive_thinking_accepts_tool_output(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+) -> None:
+    """Bedrock accepts adaptive thinking with the forced tool use required by `ToolOutput`."""
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-5', provider=bedrock_provider)
+    agent = Agent(model, output_type=ToolOutput(int))
+    sent_requests: list[dict[str, Any]] = []
+
+    def capture(request: Any, **_: Any) -> None:
+        body = request.body.decode() if isinstance(request.body, bytes) else request.body
+        sent_requests.append(json.loads(body))
+
+    event = 'before-send.bedrock-runtime.Converse'
+    model.client.meta.events.register_last(event, capture)
+    try:
+        result = await agent.run('Return the number 42.', model_settings=ModelSettings(thinking=True))
+    finally:
+        model.client.meta.events.unregister(event, capture)
+
+    assert len(sent_requests) == 1
+    sent = sent_requests[0]
+    assert sent['additionalModelRequestFields']['thinking'] == {'type': 'adaptive'}
+    assert sent['toolConfig']['toolChoice'] == {'any': {}}
+    assert result.output == 42
+
+
 async def test_bedrock_model_thinking_part_anthropic_adaptive_effort(
     allow_model_requests: None, bedrock_provider: BedrockProvider
 ):
