@@ -3307,7 +3307,7 @@ async def test_send_respond_rejects_audio_and_unsupported_image_response() -> No
     session = RealtimeSession(conn, _noop_runner)
 
     for audio in (_wav_content(b'\x01\x02'), BinaryContent(data=b'\x01\x02', media_type='audio/pcm')):
-        with pytest.raises(UserError, match='`respond=True` cannot be used with audio'):
+        with pytest.raises(UserError, match=r'`respond=True` cannot be used with audio.*`commit_audio\(\)`'):
             await session.send(audio, respond=True)
 
     unsupported = RealtimeSession(conn, _noop_runner, profile=_profile(supports_manual_turn_control=False))

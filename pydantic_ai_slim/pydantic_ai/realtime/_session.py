@@ -1187,7 +1187,10 @@ class RealtimeSession:
                 if respond is True and content.media_type in (_WAV_MEDIA_TYPE, 'audio/pcm'):
                     # Audio never solicits a reply on its own (VAD or `commit_audio()` ends the turn), so
                     # `respond=False` is a no-op for it and only `respond=True` is a mistake.
-                    raise UserError('`respond=True` cannot be used with audio sent via `session.send()`.')
+                    raise UserError(
+                        '`respond=True` cannot be used with audio sent via `session.send()`: a spoken turn is '
+                        'ended by voice activity detection, or by `commit_audio()` and `create_response()`.'
+                    )
                 await self._send_audio_content(content)
         elif isinstance(content, (bytes, bytearray)):
             # `bytes` is a `Sequence[int]`, so guard it before the sequence branch below — otherwise it
