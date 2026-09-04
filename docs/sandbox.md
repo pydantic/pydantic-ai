@@ -104,22 +104,67 @@ Pass any [`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] through `sandb
 before the run and tear it down afterward, as shown in the [first example](#sandboxes). Pass the
 same backend to several runs when they should share one workspace.
 
-### Manage sandboxes automatically
+### Supply a sandbox from a capability
 
-A capability can provision a sandbox automatically for each run. This is useful for applications
-that create containers or remote environments on demand:
+A capability can supply the run's sandbox, which is useful for applications that create containers
+or remote environments on demand. There is one hook:
 
-- [`acquire_sandbox`][pydantic_ai.capabilities.AbstractCapability.acquire_sandbox] creates or
-  selects an environment and returns its serializable identity, or `None` to decline.
-- [`get_sandbox`][pydantic_ai.capabilities.AbstractCapability.get_sandbox] connects to it when a
-  sandbox operation first runs.
-- [`release_sandbox`][pydantic_ai.capabilities.AbstractCapability.release_sandbox] cleans up after
-  a run whose acquisition returned a reference.
+[`get_sandbox`][pydantic_ai.capabilities.AbstractCapability.get_sandbox] runs once per run, before
+any other hook, and returns a backend or `None` to decline. It is synchronous and must not touch
+the network: it hands back a backend built from your own settings, and that backend creates or
+attaches the first time somebody runs a command.
 
-```python {title="sandbox_capability.py"}
+`ref` is the identity of an environment the run should continue in, either from an explicit
+`sandbox=` argument or from a previous run in the same conversation. `None` means make a fresh one.
+
+The backend holds your settings and, if the run is continuing an environment, its identity. Keep
+the environment behind a property so no method can use it without connecting first:
+
+```python {title="my_backend.py"}
+from collections.abc import Awaitable
+from typing import Any
+
+import anyio
+
+from pydantic_ai.sandboxes import CommandResult, SandboxCommand, SandboxRef
+
+
+class MyBackend:
+    def __init__(self, *, client: Any, ref: SandboxRef | None, name: str | None):
+        self.client, self.ref, self.name = client, ref, name
+        self._sandbox: Any | None = None
+        self._lock = anyio.Lock()
+
+    @property
+    def sandbox(self) -> Awaitable[Any]:
+        return self._resolve()
+
+    async def _resolve(self) -> Any:
+        async with self._lock:
+            if self._sandbox is None:
+                if self.ref is not None:
+                    self._sandbox = await self.client.connect(self.ref.sandbox_id)
+                else:
+                    self._sandbox = await self.client.create(name=self.name)
+                    self.ref = SandboxRef(sandbox_id=self._sandbox.id)
+        return self._sandbox
+
+    async def run(self, command: SandboxCommand, **kwargs: Any) -> CommandResult:
+        sandbox = await self.sandbox
+        return await sandbox.exec(command, **kwargs)
+
+    async def working_dir(self) -> str:
+        sandbox = await self.sandbox
+        return sandbox.working_dir
+```
+
+The capability then just builds one:
+
+```python {title="sandbox_capability.py" requires="my_backend.py"}
 from dataclasses import dataclass
 from typing import Any
 
+from my_backend import MyBackend
 from my_sandboxes import SandboxClient
 
 from pydantic_ai import Agent, RunContext
@@ -131,16 +176,8 @@ from pydantic_ai.sandboxes import SandboxBackend, SandboxRef
 class MySandboxCapability(AbstractCapability[Any]):
     client: SandboxClient  # credentials stay here, never in the ref
 
-    async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
-        sandbox = await self.client.create(idempotency_key=ctx.run_id)
-        return SandboxRef(sandbox_id=sandbox.sandbox_id)
-
-    async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
-        # Re-open only: raise if the environment expired. Never create a replacement here.
-        return await self.client.connect(ref.sandbox_id)
-
-    async def release_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
-        await self.client.destroy(ref.sandbox_id)
+    def get_sandbox(self, ctx: RunContext[Any], *, ref: SandboxRef | None) -> SandboxBackend:
+        return MyBackend(client=self.client, ref=ref, name=ctx.conversation_id)
 
 
 agent = Agent(
@@ -149,22 +186,30 @@ agent = Agent(
 )
 ```
 
-Pydantic AI closes the connection `get_sandbox` returned when the run ends; a live backend passed
-through `sandbox=` stays open and caller-owned.
+`sandbox` returns something you can only `await`, never call a method on directly, so the connect
+step cannot be skipped by accident. The lock means two tools running at once still produce one
+environment.
 
-Choose the lifecycle that matches your application:
+Exactly one attached capability may return a backend. Two raise
+[`UserError`][pydantic_ai.exceptions.UserError] naming both.
 
-| Lifecycle | `acquire_sandbox` | `get_sandbox` | `release_sandbox` |
-|---|---|---|---|
-| Fresh sandbox per run | provision, return its ref | connect by id | destroy |
-| Warm environment shared across runs | return its ref | open a run-scoped connection | inherited no-op |
-| Pooled per conversation | check out or create by `ctx.conversation_id` | connect | return to pool or decrement a reference count |
-| Environment fixed by configuration | return its ref | connect by id | don't override |
-| Connect-only (the caller passes a `SandboxRef`) | don't override | connect by id | don't override |
+#### Starting and stopping is yours
 
-If a workspace must survive several runs, use a warm or pooled lifecycle rather than creating a
-fresh sandbox per run. This includes [tool approval](deferred-tools.md), where pausing and resuming
-spans two runs.
+Pydantic AI never creates, closes, destroys or pauses an environment. A conversation can span many
+runs, so ending a run does not mean the workspace is finished with.
+
+If you want something to happen around a run, use the ordinary hooks:
+
+| You want | Where it goes |
+|---|---|
+| Warm the sandbox up before the model runs | `before_run`, calling something harmless like `await ctx.sandbox.working_dir()` |
+| Copy files in, or mount storage | `before_run` |
+| Copy results out, or pause the environment | `after_run` |
+| Clean up even when the run fails or is cancelled | `wrap_run`, with `try`/`finally` |
+| Destroy it for good | your own code, after the run, through `result.sandbox` |
+
+Most providers stop charging for an idle environment on their own, so doing nothing is usually the
+right answer.
 
 ### Disabling execution with a policy reason
 
@@ -205,8 +250,8 @@ data, enforce read-only access in the environment itself, for example with a rea
 
 ## Build a sandbox integration
 
-A backend is required to implement only three members: `sandbox_id`, command
-execution, and its working directory. Pydantic AI exposes it to tools through a
+A backend is required to implement only three members: its `ref`, command execution, and its
+working directory. Pydantic AI exposes it to tools through a
 [`Sandbox`][pydantic_ai.sandboxes.Sandbox] object, which adds text decoding, path resolution,
 and line-window reads. Filesystem operations use the backend's
 [`SupportsFilesystem`][pydantic_ai.sandboxes.SupportsFilesystem] implementation.
@@ -214,7 +259,7 @@ and line-window reads. Filesystem operations use the backend's
 | Need | [`Sandbox`][pydantic_ai.sandboxes.Sandbox] API | Backend support |
 |---|---|---|
 | Execute a command | [`run()`][pydantic_ai.sandboxes.Sandbox.run] | — |
-| Read/write files | [`fs`][pydantic_ai.sandboxes.Sandbox.fs] / [`read_text()`][pydantic_ai.sandboxes.Sandbox.read_text] / [`write_text()`][pydantic_ai.sandboxes.Sandbox.write_text] | [`SupportsFilesystem`][pydantic_ai.sandboxes.SupportsFilesystem] (else `NotImplementedError`) |
+| Read/write files | [`read_bytes()`][pydantic_ai.sandboxes.Sandbox.read_bytes] / [`read_text()`][pydantic_ai.sandboxes.Sandbox.read_text] / [`write_text()`][pydantic_ai.sandboxes.Sandbox.write_text] | [`SupportsFilesystem`][pydantic_ai.sandboxes.SupportsFilesystem] (else `NotImplementedError`) |
 | Windowed read | [`read_file()`][pydantic_ai.sandboxes.Sandbox.read_file] | `sed` over `run()`, with [`SupportsFilesystem`][pydantic_ai.sandboxes.SupportsFilesystem] fallback (else `NotImplementedError`) |
 | Working directory | [`working_dir()`][pydantic_ai.sandboxes.Sandbox.working_dir] | — |
 | Path resolution | [`resolve()`][pydantic_ai.sandboxes.Sandbox.resolve] | Handled by `Sandbox` |
@@ -258,9 +303,8 @@ Tools still use `ctx.sandbox` unchanged under [Temporal](durable_execution/tempo
 [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] crosses the durable boundary; the worker reconnects
 through `get_sandbox` when a durable activity, step, or task uses the sandbox.
 
-Use the lifecycle capability [shown above](#manage-sandboxes-automatically) for a sandbox owned by
-one run. If the sandbox is provisioned elsewhere and should outlive the run, pass its reference
-instead:
+Use the capability [shown above](#supply-a-sandbox-from-a-capability) to have the agent pick the
+sandbox. If the environment is made elsewhere, pass its reference instead:
 
 ```python
 from pydantic_ai import SandboxRef
@@ -268,15 +312,14 @@ from pydantic_ai import SandboxRef
 sandbox = SandboxRef(sandbox_id='sandbox-123')
 ```
 
-Pass that value through `sandbox=`. The agent must also have a capability whose `get_sandbox` can
-connect the reference. Because the caller owns this sandbox, the run does not acquire or release
-it. Do not pass a live backend or `LocalSandbox` into a durable run; they cannot cross the durable
-boundary.
+Pass that value through `sandbox=`. The agent must also have a capability whose `get_sandbox`
+recognizes the reference. Do not pass a live backend or `LocalSandbox` into a durable run; neither
+can cross the durable boundary.
 
 For reliable durable lifecycles:
 
-- make `acquire_sandbox` and `release_sandbox` idempotent because durable operations may retry;
-- make `get_sandbox` reconnect an existing environment rather than silently create an empty one;
+- make the backend's create-or-attach step safe to run twice, because durable operations may retry;
+- reconnect an existing environment rather than quietly making an empty one in its place;
 - keep credentials on the capability, never in `SandboxRef` or workflow history;
 - configure a provider-side TTL or reaper because a cancelled workflow may not run cleanup.
 

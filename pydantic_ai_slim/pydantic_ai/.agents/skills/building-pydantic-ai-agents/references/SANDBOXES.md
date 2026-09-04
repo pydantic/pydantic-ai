@@ -54,59 +54,74 @@ Backends raise `SandboxError` for deliberate recoverable operation failures,
 `SandboxTimeoutError` when a command exceeds its deadline, and
 `SandboxUnavailableError` when retrying against the same environment cannot succeed.
 
-## Manage sandbox lifecycle with a capability
+## Supply a sandbox from a capability
 
-A capability can create an environment for each run, reconnect an existing one, share a warm
-environment, or manage a pool. It does this through three hooks:
+A capability supplies the run's sandbox through one hook, `get_sandbox`. It is synchronous and
+must do no I/O: it returns a backend built from the capability's own settings, and that backend
+creates or attaches the first time an operation runs.
 
-- `acquire_sandbox`: provision, select, or check out an environment once per run, or return `None`.
-- `get_sandbox`: open a connection when an operation first needs it; reconnect, never create.
-- `release_sandbox`: destroy, return, or detach the environment after a run that acquired a ref.
-
-When acquisition returns a `SandboxRef`, the run stores only that serializable identity. The
-live connection opens on first use:
+`ref` is the identity of an environment the run should continue in, from an explicit `sandbox=`
+argument or an earlier run in the conversation. `None` means make a fresh one.
 
 ```python
-from dataclasses import dataclass
+from collections.abc import Awaitable
+from dataclasses import dataclass, field
 from typing import Any
+
+import anyio
 
 from pydantic_ai import RunContext
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.sandboxes import SandboxBackend, SandboxRef
+from pydantic_ai.sandboxes import CommandResult, SandboxBackend, SandboxCommand, SandboxRef
+
+
+class MyBackend:
+    """Configuration plus an optional identity. Nothing here touches the network."""
+
+    def __init__(self, *, client: Any, ref: SandboxRef | None, name: str | None):
+        self.client, self.ref, self.name = client, ref, name
+        self._sandbox: Any | None = None
+        self._lock = anyio.Lock()
+
+    @property
+    def sandbox(self) -> Awaitable[Any]:
+        """Returns something you can only await, so no method can skip connecting."""
+        return self._resolve()
+
+    async def _resolve(self) -> Any:
+        async with self._lock:
+            if self._sandbox is None:
+                if self.ref is not None:
+                    self._sandbox = await self.client.connect(self.ref.sandbox_id)
+                else:
+                    self._sandbox = await self.client.create(name=self.name)
+                    self.ref = SandboxRef(sandbox_id=self._sandbox.id)
+        return self._sandbox
+
+    async def run(self, command: SandboxCommand, **kwargs: Any) -> CommandResult:
+        sandbox = await self.sandbox
+        ...
+
+    async def working_dir(self) -> str:
+        sandbox = await self.sandbox
+        ...
 
 
 @dataclass
 class MySandboxCapability(AbstractCapability[Any]):
-    client: Any  # your provider's SDK client; credentials stay here, never in the ref
+    client: Any  # credentials stay here, never in the ref
 
-    async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
-        """Acquire for this run by provisioning, checking out, or selecting."""
-        sandbox = await self.client.create(idempotency_key=ctx.run_id)
-        return SandboxRef(sandbox_id=sandbox.sandbox_id)
-
-    async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
-        """Connect, never create."""
-        return await self.client.connect(ref.sandbox_id)
-
-    async def release_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
-        """Release after the run, including failure. This may destroy, check in, or do nothing."""
-        await self.client.destroy(ref.sandbox_id)
+    def get_sandbox(self, ctx: RunContext[Any], *, ref: SandboxRef | None) -> SandboxBackend:
+        return MyBackend(client=self.client, ref=ref, name=ctx.conversation_id)
 ```
 
-Choose the lifecycle that matches the application:
+Exactly one attached capability may return a backend; two raise `UserError`. Deferred capabilities
+take no part.
 
-- For a fresh sandbox per run, create it in `acquire_sandbox` and destroy it in `release_sandbox`.
-- For a warm sandbox shared across runs, return its ref from `acquire_sandbox` and leave
-  `release_sandbox` unchanged.
-- For a pool, check out in `acquire_sandbox` and return it in `release_sandbox`.
-- For a sandbox provisioned elsewhere, implement `get_sandbox` to connect its `SandboxRef`; the
-  caller owns its lifecycle.
-
-Exactly one capability may return a ref from `acquire_sandbox`, and exactly one may connect a given
-ref; more raises `UserError`. Deferred capabilities take no part until loaded.
-
-Pydantic AI closes the connection `get_sandbox` returned when the run ends; a live backend passed
-through `sandbox=` stays open and caller-owned.
+Pydantic AI never creates, closes, destroys or pauses an environment. A conversation can span many
+runs, so the end of a run does not mean the workspace is finished with. Use `before_run` to warm up
+or copy files in, `after_run` to copy results out or pause, and `wrap_run` with `try`/`finally` when
+cleanup must also happen after a failure or a cancellation.
 
 Pass `UnavailableSandbox(reason='Local execution is disabled by application policy.')` to
 disable sandbox access with a useful error.
@@ -126,12 +141,14 @@ a live backend or `LocalSandbox` into a durable run.
 
 Capability author rules:
 
-- `get_sandbox` re-opens only; raise when the environment expired. Never silently
-  open-or-create: a replacement environment would contradict the model's message history.
-- `release_sandbox` must be idempotent. It may destroy the sandbox, return it to a pool,
-  decrement a reference count, or do nothing for a warm environment.
+- `get_sandbox` does no I/O. Everything that talks to a provider belongs in the backend, behind
+  the awaitable property, so it happens inside a durable unit rather than in workflow code.
+- Make create-or-attach safe to run twice: durable operations may retry.
+- When a ref was given and its environment is gone, raise. Do not quietly make an empty one in its
+  place, because the message history says files are there that no longer are.
 - Keep credentials on the capability, not in `SandboxRef` or workflow history.
-- Always configure a server-side TTL or reaper: a terminated or cancelled workflow may not run cleanup.
+- Always configure a server-side TTL or reaper: nothing in Pydantic AI destroys an environment, and
+  a cancelled workflow will not do it either.
 
 See the full [sandbox guide](https://ai.pydantic.dev/sandbox/) for protocol contracts,
 lifecycle rules, and implementation guidance.

@@ -410,7 +410,7 @@ NoneType = type(None)
 _NO_SANDBOX_REASON = (
     'No sandbox is attached to this run. Pass `sandbox=LocalSandbox()` to the run method to use the '
     'local machine (unsafe: commands and file operations run with the full permissions of this process), '
-    'attach a capability that supplies a sandbox through its `acquire_sandbox` hook, or pass a `SandboxRef` '
+    'attach a capability that supplies a sandbox through its `get_sandbox` hook, or pass a `SandboxRef` '
     'to connect to an existing environment. See https://ai.pydantic.dev/sandbox/ for details.'
 )
 
@@ -2819,7 +2819,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         unbound, a silent divergence. KEEP the two call sites in sync.
 
         The base capability vets the bound layer here, before any hook fires on it (bootstrap model
-        selection and `acquire_sandbox` run ahead of `for_run`), so a durability capability can
+        selection and `get_sandbox` run ahead of `for_run`), so a durability capability can
         reject per-run capabilities it has no registered durable units for.
         """
         bound = [capability.for_agent(self) for capability in extra_capabilities]

@@ -255,14 +255,8 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
         return self.wrapped.get_wrapper_toolset(toolset)
 
-    async def acquire_sandbox(self, ctx: RunContext[AgentDepsT]) -> SandboxRef | None:
-        return await self.wrapped.acquire_sandbox(ctx)
-
-    async def get_sandbox(self, ctx: RunContext[AgentDepsT], ref: SandboxRef) -> SandboxBackend | None:
-        return await self.wrapped.get_sandbox(ctx, ref)
-
-    async def release_sandbox(self, ctx: RunContext[AgentDepsT], ref: SandboxRef) -> None:
-        await self.wrapped.release_sandbox(ctx, ref)
+    def get_sandbox(self, ctx: RunContext[AgentDepsT], *, ref: SandboxRef | None) -> SandboxBackend | None:
+        return self.wrapped.get_sandbox(ctx, ref=ref)
 
     async def prepare_tools(
         self,

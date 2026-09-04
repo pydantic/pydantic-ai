@@ -110,7 +110,7 @@ def _default_sandbox() -> Sandbox:
         UnavailableSandbox(
             'No sandbox is attached: this `RunContext` was created outside an agent run. '
             'Sandboxes are attached when a run starts — pass `sandbox=` to the run method or supply one '
-            "from a capability's `acquire_sandbox`."
+            "from a capability's `get_sandbox`."
         )
     )
 
@@ -231,9 +231,11 @@ class RunContext(Generic[RunContextAgentDepsT]):
     """The [`Sandbox`][pydantic_ai.sandboxes.Sandbox] attached to this run.
 
     Chosen once, before `for_run`: the `sandbox=` run argument, else the one capability whose
-    [`acquire_sandbox`][pydantic_ai.capabilities.AbstractCapability.acquire_sandbox] returned a
-    ref, else a placeholder whose operations explain how to attach one. Never the host by default.
-    See the [sandbox docs](../sandbox.md).
+    [`get_sandbox`][pydantic_ai.capabilities.AbstractCapability.get_sandbox] returned a backend,
+    else a placeholder whose operations explain how to attach one. Never the host by default.
+
+    Choosing it does no I/O: the backend creates or attaches on its first operation, and the run
+    never tears it down. See the [sandbox docs](../sandbox.md).
     """
     pending_messages: list[PendingMessage] | None = field(default=None, repr=False)
     """Queue read and mutated by the internal `PendingMessageDrainCapability`.
