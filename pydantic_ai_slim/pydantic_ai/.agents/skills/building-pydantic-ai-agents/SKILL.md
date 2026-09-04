@@ -296,6 +296,14 @@ Key facts for building realtime agents:
   `google_vad` only for finer provider-specific control; when present, they fully override the shared
   setting. Automatic detection is on by default (`True`); set `turn_detection=False` for push-to-talk
   (OpenAI/Azure/xAI only — Gemini has no manual turn controls and raises).
+- **Barge-in** (the user speaking over the model): pass `handle_barge_in=True` to `.session()` and
+  the session owns the local half — flushing the audio the user will never hear, truncating the
+  provider's transcript to what was played, and adding a client cancel only on providers whose own
+  turn detection isn't already cancelling. Off by default, and it needs playback to drain a single
+  device-paced `stream_audio()` iterator (the position it tracks); with none or several it stands
+  down. To keep the trigger yourself, `session.interrupt(played_bytes=session.played_audio_bytes)`
+  gets the same treatment on your own signal. A playback layer that buffers ahead of the device
+  makes `played_audio_bytes` read too far: count real device consumption and pass `played_ms`.
 - **Tools**: every tool runs in the background, so a slow tool never blocks the session. Whether
   the model keeps speaking meanwhile is provider-specific (OpenAI/Azure do; Gemini needs
   `google_async_tool_calls=True` on a native-audio model).
