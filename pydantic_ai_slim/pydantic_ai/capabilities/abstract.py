@@ -38,7 +38,6 @@ from pydantic_ai.tools import (
 )
 from pydantic_ai.toolsets import AbstractToolset, AgentToolset
 
-from ._durable_operation import base_hook_durable_operation
 from ._merge import merge_capability_fields
 from ._on_event import collect_on_event_methods, marked_listens_to
 
@@ -623,17 +622,6 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """Return native tools to register with the agent."""
         return []
 
-    @base_hook_durable_operation('acquire_sandbox')
-    async def acquire_sandbox(self, ctx: RunContext[AgentDepsT]) -> SandboxRef | None:
-        """Return the identity of this run's sandbox, creating or reusing an environment, or `None` to not contribute.
-
-        Called once at run start, before any hook sees [`ctx.sandbox`][pydantic_ai.tools.RunContext.sandbox],
-        and skipped when a `sandbox=` run argument was passed. Exactly one capability may return a ref.
-        Durable engines record it in a durable unit that may retry after a crash, so make it idempotent:
-        create-or-reuse keyed by [`ctx.run_id`][pydantic_ai.tools.RunContext.run_id].
-        """
-        return None
-
     async def get_sandbox(self, ctx: RunContext[AgentDepsT], ref: SandboxRef) -> SandboxBackend | None:
         """Connect to the sandbox identified by `ref` and return a live backend; never create one.
 
@@ -643,15 +631,6 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         each durable unit, with the engine's restricted `ctx` (`ctx.deps` is always available).
         """
         return None
-
-    @base_hook_durable_operation('release_sandbox')
-    async def release_sandbox(self, ctx: RunContext[AgentDepsT], ref: SandboxRef) -> None:
-        """Release the run's ownership of `ref`: destroy it, return it to a pool, or do nothing.
-
-        Called after the run ends, success or failure, only on the capability whose `acquire_sandbox`
-        returned `ref`, and never for a `sandbox=` run argument. Durable engines may retry it, so make it
-        idempotent.
-        """
 
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
         """Wrap the agent's assembled toolset, or return None to leave it unchanged.

@@ -91,9 +91,9 @@ class SandboxTimeoutError(SandboxError, TimeoutError):
 class SandboxResult(Protocol):
     """The result of a completed command execution.
 
-    A protocol rather than a concrete class: implementations return their native result
-    objects unwrapped, and richer provider fields survive for callers that know the concrete
-    type.
+    Backends return richer native result objects with these fields. Requiring `CommandResult`
+    would make them import Pydantic AI or wrap every result; the protocol keeps those objects
+    unwrapped and exposes the minimum read by `Sandbox._read_file_via_shell`.
     """
 
     @property
