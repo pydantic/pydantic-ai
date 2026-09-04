@@ -1129,8 +1129,7 @@ async def test_agent_on_event_sees_events_before_a_stream_wrapper_rewrites_them(
 
     @agent.on_event(PartStartEvent)
     async def watch(ctx: RunContext[None], event: PartStartEvent) -> None:
-        if isinstance(event.part, TextPart):
-            listener_saw.append(event.part.content)
+        listener_saw.append(repr(event.part))
 
     consumer_saw: list[str] = []
     async with agent.run_stream_events('hello') as stream:
@@ -1140,4 +1139,4 @@ async def test_agent_on_event_sees_events_before_a_stream_wrapper_rewrites_them(
 
     # The listener ran before the wrapper, so it never sees the rewrite the consumer receives.
     assert 'REWRITTEN' in consumer_saw
-    assert 'REWRITTEN' not in listener_saw
+    assert listener_saw and not any('REWRITTEN' in part for part in listener_saw)
