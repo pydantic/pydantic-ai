@@ -19,3 +19,20 @@ Additional external SDK integrations:
 
 - [Kitaru](./kitaru.md)
 - [Apache Airflow](./airflow.md)
+
+## How tool calls run durably
+
+Each engine wraps your toolsets so that every tool call executes inside the engine's durable unit (a Temporal activity, Prefect task, DBOS step, and so on). The shared scaffolding lives in `pydantic_ai.durable_exec._toolset` and is specialized per toolset kind:
+
+- `DurableFunctionToolset` wraps `FunctionToolset` (your `@agent.tool` functions).
+- `DurableDynamicToolset` wraps toolsets supplied at run time via `DynamicToolset`.
+- `DurableMCPToolset` wraps `MCPToolset` connections.
+
+These wrappers are applied automatically by the engine-specific agent classes; you do not construct them by hand. They exist so the engine can run one tool call per durable unit and replay it deterministically after a failure.
+
+Two extension points control per-tool behavior:
+
+- `resolve_tool_config` maps each tool to either a durable config mapping (merged into the engine's per-operation config, e.g. a Temporal `ActivityConfig`) or `False` to run the tool inline, outside any durable unit. Engines that restrict inline execution reject it here with their own error wording (for example, Temporal requires async tools and forbids inline MCP tools).
+- `lifecycle` controls when the wrapped toolset is entered relative to the durable context: `'enter-outside-durable'` (function and MCP toolsets; entered only outside the durable unit), `'enter-always'`, or `'enter-never'` (dynamic toolsets, whose members are managed per step).
+
+If you need custom hook work to survive retries, move it into a durable unit too — see [durable capability operations](../capabilities/custom.md#durable-capability-operations).
