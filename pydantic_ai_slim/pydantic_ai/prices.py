@@ -16,17 +16,7 @@ def update_in_background() -> UpdatePrices:
     Downloads never block your code. If one fails, the last good price list stays in use and the
     failure is logged to the `genai-prices` logger.
 
-    Returns the updater. Stop it when your app shuts down:
-
-    ```python
-    from pydantic_ai import prices
-
-    updater = prices.update_in_background()
-    try:
-        ...  # run your app
-    finally:
-        updater.stop()
-    ```
+    Returns the updater. Call `stop()` when your app shuts down.
 
     To download from your own URL or on a different schedule, use
     [`genai_prices.UpdatePrices`](https://github.com/pydantic/genai-prices/blob/main/packages/python/README.md#updateprices)
