@@ -454,6 +454,9 @@ def check_awf_binary_version(lock: Path) -> list[Violation]:
     config against; the install step's argument is maintained by hand because
     `engine.command` makes gh-aw skip its own install. A gh-aw upgrade moves the
     first and leaves the second, and the older binary then refuses the newer config.
+
+    A lock that pins a version but declares none also fails: the comparison has lost
+    its reference, and passing there would disarm the check on a gh-aw rename.
     """
     workflow = _as_mapping(yaml.safe_load(lock.read_text(encoding='utf-8')))
     pinned: set[str] = set()
@@ -463,9 +466,9 @@ def check_awf_binary_version(lock: Path) -> list[Violation]:
         for raw_step in cast(list[Any], steps) if isinstance(steps, list) else []:
             step = _as_mapping(raw_step)
             run = step.get('run')
-            # `finditer`, not `search`: a multi-line `run` that installs twice is pinned by
-            # its *last* invocation, so stopping at the first would pass a stale pin that
-            # then overwrites the binary the agent actually uses.
+            # `finditer`, not `search`: one `run:` block can invoke the installer more than
+            # once, and the last call is the binary the agent ends up with. Every invocation
+            # has to match, so stopping at the first would let a stale later one through.
             if isinstance(run, str):
                 pinned.update(match.group(1) for match in AWF_INSTALL_VERSION.finditer(run))
             version = _as_mapping(step.get('env')).get('GH_AW_INFO_AWF_VERSION')
@@ -473,10 +476,22 @@ def check_awf_binary_version(lock: Path) -> list[Violation]:
                 bundled.add(version)
 
     # No install step means this lock does not use the shim, so there is no hand-written
-    # pin to drift. No `GH_AW_INFO_AWF_VERSION` means gh-aw stopped reporting the version
-    # it bundles, which this check cannot substitute for.
-    if not pinned or not bundled:
+    # pin to drift.
+    if not pinned:
         return []
+    # A pin with nothing to compare it against is the check losing its reference, not a
+    # pass. Returning empty here would let a gh-aw rename of `GH_AW_INFO_AWF_VERSION`
+    # disarm this check silently, and the next skew would ship green exactly as #8041 did.
+    if not bundled:
+        return [
+            Violation(
+                str(lock),
+                'awf-binary-version',
+                f'the AWF install step pins {", ".join(sorted(pinned))} but the lock declares no '
+                '`GH_AW_INFO_AWF_VERSION` to check it against. gh-aw stopped reporting the AWF '
+                'version it bundles, so this check needs a new source before the pin can be trusted.',
+            )
+        ]
     unexpected = sorted(pinned - bundled)
     if not unexpected:
         return []

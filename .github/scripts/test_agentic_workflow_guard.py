@@ -777,8 +777,12 @@ jobs:
     assert check_awf_binary_version(lock) == []
 
 
-def test_awf_binary_version_ignores_a_lock_that_reports_no_bundled_version(tmp_path: Path):
-    """Without `GH_AW_INFO_AWF_VERSION` there is nothing to compare the pin against."""
+def test_awf_binary_version_rejects_a_pin_with_no_declared_version_to_check(tmp_path: Path):
+    """A pin gh-aw no longer declares a version for is an unchecked pin, not a passing one.
+
+    Returning empty here is how the check would disarm itself if gh-aw ever renamed
+    `GH_AW_INFO_AWF_VERSION` — and the next skew would then ship green, as #8041 did.
+    """
     lock = _write(
         tmp_path / 'w.lock.yml',
         """
@@ -789,7 +793,10 @@ jobs:
 """,
     )
 
-    assert check_awf_binary_version(lock) == []
+    violations = check_awf_binary_version(lock)
+
+    assert [v.check for v in violations] == ['awf-binary-version']
+    assert 'GH_AW_INFO_AWF_VERSION' in violations[0].message
 
 
 def test_compiler_version_compatibility_rejects_a_blocked_version(tmp_path: Path):
