@@ -65,6 +65,7 @@ class _Checkpoint(TypedDict):
 
 
 class _ExecutionEnvironment(TypedDict, total=False):
+    root: str
     extraPaths: list[str]
 
 
@@ -109,6 +110,10 @@ class _Project:
     # relative-import edge that ties it to `tests/__init__.py`. Measured on this repository,
     # adding it drops 228 edges and adds 1.
     import_roots: tuple[str, ...]
+    # Those roots do matter for one question. A file directly under one is a top-level module
+    # to everything in that environment, so `tests/pytest.py` would shadow the installed
+    # `pytest` for every test. Only the shadowing check reads these.
+    environment_roots: tuple[str, ...]
 
 
 def run_command(command: Sequence[str]) -> int:
@@ -147,7 +152,7 @@ def main(run: Runner = run_command) -> int:
     stored: dict[str, _FileState] = checkpoint['files'] if checkpoint is not None else {}
     changed = [path for path in universe if path not in stored or stored[path]['hash'] != hashes[path]]
 
-    reason = _reason_to_check_everything(checkpoint, keys, stored, universe, project.import_roots)
+    reason = _reason_to_check_everything(checkpoint, keys, stored, universe, project)
     imports: dict[str, list[str]] | None = None
     affected: list[str] = []
     if reason is None:
@@ -177,7 +182,10 @@ def main(run: Runner = run_command) -> int:
         return code
 
     if imports is None:
-        imports = _parse_imports(changed, universe, project.import_roots)
+        # A full run means the module map moved or the file list changed under us, so an
+        # unchanged file's stored edges can point at a path that no longer answers to that
+        # module name. Only the narrowed path has established that they still hold.
+        imports = _parse_imports(universe, universe, project.import_roots)
     files = {
         path: _FileState(hash=hashes[path], imports=imports[path] if path in imports else stored[path]['imports'])
         for path in universe
@@ -196,7 +204,7 @@ def _reason_to_check_everything(
     keys: Mapping[str, str],
     stored: Mapping[str, _FileState],
     universe: Sequence[str],
-    roots: Sequence[str],
+    project: _Project,
 ) -> str | None:
     """Say why the checkpoint cannot be narrowed against, or `None` when it can."""
     if checkpoint is None:
@@ -209,6 +217,9 @@ def _reason_to_check_everything(
     # A file's stored imports are paths, resolved when it was last parsed. Adding or moving
     # a file can point an unchanged import at a different one, and nothing in that file's
     # own content would say so.
+    # The execution environment roots join in here: a file directly under one is a top-level
+    # module inside that environment even though no import root names it that way.
+    roots = sorted({*project.import_roots, *project.environment_roots}, key=len, reverse=True)
     was = _module_map(sorted(stored), roots)
     now = _module_map(universe, roots)
     moved = sorted(name for name, path in was.items() if now.get(name, path) != path)
@@ -359,15 +370,22 @@ def _load_project() -> _Project | None:
     members = workspace.get('members') or []
     environments = pyright.get('executionEnvironments') or []
     extra_paths = [path for environment in environments for path in environment.get('extraPaths') or []]
+    # A `root` naming a single file bounds settings, not a search path worth a module name.
+    environment_roots = [
+        environment['root']
+        for environment in environments
+        if 'root' in environment and not Path(environment['root']).is_file()
+    ]
     # An absent `include` means Pyright reads the whole project, and a glob is a pattern
     # this script does not expand; either way it cannot say which files Pyright would read.
     if not include or any(
-        _GLOB_CHARACTERS.intersection(entry) for entry in chain(include, exclude, members, extra_paths)
+        _GLOB_CHARACTERS.intersection(entry)
+        for entry in chain(include, exclude, members, extra_paths, environment_roots)
     ):
         return None
 
     roots = sorted({'', *members, *extra_paths}, key=len, reverse=True)
-    return _Project(tuple(include), tuple(exclude), tuple(roots))
+    return _Project(tuple(include), tuple(exclude), tuple(roots), tuple(sorted(set(environment_roots))))
 
 
 def _tracked_files() -> list[str]:

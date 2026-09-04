@@ -240,6 +240,35 @@ def test_a_module_that_becomes_a_package_checks_everything(project: Path):
     assert _typecheck().commands == _FULL_RUN
 
 
+def test_a_module_that_moved_still_reaches_its_importers_afterwards(project: Path):
+    # The full run the move triggers has to leave behind edges pointing at the new file, or
+    # the next edit to it reaches nobody.
+    _typecheck()
+    (project / 'pkg_src/pkg/leaf.py').unlink()
+    _write(project, 'pkg_src/pkg/leaf/__init__.py', 'VALUE = 1\n')
+    _stage(project)
+    _typecheck()
+
+    _edit(project, 'pkg_src/pkg/leaf/__init__.py')
+
+    assert _typecheck().checked == [
+        'pkg_src/pkg/leaf/__init__.py',
+        'pkg_src/pkg/middle.py',
+        'pkg_src/pkg/top.py',
+    ]
+
+
+def test_a_new_module_under_an_execution_environment_root_checks_everything(project: Path):
+    # Pyright resolves a file directly under an environment root as a top-level module
+    # inside that environment, so `pkg/pytest.py` shadows the installed `pytest` there.
+    _write(project, 'pyproject.toml', f'{_PYPROJECT}\n[[tool.pyright.executionEnvironments]]\nroot = "pkg_src/pkg"\n')
+    _typecheck()
+    _write(project, 'pkg_src/pkg/pytest.py', 'FAKE = 1\n')
+    _stage(project)
+
+    assert _typecheck().commands == _FULL_RUN
+
+
 @pytest.mark.parametrize('name', ['pyproject.toml', 'uv.lock', 'Makefile'])
 def test_a_configuration_change_checks_everything(project: Path, name: str):
     _typecheck()
