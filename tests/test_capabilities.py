@@ -4698,7 +4698,7 @@ class _Nester(AbstractCapability[Any]):
     async def wrap_tool_execute(
         self, ctx: RunContext[Any], *, call: Any, tool_def: Any, args: Any, handler: Any
     ) -> Any:
-        return await handler(args)  # pragma: no cover
+        return await handler(args)
 
 
 @dataclass
@@ -4770,3 +4770,23 @@ def test_a_wrapped_capability_still_owns_execution() -> None:
         match=r'2 `_Guard` capabilities each require that nothing nests inside them when a tool executes',
     ):
         Agent(TestModel(), capabilities=[_Guard(label='a'), _Guard(label='b').prefix_tools('b')])
+
+
+async def test_a_capability_owning_execution_reaches_the_tool_itself() -> None:
+    """The point of the rule, rather than what it refuses: the guard wraps the tool body.
+
+    A capability that records what a call did is only telling the truth if the handler it awaited
+    was the tool. `_Nester` is listed after the guard and takes part in execution, so without the
+    placement the guard would be recording the outcome of `_Nester`'s wrapper instead.
+    """
+    guard = _Guard()
+    nester = _Nester()
+    agent = Agent(TestModel(call_tools=['echo']), capabilities=[guard, nester])
+
+    @agent.tool_plain
+    def echo(text: str) -> str:
+        return text
+
+    await agent.run('call it')
+
+    assert guard.seen == ['guard:echo']
