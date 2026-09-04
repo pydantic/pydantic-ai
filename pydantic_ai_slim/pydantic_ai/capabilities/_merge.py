@@ -59,12 +59,10 @@ def merge_capability_fields(
     copies the last instance, so such an attribute silently takes the last value even where an
     earlier instance was the only one to state it. Refusing says so instead.
 
-    A leading underscore exempts an attribute from that check, but only because internal state is
-    not this function's business -- it is not a way to get derived state merged. Nothing here
-    re-runs `__post_init__` (`replace_no_init` exists precisely to skip it), so `_count = len(...)`
-    keeps the last instance's value while the field it counts holds the union. A capability with
-    state derived from a merged field recomputes it in its own `combine`, the way
-    `NativeOrLocalTool` rebuilds its native tool.
+    A leading underscore does not distinguish configuration from derived state. Nothing here
+    re-runs `__post_init__` (`replace_no_init` exists precisely to skip it). A capability with
+    state derived from a merged field computes it on access, or declares it as a field and
+    recomputes it in its own `combine`, the way `NativeOrLocalTool` rebuilds its native tool.
     """
     merged = capabilities[-1]
     field_names = {field.name for field in dataclasses.fields(merged)}
@@ -73,7 +71,9 @@ def merge_capability_fields(
         # attribute does get *a* value. What it cannot get is the promise above: a value only an
         # earlier instance stated would be dropped rather than survive. Refuse rather than let that
         # differ silently from every declared field.
-        undeclared = {name for name in vars(capability) if not name.startswith('_')} - field_names
+        # Generic aliases and durable integrations attach runtime bookkeeping, not configuration.
+        runtime_attributes = {'__orig_class__', '_pydantic_ai_durable_operation_bindings'}
+        undeclared = set(vars(capability)) - field_names - runtime_attributes
         if undeclared:
             cls_name = type(merged).__name__
             names = ', '.join(sorted(undeclared))
@@ -82,9 +82,8 @@ def merge_capability_fields(
                 f'sets {names} outside its dataclass fields. Merging keeps a value only one of them states, '
                 'and cannot do that for an attribute it cannot enumerate -- the last instance would win '
                 f'silently. Declare {names} as dataclass fields to have them merged; or, for state derived '
-                'from other fields, override `combine` to recompute it after merging, since this does not '
-                're-run `__post_init__`. A leading underscore only silences this check, and leaves state '
-                "derived from a merged field holding the last instance's value."
+                'from other fields, compute it with a property or declare it as a field and override '
+                '`combine` to recompute it after merging, since this does not re-run `__post_init__`.'
             )
     changes: dict[str, Any] = {}
     for field in dataclasses.fields(merged):
@@ -109,9 +108,10 @@ def merge_field_values(values: Sequence[Any]) -> Any:
         merged_mapping: dict[Any, Any] = {}
         for value in cast('list[Mapping[Any, Any]]', stated):
             merged_mapping.update(value)
-        return _as_declared(first, merged_mapping)
+        return _as_declared(first, merged_mapping, merged_mapping)
     if all(isinstance(value, AbstractSet) for value in stated):
-        return _as_declared(first, set[Any]().union(*cast('list[AbstractSet[Any]]', stated)))
+        merged_set = set[Any]().union(*cast('list[AbstractSet[Any]]', stated))
+        return _as_declared(first, merged_set, merged_set)
     if all(isinstance(value, Sequence) and not isinstance(value, (str, bytes)) for value in stated):
         # Ordered union: a shared entry keeps the position its first mention gave it.
         merged_sequence: list[Any] = []
@@ -119,11 +119,11 @@ def merge_field_values(values: Sequence[Any]) -> Any:
             merged_sequence.extend(
                 entry for entry in value if not any(_same_value(entry, kept) for kept in merged_sequence)
             )
-        return _as_declared(first, merged_sequence)
+        return _as_declared(first, merged_sequence, stated[-1])
     return stated[-1]
 
 
-def _as_declared(first: Any, merged: Any) -> Any:
+def _as_declared(first: Any, merged: Any, fallback: Any) -> Any:
     """Rebuild `merged` as the collection type the field already held, when that is possible.
 
     The union is computed in a plain `dict`/`set`/`list`, which would hand a field annotated
@@ -131,16 +131,16 @@ def _as_declared(first: Any, merged: Any) -> Any:
     the `__post_init__` that might otherwise have caught it.
 
     Not every collection can be rebuilt from its contents: a `NamedTuple` takes its fields
-    positionally and a `range` takes integers, so both raise here. Those keep the plain merged value
-    rather than turning a type mismatch into a `TypeError` -- neither is a collection a capability
-    field would be unioning in the first place.
+    positionally and a `range` takes integers, so both raise here. The caller chooses the fallback;
+    sequences use the later original value, matching scalar behavior without corrupting the field's
+    runtime type.
     """
     if type(first) is type(merged):
         return merged
     try:
         return type(first)(merged)
     except (TypeError, ValueError):
-        return merged
+        return fallback
 
 
 def _same_value(left: Any, right: Any) -> bool:
