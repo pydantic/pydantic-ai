@@ -235,6 +235,19 @@ def test_agent_from_spec_fallback_subagent_model_key():
     assert x_search.get_toolset() is not None
 
 
+def test_agent_from_spec_rejects_both_fallback_model_keys():
+    """A spec carrying both spellings is refused rather than silently picking one."""
+    with pytest.raises((UserError, ValueError), match='cannot specify both'):
+        Agent.from_spec(
+            {
+                'model': 'test',
+                'capabilities': [
+                    {'XSearch': {'fallback_model': 'xai:grok-4.3', 'fallback_subagent_model': 'xai:grok-4.3'}}
+                ],
+            }
+        )
+
+
 def test_agent_from_spec_web_fetch():
     agent = Agent.from_spec(
         {

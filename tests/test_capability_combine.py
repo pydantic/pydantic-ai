@@ -21,6 +21,7 @@ from inline_snapshot import snapshot
 
 import pydantic_ai.capabilities as capabilities_package
 from pydantic_ai import Agent, FunctionToolset, RunContext, Tool
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import (
     MCP,
     Capability,
@@ -846,6 +847,43 @@ def test_a_merge_cannot_reach_a_combination_the_constructor_rejects(
 def _a_local_tool(prompt: str) -> str:  # pragma: no cover
     """A local fallback."""
     return 'x'
+
+
+def test_a_merge_takes_the_later_fallback_subagent_model() -> None:
+    """`fallback_subagent_model` is a scalar, so two differing values take the later one.
+
+    `COMBINE_POLICY` only pins the field where both sides agree, so this covers the differing
+    case through the general scalar rule.
+    """
+
+    merged = XSearch.combine(
+        [
+            XSearch(fallback_subagent_model='xai:grok-4.1'),
+            XSearch(fallback_subagent_model='xai:grok-4.3'),
+        ]
+    )
+
+    assert isinstance(merged, XSearch)
+    assert merged.fallback_subagent_model == 'xai:grok-4.3', 'the later value, like any scalar'
+
+
+def test_a_fallback_model_set_through_the_deprecated_alias_is_stated_configuration() -> None:
+    """A value set through the deprecated `fallback_model` setter is configuration the merge keeps.
+
+    The setter writes `fallback_subagent_model` itself, so the rebuild guards see a declared field
+    rather than undeclared state -- the merge keeps the alias-set value and no refusal fires.
+    """
+
+    first = XSearch(allowed_x_handles=['a'])
+    second = XSearch(allowed_x_handles=['b'])
+    with pytest.warns(PydanticAIDeprecationWarning, match='`fallback_model` is deprecated'):
+        second.fallback_model = 'xai:grok-4.3'  # pyright: ignore[reportDeprecated]
+
+    merged = XSearch.combine([first, second])
+
+    assert isinstance(merged, XSearch)
+    assert merged.fallback_subagent_model == 'xai:grok-4.3'
+    assert merged.allowed_x_handles == ['a', 'b']
 
 
 def test_a_merged_collection_keeps_the_type_the_field_declared() -> None:
