@@ -5262,23 +5262,49 @@ async def test_session_enqueue_asap_waits_for_active_response_to_complete() -> N
     )
 
 
+class _RespondingConnection(FakeRealtimeConnection):
+    """Replies to each text turn with a transcript and `ResponseDone`, and stops after `replies` turns."""
+
+    def __init__(self, replies: int) -> None:
+        super().__init__([])
+        self._replies = replies
+        self._text_sent = asyncio.Event()
+        self.sent_before_each_done: list[list[str]] = []
+
+    async def send(self, content: RealtimeInput) -> None:
+        await super().send(content)
+        if isinstance(content, str):
+            self._text_sent.set()
+
+    async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+        for _ in range(self._replies):
+            await self._text_sent.wait()
+            self._text_sent.clear()
+            yield OutputTranscript(text='reply', is_final=True)
+            self.sent_before_each_done.append([item for item in self.sent if isinstance(item, str)])
+            yield ResponseDone()
+
+
 async def test_session_enqueue_when_idle_follows_asap() -> None:
-    conn = _SessionEnqueueDuringSpeechConnection()
+    """`when_idle` waits for queued `asap` items even when no reply is in flight when both are enqueued."""
+    conn = _RespondingConnection(replies=2)
     agent: Agent[None, str] = Agent()
 
-    async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
-
-        async def enqueue_during_speech() -> None:
-            await conn.audio_started.wait()
+    with anyio.fail_after(5):
+        async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
             assert session.enqueue('idle', priority='when_idle') is not None
             assert session.enqueue('soon') is not None
-            conn.enqueued.set()
-
-        task = asyncio.create_task(enqueue_during_speech())
-        _ = [event async for event in session]
-        await task
+            _ = [event async for event in session]
 
     assert [item for item in conn.sent if isinstance(item, str)] == ['soon', 'idle']
+    assert conn.sent_before_each_done == [['soon'], ['soon', 'idle']]
+
+
+async def test_session_enqueue_requires_entered_session() -> None:
+    session = RealtimeSession(FakeRealtimeConnection([]))
+
+    with pytest.raises(UserError, match='before enqueuing'):
+        session.enqueue('too early')
 
 
 async def test_session_enqueue_renders_system_prompt() -> None:
