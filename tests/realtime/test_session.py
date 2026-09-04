@@ -3,6 +3,7 @@
 from __future__ import annotations as _annotations
 
 import asyncio
+import gc
 import io
 import wave
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Sequence
@@ -81,7 +82,7 @@ from pydantic_ai.realtime import (
     RealtimeTurnCompleteEvent,
     TranscriptUpdate,
 )
-from pydantic_ai.realtime._session import _pending_message_text  # pyright: ignore[reportPrivateUsage]
+from pydantic_ai.realtime._session import _pending_message_text, _TapView  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.realtime._utils import resolve_advertised_tools, seed_pcm_audio, seed_speech_content
 from pydantic_ai.realtime.codec import (
     AudioDelta,
@@ -98,6 +99,7 @@ from pydantic_ai.realtime.codec import (
     RealtimeInput,
     ResponseDone,
     SessionUsage,
+    TextContext,
     ToolCall,
     ToolCallCancelled,
     ToolResult,
@@ -646,22 +648,101 @@ async def test_close_ends_views_and_is_idempotent() -> None:
             await anext(session.stream_audio())
 
 
-async def test_view_is_lazy_and_does_not_replay_events() -> None:
+async def test_view_subscribes_at_call_time_and_does_not_replay_earlier_events() -> None:
     session = RealtimeSession(FakeRealtimeConnection([AudioDelta(b'audio')]))
 
     async with session:
-        unused_audio = session.stream_audio()
-        unused_transcripts = session.stream_transcripts()
+        audio = session.stream_audio()
         assert [event async for event in session]
-        assert [chunk async for chunk in unused_audio] == []
-        assert [part async for part in unused_transcripts] == []
+        assert [chunk async for chunk in audio] == [b'audio']
+        # Views created after the pump has finished get nothing: no replay, and they end at once.
+        assert [chunk async for chunk in session.stream_audio()] == []
+        assert [part async for part in session.stream_transcripts()] == []
 
 
 async def test_view_requires_entered_session() -> None:
     session = RealtimeSession(FakeRealtimeConnection([]))
 
     with pytest.raises(UserError, match='Enter the realtime session'):
-        await anext(session.stream_audio())
+        session.stream_audio()
+
+
+async def test_views_created_before_response_are_consumed_after_it() -> None:
+    conn = BlockingRealtimeConnection(
+        [AudioDelta(b'a1'), AudioDelta(b'a2'), OutputTranscript(text='hi there', is_final=True), ResponseDone()]
+    )
+    session = RealtimeSession(conn)
+
+    async with session:
+        audio = session.stream_audio()
+        transcripts = session.stream_transcripts()
+        await session.create_response()
+        audio_task = asyncio.create_task(aiter_to_list(audio))
+        transcript_task = asyncio.create_task(aiter_to_list(transcripts))
+        events: list[RealtimeEvent] = []
+        async for event in session:  # pragma: no branch
+            events.append(event)
+            if isinstance(event, RealtimeTurnCompleteEvent):
+                break
+        for _ in range(5):
+            await asyncio.sleep(0)
+
+    assert RealtimeTurnCompleteEvent() in events
+    assert await audio_task == [b'a1', b'a2']
+    assert [part.transcript for part in await transcript_task] == ['hi there']
+
+
+async def test_view_consumer_can_await_before_iterating() -> None:
+    session = RealtimeSession(BlockingRealtimeConnection([AudioDelta(b'audio'), ResponseDone()]))
+    got: list[bytes] = []
+
+    async def play_audio(chunks: AsyncIterator[bytes]) -> None:
+        await asyncio.sleep(0)
+        async for chunk in chunks:
+            got.append(chunk)
+
+    async with session:
+        task = asyncio.create_task(play_audio(session.stream_audio()))
+        async for event in session:  # pragma: no branch
+            if isinstance(event, RealtimeTurnCompleteEvent):
+                break
+        for _ in range(5):
+            await asyncio.sleep(0)
+
+    await task
+    assert got == [b'audio']
+
+
+async def test_closing_an_unstarted_view_releases_its_tap() -> None:
+    session = RealtimeSession(FakeRealtimeConnection([AudioDelta(b'audio')]))
+
+    async with session:
+        audio = session.stream_audio()
+        transcripts = session.stream_transcripts()
+        assert isinstance(audio, _TapView) and isinstance(transcripts, _TapView)
+        assert len(session._audio_taps) == 1  # pyright: ignore[reportPrivateUsage]
+        assert len(session._transcript_taps) == 1  # pyright: ignore[reportPrivateUsage]
+        # `aclose()` on a never-started async generator runs no `finally`; the view releases the tap itself.
+        await audio.aclose()
+        await transcripts.aclose()
+        assert len(session._audio_taps) == 0  # pyright: ignore[reportPrivateUsage]
+        assert len(session._transcript_taps) == 0  # pyright: ignore[reportPrivateUsage]
+        await drain_events(session)
+        assert session._audio_tap_drops == 0  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_abandoned_unstarted_view_releases_its_tap() -> None:
+    chunks = [bytes([index]) for index in range(40)]
+    session = RealtimeSession(FakeRealtimeConnection([AudioDelta(chunk) for chunk in chunks]))
+
+    async with session:
+        view = session.stream_audio()
+        assert len(session._audio_taps) == 1  # pyright: ignore[reportPrivateUsage]
+        del view
+        gc.collect()
+        assert len(session._audio_taps) == 0  # pyright: ignore[reportPrivateUsage]
+        await drain_events(session)
+        assert session._audio_tap_drops == 0  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_assistant_transcript_partials_then_final() -> None:
@@ -1411,7 +1492,7 @@ async def test_interrupt_played_bytes_anchors_at_the_subscription_point() -> Non
     async with session:
         stream = session.stream_audio()
         assert await anext(stream) == b'a' * _CHUNK
-        assert isinstance(stream, AsyncGenerator)
+        assert isinstance(stream, _TapView)
         await stream.aclose()  # unsubscribe, so the second stream is the session's only one
 
         conn.release.set()
@@ -3181,6 +3262,98 @@ async def test_send_accepts_sequence() -> None:
     await session.send(['look at this', BinaryImage(data=b'image', media_type='image/png')])
 
     assert conn.sent == ['look at this', BinaryImage(data=b'image', media_type='image/png')]
+
+
+async def test_send_respond_controls_text_and_image_turns() -> None:
+    conn = FakeRealtimeConnection([])
+    session = RealtimeSession(conn, _noop_runner)
+    image = BinaryImage(data=b'image', media_type='image/png')
+
+    await session.send('default')
+    await session.send('explicit', respond=True)
+    await session.send('context', respond=False)
+    await session.send(image)
+    await session.send(image, respond=False)
+    await session.send(image, respond=True)
+
+    assert conn.sent == snapshot(
+        [
+            'default',
+            'explicit',
+            TextContext(text='context'),
+            BinaryImage(data=b'image', media_type='image/png'),
+            BinaryImage(data=b'image', media_type='image/png'),
+            BinaryImage(data=b'image', media_type='image/png'),
+            CreateResponse(),
+        ]
+    )
+    assert session._pending_response_requests == 3  # pyright: ignore[reportPrivateUsage]
+    assert len(session.new_messages()) == 6
+
+
+async def test_send_respond_sequence_contextualizes_all_but_last() -> None:
+    conn = FakeRealtimeConnection([])
+    session = RealtimeSession(conn, _noop_runner)
+    image = BinaryImage(data=b'image', media_type='image/png')
+
+    await session.send(['first', image, 'last'], respond=True)
+
+    assert conn.sent == [TextContext('first'), image, 'last']
+    assert session._pending_response_requests == 1  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_send_respond_rejects_audio_and_unsupported_image_response() -> None:
+    conn = FakeRealtimeConnection([])
+    session = RealtimeSession(conn, _noop_runner)
+
+    for audio in (_wav_content(b'\x01\x02'), BinaryContent(data=b'\x01\x02', media_type='audio/pcm')):
+        with pytest.raises(UserError, match='`respond` cannot be used with audio'):
+            await session.send(audio, respond=False)
+
+    unsupported = RealtimeSession(conn, _noop_runner, profile=_profile(supports_manual_turn_control=False))
+    with pytest.raises(UserError, match='does not support manual turn-taking'):
+        await unsupported.send(BinaryImage(data=b'image', media_type='image/png'), respond=True)
+    assert conn.sent == []
+
+
+async def test_image_respond_frames_cannot_be_interleaved() -> None:
+    image_started = asyncio.Event()
+    release_image = asyncio.Event()
+
+    class _PausedImageConnection(FakeRealtimeConnection):
+        async def send(self, content: RealtimeInput) -> None:
+            if isinstance(content, BinaryImage):
+                image_started.set()
+                await release_image.wait()
+            await super().send(content)
+
+    conn = _PausedImageConnection([])
+    session = RealtimeSession(conn, _noop_runner)
+    image_task = asyncio.create_task(session.send(BinaryImage(data=b'image', media_type='image/png'), respond=True))
+    await image_started.wait()
+    text_task = asyncio.create_task(session.send('later'))
+    await asyncio.sleep(0)
+    release_image.set()
+    await asyncio.gather(image_task, text_task)
+
+    assert conn.sent == [BinaryImage(data=b'image', media_type='image/png'), CreateResponse(), 'later']
+
+
+async def test_respond_send_failures_roll_back_history_and_reservations() -> None:
+    class _FailingConnection(FakeRealtimeConnection):
+        async def send(self, content: RealtimeInput) -> None:
+            raise RuntimeError('send failed')
+
+    conn = _FailingConnection([])
+    session = RealtimeSession(conn, _noop_runner)
+
+    with pytest.raises(RuntimeError, match='send failed'):
+        await session.send('context', respond=False)
+    with pytest.raises(RuntimeError, match='send failed'):
+        await session.send(BinaryImage(data=b'image', media_type='image/png'), respond=True)
+
+    assert session.new_messages() == []
+    assert session._pending_response_requests == 0  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_image_history_retention_samples_and_round_trips() -> None:
