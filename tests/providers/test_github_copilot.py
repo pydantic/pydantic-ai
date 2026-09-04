@@ -46,8 +46,8 @@ def test_github_copilot_provider_client_headers():
 
     None is documented as required and none could be made required against `api.githubcopilot.com`;
     they are parity with other Copilot clients for the enterprise hosts we can't probe. The
-    `User-Agent` is deliberately absent — `OpenAIChatModel` sends `pydantic-ai/<version>`, which
-    Copilot accepts.
+    `User-Agent` is not among them — `test_github_copilot_sends_model_id_verbatim` asserts on the
+    wire that it stays `pydantic-ai/<version>`, which Copilot accepts.
     """
     provider = GitHubCopilotProvider(api_key='gho_test_token')
     headers = provider.client.default_headers
@@ -60,7 +60,6 @@ def test_github_copilot_provider_client_headers():
             'x-github-api-version': '2025-04-01',
         }
     )
-    assert 'user-agent' not in {key.casefold() for key in headers}
 
 
 _API_KEY_ENV_VARS = ('GITHUB_COPILOT_API_KEY', 'GITHUB_COPILOT_API_TOKEN', 'COPILOT_GITHUB_TOKEN')
