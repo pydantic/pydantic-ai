@@ -19,10 +19,11 @@ from ..agent import AbstractAgent, Agent
 from ..exceptions import UserError
 from ..messages import FunctionToolCallEvent, FunctionToolResultEvent, ModelMessage, ModelResponse, ToolReturnPart
 from ..models import infer_model, known_model_names
+from ..models.instrumented import InstrumentedModel
 from ..native_tools import NATIVE_TOOLS_REQUIRING_CONFIG, SUPPORTED_NATIVE_TOOLS
 from ..output import OutputDataT
 from ..settings import ModelSettings
-from ..toolsets import AbstractToolset
+from ..toolsets import AbstractToolset, FunctionToolset
 
 try:
     import argcomplete
@@ -142,7 +143,7 @@ def cli_exit(prog_name: str = 'clai'):  # pragma: no cover
 def _print_intro(
     console: Console,
     agent: Agent[Any, Any],
-    model_name: str,
+    model: models.Model | models.KnownModelName | str | None = None,
     *,
     agent_path: str | None = None,
 ) -> None:
@@ -151,28 +152,43 @@ def _print_intro(
     Left to itself, the first run would print the banner into the middle of the answer to the first
     prompt. A chat session knows what the agent is before then, so it shows the same banner up front.
 
+    What the session will actually do is resolved here the way a run resolves it, rather than read
+    off the agent as configured: an `override()` in force, or instrumentation switched on globally
+    by `Agent.instrument_all()`, would otherwise have the banner describe a different session than
+    the one the user is about to have.
+
     Args:
         console: Console to print to.
         agent: The agent the session will run.
-        model_name: ID of the model the agent will use.
+        model: Model the session was asked to use, if not the agent's own.
         agent_path: How the user asked for the agent, for one that doesn't name itself.
     """
     from ..agent import _registered_capability_count  # pyright: ignore[reportPrivateUsage]
 
+    chat_model = agent._pick_raw_model(model)  # pyright: ignore[reportPrivateUsage]
+    instrumented = (
+        isinstance(chat_model, InstrumentedModel) or agent._resolve_instrumentation_settings() is not None  # pyright: ignore[reportPrivateUsage]
+    )
+
     banner = _display.render_banner(
         # A loaded agent doesn't always name itself, so fall back to how the user asked for it.
         name=agent.name or agent_path,
-        model=model_name,
+        model=chat_model.model_id if isinstance(chat_model, models.Model) else chat_model,
         output_type=agent.output_type,
-        # Only the tools registered on the agent itself are knowable before a run resolves dynamic
-        # toolsets and MCP servers; a run's own banner counts everything the model will be offered.
-        tools=len(agent._function_toolset.tools),  # pyright: ignore[reportPrivateUsage]
-        capabilities=_registered_capability_count(agent.root_capability),
-        observability=not agent.instrument,
+        # `agent.toolsets` is override-aware, but only the tools it can count without opening a
+        # connection are known before a run: a run's own banner counts what the model is offered.
+        tools=sum(len(toolset.tools) for toolset in agent.toolsets if isinstance(toolset, FunctionToolset)),
+        capabilities=_registered_capability_count(agent._effective_root_capability()),  # pyright: ignore[reportPrivateUsage]
+        observability=not instrumented,
     )
-    # The banner arrives laid out in columns and pre-coloured, so rich reads its ANSI back rather
-    # than re-highlighting or re-wrapping it; an output type like `list[str]` isn't markup either.
-    console.print(Text.from_ansi(banner), soft_wrap=True)
+    try:
+        # The banner arrives laid out in columns and pre-coloured, so rich reads its ANSI back
+        # rather than re-highlighting or re-wrapping it; `list[str]` as an output type isn't markup.
+        console.print(Text.from_ansi(banner), soft_wrap=True)
+    except Exception:
+        # A terminal whose encoding can't take the logo (`LC_ALL=C`) is no reason to fail a session
+        # before it starts. The chat opens without a header rather than not at all.
+        pass
 
 
 def cli(args_list: Sequence[str] | None = None, *, prog_name: str = 'clai', default_model: str = 'openai:gpt-5') -> int:
@@ -379,7 +395,7 @@ def _run_chat_command(
     model_name = agent.model if isinstance(agent.model, str) else agent.model.model_id
     # Nothing can print a second one later: `ask_agent` claims it before every run.
     if _display.banner_available(is_terminal=console.is_terminal):
-        _print_intro(console, agent, model_name, agent_path=args.agent)
+        _print_intro(console, agent, agent_path=args.agent)
     elif args.agent and model_arg_set:
         console.print(
             f'{name_version} using custom agent [magenta]{args.agent}[/magenta] with [magenta]{model_name}[/magenta]',
@@ -427,13 +443,14 @@ async def run_chat(
 ) -> int:
     # `Agent.to_cli()` arrives here with nothing printed yet, so this is where its session gets the
     # banner. `clai` printed its own intro and claimed the banner already, so it doesn't get a second.
-    chat_model = model or agent.model
+    # A session with no model at all has nothing to say about one, and its first prompt will fail on
+    # that anyway; `_print_intro` resolves which model it will be, overrides included.
     if (
         isinstance(agent, Agent)
-        and chat_model is not None
+        and (model is not None or agent.model is not None)
         and _display.banner_available(is_terminal=console.is_terminal)
     ):
-        _print_intro(console, agent, chat_model if isinstance(chat_model, str) else chat_model.model_id)
+        _print_intro(console, agent, model)
 
     prompt_history_path = (config_dir or PYDANTIC_AI_HOME) / PROMPT_HISTORY_FILENAME
     prompt_history_path.parent.mkdir(parents=True, exist_ok=True)

@@ -1577,6 +1577,73 @@ def test_clai_intro_drops_observability_for_an_instrumented_agent(
     assert 'observability' not in output
 
 
+def test_clai_intro_drops_observability_when_instrumented_globally(
+    capfd: CaptureFixture[str],
+    mocker: MockerFixture,
+    env: TestEnv,
+    create_test_module: Callable[..., None],
+    terminal_clai: None,
+):
+    """`instrument_all()` leaves `agent.instrument` as `None`, so reading it would advertise Logfire
+    to someone already sending traces there."""
+    env.set('OPENAI_API_KEY', 'test')
+    create_test_module(custom_agent=Agent(TestModel(), name='observed'))
+    mocker.patch('pydantic_ai._cli.ask_agent')
+    Agent.instrument_all()
+    try:
+        assert cli(['--agent', 'test_module:custom_agent', 'hello']) == 0
+    finally:
+        Agent.instrument_all(False)
+
+    output = _plain(capfd.readouterr().out)
+    assert 'agent: observed' in output
+    assert 'observability' not in output
+
+
+def test_run_chat_banner_names_the_model_the_session_will_use(
+    mocker: MockerFixture, tmp_path: Path, terminal_clai: None
+):
+    """Under `override(model=...)` the prompts go to the override, so the banner has to say so."""
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('hi')])  # pragma: no cover
+
+    console, io = _chat_console()
+    agent = Agent(TestModel(), name='support_agent')
+
+    with agent.override(model=FunctionModel(respond)):
+        with create_pipe_input() as inp:
+            _exit_immediately(mocker, inp)
+            anyio.run(run_chat, True, agent, console, 'monokai', 'pydantic-ai', tmp_path)
+
+    output = _plain(io.getvalue())
+    assert 'model: function:function:respond:' in output
+    assert 'test:test' not in output
+
+
+def test_clai_intro_counts_tools_from_an_override(
+    capfd: CaptureFixture[str],
+    mocker: MockerFixture,
+    env: TestEnv,
+    create_test_module: Callable[..., None],
+    terminal_clai: None,
+):
+    """`override(tools=...)` builds a fresh function toolset, leaving the agent's own untouched."""
+
+    def ping() -> str:
+        return 'pong'  # pragma: no cover
+
+    env.set('OPENAI_API_KEY', 'test')
+    agent = Agent(TestModel(), name='overridden')
+    create_test_module(custom_agent=agent)
+    mocker.patch('pydantic_ai._cli.ask_agent')
+
+    with agent.override(tools=[ping]):
+        assert cli(['--agent', 'test_module:custom_agent', 'hello']) == 0
+
+    assert 'tools: 1' in _plain(capfd.readouterr().out)
+
+
 def test_clai_intro_falls_back_to_one_line_when_banner_is_suppressed(
     capfd: CaptureFixture[str], mocker: MockerFixture, env: TestEnv, terminal_clai: None
 ):

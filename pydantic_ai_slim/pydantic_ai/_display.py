@@ -51,6 +51,16 @@ class BannerDisplay(Protocol):
     def __call__(self, *, model: str, tools: int) -> None: ...
 
 
+def banner_pending() -> bool:
+    """Whether a banner could still be shown in this process.
+
+    Asked before gathering what a banner would say, on a path every agent run takes, so it stays
+    down to reading a flag and the environment. Once a banner has been shown — or turned away for
+    a reason a process doesn't change its mind about — the claim is spent and this stays False.
+    """
+    return not _banner_displayed and not _banner_suppressed()
+
+
 def banner_available(*, is_terminal: bool) -> bool:
     """Whether this process still owes the user a banner, claiming it for the caller if so.
 
@@ -130,21 +140,49 @@ def display_agent_banner(
     instrumented: bool,
 ) -> None:
     """Display information about the first uninstrumented agent run in an interactive process."""
-    # An instrumented run has what the banner would point it to, so it stays out of the way entirely
-    # rather than spending the claim — unlike `clai`, whose banner is also its session header.
-    if instrumented or not banner_available(is_terminal=sys.stderr.isatty()):
+    # An instrumented run has what the banner would point it to, so it stays out of the way — and
+    # leaves the claim alone, since another agent in this process may not be instrumented. `clai`
+    # differs: its banner is also its session header, so it shows one either way.
+    if instrumented:
         return
 
-    banner = render_banner(
-        name=name,
-        model=model,
-        output_type=output_type,
-        tools=tools,
-        capabilities=capabilities,
-        # Nothing renders this one for us, so the convention has to be honored here.
-        color='NO_COLOR' not in os.environ,
-    )
-    print(banner, file=sys.stderr)
+    if not banner_available(is_terminal=_stderr_is_terminal()):
+        # Whatever turned it away — a suppressing environment, `stderr` that is not a terminal — is
+        # not something a process changes its mind about, so spend the claim. Without this, every
+        # run in a non-interactive process would gather a banner's details all over again only to
+        # throw them away here.
+        claim_banner()
+        return
+
+    try:
+        banner = render_banner(
+            name=name,
+            model=model,
+            output_type=output_type,
+            tools=tools,
+            capabilities=capabilities,
+            # Nothing renders this one for us, so the convention has to be honored here.
+            color='NO_COLOR' not in os.environ,
+        )
+        print(banner, file=sys.stderr)
+    except Exception:
+        # A banner is a courtesy, and a courtesy that fails is not worth an agent run. A terminal
+        # whose encoding can't take the logo (`LC_ALL=C`) raises here, as does a `stderr` that has
+        # been closed or wrapped in something unusual.
+        pass
+
+
+def _stderr_is_terminal() -> bool:
+    """Whether `stderr` is a terminal, asked defensively because it isn't always even there.
+
+    `sys.stderr` is `None` under `pythonw` and in some frozen and embedded interpreters, where
+    `print(file=None)` would quietly redirect the banner to `stdout`, and it can be closed or
+    replaced by the time an agent runs.
+    """
+    try:
+        return sys.stderr is not None and sys.stderr.isatty()
+    except Exception:
+        return False
 
 
 def _info_lines(info: Sequence[tuple[str, str, bool]]) -> list[str]:
@@ -199,11 +237,14 @@ def _version_line() -> str:
     from . import __version__
 
     harness_version = None
-    if importlib.util.find_spec('pydantic_ai_harness') is not None:
-        try:
+    try:
+        if importlib.util.find_spec('pydantic_ai_harness') is not None:
             harness_version = metadata.version('pydantic-ai-harness')
-        except metadata.PackageNotFoundError:
-            pass
+    except Exception:
+        # Best-effort enrichment: the harness is named only when it can be found and named without
+        # trouble. `find_spec` raises for a module whose `__spec__` is None and for anything a
+        # custom importer objects to, and the distribution can be missing or unreadable.
+        pass
 
     version = f'pydantic-ai v{__version__}'
     if harness_version is not None:

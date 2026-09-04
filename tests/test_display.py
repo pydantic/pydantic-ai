@@ -11,12 +11,13 @@ import pytest
 from pydantic import BaseModel
 
 import pydantic_ai._display as _display
-from pydantic_ai import Agent, __version__
+from pydantic_ai import Agent, ModelMessage, ModelRequest, UserPromptPart, __version__
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets import FunctionToolset
 
 from ._inline_snapshot import snapshot
+from .continuation_utils import ScriptedContinuationModel, scripted_response
 
 _find_spec = importlib.util.find_spec
 
@@ -266,6 +267,100 @@ def test_display_banner_suppressed(
     assert capsys.readouterr().err == ''
 
 
+@pytest.mark.parametrize(
+    ('condition', 'value'),
+    [
+        ('PYDANTIC_AI_NO_BANNER', ''),
+        ('CI', ''),
+        ('tty', False),
+        ('enabled', False),
+    ],
+)
+def test_a_banner_that_can_never_be_shown_stops_being_offered(
+    condition: str, value: str | bool, monkeypatch: pytest.MonkeyPatch
+):
+    """Otherwise every run in a production process gathers a banner's details all over again."""
+    if condition in {'PYDANTIC_AI_NO_BANNER', 'CI'}:
+        monkeypatch.setenv(condition, str(value))
+    elif condition == 'tty':
+        monkeypatch.setattr(sys.stderr, 'isatty', lambda: value)
+    else:
+        monkeypatch.setattr(_display, 'BANNER_ENABLED', value)
+
+    display_banner()
+
+    assert _display.banner_pending() is False
+
+
+def test_an_instrumented_run_leaves_the_banner_for_another_agent(monkeypatch: pytest.MonkeyPatch, stderr: TTYStream):
+    """Instrumentation is the agent's, not the process's, so it doesn't speak for the ones after it."""
+    monkeypatch.setattr(sys, 'stderr', stderr)
+
+    display_banner(instrumented=True)
+    assert _display.banner_pending() is True
+
+    display_banner(name='uninstrumented_agent')
+    assert 'agent: uninstrumented_agent' in stderr.getvalue()
+
+
+class BrokenStream(TTYStream):
+    """A terminal that can't encode the banner, as `LC_ALL=C` gives you."""
+
+    def write(self, s: str) -> int:
+        raise UnicodeEncodeError('ascii', s, 0, 1, 'ordinal not in range(128)')
+
+
+def test_a_banner_that_cannot_be_written_is_dropped(monkeypatch: pytest.MonkeyPatch):
+    """A courtesy that fails is not worth an agent run: this used to raise straight through `iter()`."""
+    monkeypatch.setattr(sys, 'stderr', BrokenStream())
+    agent = Agent(TestModel())
+
+    result = agent.run_sync('hello')
+
+    assert result.output == snapshot('success (no tool calls)')
+
+
+def test_a_banner_is_not_written_to_a_stderr_that_is_not_there(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+):
+    """`sys.stderr` is `None` under `pythonw`, where `print(file=None)` would divert to `stdout`."""
+    monkeypatch.setattr(sys, 'stderr', None)
+
+    display_banner()
+
+    assert capsys.readouterr().out == ''
+
+
+def test_a_stderr_that_cannot_be_asked_is_not_a_terminal(monkeypatch: pytest.MonkeyPatch):
+    """`isatty()` raises on a closed stream, which is where a long-lived process can leave `stderr`."""
+
+    class ClosedStream(TTYStream):
+        def isatty(self) -> bool:
+            raise ValueError('I/O operation on closed file')
+
+    monkeypatch.setattr(sys, 'stderr', ClosedStream())
+
+    display_banner()
+
+    assert _display.banner_pending() is False
+
+
+def test_an_unnameable_harness_is_left_out_of_the_versions(monkeypatch: pytest.MonkeyPatch, stderr: TTYStream):
+    """`find_spec` raises for a module whose `__spec__` is None, and for what a custom importer hates."""
+
+    def find_spec_that_raises(name: str) -> None:
+        raise ValueError(f'{name}.__spec__ is None')
+
+    monkeypatch.setattr(sys, 'stderr', stderr)
+    monkeypatch.setattr(importlib.util, 'find_spec', find_spec_that_raises)
+    monkeypatch.setitem(sys.modules, 'logfire', None)
+
+    display_banner()
+
+    assert 'pydantic-ai-harness' not in stderr.getvalue()
+    assert f'pydantic-ai v{__version__}' in stderr.getvalue()
+
+
 def test_display_banner_once_per_process(monkeypatch: pytest.MonkeyPatch, stderr: TTYStream):
     monkeypatch.setattr(sys, 'stderr', stderr)
     display_banner()
@@ -317,6 +412,25 @@ def test_banner_counts_every_tool_the_model_is_offered(monkeypatch: pytest.Monke
     agent.run_sync('hello')
 
     assert 'tools: 3' in stderr.getvalue()
+
+
+def test_banner_is_shown_by_a_run_that_resumes_a_suspended_turn(monkeypatch: pytest.MonkeyPatch, stderr: TTYStream):
+    """Resuming a paused turn reaches the first request by its own path, which used to skip this."""
+    monkeypatch.setattr(sys, 'stderr', stderr)
+    model = ScriptedContinuationModel(
+        responses=[scripted_response(texts=['done'], provider_response_id='c2', input_tokens=1, output_tokens=1)]
+    )
+    agent = Agent(model, name='resumed_agent')
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('go')]),
+        scripted_response(
+            texts=['part one '], state='suspended', provider_response_id='c1', input_tokens=1, output_tokens=1
+        ),
+    ]
+
+    agent.run_sync(message_history=history)
+
+    assert 'agent: resumed_agent' in stderr.getvalue()
 
 
 def test_banner_does_not_count_output_tools(monkeypatch: pytest.MonkeyPatch, stderr: TTYStream):

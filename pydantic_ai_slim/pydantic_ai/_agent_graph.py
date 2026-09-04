@@ -1149,6 +1149,27 @@ async def model_request_stream(
             await sr.aclose()
 
 
+def _display_first_run_banner(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Any, Any]]) -> None:
+    """Show the first-run banner, from whichever path prepared the run's first request.
+
+    Called once the step's tool manager is built, the earliest point that knows which tools the
+    model will be offered: dynamic toolsets and MCP servers have been resolved by now. Output tools
+    are left out, as the banner reports the output type separately and counting them would make the
+    number move with the output mode rather than with what the agent was given.
+
+    `banner_pending()` is asked before any of that is gathered, so a process that will never show a
+    banner counts nothing: past the first run it comes down to reading a flag, on a path every run
+    takes.
+    """
+    if ctx.state.run_step != 1 or not _display.banner_pending():
+        return
+
+    ctx.deps.display_banner(
+        model=ctx.deps.model_id or ctx.deps.model.model_id,
+        tools=sum(tool_def.kind != 'output' for tool_def in ctx.deps.tool_manager.tool_defs),
+    )
+
+
 @dataclasses.dataclass
 class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     """The node that makes a request to the model using the last message in state.message_history."""
@@ -1546,15 +1567,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # resume-without-prompt path; ToolManager.for_run_step is a no-op for the same step.
         ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
 
-        if ctx.state.run_step == 1:
-            # The first step is the earliest point that knows which tools the model will be offered:
-            # dynamic toolsets and MCP servers have been resolved by now. Output tools are left out,
-            # as the banner reports the output type separately and counting them would make the
-            # number move with the output mode rather than with what the agent was given.
-            ctx.deps.display_banner(
-                model=ctx.deps.model_id or ctx.deps.model.model_id,
-                tools=sum(tool_def.kind != 'output' for tool_def in ctx.deps.tool_manager.tool_defs),
-            )
+        _display_first_run_banner(ctx)
 
         # Fetch instructions now that dynamic toolsets have been resolved by for_run_step.
         instruction_parts = await _get_instructions(ctx, run_context)
@@ -1732,6 +1745,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             max_retries=ctx.deps.tool_manager.default_max_retries,
         )
         ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
+
+        _display_first_run_banner(ctx)
 
         instructions = _get_history_instructions(ctx.state.message_history)
         instruction_parts = [_messages.InstructionPart(content=instructions)] if instructions else None
