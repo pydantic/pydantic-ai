@@ -315,16 +315,15 @@ Returning a replacement event from `hooks.on.event` is deprecated. Use `hooks.on
 When events are all you want to observe, [`@agent.on_event`][pydantic_ai.agent.Agent.on_event] registers a listener straight on the agent, with the same filtering, typing and `timeout=`:
 
 ```python {title="agent_on_event.py"}
-from pydantic_ai import Agent, PartStartEvent, RunContext
+from pydantic_ai import Agent, FunctionToolCallEvent, RunContext
 
 agent = Agent('test')
-event_count = 0
+called_tools: list[str] = []
 
 
-@agent.on_event(PartStartEvent)
-async def count_events(ctx: RunContext, event: PartStartEvent) -> None:
-    global event_count
-    event_count += 1
+@agent.on_event(FunctionToolCallEvent)
+async def track_tools(ctx: RunContext, event: FunctionToolCallEvent) -> None:
+    called_tools.append(event.part.tool_name)
 ```
 
 Bare works the same way: `@agent.on_event` on its own sees every event.
