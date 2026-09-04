@@ -3916,7 +3916,7 @@ class OpenAIStreamedResponse(StreamedResponse):
         else:
             self._usage += chunk_usage
 
-    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
+    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         with _map_api_errors(self._model_name, self._model_id_namespace):
             async for chunk in self._validate_response():
                 if self._provider_timestamp is None and chunk.created:
