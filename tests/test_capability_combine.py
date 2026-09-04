@@ -13,6 +13,7 @@ import pkgutil
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import KW_ONLY, dataclass, field
+from functools import cached_property
 from typing import Any, ClassVar, NamedTuple, TypeGuard, cast
 
 import pytest
@@ -576,15 +577,53 @@ def test_generic_alias_metadata_is_not_capability_configuration() -> None:
 
 
 def test_durable_operation_bindings_are_not_capability_configuration() -> None:
-    """Bindings added when a capability is reused by durable agents are runtime bookkeeping."""
+    """Bindings added when a capability is reused by durable agents are runtime bookkeeping.
+
+    Reached through the same rule as any other cached state rather than by being named in the
+    merge: they are a `cached_property`, so the merge finds them on the class, and the merged
+    capability starts without them so the next engine to bind creates its own.
+    """
 
     first = ReinjectSystemPrompt(replace_existing=False)
-    first._get_durable_operation_bindings()  # pyright: ignore[reportPrivateUsage]
+    assert first._durable_operation_bindings is not None  # pyright: ignore[reportPrivateUsage]
 
     merged = ReinjectSystemPrompt.combine([first, ReinjectSystemPrompt(replace_existing=True)])
 
     assert isinstance(merged, ReinjectSystemPrompt)
     assert merged.replace_existing is True
+    assert '_durable_operation_bindings' not in vars(merged), "the last instance's bindings do not ride along"
+
+
+def test_a_cached_property_is_recomputed_against_the_merged_fields() -> None:
+    """Derived state declared as a `cached_property` is dropped from the copy, not carried over.
+
+    `replace_no_init` deliberately skips `__post_init__`, so a value cached against one instance's
+    fields would report that instance's answer for a capability built from both. Dropping it is
+    what makes the next read recompute -- which is why a `cached_property` is the supported way to
+    derive state, and why it does not trip the undeclared-attribute check.
+    """
+
+    @dataclass
+    class Counted(AbstractCapability[Any]):
+        names: list[str] = field(default_factory=list[str])
+        _: KW_ONLY
+        id: str | None = 'counted'
+
+        @cached_property
+        def count(self) -> int:
+            return len(self.names)
+
+    first, second = Counted(names=['a']), Counted(names=['b'])
+    # Materialize both caches against their own fields, which is what makes a carried-over value
+    # wrong rather than merely absent.
+    assert (first.count, second.count) == (1, 1)
+
+    merged = Counted.combine([first, second])
+
+    assert isinstance(merged, Counted)
+    assert merged.names == ['a', 'b']
+    assert merged.count == 2, 'the last instance had cached 1'
+    assert (first.count, second.count) == (1, 1), 'the inputs are left as they were'
 
 
 def test_the_undeclared_attribute_error_explains_derived_state() -> None:
@@ -827,11 +866,12 @@ def test_a_merged_collection_keeps_the_type_the_field_declared() -> None:
     assert type(merged.unique) is frozenset
 
 
-def test_a_collection_that_cannot_be_rebuilt_keeps_the_later_declared_value() -> None:
-    """A `NamedTuple` takes its fields positionally, so rebuilding it from a list raises.
+def test_a_record_that_merely_looks_like_a_sequence_takes_the_later_value() -> None:
+    """A `NamedTuple` is a record, not a collection, so the later value wins as for any scalar.
 
-    Merging keeps the later declared value rather than turning a type mismatch into a `TypeError`
-    or corrupting the field to a plain `list`. A `NamedTuple` is a record, not a collection.
+    Recognized as a record up front rather than discovered by trying to rebuild one from a union:
+    unioning `Pair('a', 'b')` with `Pair('c', 'd')` would splice one record's columns into the
+    other's, which is not a merge anyone asked for whether or not the result can be rebuilt.
     """
 
     class Pair(NamedTuple):
@@ -848,6 +888,34 @@ def test_a_collection_that_cannot_be_rebuilt_keeps_the_later_declared_value() ->
     assert isinstance(merged, Record)
     assert merged.pair == Pair('c', 'd')
     assert type(merged.pair) is Pair
+
+
+def test_a_collection_that_cannot_be_rebuilt_is_refused() -> None:
+    """Neither answer is safe for a real collection whose declared type cannot be rebuilt.
+
+    The union has a type the field's own annotation does not describe, and `__post_init__` is
+    skipped so nothing downstream would catch it; taking one instance's value drops entries the
+    other stated, which is the one thing the merge promises not to do. So it says so, and the same
+    way for a mapping, a set and a sequence -- one failure should not have three answers.
+    """
+
+    class Roster(list[str]):
+        def __init__(self, entries: list[str], *, label: str) -> None:
+            super().__init__(entries)
+            self.label = label
+
+    @dataclass
+    class Team(AbstractCapability[Any]):
+        members: Roster = field(default_factory=lambda: Roster([], label='none'))
+        _: KW_ONLY
+        id: str | None = 'team'
+
+    with pytest.raises(UserError) as exc_info:
+        Team.combine([Team(members=Roster(['ana'], label='a')), Team(members=Roster(['bo'], label='b'))])
+
+    message = str(exc_info.value)
+    assert "field 'members'" in message, 'the author needs to know which field to change'
+    assert 'Roster' in message, 'and which type could not be rebuilt'
 
 
 async def test_a_second_local_search_tool_replaces_the_first() -> None:

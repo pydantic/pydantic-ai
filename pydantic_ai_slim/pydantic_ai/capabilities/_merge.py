@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import dataclasses
 from collections.abc import Mapping, Sequence, Set as AbstractSet
+from functools import cached_property
 from typing import TYPE_CHECKING, Any, cast
 
 from pydantic_ai._utils import replace_no_init
@@ -59,21 +60,23 @@ def merge_capability_fields(
     copies the last instance, so such an attribute silently takes the last value even where an
     earlier instance was the only one to state it. Refusing says so instead.
 
-    A leading underscore does not distinguish configuration from derived state. Nothing here
-    re-runs `__post_init__` (`replace_no_init` exists precisely to skip it). A capability with
-    state derived from a merged field computes it on access, or declares it as a field and
-    recomputes it in its own `combine`, the way `NativeOrLocalTool` rebuilds its native tool.
+    A leading underscore does not exempt an attribute from that: it does not distinguish
+    configuration from derived state, and configuration is exactly what must not be dropped. What
+    is exempt is state the class can produce again -- see `_rebuildable_attributes` -- which the
+    merge discards from its copy so it is recomputed from the merged fields rather than carried
+    over stale. Nothing here re-runs `__post_init__` (`replace_no_init` exists precisely to skip
+    it), so state a `__post_init__` derives is declared as a field and recomputed in the
+    capability's own `combine`, the way `NativeOrLocalTool` rebuilds its native tool.
     """
     merged = capabilities[-1]
     field_names = {field.name for field in dataclasses.fields(merged)}
+    rebuildable = _rebuildable_attributes(type(merged))
     for capability in capabilities:
         # Not "cannot be merged" -- `replace_no_init` copies the last instance, so an undeclared
         # attribute does get *a* value. What it cannot get is the promise above: a value only an
         # earlier instance stated would be dropped rather than survive. Refuse rather than let that
         # differ silently from every declared field.
-        # Generic aliases and durable integrations attach runtime bookkeeping, not configuration.
-        runtime_attributes = {'__orig_class__', '_pydantic_ai_durable_operation_bindings'}
-        undeclared = set(vars(capability)) - field_names - runtime_attributes
+        undeclared = set(vars(capability)) - field_names - rebuildable
         if undeclared:
             cls_name = type(merged).__name__
             names = ', '.join(sorted(undeclared))
@@ -82,22 +85,55 @@ def merge_capability_fields(
                 f'sets {names} outside its dataclass fields. Merging keeps a value only one of them states, '
                 'and cannot do that for an attribute it cannot enumerate -- the last instance would win '
                 f'silently. Declare {names} as dataclass fields to have them merged; or, for state derived '
-                'from other fields, compute it with a property or declare it as a field and override '
-                '`combine` to recompute it after merging, since this does not re-run `__post_init__`.'
+                'from other fields, make it a `cached_property` so merging can recompute it, or declare it '
+                'as a field and override `combine` to recompute it after merging, since this does not '
+                're-run `__post_init__`.'
             )
     changes: dict[str, Any] = {}
     for field in dataclasses.fields(merged):
         if not field.compare:
             continue
         current = getattr(merged, field.name)
-        value = merge_field_values([getattr(capability, field.name) for capability in capabilities])
+        value = merge_field_values(
+            [getattr(capability, field.name) for capability in capabilities], field_name=field.name
+        )
         if value is not current:
             changes[field.name] = value
-    return replace_no_init(merged, **changes) if changes else merged
+    result = replace_no_init(merged, **changes) if changes else merged
+    if changes:
+        # The copy carries the last instance's cached values, which were derived from *its* fields.
+        # Dropping them is what makes the next read recompute against the merged ones -- the answer
+        # `__post_init__` cannot give here, since `replace_no_init` deliberately does not run it.
+        instance_dict = cast('dict[str, Any]', result.__dict__)
+        for name in rebuildable & set(instance_dict):
+            del instance_dict[name]
+    return result
 
 
-def merge_field_values(values: Sequence[Any]) -> Any:
-    """Merge one field's values across the capabilities sharing an id, in application order."""
+def _rebuildable_attributes(cls: type[AbstractCapability[Any]]) -> frozenset[str]:
+    """Attribute names the class can produce again on demand, so merging drops rather than keeps them.
+
+    A `cached_property` is the supported way to derive state from fields. It is declared on the
+    class, so this can find it without a list of exceptions to maintain, and discarding the cached
+    value is what makes the merged capability recompute against the merged fields instead of
+    reporting what the last instance happened to have cached.
+
+    `__orig_class__` is not state at all: `typing` attaches it when a generic class is instantiated
+    through a subscription, and it says what the annotation said.
+    """
+    names = {'__orig_class__'}
+    for klass in cls.__mro__:
+        names.update(name for name, value in vars(klass).items() if isinstance(value, cached_property))
+    return frozenset(names)
+
+
+def merge_field_values(values: Sequence[Any], *, field_name: str) -> Any:
+    """Merge one field's values across the capabilities sharing an id, in application order.
+
+    `field_name` names the field in the error raised when a declared collection type cannot be
+    rebuilt; the merge itself does not depend on it. Required rather than defaulted, so no caller
+    can produce an error that leaves its reader guessing which field to look at.
+    """
     stated = [value for value in values if value is not None]
     if not stated:
         return None
@@ -108,39 +144,64 @@ def merge_field_values(values: Sequence[Any]) -> Any:
         merged_mapping: dict[Any, Any] = {}
         for value in cast('list[Mapping[Any, Any]]', stated):
             merged_mapping.update(value)
-        return _as_declared(first, merged_mapping, merged_mapping)
+        return _as_declared(first, merged_mapping, field_name)
     if all(isinstance(value, AbstractSet) for value in stated):
         merged_set = set[Any]().union(*cast('list[AbstractSet[Any]]', stated))
-        return _as_declared(first, merged_set, merged_set)
-    if all(isinstance(value, Sequence) and not isinstance(value, (str, bytes)) for value in stated):
+        return _as_declared(first, merged_set, field_name)
+    if all(isinstance(value, Sequence) and not _is_record(value) for value in stated):
         # Ordered union: a shared entry keeps the position its first mention gave it.
         merged_sequence: list[Any] = []
         for value in cast('list[Sequence[Any]]', stated):
             merged_sequence.extend(
                 entry for entry in value if not any(_same_value(entry, kept) for kept in merged_sequence)
             )
-        return _as_declared(first, merged_sequence, stated[-1])
+        return _as_declared(first, merged_sequence, field_name)
     return stated[-1]
 
 
-def _as_declared(first: Any, merged: Any, fallback: Any) -> Any:
-    """Rebuild `merged` as the collection type the field already held, when that is possible.
+def _is_record(value: Any) -> bool:
+    """Whether a value is a record that merely satisfies `Sequence`, rather than a collection.
+
+    A `str` is a sequence of characters and a `NamedTuple` a sequence of its fields, but neither is
+    something two capabilities are contributing *entries* to: unioning them would splice one
+    value's characters or columns into the other's. They take the later value, which is what the
+    table gives everything the merge cannot combine.
+    """
+    if isinstance(value, (str, bytes)):
+        return True
+    # `_fields` is what `typing.NamedTuple` and `collections.namedtuple` both leave behind; there is
+    # no type to `isinstance` against.
+    return isinstance(value, tuple) and hasattr(cast('Any', value), '_fields')
+
+
+def _as_declared(first: Any, merged: Any, field_name: str) -> Any:
+    """Rebuild `merged` as the collection type the field already held, or refuse.
 
     The union is computed in a plain `dict`/`set`/`list`, which would hand a field annotated
     `tuple[str, ...]` or `frozenset[str]` a value of the wrong type -- and `replace_no_init` skips
     the `__post_init__` that might otherwise have caught it.
 
-    Not every collection can be rebuilt from its contents: a `NamedTuple` takes its fields
-    positionally and a `range` takes integers, so both raise here. The caller chooses the fallback;
-    sequences use the later original value, matching scalar behavior without corrupting the field's
-    runtime type.
+    A collection type that cannot be rebuilt from its contents leaves no answer worth guessing.
+    Handing back the plain union gives the field a value its own annotation says it cannot hold;
+    handing back one instance's value drops entries the other stated, which is the one thing the
+    merge promises not to do. Records that only look like collections are already gone by here
+    (see `_is_record`), so what is left is a real collection with no way to rebuild it -- and
+    saying so is what the capability's author needs to hear.
     """
     if type(first) is type(merged):
         return merged
     try:
         return type(first)(merged)
-    except (TypeError, ValueError):
-        return fallback
+    except (TypeError, ValueError) as exc:
+        raise UserError(
+            f'Merging capabilities under one `id` unioned field {field_name!r} into a '
+            f'{type(merged).__name__}, but its declared type {type(first).__name__} cannot be rebuilt '
+            f'from that. Keeping the union would '
+            f'give the field a value {type(first).__name__} does not describe, and keeping one instance '
+            f'would drop what the other stated. Give {type(first).__name__} a constructor that takes its '
+            'contents, declare the field as a plain collection type, or override `combine` to merge this '
+            'field itself.'
+        ) from exc
 
 
 def _same_value(left: Any, right: Any) -> bool:

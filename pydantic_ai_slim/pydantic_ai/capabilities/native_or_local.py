@@ -255,8 +255,12 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
         # constructor would.
         merged = replace_no_init(
             merged,
-            native=merge_field_values([capability._declared_native for capability in nol_capabilities]),
-            local=merge_field_values([capability._declared_local for capability in nol_capabilities]),
+            native=merge_field_values(
+                [capability._declared_native for capability in nol_capabilities], field_name='native'
+            ),
+            local=merge_field_values(
+                [capability._declared_local for capability in nol_capabilities], field_name='local'
+            ),
         )
         merged.__post_init__()
         return merged
