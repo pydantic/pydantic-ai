@@ -8,7 +8,7 @@ and blocks 'required' and list[str] values before they reach the model-specific 
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import Any, Literal
 from unittest.mock import MagicMock
 
 import pytest
@@ -537,28 +537,31 @@ def test_support_tool_forcing_implicit_resolution(provider_name: str, resolved_t
 
 
 @pytest.mark.parametrize(
-    'profile,error_match',
+    'thinking_variant,supports_adaptive,error_match',
     [
         pytest.param(
-            BedrockModelProfile(
-                bedrock_supports_tool_choice=True,
-                bedrock_thinking_variant='anthropic',
-                bedrock_supports_adaptive_thinking=True,
-            ),
+            'anthropic',
+            True,
             'has not been verified',
             id='unverified-adaptive',
         ),
         pytest.param(
-            BedrockModelProfile(
-                bedrock_supports_tool_choice=True,
-                bedrock_thinking_variant='qwen',
-            ),
+            'qwen',
+            False,
             'with thinking enabled',
             id='non-anthropic',
         ),
     ],
 )
-def test_bedrock_explicit_tool_forcing_thinking_errors(profile: BedrockModelProfile, error_match: str):
+@skip_if_no_bedrock
+def test_bedrock_explicit_tool_forcing_thinking_errors(
+    thinking_variant: Literal['anthropic', 'qwen'], supports_adaptive: bool, error_match: str
+):
+    profile = BedrockModelProfile(
+        bedrock_supports_tool_choice=True,
+        bedrock_thinking_variant=thinking_variant,
+        bedrock_supports_adaptive_thinking=supports_adaptive,
+    )
     settings = BedrockModelSettings(thinking=True, tool_choice='required')
 
     with pytest.raises(UserError, match=error_match):
