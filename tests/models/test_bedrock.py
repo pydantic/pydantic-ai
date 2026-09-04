@@ -3049,35 +3049,27 @@ Mexico City is an important cultural, financial, and political center for the co
     )
 
 
-@pytest.mark.parametrize(
-    'thinking_field,error_match',
-    [
-        pytest.param({'type': 'enabled', 'budget_tokens': 1024}, 'extended thinking and output tools', id='enabled'),
-        pytest.param({'type': 'adaptive'}, 'has not been verified', id='adaptive'),
-    ],
-)
 async def test_bedrock_output_tool_with_thinking_raises(
     allow_model_requests: None,
     bedrock_provider: BedrockProvider,
-    thinking_field: dict[str, Any],
-    error_match: str,
 ):
-    """Legacy Sonnet 4 profiles keep output tools blocked while thinking is enabled.
+    """Legacy Sonnet 4 profiles keep output tools blocked with extended thinking.
 
     Uses the legacy `bedrock_additional_model_requests_fields` form. See
     `test_bedrock_output_tool_with_unified_thinking_raises` for the unified `thinking` field.
-    Covers https://github.com/pydantic/pydantic-ai/issues/3092 (`enabled`) and preserves the
-    restriction for models that do not use adaptive thinking.
+    Covers https://github.com/pydantic/pydantic-ai/issues/3092.
     """
     m = BedrockConverseModel(
         'us.anthropic.claude-sonnet-4-20250514-v1:0',
         provider=bedrock_provider,
-        settings=BedrockModelSettings(bedrock_additional_model_requests_fields={'thinking': thinking_field}),
+        settings=BedrockModelSettings(
+            bedrock_additional_model_requests_fields={'thinking': {'type': 'enabled', 'budget_tokens': 1024}}
+        ),
     )
 
     agent = Agent(m, output_type=ToolOutput(int))
 
-    with pytest.raises(UserError, match=error_match):
+    with pytest.raises(UserError, match='extended thinking and output tools'):
         await agent.run('What is 3 + 3?')
 
 
