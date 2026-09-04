@@ -29,6 +29,7 @@ pydantic-handlebars = false
 genai-prices = false
 anthropic = "2026-09-01T17:37:11Z"
 pydantic-extra-types = false
+pydantic-core = false
 pydantic = false
 openai = "2026-09-03T19:51:09Z"
 logfire-api = false

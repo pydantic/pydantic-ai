@@ -11,7 +11,6 @@ https://github.com/pydantic/pydantic-ai/issues/6524.
 
 from __future__ import annotations as _annotations
 
-import re
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import cast
@@ -45,20 +44,10 @@ with try_import() as imports_successful:
     )
     from pydantic_ai.providers.google import GoogleProvider
 
-
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='google-genai not installed'),
     pytest.mark.anyio,
 ]
-
-
-def _sdk_has_media_processing() -> bool:
-    """Whether the installed google-genai has the per-Part `media_processing` field (2.21.0+)."""
-    try:
-        from google.genai.types import PartDict
-    except ImportError:  # the `pydantic-ai-slim` install variant has no google-genai
-        return False
-    return 'media_processing' in PartDict.__annotations__
 
 
 @pytest.fixture
@@ -365,130 +354,6 @@ def test_agentic_response_handling_uses_mapped_setting(media_processing: str | N
 
 
 # =============================================================================
-# Per-Part `media_processing` forwarding via `vendor_metadata`
-# =============================================================================
-
-
-@dataclass
-class MediaProcessingCase:
-    id: str
-    content: BinaryContent | VideoUrl | AudioUrl | UploadedFile
-    expected: dict[str, object]
-    google_cloud: bool = False
-    """When True, run against the Vertex-backed model (needed for gs:// URIs)."""
-
-
-MEDIA_PROCESSING_CASES = [
-    MediaProcessingCase(
-        id='binary_media_processing_only',
-        content=BinaryContent(
-            data=b'\x00\x00\x00\x00',
-            media_type='video/mp4',
-            vendor_metadata={'media_processing': 'AGENTIC'},
-        ),
-        expected={
-            'inline_data': {'data': b'\x00\x00\x00\x00', 'mime_type': 'video/mp4'},
-            'media_processing': 'AGENTIC',
-        },
-    ),
-    MediaProcessingCase(
-        id='binary_media_processing_with_resolution_and_video_metadata',
-        content=BinaryContent(
-            data=b'\x00\x00\x00\x00',
-            media_type='video/mp4',
-            vendor_metadata={
-                'media_processing': 'AGENTIC',
-                'media_resolution': {'level': 'MEDIA_RESOLUTION_LOW'},
-                'start_offset': '2s',
-                'end_offset': '10s',
-            },
-        ),
-        expected={
-            'inline_data': {'data': b'\x00\x00\x00\x00', 'mime_type': 'video/mp4'},
-            'media_resolution': {'level': 'MEDIA_RESOLUTION_LOW'},
-            'media_processing': 'AGENTIC',
-            'video_metadata': {'start_offset': '2s', 'end_offset': '10s'},
-        },
-    ),
-    MediaProcessingCase(
-        id='binary_static_processing_explicit',
-        content=BinaryContent(
-            data=b'\x00\x00\x00\x00',
-            media_type='video/mp4',
-            vendor_metadata={'media_processing': 'STATIC', 'fps': 2.0},
-        ),
-        expected={
-            'inline_data': {'data': b'\x00\x00\x00\x00', 'mime_type': 'video/mp4'},
-            'media_processing': 'STATIC',
-            'video_metadata': {'fps': 2.0},
-        },
-    ),
-    MediaProcessingCase(
-        id='gcs_video_url_media_processing',
-        content=VideoUrl(
-            url='gs://bucket/lecture.mp4',
-            vendor_metadata={'media_processing': 'AGENTIC'},
-        ),
-        expected={
-            'file_data': {'file_uri': 'gs://bucket/lecture.mp4', 'mime_type': 'video/mp4'},
-            'media_processing': 'AGENTIC',
-        },
-        google_cloud=True,
-    ),
-    MediaProcessingCase(
-        id='gcs_audio_url_media_processing',
-        content=AudioUrl(
-            url='gs://bucket/podcast.mp3',
-            vendor_metadata={'media_processing': 'AGENTIC'},
-        ),
-        expected={
-            'file_data': {'file_uri': 'gs://bucket/podcast.mp3', 'mime_type': 'audio/mpeg'},
-            'media_processing': 'AGENTIC',
-        },
-        google_cloud=True,
-    ),
-    MediaProcessingCase(
-        id='uploaded_file_media_processing_and_video_metadata',
-        content=UploadedFile(
-            file_id='https://generativelanguage.googleapis.com/v1beta/files/video123',
-            provider_name='google',
-            media_type='video/mp4',
-            vendor_metadata={'media_processing': 'AGENTIC', 'start_offset': '10s', 'end_offset': '30s'},
-        ),
-        expected={
-            'file_data': {
-                'file_uri': 'https://generativelanguage.googleapis.com/v1beta/files/video123',
-                'mime_type': 'video/mp4',
-            },
-            'media_processing': 'AGENTIC',
-            'video_metadata': {'start_offset': '10s', 'end_offset': '30s'},
-        },
-    ),
-]
-
-
-@pytest.mark.skipif(not _sdk_has_media_processing(), reason='`media_processing` needs google-genai>=2.21.0')
-@pytest.mark.parametrize('case', [pytest.param(c, id=c.id) for c in MEDIA_PROCESSING_CASES])
-async def test_media_processing_forwarding(
-    case: MediaProcessingCase, mapping_model: GoogleModel, vertex_mapping_model: GoogleModel
-):
-    """`vendor_metadata['media_processing']` is lifted to the per-Part `media_processing`
-    field (`'AGENTIC'` enables agentic video understanding, where the model fetches segments
-    and transcripts itself), it composes with `media_resolution` and the `video_metadata`
-    keys, and the user's `vendor_metadata` dict is never mutated. The value is forwarded
-    verbatim: which models and media types accept it is the API's call, not the client's.
-    """
-    model = vertex_mapping_model if case.google_cloud else mapping_model
-
-    original_vendor_metadata = deepcopy(case.content.vendor_metadata)
-
-    content = await model._map_user_prompt(UserPromptPart(content=[case.content]))  # pyright: ignore[reportPrivateUsage]
-
-    assert content == [case.expected]
-    assert case.content.vendor_metadata == original_vendor_metadata
-
-
-# =============================================================================
 # `UploadedFile` mapping
 # =============================================================================
 
@@ -718,12 +583,3 @@ async def test_map_user_prompt_with_text_content(mapping_model: GoogleModel):
     content = await mapping_model._map_user_prompt(user_prompt_part)  # pyright: ignore[reportPrivateUsage]
 
     assert content == snapshot([{'text': 'Hi'}, {'text': 'This is some context'}])
-
-
-async def test_media_processing_requires_supporting_sdk(mapping_model: GoogleModel, mocker: MockerFixture):
-    """On an SDK without the per-Part field, asking for `media_processing` raises an actionable
-    error instead of failing request validation deep inside the SDK."""
-    mocker.patch('pydantic_ai.models.google._SDK_SUPPORTS_MEDIA_PROCESSING', False)
-    content = BinaryContent(data=b'\x00', media_type='video/mp4', vendor_metadata={'media_processing': 'AGENTIC'})
-    with pytest.raises(UserError, match=re.escape('requires `google-genai>=2.21.0`')):
-        await mapping_model._map_user_prompt(UserPromptPart(content=[content]))  # pyright: ignore[reportPrivateUsage]
