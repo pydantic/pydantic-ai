@@ -3307,13 +3307,27 @@ async def test_send_respond_rejects_audio_and_unsupported_image_response() -> No
     session = RealtimeSession(conn, _noop_runner)
 
     for audio in (_wav_content(b'\x01\x02'), BinaryContent(data=b'\x01\x02', media_type='audio/pcm')):
-        with pytest.raises(UserError, match='`respond` cannot be used with audio'):
-            await session.send(audio, respond=False)
+        with pytest.raises(UserError, match='`respond=True` cannot be used with audio'):
+            await session.send(audio, respond=True)
 
     unsupported = RealtimeSession(conn, _noop_runner, profile=_profile(supports_manual_turn_control=False))
     with pytest.raises(UserError, match='does not support manual turn-taking'):
         await unsupported.send(BinaryImage(data=b'image', media_type='image/png'), respond=True)
     assert conn.sent == []
+
+
+async def test_send_respond_sequence_can_lead_with_audio() -> None:
+    """Non-last items are sent as context, so audio ahead of the text turn is fine with an explicit `respond`."""
+    conn = FakeRealtimeConnection([])
+    session = RealtimeSession(conn)
+
+    audio = BinaryContent(data=b'\x01\x02', media_type='audio/pcm')
+    async with session:
+        await session.send([audio, 'How does it look?'], respond=True)
+        # `respond=False` is a no-op for audio on its own too: it never solicits a reply.
+        await session.send(audio, respond=False)
+
+    assert [type(item).__name__ for item in conn.sent] == ['BinaryAudio', 'str', 'BinaryAudio']
 
 
 async def test_image_respond_frames_cannot_be_interleaved() -> None:

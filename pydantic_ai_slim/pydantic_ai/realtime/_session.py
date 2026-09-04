@@ -1147,7 +1147,7 @@ class RealtimeSession:
 
         Set `respond=False` to add text or an image as context without soliciting a response. Set
         `respond=True` to solicit a response to text or an image; this requires manual turn control
-        for images. `respond` cannot be used with audio. For a sequence, an explicit `respond` value
+        for images. `respond=True` cannot be used with audio. For a sequence, an explicit `respond` value
         adds every item except the last as context and applies that value to the last item. With the
         default `respond=None`, each item keeps its usual behavior.
 
@@ -1184,8 +1184,10 @@ class RealtimeSession:
             if content.is_image:
                 await self._send_image(content, respond=respond is True)
             else:
-                if respond is not None and content.media_type in (_WAV_MEDIA_TYPE, 'audio/pcm'):
-                    raise UserError('`respond` cannot be used with audio sent via `session.send()`.')
+                if respond is True and content.media_type in (_WAV_MEDIA_TYPE, 'audio/pcm'):
+                    # Audio never solicits a reply on its own (VAD or `commit_audio()` ends the turn), so
+                    # `respond=False` is a no-op for it and only `respond=True` is a mistake.
+                    raise UserError('`respond=True` cannot be used with audio sent via `session.send()`.')
                 await self._send_audio_content(content)
         elif isinstance(content, (bytes, bytearray)):
             # `bytes` is a `Sequence[int]`, so guard it before the sequence branch below — otherwise it

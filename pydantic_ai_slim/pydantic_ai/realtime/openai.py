@@ -441,8 +441,8 @@ class OpenAIRealtimeConnection(RealtimeConnection):
     async def send(self, content: RealtimeInput) -> None:
         """Send content to the OpenAI Realtime API.
 
-        Accepts `BinaryAudio` (raw PCM16, 24kHz, mono), a `str` text turn, `BinaryImage`,
-        `ToolResult`, and the control verbs `CommitAudio`, `ClearAudio`, `CreateResponse`,
+        Accepts `BinaryAudio` (raw PCM16, 24kHz, mono), a `str` text turn, `TextContext` (text added
+        without soliciting a reply), `BinaryImage`, `ToolResult`, and the control verbs `CommitAudio`, `ClearAudio`, `CreateResponse`,
         `CancelResponse`, and `TruncateOutput`.
         """
         if isinstance(content, BinaryAudio):
