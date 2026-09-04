@@ -1579,6 +1579,10 @@ async def test_connect_seeds_message_history(monkeypatch: pytest.MonkeyPatch) ->
                 legacy_retry_prompt_part(tool_name='lookup', content='invalid id', tool_call_id='call-2'),
                 legacy_retry_prompt_part(content='answer in prose'),
                 RetryFeedbackPart(content='answer in prose', cause='model_retry'),
+                RetryFeedbackPart(
+                    content=[{'type': 'int_parsing', 'loc': ('count',), 'msg': 'not an integer', 'input': 'lots'}],
+                    cause='validation_error',
+                ),
                 UserPromptPart(
                     content=[
                         ImageUrl(url='https://example.com/a.png'),
@@ -1676,6 +1680,23 @@ async def test_connect_seeds_message_history(monkeypatch: pytest.MonkeyPatch) ->
                         {
                             'type': 'input_text',
                             'text': '<system>answer in prose</system>',
+                        }
+                    ],
+                },
+            },
+            {
+                'type': 'conversation.item.create',
+                'item': {
+                    'type': 'message',
+                    'role': 'user',
+                    'content': [
+                        {
+                            'type': 'input_text',
+                            'text': """\
+<validation_errors>
+[{"type":"int_parsing","loc":["count"],"msg":"not an integer","input":"lots"}]
+</validation_errors>\
+""",
                         }
                     ],
                 },

@@ -1681,6 +1681,10 @@ async def test_connect_seeds_message_history(monkeypatch: pytest.MonkeyPatch) ->
                 legacy_retry_prompt_part(tool_name='weather', content='invalid city', tool_call_id='call-1'),
                 legacy_retry_prompt_part(content='answer in prose'),
                 RetryFeedbackPart(content='answer in prose', cause='model_retry'),
+                RetryFeedbackPart(
+                    content=[{'type': 'int_parsing', 'loc': ('count',), 'msg': 'not an integer', 'input': 'lots'}],
+                    cause='validation_error',
+                ),
                 UserPromptPart(
                     content=[
                         ImageUrl(url='https://example.com/a.png'),
@@ -1723,6 +1727,13 @@ async def test_connect_seeds_message_history(monkeypatch: pytest.MonkeyPatch) ->
                     {'text': '[Tool call-1: weather error: invalid city]'},
                     {'text': '<system>answer in prose</system>'},
                     {'text': '<system>answer in prose</system>'},
+                    {
+                        'text': """\
+<validation_errors>
+[{"type":"int_parsing","loc":["count"],"msg":"not an integer","input":"lots"}]
+</validation_errors>\
+"""
+                    },
                     {'inline_data': {'data': b'url-image', 'mime_type': 'image/png'}},
                     {'inline_data': {'data': b'inline-image', 'mime_type': 'image/png'}},
                     {'text': 'spoken question'},
