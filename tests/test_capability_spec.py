@@ -1016,6 +1016,7 @@ def test_model_json_schema_with_capabilities():
                         'gateway/openai:gpt-5.6-luna',
                         'gateway/openai:gpt-5.6-sol',
                         'gateway/openai:gpt-5.6-terra',
+                        'gateway/openai:gpt-6-astra',
                         'gateway/openai:gpt-daybreak-blue-latest',
                         'gateway/openai:gpt-daybreak-red-latest',
                         'gateway/openai:o1',
@@ -1204,6 +1205,7 @@ def test_model_json_schema_with_capabilities():
                         'openai-chat:gpt-5.6-luna',
                         'openai-chat:gpt-5.6-sol',
                         'openai-chat:gpt-5.6-terra',
+                        'openai-chat:gpt-6-astra',
                         'openai-chat:gpt-daybreak-blue-latest',
                         'openai-chat:gpt-daybreak-red-latest',
                         'openai-chat:o1',
@@ -1284,6 +1286,7 @@ def test_model_json_schema_with_capabilities():
                         'openai:gpt-5.6-luna',
                         'openai:gpt-5.6-sol',
                         'openai:gpt-5.6-terra',
+                        'openai:gpt-6-astra',
                         'openai:gpt-daybreak-blue-latest',
                         'openai:gpt-daybreak-red-latest',
                         'openai:o1',
@@ -3302,8 +3305,11 @@ async def test_custom_init_capability_can_initialize_metadata_without_post_init(
     assert non_deferred_cap.id is None
     assert non_deferred_cap.description is None
     assert non_deferred_cap.defer_loading is False
-    assert non_deferred_capability_map == {'deferred_cap': non_deferred_cap}
-    assert 'deferred_cap' in non_deferred_available_ids
+    assert list(non_deferred_capability_map.values()) == [non_deferred_cap]
+    # No `id`, so the registry keys it by a run-local handle rather than a name.
+    (handle,) = non_deferred_capability_map
+    assert re.fullmatch(r'<deferred_cap:[0-9a-f]{6}>', handle), handle
+    assert handle in non_deferred_available_ids
 
 
 async def test_duplicate_explicit_capability_ids_set_after_construction_raise_at_run() -> None:
@@ -3331,7 +3337,12 @@ async def test_duplicate_explicit_capability_ids_set_after_construction_raise_at
 
 
 async def test_anonymous_non_deferred_capabilities_get_run_local_ids() -> None:
-    """Anonymous non-deferred capabilities are still present in run context."""
+    """Anonymous non-deferred capabilities are present in run context, keyed by a handle.
+
+    Run-local is what the keys always were; they now say so. The pair used to be `plain_cap` and
+    `plain_cap_2`, numbered from the order they were listed in, so which one was `plain_cap_2`
+    moved when the list did.
+    """
 
     @dataclass
     class PlainCap(AbstractCapability):
@@ -3341,10 +3352,13 @@ async def test_anonymous_non_deferred_capabilities_get_run_local_ids() -> None:
     second = PlainCap()
     capability_map, available_ids = await _registered_capability_context(first, second)
 
-    assert list(capability_map) == ['plain_cap', 'plain_cap_2']
+    handles = list(capability_map)
+    assert len(handles) == 2, handles
+    assert all(re.fullmatch(r'<plain_cap:[0-9a-f]{6}>', handle) for handle in handles), handles
+    assert list(capability_map.values()) == [first, second]
     assert first.id is None
     assert second.id is None
-    assert {'plain_cap', 'plain_cap_2'} <= available_ids
+    assert set(handles) <= available_ids
 
 
 def _bare_local(query: str) -> str:
@@ -3377,11 +3391,18 @@ async def test_two_one_off_capabilities_in_one_layer_combine() -> None:
 
 
 async def test_one_off_capability_with_id_none_is_still_disambiguated() -> None:
-    """`id=None` is the documented escape hatch back to per-occurrence ids."""
+    """`id=None` is the documented escape hatch back to per-occurrence keys.
+
+    Both survive as separate entries, which is what the escape hatch is for; neither is named.
+    """
     first = Thinking(effort='low', id=None)
     second = Thinking(effort='high', id=None)
     capability_map, _ = await _registered_capability_context(first, second)
-    assert list(capability_map) == ['thinking', 'thinking_2']
+
+    handles = list(capability_map)
+    assert len(handles) == 2, handles
+    assert all(re.fullmatch(r'<thinking:[0-9a-f]{6}>', handle) for handle in handles), handles
+    assert list(capability_map.values()) == [first, second]
 
 
 async def test_run_level_one_off_capability_supersedes_the_agent_level_one() -> None:

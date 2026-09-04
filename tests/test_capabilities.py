@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import inspect
+import re
 import threading
 import time
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable
@@ -4668,6 +4669,80 @@ async def test_tool_return_can_reveal_capability_owned_tools_once_loaded() -> No
 
     result = await agent.run('Load, then reveal by name.')
     assert result.output == 'done'
+
+
+# --- synthetic ids for capabilities the user never named ---
+
+
+async def _registry_keys(capabilities: list[AbstractCapability[Any]]) -> dict[str, str]:
+    """The run registry, as `{key: label}`, so a key can be traced back to what it names."""
+    agent = Agent(TestModel(), capabilities=capabilities)
+    async with agent.iter('hello') as run:
+        return {key: getattr(cap, 'label', type(cap).__name__) for key, cap in run.ctx.deps.capabilities.items()}
+
+
+@dataclass
+class _Unnamed(AbstractCapability[Any]):
+    label: str = 'x'
+
+
+async def test_a_capability_without_an_id_gets_a_synthetic_key() -> None:
+    """It has to be keyed by something, and that something must not read as a name.
+
+    Angle brackets are what the framework already uses to say it did the naming (`'<agent>'`,
+    `'<output>'` for toolsets); the class name keeps the registry readable.
+    """
+    keys = await _registry_keys([_Unnamed(label='a')])
+
+    synthetic = [key for key, label in keys.items() if label == 'a']
+    assert len(synthetic) == 1
+    assert re.fullmatch(r'<_unnamed:[0-9a-f]{6}>', synthetic[0]), synthetic[0]
+
+
+async def test_a_synthetic_key_differs_between_runs() -> None:
+    """The random part is the point: relying on one fails at once rather than silently later.
+
+    The key it replaced counted from attachment order, so it looked stable and was not -- two
+    anonymous capabilities of one class swapped keys when listed the other way round.
+    """
+    first = await _registry_keys([_Unnamed(label='a')])
+    second = await _registry_keys([_Unnamed(label='a')])
+
+    assert set(first) != set(second)
+
+
+async def test_two_unnamed_capabilities_of_one_class_get_distinct_keys() -> None:
+    """Distinct keys without an ordinal, so neither is `_unnamed_2` for whoever sorted the list."""
+    keys = await _registry_keys([_Unnamed(label='a'), _Unnamed(label='b')])
+
+    assert sorted(label for label in keys.values() if label in {'a', 'b'}) == ['a', 'b']
+    assert len({key for key, label in keys.items() if label in {'a', 'b'}}) == 2
+
+
+async def test_an_explicit_id_is_used_as_written() -> None:
+    """A capability the user named keeps that name; only the unnamed ones get a handle."""
+    keys = await _registry_keys([_Unnamed(label='a', id='chosen')])
+
+    assert keys['chosen'] == 'a'
+
+
+def test_a_synthetic_key_retries_until_it_is_unused(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Two capabilities must never share a registry key, however unlikely a collision is.
+
+    Six hex characters make one vanishingly rare, which is exactly why the retry needs pinning
+    here: nothing would exercise it, and a key that silently replaced another capability's entry
+    would drop that capability out of `ctx.capabilities` entirely.
+    """
+    from pydantic_ai.agent import _synthetic_capability_id  # pyright: ignore[reportPrivateUsage]
+
+    class _Fixed:
+        def __init__(self, hex_value: str) -> None:
+            self.hex = hex_value
+
+    minted = iter([_Fixed('aaaaaa' + '0' * 26), _Fixed('bbbbbb' + '0' * 26)])
+    monkeypatch.setattr('pydantic_ai.agent.uuid4', lambda: next(minted))
+
+    assert _synthetic_capability_id(_Unnamed, taken={'<_unnamed:aaaaaa>'}) == '<_unnamed:bbbbbb>'
 
 
 # --- exclusive_execution ---
