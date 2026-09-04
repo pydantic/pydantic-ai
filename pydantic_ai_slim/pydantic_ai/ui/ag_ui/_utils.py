@@ -217,15 +217,15 @@ def tool_kind_encrypted_value_kwargs(
 
 
 def retry_feedback_encrypted_value_kwargs(part: RetryFeedbackPart, *, supported: bool) -> _EncryptedValueKwargs:
-    """`SystemMessage` kwargs carrying the `RetryFeedbackPart` its text was rendered from.
+    """Message kwargs carrying the `RetryFeedbackPart` the message's text was rendered from.
 
-    The same namespaced `encrypted_value` carrier as `tool_kind_encrypted_value`, used here because a
-    `SystemMessage` has no other metadata slot. It is what tells our own rendered feedback apart from
-    a system message the client wrote, and what restores the part's `cause` and raw content — neither
-    of which the rendered text alone can give back.
+    The same namespaced `encrypted_value` carrier as `tool_kind_encrypted_value`, used here because
+    neither a `SystemMessage` nor a `UserMessage` has another metadata slot. It is what tells our own
+    rendered feedback apart from a message the client wrote, and what restores the part's `cause` and
+    raw content — neither of which the rendered text alone can give back.
 
     Empty when the target version predates the field (`supported=False`), in which case the message
-    reloads as a plain `SystemPromptPart` and `dump_messages` warns via
+    reloads as a plain prompt part and `dump_messages` warns via
     `warn_encrypted_value_not_persisted`.
     """
     if not supported:
@@ -238,13 +238,15 @@ def warn_encrypted_value_not_persisted(ag_ui_version: str) -> None:
 
     The carrier only exists from 0.1.11, so on older versions features like lazy capabilities and tool
     search silently forget their state across a round-trip, and harness retry feedback reloads as an
-    operator-authored system prompt; upgrading the client fixes both.
+    operator-authored system prompt or a user prompt, depending on the voice it was dumped in;
+    upgrading the client fixes both.
     """
     warnings.warn(
         f'ag-ui-protocol {ag_ui_version} predates the `encrypted_value` field (added in 0.1.11), so '
         'the claims Pydantic AI carries there cannot survive a dump/load round-trip: the `tool_kind` '
         'of typed tool parts (e.g. lazy capabilities, tool search) is dropped and those parts reload '
-        'as their base classes, and a `RetryFeedbackPart` reloads as a plain `SystemPromptPart`. '
+        'as their base classes, and a `RetryFeedbackPart` reloads as a plain `SystemPromptPart` or '
+        '`UserPromptPart`. '
         'Upgrade the client to ag-ui-protocol >= 0.1.11 to preserve them.',
         UserWarning,
         stacklevel=3,
@@ -304,7 +306,7 @@ def parse_encrypted_retry_feedback(encrypted_value: str | None) -> RetryFeedback
     """Read a `RetryFeedbackPart` claim from the `pydantic_ai` namespace of an `encrypted_value` blob.
 
     An absent, forged or malformed claim reads as `None`, so the message it rode on stays a plain
-    system prompt — see `retry_feedback_from_payload` for why the marker separates provenance rather
+    prompt part — see `retry_feedback_from_payload` for why the marker separates provenance rather
     than proving it.
     """
     namespaced = _parse_encrypted_namespace(encrypted_value)

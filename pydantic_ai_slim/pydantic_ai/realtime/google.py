@@ -436,7 +436,9 @@ async def _seed_request_parts(
             # (https://github.com/pydantic/pydantic-ai/issues/6404).
             translated = _translate_legacy_retry_part(part) if isinstance(part, RetryPromptPart) else part
             if isinstance(translated, ToolReturnPart):
-                output = translated.model_response_str()
+                # The framing already says `error`, so the `{"error": ...}` wrapper a channel-less
+                # provider gets would only say it twice.
+                output = translated.model_response_str(wrap_if_error=False)
                 text = f'[Tool {translated.tool_call_id}: {translated.tool_name} error: {output}]'
             elif _retry_feedback_speaks_for_the_harness(translated):
                 text = _wrap_in_system_tags(translated.model_response())

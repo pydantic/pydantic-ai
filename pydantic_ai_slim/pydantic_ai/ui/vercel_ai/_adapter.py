@@ -337,7 +337,11 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                 user_prompt_content: list[UserContent] = []
 
                 def flush_user_prompt(content: list[UserContent] = user_prompt_content) -> None:
-                    """Close off the user content accumulated so far, ahead of whatever follows it."""
+                    """Close off the user content accumulated so far, ahead of whatever follows it.
+
+                    `content` defaults to this message's list rather than closing over the name,
+                    which the next message rebinds; callers pass nothing.
+                    """
                     if not content:
                         return
                     first = content[0]

@@ -529,9 +529,9 @@ async def ask_agent(
                                 if isinstance(event, FunctionToolCallEvent):
                                     pending_calls[event.tool_call_id] = event.part.tool_name
                                 elif isinstance(event, FunctionToolResultEvent):
-                                    # Pop on any result, not just a `ToolReturnPart`: a call that
-                                    # comes back as a `RetryPromptPart` would otherwise stay pending
-                                    # and pin its indicator for the rest of the run.
+                                    # Pop on any result, not just a `ToolReturnPart`: a call answered
+                                    # by a legacy `RetryPromptPart` would otherwise stay pending and
+                                    # pin its indicator for the rest of the run.
                                     pending_calls.pop(event.tool_call_id, None)
                                     if isinstance(event.part, ToolReturnPart):
                                         content_pieces.append(f'> Called tool `{event.part.tool_name}`.')
