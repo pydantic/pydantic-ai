@@ -248,6 +248,13 @@ def test_a_configuration_change_checks_everything(project: Path, name: str):
     assert _typecheck().commands == _FULL_RUN
 
 
+def test_an_interpreter_without_tomllib_checks_everything(project: Path, monkeypatch: pytest.MonkeyPatch):
+    # Reading Pyright's file list out of pyproject.toml needs `tomllib`, added in 3.11.
+    monkeypatch.setattr(typecheck_changed.sys, 'version_info', (3, 10, 18))
+
+    assert _typecheck().commands == _FULL_RUN
+
+
 def test_a_new_interpreter_checks_everything(project: Path, monkeypatch: pytest.MonkeyPatch):
     _typecheck()
     monkeypatch.setattr(typecheck_changed.platform, 'python_version', lambda: '9.9.9')

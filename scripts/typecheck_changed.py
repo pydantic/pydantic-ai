@@ -10,8 +10,9 @@ imports them.
 What passed is recorded in a checkpoint under the git directory, so it is per-worktree and
 never committed. Anything the checkpoint cannot account for falls back to
 `make typecheck-pyright`, the same full run CI performs: a first run, a dependency or
-configuration change, an import that would resolve somewhere new, or a change large enough
-that narrowing stops paying for itself.
+configuration change, an import that would resolve somewhere new, an interpreter older than
+the 3.11 this needs to read `pyproject.toml`, or a change large enough that narrowing stops
+paying for itself.
 
 Usage:
     python scripts/typecheck_changed.py
@@ -34,11 +35,6 @@ from pathlib import Path
 
 from pydantic import TypeAdapter, ValidationError
 from typing_extensions import TypedDict
-
-if sys.version_info >= (3, 11):
-    import tomllib
-else:
-    import tomli as tomllib
 
 Runner = Callable[[Sequence[str]], int]
 """Runs a command, streams its output, and returns its exit code."""
@@ -124,6 +120,10 @@ def main(run: Runner = run_command) -> int:
     if os.environ.get('CI'):
         # CI keeps no checkpoint between runs, so there is nothing to narrow against.
         return _check_everything(run, 'CI is set')
+
+    if sys.version_info < (3, 11):
+        # Reading Pyright's file list out of pyproject.toml needs `tomllib`, added in 3.11.
+        return _check_everything(run, 'this interpreter is older than Python 3.11')
 
     project = _load_project()
     if project is None:
@@ -327,6 +327,9 @@ def _package_of(path: str, roots: Sequence[str]) -> str:
 
 def _load_project() -> _Project | None:
     """Read Pyright's file list, or `None` when this script cannot reproduce it."""
+    # 3.11+, which is why `main` turns an older interpreter away before reaching here.
+    import tomllib
+
     pyproject = _PYPROJECT_ADAPTER.validate_python(tomllib.loads(Path('pyproject.toml').read_text(encoding='utf-8')))
     tools = pyproject.get('tool') or _Tools()
     pyright = tools.get('pyright') or _PyrightSettings()

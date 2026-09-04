@@ -245,10 +245,6 @@ lint = [
     "mypy>=1.11.2",
     "pyright>=1.1.408",
     "ruff>=0.14.14",
-    # `scripts/typecheck_changed.py` reads this file to learn which files Pyright checks.
-    # `tomllib` only exists from 3.11, and Pyright analyses the repository as 3.10, so the
-    # 3.10 fallback has to be installed on every interpreter for that import to resolve.
-    "tomli>=2",
 ]
 [tool.hatch.build.targets.wheel]
 bypass-selection = true
@@ -404,7 +400,11 @@ executionEnvironments = [
     { root = ".github/scripts/test_ci_duration.py", extraPaths = [".github/scripts"], reportUnusedFunction = false, reportPrivateImportUsage = false },
     { root = ".github/scripts/test_check_api_compatibility.py", extraPaths = [".github/scripts"], reportUnusedFunction = false, reportPrivateImportUsage = false },
     { root = ".github/scripts/test_pydantic_ai_runner.py", extraPaths = [".github/scripts"], reportUnusedFunction = false, reportPrivateImportUsage = false },
-    { root = "scripts/test_typecheck_changed.py", extraPaths = ["scripts"], reportUnusedFunction = false, reportPrivateImportUsage = false },
+    # `scripts/typecheck_changed.py` reads `tomllib`, which is 3.11+. These two are
+    # developer tooling rather than shipped code, and the script falls back to the full
+    # type check on an older interpreter, so they are analysed above the library's floor.
+    { root = "scripts/typecheck_changed.py", pythonVersion = "3.11" },
+    { root = "scripts/test_typecheck_changed.py", extraPaths = ["scripts"], pythonVersion = "3.11", reportUnusedFunction = false, reportPrivateImportUsage = false },
 ]
 exclude = [
     "examples/pydantic_ai_examples/weather_agent_gradio.py",

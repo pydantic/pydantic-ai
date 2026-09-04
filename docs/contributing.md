@@ -145,6 +145,7 @@ changed since Pyright last passed plus everything that transitively imports them
 passed under your git directory, so the record is per-worktree and never committed.
 
 It falls back to the full run whenever the narrower one is not provably the same answer: a first run;
+an interpreter older than Python 3.11, which is what it needs to read `pyproject.toml`;
 a new Pyright or Python version, including one asked for through `PYRIGHT_PYTHON`; a change to
 `pyproject.toml`, `uv.lock` or the `Makefile`; an import that would now resolve to a different file
 or a new top-level module that could shadow an installed one; or a change reaching more than half the
