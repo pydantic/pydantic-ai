@@ -2547,6 +2547,8 @@ def _synthesize_tool_availability_delta_messages(
             continue
 
         changed = True
+        # Find the leading group containing only tool results and deltas. Its stable sort moves
+        # deltas after all results without reordering either group or any later parts.
         first_unrelated_part_index = next(
             (
                 index
