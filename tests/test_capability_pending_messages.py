@@ -5,7 +5,11 @@ Split out of `test_capabilities.py` per #7304.
 
 from __future__ import annotations
 
+import copy
+import pickle
+import threading
 from collections.abc import AsyncIterable, AsyncIterator
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, cast
@@ -16,7 +20,7 @@ import pytest
 from pydantic import BaseModel, TypeAdapter
 
 from pydantic_ai import _agent_graph
-from pydantic_ai._enqueue import PendingMessage
+from pydantic_ai._enqueue import PendingMessage, PendingMessagePriority, PendingMessageQueue
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.agent import Agent
 from pydantic_ai.capabilities import (
@@ -65,6 +69,47 @@ pytestmark = [
 
 
 # ===== Pending Message Queue Tests =====
+
+
+def test_pending_message_queue_copy_round_trip():
+    queue = PendingMessageQueue([PendingMessage(messages=[ModelRequest(parts=[UserPromptPart(content='queued')])])])
+
+    copies = [copy.deepcopy(queue), pickle.loads(pickle.dumps(queue))]
+
+    assert all(isinstance(item, PendingMessageQueue) and item == queue for item in copies)
+
+
+@pytest.mark.parametrize('drain_all', [False, True], ids=['one-priority', 'all-priorities'])
+def test_sync_enqueue_does_not_race_pending_message_drain(drain_all: bool):
+    """A worker-thread enqueue is not overwritten by either drain operation."""
+    drain_and_enqueue_ready = threading.Barrier(2)
+
+    class BlockingQueue(PendingMessageQueue):
+        def append(self, pending: PendingMessage) -> None:
+            drain_and_enqueue_ready.wait(timeout=5)
+            super().append(pending)
+
+        def _pop_priority(self, priority: PendingMessagePriority) -> list[PendingMessage]:
+            if priority == 'asap':
+                drain_and_enqueue_ready.wait(timeout=5)
+            return super()._pop_priority(priority)
+
+    queue = BlockingQueue()
+    ctx = RunContext(
+        deps=None,
+        model=TestModel(),
+        usage=RunUsage(),
+        pending_messages=queue,
+    )
+
+    drain = queue.pop_all_by_priority if drain_all else lambda: queue.pop_priority('asap')
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        drain_future = executor.submit(drain)
+        enqueue_future = executor.submit(ctx.enqueue, 'from sync tool')
+        drain_future.result(timeout=5)
+        enqueue_future.result(timeout=5)
+
+    assert len(queue) == 1
 
 
 async def test_enqueue_asap_message_from_tool():

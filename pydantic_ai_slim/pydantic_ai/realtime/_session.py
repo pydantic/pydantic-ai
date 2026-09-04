@@ -8,7 +8,6 @@ import io
 import wave
 from collections.abc import AsyncIterable, AsyncIterator, Callable, Sequence
 from dataclasses import dataclass, replace
-from threading import Lock as ThreadLock
 from time import time_ns
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypeVar, cast, overload
@@ -19,7 +18,7 @@ from opentelemetry.context import Context
 from typing_extensions import TypeAliasType, assert_never
 
 from .. import _agent_graph
-from .._enqueue import PendingMessage, PendingMessagePriority
+from .._enqueue import PendingMessage, PendingMessagePriority, PendingMessageQueue
 from .._tool_execution import (
     _reject_unloaded_capability_reveals,  # pyright: ignore[reportPrivateUsage]
     build_tool_return_part,
@@ -461,30 +460,21 @@ def _pending_message_text(pending: PendingMessage) -> str:
     return '\n\n'.join(texts)
 
 
-class _RealtimePendingMessages(list[PendingMessage]):
+class _RealtimePendingMessages(PendingMessageQueue):
     """A `RunContext.enqueue` queue that validates content and wakes the live session for delivery."""
 
     def __init__(self) -> None:
         super().__init__()
         self._on_append: Callable[[PendingMessagePriority], None] | None = None
-        self._lock = ThreadLock()
 
     def bind(self, on_append: Callable[[PendingMessagePriority], None]) -> None:
         self._on_append = on_append
 
     def append(self, pending: PendingMessage) -> None:
         _pending_message_text(pending)
-        with self._lock:
-            super().append(pending)
+        super().append(pending)
         if self._on_append is not None:
             self._on_append(pending.priority)
-
-    def pop_priority(self, priority: PendingMessagePriority) -> list[PendingMessage]:
-        """Atomically remove and return all messages with `priority`."""
-        with self._lock:
-            selected = [pending for pending in self if pending.priority == priority]
-            self[:] = [pending for pending in self if pending.priority != priority]
-        return selected
 
 
 class RealtimeSession:
@@ -755,8 +745,8 @@ class RealtimeSession:
         # before it cancels. Without this, those sequences interleave — a barge-in's cancel can land on
         # a response that a tool result started in the gap, killing the wrong turn.
         self._send_lock = Lock()
-        if self._tool_manager.ctx is not None:
-            self._tool_manager.ctx.pending_messages = self._pending_messages
+        if (ctx := self._tool_manager.ctx) is not None:
+            ctx.pending_messages = self._pending_messages
         # In-flight tool tasks keyed by tool call id, so a `ToolCallCancelled` can cancel the specific
         # calls the model abandoned (e.g. on barge-in) without touching the others.
         self._pending_tool_calls: dict[str, tuple[asyncio.Task[None], ToolCallPart]] = {}
