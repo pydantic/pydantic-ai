@@ -50,7 +50,9 @@ def _process_running(pid: int) -> bool:
         state = Path(f'/proc/{pid}/stat').read_text(encoding='ascii').rsplit(')', 1)[1].split()[0]
     # Reaped between the signal check and the procfs read; ESRCH surfaces as
     # `ProcessLookupError` from the read itself.
-    except (FileNotFoundError, ProcessLookupError):  # pragma: no cover
+    # `lax no cover`, not `no cover`: whether the reap lands inside this window is a race, so
+    # this is taken on some runs and not others.
+    except (FileNotFoundError, ProcessLookupError):  # pragma: lax no cover
         return False
     return state != 'Z'
 
