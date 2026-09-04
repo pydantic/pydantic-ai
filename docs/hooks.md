@@ -329,7 +329,7 @@ async def count_events(ctx: RunContext, event: PartStartEvent) -> None:
 
 Bare works the same way: `@agent.on_event` on its own sees every event.
 
-Listeners registered on the agent run after every listener its capabilities contribute, so they see the events those emitted, and they survive an overridden root capability. An agent that never calls `on_event` is unaffected: with nothing registered, the listener capability is never added to the run at all.
+Listeners registered on the agent join after its own capabilities, so they see the events those emitted, and they survive an overridden root capability. Capability ordering still applies: one asking for `position='innermost'` keeps that position and its listeners run after these. An agent that never calls `on_event` is unaffected: with nothing registered, the listener capability is never added to the run at all.
 
 Like `hooks.on.event`, they dispatch *upstream* of `run_event_stream`: a listener sees each event as emitted, not as finally delivered, so a capability that rewrites or drops events in its stream wrapper does so after every listener has run — and a listener can see an event no consumer ever receives. When you need the delivered stream, wrap it with `run_event_stream` or consume [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events].
 

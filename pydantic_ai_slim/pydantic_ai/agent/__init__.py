@@ -2437,9 +2437,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         This is the application-level counterpart to
         [`@on_event`][pydantic_ai.capabilities.on_event] on a capability, and it dispatches at the
-        same point: among listeners, these run after every listener the agent's capabilities
-        contribute, so they see the events those emitted; and they survive an overridden root
-        capability.
+        same point. These listeners join after the agent's own capabilities, so they see the events
+        those emitted, and they survive an overridden root capability. Capability ordering still
+        applies: one asking for `position='innermost'` keeps that position and its listeners run
+        after these.
 
         Dispatch happens *upstream* of
         [`wrap_run_event_stream()`][pydantic_ai.capabilities.AbstractCapability.wrap_run_event_stream],
@@ -2850,10 +2851,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         """
         override_cap = self._override_root_capability.get()
         base = self._effective_root_capability()
-        if self._event_hooks._get('on_event'):  # pyright: ignore[reportPrivateUsage]
-            # Last, so a listener registered on the agent observes what the registered capabilities
-            # did. Wrapped here rather than in `_root_capability` so an override of it
-            # cannot drop it; `Hooks` binds to itself, so it needs no `for_agent` pass.
+        if self._event_hooks.has_on_event:
+            # Wrapped here rather than in `_root_capability` so an override of it cannot drop the
+            # listeners; `Hooks` binds to itself, so it needs no `for_agent` pass. `CombinedCapability`
+            # re-sorts, so this joins after the agent's own capabilities but still yields to one that
+            # asks for `position='innermost'` — see `on_event`'s docstring.
             base = CombinedCapability([base, self._event_hooks])
         return base, override_cap is not None
 

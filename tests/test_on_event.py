@@ -23,6 +23,7 @@ from pydantic_ai.capabilities._on_event import (
     _OnEventMethod,  # pyright: ignore[reportPrivateUsage]
     collect_on_event_methods,
 )
+from pydantic_ai.capabilities.abstract import CapabilityOrdering
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
@@ -1140,3 +1141,32 @@ async def test_agent_on_event_sees_events_before_a_stream_wrapper_rewrites_them(
     # The listener ran before the wrapper, so it never sees the rewrite the consumer receives.
     assert 'REWRITTEN' in consumer_saw
     assert listener_saw and not any('REWRITTEN' in part for part in listener_saw)
+
+
+async def test_agent_listeners_yield_to_an_innermost_capability() -> None:
+    """Agent listeners join after the agent's capabilities, but capability ordering still wins."""
+    order: list[str] = []
+
+    @dataclass
+    class Innermost(AbstractCapability[Any]):
+        def get_ordering(self) -> CapabilityOrdering | None:
+            return CapabilityOrdering(position='innermost')
+
+        @on_event(AgentLevelEvent)
+        async def heard(self, ctx: RunContext[Any], event: AgentLevelEvent) -> None:
+            order.append('innermost')
+
+    agent = Agent(
+        FunctionModel(stream_function=simple_stream_function),
+        capabilities=[AgentLevelEmitter(), Innermost()],
+    )
+
+    @agent.on_event(AgentLevelEvent)
+    async def watch(ctx: RunContext[None], event: AgentLevelEvent) -> None:
+        order.append('agent')
+
+    await agent.run('hello')
+
+    # `position='innermost'` is a deliberate request, so it keeps its place: the agent's listeners
+    # are not unconditionally last.
+    assert order == ['agent', 'innermost']
