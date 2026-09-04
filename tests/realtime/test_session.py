@@ -6951,3 +6951,50 @@ async def test_agent_realtime_session_drops_auto_injected_tool_search() -> None:
     async with agent.realtime(model).session() as session:
         _ = [e async for e in session]
     assert model.last_native_tools == []
+
+
+async def test_send_audio_first_chunk_bad_rolls_back_turn_state() -> None:
+    """Regression: a non-bytes chunk from an async iterable raised inside the
+    retention-buffer extend, which sat OUTSIDE the rollback try — leaving
+    `_user_turn_active` set (and a pending turn anchor) with nothing buffered
+    or sent, producing a phantom empty user turn at the next boundary."""
+    conn = FakeRealtimeConnection([])
+    session = RealtimeSession(conn, audio_retention='input_audio')
+
+    async def first_chunk_bad() -> AsyncIterator[bytes]:
+        yield 123  # type: ignore[misc]
+
+    async with session:
+        with pytest.raises(TypeError):
+            await session.send_audio(first_chunk_bad())
+
+        assert session._user_turn_active is False, 'bad chunk must roll the turn state back'  # pyright: ignore[reportPrivateUsage]
+        assert len(session._input_audio) == 0  # pyright: ignore[reportPrivateUsage]
+        assert conn.sent == [], 'nothing should have reached the connection'
+
+        # With the state clean, a later (empty) turn boundary must not record
+        # a phantom user turn.
+        await session.commit_audio()
+        _ = await drain_events(session)
+
+    assert session.new_messages() == []
+
+
+async def test_send_audio_bad_later_chunk_keeps_earlier_chunks() -> None:
+    """The chunk that fails rolls back to its own entry snapshot: the turn it
+    found still active stays active, and the chunks that already succeeded
+    remain sent and buffered (nothing is duplicated or dropped)."""
+    conn = FakeRealtimeConnection([])
+    session = RealtimeSession(conn, audio_retention='input_audio')
+
+    async def chunks() -> AsyncIterator[bytes]:
+        yield b'good-bytes'
+        yield 'not-bytes'  # type: ignore[misc]
+
+    async with session:
+        with pytest.raises(TypeError):
+            await session.send_audio(chunks())
+
+        assert session._user_turn_active is True, 'the first chunk legitimately opened the turn'  # pyright: ignore[reportPrivateUsage]
+        assert bytes(session._input_audio) == b'good-bytes'  # pyright: ignore[reportPrivateUsage]
+        assert len(conn.sent) == 1

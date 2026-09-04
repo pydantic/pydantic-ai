@@ -1237,8 +1237,14 @@ class RealtimeSession:
             # boundary later cuts this into that turn's own segment (see `_segment_input_audio`); only the
             # exact split at the boundary is approximate (see `audio_retention`).
             previous_length = len(self._input_audio)
-            self._input_audio.extend(data)
         try:
+            # The extend lives inside the try so a chunk that is not bytes-like (possible since
+            # `send_audio` accepts an async iterable of chunks) rolls the user-turn state back below
+            # instead of leaving `_user_turn_active` set with nothing buffered or sent. A failing
+            # `bytearray.extend` leaves the buffer unchanged, so the length guard in the handler
+            # correctly skips the truncation for that case.
+            if self._retain_input:
+                self._input_audio.extend(data)
             await self._send_frame(BinaryAudio(data=data, media_type='audio/pcm'))
         except BaseException:
             self._user_turn_active = user_turn_was_active
