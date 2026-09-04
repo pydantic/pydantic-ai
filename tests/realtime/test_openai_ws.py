@@ -40,7 +40,12 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.realtime import RealtimeModelProfile, RealtimeOutputSpeechEndEvent, RealtimeTurnCompleteEvent
+from pydantic_ai.realtime import (
+    RealtimeModelProfile,
+    RealtimeOutputSpeechEndEvent,
+    RealtimeSession,
+    RealtimeTurnCompleteEvent,
+)
 from pydantic_ai.usage import RunUsage
 
 from ..conftest import IsDatetime, IsStr, try_import
@@ -425,12 +430,14 @@ async def test_tool_error_ends_transcript_only_session(
         """Look up the weather for a city."""
         raise ValueError(f'weather service unavailable for {city}')
 
+    session: RealtimeSession | None = None
     with pytest.raises(ValueError, match='weather service unavailable for London'):
         async with agent.realtime(model).session() as session:
             await session.send('What is the weather in London?')
             with anyio.fail_after(30):
                 assert [part async for part in session.stream_transcripts()] == []
 
+    assert session is not None
     assert session.all_messages() == snapshot(
         [
             ModelRequest(

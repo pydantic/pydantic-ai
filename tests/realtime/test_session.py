@@ -6896,10 +6896,10 @@ async def test_agent_realtime_session_capability_tool_hooks() -> None:
 
 
 async def test_agent_realtime_session_capability_recovers_tool_error_for_taps_only_consumer() -> None:
-    class RecoverToolError(AbstractCapability[None]):
+    class RecoverToolError(AbstractCapability[object]):
         async def on_tool_execute_error(
             self,
-            ctx: RunContext[None],
+            ctx: RunContext[object],
             *,
             call: ToolCallPart,
             tool_def: ToolDefinition,
