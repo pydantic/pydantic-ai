@@ -69,10 +69,7 @@ from ..capabilities._dynamic import wrap_capability_funcs
 from ..capabilities._ordering import find_capability, has_capability_type
 from ..capabilities._pending_messages import PendingMessageDrainCapability
 from ..capabilities._sandbox import (
-    acquire_run_sandbox,
-    active_leaves,
-    connect_sandbox_ref,
-    release_run_sandbox,
+    get_run_sandbox,
 )
 from ..capabilities.abstract import (
     _combine_duplicate_capabilities,  # pyright: ignore[reportPrivateUsage]
@@ -416,11 +413,6 @@ _NO_SANDBOX_REASON = (
     'attach a capability that supplies a sandbox through its `acquire_sandbox` hook, or pass a `SandboxRef` '
     'to connect to an existing environment. See https://ai.pydantic.dev/sandbox/ for details.'
 )
-
-
-async def _close_sandbox_connection(facade: Sandbox) -> None:
-    with anyio.CancelScope(shield=True):
-        await facade._close_connected_backend()  # pyright: ignore[reportPrivateUsage]
 
 
 @dataclasses.dataclass
@@ -1693,36 +1685,28 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             sandbox=Sandbox.wrap(UnavailableSandbox(_NO_SANDBOX_REASON)),
         )
 
+        # Resolve the sandbox before `for_run` so every hook sees the final `ctx.sandbox`.
+        # Nothing here does I/O: the backend creates or attaches on its first operation, and
+        # the run never tears it down — one conversation can span many runs.
         sandbox_facade: Sandbox
-        sandbox_connection = False
-        sandbox_release: tuple[AbstractCapability[AgentDepsT], RunContext[AgentDepsT], SandboxRef] | None = None
-        # Resolve the sandbox before `for_run` so every hook sees the final `ctx.sandbox`. The callbacks are
-        # registered by `_PreparedAgentRun.open()` so their lifetime is tied to the run's exit stack.
-        if isinstance(sandbox, SandboxRef):
-            connectors = active_leaves(bootstrap_capability)
-            sandbox_facade = Sandbox._from_ref(  # pyright: ignore[reportPrivateUsage]
-                sandbox, lambda ref: connect_sandbox_ref(connectors, initial_ctx, ref)
-            )
-            sandbox_connection = True
-        elif sandbox is not None:
-            sandbox_facade = Sandbox.wrap(sandbox)
-        else:
-            sandbox_facade = initial_ctx.sandbox
-            acquired = await acquire_run_sandbox(bootstrap_capability, initial_ctx)
-            if acquired is not None:
-                supplier, sandbox_ref = acquired
-                sandbox_facade = Sandbox._from_ref(  # pyright: ignore[reportPrivateUsage]
-                    sandbox_ref, lambda ref: connect_sandbox_ref([supplier], initial_ctx, ref)
+        if sandbox is None:
+            backend = get_run_sandbox(bootstrap_capability, initial_ctx, None)
+            sandbox_facade = Sandbox(backend) if backend is not None else initial_ctx.sandbox
+        elif isinstance(sandbox, SandboxRef):
+            # An identity the caller passed, or one recovered from the message history: ask the
+            # capabilities for a backend bound to it.
+            backend = get_run_sandbox(bootstrap_capability, initial_ctx, sandbox)
+            if backend is None:
+                raise exceptions.UserError(
+                    f'No capability can supply sandbox {sandbox.sandbox_id!r}: every `get_sandbox` returned `None`. '
+                    'Attach a capability whose `get_sandbox` recognizes it.'
                 )
-                sandbox_release = (supplier, initial_ctx, sandbox_ref)
-                sandbox_connection = True
+            sandbox_facade = Sandbox(backend)
+        else:
+            # An explicit backend, or an existing `Sandbox` passed straight through from a
+            # parent run or a previous result.
+            sandbox_facade = Sandbox.wrap(sandbox)
         initial_ctx.sandbox = sandbox_facade
-
-        async def _cleanup_sandbox() -> None:
-            if sandbox_connection:
-                await _close_sandbox_connection(sandbox_facade)
-            if sandbox_release is not None:
-                await release_run_sandbox(*sandbox_release)
 
         # Resolve run metadata up front so capability and toolset `for_run` hooks
         # can see it on `RunContext.metadata`. Metadata factories receive the
@@ -1731,27 +1715,23 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # so any field that becomes available later still ends up reflected in
         # `agent_run.metadata`. Factories should be pure mappings over the run
         # context, not perform IO or have side effects.
-        try:
-            state.metadata = self._get_metadata(initial_ctx, metadata)
-            initial_ctx.metadata = state.metadata
+        state.metadata = self._get_metadata(initial_ctx, metadata)
+        initial_ctx.metadata = state.metadata
 
-            # Resolve the capability layers and extract their per-run contributions. Shared with
-            # `realtime_session` via `_resolve_run_capabilities` so both wire capabilities up identically;
-            # this call site keeps the graph-only surroundings: the `InstrumentedModel` unwrap and
-            # instrumentation-settings resolution above, the deferred loader (`inject_deferred_loader=True`),
-            # the output toolset below, and the layered `get_model_settings` closure. Keep those in sync
-            # with the realtime call site.
-            resolved_caps = await self._resolve_run_capabilities(
-                initial_ctx,
-                base_capability=base_capability,
-                extra_capabilities=extra_capabilities,
-                instrumentation_cap=instrumentation_cap,
-                inject_deferred_loader=True,
-                base_is_override=base_is_override,
-            )
-        except BaseException:
-            await _cleanup_sandbox()
-            raise
+        # Resolve the capability layers and extract their per-run contributions. Shared with
+        # `realtime_session` via `_resolve_run_capabilities` so both wire capabilities up identically;
+        # this call site keeps the graph-only surroundings: the `InstrumentedModel` unwrap and
+        # instrumentation-settings resolution above, the deferred loader (`inject_deferred_loader=True`),
+        # the output toolset below, and the layered `get_model_settings` closure. Keep those in sync
+        # with the realtime call site.
+        resolved_caps = await self._resolve_run_capabilities(
+            initial_ctx,
+            base_capability=base_capability,
+            extra_capabilities=extra_capabilities,
+            instrumentation_cap=instrumentation_cap,
+            inject_deferred_loader=True,
+            base_is_override=base_is_override,
+        )
         run_capability = resolved_caps.run_capability
         capabilities_dict = resolved_caps.capabilities
         cap_instructions = resolved_caps.instructions
@@ -1928,8 +1908,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             run_capability=run_capability,
             toolset=toolset,
             sandbox_facade=sandbox_facade,
-            sandbox_connection=sandbox_connection,
-            sandbox_release=sandbox_release,
             usage_limits=usage_limits,
             concurrency_limiter=self._concurrency_limiter,
             resolve_metadata=functools.partial(self._resolve_and_store_metadata, metadata=metadata),
@@ -4097,22 +4075,12 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
     run_capability: AbstractCapability[_PreparedDepsT]
     toolset: AbstractToolset[_PreparedDepsT]
     sandbox_facade: Sandbox
-    sandbox_connection: bool
-    sandbox_release: tuple[AbstractCapability[_PreparedDepsT], RunContext[_PreparedDepsT], SandboxRef] | None
     usage_limits: _usage.UsageLimits
     concurrency_limiter: _concurrency.AbstractConcurrencyLimiter | None
     resolve_metadata: Callable[
         [GraphRunContext[_agent_graph.GraphAgentState, _agent_graph.GraphAgentDeps[_PreparedDepsT, _PreparedOutputT]]],
         dict[str, Any] | None,
     ]
-
-    def _push_sandbox_cleanup(self, stack: AsyncExitStack) -> None:
-        # Register sandbox cleanup before the run contexts so it executes after the run's own teardown.
-        # Push release first so the live connection is detached before ownership of the environment ends.
-        if self.sandbox_release is not None:
-            stack.push_async_callback(release_run_sandbox, *self.sandbox_release)
-        if self.sandbox_connection:
-            stack.push_async_callback(_close_sandbox_connection, self.sandbox_facade)
 
     @asynccontextmanager
     async def open(self) -> AsyncGenerator[AgentRun[_PreparedDepsT, _PreparedOutputT]]:
@@ -4155,7 +4123,6 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
                 graph_deps.cancellation.release_issued()
 
         async with AsyncExitStack() as stack:
-            self._push_sandbox_cleanup(stack)
 
             # Enter first so cancellation is classified only after every other context has torn down.
             await stack.enter_async_context(_translate_cancellation())

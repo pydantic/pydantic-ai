@@ -37,6 +37,7 @@ __all__ = (
     'SandboxError',
     'SandboxFileEntry',
     'SandboxFilesystem',
+    'SandboxRef',
     'SandboxResult',
     'SandboxTimeoutError',
     'SandboxUnavailableError',
@@ -51,6 +52,19 @@ string (`'echo $HOME | wc -c'`). Passing a `str` without `shell=True` is invalid
 an argv sequence with `shell=True`: implementations must reject either mismatch with a
 `TypeError`, forcing callers to be explicit about shell interpretation.
 """
+
+
+@dataclass(frozen=True, kw_only=True)
+class SandboxRef:
+    """Serializable identity of a sandbox environment, as the backend spells it.
+
+    The string is whatever that backend needs to find its environment again: a provider-issued
+    id for Modal, Daytona or E2B, a caller-chosen name for platforms that cannot reattach by id.
+    Pydantic AI never interprets it, and it must never carry credentials.
+    """
+
+    sandbox_id: str
+    """The backend's own identifier for the environment."""
 
 
 class SandboxError(RuntimeError):
@@ -228,17 +242,21 @@ class SandboxBackend(Protocol):
     Structural protocol: any object with these members conforms — no registration or base
     class required. See the [module doc string][pydantic_ai.sandboxes] for the contracts
     implementations must honor, and the [sandbox documentation](../sandbox.md) for lifecycle
-    rules: this protocol deliberately contains no create/destroy/connect surface, because the
-    supplier of a sandbox always owns its lifecycle.
-
-    `isinstance` checks are shallow (member presence, not signatures), so full conformance is
-    the type checker's job: verify it statically, e.g.
-    `sandbox: SandboxBackend = MySandbox(...)`.
+    rules: this protocol has no create, connect or destroy member. A backend is built from
+    configuration plus an optional [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] and does no
+    I/O until its first operation, which creates or attaches as needed. Pydantic AI never starts
+    or stops an environment.
     """
 
     @property
-    def sandbox_id(self) -> str:
-        """The implementation's stable identifier for this sandbox, carried by [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef]."""
+    def ref(self) -> SandboxRef | None:
+        """Identity of the environment this backend is bound to, or `None` before it has one.
+
+        A backend built to attach to an existing environment reports its ref straight away. One
+        built to create a fresh environment reports `None` until its first operation has run,
+        because only the provider can say what the new environment is called. Once an operation
+        has succeeded, this must not be `None`.
+        """
         ...
 
     async def run(

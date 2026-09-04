@@ -16,8 +16,7 @@ from typing_extensions import Never
 
 from pydantic_ai.exceptions import UserError
 
-from ._connection import close_backend_connection
-from .protocol import SandboxCommand, SupportsFilesystem
+from .protocol import SandboxCommand, SandboxRef, SupportsFilesystem
 
 if TYPE_CHECKING:
     from .protocol import SandboxBackend, SandboxFileEntry, SandboxFilesystem
@@ -63,7 +62,7 @@ class ReadOnlySandbox:
 
     Reads (`working_dir`, `fs.read_bytes`, `fs.stat`, `fs.list_dir`, `fs.exists`) forward to
     the wrapped backend; `run` and file mutations raise
-    [`UserError`][pydantic_ai.exceptions.UserError] explaining the restriction. `sandbox_id`
+    [`UserError`][pydantic_ai.exceptions.UserError] explaining the restriction. `ref`
     is the wrapped backend's own: a
     [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] names the environment, never the policy,
     so whoever supplies the sandbox re-applies the wrapper on every (re)connection.
@@ -79,17 +78,11 @@ class ReadOnlySandbox:
             self.fs: SandboxFilesystem = _ReadOnlyFilesystem(wrapped.fs)
 
     @property
-    def sandbox_id(self) -> str:
-        return self._wrapped.sandbox_id
+    def ref(self) -> SandboxRef | None:
+        return self._wrapped.ref
 
     async def working_dir(self) -> str:
         return await self._wrapped.working_dir()
-
-    async def close(self, *, terminate: bool) -> None:
-        """Detach the wrapped connection without allowing this policy view to terminate it."""
-        if terminate:
-            raise UserError('A read-only sandbox cannot terminate its wrapped environment.')
-        await close_backend_connection(self._wrapped)
 
     async def run(
         self,

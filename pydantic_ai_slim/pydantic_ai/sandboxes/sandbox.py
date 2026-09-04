@@ -9,33 +9,20 @@ consume it through [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox].
 
 from __future__ import annotations as _annotations
 
-import functools
 import posixpath
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, TypeAlias
+from typing import TYPE_CHECKING
 
-import anyio
-
-from pydantic_ai.exceptions import UserError
-
-from ._connection import close_backend_connection
 from .protocol import (
     SandboxBackend,
     SandboxCommand,
     SandboxFileEntry,
     SandboxFilesystem,
+    SandboxRef,
     SandboxResult,
     SupportsFilesystem,
 )
-from .references import SandboxRef
-
-_SandboxResolver: TypeAlias = 'Callable[[SandboxRef], Awaitable[SandboxBackend]]'
-"""Turns a serializable sandbox identity into a live backend — connect, never create.
-
-Must raise (typically [`UserError`][pydantic_ai.exceptions.UserError]) when nothing recognizes
-the reference.
-"""
 
 __all__ = ('FileWindow', 'Sandbox')
 
@@ -66,34 +53,6 @@ class FileWindow:
         return '\n'.join(self.lines)
 
 
-class _DeferredFilesystem:
-    """Filesystem proxy that connects its sandbox before each operation."""
-
-    def __init__(self, filesystem: Callable[[], Awaitable[SandboxFilesystem]]):
-        self._get_filesystem = filesystem
-
-    async def read_bytes(self, path: str) -> bytes:
-        return await (await self._get_filesystem()).read_bytes(path)
-
-    async def write_bytes(self, path: str, data: bytes) -> None:
-        await (await self._get_filesystem()).write_bytes(path, data)
-
-    async def stat(self, path: str) -> SandboxFileEntry:
-        return await (await self._get_filesystem()).stat(path)
-
-    async def list_dir(self, path: str) -> Sequence[SandboxFileEntry]:
-        return await (await self._get_filesystem()).list_dir(path)
-
-    async def make_dir(self, path: str) -> None:
-        await (await self._get_filesystem()).make_dir(path)
-
-    async def remove(self, path: str) -> None:
-        await (await self._get_filesystem()).remove(path)
-
-    async def exists(self, path: str) -> bool:
-        return await (await self._get_filesystem()).exists(path)
-
-
 class Sandbox:
     """Rich sandbox interface exposed to tools and capabilities.
 
@@ -104,93 +63,25 @@ class Sandbox:
     """
 
     def __init__(self, backend: SandboxBackend):
-        self._initialize(backend=backend, ref=None, resolver=None)
-
-    def _initialize(
-        self,
-        *,
-        backend: SandboxBackend | None,
-        ref: SandboxRef | None,
-        resolver: _SandboxResolver | None,
-    ) -> None:
-        self._backend: SandboxBackend | None = backend
-        self._ref = ref
-        self._resolver = resolver
-        self._backend_closed = False
-        self._connection_error: str | None = None
-        self._deferred_filesystem: _DeferredFilesystem | None = None
-
-    @functools.cached_property
-    def _connect_lock(self) -> anyio.Lock:
-        # `anyio.Lock` binds to the event loop on which it is first used.
-        return anyio.Lock()
+        self._backend = backend
 
     @classmethod
     def wrap(cls, value: SandboxBackend) -> Sandbox:
         """Wrap `value`, returning an existing `Sandbox` unchanged."""
         return value if isinstance(value, Sandbox) else cls(value)
 
-    @classmethod
-    def _from_ref(cls, ref: SandboxRef, resolver: _SandboxResolver) -> Sandbox:
-        """Create a `Sandbox` that connects to `ref` through `resolver` on its first operation."""
-        sandbox = cls.__new__(cls)
-        sandbox._initialize(backend=None, ref=ref, resolver=resolver)
-        return sandbox
-
-    def _durable_identity(self) -> SandboxRef | SandboxBackend:
-        """Identity for durable frameworks: the ref of a deferred connection, else the live backend."""
-        if self._ref is not None:
-            return self._ref
-        assert self._backend is not None
-        return self._backend
-
-    def _forbid_connection(self, reason: str) -> None:
-        """Make any operation on a not-yet-connected sandbox raise `UserError(reason)`."""
-        self._connection_error = reason
-
     @property
     def backend(self) -> SandboxBackend:
         """The wrapped backend, for access to provider-specific functionality."""
-        if self._backend is None:
-            raise UserError(
-                f'Sandbox {self.sandbox_id!r} has not connected yet. '
-                'Call an async sandbox operation before accessing `sandbox.backend`.'
-            )
         return self._backend
 
     @property
-    def sandbox_id(self) -> str:
-        if self._ref is not None:
-            return self._ref.sandbox_id
-        assert self._backend is not None
-        return self._backend.sandbox_id
+    def ref(self) -> SandboxRef | None:
+        """Identity of the environment, once the backend has one.
 
-    @property
-    def fs(self) -> SandboxFilesystem:
-        if self._backend is not None:
-            return self._filesystem_for_backend(self._backend)
-        if self._deferred_filesystem is None:
-            self._deferred_filesystem = _DeferredFilesystem(self._filesystem)
-        return self._deferred_filesystem
-
-    async def _ensure_backend(self) -> SandboxBackend:
-        if self._backend is not None:
-            return self._backend
-        if self._connection_error is not None:
-            raise UserError(self._connection_error)
-        assert self._resolver is not None and self._ref is not None
-        async with self._connect_lock:
-            if self._backend is None:
-                self._backend = await self._resolver(self._ref)
-        return self._backend
-
-    async def _close_connected_backend(self) -> None:
-        """Detach the connection opened by this `Sandbox` without terminating the environment."""
-        async with self._connect_lock:
-            backend = self._backend
-            if not self._backend_closed and backend is not None:
-                await close_backend_connection(backend)
-                self._backend_closed = True
+        `None` until a backend built to create a fresh environment has run its first operation.
+        """
+        return self._backend.ref
 
     def _filesystem_for_backend(self, backend: SandboxBackend) -> SandboxFilesystem:
         if isinstance(backend, SupportsFilesystem):
@@ -200,8 +91,9 @@ class Sandbox:
             'implement `fs` on the backend, or reach for files through `sandbox.run(...)` shell commands.'
         )
 
-    async def _filesystem(self) -> SandboxFilesystem:
-        return self._filesystem_for_backend(await self._ensure_backend())
+    @property
+    def _filesystem(self) -> SandboxFilesystem:
+        return self._filesystem_for_backend(self._backend)
 
     async def run(
         self,
@@ -218,8 +110,7 @@ class Sandbox:
         and contracts are documented there.
         """
         _require_absolute_cwd(cwd)
-        backend = await self._ensure_backend()
-        return await backend.run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
+        return await self._backend.run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
 
     async def working_dir(self) -> str:
         """The sandbox's default working directory (absolute, filesystem-canonical POSIX path).
@@ -227,7 +118,7 @@ class Sandbox:
         The canonicality contract is documented on
         [`SandboxBackend.working_dir`][pydantic_ai.sandboxes.SandboxBackend.working_dir].
         """
-        return await (await self._ensure_backend()).working_dir()
+        return await self._backend.working_dir()
 
     async def resolve(self, path: str, *, base: str | None = None) -> str:
         """Resolve a possibly-relative path to an absolute POSIX path.
@@ -243,19 +134,45 @@ class Sandbox:
             raise ValueError(f'base must be an absolute path, got {base!r}')
         return posixpath.normpath(posixpath.join(base or await self.working_dir(), path))
 
+    async def read_bytes(self, path: str) -> bytes:
+        """Read a file's contents as bytes."""
+        return await self._filesystem.read_bytes(await self.resolve(path))
+
+    async def write_bytes(self, path: str, data: bytes) -> None:
+        """Write bytes to a file, creating missing parents and replacing existing contents."""
+        await self._filesystem.write_bytes(await self.resolve(path), data)
+
+    async def stat(self, path: str) -> SandboxFileEntry:
+        """Return metadata for a file or directory."""
+        return await self._filesystem.stat(await self.resolve(path))
+
+    async def list_dir(self, path: str) -> Sequence[SandboxFileEntry]:
+        """List the entries of a directory (non-recursive)."""
+        return await self._filesystem.list_dir(await self.resolve(path))
+
+    async def make_dir(self, path: str) -> None:
+        """Create a directory, including missing parents."""
+        await self._filesystem.make_dir(await self.resolve(path))
+
+    async def remove(self, path: str) -> None:
+        """Remove a file, or a directory and its contents."""
+        await self._filesystem.remove(await self.resolve(path))
+
+    async def exists(self, path: str) -> bool:
+        """Whether a file or directory exists at the path."""
+        return await self._filesystem.exists(await self.resolve(path))
+
     async def read_text(self, path: str, *, encoding: str = 'utf-8') -> str:
         """Read text from `path`, resolving relative paths through the backend first.
 
         Decoding is strict: undecodable bytes raise `UnicodeDecodeError`. For a lossy,
         model-facing view use [`read_file`][pydantic_ai.sandboxes.Sandbox.read_file].
         """
-        resolved_path = await self.resolve(path)
-        return (await self.fs.read_bytes(resolved_path)).decode(encoding)
+        return (await self.read_bytes(path)).decode(encoding)
 
     async def write_text(self, path: str, content: str, *, encoding: str = 'utf-8') -> None:
         """Write text to `path`, resolving relative paths through the backend first."""
-        resolved_path = await self.resolve(path)
-        await self.fs.write_bytes(resolved_path, content.encode(encoding))
+        await self.write_bytes(path, content.encode(encoding))
 
     async def read_file(self, path: str, *, offset: int = 1, limit: int | None = None) -> FileWindow:
         """Read a line window from `path`, resolving relative paths through the backend first.
@@ -289,14 +206,14 @@ class Sandbox:
 
             await self._validate_bounded_read_path(resolved_path)
             try:
-                filesystem = await self._filesystem()
+                filesystem = self._filesystem
             except NotImplementedError as e:
                 raise NotImplementedError(
                     'This sandbox could not perform a windowed file read. Provide a working `sed` '
                     'command through `run()`, or implement `SupportsFilesystem` on the backend.'
                 ) from e
         else:
-            filesystem = await self._filesystem()
+            filesystem = self._filesystem
 
         data = await filesystem.read_bytes(resolved_path)
         return _window_from_data(data, offset, limit)
@@ -310,7 +227,7 @@ class Sandbox:
         """
         end = offset + limit  # one extra line, to learn whether more exist
         try:
-            backend = await self._ensure_backend()
+            backend = self._backend
             # argv, never shell=True: the path is an argument, not shell-interpreted text.
             # `{end}q` stops `sed` at the window instead of scanning to EOF, and the timeout
             # bounds the optimization on paths that never finish.
@@ -335,7 +252,7 @@ class Sandbox:
     async def _validate_bounded_read_path(self, path: str) -> None:
         """Surface filesystem policy, missing-path, and directory errors without reading content."""
         try:
-            entry = await (await self._filesystem()).stat(path)
+            entry = await (self._filesystem).stat(path)
         except NotImplementedError:
             return
         if entry.is_dir:

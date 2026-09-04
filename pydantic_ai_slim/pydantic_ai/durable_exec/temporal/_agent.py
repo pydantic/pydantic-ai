@@ -52,10 +52,8 @@ from pydantic_ai.tools import (
 
 from .._runtime_toolsets import reject_cancellation_token, reject_unsupported_runtime_toolsets
 from .._sandbox import (
-    contributes_sandbox,
     guard_workflow_sandbox,
     live_sandbox_error,
-    sandbox_contribution_error,
 )
 from ._activity_execution import execute_activity
 from ._durability import serialization_user_error
@@ -97,10 +95,6 @@ def _merge_activity_config(base: ActivityConfig, override: ActivityConfig) -> Ac
     return merged
 
 
-_SANDBOX_CONTRIBUTION_ERROR = sandbox_contribution_error(
-    run_location='inside a Temporal workflow',
-    sandbox_constraint='the sandbox would be entered as workflow code where I/O is forbidden',
-)
 _LIVE_SANDBOX_ERROR = live_sandbox_error(
     run_location='to an agent run inside a Temporal workflow',
     sandbox_constraint='it would exist in workflow code where I/O is forbidden and cannot cross into activities',
@@ -194,7 +188,6 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
 
         self._name = name
         self._event_stream_handler = event_stream_handler
-        self._wrapped_contributes_sandbox = contributes_sandbox(wrapped.root_capability)
         self.run_context_type = run_context_type
 
         if self.name is None:
@@ -527,9 +520,6 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 )
             sandbox = guard_workflow_sandbox(
                 sandbox,
-                capabilities,
-                static_contributes_sandbox=self._wrapped_contributes_sandbox,
-                contribution_error=_SANDBOX_CONTRIBUTION_ERROR,
                 live_error=_LIVE_SANDBOX_ERROR,
             )
             if sandbox is None:

@@ -51,10 +51,8 @@ from pydantic_ai.tools import (
 
 from .._runtime_toolsets import reject_cancellation_token, reject_unsupported_runtime_toolsets
 from .._sandbox import (
-    contributes_sandbox,
     guard_workflow_sandbox,
     live_sandbox_error,
-    sandbox_contribution_error,
 )
 from ._model import DBOSModel
 from ._utils import DBOS_SANDBOX_UNAVAILABLE_REASON, StepConfig
@@ -74,10 +72,6 @@ DBOSParallelExecutionMode = Literal['sequential', 'parallel_ordered_events']
 """The mode for executing tool calls in DBOS durable workflows. This is a subset of the ParallelExecutionMode because 'parallel' cannot guarantee deterministic ordering.
 """
 
-_SANDBOX_CONTRIBUTION_ERROR = sandbox_contribution_error(
-    run_location='in a DBOS durable workflow',
-    sandbox_constraint='the sandbox would be entered in workflow code, which is replayed during recovery',
-)
 _LIVE_SANDBOX_ERROR = live_sandbox_error(
     run_location='to a DBOS durable agent run',
     sandbox_constraint=(
@@ -132,7 +126,6 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
 
         self._name = name or wrapped.name
         self._event_stream_handler = event_stream_handler
-        self._wrapped_contributes_sandbox = contributes_sandbox(wrapped.root_capability)
         self._run_event_stream_handler: ContextVar[EventStreamHandler[AgentDepsT] | None] = ContextVar(
             '_run_event_stream_handler', default=None
         )
@@ -530,9 +523,6 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         self._reject_unsupported_runtime_toolsets(toolsets)
         sandbox = guard_workflow_sandbox(
             sandbox,
-            capabilities,
-            static_contributes_sandbox=self._wrapped_contributes_sandbox,
-            contribution_error=_SANDBOX_CONTRIBUTION_ERROR,
             live_error=_LIVE_SANDBOX_ERROR,
         )
         return await self.dbos_wrapped_run_workflow(
@@ -698,9 +688,6 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         self._reject_unsupported_runtime_toolsets(toolsets)
         sandbox = guard_workflow_sandbox(
             sandbox,
-            capabilities,
-            static_contributes_sandbox=self._wrapped_contributes_sandbox,
-            contribution_error=_SANDBOX_CONTRIBUTION_ERROR,
             live_error=_LIVE_SANDBOX_ERROR,
         )
         return self.dbos_wrapped_run_sync_workflow(

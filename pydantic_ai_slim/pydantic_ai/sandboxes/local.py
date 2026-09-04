@@ -24,7 +24,7 @@ from typing_extensions import Self
 
 from pydantic_ai._utils import run_in_executor
 
-from .protocol import CommandResult, FileEntry, SandboxCommand, SandboxError, SandboxTimeoutError
+from .protocol import CommandResult, FileEntry, SandboxCommand, SandboxError, SandboxRef, SandboxTimeoutError
 
 if TYPE_CHECKING:
     from .protocol import SandboxBackend, SupportsFilesystem
@@ -148,8 +148,8 @@ class LocalSandbox:
         self.fs = _LocalFilesystem()
 
     @property
-    def sandbox_id(self) -> str:
-        return self._id
+    def ref(self) -> SandboxRef:
+        return SandboxRef(sandbox_id=self._id)
 
     async def _root_path(self) -> Path:
         # The default temp root is created lazily, so a constructed-but-unused sandbox doesn't

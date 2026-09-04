@@ -17,7 +17,7 @@ from typing_extensions import Never
 
 from pydantic_ai.exceptions import UserError
 
-from .protocol import SandboxCommand
+from .protocol import SandboxCommand, SandboxRef
 
 if TYPE_CHECKING:
     from .protocol import (
@@ -57,7 +57,9 @@ class _UnavailableFilesystem:
 class UnavailableSandbox:
     """A `SandboxBackend` whose every operation raises `UserError` with a configured reason."""
 
-    sandbox_id = 'unavailable'
+    @property
+    def ref(self) -> SandboxRef:
+        return SandboxRef(sandbox_id='unavailable')
 
     def __init__(self, reason: str):
         self.reason = reason

@@ -9,13 +9,13 @@ from .protocol import (
     SandboxError,
     SandboxFileEntry,
     SandboxFilesystem,
+    SandboxRef,
     SandboxResult,
     SandboxTimeoutError,
     SandboxUnavailableError,
     SupportsFilesystem,
 )
 from .readonly import ReadOnlySandbox
-from .references import SandboxRef
 from .sandbox import FileWindow, Sandbox
 from .unavailable import UnavailableSandbox
 

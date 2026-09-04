@@ -622,13 +622,18 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """Return native tools to register with the agent."""
         return []
 
-    async def get_sandbox(self, ctx: RunContext[AgentDepsT], ref: SandboxRef) -> SandboxBackend | None:
-        """Connect to the sandbox identified by `ref` and return a live backend; never create one.
+    def get_sandbox(
+        self, ctx: RunContext[AgentDepsT], *, ref: SandboxRef | None
+    ) -> SandboxBackend | None:
+        """Supply the run's sandbox backend, or `None` if this capability does not provide one.
 
-        Return `None` if this capability cannot serve `ref`. Return a fresh handle on every call; the run
-        closes it with `close(terminate=False)` when the backend supports it. Fail if the sandbox is gone.
-        Never a durable operation: a live handle cannot be replayed, so durable engines call this inside
-        each durable unit, with the engine's restricted `ctx` (`ctx.deps` is always available).
+        Called once per run, synchronously, and must do no I/O: return a backend configured from
+        this capability's own settings, carrying `ref` when one was recovered or passed in. The
+        backend creates or attaches on its first operation, so nothing here reaches the network.
+
+        `ref` is the identity of an environment the run should continue in: an explicit
+        `sandbox=` argument, or the last one recorded in the message history. `None` means the
+        backend should create a fresh environment. At most one attached capability may answer.
         """
         return None
 
