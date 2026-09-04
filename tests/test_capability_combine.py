@@ -156,16 +156,16 @@ COMBINE_POLICY: dict[str, Policy] = {
     'XSearch': Combines(
         'one X search configuration',
         lambda: (
-            XSearch(fallback_model='xai:grok-4.3', allowed_x_handles=['a']),
-            XSearch(fallback_model='xai:grok-4.3', allowed_x_handles=['b']),
+            XSearch(fallback_subagent_model='xai:grok-4.3', allowed_x_handles=['a']),
+            XSearch(fallback_subagent_model='xai:grok-4.3', allowed_x_handles=['b']),
         ),
         _check_x_search,
     ),
     'ImageGeneration': Combines(
         'one image generation configuration',
         lambda: (
-            ImageGeneration(fallback_model='openai-responses:gpt-5.4', quality='low'),
-            ImageGeneration(fallback_model='openai-responses:gpt-5.4', quality='high'),
+            ImageGeneration(fallback_subagent_model='openai-responses:gpt-5.4', quality='low'),
+            ImageGeneration(fallback_subagent_model='openai-responses:gpt-5.4', quality='high'),
         ),
         _check_image_generation,
     ),
@@ -755,17 +755,17 @@ def test_a_chain_of_wrappers_walks_its_subtree_once_per_level() -> None:
 def test_a_merge_cannot_reach_a_combination_the_constructor_rejects(
     capability_type: type[ImageGeneration[Any]] | type[XSearch[Any]],
 ) -> None:
-    """`fallback_model` and `local` are alternatives, and merging two instances must not pair them.
+    """`fallback_subagent_model` and `local` are alternatives, and merging two instances must not pair them.
 
     Each states one half of a combination `__init__` refuses, so the merged capability would carry
-    both -- and the local tool would take effect while `fallback_model` was silently ignored. The
+    both -- and the local tool would take effect while `fallback_subagent_model` was silently ignored. The
     invariant lives in `__post_init__`, which `combine` re-runs, rather than in `__init__`, which
     it cannot.
     """
-    with pytest.raises(UserError, match='cannot specify both `fallback_model` and `local`'):
+    with pytest.raises(UserError, match='cannot specify both `fallback_subagent_model` and `local`'):
         capability_type.combine(
             [
-                capability_type(fallback_model=TestModel()),
+                capability_type(fallback_subagent_model=TestModel()),
                 capability_type(local=_a_local_tool),
             ]
         )
