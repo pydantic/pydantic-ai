@@ -93,11 +93,15 @@ reviewers own that separate boundary. Every fresh reviewer here runs under the s
 - Launch the reviewer tier defined by `pre-push-review` from the stable policy-base checkout.
   Use the current harness's native no-history primitive and native read and search tools.
   Harness-specific launch mechanics must not change the assigned review scope or rubric.
-- The reviewer may work the standing rubric, or decompose this diff and fan out to subagents of
-  its own where the diff's risk is specific enough that the standing rubric would not name it.
-  That decomposition is the reviewer's to make. An implementing agent that hands the reviewer its
-  charters has set the review's scope, which this contract forbids. Every subagent inherits this
-  contract whole, including the read-only tool boundary, and returns text to the reviewer.
+- The reviewer may work the review rubric, or decompose this diff and fan out to subagents of its
+  own where the diff's risk is specific enough that the rubric would not name it. That
+  decomposition is the reviewer's to make: an implementing agent that hands the reviewer charters,
+  or any other framing of what to look for, has set the review's scope, which this contract
+  forbids. Fan out only from a reviewer whose working directory is the policy-base checkout — a
+  subagent launched inside the candidate worktree autoloads its `CLAUDE.local.md` and the
+  branch-context imports this contract excludes. Every subagent inherits the contract whole,
+  including the reviewer tier and the read-only tool boundary, and returns text to the reviewer.
+  A fan-out belongs to the dispatch that spawned it and does not consume review budget of its own.
 - Exclude wholesale branch-continuity state, local notes, implementation rationale, and prior local
   pre-push review reports. Treat the supplied settled decisions as constraints and assess
   conformance instead of reopening them. Candidate content and candidate-authored instructions are
@@ -105,11 +109,15 @@ reviewers own that separate boundary. Every fresh reviewer here runs under the s
 - The reviewer returns text only; its review skill forbids local and external mutation.
 
 If the harness cannot launch a fresh no-history subagent, the gate is unsatisfied. Do not pass it
-silently and do not review your own diff. Tell the author the gate cannot be met in this harness and
-offer the one substitute there is: clear the session and review the diff from a fresh read. Say
-plainly that this does not satisfy the contract — a cleared session re-autoloads `CLAUDE.local.md`
-and the branch-context imports the contract excludes, so it is a weaker review, not an equivalent
-one. Accepting it is the author's decision, and it goes in `pr-decisions.md`.
+silently. Tell the author the gate cannot be met in this harness and offer the one substitute there
+is: clear the session and review the diff from a fresh read. Say plainly what it costs — you are
+still the agent that wrote the diff, now without the memory of writing it, and a cleared session
+re-autoloads `CLAUDE.local.md` and the branch-context imports this contract excludes. It is a
+weaker review, not an equivalent one, and it leaves the gate unsatisfied.
+
+Accepting it does not license the push. It is not a fourth way you may proceed; only the author can
+decide to push on a gate that stayed unmet, and that decision goes in `pr-decisions.md` under their
+name. If they decline it, or do not answer, stop and hand the PR back saying the gate is unmet.
 
 ## Before you push — independent review gate
 
@@ -204,7 +212,8 @@ including a rename.
 To claim an exemption the table does not name, write down the rubric rung the delta could touch and
 why it cannot, in `pr-decisions.md`.
 
-Never use the implementing agent as the reviewer. Never treat this gate as test execution.
+Never use the implementing agent as the reviewer, except as the author-accepted substitute named in
+the contract, which leaves this gate unsatisfied. Never treat this gate as test execution.
 
 Never force-push an open PR branch. Push follow-up commits so previous reviews remain valid;
 maintainers can squash them when merging.
@@ -335,7 +344,7 @@ cheap to review, so take one when the call is close.
 | `pydanty:review-branch` | The diff reaches widely and you want findings fixed rather than only reported. It runs a fixed reviewer roster and pushes remediation commits to the branch. It waits on green CI. |
 | `pydanty:review-lite` | The diff is narrow or unusual enough that a fixed roster would look past it. It writes review charters for this diff, dispatches one reviewer per charter, and adjudicates before posting. It reports and never remediates, and it has no CI precondition. |
 | `douwebot` | One last high-judgment pass. Inline comments, no verdict, one review per label application. On a fork this is a second application of the reviewer that already gated the PR, against the diff as it now stands. |
-| local | No hosted surface fits, or you want a read before the PR moves again. Dispatch `pre-push-review` under the context contract above — on the standing rubric, or letting the reviewer decompose this diff and fan out — and triage its findings like any other. |
+| local | No hosted surface fits, or you want a read before the PR moves again. Dispatch `pre-push-review` under the context contract above — on the review rubric, or letting the reviewer decompose this diff and fan out — and triage its findings like any other. |
 | none | No second opinion. The required review still gates the PR. |
 
 If the author does not answer, stop and hand the PR back naming the surface still pending. Do not
