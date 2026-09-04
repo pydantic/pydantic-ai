@@ -6232,15 +6232,12 @@ async def test_tool_closing_realtime_session_drains_sibling_tools(loop_errors: l
         await sibling_started.wait()
         await ctx.realtime_session.close()
 
-    class TwoCallsConnection(FakeRealtimeConnection):
-        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
-            yield ToolCall(tool_call_id='c1', tool_name='slow', args='{}')
-            yield ToolCall(tool_call_id='c2', tool_name='hang_up', args='{}')
-            # `hang_up` closes the session before the response would complete, so idle like the
-            # provider does while a tool is still running.
-            await asyncio.Event().wait()
-
-    conn = TwoCallsConnection([])
+    conn = FakeRealtimeConnection(
+        [
+            ToolCall(tool_call_id='c1', tool_name='slow', args='{}'),
+            ToolCall(tool_call_id='c2', tool_name='hang_up', args='{}'),
+        ]
+    )
     with anyio.fail_after(5):
         async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
             _ = [event async for event in session]
