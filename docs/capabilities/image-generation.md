@@ -27,7 +27,7 @@ ImageGeneration(local=my_generator)
 ```
 
 !!! note "`fallback_model` is deprecated"
-    `fallback_model` is the former name of `fallback_subagent_model`. It keeps working, in Python and in an [agent spec](../agent-spec.md), and warns; passing both names raises [`UserError`][pydantic_ai.exceptions.UserError].
+    `fallback_model` is the former name of `fallback_subagent_model`. It keeps working, in Python and in an [agent spec](../agent-spec.md), and warns; passing both names is refused: [`UserError`][pydantic_ai.exceptions.UserError] when you construct the capability, and the `ValueError` the spec loader wraps it in when you load a spec.
 
 !!! warning "Durable execution with Temporal"
     Generated images have to cross Temporal's activity boundary, where the payload size limit leaves roughly 1.5MB for raw image bytes. A larger image fails with a `UserError` — naming the tool when it came from a local generator (the subagent fallback or your own `local=` callable or toolset), or naming the model when the native tool put it on the response. See [Large Payloads](../durable_execution/temporal.md#large-payloads) for the options.

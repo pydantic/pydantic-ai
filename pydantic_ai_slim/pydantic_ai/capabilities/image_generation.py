@@ -158,7 +158,9 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         self.native = native
         self.local = local
         self.fallback_subagent_model = resolve_fallback_subagent_model(
-            type(self).__name__, fallback_subagent_model, fallback_model
+            type(self).__name__,
+            fallback_subagent_model=fallback_subagent_model,
+            fallback_model=fallback_model,
         )
         self.action = action
         self.background = background

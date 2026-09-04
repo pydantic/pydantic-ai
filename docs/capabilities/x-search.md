@@ -15,7 +15,7 @@ agent = Agent(
 ```
 
 !!! note "`fallback_model` is deprecated"
-    `fallback_model` is the former name of `fallback_subagent_model`. It keeps working, in Python and in an [agent spec](../agent-spec.md), and warns; passing both names raises [`UserError`][pydantic_ai.exceptions.UserError].
+    `fallback_model` is the former name of `fallback_subagent_model`. It keeps working, in Python and in an [agent spec](../agent-spec.md), and warns; passing both names is refused: [`UserError`][pydantic_ai.exceptions.UserError] when you construct the capability, and the `ValueError` the spec loader wraps it in when you load a spec.
 
 `native=` can be a factory: a callable taking [`RunContext`][pydantic_ai.tools.RunContext] that returns [`XSearchTool`][pydantic_ai.native_tools.XSearchTool] or `None` — [`XSearchNativeTool`][pydantic_ai.common_tools.x_search.XSearchNativeTool] is the type the `fallback_subagent_model` subagent accepts. It resolves on each model request, and again when the subagent runs — so keep it free of one-shot side effects. Both resolutions belong to the same run and carry the same `deps`, but they do not share a [`RunContext`][pydantic_ai.tools.RunContext]: the subagent resolves from its own tool call, so `tool_call_id` and `tool_name` name that call instead of being `None`, and `messages` holds the run so far. Read `ctx.deps` for configuration that has to match across both. On the subagent, capability-level fields such as `include_output` override the factory result. See [Dynamic Configuration](../native-tools.md#dynamic-configuration).
 

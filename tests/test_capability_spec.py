@@ -235,17 +235,25 @@ def test_agent_from_spec_fallback_subagent_model_key():
     assert x_search.get_toolset() is not None
 
 
-def test_agent_from_spec_rejects_both_fallback_model_keys():
-    """A spec carrying both spellings is refused rather than silently picking one."""
-    with pytest.raises((UserError, ValueError), match='cannot specify both'):
+@pytest.mark.parametrize('name, model', [('ImageGeneration', 'openai-responses:gpt-5.4'), ('XSearch', 'xai:grok-4.3')])
+def test_agent_from_spec_rejects_both_fallback_model_keys(name: str, model: str):
+    """A spec carrying both spellings is refused rather than silently picking one.
+
+    `_spec.load_from_registry` wraps every capability-constructor error, so the refusal the
+    constructor raises as a `UserError` reaches the caller as a `ValueError` naming the capability,
+    with the `UserError` as its cause. Direct construction raises the `UserError` itself, which
+    `tests/test_capability_native_or_local.py` pins.
+    """
+    with pytest.raises(ValueError, match=f'Failed to instantiate capability {name!r}') as exc_info:
         Agent.from_spec(
             {
                 'model': 'test',
-                'capabilities': [
-                    {'XSearch': {'fallback_model': 'xai:grok-4.3', 'fallback_subagent_model': 'xai:grok-4.3'}}
-                ],
+                'capabilities': [{name: {'fallback_model': model, 'fallback_subagent_model': model}}],
             }
         )
+    cause = exc_info.value.__cause__
+    assert isinstance(cause, UserError)
+    assert str(cause).startswith(f'{name}: cannot specify both `fallback_model` and `fallback_subagent_model`')
 
 
 def test_agent_from_spec_web_fetch():
