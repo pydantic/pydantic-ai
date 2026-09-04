@@ -4724,3 +4724,22 @@ async def test_an_explicit_id_is_used_as_written() -> None:
     keys = await _registry_keys([_Unnamed(label='a', id='chosen')])
 
     assert keys['chosen'] == 'a'
+
+
+def test_a_synthetic_key_retries_until_it_is_unused(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Two capabilities must never share a registry key, however unlikely a collision is.
+
+    Six hex characters make one vanishingly rare, which is exactly why the retry needs pinning
+    here: nothing would exercise it, and a key that silently replaced another capability's entry
+    would drop that capability out of `ctx.capabilities` entirely.
+    """
+    from pydantic_ai.agent import _synthetic_capability_id  # pyright: ignore[reportPrivateUsage]
+
+    class _Fixed:
+        def __init__(self, hex_value: str) -> None:
+            self.hex = hex_value
+
+    minted = iter([_Fixed('aaaaaa' + '0' * 26), _Fixed('bbbbbb' + '0' * 26)])
+    monkeypatch.setattr('pydantic_ai.agent.uuid4', lambda: next(minted))
+
+    assert _synthetic_capability_id(_Unnamed, taken={'<_unnamed:aaaaaa>'}) == '<_unnamed:bbbbbb>'
