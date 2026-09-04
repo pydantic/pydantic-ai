@@ -295,6 +295,22 @@ def test_a_second_durability_engine_is_refused_behind_a_wrapper() -> None:
         )
 
 
+def test_one_engine_written_twice_is_refused() -> None:
+    """The same object listed twice is two registrations, not one capability seen twice.
+
+    Each entry is bound in its own right, so counting distinct objects rather than occurrences
+    would read this pair as nothing at all -- and an engine declaring no default `id` has no
+    `combine` behind it to catch what that misses.
+    """
+    durability = JournalDurability()
+
+    with pytest.raises(
+        UserError,
+        match=r'An agent runs under one durability engine, but 2 JournalDurability capabilities are attached\.',
+    ):
+        Agent(TestModel(), name='written_twice', capabilities=[durability, durability])
+
+
 def test_a_repeated_engine_without_a_default_id_is_refused() -> None:
     """`combine` only sees a repeat that met under a shared `id`, which this engine never declares.
 

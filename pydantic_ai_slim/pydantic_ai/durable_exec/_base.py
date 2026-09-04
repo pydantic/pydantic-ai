@@ -585,10 +585,15 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         every engine passes through. Two engines each wrap the agent's model and toolsets and
         register their own durable units, so a run would be dispatched through both.
         """
-        attached = [capability for capability in attached_durability_capabilities(agent) if capability is not self]
-        if not attached:
+        # Counted by occurrence rather than by object, because one capability written twice binds
+        # twice and registers its units twice -- filtering by identity would read that pair as
+        # nothing at all. `self` is normally already among them, since the agent's tree still holds
+        # it while it binds; a per-run capability binds before it joins the tree, so it is added.
+        attached = attached_durability_capabilities(agent)
+        if not any(capability is self for capability in attached):
+            attached = [*attached, self]
+        if len(attached) < 2:
             return
-        attached.append(self)
         engine_names = sorted({type(capability).__name__ for capability in attached})
         # A repeat of one engine reads as a count; distinct engines read as a list. Engines that
         # declare a default `id` are settled by `combine` before they reach here, so its more
