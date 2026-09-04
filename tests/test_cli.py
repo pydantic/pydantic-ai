@@ -495,8 +495,7 @@ async def test_streaming_clears_indicator_for_retried_tool(live_frames: list[str
 
     `pending_calls` is popped for any `FunctionToolResultEvent`. Popping on success alone left
     `> _Calling tool ...` on screen for the rest of the run. The retried call reports `Called tool`
-    like any other: it is a call that ran and returned, and the run's next line is its second
-    attempt.
+    like any other: it is a call that ran and returned, and the run continues from there.
     """
 
     async def retrying_tool_stream(

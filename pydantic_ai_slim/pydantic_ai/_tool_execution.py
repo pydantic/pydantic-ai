@@ -972,7 +972,9 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         otherwise-valid output, so the model addresses the retry next round. Retries from
         unknown/hallucinated tools don't — they aren't work that needs to complete before the output
         is valid. This single predicate backs both the emission-order paths (graceful/early) and the
-        parallel exhaustive path so the rule lives in one place.
+        parallel exhaustive path so the rule lives in one place. The emission-order caller pre-filters
+        on `outcome == 'retried'` to skip a tool-def lookup per settled return, so widening the set of
+        outcomes that trigger retry-wins means widening that check too.
         """
         return kind == 'function' and isinstance(part, _messages.ToolReturnPart) and part.outcome == 'retried'
 

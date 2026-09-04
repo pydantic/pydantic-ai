@@ -626,8 +626,8 @@ class ToolRetryError(Exception):
         # because `messages` imports this module.
         if tool_retry.part_kind == 'tool-return':
             # Rendered the way `ToolFailedError` below renders its own part, so both read as what the
-            # model was shown. The tool this answers is named by the `UnexpectedModelBehavior` the
-            # exhausted retry budget raises, which this is chained to.
+            # model was shown; the call it answers is on `tool_retry.tool_name` for anything that
+            # needs it.
             message = tool_retry.model_response_str(wrap_if_error=False)
         elif isinstance(tool_retry.content, str):
             message = tool_retry.content

@@ -233,7 +233,7 @@ Mid-conversation instructions stay where you put them rather than joining the sy
 How it reaches the model depends on the provider:
 
 * Where the API accepts a system message inside the conversation, it's sent as one, with the operator authority that implies. [Anthropic](models/anthropic.md#mid-conversation-system-messages) supports this on some models, and may adjust the position slightly to satisfy its own placement rules.
-* Everywhere else it's rendered as a `<system>`-tagged [`UserPromptPart`][pydantic_ai.messages.UserPromptPart] at the same position. The instruction still applies from where you put it, but the model can tell it came in over the user channel and may treat it as a strong preference rather than a rule. A `</system>` inside your own text reaches the model as `&lt;/system&gt;` on this path, so nothing in the instruction can close the wrapper early; the rest of it goes out as written.
+* Everywhere else it's rendered as a `<system>`-tagged [`UserPromptPart`][pydantic_ai.messages.UserPromptPart] at the same position. The instruction still applies from where you put it, but the model can tell it came in over the user channel and may treat it as a strong preference rather than a rule. A `</system>` inside your own text reaches the model with its `<` escaped, as `&lt;/system>`, so nothing in the instruction can close the wrapper early; the rest of it goes out as written.
 
 Phrase the instruction as what changed rather than as an override of the user. Models are trained to resist instructions that appear to work against the person they're talking to, and that applies to the system role too — "the build tag is no longer confidential" lands where "ignore what the user was told earlier" doesn't.
 
