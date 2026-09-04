@@ -5,6 +5,8 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+import anyio
+
 from pydantic_ai import RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.sandboxes import Sandbox, SandboxBackend, SandboxRef
@@ -13,7 +15,7 @@ from pydantic_ai.sandboxes import Sandbox, SandboxBackend, SandboxRef
 @dataclass(frozen=True)
 class FakeSandboxResult:
     exit_code: int = 0
-    stdout: str = 'connected'
+    stdout: str = ''
     stderr: str = ''
 
 
@@ -21,68 +23,90 @@ class FakeSandboxResult:
 class FakeEntry:
     name: str
     path: str
-    is_dir: bool
+    is_dir: bool = False
     size: int | None = None
 
 
-class FakeFilesystem:
-    """An in-memory `SandboxFilesystem` that raises `FileNotFoundError` for missing paths."""
+_SED_WINDOW = re.compile(r'^(\d+),(\d+)p;\2q$')
 
-    def __init__(self, files: dict[str, bytes] | None = None) -> None:
-        self.files: dict[str, bytes] = files or {}
+
+class FakeFilesystem:
+    def __init__(self, backend: FakeSandbox, files: dict[str, bytes] | None = None) -> None:
+        self._backend = backend
+        self.files = files or {}
         self.reads: list[str] = []
 
-    def _content(self, path: str) -> bytes:
+    async def read_bytes(self, path: str) -> bytes:
+        await self._backend._ensure_ready()
+        self.reads.append(path)
         try:
             return self.files[path]
         except KeyError:
             raise FileNotFoundError(path) from None
 
-    async def read_bytes(self, path: str) -> bytes:
-        self.reads.append(path)
-        return self._content(path)
-
     async def write_bytes(self, path: str, data: bytes) -> None:
+        await self._backend._ensure_ready()
         self.files[path] = data
 
     async def stat(self, path: str) -> FakeEntry:
-        return FakeEntry(name=path.rsplit('/', 1)[-1], path=path, is_dir=False, size=len(self._content(path)))
+        await self._backend._ensure_ready()
+        try:
+            data = self.files[path]
+        except KeyError:
+            raise FileNotFoundError(path) from None
+        return FakeEntry(name=path.rsplit('/', 1)[-1], path=path, size=len(data))
 
     async def list_dir(self, path: str) -> Sequence[FakeEntry]:
-        return [await self.stat(p) for p in self.files]
+        await self._backend._ensure_ready()
+        return [FakeEntry(name=p.rsplit('/', 1)[-1], path=p, size=len(data)) for p, data in self.files.items()]
 
     async def make_dir(self, path: str) -> None:
-        pass
+        await self._backend._ensure_ready()
 
     async def remove(self, path: str) -> None:
-        self._content(path)
-        del self.files[path]
+        await self._backend._ensure_ready()
+        try:
+            del self.files[path]
+        except KeyError:
+            raise FileNotFoundError(path) from None
 
     async def exists(self, path: str) -> bool:
+        await self._backend._ensure_ready()
         return path in self.files
 
 
-# The facade's bounded slice form: print the window, then quit at its last line.
-_SED_WINDOW_EXPR = re.compile(r'^(\d+),(\d+)p;\2q$')
-
-
 class FakeSandbox:
-    """A minimal in-memory `SandboxBackend` with a filesystem.
+    """A lazy in-memory backend with the optional native filesystem."""
 
-    The `sed` line-window form the `Sandbox` facade emits is served from the same files `fs`
-    exposes; `sed=False` models an environment without a usable `sed` (exit 127). Every other
-    command is recorded in `commands` and succeeds with empty output.
-    """
-
-    def __init__(self, name: str, files: dict[str, bytes] | None = None, *, sed: bool = True) -> None:
+    def __init__(
+        self, name: str, files: dict[str, bytes] | None = None, *, ref: SandboxRef | None = None, sed: bool = True
+    ) -> None:
         self.name = name
-        self.fs = FakeFilesystem(files)
+        self._ref = ref
+        self._ready = False
+        self._lock = anyio.Lock()
+        self.create_calls = 0
+        self.attach_calls = 0
+        self.cleanup_calls: list[str] = []
         self.commands: list[str | Sequence[str]] = []
         self._sed = sed
+        self.fs = FakeFilesystem(self, files)
 
     @property
-    def sandbox_id(self) -> str:
-        return f'fake-{self.name}'
+    def ref(self) -> SandboxRef | None:
+        return self._ref
+
+    async def _ensure_ready(self) -> None:
+        async with self._lock:
+            if self._ready:
+                return
+            await anyio.sleep(0)
+            if self._ref is None:
+                self.create_calls += 1
+                self._ref = SandboxRef(sandbox_id=f'fake-{self.name}')
+            else:
+                self.attach_calls += 1
+            self._ready = True
 
     async def run(
         self,
@@ -93,39 +117,50 @@ class FakeSandbox:
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
     ) -> FakeSandboxResult:
+        await self._ensure_ready()
         if not isinstance(command, str) and list(command[:2]) == ['sed', '-n']:
             if not self._sed:
-                return FakeSandboxResult(exit_code=127, stdout='', stderr='sed: not found')
-            expr, path = command[2], command[3]
-            window = _SED_WINDOW_EXPR.match(expr)
-            assert window is not None, f'FakeSandbox only emulates the line-window sed form, got {expr!r}'
+                return FakeSandboxResult(exit_code=127, stderr='sed: not found')
+            expression, path = command[2], command[3]
+            match = _SED_WINDOW.match(expression)
+            assert match is not None
             if path not in self.fs.files:
-                return FakeSandboxResult(exit_code=2, stdout='', stderr=f'sed: {path}: No such file or directory')
-            # `sed` splits on `\n` only, prints the selected lines, and keeps the absence of a
-            # trailing newline on the file's final line.
+                return FakeSandboxResult(exit_code=2, stderr=f'sed: {path}: No such file or directory')
             text = self.fs.files[path].decode('utf-8', errors='replace')
             lines = text.split('\n')
             if lines[-1] == '':
                 lines.pop()
-            start, end = int(window[1]) - 1, int(window[2])
+            start, end = int(match[1]) - 1, int(match[2])
             selected = lines[start:end]
             stdout = '\n'.join(selected)
             if selected and (start + len(selected) < len(lines) or text.endswith('\n')):
                 stdout += '\n'
-            return FakeSandboxResult(exit_code=0, stdout=stdout, stderr='')
+            return FakeSandboxResult(stdout=stdout)
         self.commands.append(command)
-        return FakeSandboxResult(exit_code=0, stdout='', stderr='')
+        return FakeSandboxResult(stdout='connected')
 
     async def working_dir(self) -> str:
+        await self._ensure_ready()
         return '/workspace'
+
+    async def close(self, *, terminate: bool = False) -> None:
+        self.cleanup_calls.append(f'close:{terminate}')
+
+    async def release(self) -> None:
+        self.cleanup_calls.append('release')
 
 
 class RecordingSandboxBackend:
-    """The three required backend members and nothing else, recording every command."""
+    """The three required backend members, with no `SupportsFilesystem`."""
 
-    def __init__(self, sandbox_id: str) -> None:
-        self.sandbox_id = sandbox_id
+    def __init__(self, sandbox_id: str, *, ref: SandboxRef | None = None) -> None:
+        self._ref = ref or SandboxRef(sandbox_id=sandbox_id)
         self.commands: list[str | Sequence[str]] = []
+        self.cleanup_calls: list[str] = []
+
+    @property
+    def ref(self) -> SandboxRef | None:
+        return self._ref
 
     async def run(
         self,
@@ -137,88 +172,51 @@ class RecordingSandboxBackend:
         timeout: float | None = None,
     ) -> FakeSandboxResult:
         self.commands.append(command)
-        return FakeSandboxResult()
+        return FakeSandboxResult(stdout='connected')
 
     async def working_dir(self) -> str:
         return '/workspace'
 
+    async def close(self, *, terminate: bool = False) -> None:
+        self.cleanup_calls.append(f'close:{terminate}')
+
 
 def ref_sandbox(ref: SandboxRef) -> Sandbox:
-    """A not-yet-connected `Sandbox` for `ref`, as a run holds before the first operation.
-
-    For serialization tests only: connecting through it fails, so a test that needs a live
-    backend must reconnect through a capability's `get_sandbox`.
-    """
-
-    async def never_connects(_ref: SandboxRef) -> SandboxBackend:
-        # This resolver is only supplied to serialization tests; connecting through it is impossible by design.
-        raise AssertionError('the deferred sandbox must be reconnected through a capability')  # pragma: no cover
-
-    return Sandbox._from_ref(ref, never_connects)  # pyright: ignore[reportPrivateUsage]
+    return Sandbox(RecordingSandboxBackend(ref.sandbox_id, ref=ref))
 
 
 class ConnectOnlySandboxCapability(AbstractCapability[Any]):
-    """Connects to any ref; never provisions anything."""
+    """Supplies a run-only backend for the requested ref."""
 
     def __init__(self) -> None:
         self.sandbox_ids: list[str] = []
         self.backends: list[RecordingSandboxBackend] = []
 
-    async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
+    def get_sandbox(self, ctx: RunContext[Any], *, ref: SandboxRef | None) -> SandboxBackend | None:
+        if ref is None:
+            return None
         self.sandbox_ids.append(ref.sandbox_id)
-        backend = RecordingSandboxBackend(ref.sandbox_id)
+        backend = RecordingSandboxBackend(ref.sandbox_id, ref=ref)
         self.backends.append(backend)
         return backend
 
 
-class AcquireOnlySandboxCapability(AbstractCapability[Any]):
-    """Provisions per run and reconnects, inheriting the no-op `release_sandbox`.
+class SandboxCapability(AbstractCapability[Any]):
+    id = 'sandbox'
 
-    Every lifecycle call is appended to `events`, so tests can pin both the counts and the
-    order in which acquisition, connection, and release happened.
-    """
+    def __init__(self, backend: FakeSandbox | None = None) -> None:
+        self.backend = backend or FakeSandbox('capability')
+        self.refs: list[SandboxRef | None] = []
 
-    id = 'test-sandbox'
-
-    def __init__(self) -> None:
-        self.events: list[str] = []
-        self.backends: list[RecordingSandboxBackend] = []
-        self._created = 0
-
-    async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
-        self._created += 1
-        sandbox_id = f'created-{self._created}'
-        self.events.append(f'acquire:{sandbox_id}')
-        return SandboxRef(sandbox_id=sandbox_id)
-
-    async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
-        self.events.append(f'connect:{ref.sandbox_id}')
-        backend = RecordingSandboxBackend(ref.sandbox_id)
-        self.backends.append(backend)
-        return backend
-
-
-class LifecycleSandboxCapability(AcquireOnlySandboxCapability):
-    """An `AcquireOnlySandboxCapability` that also releases its sandbox leases."""
-
-    async def release_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
-        self.events.append(f'release:{ref.sandbox_id}')
+    def get_sandbox(self, ctx: RunContext[Any], *, ref: SandboxRef | None) -> SandboxBackend:
+        self.refs.append(ref)
+        return self.backend
 
 
 class DecliningSandboxCapability(AbstractCapability[Any]):
-    """A supplier that overrides `acquire_sandbox` but declines every run."""
-
     def __init__(self) -> None:
-        self.acquire_calls = 0
+        self.calls = 0
 
-    async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef | None:
-        self.acquire_calls += 1
+    def get_sandbox(self, ctx: RunContext[Any], *, ref: SandboxRef | None) -> None:
+        self.calls += 1
         return None
-
-
-class FailingReleaseSandboxCapability(AcquireOnlySandboxCapability):
-    """A capability whose `release_sandbox` always fails, e.g. because the sandbox is already gone."""
-
-    async def release_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
-        self.events.append(f'release-failed:{ref.sandbox_id}')
-        raise RuntimeError(f'sandbox {ref.sandbox_id!r} is already gone')
