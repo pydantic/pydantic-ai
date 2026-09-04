@@ -5488,13 +5488,14 @@ Overall, it's a pleasant day in San Francisco with mild temperatures and mostly 
                 usage=RequestUsage(
                     input_tokens=8984,
                     output_tokens=520,
+                    web_searches=1,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
                         'input_tokens': 8984,
                         'output_tokens': 520,
                     },
-                    cost=Decimal('0.034752'),
+                    cost=Decimal('0.044752'),
                 ),
                 model_name='claude-sonnet-4-20250514',
                 timestamp=IsDatetime(),
@@ -5692,13 +5693,14 @@ Mexico City is experiencing typical rainy season weather with moderate temperatu
                 usage=RequestUsage(
                     input_tokens=19859,
                     output_tokens=544,
+                    web_searches=1,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
                         'input_tokens': 19859,
                         'output_tokens': 544,
                     },
-                    cost=Decimal('0.067737'),
+                    cost=Decimal('0.077737'),
                 ),
                 model_name='claude-sonnet-4-20250514',
                 timestamp=IsDatetime(),
@@ -5997,13 +5999,14 @@ So for today, you can expect partly sunny to sunny skies with a high around 76°
                 usage=RequestUsage(
                     input_tokens=22397,
                     output_tokens=637,
+                    web_searches=2,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
                         'input_tokens': 22397,
                         'output_tokens': 637,
                     },
-                    cost=Decimal('0.076746'),
+                    cost=Decimal('0.096746'),
                 ),
                 model_name='claude-sonnet-4-20250514',
                 timestamp=IsDatetime(),
@@ -6679,6 +6682,7 @@ Let me fetch the page first.\
                 usage=RequestUsage(
                     input_tokens=7262,
                     output_tokens=171,
+                    web_searches=0,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
@@ -6765,6 +6769,7 @@ Let me fetch the page first.\
                 usage=RequestUsage(
                     input_tokens=7262,
                     output_tokens=171,
+                    web_searches=0,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
@@ -6952,6 +6957,7 @@ async def test_anthropic_web_fetch_tool_stream(
                 usage=RequestUsage(
                     input_tokens=7244,
                     output_tokens=153,
+                    web_searches=0,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
@@ -8045,6 +8051,7 @@ The repo is organized as a monorepo with core packages like `pydantic-ai-slim` (
                 usage=RequestUsage(
                     input_tokens=2674,
                     output_tokens=373,
+                    web_searches=0,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
@@ -8187,6 +8194,7 @@ Pydantic ensures runtime data integrity through type hints and is foundational t
                 usage=RequestUsage(
                     input_tokens=5262,
                     output_tokens=369,
+                    web_searches=0,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
@@ -8303,6 +8311,7 @@ It's designed to simplify building robust, production-ready AI agents while abst
                 usage=RequestUsage(
                     input_tokens=3042,
                     output_tokens=354,
+                    web_searches=0,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
@@ -8563,6 +8572,7 @@ async def test_anthropic_code_execution_tool(
                 usage=RequestUsage(
                     input_tokens=4692,
                     output_tokens=106,
+                    web_searches=0,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
@@ -8631,6 +8641,7 @@ async def test_anthropic_code_execution_tool(
                 usage=RequestUsage(
                     input_tokens=4690,
                     output_tokens=103,
+                    web_searches=0,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
@@ -8738,6 +8749,7 @@ Following the standard **order of operations (PEMDAS/BODMAS)** — multiplicatio
                 usage=RequestUsage(
                     input_tokens=4714,
                     output_tokens=304,
+                    web_searches=0,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
@@ -9938,6 +9950,7 @@ Everything looks perfect! 🎉\
                 usage=RequestUsage(
                     input_tokens=10490,
                     output_tokens=469,
+                    web_searches=0,
                     details={
                         'input_tokens': 10490,
                         'output_tokens': 469,
@@ -13161,6 +13174,7 @@ async def test_anthropic_code_execution_tool_container_reuse(
                 usage=RequestUsage(
                     input_tokens=4612,
                     output_tokens=80,
+                    web_searches=0,
                     details={
                         'input_tokens': 4612,
                         'output_tokens': 80,
@@ -13214,6 +13228,7 @@ async def test_anthropic_code_execution_tool_container_reuse(
                 usage=RequestUsage(
                     input_tokens=4840,
                     output_tokens=80,
+                    web_searches=0,
                     details={
                         'input_tokens': 4840,
                         'output_tokens': 80,
