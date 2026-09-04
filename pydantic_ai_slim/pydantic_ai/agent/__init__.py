@@ -2428,15 +2428,22 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     ) -> Any:
         """Decorator to register a listener for events on this agent's run event stream.
 
-        Naming event classes narrows the `event` argument to their union and lets dispatch skip
-        the agent's listeners for anything else; a bare `@agent.on_event` sees every
+        Every event on the stream can be listened for: the framework's own model and tool events,
+        the application's [`CustomEvent`][pydantic_ai.messages.CustomEvent]s, and the
+        [`CapabilityEvent`][pydantic_ai.messages.CapabilityEvent]s published by the agent's
+        capabilities. Naming event classes narrows the `event` argument to their union and lets
+        dispatch skip the agent's listeners for anything else; a bare `@agent.on_event` sees every
         [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent].
 
         This is the application-level counterpart to
         [`@on_event`][pydantic_ai.capabilities.on_event] on a capability. Listeners registered here
         run after those contributed by the agent's capabilities, so they observe what the
-        capabilities did, and they survive an overridden root capability. Being application code,
-        they may emit [`CustomEvent`][pydantic_ai.messages.CustomEvent]s.
+        capabilities did, and they survive an overridden root capability.
+
+        Being application code, a listener may emit a `CustomEvent` of its own. That is how a
+        capability's internal event reaches a frontend: capability events are deliberately not
+        forwarded by the [AG-UI](../ui/ag-ui.md) and [Vercel AI](../ui/vercel-ai.md) adapters, so
+        you republish the part of one that is public.
 
         For hook families other than events, pass a [`Hooks`][pydantic_ai.capabilities.Hooks]
         capability to `capabilities=`, where its position among the other capabilities — which
@@ -2446,20 +2453,24 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         ```python
         from dataclasses import dataclass
 
-        from pydantic_ai import Agent, CustomEvent, RunContext
-        from pydantic_ai.messages import FunctionToolCallEvent
+        from pydantic_ai import Agent, CapabilityEvent, CustomEvent, RunContext
 
         agent = Agent('test')
 
 
         @dataclass(kw_only=True)
-        class ToolStarted(CustomEvent):
-            started: str  # not `tool_name`, which the event envelope reserves
+        class IndexRebuiltEvent(CapabilityEvent, namespace='indexer'):
+            documents: int
 
 
-        @agent.on_event(FunctionToolCallEvent)
-        async def announce(ctx: RunContext[None], event: FunctionToolCallEvent) -> None:
-            await ctx.emit(ToolStarted(started=event.part.tool_name))
+        @dataclass(kw_only=True)
+        class SearchReadyEvent(CustomEvent):
+            documents: int
+
+
+        @agent.on_event(IndexRebuiltEvent)
+        async def republish(ctx: RunContext[None], event: IndexRebuiltEvent) -> None:
+            await ctx.emit(SearchReadyEvent(documents=event.documents))
         ```
         """
         # `Hooks.on.event` already sorts the bare form from the filtered one; forward verbatim so
