@@ -211,6 +211,34 @@ If you want something to happen around a run, use the ordinary hooks:
 Most providers stop charging for an idle environment on their own, so doing nothing is usually the
 right answer.
 
+#### Carrying on where a run left off
+
+A finished run hands back the sandbox it used, so the environment and its files are still there
+afterwards. Read an artifact out of it, or pass it to the next run and keep working in the same
+workspace:
+
+```python
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.sandboxes import LocalSandbox
+
+agent = Agent('anthropic:claude-sonnet-5')
+
+
+@agent.tool
+async def execute(ctx: RunContext[None], command: list[str]) -> str:
+    result = await ctx.sandbox.run(command, timeout=60)
+    return result.stdout if result.exit_code == 0 else f'[exit {result.exit_code}] {result.stderr}'
+
+
+async def main() -> None:
+    async with LocalSandbox() as sandbox:
+        first = await agent.run('Write fizzbuzz to fizzbuzz.py and run it.', sandbox=sandbox)
+        await agent.run('Now add a test for it.', sandbox=first.sandbox)
+```
+
+The same value works for a subagent: pass `ctx.sandbox` from a tool and the subagent shares the
+workspace instead of getting one of its own.
+
 ### Disabling execution with a policy reason
 
 Pass [`UnavailableSandbox`][pydantic_ai.sandboxes.UnavailableSandbox] as

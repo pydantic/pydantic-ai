@@ -101,7 +101,7 @@ async def dispatch_event_stream(
         yield ctx._event_stream_replacements.pop(event_id, event)  # pyright: ignore[reportPrivateUsage]
 
 
-def _default_sandbox() -> Sandbox:
+def unattached_sandbox() -> Sandbox:
     # Imported lazily to keep the run-context module independent of the sandbox facade during
     # package initialization. This factory runs only when a `RunContext` is constructed.
     from .sandboxes import Sandbox, UnavailableSandbox
@@ -227,7 +227,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
     [`RealtimeModelSettings`][pydantic_ai.realtime.RealtimeModelSettings] the session was opened
     with, for the whole session (realtime settings are fixed at connect time).
     """
-    sandbox: Sandbox = field(default_factory=_default_sandbox)
+    sandbox: Sandbox = field(default_factory=unattached_sandbox)
     """The [`Sandbox`][pydantic_ai.sandboxes.Sandbox] attached to this run.
 
     Chosen once, before `for_run`: the `sandbox=` run argument, else the one capability whose

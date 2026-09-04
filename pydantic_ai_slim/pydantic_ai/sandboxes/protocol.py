@@ -224,9 +224,9 @@ class SandboxFilesystem(Protocol):
 class SupportsFilesystem(Protocol):
     """Optional native filesystem access for a sandbox backend.
 
-    Checked via `isinstance` by [`Sandbox`][pydantic_ai.sandboxes.Sandbox];
-    [`Sandbox.fs`][pydantic_ai.sandboxes.Sandbox.fs] raises `NotImplementedError` when the
-    backend does not implement this.
+    Checked via `isinstance` by [`Sandbox`][pydantic_ai.sandboxes.Sandbox]: its file methods
+    (`read_bytes`, `write_bytes`, `stat`, `list_dir`, `make_dir`, `remove`, `exists`) raise
+    `NotImplementedError` when the backend does not implement this.
     """
 
     @property

@@ -123,7 +123,6 @@ try:
     from pydantic_ai.durable_exec.temporal._model import TemporalModel
     from pydantic_ai.durable_exec.temporal._run_context import (
         TemporalRunContext,
-        activity_sandbox_connection_scope,
         deserialize_run_context,
     )
     from pydantic_ai.durable_exec.temporal._toolset import CallToolParams
@@ -2759,53 +2758,25 @@ async def test_temporal_run_context_ref_without_agent_cannot_connect():
         await reconstructed.sandbox.run(['true'])
 
 
-async def test_temporal_run_context_closes_reconnected_sandbox_when_scope_is_cancelled():
+async def test_temporal_activity_rebuilds_the_sandbox_and_leaves_it_running():
+    """A tool activity reaches its sandbox through the capability, and nothing tears it down after.
+
+    The end of an activity is not the end of the environment: one conversation spans many runs,
+    and many activities, so Pydantic AI never closes what a capability supplied.
+    """
+
     class ClosableBackend(RecordingSandboxBackend):
         def __init__(self) -> None:
             super().__init__('provider-only')
             self.close_calls: list[bool] = []
 
-        async def close(self, *, terminate: bool) -> None:
-            await anyio.sleep(0)
+        async def close(self, *, terminate: bool = False) -> None:
             self.close_calls.append(terminate)
 
     backend = ClosableBackend()
 
     class Provider(Capability[Any]):
-        async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
-            return backend
-
-    provider = Provider(id='provider')
-    agent = Agent(TestModel(), capabilities=[provider])
-
-    sandbox = ref_sandbox(SandboxRef(sandbox_id='provider-only'))
-    with anyio.CancelScope() as cancel_scope:
-        async with activity_sandbox_connection_scope():
-            reconstructed = deserialize_run_context(
-                TemporalRunContext,
-                TemporalRunContext.serialize_run_context(_sandbox_context(sandbox)),
-                deps=None,
-                agent=agent,
-            )
-            assert (await reconstructed.sandbox.run(['true'])).stdout == 'connected'
-            cancel_scope.cancel()
-
-    assert backend.close_calls == [False]
-
-
-async def test_temporal_activity_closes_deferred_sandbox_connections():
-    class ClosableBackend(RecordingSandboxBackend):
-        def __init__(self) -> None:
-            super().__init__('provider-only')
-            self.close_calls: list[bool] = []
-
-        async def close(self, *, terminate: bool) -> None:
-            self.close_calls.append(terminate)
-
-    backend = ClosableBackend()
-
-    class Provider(Capability[Any]):
-        async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
+        def get_sandbox(self, ctx: RunContext[Any], *, ref: SandboxRef | None) -> SandboxBackend | None:
             return backend
 
     async def use_sandbox(ctx: RunContext[None]) -> str:
@@ -2815,17 +2786,13 @@ async def test_temporal_activity_closes_deferred_sandbox_connections():
     toolset = FunctionToolset[None](tools=[use_sandbox], id='sandbox-toolset')
     temporal_toolset = temporalize_function_toolset(
         toolset,
-        activity_name_prefix='test__sandbox_connection_scope',
+        activity_name_prefix='test__sandbox_rebuild',
         activity_config=BASE_ACTIVITY_CONFIG,
         tool_activity_config={},
         deps_type=type(None),
         agent=agent,
     )
     (call_tool_activity,) = temporal_toolset.durable_registrations
-    assert ActivityDefinition.must_from_callable(call_tool_activity).arg_types == [  # pyright: ignore[reportUnknownMemberType]
-        CallToolParams,
-        type(None),
-    ]
 
     sandbox = ref_sandbox(SandboxRef(sandbox_id='provider-only'))
 
@@ -2845,74 +2812,8 @@ async def test_temporal_activity_closes_deferred_sandbox_connections():
         )
 
     assert unwrap_tool_call_result(result) == 'connected'
-    assert backend.close_calls == [False]
+    assert backend.close_calls == []
 
-
-async def test_temporal_activity_sandbox_close_error_does_not_mask_handler_error():
-    class FailingCloseBackend(RecordingSandboxBackend):
-        def __init__(self) -> None:
-            super().__init__('provider-only')
-            self.close_calls = 0
-
-        async def close(self, *, terminate: bool) -> None:
-            self.close_calls += 1
-            raise RuntimeError('close failed')
-
-    backend = FailingCloseBackend()
-
-    class Provider(Capability[Any]):
-        async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
-            return backend
-
-    agent = Agent(TestModel(), capabilities=[Provider(id='provider')])
-
-    sandbox = ref_sandbox(SandboxRef(sandbox_id='provider-only'))
-    with pytest.raises(ValueError, match='handler failed'):
-        async with activity_sandbox_connection_scope():
-            reconstructed = deserialize_run_context(
-                TemporalRunContext,
-                TemporalRunContext.serialize_run_context(_sandbox_context(sandbox)),
-                deps=None,
-                agent=agent,
-            )
-            await reconstructed.sandbox.run(['true'])
-            raise ValueError('handler failed')
-
-    assert backend.close_calls == 1
-
-
-async def test_temporal_activity_sandbox_close_raises_the_first_failure_after_closing_all():
-    close_order: list[str] = []
-
-    class FailingCloseBackend(RecordingSandboxBackend):
-        def __init__(self, name: str) -> None:
-            super().__init__(name)
-
-        async def close(self, *, terminate: bool) -> None:
-            close_order.append(self.sandbox_id)
-            raise RuntimeError(f'{self.sandbox_id} close failed')
-
-    backends = iter([FailingCloseBackend('first'), FailingCloseBackend('second')])
-
-    class Provider(Capability[Any]):
-        async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
-            return next(backends)
-
-    agent = Agent(TestModel(), capabilities=[Provider(id='provider')])
-
-    sandbox = ref_sandbox(SandboxRef(sandbox_id='provider-only'))
-    with pytest.raises(RuntimeError, match='second close failed'):
-        async with activity_sandbox_connection_scope():
-            for _ in range(2):
-                reconstructed = deserialize_run_context(
-                    TemporalRunContext,
-                    TemporalRunContext.serialize_run_context(_sandbox_context(sandbox)),
-                    deps=None,
-                    agent=agent,
-                )
-                await reconstructed.sandbox.run(['true'])
-
-    assert close_order == ['second', 'first']
 
 
 def test_temporal_run_context_context_window_used_is_none_without_messages():

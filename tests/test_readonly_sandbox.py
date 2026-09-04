@@ -7,7 +7,7 @@ import pytest
 from pydantic_ai import UserError
 from pydantic_ai.sandboxes import ReadOnlySandbox, Sandbox, SandboxRef
 
-from .sandbox_fakes import FakeSandbox
+from .sandbox_fakes import FakeSandbox, RecordingSandboxBackend
 
 pytestmark = pytest.mark.anyio
 
@@ -26,3 +26,30 @@ async def test_read_only_sandbox_forwards_reads_and_refuses_run_and_writes() -> 
         await sandbox.write_text('data.txt', 'changed')
 
     assert backend.fs.files['/workspace/data.txt'] == b'original'
+
+
+async def test_read_only_sandbox_forwards_every_read_and_refuses_every_write() -> None:
+    backend = FakeSandbox('read-only', {'/workspace/data.txt': b'original'})
+    sandbox = Sandbox(ReadOnlySandbox(backend))
+
+    assert (await sandbox.stat('data.txt')).name == 'data.txt'
+    assert [entry.name for entry in await sandbox.list_dir('/workspace')] == ['data.txt']
+    assert await sandbox.exists('data.txt') is True
+    assert await sandbox.working_dir() == '/workspace'
+
+    with pytest.raises(UserError, match='read-only'):
+        await sandbox.make_dir('new-dir')
+    with pytest.raises(UserError, match='read-only'):
+        await sandbox.remove('data.txt')
+
+    assert backend.fs.files == {'/workspace/data.txt': b'original'}
+
+
+async def test_read_only_sandbox_over_a_backend_without_a_filesystem() -> None:
+    """Wrapping a run-only backend still yields a valid backend; file reads report the missing `fs`."""
+    sandbox = Sandbox(ReadOnlySandbox(RecordingSandboxBackend('run-only')))
+
+    with pytest.raises(NotImplementedError, match='does not implement `SupportsFilesystem`'):
+        await sandbox.read_text('data.txt')
+    with pytest.raises(UserError, match='read-only'):
+        await sandbox.run(['ls'])

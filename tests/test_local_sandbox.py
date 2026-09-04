@@ -88,7 +88,7 @@ async def test_local_sandbox_conforms_to_the_protocol(tmp_path: Path):
     assert isinstance(sandbox, SandboxBackend)
     assert isinstance(sandbox, SupportsFilesystem)
     typed: SandboxBackend = sandbox  # static conformance, checked because tests are type-checked
-    assert typed.sandbox_id.startswith('local-')
+    assert typed.ref is not None and typed.ref.sandbox_id.startswith('local-')
 
 
 @pytest.mark.parametrize('operation', ['root', 'cwd', 'fs'])

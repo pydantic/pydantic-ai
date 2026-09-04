@@ -7,6 +7,7 @@ from typing import Any
 
 import anyio
 import pytest
+from pydantic import TypeAdapter
 
 from pydantic_ai import Agent, RunContext, UserError
 from pydantic_ai.capabilities import AbstractCapability
@@ -254,6 +255,8 @@ async def test_bounded_read_through_read_only_sandbox_uses_filesystem() -> None:
 async def test_unavailable_sandbox_uses_the_configured_reason_for_every_operation() -> None:
     reason = 'sandbox disabled by policy'
     backend = UnavailableSandbox(reason)
+    # No environment exists, so there is no identity a later run could reconnect to.
+    assert backend.ref is None
     operations = [
         backend.run(['true']),
         backend.working_dir(),
@@ -309,6 +312,53 @@ async def test_explicit_backend_wins_over_a_capability_backend() -> None:
 
     assert observed[0].backend is explicit
     assert capability.refs == []
+
+
+async def test_the_result_carries_the_sandbox_the_run_used() -> None:
+    """`result.sandbox` is the same object tools saw, so a caller can keep working in it."""
+    capability = SandboxCapability()
+    observed: list[Sandbox] = []
+    agent = Agent(_tool_call_model(), capabilities=[capability])
+
+    @agent.tool
+    async def probe(ctx: RunContext[Any]) -> str:
+        observed.append(ctx.sandbox)
+        return (await ctx.sandbox.run(['true'])).stdout
+
+    result = await agent.run('go')
+
+    assert result.sandbox is observed[0]
+    assert result.sandbox.ref == SandboxRef(sandbox_id='fake-capability')
+
+    # Handing it to a second run continues in the same environment rather than making a new one.
+    second = await agent.run('again', sandbox=result.sandbox)
+    assert second.sandbox is result.sandbox
+    assert capability.refs == [None]
+    assert capability.backend.create_calls == 1
+
+
+async def test_a_result_still_round_trips_through_json_when_a_sandbox_was_used() -> None:
+    """The sandbox is a live handle, so it is left out of the serialized result rather than breaking it."""
+    agent = Agent(_tool_call_model(), capabilities=[SandboxCapability()])
+
+    @agent.tool
+    async def probe(ctx: RunContext[Any]) -> str:
+        return (await ctx.sandbox.run(['true'])).stdout
+
+    result = await agent.run('go')
+    adapter = TypeAdapter(AgentRunResult[str])
+    restored = adapter.validate_json(adapter.dump_json(result))
+
+    assert restored == result
+    with pytest.raises(UserError, match='created outside an agent run'):
+        await restored.sandbox.run(['true'])
+
+
+async def test_a_result_built_outside_a_run_explains_that_no_sandbox_is_attached() -> None:
+    result = AgentRunResult[str]('output')
+
+    with pytest.raises(UserError, match='created outside an agent run'):
+        await result.sandbox.run(['true'])
 
 
 async def test_deferred_capability_never_contributes_a_backend() -> None:

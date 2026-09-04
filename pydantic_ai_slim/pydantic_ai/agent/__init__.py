@@ -1688,10 +1688,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # Resolve the sandbox before `for_run` so every hook sees the final `ctx.sandbox`.
         # Nothing here does I/O: the backend creates or attaches on its first operation, and
         # the run never tears it down — one conversation can span many runs.
-        sandbox_facade: Sandbox
+        run_sandbox: Sandbox
         if sandbox is None:
+            # Nothing was passed to the run: a capability may still supply one, and if none does
+            # the run keeps the `UnavailableSandbox` above, whose reason explains how to attach one.
             backend = get_run_sandbox(bootstrap_capability, initial_ctx, None)
-            sandbox_facade = Sandbox(backend) if backend is not None else initial_ctx.sandbox
+            run_sandbox = Sandbox(backend) if backend is not None else initial_ctx.sandbox
         elif isinstance(sandbox, SandboxRef):
             # An identity the caller passed, or one recovered from the message history: ask the
             # capabilities for a backend bound to it.
@@ -1701,15 +1703,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     f'No capability can supply sandbox {sandbox.sandbox_id!r}: every `get_sandbox` returned `None`. '
                     'Attach a capability whose `get_sandbox` recognizes it.'
                 )
-            sandbox_facade = Sandbox(backend)
+            run_sandbox = Sandbox(backend)
         else:
             # An explicit backend, or an existing `Sandbox` passed straight through from a
             # parent run or a previous result. Mark it: a durable engine cannot rebuild this one
             # inside a durable unit the way it can rebuild a capability's backend from a ref.
-            sandbox_facade = (
-                sandbox if isinstance(sandbox, Sandbox) else Sandbox(sandbox, caller_owned=True)
-            )
-        initial_ctx.sandbox = sandbox_facade
+            run_sandbox = sandbox if isinstance(sandbox, Sandbox) else Sandbox(sandbox, caller_owned=True)
+        initial_ctx.sandbox = run_sandbox
 
         # Resolve run metadata up front so capability and toolset `for_run` hooks
         # can see it on `RunContext.metadata`. Metadata factories receive the
@@ -1878,7 +1878,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             capabilities=capabilities_dict,
             loaded_capability_ids=loaded_capability_ids,
             discovered_tool_names=discovered_tool_names,
-            sandbox=sandbox_facade,
+            sandbox=run_sandbox,
             native_tools=cap_native_tools,
             tool_manager=tool_manager,
             tracer=tracer,
@@ -1910,7 +1910,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             model_resources=model_resources,
             run_capability=run_capability,
             toolset=toolset,
-            sandbox_facade=sandbox_facade,
             usage_limits=usage_limits,
             concurrency_limiter=self._concurrency_limiter,
             resolve_metadata=functools.partial(self._resolve_and_store_metadata, metadata=metadata),
@@ -4077,7 +4076,6 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
     model_resources: _RunModelResources
     run_capability: AbstractCapability[_PreparedDepsT]
     toolset: AbstractToolset[_PreparedDepsT]
-    sandbox_facade: Sandbox
     usage_limits: _usage.UsageLimits
     concurrency_limiter: _concurrency.AbstractConcurrencyLimiter | None
     resolve_metadata: Callable[
@@ -4126,7 +4124,6 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
                 graph_deps.cancellation.release_issued()
 
         async with AsyncExitStack() as stack:
-
             # Enter first so cancellation is classified only after every other context has torn down.
             await stack.enter_async_context(_translate_cancellation())
 

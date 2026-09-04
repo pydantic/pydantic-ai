@@ -983,6 +983,8 @@ async def model_logic(  # noqa: C901
                     )
                 ]
             )
+        elif m.content == 'Now add a test for it.':
+            return ModelResponse(parts=[TextPart('Added test_fizzbuzz.py next to fizzbuzz.py.')])
         elif m.content == 'Summarize data.csv in the working directory.':
             return ModelResponse(
                 parts=[

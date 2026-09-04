@@ -103,17 +103,15 @@ class Sandbox:
         """
         return self._backend.ref
 
-    def _filesystem_for_backend(self, backend: SandboxBackend) -> SandboxFilesystem:
+    @property
+    def _filesystem(self) -> SandboxFilesystem:
+        backend = self._backend
         if isinstance(backend, SupportsFilesystem):
             return backend.fs
         raise NotImplementedError(
             f'Sandbox backend {type(backend).__name__} does not implement `SupportsFilesystem`; '
             'implement `fs` on the backend, or reach for files through `sandbox.run(...)` shell commands.'
         )
-
-    @property
-    def _filesystem(self) -> SandboxFilesystem:
-        return self._filesystem_for_backend(self._backend)
 
     async def run(
         self,
@@ -129,7 +127,13 @@ class Sandbox:
         Delegates to [`SandboxBackend.run`][pydantic_ai.sandboxes.SandboxBackend.run]; arguments
         and contracts are documented there.
         """
-        _require_absolute_cwd(cwd)
+        # Checked here as well as in the backend: a relative cwd has no sandbox meaning, and the
+        # facade is the seam every tool call goes through, so the error is the same whichever
+        # backend is attached.
+        if cwd is not None and not posixpath.isabs(cwd):
+            raise ValueError(
+                f'cwd must be an absolute POSIX path, got {cwd!r}; resolve relative paths with `sandbox.resolve()` first'
+            )
         return await self._backend.run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
 
     async def working_dir(self) -> str:
@@ -277,15 +281,6 @@ class Sandbox:
             return
         if entry.is_dir:
             raise IsADirectoryError(path)
-
-
-def _require_absolute_cwd(cwd: str | None) -> None:
-    # A relative cwd has no sandbox meaning: backends would resolve it against ambient state
-    # (the host process's working directory for a local backend), outside the sandbox root.
-    if cwd is not None and not posixpath.isabs(cwd):
-        raise ValueError(
-            f'cwd must be an absolute POSIX path, got {cwd!r}; resolve relative paths with `sandbox.resolve()` first'
-        )
 
 
 def _window_from_data(data: bytes, offset: int, limit: int | None) -> FileWindow:

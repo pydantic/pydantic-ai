@@ -61,7 +61,6 @@ from pydantic_ai.durable_exec._toolset import (
 from pydantic_ai.messages import CapabilityEvent, CustomEvent
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.sandboxes import SandboxRef
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.usage import RunUsage
@@ -116,8 +115,6 @@ JOURNAL_OPERATION_NAMES = {
     'compat__dynamic_toolset__dynamic.call_tool:dynamic_tool',
     'compat__dynamic_toolset__dynamic.validate_args',
     'compat__capability__compat.operation',
-    'compat__capability__compat.acquire_sandbox',
-    'compat__capability__compat.release_sandbox',
 }
 
 PREFECT_OPERATION_NAMES = {
@@ -135,8 +132,6 @@ PREFECT_OPERATION_NAMES = {
     'Call Tool: dynamic_tool',
     'Validate Tool Args: dynamic_tool',
     'Capability: compat.operation',
-    'Capability: compat.acquire_sandbox',
-    'Capability: compat.release_sandbox',
 }
 
 TEMPORAL_ACTIVITY_NAMES = {
@@ -156,8 +151,6 @@ TEMPORAL_ACTIVITY_NAMES = {
     'agent__compat__dynamic_toolset__dynamic__call_tool',
     'agent__compat__dynamic_toolset__dynamic__validate_args',
     'agent__compat__capability__compat__operation',
-    'agent__compat__capability__compat__acquire_sandbox',
-    'agent__compat__capability__compat__release_sandbox',
 }
 
 DBOS_OPERATION_NAMES = {
@@ -173,8 +166,6 @@ DBOS_OPERATION_NAMES = {
     'compat__dynamic_toolset__dynamic.call_tool',
     'compat__dynamic_toolset__dynamic.validate_args',
     'compat__capability__compat.operation',
-    'compat__capability__compat.acquire_sandbox',
-    'compat__capability__compat.release_sandbox',
 }
 
 
@@ -198,8 +189,6 @@ def _operation_ids() -> list[DurableOperationId]:
         ToolsetCallToolId('dynamic', toolset_id='dynamic'),
         ToolsetValidateToolArgumentsId('dynamic', toolset_id='dynamic'),
         CapabilityOperationId('compat', operation='operation'),
-        CapabilityOperationId('compat', operation='acquire_sandbox'),
-        CapabilityOperationId('compat', operation='release_sandbox'),
     ]
 
 
@@ -214,12 +203,6 @@ class CompatCapability(AbstractCapability[Any]):
 
     @durable_operation('operation')
     async def operation(self, ctx: RunContext[Any]) -> None:
-        pass
-
-    async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef | None:
-        return None
-
-    async def release_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
         pass
 
 
@@ -293,7 +276,6 @@ async def test_journal_operation_name_assembly_sequence() -> None:
     durability = JournalDurability.from_agent(agent)
     assert durability is not None
     assert durability.recorded_names == [
-        'compat__capability__compat.acquire_sandbox',
         'compat__dynamic_toolset__dynamic.get_tools',
         'compat__model.request_stream',
         'compat__event_stream_handler',

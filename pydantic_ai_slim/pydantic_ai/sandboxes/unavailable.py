@@ -17,7 +17,7 @@ from typing_extensions import Never
 
 from pydantic_ai.exceptions import UserError
 
-from .protocol import SandboxCommand, SandboxRef
+from .protocol import SandboxCommand
 
 if TYPE_CHECKING:
     from .protocol import (
@@ -57,13 +57,14 @@ class _UnavailableFilesystem:
 class UnavailableSandbox:
     """A `SandboxBackend` whose every operation raises `UserError` with a configured reason."""
 
-    @property
-    def ref(self) -> SandboxRef:
-        return SandboxRef(sandbox_id='unavailable')
-
     def __init__(self, reason: str):
         self.reason = reason
         self.fs = _UnavailableFilesystem(reason)
+
+    @property
+    def ref(self) -> None:
+        """Always `None`: there is no environment to name, so nothing can be reconnected to later."""
+        return None
 
     async def run(
         self,

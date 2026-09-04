@@ -5,7 +5,9 @@ import dataclasses
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from copy import deepcopy
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Generic, Literal, overload
+from typing import TYPE_CHECKING, Annotated, Any, Generic, Literal, overload
+
+import pydantic
 
 from pydantic_graph import BaseNode, End, EndMarker, ErrorMarker, GraphRun, GraphRunContext, GraphTaskRequest, JoinItem
 from pydantic_graph.step import NodeStep
@@ -19,13 +21,17 @@ from . import (
 )
 from ._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority
 from ._instrumentation import current_otel_traceparent
-from ._run_context import CustomEventT
+from ._run_context import (
+    CustomEventT,
+    unattached_sandbox,
+)
 from .output import OutputDataT
 from .tools import AgentDepsT
 
 if TYPE_CHECKING:
     from ._run_context import RunContext
     from .result import FinalResult
+    from .sandboxes import Sandbox
 
 
 @dataclasses.dataclass(repr=False)
@@ -159,6 +165,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             self._graph_run.state,
             self._graph_run.deps.new_message_index,
             self._traceparent(required=False),
+            _sandbox=self._graph_run.deps.sandbox,
         )
 
     def all_messages(self) -> list[_messages.ModelMessage]:
@@ -644,6 +651,27 @@ class AgentRunResult(Generic[OutputDataT]):
     )
     _new_message_index: int = dataclasses.field(repr=False, compare=False, default=0)
     _traceparent_value: str | None = dataclasses.field(repr=False, compare=False, default=None)
+    # `Any` and excluded, read through the `sandbox` property below: a result round-trips through
+    # JSON (`TypeAdapter(AgentRunResult[...])`) and a sandbox does not, because it holds a live
+    # handle to an environment. A deserialized result therefore gets the placeholder sandbox,
+    # whose operations say that no environment is attached.
+    _sandbox: Annotated[Any, pydantic.Field(exclude=True)] = dataclasses.field(
+        repr=False, compare=False, kw_only=True, default_factory=unattached_sandbox
+    )
+
+    @property
+    def sandbox(self) -> Sandbox:
+        """The [`Sandbox`][pydantic_ai.sandboxes.Sandbox] the run used.
+
+        Pass it to a later run or a subagent as `sandbox=result.sandbox` to keep working in the same
+        environment. Nothing tears it down when the run ends, so it is still usable here: copy files
+        out, or destroy it yourself through
+        [`backend`][pydantic_ai.sandboxes.Sandbox.backend] if your provider supports that.
+
+        A result created outside an agent run has a placeholder whose operations explain that no
+        sandbox is attached.
+        """
+        return self._sandbox
 
     @overload
     def _traceparent(self, *, required: Literal[False]) -> str | None: ...
