@@ -62,13 +62,33 @@ class Sandbox:
     functionality.
     """
 
-    def __init__(self, backend: SandboxBackend):
+    def __init__(self, backend: SandboxBackend, *, caller_owned: bool = False):
         self._backend = backend
+        self._caller_owned = caller_owned
+
+    @property
+    def caller_owned(self) -> bool:
+        """Whether the caller passed this backend in, rather than a capability supplying it.
+
+        A durable engine can rebuild a capability's backend inside a durable unit from its
+        [`ref`][pydantic_ai.sandboxes.Sandbox.ref], but not one handed to it directly.
+        """
+        return self._caller_owned
 
     @classmethod
     def wrap(cls, value: SandboxBackend) -> Sandbox:
         """Wrap `value`, returning an existing `Sandbox` unchanged."""
         return value if isinstance(value, Sandbox) else cls(value)
+
+    def _make_unavailable(self, reason: str) -> None:
+        """Replace the backend in place so every operation on this sandbox explains `reason`.
+
+        Mutates rather than returning a new facade because the same object is already held by the
+        run's dependencies, so callers that took it earlier see the change too.
+        """
+        from .unavailable import UnavailableSandbox
+
+        self._backend = UnavailableSandbox(reason)
 
     @property
     def backend(self) -> SandboxBackend:

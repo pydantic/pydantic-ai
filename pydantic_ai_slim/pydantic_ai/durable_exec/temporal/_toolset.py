@@ -28,7 +28,7 @@ from pydantic_ai.exceptions import FallbackExceptionGroup, UnexpectedModelBehavi
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
-from ._run_context import TemporalRunContext, activity_sandbox_connection_scope
+from ._run_context import TemporalRunContext
 
 if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AbstractAgent
@@ -81,8 +81,7 @@ async def heartbeating() -> AsyncGenerator[None]:
 
     task = asyncio.create_task(beat())
     try:
-        async with activity_sandbox_connection_scope():
-            yield
+        yield
     except BaseException:
         # The body's exception is already propagating; a heartbeat failure must not replace it.
         task.cancel()

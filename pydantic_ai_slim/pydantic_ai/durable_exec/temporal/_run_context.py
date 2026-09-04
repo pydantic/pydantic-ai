@@ -1,22 +1,17 @@
 from __future__ import annotations
 
-import sys
-from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
-from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any, overload
 
-import anyio
 from pydantic import TypeAdapter
 from typing_extensions import TypeVar
 
 from pydantic_ai._run_context import AnchoredEvidence, CapabilityEventT, CustomEventT
 from pydantic_ai._utils import is_str_dict
-from pydantic_ai.capabilities._sandbox import active_leaves, connect_sandbox_ref
+from pydantic_ai.capabilities._sandbox import get_run_sandbox
 from pydantic_ai.durable_exec._toolset import EnqueueGuard, enqueue_not_supported_message
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import CapabilityEvent, CustomEvent
-from pydantic_ai.sandboxes import Sandbox, SandboxBackend, SandboxRef, UnavailableSandbox
+from pydantic_ai.sandboxes import Sandbox, SandboxRef, UnavailableSandbox
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage, UsageLimits
 
@@ -33,31 +28,6 @@ TEMPORAL_SANDBOX_UNAVAILABLE_REASON = (
     "through the capability chain's `get_sandbox`."
 )
 
-_activity_sandboxes: ContextVar[list[Sandbox] | None] = ContextVar('temporal_activity_sandboxes', default=None)
-
-
-@asynccontextmanager
-async def activity_sandbox_connection_scope() -> AsyncGenerator[None]:
-    """Close every deferred sandbox connection opened by one Temporal activity."""
-    sandboxes: list[Sandbox] = []
-    token = _activity_sandboxes.set(sandboxes)
-    try:
-        yield
-    finally:
-        active_error = sys.exc_info()[1]
-        try:
-            with anyio.CancelScope(shield=True):
-                error: BaseException | None = None
-                for sandbox in reversed(sandboxes):
-                    try:
-                        await sandbox._close_connected_backend()  # pyright: ignore[reportPrivateUsage]
-                    except BaseException as close_error:
-                        if error is None:
-                            error = close_error
-                if error is not None and active_error is None:
-                    raise error
-        finally:
-            _activity_sandboxes.reset(token)
 
 
 # The serialized run context crosses the activity boundary as untyped JSON (`Any`, so
@@ -290,11 +260,13 @@ class TemporalRunContext(RunContext[AgentDepsT]):
             '_deferred_capability_ids': ctx._deferred_capability_ids,
             'capability_active': ctx.capability_active,
         }
-        sandbox_identity = ctx.sandbox._durable_identity()  # pyright: ignore[reportPrivateUsage]
-        if isinstance(sandbox_identity, SandboxRef):
-            serialized['_sandbox_state'] = {'sandbox_id': sandbox_identity.sandbox_id}
-        elif isinstance(sandbox_identity, UnavailableSandbox):
-            serialized['_sandbox_state'] = {'unavailable_reason': sandbox_identity.reason}
+        backend = ctx.sandbox.backend
+        if isinstance(backend, UnavailableSandbox):
+            serialized['_sandbox_state'] = {'unavailable_reason': backend.reason}
+        elif (ref := backend.ref) is not None:
+            # Only the identity crosses the boundary; the activity rebuilds a backend for it
+            # through the worker's own capability tree, credentials included.
+            serialized['_sandbox_state'] = {'sandbox_id': ref.sandbox_id}
         return serialized
 
     @classmethod
@@ -327,10 +299,6 @@ def deserialize_run_context(
     sandbox_state = serialized.get('_sandbox_state')
     if is_str_dict(sandbox_state):
         _restore_sandbox(ctx, sandbox_state, agent)
-        if (sandboxes := _activity_sandboxes.get()) is not None:
-            sandbox = ctx.__dict__.get('_sandbox')
-            if isinstance(sandbox, Sandbox) and all(existing is not sandbox for existing in sandboxes):
-                sandboxes.append(sandbox)
     # `pending_messages` isn't serialized across the activity boundary, and any code running inside
     # an activity (a tool, a `process_tool_call` hook, an `event_stream_handler`) is in a durable
     # unit whose result is replayed without re-running it, so an enqueue would be dropped. Install
@@ -342,20 +310,24 @@ def deserialize_run_context(
 def _restore_sandbox(
     ctx: RunContext[Any], sandbox_state: dict[str, Any], agent: AbstractAgent[Any, Any] | None
 ) -> None:
-    """Rebuild a lazy sandbox facade from its serialized identity."""
+    """Rebuild the run's sandbox inside an activity from its serialized identity."""
     sandbox_id = sandbox_state.get('sandbox_id')
     unavailable_reason = sandbox_state.get('unavailable_reason')
     if isinstance(sandbox_id, str):
-        # The worker's capability tree is the connection registry: the capability that can
-        # connect the ref exists on the agent this worker constructed, credentials included.
-        async def resolve_sandbox(ref: SandboxRef) -> SandboxBackend:
-            if agent is None:
-                raise UserError(
-                    f'Cannot connect to sandbox {ref.sandbox_id!r}: no agent is attached to this Temporal '
-                    'activity, so there is no capability chain to resolve the reference through.'
-                )
-            return await connect_sandbox_ref(active_leaves(agent.root_capability), ctx, ref)
-
-        ctx.__dict__['_sandbox'] = Sandbox._from_ref(SandboxRef(sandbox_id=sandbox_id), resolve_sandbox)  # pyright: ignore[reportPrivateUsage]
+        # The worker's capability tree is the registry: the capability that recognizes this ref
+        # exists on the agent this worker constructed, credentials included. Building the backend
+        # does no I/O, so it is safe here; it reaches the provider on its first operation.
+        if agent is None:
+            raise UserError(
+                f'Cannot rebuild sandbox {sandbox_id!r}: no agent is attached to this Temporal activity, '
+                'so there is no capability chain to resolve the reference through.'
+            )
+        backend = get_run_sandbox(agent.root_capability, ctx, SandboxRef(sandbox_id=sandbox_id))
+        if backend is None:
+            raise UserError(
+                f'No capability can supply sandbox {sandbox_id!r}: every `get_sandbox` returned `None`. '
+                'Attach a capability whose `get_sandbox` recognizes it.'
+            )
+        ctx.__dict__['_sandbox'] = Sandbox(backend)
     elif isinstance(unavailable_reason, str):
         ctx.__dict__['_sandbox_unavailable_reason'] = unavailable_reason

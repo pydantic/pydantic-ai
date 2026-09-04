@@ -170,56 +170,6 @@ class ReplayingDurability(RecordingDurability):
     replay_capability_operations = True
 
 
-async def test_durable_sandbox_release_failure_propagates() -> None:
-    """A durable release failure surfaces like any other failed durable operation."""
-
-    class FailingRelease(AbstractCapability[Any]):
-        id = 'sandbox'
-
-        async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
-            return SandboxRef(sandbox_id='durable-sandbox')
-
-        async def release_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
-            raise RuntimeError('control plane unavailable')
-
-    agent = Agent(TestModel(), name='durable_release', capabilities=[FailingRelease(), RecordingDurability()])
-    with pytest.raises(RuntimeError, match='control plane unavailable'):
-        await agent.run('go')
-
-
-async def test_wrapped_sandbox_provider_lifecycle_uses_durable_dispatch() -> None:
-    class SandboxProvider(AbstractCapability[Any]):
-        id = 'sandbox'
-
-        def __init__(self) -> None:
-            self.events: list[str] = []
-
-        async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
-            self.events.append('acquire')
-            return SandboxRef(sandbox_id='wrapped')
-
-        async def release_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
-            self.events.append('release')
-
-    provider = SandboxProvider()
-    agent = Agent(
-        TestModel(),
-        name='wrapped_sandbox',
-        capabilities=[WrapperCapability(wrapped=WrapperCapability(wrapped=provider)), RecordingDurability()],
-    )
-
-    await agent.run('go')
-
-    durability = RecordingDurability.from_agent(agent)
-    assert durability is not None
-    durable_calls = [name for name, _ in durability.calls if '__capability__sandbox.' in name]
-    assert durable_calls == [
-        'wrapped_sandbox__capability__sandbox.acquire_sandbox',
-        'wrapped_sandbox__capability__sandbox.release_sandbox',
-    ]
-    assert provider.events == ['acquire', 'release']
-
-
 async def test_durability_rejects_live_sandbox_in_durable_context() -> None:
     from ..sandbox_fakes import RecordingSandboxBackend
 
@@ -239,7 +189,7 @@ async def test_durability_forbids_connecting_sandbox_ref_in_durable_context() ->
     async def probe(ctx: RunContext[Any]) -> str:
         return (await ctx.sandbox.run(['true'])).stdout
 
-    with pytest.raises(UserError, match=r'`ctx.sandbox` cannot connect inside recording journal code'):
+    with pytest.raises(UserError, match=r'`ctx\.sandbox` cannot be used inside recording journal code'):
         await agent.run('go', sandbox=SandboxRef(sandbox_id='outside'))
 
 

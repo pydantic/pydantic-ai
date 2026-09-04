@@ -1704,8 +1704,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             sandbox_facade = Sandbox(backend)
         else:
             # An explicit backend, or an existing `Sandbox` passed straight through from a
-            # parent run or a previous result.
-            sandbox_facade = Sandbox.wrap(sandbox)
+            # parent run or a previous result. Mark it: a durable engine cannot rebuild this one
+            # inside a durable unit the way it can rebuild a capability's backend from a ref.
+            sandbox_facade = (
+                sandbox if isinstance(sandbox, Sandbox) else Sandbox(sandbox, caller_owned=True)
+            )
         initial_ctx.sandbox = sandbox_facade
 
         # Resolve run metadata up front so capability and toolset `for_run` hooks
