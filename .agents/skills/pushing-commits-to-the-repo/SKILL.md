@@ -304,7 +304,7 @@ if the head changes, capture the new SHA and restart the loop.
 
 The required hosted review is not on this menu. Step 4 of the loop above already settles which one
 it is: on a same-repository PR it is `CI Review`, which runs itself once `CI` succeeds on the
-current head and owns the `APPROVE` / `REQUEST_CHANGES` verdict on the more rigorous process —
+current head and owns the `APPROVE` / `REQUEST_CHANGES` verdict and the more rigorous process —
 severity scale, subagent fan-out, per-finding verification. On a fork PR it is `douwebot`, because
 `CI Review` deliberately skips there. Neither is optional, and nothing below replaces either.
 
@@ -312,18 +312,18 @@ What is optional is a second opinion on top, and that choice belongs to the auth
 
 Report the diff first: its size label, how many files it changes, and where the change lands on the
 review rubric — public API, then concepts and behavior, documentation, tests, code quality.
-Recommend one surface from those three facts and ask; never pick for the author. Lean toward `none`
-on a typo fix, a dependency bump, or a mechanical chore, which sit on the bottom rungs CI has
-already measured. Lean toward a surface when the diff moves public API, concepts and behavior, or
-user-facing docs — where a reviewer catches things like an example built on an outdated model.
-Small diffs are cheap to review, so take one when the call is close.
+Recommend one from those three facts and ask. Lean toward `none` on a typo fix, a dependency bump,
+or a mechanical chore, which sit on the bottom rungs CI has already measured. Lean toward a surface
+when the diff moves public API, concepts and behavior, or user-facing docs — where a reviewer
+catches things like an example built on an outdated model. Small diffs are cheap to review, so take
+one when the call is close.
 
 | Surface | Choose it when |
 |---|---|
-| `pydanty:review-branch` | The diff has broad surface and you want findings fixed rather than only reported. It runs a fixed reviewer roster and pushes remediation commits to the branch. |
-| `pydanty:review-lite` | The diff is narrow or unusual enough that a fixed roster would look past it. It writes 2 to 8 review charters for this diff, dispatches one reviewer per charter, and adjudicates with a skeptic pass before posting. It reports and never remediates. |
-| `douwebot` | One last high-judgment pass, on a stronger model than the required review. Inline comments, no verdict, one shot. |
-| local | You are still iterating, or a hosted surface is unavailable. A fresh subagent under the context contract above runs `pre-push-review`, `/review-branch`, or a review it decomposes and fans out itself. Choosing it here IS that skill's invocation; its own gate does not ask again. |
+| `pydanty:review-branch` | The diff reaches widely and you want findings fixed rather than only reported. It runs a fixed reviewer roster and pushes remediation commits to the branch. It waits on green CI. |
+| `pydanty:review-lite` | The diff is narrow or unusual enough that a fixed roster would look past it. It writes review charters for this diff, dispatches one reviewer per charter, and adjudicates before posting. It reports and never remediates, and it has no CI precondition. |
+| `douwebot` | One last high-judgment pass. Inline comments, no verdict, one review per label application. On a fork this is a second application of the reviewer that already gated the PR, against the diff as it now stands. |
+| local | You are still iterating, or no hosted surface is available. A fresh subagent under the context contract above either runs `pre-push-review`, or decomposes this diff itself and fans out — the second when the diff's risk is specific enough that the standing rubric would not name it. This dispatch does not count against the pre-push review budget. |
 | none | No second opinion. The required review above still gates the PR. |
 
 If the author does not answer, stop and hand the PR back naming the surface still pending. Do not
@@ -336,26 +336,27 @@ pick one yourself to keep moving.
 - **How:** `gh pr edit <number> --add-label <douwebot|pydanty:review-branch|pydanty:review-lite>`.
   This needs triage permission on the repo. If it fails, quote the actual error rather than skipping
   the step on an assumed lack of permission.
-- **A missing label does not prove a review happened.** `douwebot` deletes its own label from an
-  `always()` step, so a crashed run and a finished one look identical from the PR. Pydanty removes
-  the trigger label on pickup, before it has reviewed anything. Read the posted comment, never the
-  label.
+- **Read the posted comment, never the label.** Every surface consumes its own trigger label — pydanty
+  on pickup, before it has reviewed anything; `douwebot` from an `always()` step. A failed `douwebot`
+  run says so in a comment naming the run and inviting a re-apply, so a vanished label with no
+  comment at all means the run was cancelled, not that it found nothing.
 - **Wait for a pydanty run.** It adds `pydanty:is-working` when it starts. Poll every 15 minutes for
   up to 2 hours 30 minutes. Never push to the branch and never touch a thread while
-  `pydanty:is-working` is set. Three things end the wait: a posted review, `pydanty:reviewed` on a
-  clean pass, or `pydanty:rb-pending` — which means pydanty deferred on red or conflicted CI and
-  will retry on its own, so fix CI instead of re-applying the label.
+  `pydanty:is-working` is set. The wait ends on a posted review, or on `pydanty:reviewed` for a clean
+  pass. `pydanty:review-branch` can also defer instead: on red or conflicted CI it strips the trigger
+  label and adds `pydanty:rb-pending`, then retries on its own, so fix CI rather than re-applying.
+  If nothing has landed at 2 hours 30 minutes, stop and hand the PR back saying the run has not
+  reported.
 - **A pydanty remediation commit is a HEAD nobody reviewed.** Fast-forward before acting on the
-  verdict, or you will read a head behind the PR. Then treat the new HEAD as the unreviewed push it
-  is: re-run the pre-push gate while the budget remains, or record its exemption against the table
-  above.
+  verdict, or you will read a head behind the PR. That commit is the fourth exception above: either
+  record its exemption against the delta table, or review the new HEAD before the PR is handed back.
 - **Known `douwebot` refusal:** the job fails without reviewing if the PR touches an `AGENTS.md` or
   `CLAUDE.md` at any depth, `CLAUDE.local.md`, `.mcp.json`, or anything under `.claude/`,
   `.agents/` or `agent_docs/` — a security guard against a PR editing the reviewer's own
   instructions. The guard is skipped for an author with write or admin access on the repo. Don't
   apply the label to a PR the guard covers; the red check is the guard working.
-- **Afterwards, re-enter the loop.** Every surface posts comments that need the same triage as any
-  other.
+- **Afterwards, re-enter the loop.** A hosted surface posts comments that need the same triage as
+  any other.
 
 ## Before handing the PR back
 
