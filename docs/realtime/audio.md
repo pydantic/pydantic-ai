@@ -8,7 +8,9 @@ playback and captions. Use the high-level session views for media and transcript
 
 You send and receive raw audio samples; there is no container or codec in the live path.
 [`send_audio()`][pydantic_ai.realtime.RealtimeSession.send_audio] accepts raw, signed 16-bit
-little-endian mono PCM. [`stream_audio()`][pydantic_ai.realtime.RealtimeSession.stream_audio]
+little-endian mono PCM — a single chunk, or an async iterable of chunks (a microphone stream, a
+WebSocket receive loop) that it forwards until the iterable ends, so a whole capture loop can be
+one task. [`stream_audio()`][pydantic_ai.realtime.RealtimeSession.stream_audio]
 returns the same format. Capture at
 [`session.audio_input_sample_rate`][pydantic_ai.realtime.RealtimeSession.audio_input_sample_rate]
 and play at
@@ -65,7 +67,10 @@ async def main():
 
 Each view is independently bounded; a slow consumer drops its oldest item rather than stalling
 tools, turn tracking, or other consumers.
-Subscriptions begin when iteration starts, so unused views do not buffer.
+A subscription begins when `stream_audio()` or `stream_transcripts()` is called, so a view handed to
+a task with `asyncio.create_task` misses nothing while it waits for its first turn on the event loop,
+up to its buffer bound.
+An unconsumed view buffers up to its bound, dropping the oldest item when full, until it is collected.
 [`close()`][pydantic_ai.realtime.RealtimeSession.close] discards pending items and ends every live
 iterator; [`closed`][pydantic_ai.realtime.RealtimeSession.closed] reports the state.
 
@@ -103,6 +108,10 @@ configured with `google_input_transcription`: a pinned model ID in the shared se
 (native transcription stays on), and only `None` turns it off. Provider-specific defaults and
 deployment constraints live on the provider pages.
 
+The user transcript is a separate transcription pass, not a readout of what the realtime model
+heard directly from the audio. It can be less accurate or simply differ, so treat it as a caption
+and history record rather than ground truth for why the model responded as it did.
+
 Disabling transcription changes what a spoken turn contributes to history, replay, and text-agent
 handoff; see [History and handoff](history.md#retaining-audio) before relying on it. A
 [WebRTC sideband](deployment.md#browser-webrtc-server-sideband) receives no audio bytes to retain, so without input
@@ -127,12 +136,15 @@ async def send_image(session):
 Streaming images continuously approximates live video: the
 [camera example](../examples/realtime-camera.md) sends one camera frame per second alongside
 microphone audio. For continuous streams like that, use the session's image-retention controls to
-bound local history; see [Retaining images](history.md#retaining-images). Gemini-specific live-video
-settings belong on the [Gemini provider page](gemini.md#settings).
+bound local history; they do not change which frames the provider receives. See
+[Retaining images](history.md#retaining-images). Gemini-specific live-video settings belong on the
+[Gemini provider page](gemini.md#settings).
 
 ## Edge cases
 
 - Audio and transcript iterators deliberately drop old buffered items when consumers fall behind.
   [Logfire attributes](observability.md#logfire-instrumentation) report those drops.
+- Session failures have different propagation paths when only these views are consumed; see
+  [Errors](lifecycle.md#errors).
 - Provider speech/interruption signals differ. Use the profile flags and the
   [turns guide](turns.md#barge-in) rather than branching on provider names.

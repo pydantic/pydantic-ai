@@ -12,8 +12,10 @@ import wave
 from collections.abc import AsyncIterator, Sequence
 from contextlib import AbstractAsyncContextManager
 from typing import Any, Literal, cast, get_args, get_origin
+from unittest.mock import patch
 
 import pytest
+from genai_prices.data_snapshot import get_snapshot
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
@@ -1765,8 +1767,12 @@ async def test_connect_seeds_multimodal_tool_return(monkeypatch: pytest.MonkeyPa
                     'type': 'message',
                     'role': 'user',
                     'content': [
-                        {'type': 'input_text', 'text': 'This is file result.png:'},
+                        {
+                            'type': 'input_text',
+                            'text': '<tool_result tool_name="inspect" tool_call_id="call-image" file_id="result.png">',
+                        },
                         {'type': 'input_image', 'image_url': 'data:image/png;base64,cmVzdWx0LWltYWdl'},
+                        {'type': 'input_text', 'text': '</tool_result>'},
                     ],
                 },
             },
@@ -3810,6 +3816,23 @@ def test_profile() -> None:
     assert profile.get('audio_output_sample_rate') == 24000
 
 
+@pytest.mark.parametrize(
+    ('model_name', 'supports_thinking'),
+    [
+        ('gpt-realtime-2', True),
+        ('gpt-realtime-2.1', True),
+        ('gpt-realtime-2.1-2026-01-01', True),
+        ('gpt-realtime-2-mini', True),
+        ('gpt-realtime', False),
+        ('gpt-realtime-mini', False),
+        ('gpt-realtime-2025-08-28', False),
+        ('gpt-realtime-mini-2025-10-06', False),
+    ],
+)
+def test_profile_supports_thinking_at_model_family_boundary(model_name: str, supports_thinking: bool) -> None:
+    assert OpenAIRealtimeModel(model_name).profile.get('supports_thinking') is supports_thinking
+
+
 def test_provider_driven_profile_merges_defaults_varies_by_model_and_intersects_native_tools() -> None:
     class ProfileProvider(OpenAIProvider):
         @staticmethod
@@ -3876,6 +3899,44 @@ def test_user_profile_corrects_a_thinking_claim_defeated_by_the_model_name() -> 
     )
     assert corrected.profile.get('supports_thinking') is True
     assert corrected._session_config('', None, model_settings=None)['reasoning'] == {'effort': 'low'}  # pyright: ignore[reportPrivateUsage]
+
+
+def test_context_window_filled_from_genai_prices_unless_a_profile_layer_sets_it() -> None:
+    """Resolution step 3 mirrors `Model.profile`: genai-prices fills `context_window` only when neither the
+    provider nor a partial user profile set it (including to `None`); a callable user layer sees the fill."""
+    provider = OpenAIProvider(api_key='k')
+
+    with patch('pydantic_ai.realtime.model.lookup_context_window', return_value=123) as lookup:
+        model = OpenAIRealtimeModel('gpt-realtime', provider=provider)
+        assert model.context_window == 123
+        assert model.profile.get('context_window') == 123
+        lookup.assert_called_with(model)
+
+        explicit = OpenAIRealtimeModel('gpt-realtime', provider=provider, profile={'context_window': None})
+        assert explicit.context_window is None
+
+        seen: list[int | None] = []
+
+        def use_resolved(resolved: RealtimeModelProfile) -> RealtimeModelProfile:
+            seen.append(resolved.get('context_window'))
+            return resolved
+
+        assert OpenAIRealtimeModel('gpt-realtime', provider=provider, profile=use_resolved).context_window == 123
+        assert seen == [123]
+
+    class WindowProvider(OpenAIProvider):
+        @staticmethod
+        def realtime_model_profile(model_name: str) -> RealtimeModelProfile:
+            return RealtimeModelProfile(context_window=456)
+
+    with patch('pydantic_ai.realtime.model.lookup_context_window', side_effect=AssertionError('not consulted')):
+        assert OpenAIRealtimeModel('gpt-realtime', provider=WindowProvider(api_key='k')).context_window == 456
+
+    # Unpatched, the real lookup runs: whatever the pinned genai-prices data records for the model.
+    _, model_info = get_snapshot().find_provider_model(
+        'gpt-realtime', provider=None, provider_id='openai', provider_api_url=None
+    )
+    assert OpenAIRealtimeModel('gpt-realtime', provider=provider).context_window == model_info.context_window
 
 
 class _ConnectSequence:

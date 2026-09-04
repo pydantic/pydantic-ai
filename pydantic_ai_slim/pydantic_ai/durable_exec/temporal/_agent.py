@@ -85,7 +85,7 @@ def _merge_activity_config(base: ActivityConfig, override: ActivityConfig) -> Ac
     return merged
 
 
-@dataclass
+@dataclass(kw_only=True)
 @with_config(ConfigDict(arbitrary_types_allowed=True))
 class _EventStreamHandlerParams:
     event: _messages.AgentStreamEvent
@@ -240,7 +240,12 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             id = toolset.id
             if id is None:
                 raise UserError(
-                    "Toolsets that are 'leaves' (i.e. those that implement their own tool listing and calling) need to have a unique `id` in order to be used with Temporal. The ID will be used to identify the toolset's activities within the workflow."
+                    "Toolsets that are 'leaves' (i.e. those that implement their own tool listing and calling) "
+                    'need to have a unique `id` in order to be used with Temporal. '
+                    "The ID will be used to identify the toolset's activities within the workflow. "
+                    'Set it on the toolset itself with `FunctionToolset(id=...)` or `MCPToolset(..., id=...)`, '
+                    "or, when the toolset is contributed by a capability, set the capability's `id` "
+                    "(for example, `WebSearch(local='duckduckgo', id='search')` or `MCP(url='...', id='...')`)."
                 )
 
             args: tuple[Any, ...] = (
@@ -1267,6 +1272,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         run_id: str | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         audio_retention: AudioRetention = 'transcript_only',
+        handle_barge_in: bool = False,
         retain_images_every_n: int = 1,
         retain_images_max: int | None = 100,
         provider_session: RealtimeProviderSession | None = None,
@@ -1296,6 +1302,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             run_id=run_id,
             message_history=message_history,
             audio_retention=audio_retention,
+            handle_barge_in=handle_barge_in,
             retain_images_every_n=retain_images_every_n,
             retain_images_max=retain_images_max,
             provider_session=provider_session,

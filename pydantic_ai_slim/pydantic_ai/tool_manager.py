@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, Generic, Literal
 from pydantic import ValidationError
 
 from . import messages as _messages
+from ._deferred import filter_deferred_results
 from ._output import (
     OutputSchema,
     OutputToolset,
@@ -294,6 +295,11 @@ class ToolManager(Generic[AgentDepsT]):
         assert self.ctx is not None
         return replace(
             self.ctx,
+            # The manager executing the call, not the one carried by `self.ctx`: a wrapper that
+            # dispatches hidden tools through its own nested `ToolManager` (e.g. a sandbox's
+            # `run_code`) inherits a `ctx` whose manager only knows the model-visible tools, and
+            # `RunContext.emit` resolves a tool's owning capability through `tool_manager.tools`.
+            tool_manager=self,
             tool_name=call.tool_name,
             tool_call_id=call.tool_call_id,
             retry=self.ctx.retries.get(call.tool_name, 0),
@@ -1143,7 +1149,8 @@ class ToolManager(Generic[AgentDepsT]):
         """
         if self.root_capability is None or self.ctx is None:
             return None
-        return await self.root_capability.handle_deferred_tool_calls(self.ctx, requests=requests)
+        results = await self.root_capability.handle_deferred_tool_calls(self.ctx, requests=requests)
+        return filter_deferred_results(requests, results) if results is not None else None
 
     async def _resolve_single_deferred(
         self,

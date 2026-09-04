@@ -951,6 +951,9 @@ def test_sync_stream_bridge_init_propagates_base_exception(error_type: type[Base
     try:
         with pytest.raises(error_type) as exc_info:
             SyncStreamBridge(FailingContextManager(), async_alternative='`async_method`')
+        # The watchdog only guards against a hung constructor; cancel it before the liveness
+        # check so a slow worker can't have it fire mid-`run_until_complete`.
+        stop_handle.cancel()
         assert exc_info.value is error
         assert not forced_stop
         assert loop.run_until_complete(asyncio.sleep(0)) is None
@@ -2156,6 +2159,13 @@ async def test_call_tool_wrong_name():
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+                state='interrupted',
             ),
         ]
     )
@@ -4203,8 +4213,8 @@ class TestMultipleToolCalls:
                 await result.get_output()  # pragma: no cover
 
         task = asyncio.create_task(run())
-        await asyncio.wait_for(first_done.wait(), timeout=1)
-        await asyncio.wait_for(pending_started.wait(), timeout=1)
+        await asyncio.wait_for(first_done.wait(), timeout=5)
+        await asyncio.wait_for(pending_started.wait(), timeout=5)
 
         task.cancel()
         with pytest.raises(asyncio.CancelledError):

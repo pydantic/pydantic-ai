@@ -66,7 +66,7 @@ The case metadata drives per-case behavior without needing custom [`Case`][pydan
 
 ### Conditional Teardown
 
-The `teardown()` hook receives the full result, so you can vary cleanup logic based on success or failure — for example, keeping test environments up for manual inspection when a case fails. The `result` can be `None` if evaluation is interrupted before the case produces a report result, so handle that branch when your cleanup depends on the case outcome:
+The `teardown()` hook receives the full result, so cleanup can differ for successful and failed cases. For example, keep a failed case's environment for manual inspection. If evaluation is interrupted before the case produces a report result, `result` is `None`; handle that case when cleanup depends on the outcome:
 
 ```python
 from pydantic_evals import Case, Dataset

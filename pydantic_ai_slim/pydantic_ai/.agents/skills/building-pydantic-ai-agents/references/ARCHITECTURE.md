@@ -174,10 +174,11 @@ Need deterministic, fast tests?
 | Azure | `azure:` | `azure:gpt-5.2` |
 | OpenRouter | `openrouter:` | `openrouter:anthropic/claude-sonnet-4-6` |
 | xAI | `xai:` | `xai:grok-4.3` |
-| DeepSeek | `deepseek:` | `deepseek:deepseek-chat` |
+| DeepSeek | `deepseek:` | `deepseek:deepseek-v4-flash` |
 | Fireworks | `fireworks:` | `fireworks:accounts/fireworks/models/llama-v3p3-70b-instruct` |
 | Together | `together:` | `together:meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo` |
 | Ollama (local) | `ollama:` | `ollama:llama3.2` |
+| vLLM (local or remote) | `vllm:` | `vllm:Qwen/Qwen3.8-27B` |
 | GitHub Models | `github:` | `github:openai/gpt-5.2` |
 | Hugging Face | `huggingface:` | `huggingface:meta-llama/Llama-3.3-70B-Instruct` |
 | Cerebras | `cerebras:` | `cerebras:llama-4-scout-17b-16e-instruct` |

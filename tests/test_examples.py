@@ -18,6 +18,8 @@ import httpx
 import pytest
 from _pytest.mark import ParameterSet
 from devtools import debug
+from genai_prices import UpdatePrices
+from genai_prices.data_snapshot import get_snapshot
 from pytest_examples import CodeExample, EvalExample, find_examples
 from pytest_examples.config import ExamplesConfig as BaseExamplesConfig
 from pytest_mock import MockerFixture
@@ -251,6 +253,7 @@ def test_docs_examples(
     mocker.patch('httpx2.Client.post', side_effect=http_request)
     mocker.patch('httpx2.AsyncClient.get', side_effect=async_http_request)
     mocker.patch('httpx2.AsyncClient.post', side_effect=async_http_request)
+    mocker.patch.object(UpdatePrices, 'fetch', return_value=get_snapshot())
     mocker.patch('random.randint', return_value=4)
     mocker.patch('rich.prompt.Prompt.ask', side_effect=rich_prompt_ask)
 
@@ -295,6 +298,7 @@ def test_docs_examples(
     env.set('TOGETHER_API_KEY', 'testing')
     env.set('OLLAMA_API_KEY', 'testing')
     env.set('OLLAMA_BASE_URL', 'http://localhost:11434/v1')
+    env.set('VLLM_BASE_URL', 'http://localhost:8000/v1')
     env.set('AZURE_OPENAI_API_KEY', 'testing')
     env.set('AZURE_OPENAI_ENDPOINT', 'https://your-azure-endpoint.openai.azure.com')
     env.set('OPENAI_API_VERSION', '2024-05-01')
@@ -452,7 +456,7 @@ class MockMCPServer(AbstractToolset[Any]):
 
     @property
     def id(self) -> str | None:
-        return None  # pragma: no cover
+        return None
 
     async def get_instructions(self, ctx: RunContext[Any]) -> str | None:
         return None

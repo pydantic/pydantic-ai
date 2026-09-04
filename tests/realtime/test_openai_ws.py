@@ -40,16 +40,23 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.realtime import RealtimeModelProfile, RealtimeOutputSpeechEndEvent, RealtimeTurnCompleteEvent
-from pydantic_ai.usage import RunUsage
+from pydantic_ai.realtime import (
+    RealtimeModelProfile,
+    RealtimeOutputSpeechEndEvent,
+    RealtimeSession,
+    RealtimeTurnCompleteEvent,
+)
+from pydantic_ai.usage import RequestUsage, RunUsage
 
 from ..conftest import IsDatetime, IsStr, try_import
 from .conftest import REAL_SDP_OFFER
-from .ws_cassettes import RealtimeCassette
+from .ws_cassettes import RealtimeCassette, ReplayWebSocket
 from .ws_helpers import collapse_event_types, sent_frames_containing
 
 with try_import() as imports_successful:
     from pydantic_ai.providers import Provider
+    from pydantic_ai.providers.openai import OpenAIProvider
+    from pydantic_ai.realtime import infer_realtime_model
     from pydantic_ai.realtime.openai import (
         OpenAIRealtimeConnection,
         OpenAIRealtimeModel,
@@ -129,6 +136,120 @@ async def test_text_in_audio_out_turn(openai_ws_cassette: tuple[Provider[Any], R
     assert isinstance(part.audio, BinaryContent)
     assert part.audio.media_type == 'audio/wav'
     assert len(part.audio.data) > 0
+
+
+async def test_media_views_subscribe_before_iteration(
+    openai_ws_cassette: tuple[Provider[Any], RealtimeCassette],
+) -> None:
+    """Audio and transcripts produced before their consumers start are buffered by the live session."""
+    provider, _ = openai_ws_cassette
+    model = OpenAIRealtimeModel('gpt-realtime', provider=provider)
+    agent = Agent(instructions='Reply only with hello.')
+
+    async with agent.realtime(model).session() as session:
+        audio = session.stream_audio()
+        transcripts = session.stream_transcripts()
+        await session.send('Say hello.')
+        with anyio.fail_after(30):
+            async for event in session:  # pragma: no branch
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+
+        async def consume_audio() -> list[bytes]:
+            return [chunk async for chunk in audio]
+
+        async def consume_transcripts() -> list[SpeechPart]:
+            return [part async for part in transcripts]
+
+        audio_task = asyncio.create_task(consume_audio())
+        transcript_task = asyncio.create_task(consume_transcripts())
+        for _ in range(5):
+            await asyncio.sleep(0)
+
+    audio_chunks = await audio_task
+    transcript_parts = await transcript_task
+    assert audio_chunks
+    assert all(audio_chunks)
+    assert len(transcript_parts) == 1
+    assert transcript_parts[0].speaker == 'assistant'
+    assert transcript_parts[0].transcript
+
+
+async def test_provider_factory_text_turn(
+    openai_ws_cassette: tuple[Provider[Any], RealtimeCassette], openai_api_key: str
+) -> None:
+    """A factory-built provider authenticates and runs an inferred realtime model end to end."""
+    model = infer_realtime_model(
+        'openai:gpt-realtime', provider_factory=lambda _: OpenAIProvider(api_key=openai_api_key)
+    )
+    agent = Agent(instructions='Answer in two words.')
+
+    async with agent.realtime(model, model_settings={'output_modality': 'text'}).session() as session:
+        await session.send('Say hello.')
+        with anyio.fail_after(30):
+            async for event in session:  # pragma: no branch
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+
+    assert session.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Say hello.', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Hello there!')],
+                usage=RequestUsage(
+                    input_tokens=12,
+                    output_tokens=5,
+                    details={
+                        'input_text_tokens': 12,
+                        'input_image_tokens': 0,
+                        'output_text_tokens': 5,
+                        'audio_tokens': 0,
+                    },
+                ),
+                model_name='gpt-realtime',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
+                provider_details={'status': 'completed'},
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_dated_ga_snapshot_ignores_thinking(
+    openai_ws_cassette: tuple[Provider[Any], RealtimeCassette],
+) -> None:
+    """The dated GA snapshot completes a turn without receiving unsupported `reasoning` config."""
+    provider, cassette = openai_ws_cassette
+    model = OpenAIRealtimeModel(
+        'gpt-realtime-2025-08-28',
+        provider=provider,
+        settings=OpenAIRealtimeModelSettings(thinking='low', output_modality='text'),
+    )
+
+    events: list[Any] = []
+    async with Agent(instructions='Answer in two or three words.').realtime(model).session() as session:
+        await session.send('Say a short greeting.')
+        with anyio.fail_after(30):
+            async for event in session:  # pragma: no branch
+                events.append(event)
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+
+    session_updates = sent_frames_containing(cassette, 'session.update')
+    assert len(session_updates) == 1
+    assert 'reasoning' not in session_updates[0]['session']
+    assert any(isinstance(event, PartEndEvent) for event in events)
+    assert isinstance(events[-1], RealtimeTurnCompleteEvent)
 
 
 async def test_audio_in_server_vad_turn(
@@ -400,6 +521,67 @@ async def test_tool_call_round(openai_ws_cassette: tuple[Provider[Any], Realtime
     assert session.usage.input_tokens > 0 and session.usage.output_tokens > 0
 
 
+async def test_tool_error_ends_transcript_only_session(
+    openai_ws_cassette: tuple[Provider[Any], RealtimeCassette],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A raising tool ends a transcript-only consumer instead of leaving the live session mute."""
+    replay_recv = ReplayWebSocket.recv
+
+    async def yielding_replay_recv(self: ReplayWebSocket, *, decode: bool | None = None) -> str | bytes:
+        # A real socket yields between frames; give the spawned tool task the same scheduling chance
+        # during cassette playback before end-of-recording is interpreted as a provider close.
+        await asyncio.sleep(0)
+        return await replay_recv(self, decode=decode)
+
+    monkeypatch.setattr(ReplayWebSocket, 'recv', yielding_replay_recv)
+    provider, _ = openai_ws_cassette
+    model = OpenAIRealtimeModel(
+        'gpt-realtime', provider=provider, settings=OpenAIRealtimeModelSettings(output_modality='text')
+    )
+    agent = Agent(instructions='Use the get_weather tool for any weather question.')
+
+    @agent.tool_plain
+    async def get_weather(city: str) -> str:
+        """Look up the weather for a city."""
+        raise ValueError(f'weather service unavailable for {city}')
+
+    session: RealtimeSession | None = None
+    with pytest.raises(ValueError, match='weather service unavailable for London'):
+        async with agent.realtime(model).session() as session:
+            await session.send('What is the weather in London?')
+            with anyio.fail_after(30):
+                assert [part async for part in session.stream_transcripts()] == []
+
+    assert session is not None
+    assert session.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='What is the weather in London?', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='get_weather',
+                        args=IsStr(),
+                        tool_call_id=IsStr(),
+                    )
+                ],
+                model_name='gpt-realtime',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+                state='interrupted',
+            ),
+        ]
+    )
+
+
 async def test_message_history_seeding(openai_ws_cassette: tuple[Provider[Any], RealtimeCassette]) -> None:
     """Seeded prior turns are sent on the wire and reflected in the model's reply."""
     provider, cassette = openai_ws_cassette
@@ -467,6 +649,7 @@ async def test_message_history_seeding(openai_ws_cassette: tuple[Provider[Any], 
     assert 'alice' in content and 'teal' in content
 
 
+@pytest.mark.usefixtures('no_genai_prices_context_window')
 def test_profile_allow_seeding() -> None:
     """Unit guard: the model advertises session seeding, which the seeding cassette test relies on.
 
@@ -491,6 +674,7 @@ def test_profile_allow_seeding() -> None:
         emits_input_speech_events=True,
         audio_input_sample_rate=24000,
         audio_output_sample_rate=24000,
+        context_window=None,
     )
 
 
@@ -729,3 +913,59 @@ async def test_webrtc_sideband_audio_turn(
             }
         ]
     )
+
+
+async def test_handle_barge_in_over_live_speech(
+    openai_ws_cassette: tuple[Provider[Any], RealtimeCassette], assets_path: Path
+) -> None:
+    """`handle_barge_in=True` runs the whole barge-in against the live protocol.
+
+    The user speaks over the model's reply: the session must send the truncation on its own — and
+    *only* the truncation, because with the default `interrupt_response: true` server VAD the
+    provider cancels the response itself (`reason: turn_detected`), and a client cancel racing that
+    was observed being applied to the *next* response, silencing the reply to the barge-in. The
+    provider must accept the truncate, and the session must stay usable: the barged-in utterance
+    still gets a completed reply. The playback position is deterministic across record and replay:
+    exactly one audio chunk is pulled and never confirmed, so the truncation point is 0 ms (any
+    other value would be recomputed on replay from cassette-truncated chunk sizes and mismatch the
+    recorded frame).
+    """
+    provider, cassette = openai_ws_cassette
+    model = OpenAIRealtimeModel('gpt-realtime', provider=provider)
+    agent = Agent(instructions='Reply in a few words.')
+    pcm = assets_path.joinpath('marcelo_24khz.pcm').read_bytes()
+
+    events: list[Any] = []
+    async with agent.realtime(model).session(handle_barge_in=True) as session:
+        stream = session.stream_audio()
+        with anyio.fail_after(90):
+            for start in range(0, len(pcm), 4800):
+                await session.send_audio(pcm[start : start + 4800])
+            # Wait for the reply's audio to start flowing; the chunk stays unconfirmed, pinning the
+            # session's tracked playback position at 0.
+            assert len(await anext(stream)) > 0
+            # Speak over the reply: server VAD reports speech onset and the session barges in.
+            for start in range(0, len(pcm), 4800):
+                await session.send_audio(pcm[start : start + 4800])
+            turns_complete = 0
+            async for event in session:  # pragma: no branch
+                events.append(event)
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    # The interrupted reply settles as its own turn; break after the reply to the
+                    # barge-in utterance.
+                    turns_complete += 1
+                    if turns_complete == 2:
+                        break
+
+    # The session sent the barge-in itself — nothing in this test called `interrupt()` — and left
+    # the cancellation to the server's own VAD.
+    truncates = sent_frames_containing(cassette, 'conversation.item.truncate')
+    assert [frame['audio_end_ms'] for frame in truncates] == [0]
+    assert sent_frames_containing(cassette, 'response.cancel') == []
+
+    # The provider accepted it: the first reply settles as interrupted with the truncation point on
+    # its speech part, and the barged-in utterance still got a completed reply.
+    responses = [message for message in session.all_messages() if isinstance(message, ModelResponse)]
+    assert [response.state for response in responses] == snapshot(['interrupted', 'complete'])
+    speech = next(part for part in responses[0].parts if isinstance(part, SpeechPart))
+    assert speech.interrupted_at_ms == 0

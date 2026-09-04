@@ -43,7 +43,14 @@ lint: ## Lint the code
 typecheck-pyright:
 	@# To typecheck for a specific version of python, run 'make install-all-python' then set environment variable PYRIGHT_PYTHON=3.10 or similar
 	@# PYRIGHT_PYTHON_IGNORE_WARNINGS avoids the overhead of making a request to github on every invocation
-	PYRIGHT_PYTHON_IGNORE_WARNINGS=1 uv run pyright $(if $(PYRIGHT_PYTHON),--pythonversion $(PYRIGHT_PYTHON))
+	@# --threads parallelizes the check phase across logical cores (~2x faster, identical output)
+	PYRIGHT_PYTHON_IGNORE_WARNINGS=1 uv run pyright --threads $(if $(PYRIGHT_PYTHON),--pythonversion $(PYRIGHT_PYTHON))
+
+.PHONY: typecheck-changed
+typecheck-changed: ## Run static type checking on the files reached by changes since it last passed
+	@# The pre-commit hook's entry point. Falls back to `typecheck-pyright` whenever the
+	@# narrowed set is not provably the same answer; see scripts/typecheck_changed.py
+	uv run python scripts/typecheck_changed.py
 
 .PHONY: typecheck-mypy
 typecheck-mypy:

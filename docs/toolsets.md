@@ -862,6 +862,8 @@ To define a fully custom toolset with its own logic to list available tools and 
 
 You can also override the [`get_instructions()`][pydantic_ai.toolsets.AbstractToolset.get_instructions] method to provide a description of how to use the toolset's tools. This will be injected into the agent's instructions and is useful for helping the model understand how to effectively use your toolset's tools.
 
+If the toolset has an [`id`][pydantic_ai.toolsets.AbstractToolset.id] and contributes instructions, that id must be unique among the toolsets registered with an agent, counting the ones a [capability](capabilities/overview.md) contributes. Its instructions reach the model as [instruction parts](agent.md#instruction-parts) identified by `'toolset:<toolset id>'`, so an application can address them by a key that outlives their wording. Every part the toolset returns carries that one key; if you want a part to be addressable on its own, return an [`InstructionPart`][pydantic_ai.messages.InstructionPart] with a `name` relative to your toolset (`'limits'`), which the framework qualifies to `'toolset:weather:limits'`. Don't spell out your own id — you'd be repeating what the framework already knows, and a name of your own can't be mistaken for a top-level key.
+
 !!! tip
     If your toolset also needs to provide model settings or hooks, consider building a [custom capability](capabilities/custom.md) instead.
 
@@ -888,7 +890,7 @@ Pydantic AI provides [`MCPToolset`][pydantic_ai.mcp.MCPToolset] for connecting t
 
 ### Agent Skills
 
-Toolsets that implement [Agent Skills](https://agentskills.io) support so agents can efficiently discover and perform specific tasks:
+Toolsets that implement [Agent Skills](https://agentskills.io) support help agents efficiently discover and perform specific tasks:
 
 * [`pydantic-ai-skills`](https://github.com/DougTrajano/pydantic-ai-skills) - `SkillsToolset` implements Agent Skills support with progressive disclosure (load skills on-demand to reduce tokens). Supports filesystem and programmatic skills; compatible with [agentskills.io](https://agentskills.io).
 
