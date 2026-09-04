@@ -83,8 +83,9 @@ class PendingMessageDrainCapability(AbstractCapability[Any]):
         [`enqueue`][pydantic_ai.tools.RunContext.enqueue] call, in enqueue order, describing the
         messages exactly as delivered here.
         """
+        # This capability only runs in standard graph runs, which always install the shared queue.
         queue = ctx._pending_message_queue  # pyright: ignore[reportPrivateUsage]
-        assert queue is not None, 'drain runs during an agent run, which always has a queue'
+        assert queue is not None
         drained = queue.pop_priority('asap')
         for pending in drained:
             messages = _stamped_messages(
@@ -121,8 +122,9 @@ class PendingMessageDrainCapability(AbstractCapability[Any]):
         if not isinstance(result, End):
             return result
 
+        # This capability only runs in standard graph runs, which always install the shared queue.
         queue = ctx._pending_message_queue  # pyright: ignore[reportPrivateUsage]
-        assert queue is not None, 'drain runs during an agent run, which always has a queue'
+        assert queue is not None
         # Pi-mono parity: drain `'asap'` first so anything that arrived during the
         # final step (e.g. a background task completing while the model produced
         # its final response) gets delivered before `'when_idle'` messages, and the
