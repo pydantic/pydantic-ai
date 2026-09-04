@@ -90,6 +90,7 @@ from .codec import (
     RealtimeSessionInput,
     ResponseDone,
     SessionUsage,
+    TextContext,
     ToolCall,
     ToolCallCancelled,
     ToolResult,
@@ -1138,8 +1139,20 @@ class RealtimeSession:
         fill_run_metadata(request, run_id=self._run_id, conversation_id=self._conversation_id)
         return request
 
-    async def send(self, content: RealtimeSessionInput | Sequence[RealtimeSessionInput]) -> None:
+    async def send(
+        self, content: RealtimeSessionInput | Sequence[RealtimeSessionInput], *, respond: bool | None = None
+    ) -> None:
         """Feed content into the session.
+
+        A `str` is a complete text turn that the model replies to. Do not follow `send('...')` with
+        `create_response()`: that asks for two responses. An image is added as context without
+        soliciting a response, while audio is streamed into the input buffer.
+
+        Set `respond=False` to add text or an image as context without soliciting a response. Set
+        `respond=True` to solicit a response to text or an image; this requires manual turn control
+        for images. `respond=True` cannot be used with audio. For a sequence, an explicit `respond` value
+        adds every item except the last as context and applies that value to the last item. With the
+        default `respond=None`, each item keeps its usual behavior.
 
         Accepts the shared message vocabulary: plain text as a `str`, image/audio
         [`BinaryContent`][pydantic_ai.messages.BinaryContent] (including
@@ -1158,49 +1171,70 @@ class RealtimeSession:
         completes (see `_execute_tool`) — neither is accepted here.
         """
         if isinstance(content, str):
-            self._reserve_response_request()
+            solicits_response = respond is not False
+            if solicits_response:
+                self._reserve_response_request()
             request = self._new_request([UserPromptPart(content=content)])
             self._record_sent_request(request)
             try:
-                await self._send_frame(content)
+                await self._send_frame(content if solicits_response else TextContext(content))
             except BaseException:
-                self._pending_response_requests -= 1
+                if solicits_response:
+                    self._pending_response_requests -= 1
                 self._remove_sent_request(request)
                 raise
         elif isinstance(content, BinaryContent):
             if content.is_image:
-                await self._send_image(content)
-            elif content.media_type == _WAV_MEDIA_TYPE:
-                # Retained `SpeechPart.audio` (from `audio_retention`) is a WAV container; unwrap it to
-                # raw PCM — matching the seeding path — so a natural round-trip (retain a turn's audio,
-                # then `send()` it back) doesn't stream the WAV header into the buffer as noise.
-                await self.send_audio(
-                    seed_pcm_audio(
-                        audio=content,
-                        provider_name=self._provider_name or 'realtime',
-                        sample_rate=self.audio_input_sample_rate,
-                    )
-                )
-            elif content.media_type == 'audio/pcm':
-                await self.send_audio(content.data)
+                await self._send_image(content, respond=respond is True)
             else:
-                raise UserError(
-                    f'Unsupported binary media type {content.media_type!r} for `session.send()`. '
-                    'Send an image, WAV audio, or raw PCM (`audio/pcm`); for a raw PCM byte stream use `send_audio()`.'
-                )
+                if respond is True and content.media_type in (_WAV_MEDIA_TYPE, 'audio/pcm'):
+                    # Audio never solicits a reply on its own (VAD or `commit_audio()` ends the turn), so
+                    # `respond=False` is a no-op for it and only `respond=True` is a mistake.
+                    raise UserError(
+                        '`respond=True` cannot be used with audio sent via `session.send()`: a spoken turn is '
+                        'ended by voice activity detection, or by `commit_audio()` and `create_response()`.'
+                    )
+                await self._send_audio_content(content)
         elif isinstance(content, (bytes, bytearray)):
             # `bytes` is a `Sequence[int]`, so guard it before the sequence branch below — otherwise it
             # iterates into a confusing per-byte error. Raw input audio goes through `send_audio()`.
             raise UserError('Raw audio bytes cannot be sent via `session.send()`; use `session.send_audio(...)`.')
         elif isinstance(content, Sequence):
-            for item in content:
-                await self.send(item)
+            if respond is None:
+                for item in content:
+                    await self.send(item)
+            else:
+                for index, item in enumerate(content):
+                    await self.send(item, respond=respond if index == len(content) - 1 else False)
         else:
             assert_never(content)
 
-    async def _send_image(self, content: BinaryContent) -> None:
+    async def _send_audio_content(self, content: BinaryContent) -> None:
+        if content.media_type == _WAV_MEDIA_TYPE:
+            # Retained `SpeechPart.audio` (from `audio_retention`) is a WAV container; unwrap it to
+            # raw PCM — matching the seeding path — so a natural round-trip (retain a turn's audio,
+            # then `send()` it back) doesn't stream the WAV header into the buffer as noise.
+            await self.send_audio(
+                seed_pcm_audio(
+                    audio=content,
+                    provider_name=self._provider_name or 'realtime',
+                    sample_rate=self.audio_input_sample_rate,
+                )
+            )
+        elif content.media_type == 'audio/pcm':
+            await self.send_audio(content.data)
+        else:
+            raise UserError(
+                f'Unsupported binary media type {content.media_type!r} for `session.send()`. '
+                'Send an image, WAV audio, or raw PCM (`audio/pcm`); for a raw PCM byte stream use `send_audio()`.'
+            )
+
+    async def _send_image(self, content: BinaryContent, *, respond: bool) -> None:
         """Forward an image and retain it according to the session's sampling and cap policies."""
         self._require_capability('supports_image_input', method='send', feature='image input')
+        if respond:
+            self._require_capability('supports_manual_turn_control', method='send', feature='manual turn-taking')
+            self._reserve_response_request()
         request: ModelRequest | None = None
         if self._retain_images_max != 0 and self._sent_image_count % self._retain_images_every_n == 0:
             request = self._new_request([UserPromptPart(content=[content])])
@@ -1209,8 +1243,13 @@ class RealtimeSession:
             # Callers guard on `is_image`, so the narrowed type only re-tags a plain `BinaryContent`.
             image = BinaryContent.narrow_type(content)
             assert isinstance(image, BinaryImage)
-            await self._send_frame(image)
+            if respond:
+                await self._send_frame(image, CreateResponse())
+            else:
+                await self._send_frame(image)
         except BaseException:
+            if respond:
+                self._pending_response_requests -= 1
             # `None` when this image wasn't the one retained by the sampling policy: nothing recorded,
             # so nothing to take back.
             if request is not None:
@@ -1316,7 +1355,11 @@ class RealtimeSession:
         self._user_turn_active = False
 
     async def create_response(self) -> None:
-        """Ask the model to respond now (manual turn-taking, after `commit_audio`)."""
+        """Ask the model to respond now (manual turn-taking, after `commit_audio`).
+
+        If a response is already in flight, the request is held until it completes and is dropped if
+        the user barges in. Returning does not mean the model has started speaking.
+        """
         self._require_capability('supports_manual_turn_control', method='create_response', feature='manual turn-taking')
         self._reserve_response_request()
         try:

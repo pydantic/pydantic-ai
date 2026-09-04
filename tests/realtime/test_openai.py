@@ -85,6 +85,7 @@ from pydantic_ai.realtime.codec import (
     RealtimeCodecEvent,
     ResponseDone,
     SessionUsage,
+    TextContext,
     ToolCall,
     ToolResult,
     TruncateOutput,
@@ -2122,6 +2123,23 @@ async def test_connection_send_text() -> None:
     create = json.loads(ws.sent[0])
     assert create['item']['content'][0]['text'] == 'hello'
     assert json.loads(ws.sent[1]) == {'type': 'response.create'}
+
+
+@pytest.mark.anyio
+async def test_connection_send_text_context() -> None:
+    ws = FakeWebSocket([])
+    conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    await conn.send(TextContext('background'))
+    assert [json.loads(frame) for frame in ws.sent] == [
+        {
+            'type': 'conversation.item.create',
+            'item': {
+                'type': 'message',
+                'role': 'user',
+                'content': [{'type': 'input_text', 'text': 'background'}],
+            },
+        }
+    ]
 
 
 @pytest.mark.anyio
