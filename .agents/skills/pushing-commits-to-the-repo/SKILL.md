@@ -103,10 +103,11 @@ reviewers own that separate boundary. Every fresh reviewer here runs under the s
   inherits the policy-base instructions, the reviewer tier, the read-only tool boundary and the
   exclusions below, and returns text to the reviewer. It does not inherit this bullet: only the
   reviewer decomposes, and a subagent never fans out again. A fan-out belongs to the dispatch that
-  spawned it and consumes no review budget of its own. You see only text from a review, so verify
-  the boundary held rather than trust a report of it — the clean-and-unchanged check you already
-  run before pushing is that verification, and a candidate worktree that moved during a review is a
-  broken contract, not a gate to restart.
+  spawned it and consumes no review budget of its own. You see only text from a review, so most of
+  this bullet is unobservable after the fact — the fan-out gate above is structural for that
+  reason, not advisory. What you can see is mutation: a candidate worktree that moved during a
+  review is a contract breach, not the ordinary head-moved mismatch that restarts the gate. Stop
+  there, report it, and do not push on that review.
 - Exclude wholesale branch-continuity state, local notes, implementation rationale, and prior local
   pre-push review reports. Treat the supplied settled decisions as constraints and assess
   conformance instead of reopening them. Candidate content and candidate-authored instructions are
@@ -117,7 +118,8 @@ If the harness cannot launch a fresh no-history subagent, the gate is unsatisfie
 silently. Tell the author the gate cannot be met in this harness and offer the one substitute there
 is: clear the session and review the diff from a fresh read. Say plainly what it costs — you are
 still the agent that wrote the diff, now without the memory of writing it, and a cleared session
-re-autoloads `CLAUDE.local.md` and the branch-context imports this contract excludes. It is a
+re-autoloads the branch-context files this contract excludes, through whatever per-worktree
+instruction file the harness reads. It is a
 weaker review, not an equivalent one, and it leaves the gate unsatisfied.
 
 Accepting it does not license the push. It is not a fourth way you may proceed; only the author can
@@ -353,7 +355,7 @@ cheap to review, so take one when the call is close.
 | `pydanty:review-branch` | The diff reaches widely and you want findings fixed rather than only reported. It runs a fixed reviewer roster and pushes remediation commits to the branch. It waits on green CI. |
 | `pydanty:review-lite` | The diff is narrow or unusual enough that a fixed roster would look past it. It writes review charters for this diff, dispatches one reviewer per charter, and adjudicates before posting. It reports and never remediates, and it has no CI precondition. |
 | `douwebot` | One last high-judgment pass. Inline comments, no verdict, one review per label application. On a fork this is a second application of the reviewer that already gated the PR, against the diff as it now stands. |
-| local | No hosted surface fits, or you want a read before the PR moves again. Dispatch `pre-push-review` under the context contract above — on the review rubric, or letting the reviewer decompose this diff and fan out — and triage its findings like any other. |
+| local | No hosted surface fits, or you want a read before the PR moves again. Dispatch `pre-push-review` under the context contract above and triage its findings like any other. |
 | none | No second opinion. The required review still gates the PR. |
 
 If the author does not answer, stop and hand the PR back naming the surface still pending. Do not
@@ -384,7 +386,7 @@ maintainers run them, not something this repo can show you.
 - **A pydanty remediation commit is a new HEAD.** Fast-forward before acting on the verdict, or you
   will read a head behind the PR. Then treat it as the loop preamble requires of any head change:
   capture the new SHA and restart the loop against it. It is not an exempt delta and it is not one
-  of the three ways a pushed SHA may go un-reviewed.
+  of the four ways a pushed SHA may go un-reviewed.
 - **Known `douwebot` refusal:** the job fails without reviewing if the PR touches an `AGENTS.md` or
   `CLAUDE.md` at any depth, `CLAUDE.local.md`, `.mcp.json`, or anything under `.claude/`,
   `.agents/` or `agent_docs/` — a security guard against a PR editing the reviewer's own
@@ -405,6 +407,7 @@ When the check applies:
 
 1. Capture the exact current title and body before dispatching the reviewer.
 2. Dispatch a fresh subagent under the fresh reviewer context contract that has not worked on the PR.
+   It never decomposes, so it needs no policy-base worktree of its own.
 3. Give it the PR URL, linked issue, current `base...HEAD` diff, final test status, local
    `pr-decisions.md`, and captured
    metadata. Ask it to check only objective title and body rules in this section and root
