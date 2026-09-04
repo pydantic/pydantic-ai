@@ -5263,7 +5263,7 @@ async def test_session_enqueue_asap_waits_for_active_response_to_complete() -> N
 
 
 class _RespondingConnection(FakeRealtimeConnection):
-    """Replies to each text turn with a transcript and `ResponseDone`, and stops after `replies` turns."""
+    """Replies to each send with a transcript and `ResponseDone`, and stops after `replies` turns."""
 
     def __init__(self, replies: int) -> None:
         super().__init__([])
@@ -5273,8 +5273,7 @@ class _RespondingConnection(FakeRealtimeConnection):
 
     async def send(self, content: RealtimeInput) -> None:
         await super().send(content)
-        if isinstance(content, str):
-            self._text_sent.set()
+        self._text_sent.set()
 
     async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
         for _ in range(self._replies):
