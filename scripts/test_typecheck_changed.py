@@ -307,8 +307,12 @@ def test_editing_an_excluded_file_checks_what_imports_it(project: Path):
 
 @pytest.mark.parametrize(
     'pyproject',
-    [_PYPROJECT.replace('["pkg_src"]', '["pkg_src/**"]'), _PYPROJECT.replace('include = ["pkg_src"]\n', '')],
-    ids=['glob', 'no-include'],
+    [
+        _PYPROJECT.replace('["pkg_src"]', '["pkg_src/**"]'),
+        _PYPROJECT.replace('include = ["pkg_src"]\n', ''),
+        _PYPROJECT.replace('[tool.pyright]\n', '[tool.pyright]\nextends = "base.json"\n'),
+    ],
+    ids=['glob', 'no-include', 'extends'],
 )
 def test_a_file_list_this_script_cannot_reproduce_checks_everything(project: Path, pyproject: str):
     _write(project, 'pyproject.toml', pyproject)
@@ -318,6 +322,16 @@ def test_a_file_list_this_script_cannot_reproduce_checks_everything(project: Pat
     assert recorder.commands == _FULL_RUN
     # Without a file list there is nothing to record, so every run stays a full one.
     assert not _checkpoint(project).exists()
+
+
+def test_a_pyrightconfig_json_checks_everything(project: Path):
+    # Pyright reads it instead of `[tool.pyright]`, so pyproject.toml stops describing
+    # what it checks.
+    _typecheck()
+    _write(project, 'pyrightconfig.json', '{"include": ["pkg_src"]}\n')
+    _stage(project)
+
+    assert _typecheck().commands == _FULL_RUN
 
 
 def test_an_unreadable_checkpoint_checks_everything(project: Path):

@@ -71,6 +71,7 @@ class _ExecutionEnvironment(TypedDict, total=False):
 class _PyrightSettings(TypedDict, total=False):
     include: list[str]
     exclude: list[str]
+    extends: str
     executionEnvironments: list[_ExecutionEnvironment]
 
 
@@ -335,6 +336,12 @@ def _load_project() -> _Project | None:
     pyright = tools.get('pyright') or _PyrightSettings()
     workspace = (tools.get('uv') or _Uv()).get('workspace') or _Workspace()
 
+    # A `pyrightconfig.json` takes precedence over `[tool.pyright]`, and `extends` names a
+    # file this does not read. Either way pyproject.toml has stopped describing what Pyright
+    # checks, so there is nothing here to narrow against.
+    if pyright.get('extends') or Path('pyrightconfig.json').exists():
+        return None
+
     include = pyright.get('include') or []
     exclude = pyright.get('exclude') or []
     members = workspace.get('members') or []
@@ -356,7 +363,8 @@ def _tracked_files() -> list[str]:
 
     The import graph is a property of the source tree, not of Pyright's file list: a file
     Pyright reports nothing about is still read for whoever imports it, so it belongs in the
-    graph even though it never belongs on the command line. Untracked files are not checked.
+    graph even though it never belongs on the command line. A narrowed run never sees an
+    untracked file; a fallback run does, because Pyright walks the project itself.
     """
     listed = _git('ls-files', '-z').split('\0')
     # A file removed from the working tree but not yet from the index is still listed, and
