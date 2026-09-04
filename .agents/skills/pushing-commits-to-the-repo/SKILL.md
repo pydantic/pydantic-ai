@@ -257,9 +257,13 @@ if the head changes, capture the new SHA and restart the loop.
    is the source of truth for eligibility and accepted verdicts or no-ops.
    - **Same-repository PR:** require the `CI Review` terminal outcome to identify the captured SHA.
      A `CI Review skipped` check is not that outcome; read its summary for the reason. When the
-     reason is a standing `REQUEST_CHANGES`, escalate: dismissing a review needs a permission you
-     do not have, and no push clears it. A dismissal alone produces no verdict either — something
-     still has to fire the workflow, and what works depends on whether the head moved.
+     reason is a standing `REQUEST_CHANGES`, no push clears it and the review has to be dismissed.
+     Do not dismiss it on your own judgment even where you hold the permission — discarding a
+     reviewer's verdict is the author's call. Ask, and say what changed since the reviewed SHA.
+     A dismissal alone produces no verdict either: something still has to fire the workflow, and
+     what works depends on whether the head moved. Dismiss first, then move the head — a commit
+     pushed before the dismissal clears nothing, because the gate tests `reviewDecision` before it
+     reaches the dedup.
 
      After a dismissal, when the head has moved since the dismissed review, any of three fire it:
      that new commit's `CI`, a re-run of the existing `CI` run, or `workflow_dispatch` carrying the
