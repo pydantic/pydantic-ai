@@ -46,6 +46,7 @@ Connections to systems outside the agent's workspace, and abilities the provider
 | [MCP](mcp.md) | Core | Connect any MCP server's tools; local by default, provider-native connectors opt-in |
 | [Image Generation](image-generation.md) | Core | Generate and edit images; provider-native where supported, sub-agent fallback elsewhere |
 | [Native Tool](../native-tools.md) | Core | Register any provider-native tool with the agent |
+| [Notion](https://pydantic.dev/docs/ai/harness/notion/) | Harness | Search and read one user's Notion workspace; opt into page and database mutations by tool name |
 | [StackOne](https://pydantic.dev/docs/ai/harness/stackone/) | Harness | Act on linked SaaS accounts (HRIS, ATS, CRM, …) via [StackOne](https://www.stackone.com) |
 | [LocalStack](https://pydantic.dev/docs/ai/harness/localstack/) | Harness | An emulated AWS environment with AWS CLI tools |
 | [Macroscope](https://pydantic.dev/docs/ai/harness/macroscope/) | Harness | Run a local [Macroscope](https://docs.macroscope.com/cli) code review and hand the findings to the agent |
