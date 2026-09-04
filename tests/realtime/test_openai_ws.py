@@ -131,6 +131,33 @@ async def test_text_in_audio_out_turn(openai_ws_cassette: tuple[Provider[Any], R
     assert len(part.audio.data) > 0
 
 
+async def test_dated_ga_snapshot_ignores_thinking(
+    openai_ws_cassette: tuple[Provider[Any], RealtimeCassette],
+) -> None:
+    """The dated GA snapshot completes a turn without receiving unsupported `reasoning` config."""
+    provider, cassette = openai_ws_cassette
+    model = OpenAIRealtimeModel(
+        'gpt-realtime-2025-08-28',
+        provider=provider,
+        settings=OpenAIRealtimeModelSettings(thinking='low', output_modality='text'),
+    )
+
+    events: list[Any] = []
+    async with Agent(instructions='Answer in two or three words.').realtime(model).session() as session:
+        await session.send('Say a short greeting.')
+        with anyio.fail_after(30):
+            async for event in session:  # pragma: no branch
+                events.append(event)
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+
+    session_updates = sent_frames_containing(cassette, 'session.update')
+    assert len(session_updates) == 1
+    assert 'reasoning' not in session_updates[0]['session']
+    assert any(isinstance(event, PartEndEvent) for event in events)
+    assert isinstance(events[-1], RealtimeTurnCompleteEvent)
+
+
 async def test_audio_in_server_vad_turn(
     openai_ws_cassette: tuple[Provider[Any], RealtimeCassette], assets_path: Path
 ) -> None:
