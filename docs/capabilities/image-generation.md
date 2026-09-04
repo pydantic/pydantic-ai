@@ -86,13 +86,14 @@ routes to the direct generator instead is what warns that they went unapplied, a
 explicit instance through `native=ImageGenerationTool(...)` when you need its full provider-native configuration, or a
 callable taking [`RunContext`][pydantic_ai.tools.RunContext] that returns an `ImageGenerationTool` or `None` for
 [dynamic configuration](../native-tools.md#dynamic-configuration). A callable resolves on each model request and again
-when the `fallback_model` subagent runs. Both resolutions receive the same `deps`, but the subagent has its own
-`RunContext`; use `ctx.deps` for configuration that must match across both. Capability-level fields override the
-factory result on the subagent.
+when the subagent runs. Both resolutions receive the same `deps`, but the subagent has its own `RunContext`; use
+`ctx.deps` for configuration that must match across both. Capability-level fields override the factory result on the
+subagent.
 
-A static native instance's `aspect_ratio` reaches both fallbacks — the `fallback_model` subagent and the direct `local=`
-generator — while a capability-level `aspect_ratio` takes precedence over it, as does a capability-level `dimensions`,
-which is the same geometry spelled differently and cannot be combined with it. Only inheritance yields that way:
+A static native instance's `aspect_ratio` reaches both fallbacks — the `fallback_subagent_model` subagent and the
+direct `local=` generator — while a capability-level `aspect_ratio` takes precedence over it, as does a
+capability-level `dimensions`, which is the same geometry spelled differently and cannot be combined with it. Only
+inheritance yields that way:
 setting both `dimensions` and `aspect_ratio` on the capability itself raises
 [`UserError`][pydantic_ai.exceptions.UserError] at construction, once a direct `local` generator is configured to apply
 them.
@@ -123,14 +124,19 @@ Two built-in mechanisms cover a model that does not generate images natively:
   [`ImageGenerationModel`][pydantic_ai.images.ImageGenerationModel]. The tool call is a single image API call, with no
   extra agent run, and it applies the portable `dimensions` and `aspect_ratio` settings. Reach for it when the geometry
   or the choice of image model is yours to make.
-- **Subagent**: `fallback_model=` with a conversational model that generates images natively. The tool call runs an
-  additional agent whose native [`ImageGenerationTool`][pydantic_ai.native_tools.ImageGenerationTool] produces the
-  image. Reach for it when you want that model's native tool semantics and the settings the native tool carries.
+- **Subagent**: `fallback_subagent_model=` with a conversational model that generates images natively. The tool call
+  runs an additional agent whose native [`ImageGenerationTool`][pydantic_ai.native_tools.ImageGenerationTool] produces
+  the image. Reach for it when you want that model's native tool semantics and the settings the native tool carries.
 
 A `local=` callable, `Tool`, or toolset of your own replaces both with an implementation you write.
 
+!!! note "`fallback_model` is deprecated"
+    `fallback_model` is the former name of `fallback_subagent_model`. It keeps working, in Python and in an
+    [agent spec](../agent-spec.md), and warns; passing both names raises
+    [`UserError`][pydantic_ai.exceptions.UserError].
+
 !!! note "A factory returning `None`"
-    Without `fallback_model`, `None` omits the native tool for that request. With `fallback_model`, the subagent tool
+    Without `fallback_subagent_model`, `None` omits the native tool for that request. With it set, the subagent tool
     stays available, and calling it raises [`UserError`][pydantic_ai.exceptions.UserError] instead of silently using
     default image settings.
 

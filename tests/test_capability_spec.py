@@ -239,6 +239,52 @@ def test_agent_from_spec_direct_image_generation():
     assert cap.get_toolset() is not None
 
 
+def test_agent_from_spec_deprecated_fallback_model_key():
+    """A spec written against the old key keeps loading, and warns.
+
+    The deprecated name stays in `ImageGeneration.from_spec` and `XSearch.__init__` for exactly
+    this: the published schema forbids extra keys, so removing it would fail such a spec outright
+    rather than deprecate it.
+    """
+    with pytest.warns(
+        PydanticAIDeprecationWarning, match=r'`fallback_model` is deprecated; use `fallback_subagent_model`'
+    ):
+        agent = Agent.from_spec(
+            {
+                'model': 'test',
+                'capabilities': [
+                    {'ImageGeneration': {'fallback_model': 'openai-responses:gpt-5.4'}},
+                    {'XSearch': {'fallback_model': 'xai:grok-4.3'}},
+                ],
+            }
+        )
+    children = agent._root_capability.capabilities  # pyright: ignore[reportPrivateUsage]
+    image_gen = next(c for c in children if isinstance(c, ImageGeneration))
+    x_search = next(c for c in children if isinstance(c, XSearch))
+    assert image_gen.fallback_subagent_model == 'openai-responses:gpt-5.4'
+    assert x_search.fallback_subagent_model == 'xai:grok-4.3'
+
+
+def test_agent_from_spec_fallback_subagent_model_key():
+    """The current key configures the same subagent from a spec."""
+    agent = Agent.from_spec(
+        {
+            'model': 'test',
+            'capabilities': [
+                {'ImageGeneration': {'fallback_subagent_model': 'openai-responses:gpt-5.4'}},
+                {'XSearch': {'fallback_subagent_model': 'xai:grok-4.3'}},
+            ],
+        }
+    )
+    children = agent._root_capability.capabilities  # pyright: ignore[reportPrivateUsage]
+    image_gen = next(c for c in children if isinstance(c, ImageGeneration))
+    x_search = next(c for c in children if isinstance(c, XSearch))
+    assert image_gen.fallback_subagent_model == 'openai-responses:gpt-5.4'
+    assert x_search.fallback_subagent_model == 'xai:grok-4.3'
+    assert image_gen.get_toolset() is not None
+    assert x_search.get_toolset() is not None
+
+
 def test_agent_from_spec_rejects_invalid_image_dimensions_length():
     with pytest.raises(ValueError, match='`dimensions` must contain exactly two integers'):
         Agent.from_spec(
@@ -1941,6 +1987,10 @@ def test_model_json_schema_with_capabilities():
                             'anyOf': [{'type': 'string'}, {'const': False, 'type': 'boolean'}, {'type': 'null'}],
                             'title': 'Local',
                         },
+                        'fallback_subagent_model': {
+                            'anyOf': [{'$ref': '#/$defs/KnownModelName'}, {'type': 'string'}, {'type': 'null'}],
+                            'title': 'Fallback Subagent Model',
+                        },
                         'fallback_model': {
                             'anyOf': [{'$ref': '#/$defs/KnownModelName'}, {'type': 'string'}, {'type': 'null'}],
                             'title': 'Fallback Model',
@@ -2226,6 +2276,10 @@ def test_model_json_schema_with_capabilities():
                     'properties': {
                         'native': {'anyOf': [{'$ref': '#/$defs/XSearchTool'}, {'type': 'boolean'}], 'title': 'Native'},
                         'local': {'anyOf': [{'const': False, 'type': 'boolean'}, {'type': 'null'}], 'title': 'Local'},
+                        'fallback_subagent_model': {
+                            'anyOf': [{'$ref': '#/$defs/KnownModelName'}, {'type': 'string'}, {'type': 'null'}],
+                            'title': 'Fallback Subagent Model',
+                        },
                         'fallback_model': {
                             'anyOf': [{'$ref': '#/$defs/KnownModelName'}, {'type': 'string'}, {'type': 'null'}],
                             'title': 'Fallback Model',
@@ -3455,8 +3509,8 @@ async def test_one_off_capabilities_carry_a_stable_default_id() -> None:
     them without the user naming something they never constructed."""
     assert WebSearch(local=_bare_local).id == 'web_search'
     assert WebFetch(local=_bare_local).id == 'web_fetch'
-    assert ImageGeneration(fallback_model='openai-responses:gpt-5.4').id == 'image_generation'
-    assert XSearch(fallback_model='xai:grok-4.3').id == 'x_search'
+    assert ImageGeneration(fallback_subagent_model='openai-responses:gpt-5.4').id == 'image_generation'
+    assert XSearch(fallback_subagent_model='xai:grok-4.3').id == 'x_search'
     assert Thinking().id == 'thinking'
     assert Instrumentation().id == 'instrumentation'
     assert ReinjectSystemPrompt().id == 'reinject_system_prompt'

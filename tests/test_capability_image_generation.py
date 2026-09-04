@@ -18,6 +18,7 @@ from pydantic import TypeAdapter
 
 import pydantic_ai.images as images_module
 from pydantic_ai._run_context import RunContext
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent import Agent
 from pydantic_ai.capabilities import (
     ImageGeneration,
@@ -88,6 +89,7 @@ class TestImageGenerationCapability:
             'self',
             'native',
             'local',
+            'fallback_subagent_model',
             'fallback_model',
             'id',
             'defer_loading',
@@ -813,9 +815,9 @@ class TestImageGenerationCapability:
         assert isinstance(native_tool, ImageGenerationTool)
         assert native_tool.aspect_ratio == '16:9'
 
-    def test_image_generation_with_fallback_model(self):
-        """ImageGeneration(fallback_model=...) creates a local fallback tool."""
-        cap = ImageGeneration(fallback_model='openai-responses:gpt-5.4')
+    def test_image_generation_with_subagent_model(self):
+        """ImageGeneration(fallback_subagent_model=...) creates a local fallback tool."""
+        cap = ImageGeneration(fallback_subagent_model='openai-responses:gpt-5.4')
         assert isinstance(cap.local, Tool)
         assert cap.get_toolset() is not None
         builtins = cap.get_native_tools()
@@ -823,16 +825,16 @@ class TestImageGenerationCapability:
         assert isinstance(builtins[0], ImageGenerationTool)
 
     @pytest.mark.parametrize('native', [True, False])
-    def test_image_generation_fallback_model_warns_for_direct_only_geometry(self, native: bool):
+    def test_image_generation_subagent_model_warns_for_direct_only_geometry(self, native: bool):
         """The subagent fallback can't carry `dimensions` whether or not the native tool is also built.
 
-        `native=False` is the only configuration that reaches the check through the `fallback_model`
+        `native=False` is the only configuration that reaches the check through the `fallback_subagent_model`
         term alone, so both spellings have to warn.
         """
         with pytest.warns(UserWarning, match='ignored direct-only setting.*dimensions'):
             cap = ImageGeneration(
                 native=native,
-                fallback_model='openai-responses:gpt-5.4',
+                fallback_subagent_model='openai-responses:gpt-5.4',
                 dimensions=(2048, 1152),
             )
 
@@ -942,7 +944,7 @@ class TestImageGenerationCapability:
         custom_native = ImageGenerationTool(quality='high', size='1024x1024')
         cap = ImageGeneration(
             native=custom_native,
-            fallback_model='openai-responses:gpt-5.4',
+            fallback_subagent_model='openai-responses:gpt-5.4',
             output_format='jpeg',  # capability-level override
         )
         assert isinstance(cap.local, Tool)
@@ -951,7 +953,7 @@ class TestImageGenerationCapability:
     async def test_image_generation_custom_native_ratio_reaches_both_fallbacks(self, allow_model_requests: None):
         """A custom `native` instance's `aspect_ratio` is the base for the direct fallback too.
 
-        The `fallback_model` subagent has merged custom-native settings since the capability shipped;
+        The `fallback_subagent_model` subagent has merged custom-native settings since the capability shipped;
         the direct fallback has to honor the same instance, or the identical configuration produces
         differently shaped images depending on which fallback is configured. Capability-level fields
         still override it on both paths, which is the precedence the class docstring states.
@@ -989,7 +991,9 @@ class TestImageGenerationCapability:
             )
 
         inner_model = FunctionModel(inner_model_fn, profile=ModelProfile(supports_image_output=True))
-        subagent_agent = Agent(outer_model, capabilities=[ImageGeneration(native=native, fallback_model=inner_model)])
+        subagent_agent = Agent(
+            outer_model, capabilities=[ImageGeneration(native=native, fallback_subagent_model=inner_model)]
+        )
         await subagent_agent.run('Generate an image')
         assert subagent_native_tools == snapshot([ImageGenerationTool(aspect_ratio='16:9')])
 
@@ -997,28 +1001,57 @@ class TestImageGenerationCapability:
         """When native is a callable, the fallback local tool still gets created."""
         cap = ImageGeneration(
             native=lambda ctx: ImageGenerationTool(quality='high'),
-            fallback_model='openai-responses:gpt-5.4',
+            fallback_subagent_model='openai-responses:gpt-5.4',
         )
         # Callable native can't be resolved at init time, but local fallback is still created
         assert isinstance(cap.local, Tool)
         assert cap.get_toolset() is not None
 
-    def test_image_generation_fallback_model_and_local_conflict(self):
-        """ImageGeneration(fallback_model=..., local=func) raises UserError."""
+    def test_image_generation_subagent_model_and_local_conflict(self):
+        """ImageGeneration(fallback_subagent_model=..., local=func) raises UserError."""
 
         def my_gen(prompt: str) -> str:
             return 'image_url'  # pragma: no cover
 
-        with pytest.raises(UserError, match='cannot specify both `fallback_model` and `local`'):
-            ImageGeneration(fallback_model='openai-responses:gpt-5.4', local=my_gen)
+        with pytest.raises(UserError, match='cannot specify both `fallback_subagent_model` and `local`'):
+            ImageGeneration(fallback_subagent_model='openai-responses:gpt-5.4', local=my_gen)
 
-    def test_image_generation_fallback_model_with_local_false(self):
-        """ImageGeneration(fallback_model=..., local=False) raises UserError."""
-        with pytest.raises(UserError, match='cannot specify both `fallback_model` and `local`'):
-            ImageGeneration(fallback_model='openai-responses:gpt-5.4', local=False)
+    def test_image_generation_subagent_model_with_local_false(self):
+        """ImageGeneration(fallback_subagent_model=..., local=False) raises UserError."""
+        with pytest.raises(UserError, match='cannot specify both `fallback_subagent_model` and `local`'):
+            ImageGeneration(fallback_subagent_model='openai-responses:gpt-5.4', local=False)
 
-    async def test_image_generation_callable_fallback_model(self, allow_model_requests: None):
-        """ImageGeneration with async callable fallback_model resolves the model per-run."""
+    def test_image_generation_deprecated_fallback_model_argument(self):
+        """`fallback_model=` still configures the subagent, and warns."""
+        with pytest.warns(
+            PydanticAIDeprecationWarning, match=r'`fallback_model` is deprecated; use `fallback_subagent_model`'
+        ):
+            cap = ImageGeneration(fallback_model='openai-responses:gpt-5.4')
+        assert cap.fallback_subagent_model == 'openai-responses:gpt-5.4'
+        assert cap.get_toolset() is not None
+
+    def test_image_generation_deprecated_fallback_model_attribute(self):
+        """Reading and writing `.fallback_model` proxies `fallback_subagent_model`, and warns."""
+        cap = ImageGeneration(fallback_subagent_model='openai-responses:gpt-5.4')
+        with pytest.warns(
+            PydanticAIDeprecationWarning, match=r'`fallback_model` is deprecated; use `fallback_subagent_model`'
+        ):
+            assert cap.fallback_model == 'openai-responses:gpt-5.4'  # pyright: ignore[reportDeprecated]
+        with pytest.warns(
+            PydanticAIDeprecationWarning, match=r'`fallback_model` is deprecated; use `fallback_subagent_model`'
+        ):
+            cap.fallback_model = 'openai-responses:gpt-5.5'  # pyright: ignore[reportDeprecated]
+        assert cap.fallback_subagent_model == 'openai-responses:gpt-5.5'
+
+    def test_image_generation_rejects_both_model_names(self):
+        """Both spellings at once is a mistake to report, not one to resolve silently."""
+        with pytest.raises(UserError, match='cannot specify both `fallback_model` and `fallback_subagent_model`'):
+            ImageGeneration(
+                fallback_subagent_model='openai-responses:gpt-5.4', fallback_model='openai-responses:gpt-5.5'
+            )
+
+    async def test_image_generation_callable_subagent_model(self, allow_model_requests: None):
+        """ImageGeneration with async callable fallback_subagent_model resolves the model per-run."""
         image_data = b'\x89PNG\r\n\x1a\n'  # minimal PNG header
 
         def inner_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -1035,7 +1068,7 @@ class TestImageGenerationCapability:
             return ModelResponse(parts=[ToolCallPart(tool_name='generate_image', args='{"prompt": "test"}')])
 
         outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
-        agent = Agent(outer_model, capabilities=[ImageGeneration(fallback_model=model_factory)])
+        agent = Agent(outer_model, capabilities=[ImageGeneration(fallback_subagent_model=model_factory)])
         result = await agent.run('Generate a test image')
         assert result.output == 'done'
         assert result.all_messages() == snapshot(
@@ -1085,7 +1118,7 @@ class TestImageGenerationCapability:
         )
 
     async def test_image_generation_callable_returns_image_only_model(self, allow_model_requests: None):
-        """Callable fallback_model returning an image-only model name is caught at call time."""
+        """Callable fallback_subagent_model returning an image-only model name is caught at call time."""
 
         def model_factory(ctx: RunContext) -> str:
             return 'openai-responses:gpt-image-1'
@@ -1094,7 +1127,7 @@ class TestImageGenerationCapability:
             return ModelResponse(parts=[ToolCallPart(tool_name='generate_image', args='{"prompt": "test"}')])
 
         outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
-        agent = Agent(outer_model, capabilities=[ImageGeneration(fallback_model=model_factory)])
+        agent = Agent(outer_model, capabilities=[ImageGeneration(fallback_subagent_model=model_factory)])
         with pytest.raises(UserError, match="'gpt-image-1' is a dedicated image generation model"):
             await agent.run('Generate a test image')
 
@@ -1126,7 +1159,9 @@ class TestImageGenerationCapability:
 
         capability: ImageGeneration[object] = (
             ImageGeneration(
-                fallback_model=FunctionModel(blocked_model_fn, profile=ModelProfile(supports_image_output=True))
+                fallback_subagent_model=FunctionModel(
+                    blocked_model_fn, profile=ModelProfile(supports_image_output=True)
+                )
             )
             if fallback == 'subagent'
             else ImageGeneration(native=False, local=BlockedImageGenerationModel())
@@ -1171,7 +1206,7 @@ class TestImageGenerationCapability:
             return ModelResponse(parts=[TextPart(content='gave up')])
 
         outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
-        agent = Agent(outer_model, capabilities=[ImageGeneration(fallback_model=inner_model)])
+        agent = Agent(outer_model, capabilities=[ImageGeneration(fallback_subagent_model=inner_model)])
         result = await agent.run('Generate a test image')
         assert result.output == 'gave up'
         assert result.all_messages() == snapshot(
@@ -1242,12 +1277,12 @@ class TestImageGenerationCapability:
             UserError,
             match=re.escape(
                 f'{model_name!r} is a dedicated image generation model that cannot be used as '
-                f'`fallback_model` directly. Pass an `ImageGenerator` with a direct image model '
+                f'`fallback_subagent_model` directly. Pass an `ImageGenerator` with a direct image model '
                 f'to `local` instead, or use a conversational model with image generation support, '
                 f'e.g. {suggestion!r}.'
             ),
         ):
-            ImageGeneration(fallback_model=f'{provider}:{model_name}')
+            ImageGeneration(fallback_subagent_model=f'{provider}:{model_name}')
 
     @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
     @pytest.mark.vcr()
@@ -1287,7 +1322,7 @@ class TestImageGenerationCapability:
                 capabilities=[
                     ImageGeneration(
                         native=native_factory,
-                        fallback_model=inner_model,
+                        fallback_subagent_model=inner_model,
                         background='opaque',
                     ),
                 ],
@@ -1379,7 +1414,7 @@ class TestImageGenerationCapability:
 
         inner_model = GoogleModel('gemini-3-pro-image', provider=GoogleProvider(api_key=gemini_api_key))
         outer_model = FunctionModel(model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
-        agent = Agent(outer_model, capabilities=[ImageGeneration(fallback_model=inner_model)])
+        agent = Agent(outer_model, capabilities=[ImageGeneration(fallback_subagent_model=inner_model)])
         result = await agent.run('Generate an image of a cute baby sea otter')
         assert result.output == 'Here is the generated image.'
         assert result.all_messages() == snapshot(

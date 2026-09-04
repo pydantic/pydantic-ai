@@ -17,6 +17,7 @@ from pydantic import BaseModel
 
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._spec import NamedSpec
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent import Agent
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities import (
@@ -193,12 +194,12 @@ class TestXSearchCapability:
         """XSearch() with defaults → native XSearchTool, no local."""
         cap = XSearch()
         assert cap.get_native_tools() == snapshot([XSearchTool()])
-        assert cap.fallback_model is None
+        assert cap.fallback_subagent_model is None
         assert cap.get_toolset() is None
 
-    def test_xsearch_with_fallback_model(self):
-        """XSearch(fallback_model=...) → native XSearchTool, local subagent fallback."""
-        cap = XSearch(fallback_model='xai:grok-4-1-fast-non-reasoning')
+    def test_xsearch_with_subagent_model(self):
+        """XSearch(fallback_subagent_model=...) → native XSearchTool, local subagent fallback."""
+        cap = XSearch(fallback_subagent_model='xai:grok-4-1-fast-non-reasoning')
         assert cap.get_native_tools() == snapshot([XSearchTool()])
         assert cap.get_toolset() is not None
 
@@ -236,37 +237,64 @@ class TestXSearchCapability:
             XSearch(native=False, local=False)
 
     def test_xsearch_native_false_with_constraints_raises(self):
-        """XSearch(native=False, allowed_x_handles=...) without fallback_model → UserError."""
+        """XSearch(native=False, allowed_x_handles=...) without fallback_subagent_model → UserError."""
         with pytest.raises(UserError, match='constraint fields require the native tool'):
             XSearch(native=False, allowed_x_handles=['handle1'])
 
-    def test_xsearch_fallback_model_and_local_conflict(self):
-        """XSearch(fallback_model=..., local=func) raises UserError."""
+    def test_xsearch_subagent_model_and_local_conflict(self):
+        """XSearch(fallback_subagent_model=..., local=func) raises UserError."""
 
         def my_search(query: str) -> str:
             return 'result'  # pragma: no cover
 
-        with pytest.raises(UserError, match='cannot specify both `fallback_model` and `local`'):
-            XSearch(fallback_model='xai:grok-4-1-fast-non-reasoning', local=my_search)
+        with pytest.raises(UserError, match='cannot specify both `fallback_subagent_model` and `local`'):
+            XSearch(fallback_subagent_model='xai:grok-4-1-fast-non-reasoning', local=my_search)
 
-    def test_xsearch_fallback_model_with_local_false(self):
-        """XSearch(fallback_model=..., local=False) raises UserError."""
-        with pytest.raises(UserError, match='cannot specify both `fallback_model` and `local`'):
-            XSearch(fallback_model='xai:grok-4-1-fast-non-reasoning', local=False)
+    def test_xsearch_subagent_model_with_local_false(self):
+        """XSearch(fallback_subagent_model=..., local=False) raises UserError."""
+        with pytest.raises(UserError, match='cannot specify both `fallback_subagent_model` and `local`'):
+            XSearch(fallback_subagent_model='xai:grok-4-1-fast-non-reasoning', local=False)
+
+    def test_xsearch_deprecated_fallback_model_argument(self):
+        """`fallback_model=` still configures the subagent, and warns."""
+        with pytest.warns(
+            PydanticAIDeprecationWarning, match=r'`fallback_model` is deprecated; use `fallback_subagent_model`'
+        ):
+            cap = XSearch(fallback_model='xai:grok-4-1-fast-non-reasoning')
+        assert cap.fallback_subagent_model == 'xai:grok-4-1-fast-non-reasoning'
+        assert cap.get_toolset() is not None
+
+    def test_xsearch_deprecated_fallback_model_attribute(self):
+        """Reading and writing `.fallback_model` proxies `fallback_subagent_model`, and warns."""
+        cap = XSearch(fallback_subagent_model='xai:grok-4-1-fast-non-reasoning')
+        with pytest.warns(
+            PydanticAIDeprecationWarning, match=r'`fallback_model` is deprecated; use `fallback_subagent_model`'
+        ):
+            assert cap.fallback_model == 'xai:grok-4-1-fast-non-reasoning'  # pyright: ignore[reportDeprecated]
+        with pytest.warns(
+            PydanticAIDeprecationWarning, match=r'`fallback_model` is deprecated; use `fallback_subagent_model`'
+        ):
+            cap.fallback_model = 'xai:grok-4.3'  # pyright: ignore[reportDeprecated]
+        assert cap.fallback_subagent_model == 'xai:grok-4.3'
+
+    def test_xsearch_rejects_both_model_names(self):
+        """Both spellings at once is a mistake to report, not one to resolve silently."""
+        with pytest.raises(UserError, match='cannot specify both `fallback_model` and `fallback_subagent_model`'):
+            XSearch(fallback_subagent_model='xai:grok-4.3', fallback_model='xai:grok-4-1-fast-non-reasoning')
 
     def test_xsearch_callable_native_with_fallback(self):
-        """Callable native with fallback_model still creates a local fallback tool."""
+        """Callable native with fallback_subagent_model still creates a local fallback tool."""
         from pydantic_ai.tools import Tool
 
         cap = XSearch(
             native=lambda ctx: XSearchTool(enable_image_understanding=True),
-            fallback_model='xai:grok-4-1-fast-non-reasoning',
+            fallback_subagent_model='xai:grok-4-1-fast-non-reasoning',
         )
         assert isinstance(cap.local, Tool)
         assert cap.get_toolset() is not None
 
-    async def test_xsearch_callable_fallback_model(self, allow_model_requests: None):
-        """XSearch with callable fallback_model resolves the model per-run."""
+    async def test_xsearch_callable_subagent_model(self, allow_model_requests: None):
+        """XSearch with callable fallback_subagent_model resolves the model per-run."""
 
         def inner_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             return ModelResponse(parts=[TextPart(content='summary of recent tweets')])
@@ -284,7 +312,7 @@ class TestXSearchCapability:
             return ModelResponse(parts=[ToolCallPart(tool_name='x_search', args='{"query": "latest news"}')])
 
         outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
-        agent = Agent(outer_model, capabilities=[XSearch(fallback_model=model_factory)])
+        agent = Agent(outer_model, capabilities=[XSearch(fallback_subagent_model=model_factory)])
         result = await agent.run('What is happening on X?')
         assert result.output == 'done'
         assert result.all_messages() == snapshot(
@@ -333,8 +361,8 @@ class TestXSearchCapability:
             ]
         )
 
-    async def test_xsearch_sync_callable_fallback_model(self, allow_model_requests: None):
-        """XSearch with sync callable fallback_model resolves the model per-run."""
+    async def test_xsearch_sync_callable_subagent_model(self, allow_model_requests: None):
+        """XSearch with sync callable fallback_subagent_model resolves the model per-run."""
 
         def inner_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             return ModelResponse(parts=[TextPart(content='summary')])
@@ -352,7 +380,7 @@ class TestXSearchCapability:
             return ModelResponse(parts=[ToolCallPart(tool_name='x_search', args='{"query": "news"}')])
 
         outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
-        agent = Agent(outer_model, capabilities=[XSearch(fallback_model=model_factory)])
+        agent = Agent(outer_model, capabilities=[XSearch(fallback_subagent_model=model_factory)])
         result = await agent.run('search X')
         assert result.output == 'done'
         tool_returns = list(iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart))
@@ -380,7 +408,7 @@ class TestXSearchCapability:
             return ModelResponse(parts=[TextPart(content='gave up')])
 
         outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
-        agent = Agent(outer_model, capabilities=[XSearch(fallback_model=inner_model)])
+        agent = Agent(outer_model, capabilities=[XSearch(fallback_subagent_model=inner_model)])
         result = await agent.run('search X')
         assert result.output == 'gave up'
         retry_parts = list(iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart))

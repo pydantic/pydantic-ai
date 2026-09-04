@@ -5,7 +5,10 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Literal, get_args
 
+from typing_extensions import deprecated
+
 from pydantic_ai._utils import replace_no_init
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.exceptions import ContentFilterError, ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.images import (
     ImageDimensions,
@@ -28,6 +31,7 @@ from pydantic_ai.tools import AgentDepsT, RunContext, Tool, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.toolsets.prepared import PreparedToolset
 
+from ._deprecated_fallback_model import resolve_fallback_subagent_model
 from .abstract import AbstractCapability
 from .native_or_local import NativeOrLocalTool
 
@@ -80,7 +84,7 @@ class _DirectImageGenerationTool:
         try:
             result = await self.generator.generate(prompt, settings=self.settings)
         except ContentFilterError as e:
-            # Same conversion as the `fallback_model` subagent path, so the capability fails the
+            # Same conversion as the `fallback_subagent_model` path, so the capability fails the
             # same way on both fallbacks: the outer model gets to rephrase, and no exception escapes
             # the tool call for a durable engine to retry against an error class its non-retryable
             # list doesn't name. `ImageGenerator.generate` itself still raises `ContentFilterError`.
@@ -102,7 +106,7 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
     support it, pass an `ImageGenerator` or `ImageGenerationModel` to `local` to use
     the direct image generation API as a fallback.
 
-    The `fallback_model` path is the other way to cover such a model: it runs an additional
+    The `fallback_subagent_model` path is the other way to cover such a model: it runs an additional
     agent on an image-capable conversational model, so the image comes from that model's
     native `ImageGenerationTool`. Use it when you want those native tool semantics.
 
@@ -112,8 +116,8 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
     `ImageGenerator` or `ImageGenerationModel`.
 
     When passing a custom `native` instance or factory, its settings are also used for the
-    `fallback_model` subagent; capability-level fields override any `native` settings. A static
-    instance's `aspect_ratio` is also inherited by the direct fallback.
+    `fallback_subagent_model` subagent; capability-level fields override any `native` settings. A
+    static instance's `aspect_ratio` is also inherited by the direct fallback.
     """
 
     local: (
@@ -138,13 +142,13 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
     each time the toolset is requested.
     """
 
-    fallback_model: ImageGenerationFallbackModel
-    """Model to use for image generation when the agent's model doesn't support it natively.
+    fallback_subagent_model: ImageGenerationFallbackModel
+    """Model for a subagent to run when the agent's model doesn't support image generation natively.
 
     Must be a model that supports image generation via the
     [`ImageGenerationTool`][pydantic_ai.native_tools.ImageGenerationTool] native tool.
     This requires a conversational model with image generation support, not a dedicated
-    image-only API. Examples:
+    image-only API — for one of those, pass it to `local` instead. Examples:
 
     * `'openai-responses:gpt-5.4'` — OpenAI model with image generation support
     * `'google:gemini-3-pro-image'` — Google image generation model
@@ -236,8 +240,8 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
     generator raises `UserError` at construction. Only the direct `local` generator can apply it,
     so pass `native=False` to guarantee it takes effect: with the default `native=True` the direct
     generator is dropped whenever the conversational model generates images natively, and the
-    native tool has no equivalent — that request warns. The `fallback_model` path ignores it with a
-    warning. Supported shapes are model-specific; see the
+    native tool has no equivalent — that request warns. The `fallback_subagent_model` path ignores
+    it with a warning. Supported shapes are model-specific; see the
     [Image Generation guide](../image-generation.md#supported-exact-dimensions).
     """
 
@@ -250,8 +254,8 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
     Direct adapters map this to a canonical geometry supported by the selected model. Ratios the
     native tool also accepts apply on either path; the rest need the direct generator, so pass
     `native=False` to guarantee them, as for `dimensions`, and a request that takes the native path
-    instead warns. Ratios outside the native vocabulary are ignored by the `fallback_model` path
-    with a warning. See the
+    instead warns. Ratios outside the native vocabulary are ignored by the `fallback_subagent_model`
+    path with a warning. See the
     [ratio-to-dimensions matrix](../image-generation.md#canonical-dimensions-for-aspect_ratio).
     """
 
@@ -275,7 +279,7 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         | str
         | Literal[False]
         | None = None,
-        fallback_model: Model
+        fallback_subagent_model: Model
         | KnownModelName
         | str
         | Callable[[RunContext[AgentDepsT]], Awaitable[Model | KnownModelName | str] | Model | KnownModelName | str]
@@ -294,12 +298,20 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         id: str | None = 'image_generation',
         defer_loading: bool = False,
         description: str | None = None,
+        # TODO(v3): remove `fallback_model`, the deprecated spelling of `fallback_subagent_model`.
+        fallback_model: Model
+        | KnownModelName
+        | str
+        | Callable[[RunContext[AgentDepsT]], Awaitable[Model | KnownModelName | str] | Model | KnownModelName | str]
+        | None = None,
     ) -> None:
         self.id = id
         self.description = description
         self.defer_loading = defer_loading
         self.native = native
-        self.fallback_model = fallback_model
+        self.fallback_subagent_model = resolve_fallback_subagent_model(
+            type(self).__name__, fallback_subagent_model, fallback_model
+        )
         self.action = action
         self.background = background
         self.input_fidelity = input_fidelity
@@ -316,14 +328,14 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
 
     def __post_init__(self) -> None:
         # Checked here rather than in `__init__` so a merge is held to it too: `combine` can pair
-        # one instance's `fallback_model` with another's `local`, which no constructor accepts, and
-        # the local tool would then take effect with `fallback_model` silently ignored. Runs before
-        # the base resolves `local`, so it reads what was declared rather than what was
-        # materialized.
-        if self.fallback_model is not None and self.local is not None:
+        # one instance's `fallback_subagent_model` with another's `local`, which no constructor
+        # accepts, and the local tool would then take effect with `fallback_subagent_model` silently
+        # ignored. Runs before the base resolves `local`, so it reads what was declared rather than
+        # what was materialized.
+        if self.fallback_subagent_model is not None and self.local is not None:
             raise UserError(
-                'ImageGeneration: cannot specify both `fallback_model` and `local` — '
-                'use `fallback_model` for the default subagent fallback, or `local` for a custom tool'
+                'ImageGeneration: cannot specify both `fallback_subagent_model` and `local` — '
+                'use `fallback_subagent_model` for the default subagent fallback, or `local` for a custom tool'
             )
 
         if isinstance(self.local, str):
@@ -369,9 +381,9 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
                     )
 
         # The native tool's kwargs are collected once for the default native tool and again for the
-        # `fallback_model` subagent's copy, so the notice lives here to fire exactly once.
+        # `fallback_subagent_model` subagent's copy, so the notice lives here to fire exactly once.
         ignored: list[str] = []
-        if self.native is not False or (self.local is None and self.fallback_model is not None):
+        if self.native is not False or (self.local is None and self.fallback_subagent_model is not None):
             _, ignored = self._native_geometry()
         elif not self._has_direct_generator:
             # `native=False` with a local tool of the user's own: no native tool is built and the
@@ -389,6 +401,24 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
                 UserWarning,
                 stacklevel=3,
             )
+
+    # TODO(v3): remove the `fallback_model` property, the deprecated spelling of `fallback_subagent_model`.
+    # The message is spelled out rather than shared with the helper that warns at construction:
+    # a type checker only reports a deprecation whose message is a string literal.
+    @property
+    @deprecated(
+        '`fallback_model` is deprecated; use `fallback_subagent_model` instead.', category=PydanticAIDeprecationWarning
+    )
+    def fallback_model(self) -> ImageGenerationFallbackModel:
+        """Deprecated alias for [`fallback_subagent_model`][pydantic_ai.capabilities.ImageGeneration.fallback_subagent_model]."""
+        return self.fallback_subagent_model
+
+    @fallback_model.setter
+    @deprecated(
+        '`fallback_model` is deprecated; use `fallback_subagent_model` instead.', category=PydanticAIDeprecationWarning
+    )
+    def fallback_model(self, value: ImageGenerationFallbackModel) -> None:
+        self.fallback_subagent_model = value
 
     @property
     def _has_direct_generator(self) -> bool:
@@ -428,7 +458,7 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         *,
         native: ImageGenerationTool | bool = True,
         local: str | Literal[False] | None = None,
-        fallback_model: KnownModelName | str | None = None,
+        fallback_subagent_model: KnownModelName | str | None = None,
         action: Literal['generate', 'edit', 'auto'] | None = None,
         background: Literal['transparent', 'opaque', 'auto'] | None = None,
         input_fidelity: Literal['high', 'low'] | None = None,
@@ -443,6 +473,10 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         id: str | None = 'image_generation',
         defer_loading: bool = False,
         description: str | None = None,
+        # TODO(v3): remove `fallback_model`, the deprecated spelling of `fallback_subagent_model`. It stays in
+        # the signature, and so in the published spec schema, because that schema forbids extra keys:
+        # dropping it would stop a spec written against the old name from validating at all.
+        fallback_model: KnownModelName | str | None = None,
     ) -> ImageGeneration[AgentDepsT]:
         """Construct from the JSON/YAML-serializable subset of the runtime API.
 
@@ -462,6 +496,7 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         return cls(
             native=native,
             local=local,
+            fallback_subagent_model=fallback_subagent_model,
             fallback_model=fallback_model,
             action=action,
             background=background,
@@ -586,7 +621,7 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         if self.dimensions is not None:
             settings['dimensions'] = self.dimensions
         # A custom `native` instance is the base and capability-level fields override it, the same
-        # precedence `_resolved_native` gives the `fallback_model` subagent. `size` has no
+        # precedence `_resolved_native` gives the `fallback_subagent_model` subagent. `size` has no
         # counterpart on the other side of that merge; `dimensions` is the capability's own
         # spelling of the geometry the inherited `aspect_ratio` expresses, and the two are mutually
         # exclusive in `ImageGenerationSettings`, so inheriting alongside it would fail the generate
@@ -615,11 +650,11 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         return self._resolve_native_with_overrides(ImageGenerationTool, self._image_gen_kwargs())
 
     def _default_local(self) -> Tool[AgentDepsT] | AbstractToolset[AgentDepsT] | None:
-        if self.fallback_model is None:
+        if self.fallback_subagent_model is None:
             return None
         from pydantic_ai.common_tools.image_generation import image_generation_tool
 
-        return image_generation_tool(model=self.fallback_model, native_tool=self._resolved_native())
+        return image_generation_tool(model=self.fallback_subagent_model, native_tool=self._resolved_native())
 
     def get_toolset(self) -> AbstractToolset[AgentDepsT] | None:
         capability = self

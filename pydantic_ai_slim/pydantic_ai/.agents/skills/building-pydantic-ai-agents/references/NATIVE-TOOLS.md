@@ -60,10 +60,10 @@ agent = Agent(
 ```
 
 Returning `None` omits the tool for that step. `XSearch` and `ImageGeneration` are the exception when
-`fallback_model` is set: they route unsupported models to a subagent rather than a local tool, and their
-`native=` factory is resolved a second time when that subagent runs. Once `fallback_model` is set, returning
+`fallback_subagent_model` is set: they route unsupported models to a subagent rather than a local tool, and their
+`native=` factory is resolved a second time when that subagent runs. Once `fallback_subagent_model` is set, returning
 `None` no longer omits anything — the subagent tool stays offered and calling it raises `UserError`.
-Return a configured tool instance, or drop `fallback_model`.
+Return a configured tool instance, or drop `fallback_subagent_model`.
 
 ## When to Use Native Tools vs Provider-Adaptive Capabilities
 
