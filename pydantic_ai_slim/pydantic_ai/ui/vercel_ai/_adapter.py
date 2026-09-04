@@ -31,7 +31,7 @@ from ...messages import (
     NativeToolCallPart,
     NativeToolReturnPart,
     RetryFeedbackPart,
-    RetryPromptPart,
+    RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
     SpeechPart,
     SystemPromptPart,
     TextContent,
@@ -45,13 +45,13 @@ from ...messages import (
     UserContent,
     UserPromptPart,
     VideoUrl,
+    _translate_legacy_retry_part,  # pyright: ignore[reportPrivateUsage]
     narrow_message_parts,
     parse_tool_kind,
     tool_return_content_ta,
 )
 from ...models import (
     _retry_feedback_speaks_for_the_harness,  # pyright: ignore[reportPrivateUsage]
-    _translate_legacy_retry_part,  # pyright: ignore[reportPrivateUsage]
 )
 from ...output import OutputDataT
 from ...tools import AgentDepsT, DeferredToolResults, ToolDenied
@@ -704,8 +704,13 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         },
                     )
                 )
-            elif isinstance(part, RetryPromptPart | RetryFeedbackPart):
-                translated = _translate_legacy_retry_part(part) if isinstance(part, RetryPromptPart) else part
+            # TODO(v3): remove `RetryPromptPart`
+            elif isinstance(part, RetryPromptPart | RetryFeedbackPart):  # pyright: ignore[reportDeprecated]
+                translated = (
+                    _translate_legacy_retry_part(part)
+                    if isinstance(part, RetryPromptPart)  # pyright: ignore[reportDeprecated]
+                    else part
+                )
                 if isinstance(translated, ToolReturnPart):
                     # Tool-related retries are handled when processing ToolCallPart in ModelResponse
                     pass
@@ -1068,7 +1073,8 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                 for part in msg.parts:
                     if isinstance(part, ToolReturnPart):
                         tool_results[part.tool_call_id] = part
-                    elif isinstance(part, RetryPromptPart) and isinstance(
+                    # TODO(v3): remove `RetryPromptPart`
+                    elif isinstance(part, RetryPromptPart) and isinstance(  # pyright: ignore[reportDeprecated]
                         translated := _translate_legacy_retry_part(part), ToolReturnPart
                     ):
                         tool_results[part.tool_call_id] = translated

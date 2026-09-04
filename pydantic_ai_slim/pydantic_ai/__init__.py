@@ -106,7 +106,7 @@ from .messages import (
     PartEndEvent,
     PartStartEvent,
     RetryFeedbackPart,
-    RetryPromptPart,
+    RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
     SpeechPart,
     SpeechPartDelta,
     SystemPromptPart,

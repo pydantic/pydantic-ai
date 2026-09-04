@@ -56,7 +56,7 @@ from ..messages import (
     PartEndEvent,
     PartStartEvent,
     RetryFeedbackPart,
-    RetryPromptPart,
+    RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
     SpeechPart,
     SystemPromptPart,
     TextPart,
@@ -70,8 +70,8 @@ from ..messages import (
     UserPromptPart,
     VideoUrl,
     _compaction_part_is_wire_boundary,  # pyright: ignore[reportPrivateUsage]
-    _dump_error_details,  # pyright: ignore[reportPrivateUsage]
     _tool_results_first_sort_key,  # pyright: ignore[reportPrivateUsage]
+    _translate_legacy_retry_part,  # pyright: ignore[reportPrivateUsage]
     _wrap_in_tag,  # pyright: ignore[reportPrivateUsage]
 )
 from ..native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
@@ -2272,7 +2272,10 @@ def _wrap_non_leading_system_prompts(messages: list[ModelMessage]) -> list[Model
     return new_messages if changed else messages
 
 
-_UnpreparedPart: TypeAlias = ToolAvailabilityDeltaPart | RetryFeedbackPart | RetryPromptPart
+# TODO(v3): remove `RetryPromptPart`
+_UnpreparedPart: TypeAlias = (
+    ToolAvailabilityDeltaPart | RetryFeedbackPart | RetryPromptPart  # pyright: ignore[reportDeprecated]
+)
 """The request parts `prepare_messages` translates away before any adapter sees them.
 
 Each of these carries something no provider API has a field for — a mid-conversation change to the
@@ -2338,32 +2341,6 @@ for, on a turn the user didn't write.
 """
 
 
-def _translate_legacy_retry_part(part: RetryPromptPart) -> ToolReturnPart | RetryFeedbackPart:
-    """The part a legacy [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] always meant.
-
-    `tool_name` says whether the retry answers a tool call. One that does is that call's own result
-    again, marked `outcome='retried'` so it travels the provider's native error channel; one that
-    doesn't is harness feedback, and its `content` says whether that feedback is validation errors or
-    a message somebody wrote (https://github.com/pydantic/pydantic-ai/issues/6404).
-
-    Every reader of a stored history goes through here — `prepare_messages`, the UI adapters' dumps,
-    the realtime seeders — so none of them has to know the old shape.
-    """
-    if part.tool_name is not None:
-        return ToolReturnPart(
-            tool_name=part.tool_name,
-            content=part.content if isinstance(part.content, str) else _dump_error_details(part.content),
-            tool_call_id=part.tool_call_id,
-            timestamp=part.timestamp,
-            outcome='retried',
-        )
-    return RetryFeedbackPart(
-        content=part.content,
-        cause='model_retry' if isinstance(part.content, str) else 'validation_error',
-        timestamp=part.timestamp,
-    )
-
-
 def _retry_feedback_speaks_for_the_harness(part: RetryFeedbackPart) -> bool:
     """Whether this feedback reaches the model in the harness's voice rather than the user's.
 
@@ -2400,7 +2377,8 @@ def _translate_retry_parts(messages: list[ModelMessage]) -> list[ModelMessage]:
     """
 
     def translate(part: ModelRequestPart) -> ModelRequestPart:
-        if isinstance(part, RetryPromptPart):
+        # TODO(v3): remove `RetryPromptPart`
+        if isinstance(part, RetryPromptPart):  # pyright: ignore[reportDeprecated]
             translated = _translate_legacy_retry_part(part)
             if isinstance(translated, ToolReturnPart):
                 return translated
@@ -2415,7 +2393,8 @@ def _translate_retry_parts(messages: list[ModelMessage]) -> list[ModelMessage]:
     changed = False
     for message in messages:
         if not isinstance(message, ModelRequest) or not any(
-            isinstance(part, RetryPromptPart | RetryFeedbackPart) for part in message.parts
+            isinstance(part, RetryPromptPart | RetryFeedbackPart)  # pyright: ignore[reportDeprecated]
+            for part in message.parts
         ):
             transformed.append(message)
             continue
@@ -2655,7 +2634,7 @@ def _synthesize_tool_availability_delta_messages(
         part.tool_call_id
         for message in messages
         for part in message.parts
-        if isinstance(part, BaseToolCallPart | BaseToolReturnPart | RetryPromptPart)
+        if isinstance(part, BaseToolCallPart | BaseToolReturnPart)
     }
     for message in messages:
         if not isinstance(message, ModelRequest) or not any(

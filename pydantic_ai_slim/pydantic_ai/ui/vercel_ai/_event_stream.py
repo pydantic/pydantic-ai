@@ -21,7 +21,6 @@ from ...messages import (
     NativeToolReturnPart,
     OutputToolCallEvent,
     OutputToolResultEvent,
-    RetryPromptPart,
     TextPart,
     TextPartDelta,
     ThinkingPart,
@@ -427,7 +426,7 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
             # it by overriding `to_payload`.
             yield DataChunk(type=f'data-{event.name}', data=payload)
 
-    async def _handle_tool_result(self, part: ToolReturnPart | RetryPromptPart) -> AsyncIterator[BaseChunk]:
+    async def _handle_tool_result(self, part: ToolReturnPart) -> AsyncIterator[BaseChunk]:
         tool_call_id = part.tool_call_id
 
         invalidated_part = self._invalidated_tool_calls.pop(tool_call_id, None)
@@ -444,7 +443,7 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         if streamed_part is not None and invalidated_part is None:
             yield self._tool_input_available_chunk(streamed_part)
 
-        if self.sdk_version >= 6 and isinstance(part, ToolReturnPart) and part.outcome == 'denied':
+        if self.sdk_version >= 6 and part.outcome == 'denied':
             yield ToolOutputDeniedChunk(tool_call_id=tool_call_id)
         elif invalidated_part is not None:
             # The original `tool-input-available` was suppressed because `args_valid=False`.
@@ -452,8 +451,7 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
             # result chunk (success/output-error) fire — the call never actually executed.
             # `error_text` comes from `ToolReturnPart.model_response_str()` — the retry feedback
             # itself, or the status part on the exhaustive output-strategy skip path (which says
-            # e.g. "Output tool not used …") — and from `RetryPromptPart.model_response()` only
-            # for a legacy retry part handed back through `DeferredToolResults`.
+            # e.g. "Output tool not used …").
             yield ToolInputErrorChunk(
                 tool_call_id=tool_call_id,
                 tool_name=invalidated_part.tool_name,
@@ -464,16 +462,12 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
                     provider_details=invalidated_part.provider_details,
                     tool_kind=invalidated_part.tool_kind,
                 ),
-                error_text=part.model_response()
-                if isinstance(part, RetryPromptPart)
-                else part.model_response_str(wrap_if_error=False),
+                error_text=part.model_response_str(wrap_if_error=False),
             )
-        elif isinstance(part, RetryPromptPart):
-            yield ToolOutputErrorChunk(tool_call_id=tool_call_id, error_text=part.model_response())
-        elif isinstance(part, ToolReturnPart) and part.outcome in ERROR_OUTCOMES:
+        elif part.outcome in ERROR_OUTCOMES:
             # A retry takes the error channel like a failure does, and its `error_text` is the
-            # feedback itself — unwrapped, and with none of the instruction framing a
-            # `RetryPromptPart` renders (https://github.com/pydantic/pydantic-ai/pull/4869).
+            # feedback itself — unwrapped, and with none of the instruction framing the retry part
+            # it replaces rendered (https://github.com/pydantic/pydantic-ai/pull/4869).
             yield ToolOutputErrorChunk(
                 tool_call_id=tool_call_id, error_text=part.model_response_str(wrap_if_error=False)
             )
@@ -490,6 +484,5 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         # Check for data-carrying Vercel AI chunks returned by tool calls via metadata.
         # Only data-carrying chunks (DataChunk, SourceUrlChunk, etc.) are yielded;
         # protocol-control chunks are filtered out by iter_metadata_chunks.
-        if isinstance(part, ToolReturnPart):
-            for chunk in iter_metadata_chunks(part):
-                yield chunk
+        for chunk in iter_metadata_chunks(part):
+            yield chunk

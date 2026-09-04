@@ -34,7 +34,7 @@ import pydantic_core
 from genai_prices import types as genai_types
 from pydantic.alias_generators import to_snake
 from pydantic.dataclasses import dataclass as pydantic_dataclass
-from typing_extensions import TypeAliasType, TypeVar, assert_never
+from typing_extensions import NotRequired, TypeAliasType, TypedDict, TypeVar, assert_never, deprecated
 
 from pydantic_ai._genai_prices import calculate_price_for_usage
 
@@ -53,6 +53,7 @@ from ._event_registry import (
 )
 from ._instrumentation import redact_binary_content, serialize_any
 from ._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc
+from ._warnings import PydanticAIDeprecationWarning
 from .exceptions import ModelRetry, UnexpectedModelBehavior, UserError
 from .usage import RequestUsage
 
@@ -1382,9 +1383,13 @@ class BaseToolReturnPart:
       returning [`ToolDenied`][pydantic_ai.tools.ToolDenied].
     - `'interrupted'`: The tool call did not produce a result because the run was interrupted (e.g. a
       cancelled stream or a crash mid-execution); synthesized during message-history repair.
-    - `'retried'`: The tool asked the model to call it again — its arguments failed validation, or it
-      raised [`ModelRetry`][pydantic_ai.exceptions.ModelRetry]. The content is the feedback the model
-      needs to get the call right, and the call still counts against the tool's retry budget.
+    - `'retried'`: The call has to be made again — its arguments failed validation, the tool raised
+      [`ModelRetry`][pydantic_ai.exceptions.ModelRetry], or a
+      [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] handler answered
+      it with one. The content is the feedback the model needs to get the call right, and the call
+      still counts against the tool's retry budget. An output tool's validation failure lands here
+      too; output that had no call to answer is a
+      [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart] instead.
 
     `'failed'` and `'retried'` are mapped to a provider's native error channel (e.g. Anthropic
     `is_error`, Bedrock `status='error'`) — see
@@ -1746,24 +1751,29 @@ def _validation_error_description(
     return f'{len(errors)} validation error{"s" if plural else ""}:\n```json\n{json_errors.decode()}\n```'
 
 
+# TODO(v3): remove RetryPromptPart
+@deprecated(
+    '`RetryPromptPart` is deprecated and will be removed in v3. Build the part the retry belongs to: '
+    "`ToolReturnPart(tool_name=..., content=..., tool_call_id=..., outcome='retried')` for a retry that "
+    'answers a tool call, or `RetryFeedbackPart(content=..., cause=...)` for one that answers none.',
+    category=PydanticAIDeprecationWarning,
+)
 @dataclass(repr=False)
 class RetryPromptPart:
     """A message back to a model asking it to try again.
 
-    This can be sent for a number of reasons:
+    Deprecated in favour of the two parts it conflated. A retry that answers a tool call is that
+    call's own [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] with `outcome='retried'`; one
+    that answers no call is a [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart]. Holding
+    both in one class left a tool-less retry reaching every provider as bare user text the model
+    couldn't tell from something a person wrote
+    (https://github.com/pydantic/pydantic-ai/issues/6404).
 
-    * Pydantic validation of tool arguments failed, here content is derived from a Pydantic
-      [`ValidationError`][pydantic_core.ValidationError]
-    * a tool raised a [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] exception
-    * no tool was found for the tool name
-
-    Pydantic AI no longer emits this part: a retry that answers a tool call is now a
-    [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] with `outcome='retried'`, and one that
-    doesn't is a [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart]. Conflating the two
-    left tool-less retries reaching every provider as bare user text the model couldn't tell from
-    something a person wrote. The class stays accepted, deserializable, and rendered exactly as
-    before, so stored histories and code that hands one back through
-    [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] keep working unchanged.
+    Nothing you already stored has to change: a `'retry-prompt'` part in a serialized history loads
+    as whichever of the two it always meant, so old histories keep working and cost no warning. An
+    instance still in memory — one your own code built, or one handed back through
+    [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] — is translated the same way
+    before it reaches a model.
     """
 
     content: list[pydantic_core.ErrorDetails] | str
@@ -1797,12 +1807,12 @@ class RetryPromptPart:
         *,
         tool_name: str | None = None,
         tool_call_id: str | None = None,
-    ) -> RetryPromptPart:
+    ) -> RetryPromptPart:  # pyright: ignore[reportDeprecated]
         """Build a retry prompt from a validation error or a `ModelRetry`.
 
-        Pydantic AI no longer builds one for its own retries, so this is for code that answers a
-        deferred call with a `RetryPromptPart` of its own and wants the same content shape the
-        framework used to produce.
+        Deprecated with the class. `ToolReturnPart` and `RetryFeedbackPart` take the same `content`
+        this builds — a `ValidationError`'s `errors(include_url=False, include_context=False)`, or a
+        `ModelRetry`'s `message`.
         """
         content = (
             error.errors(include_url=False, include_context=False)
@@ -1853,12 +1863,13 @@ class RetryPromptPart:
 class RetryFeedbackPart:
     """Pydantic AI's own feedback about a model response it couldn't use.
 
-    Unlike [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] this part is never bound to a
-    tool call, and deliberately carries no tool fields: it covers the retries where the response as a
-    whole was unusable — structured output failed validation, an output validator or function raised
-    [`ModelRetry`][pydantic_ai.exceptions.ModelRetry], or the response contained nothing that could
-    serve as output. A tool call that needs retrying answers its own call as a
-    [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] with `outcome='retried'` instead.
+    This part is never bound to a tool call, and deliberately carries no tool fields: it covers the
+    retries where the response as a whole was unusable — structured output failed validation, an
+    output validator or function raised [`ModelRetry`][pydantic_ai.exceptions.ModelRetry], or the
+    response contained nothing that could serve as output. A tool call that needs retrying answers
+    its own call as a [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] with
+    `outcome='retried'` instead. The deprecated
+    [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] was both at once.
 
     The stored part stays model-neutral; each model translates it at
     [`prepare_messages`][pydantic_ai.models.Model.prepare_messages] time into the part its `cause`
@@ -1866,7 +1877,7 @@ class RetryFeedbackPart:
     [`UserPromptPart`][pydantic_ai.messages.UserPromptPart] for output the model itself wrote, a
     mid-conversation [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] for a message your
     own code did. Either way the model can tell the feedback apart from something a person wrote,
-    which is what a `RetryPromptPart` rendered as bare user text never allowed
+    which is what a retry rendered as bare user text never allowed
     (https://github.com/pydantic/pydantic-ai/issues/6404), and keeping the presentation out of the
     history keeps a cached prefix valid across providers.
     """
@@ -1944,6 +1955,68 @@ class RetryFeedbackPart:
         ]
 
     __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+# TODO(v3): remove `_LegacyRetryPromptFields` along with `RetryPromptPart`.
+class _LegacyRetryPromptFields(TypedDict):
+    """The stored shape of a legacy `RetryPromptPart`.
+
+    Validated in place of the class when a history is loaded, so translating a stored retry never
+    constructs the deprecated part — which would warn once per part, for a part the reader never
+    chose to write.
+    """
+
+    content: list[pydantic_core.ErrorDetails] | str
+    tool_name: NotRequired[str | None]
+    tool_call_id: NotRequired[str]
+    timestamp: NotRequired[datetime]
+
+
+_legacy_retry_prompt_fields_ta = pydantic.TypeAdapter(_LegacyRetryPromptFields)
+
+
+# TODO(v3): remove `_translate_legacy_retry_part` along with `RetryPromptPart`.
+def _translate_legacy_retry_part(
+    part: RetryPromptPart | Mapping[str, Any],  # pyright: ignore[reportDeprecated]
+) -> ToolReturnPart | RetryFeedbackPart:
+    """The part a legacy [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] always meant.
+
+    `tool_name` says whether the retry answers a tool call. One that does is that call's own result
+    again, marked `outcome='retried'` so it travels the provider's native error channel; one that
+    doesn't is harness feedback, and its `content` says whether that feedback is validation errors or
+    a message somebody wrote (https://github.com/pydantic/pydantic-ai/issues/6404).
+
+    Both a constructed part and the mapping a stored one loads from come through here, so the two
+    populations can't drift: [`ModelRequestPart`][pydantic_ai.messages.ModelRequestPart] runs it on
+    the stored mapping while `prepare_messages`, the UI adapters' dumps and the realtime seeders run
+    it on whatever a caller still holds in memory.
+    """
+    fields: _LegacyRetryPromptFields = (
+        {
+            'content': part.content,
+            'tool_name': part.tool_name,
+            'tool_call_id': part.tool_call_id,
+            'timestamp': part.timestamp,
+        }
+        if isinstance(part, RetryPromptPart)  # pyright: ignore[reportDeprecated]
+        else _legacy_retry_prompt_fields_ta.validate_python(part)
+    )
+    content = fields['content']
+    timestamp = fields.get('timestamp') or _now_utc()
+    tool_name = fields.get('tool_name')
+    if tool_name is not None:
+        return ToolReturnPart(
+            tool_name=tool_name,
+            content=content if isinstance(content, str) else _dump_error_details(content),
+            tool_call_id=fields.get('tool_call_id') or _generate_tool_call_id(),
+            timestamp=timestamp,
+            outcome='retried',
+        )
+    return RetryFeedbackPart(
+        content=content,
+        cause='model_retry' if isinstance(content, str) else 'validation_error',
+        timestamp=timestamp,
+    )
 
 
 # `ModelRequestPart` is defined further down (after the typed `ToolSearchReturnPart`
@@ -2782,6 +2855,11 @@ def _model_request_part_discriminator(v: Any) -> str | None:
     Dispatching by `tool_kind` rather than `tool_name` means a user's regular tool
     that happens to share a `tool_name` with a framework-emitted one deserializes
     safely as a base part (no accidental promotion / shape-validation failure).
+
+    A stored `'retry-prompt'` takes a legacy tag instead of its own, so a history recorded before
+    the retry split loads as the parts it always meant rather than as the deprecated class
+    (https://github.com/pydantic/pydantic-ai/issues/6404). Its `tool_name` picks which, on the same
+    rule `_translate_legacy_retry_part` applies to a part still held in memory.
     """
     if isinstance(v, dict):
         v_dict = cast(dict[str, Any], v)
@@ -2791,11 +2869,21 @@ def _model_request_part_discriminator(v: Any) -> str | None:
             tag = _TYPED_PART_TAGS.get((kind, tool_kind))
             if tag is not None:
                 return tag
+        if kind == 'retry-prompt':
+            return _legacy_retry_part_tag(v_dict.get('tool_name'))
         return kind if isinstance(kind, str) else None
     for cls, tag in _TYPED_PART_TAGS_BY_TYPE.items():
         if isinstance(v, cls):
             return tag
+    if isinstance(v, RetryPromptPart):  # pyright: ignore[reportDeprecated]
+        return _legacy_retry_part_tag(v.tool_name)
     return getattr(v, 'part_kind', None)
+
+
+# TODO(v3): remove `_legacy_retry_part_tag` along with `RetryPromptPart`.
+def _legacy_retry_part_tag(tool_name: object) -> str:
+    """The `ModelRequestPart` tag a legacy `RetryPromptPart` is translated through."""
+    return 'legacy-retry-tool-return' if tool_name is not None else 'legacy-retry-feedback'
 
 
 ModelRequestPart = Annotated[
@@ -2805,9 +2893,28 @@ ModelRequestPart = Annotated[
     | Annotated[ToolSearchReturnPart, pydantic.Tag('tool-search-return')]
     | Annotated[LoadCapabilityReturnPart, pydantic.Tag('capability-load-return')]
     | Annotated[ToolReturnPart, pydantic.Tag('tool-return')]
-    | Annotated[RetryPromptPart, pydantic.Tag('retry-prompt')]
+    # TODO(v3): remove `RetryPromptPart` and the two legacy members below.
+    # Nothing is validated or serialized under this tag any more — the discriminator sends every
+    # legacy part to one of the two members below. It stays because the alias is public: code
+    # annotating a variable `ModelRequestPart` and assigning a `RetryPromptPart` still type-checks,
+    # and the published JSON schema keeps its `RetryPromptPart` member.
+    | Annotated[RetryPromptPart, pydantic.Tag('retry-prompt')]  # pyright: ignore[reportDeprecated]
     | Annotated[RetryFeedbackPart, pydantic.Tag('retry-feedback')]
-    | Annotated[ToolAvailabilityDeltaPart, pydantic.Tag('tool-availability-delta')],
+    | Annotated[ToolAvailabilityDeltaPart, pydantic.Tag('tool-availability-delta')]
+    # A legacy part is translated on the way in, so a stored history is upgraded by loading it and
+    # the deprecated class is never constructed. `SerializeAsAny` covers the other direction: an
+    # instance a caller built by hand and never validated still dumps in its own shape rather than
+    # being forced through the member's declared type.
+    | Annotated[
+        pydantic.SerializeAsAny[ToolReturnPart],
+        pydantic.BeforeValidator(_translate_legacy_retry_part),
+        pydantic.Tag('legacy-retry-tool-return'),
+    ]
+    | Annotated[
+        pydantic.SerializeAsAny[RetryFeedbackPart],
+        pydantic.BeforeValidator(_translate_legacy_retry_part),
+        pydantic.Tag('legacy-retry-feedback'),
+    ],
     pydantic.Discriminator(_model_request_part_discriminator),
 ]
 """A message part sent by Pydantic AI to a model."""
@@ -2818,8 +2925,14 @@ def _tool_results_first_sort_key(part: ModelRequestPart) -> int:  # pyright: ign
 
     Providers such as Anthropic require every tool result answering an assistant turn to lead the
     next message, ahead of any other content.
+
+    A legacy `RetryPromptPart` counts because history cleaning runs over the messages a caller
+    passed, before `prepare_messages` translates one. Even a tool-less one sorts here, which the
+    part it translates into does not — a quirk of the conflated type that a history holding one
+    keeps.
     """
-    return 0 if isinstance(part, ToolReturnPart | RetryPromptPart) else 1
+    # TODO(v3): remove `RetryPromptPart`
+    return 0 if isinstance(part, ToolReturnPart | RetryPromptPart) else 1  # pyright: ignore[reportDeprecated]
 
 
 def _model_response_part_discriminator(v: Any) -> str | None:
@@ -4341,7 +4454,7 @@ class ToolResultEvent:
     and [`OutputToolResultEvent`][pydantic_ai.messages.OutputToolResultEvent] together.
     """
 
-    part: ToolReturnPart | RetryPromptPart
+    part: ToolReturnPart
     """The tool result part that will be sent back to the model."""
 
     @property

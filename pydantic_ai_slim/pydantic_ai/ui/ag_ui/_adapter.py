@@ -35,7 +35,7 @@ from ...messages import (
     NativeToolCallPart,
     NativeToolReturnPart,
     RetryFeedbackPart,
-    RetryPromptPart,
+    RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
     SpeechPart,
     SystemPromptPart,
     TextContent,
@@ -49,11 +49,11 @@ from ...messages import (
     UserContent,
     UserPromptPart,
     VideoUrl,
+    _translate_legacy_retry_part,  # pyright: ignore[reportPrivateUsage]
     narrow_message_parts,
 )
 from ...models import (
     _retry_feedback_speaks_for_the_harness,  # pyright: ignore[reportPrivateUsage]
-    _translate_legacy_retry_part,  # pyright: ignore[reportPrivateUsage]
 )
 from ...output import OutputDataT
 from ...tools import (
@@ -763,7 +763,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         },
                     )
                 )
-            elif isinstance(part, RetryPromptPart | RetryFeedbackPart):
+            # TODO(v3): remove `RetryPromptPart`
+            elif isinstance(part, RetryPromptPart | RetryFeedbackPart):  # pyright: ignore[reportDeprecated]
                 # Harness feedback dumps in the voice the model is shown it in, not as text a person
                 # appears to have written (https://github.com/pydantic/pydantic-ai/issues/6404), and
                 # carries the part itself so the reload can rebuild it. Flushing first keeps it in
@@ -771,7 +772,11 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                 # head of the request; that's this adapter's dump shape, not a guarantee every
                 # adapter makes — `VercelAIAdapter` hoists a system-voice one above the user message.
                 flush_user_content()
-                translated = _translate_legacy_retry_part(part) if isinstance(part, RetryPromptPart) else part
+                translated = (
+                    _translate_legacy_retry_part(part)
+                    if isinstance(part, RetryPromptPart)  # pyright: ignore[reportDeprecated]
+                    else part
+                )
                 if isinstance(translated, ToolReturnPart):
                     result.append(
                         ToolMessage(

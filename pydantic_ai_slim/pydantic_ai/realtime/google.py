@@ -61,7 +61,7 @@ from ..messages import (
     RealtimeSessionErrorEvent,
     RealtimeSessionReconnectEvent,
     RetryFeedbackPart,
-    RetryPromptPart,
+    RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
     SpeechPart,
     SystemPromptPart,
     TextContent,
@@ -73,11 +73,11 @@ from ..messages import (
     UploadedFile,
     UserPromptPart,
     VideoUrl,
+    _translate_legacy_retry_part,  # pyright: ignore[reportPrivateUsage]
 )
 from ..models import (
     ModelRequestParameters,
     _retry_feedback_speaks_for_the_harness,  # pyright: ignore[reportPrivateUsage]
-    _translate_legacy_retry_part,  # pyright: ignore[reportPrivateUsage]
     _wrap_in_system_tags,  # pyright: ignore[reportPrivateUsage]
 )
 
@@ -427,14 +427,19 @@ async def _seed_request_parts(
                         )
                     )
                 )
-        elif isinstance(part, RetryPromptPart | RetryFeedbackPart):
+        # TODO(v3): remove `RetryPromptPart`
+        elif isinstance(part, RetryPromptPart | RetryFeedbackPart):  # pyright: ignore[reportDeprecated]
             # A seeded turn has no system role — a `SystemPromptPart` is hoisted to
             # `system_instruction` instead — and a retry answers one response rather than standing
             # over the session, so hoisting it there would be wrong. Feedback bound for the system
             # voice takes the same `<system>` tagging every model without a mid-conversation system
             # message gets, which is what keeps the model from reading it as something a person said
             # (https://github.com/pydantic/pydantic-ai/issues/6404).
-            translated = _translate_legacy_retry_part(part) if isinstance(part, RetryPromptPart) else part
+            translated = (
+                _translate_legacy_retry_part(part)
+                if isinstance(part, RetryPromptPart)  # pyright: ignore[reportDeprecated]
+                else part
+            )
             if isinstance(translated, ToolReturnPart):
                 # The framing already says `error`, so the `{"error": ...}` wrapper a channel-less
                 # provider gets would only say it twice.

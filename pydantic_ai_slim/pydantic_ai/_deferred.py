@@ -20,7 +20,9 @@ from pydantic import Discriminator, Tag
 
 from . import _utils
 from .exceptions import ModelRetry, ToolFailed
-from .messages import RetryPromptPart, ToolCallPart, ToolReturn
+
+# TODO(v3): remove `RetryPromptPart`
+from .messages import RetryPromptPart, ToolCallPart, ToolReturn  # pyright: ignore[reportDeprecated]
 
 
 @dataclass(kw_only=True)
@@ -146,7 +148,9 @@ DeferredToolCallResult: TypeAlias = Annotated[
     Annotated[ToolReturn, Tag('tool-return')]
     | Annotated[ToolFailed, Tag('tool-failed')]
     | Annotated[ModelRetry, Tag('model-retry')]
-    | Annotated[RetryPromptPart, Tag('retry-prompt')],
+    # TODO(v3): remove `RetryPromptPart`. A handler still answering with one gets the same result as
+    # `ModelRetry`: the retry is bound to the call being resolved and travels as its own return.
+    | Annotated[RetryPromptPart, Tag('retry-prompt')],  # pyright: ignore[reportDeprecated]
     Discriminator(_deferred_tool_call_result_discriminator),
 ]
 """Result for a tool call that required external execution."""

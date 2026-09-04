@@ -23,7 +23,7 @@ else:
 
 
 if TYPE_CHECKING:
-    from .messages import ModelMessage, ModelResponse, RetryFeedbackPart, RetryPromptPart, ToolReturnPart
+    from .messages import ModelMessage, ModelResponse, RetryFeedbackPart, ToolReturnPart
     from .usage import RunUsage
 
 __all__ = (
@@ -617,11 +617,10 @@ class ToolRetryError(Exception):
     """Exception used to signal a retry message should be returned to the LLM.
 
     `tool_retry` is whichever part the retry travels as: a `ToolReturnPart` with `outcome='retried'`
-    when it answers a tool call, a `RetryFeedbackPart` when it doesn't, or a `RetryPromptPart` when it
-    came from user code (a handler returning one through `DeferredToolResults`).
+    when it answers a tool call, a `RetryFeedbackPart` when it doesn't.
     """
 
-    def __init__(self, tool_retry: RetryPromptPart | RetryFeedbackPart | ToolReturnPart):
+    def __init__(self, tool_retry: RetryFeedbackPart | ToolReturnPart):
         self.tool_retry = tool_retry
         if tool_retry.part_kind == 'tool-return':
             # A retried tool return already carries its validation details as serialized content, so
@@ -630,8 +629,7 @@ class ToolRetryError(Exception):
         elif isinstance(tool_retry.content, str):
             message = tool_retry.content
         else:
-            tool_name = tool_retry.tool_name if tool_retry.part_kind == 'retry-prompt' else None
-            message = self._format_error_details(tool_retry.content, tool_name)
+            message = self._format_error_details(tool_retry.content, None)
         super().__init__(message)
 
     def __reduce__(self) -> tuple[type, tuple[Any, ...]]:

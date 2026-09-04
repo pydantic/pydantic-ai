@@ -71,8 +71,9 @@ def _prepare_messages_carrying_a_retry(
     [`Model.request`][pydantic_ai.models.Model.request], sending the history they are handed. Scoping
     preparation to histories holding a retry leaves every other caller's request exactly as it was.
     """
+    # TODO(v3): remove `RetryPromptPart`
     if any(
-        isinstance(part, messages.RetryFeedbackPart | messages.RetryPromptPart)
+        isinstance(part, messages.RetryFeedbackPart | messages.RetryPromptPart)  # pyright: ignore[reportDeprecated]
         for message in msgs
         if isinstance(message, messages.ModelRequest)
         for part in message.parts

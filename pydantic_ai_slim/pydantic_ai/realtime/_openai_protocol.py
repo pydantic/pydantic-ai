@@ -69,7 +69,7 @@ from ..messages import (
     RealtimeInputTranscriptionErrorEvent,
     RealtimeSessionErrorEvent,
     RetryFeedbackPart,
-    RetryPromptPart,
+    RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
     SpeechPart,
     SystemPromptPart,
     TextContent,
@@ -80,10 +80,10 @@ from ..messages import (
     ToolReturnPart,
     UserContent,
     UserPromptPart,
+    _translate_legacy_retry_part,  # pyright: ignore[reportPrivateUsage]
 )
 from ..models import (
     _retry_feedback_speaks_for_the_harness,  # pyright: ignore[reportPrivateUsage]
-    _translate_legacy_retry_part,  # pyright: ignore[reportPrivateUsage]
     _wrap_in_system_tags,  # pyright: ignore[reportPrivateUsage]
 )
 from ..models._tool_choice import ResolvedToolChoice
@@ -523,14 +523,19 @@ async def _seed_request_items(
                 )
             ):
                 items.append(_message_item('user', content))
-        elif isinstance(part, RetryPromptPart | RetryFeedbackPart):
+        # TODO(v3): remove `RetryPromptPart`
+        elif isinstance(part, RetryPromptPart | RetryFeedbackPart):  # pyright: ignore[reportDeprecated]
             # A seeded item takes `user` or `assistant` only — a `SystemPromptPart` is routed to the
             # session `instructions` instead — and a retry answers one response rather than standing
             # over the session, so routing it there would be wrong. Feedback bound for the system
             # voice takes the same `<system>` tagging every model without a mid-conversation system
             # message gets, which is what keeps the model from reading it as something a person said
             # (https://github.com/pydantic/pydantic-ai/issues/6404).
-            translated = _translate_legacy_retry_part(part) if isinstance(part, RetryPromptPart) else part
+            translated = (
+                _translate_legacy_retry_part(part)
+                if isinstance(part, RetryPromptPart)  # pyright: ignore[reportDeprecated]
+                else part
+            )
             if isinstance(translated, ToolReturnPart):
                 _require_seeded_call(
                     translated.tool_name, tool_call_id=translated.tool_call_id, seeded_calls=seeded_calls
