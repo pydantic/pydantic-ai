@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import threading
 from collections.abc import AsyncIterable, AsyncIterator
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, cast
@@ -70,15 +71,17 @@ pytestmark = [
 
 @pytest.mark.parametrize('drain_all', [False, True], ids=['one-priority', 'all-priorities'])
 def test_sync_enqueue_does_not_race_pending_message_drain(drain_all: bool):
-    """A worker-thread enqueue waits for the drain transaction instead of being overwritten."""
-    drain_started = threading.Event()
-    release_drain = threading.Event()
-    enqueue_started = threading.Event()
+    """A worker-thread enqueue is not overwritten by either drain operation."""
+    drain_and_enqueue_ready = threading.Barrier(2)
 
     class BlockingQueue(PendingMessageQueue):
+        def append(self, pending: PendingMessage) -> None:
+            drain_and_enqueue_ready.wait(timeout=5)
+            super().append(pending)
+
         def _pop_priority(self, priority: PendingMessagePriority) -> list[PendingMessage]:
-            drain_started.set()
-            assert release_drain.wait(timeout=5)
+            if priority == 'asap':
+                drain_and_enqueue_ready.wait(timeout=5)
             return super()._pop_priority(priority)
 
     pending_messages: list[PendingMessage] = []
@@ -92,25 +95,12 @@ def test_sync_enqueue_does_not_race_pending_message_drain(drain_all: bool):
     )
 
     drain = queue.pop_all_by_priority if drain_all else lambda: queue.pop_priority('asap')
-    drain_thread = threading.Thread(target=drain)
-    drain_thread.start()
-    assert drain_started.wait(timeout=5)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        drain_future = executor.submit(drain)
+        enqueue_future = executor.submit(ctx.enqueue, 'from sync tool')
+        drain_future.result(timeout=5)
+        enqueue_future.result(timeout=5)
 
-    def enqueue() -> None:
-        enqueue_started.set()
-        ctx.enqueue('from sync tool')
-
-    enqueue_thread = threading.Thread(target=enqueue)
-    enqueue_thread.start()
-    assert enqueue_started.wait(timeout=5)
-    assert enqueue_thread.is_alive()
-
-    release_drain.set()
-    drain_thread.join(timeout=5)
-    enqueue_thread.join(timeout=5)
-
-    assert not drain_thread.is_alive()
-    assert not enqueue_thread.is_alive()
     assert len(pending_messages) == 1
 
 
