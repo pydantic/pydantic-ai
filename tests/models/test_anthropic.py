@@ -12227,9 +12227,9 @@ def test_anthropic_defer_loading_exchange_precedes_non_tool_part_after_delta() -
                 parts=[
                     ToolReturnPart(tool_name='reveal', content='ready', tool_call_id='reveal'),
                     ToolAvailabilityDeltaPart(tools_added=['delete_map']),
-                    UserPromptPart(content='first barrier'),
+                    RetryPromptPart(content='first barrier'),
                     ToolAvailabilityDeltaPart(tools_added=['archive_map']),
-                    RetryPromptPart(content='second barrier'),
+                    UserPromptPart(content='second barrier'),
                 ]
             ),
         ],
@@ -12245,12 +12245,12 @@ def test_anthropic_defer_loading_exchange_precedes_non_tool_part_after_delta() -
     assert isinstance(second_return, ModelRequest)
     assert len(first_return.parts) == 2
     assert isinstance(first_return.parts[0], ToolSearchReturnPart)
-    assert isinstance(first_return.parts[1], UserPromptPart)
+    assert isinstance(first_return.parts[1], RetryPromptPart)
+    assert first_return.parts[1].tool_name is None
     assert first_return.parts[1].content == 'first barrier'
     assert len(second_return.parts) == 2
     assert isinstance(second_return.parts[0], ToolSearchReturnPart)
-    assert isinstance(second_return.parts[1], RetryPromptPart)
-    assert second_return.parts[1].tool_name is None
+    assert isinstance(second_return.parts[1], UserPromptPart)
     assert second_return.parts[1].content == 'second barrier'
 
 
