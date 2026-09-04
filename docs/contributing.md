@@ -136,7 +136,7 @@ To run code formatting, linting, static type checks, and tests with coverage rep
 make
 ```
 
-If type checking swaps or stalls on your machine, cap `pyright`'s worker count with
+If your machine swaps or stalls during type checking, cap `pyright`'s worker count with
 `PYRIGHT_THREADS`. It defaults to `auto`, which spawns up to one worker process per logical core;
 a positive integer caps them, with `1` dropping to a single process, which can be faster when a
 worker per core exhausts memory. Any other value falls back to `auto`.
