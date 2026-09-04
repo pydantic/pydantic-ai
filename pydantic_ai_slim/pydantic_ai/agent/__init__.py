@@ -86,6 +86,7 @@ from ..capabilities.abstract import (
     leaf_capabilities,
 )
 from ..capabilities.combined import bind_capabilities_tier
+from ..capabilities.hooks import EventT, Hooks, OnEventHookFunc
 from ..capabilities.instrumentation import Instrumentation as InstrumentationCap
 from ..models.instrumented import InstrumentationSettings, InstrumentedModel
 from ..native_tools import AbstractNativeTool
@@ -665,6 +666,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         capabilities = wrap_capability_funcs(capabilities)
 
         _inject_auto_capabilities(capabilities)
+
+        # Listeners registered with `@agent.on_event` live here rather than in the root capability,
+        # so they survive an overridden root capability the way `@agent.tool` tools survive
+        # `override(toolsets=...)`. `on_event` is the only way to reach it, so it never contributes
+        # instructions, tools or model settings, and while it holds no listeners `listens_to()` is
+        # False and the dispatch gate skips it entirely.
+        self._event_hooks: Hooks[AgentDepsT] = Hooks()
 
         self._root_capability = CombinedCapability(capabilities)
         _validate_capability_ids(self._root_capability.capabilities)
@@ -2413,6 +2421,88 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         return func
 
     @overload
+    def on_event(
+        self, func: OnEventHookFunc[_messages.AgentStreamEvent], /
+    ) -> OnEventHookFunc[_messages.AgentStreamEvent]: ...
+
+    @overload
+    def on_event(
+        self, *event_types: type[EventT], timeout: float | None = None
+    ) -> Callable[[OnEventHookFunc[EventT]], OnEventHookFunc[EventT]]: ...
+
+    def on_event(
+        self,
+        func_or_event_type: OnEventHookFunc[_messages.AgentStreamEvent] | type[EventT] | None = None,
+        *event_types: type[EventT],
+        timeout: float | None = None,
+    ) -> Any:
+        """Decorator to register a listener for events on this agent's run event stream.
+
+        Every event on the stream can be listened for: the framework's own model and tool events,
+        the application's [`CustomEvent`][pydantic_ai.messages.CustomEvent]s, and the
+        [`CapabilityEvent`][pydantic_ai.messages.CapabilityEvent]s published by the agent's
+        capabilities. Naming event classes narrows the `event` argument to their union and lets
+        dispatch skip the agent's listeners for anything else; a bare `@agent.on_event` sees every
+        [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent].
+
+        This is the application-level counterpart to
+        [`@on_event`][pydantic_ai.capabilities.on_event] on a capability, and it dispatches at the
+        same point. These listeners join after the agent's own capabilities, so they see the events
+        those emitted, and they survive an overridden root capability. Capability ordering still
+        applies: one asking for `position='innermost'` keeps that position and its listeners run
+        after these.
+
+        Dispatch happens *upstream* of
+        [`wrap_run_event_stream()`][pydantic_ai.capabilities.AbstractCapability.wrap_run_event_stream],
+        so a listener sees each event as it was emitted, not as it is finally delivered. A
+        capability that rewrites, replaces or drops events in its stream wrapper does so after
+        every listener has already run, which means a listener can see an event that no stream
+        consumer ever receives. To act on the delivered stream instead, wrap it yourself with
+        `wrap_run_event_stream` on a [`Hooks`][pydantic_ai.capabilities.Hooks] capability, or
+        consume [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events].
+
+        Being application code, a listener may emit a `CustomEvent` of its own. That is how a
+        capability's internal event reaches a frontend: capability events are deliberately not
+        forwarded by the [AG-UI](../ui/ag-ui.md) and [Vercel AI](../ui/vercel-ai.md) adapters, so
+        you republish the part of one that is public.
+
+        For hook families other than events, pass a [`Hooks`][pydantic_ai.capabilities.Hooks]
+        capability to `capabilities=`, where its position among the other capabilities — which
+        decides where it sits in each wrap chain — is yours to choose.
+
+        Example:
+        ```python
+        from dataclasses import dataclass
+
+        from pydantic_ai import Agent, CapabilityEvent, CustomEvent, RunContext
+
+        agent = Agent('test')
+
+
+        @dataclass(kw_only=True)
+        class IndexRebuiltEvent(CapabilityEvent, namespace='indexer'):
+            documents: int
+
+
+        @dataclass(kw_only=True)
+        class SearchReadyEvent(CustomEvent):
+            documents: int
+
+
+        @agent.on_event(IndexRebuiltEvent)
+        async def republish(ctx: RunContext[None], event: IndexRebuiltEvent) -> None:
+            await ctx.emit(SearchReadyEvent(documents=event.documents))
+        ```
+        """
+        # `Hooks.on.event` already sorts the bare form from the filtered one; forward verbatim so
+        # there is one implementation of that split. Typed `Any` because the overloads above carry
+        # the signature, as they do for the registrar itself.
+        registrar: Any = self._event_hooks.on
+        if func_or_event_type is None:
+            return registrar.event(*event_types, timeout=timeout)
+        return registrar.event(func_or_event_type, *event_types, timeout=timeout)
+
+    @overload
     def tool(self, func: ToolFuncContext[AgentDepsT, ToolParams], /) -> ToolFuncContext[AgentDepsT, ToolParams]: ...
 
     @overload
@@ -2770,7 +2860,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         silently drop a `with agent.override(root_capability=...):` block).
         """
         override_cap = self._override_root_capability.get()
-        return self._effective_root_capability(), override_cap is not None
+        base = self._effective_root_capability()
+        if self._event_hooks.has_on_event:
+            # Wrapped here rather than in `_root_capability` so an override of it cannot drop the
+            # listeners; `Hooks` binds to itself, so it needs no `for_agent` pass. `CombinedCapability`
+            # re-sorts, so this joins after the agent's own capabilities but still yields to one that
+            # asks for `position='innermost'` — see `on_event`'s docstring.
+            base = CombinedCapability([base, self._event_hooks])
+        return base, override_cap is not None
 
     def _bind_run_capabilities(
         self, extra_capabilities: list[AbstractCapability[AgentDepsT]]

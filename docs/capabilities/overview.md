@@ -234,13 +234,12 @@ Keep the namespace in a module-level constant and give it the capability's name 
 
 A capability publishes capability events specifically, and emitting an application [`CustomEvent`][pydantic_ai.messages.CustomEvent] from one raises a [`UserError`][pydantic_ai.exceptions.UserError]; see [Which event type do I use?](../agent.md#which-event-type) for the split. The payload cannot use the field names the envelope needs for itself: `data`, `capability_id`, `tool_call_id`, `tool_name`, and `event_kind` are rejected when the class is defined.
 
-Pydantic AI stamps the emitting capability's run id as `capability_id`. For a capability you gave an `id`, that is the `id`. For one you did not, it is a handle the framework mints for that run — `'<file_reader:4f3a9c>'` — which differs every run and must not be matched on; give the capability an explicit `id` if a subscriber needs to recognize it. Events emitted by its tools also receive `tool_call_id` and `tool_name`. They surface on the [agent run event stream](../agent.md#streaming-all-events) but are internal coordination signals, so UI adapters do not forward them by default. A protocol adapter can override [`handle_capability_event()`][pydantic_ai.ui.UIEventStream.handle_capability_event] to map one onto its own protocol, building the payload itself as `CapabilityEvent` has no `to_payload()`. An application that wants to expose one to a frontend can instead consume it from an [event hook](../hooks.md#event-stream-hooks) and emit an application `CustomEvent` carrying the public payload:
+Pydantic AI stamps the emitting capability's run id as `capability_id`. For a capability you gave an `id`, that is the `id`. For one you did not, it is a handle the framework mints for that run — `'<file_reader:4f3a9c>'` — which differs every run and must not be matched on; give the capability an explicit `id` if a subscriber needs to recognize it. Events emitted by its tools also receive `tool_call_id` and `tool_name`. They surface on the [agent run event stream](../agent.md#streaming-all-events) but are internal coordination signals, so UI adapters do not forward them by default. A protocol adapter can override [`handle_capability_event()`][pydantic_ai.ui.UIEventStream.handle_capability_event] to map one onto its own protocol, building the payload itself as `CapabilityEvent` has no `to_payload()`. An application that wants to expose one to a frontend can instead listen for it with [`@agent.on_event`][pydantic_ai.agent.Agent.on_event] and emit an application `CustomEvent` carrying the public payload:
 
 ```python {title="republish_capability_event.py"}
 from dataclasses import dataclass
 
 from pydantic_ai import Agent, CapabilityEvent, CustomEvent, RunContext
-from pydantic_ai.capabilities import Hooks
 
 SEARCH_INDEX = 'search_index'
 
@@ -255,20 +254,17 @@ class SearchReadyEvent(CustomEvent):
     documents: int
 
 
-hooks = Hooks()
+agent = Agent('test')
 
 
-@hooks.on.event(IndexRebuiltEvent)
+@agent.on_event(IndexRebuiltEvent)
 async def republish(ctx: RunContext, event: IndexRebuiltEvent) -> None:
     await ctx.emit(SearchReadyEvent(documents=event.documents))
-
-
-agent = Agent('test', capabilities=[hooks])
 ```
 
 _(This example is complete, it can be run "as is")_
 
-An event hook belongs to the application rather than to a capability, so it is one of the places application `CustomEvent`s can be emitted.
+The listener belongs to the application rather than to a capability, so it is one of the places application `CustomEvent`s can be emitted. [`Hooks.on.event`][pydantic_ai.capabilities.Hooks] does the same job when you want a `Hooks` capability anyway — for the other [hook families](../hooks.md), or to choose where it sits among the other capabilities.
 
 The namespace and event name form the serialized `kind` (for example, `workspace.file_read`), and the event name is derived from the class name unless you pass an explicit `name=`. A namespace is required: defining a `CapabilityEvent` subclass without one raises `TypeError` there and then, rather than letting an unnamespaced event reach the stream. You only give it once per family, though — an event subclassing another capability event inherits its namespace and contributes just its own name, so a shared base is the tidiest way to define a family — and a subclass can pass its own `namespace=` to move out of the one it inherited. Mark a base that only carries the namespace and fields common to the family `abstract=True`, and it stays out of the registry and can't be emitted itself, while its subclasses register as usual. Decorate it with `@dataclass` like any other event: an undecorated base contributes no fields at all, which is rejected rather than left to surface as a payload quietly missing them. The `kind` is the event's wire identifier, so renaming the class renames the tag with it, breaking compatibility wherever events outlive the emitting process — [durable execution](../durable_execution/overview.md) histories and caches, persisted event logs, subscribers matching on the kind. A capability published as a library should pin `name=` on each of its events. Kinds are registered when the class is defined and must be unique within the process; re-executing the same class definition (as when re-running a notebook cell) replaces the registration. Import the module defining an event before creating the adapter that deserializes it, as each pydantic `TypeAdapter` captures the kinds registered when it is created. Otherwise the event becomes an [`UnknownCapabilityEvent`][pydantic_ai.messages.UnknownCapabilityEvent] and a `UserWarning` is emitted, without losing payload fields; serializing it again preserves the wire representation so a later consumer can recover the typed event.
 
