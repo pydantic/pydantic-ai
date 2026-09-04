@@ -20,7 +20,7 @@ import anyio
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, RequestUsage
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
@@ -35,6 +35,7 @@ from pydantic_ai.messages import (
     RealtimeSessionErrorEvent,
     SpeechPart,
     SpeechPartDelta,
+    SystemPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -66,6 +67,104 @@ pytestmark = [
     pytest.mark.anyio,
     pytest.mark.skipif(not imports_successful(), reason='openai / websockets not installed'),
 ]
+
+
+async def test_session_when_idle_enqueue_waits_for_response_boundary(
+    openai_ws_cassette: tuple[Provider[Any], RealtimeCassette],
+) -> None:
+    """A session-level system prompt waits for OpenAI's active response to finish."""
+    provider, _ = openai_ws_cassette
+    model = OpenAIRealtimeModel(
+        'gpt-realtime', provider=provider, settings=OpenAIRealtimeModelSettings(output_modality='text')
+    )
+    agent = Agent(
+        instructions=(
+            'First say exactly "FIRST RESPONSE COMPLETE". After any later message, follow its instruction exactly.'
+        )
+    )
+
+    completions: list[RealtimeTurnCompleteEvent] = []
+    enqueued = False
+    async with agent.realtime(model).session() as session:
+        await session.send('Begin.')
+        with anyio.fail_after(30):
+            async for event in session:  # pragma: no branch
+                if not enqueued and isinstance(event, PartDeltaEvent):
+                    session.enqueue(
+                        SystemPromptPart(content='Say exactly "QUEUED MARKER RECEIVED".'),
+                        priority='when_idle',
+                    )
+                    enqueued = True
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    completions.append(event)
+                    if len(completions) == 2:
+                        break
+
+    assert len(completions) == 2
+    assert session.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Begin.', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='FIRST RESPONSE COMPLETE')],
+                usage=RequestUsage(
+                    details={
+                        'input_text_tokens': 24,
+                        'input_image_tokens': 0,
+                        'output_text_tokens': 5,
+                        'audio_tokens': 0,
+                    },
+                    output_tokens=5,
+                    input_tokens=24,
+                ),
+                model_name='gpt-realtime',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
+                provider_details={'status': 'completed'},
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='<system>Say exactly "QUEUED MARKER RECEIVED".</system>', timestamp=IsDatetime()
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='QUEUED MARKER RECEIVED')],
+                usage=RequestUsage(
+                    details={
+                        'input_text_tokens': 52,
+                        'input_image_tokens': 0,
+                        'output_text_tokens': 9,
+                        'audio_tokens': 0,
+                    },
+                    output_tokens=9,
+                    input_tokens=52,
+                ),
+                model_name='gpt-realtime',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
+                provider_details={'status': 'completed'},
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
 
 
 async def test_text_in_audio_out_turn(openai_ws_cassette: tuple[Provider[Any], RealtimeCassette]) -> None:

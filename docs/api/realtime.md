@@ -65,7 +65,9 @@ plain `str`, image/audio [`BinaryContent`][pydantic_ai.messages.BinaryContent] (
 [`BinaryAudio`][pydantic_ai.messages.BinaryAudio]), or a sequence of
 these. Turn-taking and interruption go through the dedicated
 [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] methods (`commit_audio()`, `clear_audio()`,
-`create_response()`, `interrupt()`), not `send()`.
+`create_response()`, `interrupt()`), not `send()`. Use
+[`RealtimeSession.enqueue()`][pydantic_ai.realtime.RealtimeSession.enqueue] to queue text or system
+prompt parts for delivery after the active response, or once the model is idle.
 
 **Consumption views** —
 [`RealtimeSession.stream_audio()`][pydantic_ai.realtime.RealtimeSession.stream_audio] yields model

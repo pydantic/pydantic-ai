@@ -19,7 +19,7 @@ from opentelemetry.context import Context
 from typing_extensions import TypeAliasType, assert_never
 
 from .. import _agent_graph
-from .._enqueue import PendingMessage, PendingMessagePriority
+from .._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority
 from .._tool_execution import (
     _reject_unloaded_capability_reveals,  # pyright: ignore[reportPrivateUsage]
     build_tool_return_part,
@@ -441,7 +441,7 @@ def _pending_message_text(pending: PendingMessage) -> str:
     standard run's non-leading system prompts. Anything else can't cross the live input channel.
     """
     error = UserError(
-        '`RunContext.enqueue()` in a realtime session supports plain-text prompts and system-prompt '
+        '`RealtimeSession.enqueue()` and `RunContext.enqueue()` in a realtime session support plain-text prompts and system-prompt '
         'parts only. Multimodal content and model responses cannot be delivered over the live input '
         'channel.'
     )
@@ -1153,6 +1153,47 @@ class RealtimeSession:
                 await self.send(item)
         else:
             assert_never(content)
+
+    def enqueue(
+        self,
+        *content: EnqueueContent,
+        priority: PendingMessagePriority = 'asap',
+    ) -> str | None:
+        """Enqueue content to be delivered to the model when the session is ready for it.
+
+        Use this from code driving the session. For tools, use
+        [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue]. Unlike
+        [`send()`][pydantic_ai.realtime.RealtimeSession.send], which is delivered immediately even
+        while the model is speaking, enqueued content waits for the appropriate turn boundary and
+        triggers a model response when delivered.
+
+        Args:
+            *content: One or more [`EnqueueContent`][pydantic_ai.run.EnqueueContent] items. Realtime
+                delivery supports text parts and
+                [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s, which are joined into
+                one user turn. System parts use the `<system>…</system>` convention to indicate that
+                the text is not the person speaking. The delivered turn is recorded in history as a
+                [`UserPromptPart`][pydantic_ai.messages.UserPromptPart]. Calling with no positional
+                arguments is a no-op.
+            priority: When to deliver:
+                `'asap'` (default) — after the response in flight, if any, finishes, without
+                    interrupting it.
+                `'when_idle'` — only once the model is idle: no response is in flight and all
+                    `'asap'` items have been delivered.
+
+        Returns:
+            The `enqueue_id` of the queued message, or `None` when there was nothing to enqueue.
+
+        Raises:
+            UserError: If the session is closed or the content cannot be delivered over the live
+                input channel.
+        """
+        self._ensure_not_closed()
+        pending = PendingMessage.from_content(*content, priority=priority)
+        if pending is None:
+            return None
+        self._pending_messages.append(pending)
+        return pending.enqueue_id
 
     async def _send_image(self, content: BinaryContent) -> None:
         """Forward an image and retain it according to the session's sampling and cap policies."""

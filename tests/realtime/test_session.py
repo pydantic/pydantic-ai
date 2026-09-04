@@ -5194,6 +5194,26 @@ class _EnqueueDuringSpeechConnection(FakeRealtimeConnection):
         yield ResponseDone()
 
 
+class _SessionEnqueueDuringSpeechConnection(FakeRealtimeConnection):
+    """Expose session-level enqueue and immediate send behavior during assistant speech."""
+
+    def __init__(self) -> None:
+        super().__init__([])
+        self.audio_started = asyncio.Event()
+        self.enqueued = asyncio.Event()
+        self.sent_before_response_complete: list[RealtimeInput] = []
+
+    async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+        yield AudioDelta(data=b'audio')
+        self.audio_started.set()
+        await self.enqueued.wait()
+        for _ in range(3):
+            await asyncio.sleep(0)
+        self.sent_before_response_complete = list(self.sent)
+        yield OutputTranscript(text='still speaking')
+        yield ResponseDone()
+
+
 async def test_asap_enqueue_waits_for_active_response_to_complete() -> None:
     """`asap` is provider-agnostic: active assistant output finishes before queued text is sent."""
     agent: Agent[None, str] = Agent()
@@ -5214,6 +5234,91 @@ async def test_asap_enqueue_waits_for_active_response_to_complete() -> None:
 
     assert not any(isinstance(item, str) for item in conn.sent_before_response_complete)
     assert [item for item in conn.sent if isinstance(item, str)] == ['follow-up context']
+
+
+async def test_session_enqueue_asap_waits_for_active_response_to_complete() -> None:
+    conn = _SessionEnqueueDuringSpeechConnection()
+    agent: Agent[None, str] = Agent()
+
+    async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
+
+        async def send_and_enqueue_during_speech() -> None:
+            await conn.audio_started.wait()
+            await session.send('sent immediately')
+            assert session.enqueue('queued for the boundary') is not None
+            conn.enqueued.set()
+
+        task = asyncio.create_task(send_and_enqueue_during_speech())
+        _ = [event async for event in session]
+        await task
+
+    assert [item for item in conn.sent_before_response_complete if isinstance(item, str)] == ['sent immediately']
+    assert [item for item in conn.sent if isinstance(item, str)] == ['sent immediately', 'queued for the boundary']
+    assert session.new_messages()[-1] == ModelRequest(
+        parts=[UserPromptPart(content='queued for the boundary', timestamp=IsDatetime())],
+        timestamp=IsDatetime(),
+        conversation_id=IsStr(),
+        run_id=IsStr(),
+    )
+
+
+async def test_session_enqueue_when_idle_follows_asap() -> None:
+    conn = _SessionEnqueueDuringSpeechConnection()
+    agent: Agent[None, str] = Agent()
+
+    async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
+
+        async def enqueue_during_speech() -> None:
+            await conn.audio_started.wait()
+            assert session.enqueue('idle', priority='when_idle') is not None
+            assert session.enqueue('soon') is not None
+            conn.enqueued.set()
+
+        task = asyncio.create_task(enqueue_during_speech())
+        _ = [event async for event in session]
+        await task
+
+    assert [item for item in conn.sent if isinstance(item, str)] == ['soon', 'idle']
+
+
+async def test_session_enqueue_renders_system_prompt() -> None:
+    conn = FakeRealtimeConnection([ResponseDone()])
+    agent: Agent[None, str] = Agent()
+
+    async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
+        assert session.enqueue('context', SystemPromptPart(content='wrap up')) is not None
+        _ = [event async for event in session]
+
+    assert [item for item in conn.sent if isinstance(item, str)] == ['context\n\n<system>wrap up</system>']
+    assert session.new_messages()[-1] == ModelRequest(
+        parts=[UserPromptPart(content='context\n\n<system>wrap up</system>', timestamp=IsDatetime())],
+        timestamp=IsDatetime(),
+        conversation_id=IsStr(),
+        run_id=IsStr(),
+    )
+
+
+async def test_session_enqueue_empty_call_is_noop() -> None:
+    agent: Agent[None, str] = Agent()
+    async with agent.realtime(FakeRealtimeModel(FakeRealtimeConnection([]))).session() as session:
+        assert session.enqueue() is None
+
+
+async def test_session_enqueue_after_close_raises() -> None:
+    agent: Agent[None, str] = Agent()
+    async with agent.realtime(FakeRealtimeModel(FakeRealtimeConnection([]))).session() as session:
+        await session.close()
+        with pytest.raises(UserError, match='session is closed'):
+            session.enqueue('late')
+
+
+async def test_session_enqueue_rejects_invalid_content_immediately() -> None:
+    agent: Agent[None, str] = Agent()
+    async with agent.realtime(FakeRealtimeModel(FakeRealtimeConnection([]))).session() as session:
+        with pytest.raises(UserError, match='Enqueued content must end with a `ModelRequest`'):
+            session.enqueue(ModelResponse(parts=[TextPart(content='not a request')]))
+        with pytest.raises(UserError, match='support plain-text prompts and system-prompt parts only'):
+            session.enqueue(BinaryImage(data=b'image', media_type='image/png'))
 
 
 @pytest.mark.parametrize(
@@ -5304,7 +5409,7 @@ async def test_agent_realtime_session_rejects_non_text_enqueue() -> None:
 
     conn = FakeRealtimeConnection([ToolCall(tool_call_id='tc', tool_name='queue_image', args='{}')])
     async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
-        with pytest.raises(UserError, match='supports plain-text prompts and system-prompt parts only'):
+        with pytest.raises(UserError, match='support plain-text prompts and system-prompt parts only'):
             _ = [event async for event in session]
 
 
@@ -5321,7 +5426,7 @@ async def test_realtime_pending_messages_reject_unsupported_message_shapes(messa
     manager = session._tool_manager  # pyright: ignore[reportPrivateUsage]
     assert manager.ctx is not None
     assert manager.ctx.pending_messages is not None
-    with pytest.raises(UserError, match='supports plain-text prompts and system-prompt parts only'):
+    with pytest.raises(UserError, match='support plain-text prompts and system-prompt parts only'):
         manager.ctx.pending_messages.append(PendingMessage(messages=messages))
 
 
