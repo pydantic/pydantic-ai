@@ -86,27 +86,18 @@ async def dispatch_event_immediate(ctx: RunContext[Any], event: _messages.AgentS
 async def dispatch_event_stream(
     ctx: RunContext[Any], stream: AsyncIterable[_messages.AgentStreamEvent]
 ) -> AsyncIterator[_messages.AgentStreamEvent]:
-    """Dispatch events at their stream positions and deduplicate immediately dispatched events.
-
-    This sits outermost, downstream of every `wrap_run_event_stream` wrapper, so closing it has to
-    close what it wraps: a consumer that stops early (`break`) closes only this generator, and a
-    capability stream that is a plain async iterator rather than an async generator has no
-    `GeneratorExit` to tear it down on its own.
-    """
+    """Dispatch events at their stream positions and deduplicate immediately dispatched events."""
     capability = ctx.root_capability
-    try:
-        async for event in stream:
-            event_id = id(event)
-            if pending := ctx._pending_immediate_dispatches.get(event_id):  # pyright: ignore[reportPrivateUsage]
-                settled = pending.pop(0)
-                if not pending:
-                    del ctx._pending_immediate_dispatches[event_id]  # pyright: ignore[reportPrivateUsage]
-                await settled.wait()
-            elif capability is not None and capability.listens_to(event):
-                await capability.on_event(ctx, event=event)
-            yield ctx._event_stream_replacements.pop(event_id, event)  # pyright: ignore[reportPrivateUsage]
-    finally:
-        await _utils.aclose_if_supported(stream)
+    async for event in stream:
+        event_id = id(event)
+        if pending := ctx._pending_immediate_dispatches.get(event_id):  # pyright: ignore[reportPrivateUsage]
+            settled = pending.pop(0)
+            if not pending:
+                del ctx._pending_immediate_dispatches[event_id]  # pyright: ignore[reportPrivateUsage]
+            await settled.wait()
+        elif capability is not None and capability.listens_to(event):
+            await capability.on_event(ctx, event=event)
+        yield ctx._event_stream_replacements.pop(event_id, event)  # pyright: ignore[reportPrivateUsage]
 
 
 @dataclasses.dataclass(frozen=True)

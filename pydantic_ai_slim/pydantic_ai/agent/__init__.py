@@ -2441,17 +2441,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         contribute, so they see the events those emitted; and they survive an overridden root
         capability.
 
-        Dispatch happens *downstream* of every
-        [`wrap_run_event_stream()`][pydantic_ai.capabilities.AbstractCapability.wrap_run_event_stream]
-        wrapper, so a listener sees each event exactly as consumers receive it: rewrites and
-        replacements have been applied, and an event a wrapper dropped never reaches a listener at
-        all. A listener is terminal — it cannot transform or replace — so everything that can runs
-        ahead of it. Use `wrap_run_event_stream` when you need to change the stream rather than
-        observe it.
-
-        The exception is a decision event declaring `dispatch='immediate'`, which reaches listeners
-        when it is emitted, before it has entered the stream at all: its emitter awaits the decision
-        inline, so there is no stream position for a wrapper to have acted on yet.
+        Dispatch happens *upstream* of
+        [`wrap_run_event_stream()`][pydantic_ai.capabilities.AbstractCapability.wrap_run_event_stream],
+        so a listener sees each event as it was emitted, not as it is finally delivered. A
+        capability that rewrites, replaces or drops events in its stream wrapper does so after
+        every listener has already run, which means a listener can see an event that no stream
+        consumer ever receives. To act on the delivered stream instead, wrap it yourself with
+        `wrap_run_event_stream` on a [`Hooks`][pydantic_ai.capabilities.Hooks] capability, or
+        consume [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events].
 
         Being application code, a listener may emit a `CustomEvent` of its own. That is how a
         capability's internal event reaches a frontend: capability events are deliberately not
@@ -3681,9 +3678,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 | None
             ) = (
                 (
-                    # Wrappers first, listeners last -- see `_agent_graph._wrapped_stream`.
-                    lambda stream: dispatch_event_stream(
-                        run_context, run_capability.wrap_run_event_stream(run_context, stream=stream)
+                    lambda stream: run_capability.wrap_run_event_stream(
+                        run_context, stream=dispatch_event_stream(run_context, stream)
                     )
                 )
                 if run_capability.has_wrap_run_event_stream or run_capability.has_on_event

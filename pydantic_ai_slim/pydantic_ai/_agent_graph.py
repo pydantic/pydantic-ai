@@ -1945,14 +1945,12 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         """
         if self._wrapped_events_iterator is None:
             run_context = build_run_context(ctx)
-            # Wrappers first, listeners last: `on_event` is terminal (it cannot transform or
-            # replace), so everything that can rewrite, replace or drop an event runs ahead of it and
-            # a listener sees what consumers will actually receive.
-            wrapped = ctx.deps.root_capability.wrap_run_event_stream(
-                run_context,
-                stream=_with_event_stream_buffer(self._run_stream(ctx), ctx.state.event_stream_buffer),
+            inner = dispatch_event_stream(
+                run_context, _with_event_stream_buffer(self._run_stream(ctx), ctx.state.event_stream_buffer)
             )
-            self._wrapped_events_iterator = aiter(dispatch_event_stream(run_context, wrapped))
+            self._wrapped_events_iterator = aiter(
+                ctx.deps.root_capability.wrap_run_event_stream(run_context, stream=inner)
+            )
         return self._wrapped_events_iterator
 
     async def _run_stream(  # noqa: C901
