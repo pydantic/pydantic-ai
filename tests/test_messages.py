@@ -2344,6 +2344,31 @@ def test_narrow_type_upgrades_json_string_content():
     assert narrowed.content == {'instructions': 'hi'}
 
 
+def test_load_capability_return_content_extras_survive_roundtrip():
+    content = {'instructions': 'hi', 'version': 2, 'extra': 'KEEP_ME'}
+    raw_messages = [
+        {
+            'kind': 'request',
+            'parts': [
+                {
+                    'part_kind': 'tool-return',
+                    'tool_kind': 'capability-load',
+                    'tool_name': 'load_capability',
+                    'tool_call_id': 'c1',
+                    'content': content,
+                }
+            ],
+        }
+    ]
+
+    messages = ModelMessagesTypeAdapter.validate_python(raw_messages)
+    assert isinstance(messages[0].parts[0], LoadCapabilityReturnPart)
+    assert messages[0].parts[0].content == content
+
+    serialized = ModelMessagesTypeAdapter.dump_json(messages)
+    assert json.loads(serialized)[0]['parts'][0]['content'] == content
+
+
 def test_stripped_tool_kind_part_survives_roundtrip():
     """A base part that kept an unvalidatable `tool_kind` would be routed back to the typed subclass
     by the discriminator and fail validation on reload; stripping it preserves the round-trip."""
