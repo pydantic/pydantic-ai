@@ -10,7 +10,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, replace
 from datetime import datetime
 from importlib.util import find_spec
-from types import NoneType
+from types import ModuleType, NoneType
 from typing import Any
 
 import httpx2
@@ -266,13 +266,30 @@ class TestXSearchCapability:
             XSearch(fallback_subagent_model='xai:grok-4-1-fast-non-reasoning', local=False)
 
     def test_xsearch_deprecated_fallback_model_argument(self):
-        """`fallback_model=` still configures the subagent, and warns."""
+        """`fallback_model=` still configures the subagent, and warns at the caller's own line."""
         with pytest.warns(
             PydanticAIDeprecationWarning, match=r'`fallback_model` is deprecated; use `fallback_subagent_model`'
-        ):
+        ) as record:
             cap = XSearch(fallback_model='xai:grok-4-1-fast-non-reasoning')
+        assert [warning.filename for warning in record] == [__file__]
         assert cap.fallback_subagent_model == 'xai:grok-4-1-fast-non-reasoning'
         assert cap.get_toolset() is not None
+
+    def test_xsearch_deprecated_fallback_model_from_a_pydantic_ai_prefixed_package(self):
+        """A caller package whose name merely starts with `pydantic_ai` still gets its own line.
+
+        `pydantic_ai_harness` is such a package, and the notice is useless to it if the walk out of
+        the framework's own frames treats it as one of them.
+        """
+        caller_file = '/pydantic_ai_harness/capabilities.py'
+        caller = ModuleType('pydantic_ai_harness.capabilities')
+        caller.__dict__['XSearch'] = XSearch
+        code = compile("cap = XSearch(fallback_model='xai:grok-4-1-fast-non-reasoning')", caller_file, 'exec')
+        with pytest.warns(
+            PydanticAIDeprecationWarning, match=r'`fallback_model` is deprecated; use `fallback_subagent_model`'
+        ) as record:
+            exec(code, caller.__dict__)
+        assert [warning.filename for warning in record] == [caller_file]
 
     def test_xsearch_deprecated_fallback_model_attribute(self):
         """Reading and writing `.fallback_model` proxies `fallback_subagent_model`, and warns."""
@@ -732,11 +749,12 @@ class TestImageGenerationCapability:
             ImageGeneration(fallback_subagent_model='openai-responses:gpt-5.4', local=False)
 
     def test_image_generation_deprecated_fallback_model_argument(self):
-        """`fallback_model=` still configures the subagent, and warns."""
+        """`fallback_model=` still configures the subagent, and warns at the caller's own line."""
         with pytest.warns(
             PydanticAIDeprecationWarning, match=r'`fallback_model` is deprecated; use `fallback_subagent_model`'
-        ):
+        ) as record:
             cap = ImageGeneration(fallback_model='openai-responses:gpt-5.4')
+        assert [warning.filename for warning in record] == [__file__]
         assert cap.fallback_subagent_model == 'openai-responses:gpt-5.4'
         assert cap.get_toolset() is not None
 

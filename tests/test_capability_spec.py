@@ -188,15 +188,16 @@ def test_agent_from_spec_image_generation():
 
 
 def test_agent_from_spec_deprecated_fallback_model_key():
-    """A spec written against the old key keeps loading, and warns.
+    """A spec written against the old key keeps loading, and warns at the loading line.
 
     The deprecated name stays in `ImageGeneration.__init__` and `XSearch.__init__` for exactly
     this: the published schema forbids extra keys, so removing it would fail such a spec outright
-    rather than deprecate it.
+    rather than deprecate it. `from_spec` reaches the capability through several pydantic-ai
+    frames, so the notice has to be attributed past them to be filterable by the user's module.
     """
     with pytest.warns(
         PydanticAIDeprecationWarning, match=r'`fallback_model` is deprecated; use `fallback_subagent_model`'
-    ):
+    ) as record:
         agent = Agent.from_spec(
             {
                 'model': 'test',
@@ -206,6 +207,7 @@ def test_agent_from_spec_deprecated_fallback_model_key():
                 ],
             }
         )
+    assert [warning.filename for warning in record] == [__file__, __file__]
     children = agent._root_capability.capabilities  # pyright: ignore[reportPrivateUsage]
     image_gen = next(c for c in children if isinstance(c, ImageGeneration))
     x_search = next(c for c in children if isinstance(c, XSearch))

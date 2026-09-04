@@ -10,6 +10,7 @@ rather than to a local tool of their own.
 
 from __future__ import annotations
 
+import inspect
 import warnings
 from typing import TypeVar
 
@@ -39,11 +40,16 @@ def resolve_fallback_subagent_model(
             f'{cls_name}: cannot specify both `fallback_model` and `fallback_subagent_model` — '
             '`fallback_model` is the deprecated spelling of `fallback_subagent_model`, so pass only the latter'
         )
-    # user → `__init__` → here → `warn`; `from_spec` adds a frame and so lands one short, as the
-    # other notices these capabilities emit from `__post_init__` already do.
+    # Attribute the notice to the first frame whose top-level package isn't `pydantic_ai`, so it
+    # points at the user whether they constructed the capability directly or loaded an old spec.
+    frame = inspect.currentframe()
+    stacklevel = 1
+    while frame is not None and frame.f_globals.get('__name__', '').partition('.')[0] == 'pydantic_ai':
+        frame = frame.f_back
+        stacklevel += 1
     warnings.warn(
         '`fallback_model` is deprecated; use `fallback_subagent_model` instead.',
         PydanticAIDeprecationWarning,
-        stacklevel=3,
+        stacklevel=stacklevel,
     )
     return fallback_model
