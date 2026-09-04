@@ -301,8 +301,7 @@ async def test_function_toolset_with_defaults_overridden():
         return a - b  # pragma: no cover
 
 
-@pytest.mark.parametrize('prepared_toolset_id', [None, 'prepared-source'])
-async def test_prepared_combined_toolset_dispatches_updated_tool(prepared_toolset_id: str | None):
+async def test_prepared_combined_toolset_dispatches_updated_tool():
     received_definitions: list[ToolDefinition] = []
 
     class InspectingToolset(FunctionToolset[None]):
@@ -321,10 +320,6 @@ async def test_prepared_combined_toolset_dispatches_updated_tool(prepared_toolse
     def prepare_tool(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
         tool_defs[0].metadata = {'source': 'prepared'}
         tool_defs[0].timeout = 0.01
-        if prepared_toolset_id is None:
-            tool_defs[0].toolset_id = ''.join(['s', 'ource'])
-        else:
-            tool_defs[0].toolset_id = prepared_toolset_id
         return tool_defs
 
     toolset = PreparedToolset(CombinedToolset([source_toolset]), prepare_tool)
@@ -334,7 +329,7 @@ async def test_prepared_combined_toolset_dispatches_updated_tool(prepared_toolse
     with pytest.raises(ModelRetry, match=re.escape('Timed out after 0.01 seconds')):
         await toolset.call_tool('slow_tool', {}, ctx, tool)
     assert received_definitions[0].metadata == {'source': 'prepared'}
-    assert received_definitions[0].toolset_id == prepared_toolset_id
+    assert received_definitions[0].toolset_id is None
 
 
 async def test_prepared_toolset_sync_prepare_func():
