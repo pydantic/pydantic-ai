@@ -18,6 +18,8 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.sandboxes import (
+    FileEntry,
+    FileWindow,
     LocalSandbox,
     ReadOnlySandbox,
     Sandbox,
@@ -32,6 +34,7 @@ from pydantic_ai.usage import RunUsage
 from .sandbox_fakes import (
     ConnectOnlySandboxCapability,
     DecliningSandboxCapability,
+    FakeEntry,
     FakeSandbox,
     FakeSandboxResult,
     RunOnlySandboxBackend,
@@ -202,11 +205,103 @@ async def test_run_only_backend_has_a_complete_binary_safe_shell_filesystem(tmp_
     assert max(len(command.encode()) for command in backend.commands if isinstance(command, str)) < 128 * 1024
 
     await sandbox.make_dir('nested/directory')
+    assert (await sandbox.stat('nested/directory')).is_dir
     assert await sandbox.exists('nested/directory')
     await sandbox.remove('nested')
     assert not await sandbox.exists(filename)
     with pytest.raises(FileNotFoundError):
         await sandbox.read_bytes(filename)
+
+
+@pytest.mark.parametrize('cleanup_fails', [False, True])
+async def test_shell_write_preserves_the_original_error_when_cleanup_fails(tmp_path: Path, cleanup_fails: bool) -> None:
+    cleanup_attempted = False
+
+    class FailedWriteBackend(RunOnlySandboxBackend):
+        async def run(
+            self,
+            command: str | Sequence[str],
+            *,
+            shell: bool = False,
+            cwd: str | None = None,
+            env: Mapping[str, str] | None = None,
+            timeout: float | None = None,
+        ) -> FakeSandboxResult:
+            nonlocal cleanup_attempted
+            if isinstance(command, str) and command.startswith('rm -f '):
+                cleanup_attempted = True
+                if cleanup_fails:
+                    raise RuntimeError('cleanup failed')
+            if isinstance(command, str) and 'base64 -d' in command:
+                raise RuntimeError('write failed')
+            result = await super().run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
+            return FakeSandboxResult(exit_code=result.exit_code, stdout=result.stdout, stderr=result.stderr)
+
+    with pytest.raises(RuntimeError, match='write failed'):
+        await Sandbox(FailedWriteBackend(LocalSandbox(tmp_path))).write_bytes('data.bin', b'data')
+
+    assert cleanup_attempted
+
+
+async def test_shell_stat_rejects_an_invalid_size(tmp_path: Path) -> None:
+    class InvalidStatBackend(RunOnlySandboxBackend):
+        async def run(
+            self,
+            command: str | Sequence[str],
+            *,
+            shell: bool = False,
+            cwd: str | None = None,
+            env: Mapping[str, str] | None = None,
+            timeout: float | None = None,
+        ) -> FakeSandboxResult:
+            if isinstance(command, str) and 'wc -c' in command:
+                return FakeSandboxResult(stdout='not-a-size')
+            result = await super().run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
+            return FakeSandboxResult(exit_code=result.exit_code, stdout=result.stdout, stderr=result.stderr)
+
+    with pytest.raises(SandboxError, match='invalid size'):
+        await Sandbox(InvalidStatBackend(LocalSandbox(tmp_path))).stat('data.bin')
+
+
+async def test_shell_list_dir_rejects_invalid_encoded_output(tmp_path: Path) -> None:
+    class InvalidListingBackend(RunOnlySandboxBackend):
+        async def run(
+            self,
+            command: str | Sequence[str],
+            *,
+            shell: bool = False,
+            cwd: str | None = None,
+            env: Mapping[str, str] | None = None,
+            timeout: float | None = None,
+        ) -> FakeSandboxResult:
+            if isinstance(command, str) and 'find ' in command:
+                return FakeSandboxResult(stdout='/w==')
+            result = await super().run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
+            return FakeSandboxResult(exit_code=result.exit_code, stdout=result.stdout, stderr=result.stderr)
+
+    with pytest.raises(SandboxError, match='invalid directory listing'):
+        await Sandbox(InvalidListingBackend(LocalSandbox(tmp_path))).list_dir('.')
+
+
+async def test_empty_shell_window_tolerates_a_backend_without_stat() -> None:
+    class NoStatBackend(FakeSandbox):
+        async def stat(self, path: str) -> FakeEntry:
+            raise NotImplementedError
+
+        async def run(
+            self,
+            command: str | Sequence[str],
+            *,
+            shell: bool = False,
+            cwd: str | None = None,
+            env: Mapping[str, str] | None = None,
+            timeout: float | None = None,
+        ) -> FakeSandboxResult:
+            return FakeSandboxResult(stdout='')
+
+    window = await Sandbox(NoStatBackend('no-stat')).read_file('empty.txt', limit=1)
+
+    assert window == FileWindow(lines=(), start_line=1, has_more=False, total_lines=None)
 
 
 async def test_shell_list_dir_does_not_hide_find_failure(tmp_path: Path) -> None:
@@ -533,6 +628,72 @@ def test_sandbox_wrap_is_idempotent() -> None:
     assert isinstance(sandbox, Sandbox)
     assert sandbox.backend is backend
     assert Sandbox.wrap(sandbox) is sandbox
+
+
+async def test_sandbox_routes_every_operation_through_an_installed_dispatcher() -> None:
+    raw_backend = FakeSandbox('raw')
+    routed_backend = FakeSandbox('routed')
+
+    class RecordingDispatcher:
+        backend = routed_backend
+        ref = SandboxRef(sandbox_id='routed-ref')
+
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, Mapping[str, Any]]] = []
+
+        async def __call__(self, method: str, arguments: Mapping[str, Any]) -> Any:
+            self.calls.append((method, arguments))
+            return {
+                'run': FakeSandboxResult(stdout='routed'),
+                'working_dir': '/routed',
+                'resolve': '/routed/file.txt',
+                'read_bytes': b'data',
+                'write_bytes': None,
+                'stat': FileEntry(name='file.txt', path='/routed/file.txt', is_dir=False, size=4),
+                'list_dir': (FileEntry(name='file.txt', path='/routed/file.txt', is_dir=False, size=4),),
+                'make_dir': None,
+                'remove': None,
+                'exists': True,
+                'read_text': 'data',
+                'write_text': None,
+                'read_file': FileWindow(lines=('data',), start_line=1, has_more=False, total_lines=1),
+            }[method]
+
+    dispatcher = RecordingDispatcher()
+    sandbox = Sandbox(raw_backend)
+    sandbox._install_operation_dispatcher(dispatcher)  # pyright: ignore[reportPrivateUsage]
+
+    assert sandbox.backend is routed_backend
+    assert sandbox.ref == dispatcher.ref
+    assert (await sandbox.run(['true'])).stdout == 'routed'
+    assert await sandbox.working_dir() == '/routed'
+    assert await sandbox.resolve('file.txt') == '/routed/file.txt'
+    assert await sandbox.read_bytes('file.txt') == b'data'
+    await sandbox.write_bytes('file.txt', b'data')
+    assert (await sandbox.stat('file.txt')).size == 4
+    assert len(await sandbox.list_dir('.')) == 1
+    await sandbox.make_dir('dir')
+    await sandbox.remove('file.txt')
+    assert await sandbox.exists('file.txt') is True
+    assert await sandbox.read_text('file.txt') == 'data'
+    await sandbox.write_text('file.txt', 'data')
+    assert (await sandbox.read_file('file.txt')).lines == ('data',)
+
+    assert [method for method, _ in dispatcher.calls] == [
+        'run',
+        'working_dir',
+        'resolve',
+        'read_bytes',
+        'write_bytes',
+        'stat',
+        'list_dir',
+        'make_dir',
+        'remove',
+        'exists',
+        'read_text',
+        'write_text',
+        'read_file',
+    ]
 
 
 async def test_run_rejects_relative_cwd() -> None:
