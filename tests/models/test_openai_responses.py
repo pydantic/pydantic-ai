@@ -12817,8 +12817,11 @@ async def test_openai_responses_refusal_non_streaming(allow_model_requests: None
     assert response_msg['provider_details']['refusal'] == "I can't help with that request."
 
 
-async def test_openai_responses_refusal_streaming(allow_model_requests: None):
-    """Test that ResponseRefusalDeltaEvent/DoneEvent in streaming triggers ContentFilterError."""
+@pytest.mark.parametrize('terminal_status', ['completed', 'incomplete', 'failed'])
+async def test_openai_responses_refusal_streaming(
+    allow_model_requests: None, terminal_status: Literal['completed', 'incomplete', 'failed']
+):
+    """A streamed refusal takes precedence over the terminal finish reason."""
     base_response = resp.Response(
         id='resp_001',
         model='gpt-4o',
@@ -12829,6 +12832,26 @@ async def test_openai_responses_refusal_streaming(allow_model_requests: None):
         tool_choice='auto',
         tools=[],
     )
+    terminal_response = base_response.model_copy(update={'status': terminal_status})
+    if terminal_status == 'completed':
+        terminal_event = resp.ResponseCompletedEvent(
+            response=terminal_response,
+            type='response.completed',
+            sequence_number=6,
+        )
+    elif terminal_status == 'incomplete':
+        terminal_response.incomplete_details = IncompleteDetails(reason='max_output_tokens')
+        terminal_event = resp.ResponseIncompleteEvent(
+            response=terminal_response,
+            type='response.incomplete',
+            sequence_number=6,
+        )
+    else:
+        terminal_event = resp.ResponseFailedEvent(
+            response=terminal_response,
+            type='response.failed',
+            sequence_number=6,
+        )
 
     stream: list[resp.ResponseStreamEvent] = [
         resp.ResponseCreatedEvent(response=base_response, type='response.created', sequence_number=0),
@@ -12869,11 +12892,7 @@ async def test_openai_responses_refusal_streaming(allow_model_requests: None):
             type='response.refusal.done',
             sequence_number=5,
         ),
-        resp.ResponseCompletedEvent(
-            response=base_response.model_copy(update={'status': 'completed'}),
-            type='response.completed',
-            sequence_number=6,
-        ),
+        terminal_event,
     ]
 
     mock_client = MockOpenAIResponses.create_mock_stream(stream)
@@ -12890,6 +12909,7 @@ async def test_openai_responses_refusal_streaming(allow_model_requests: None):
     assert response_msg['parts'] == []
     assert response_msg['finish_reason'] == 'content_filter'
     assert response_msg['provider_details']['refusal'] == "I can't help with that."
+    assert 'finish_reason' not in response_msg['provider_details']
 
 
 async def test_stream_cancel(allow_model_requests: None):

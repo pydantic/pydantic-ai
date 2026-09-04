@@ -12489,16 +12489,22 @@ async def test_run_stream_max_output_tokens_raises_unexpected_model_behavior(all
 
     from .models.mock_openai import MockOpenAIResponses, response_message
 
-    incomplete_response = response_message([])
-    incomplete_response.status = 'incomplete'
+    created_response = response_message([])
+    created_response.status = 'in_progress'
+    incomplete_response = created_response.model_copy(update={'status': 'incomplete'})
     incomplete_response.incomplete_details = IncompleteDetails(reason='max_output_tokens')
 
     mock_client = MockOpenAIResponses.create_mock_stream(
         [
+            resp.ResponseCreatedEvent(
+                response=created_response,
+                type='response.created',
+                sequence_number=0,
+            ),
             resp.ResponseIncompleteEvent(
                 response=incomplete_response,
                 type='response.incomplete',
-                sequence_number=0,
+                sequence_number=1,
             ),
         ]
     )
@@ -12506,8 +12512,8 @@ async def test_run_stream_max_output_tokens_raises_unexpected_model_behavior(all
     agent = Agent(model=model, output_type=str | None)
 
     with pytest.raises(UnexpectedModelBehavior, match='token limit'):
-        async with agent.run_stream('hello') as result:
-            await result.get_output()  # pragma: no cover — the error-terminated empty response raises on entry
+        async with agent.run_stream('hello'):
+            pass
 
 
 async def test_run_stream_content_filter_raises_content_filter_error(allow_model_requests: None):
@@ -12522,16 +12528,22 @@ async def test_run_stream_content_filter_raises_content_filter_error(allow_model
 
     from .models.mock_openai import MockOpenAIResponses, response_message
 
-    incomplete_response = response_message([])
-    incomplete_response.status = 'incomplete'
+    created_response = response_message([])
+    created_response.status = 'in_progress'
+    incomplete_response = created_response.model_copy(update={'status': 'incomplete'})
     incomplete_response.incomplete_details = IncompleteDetails(reason='content_filter')
 
     mock_client = MockOpenAIResponses.create_mock_stream(
         [
+            resp.ResponseCreatedEvent(
+                response=created_response,
+                type='response.created',
+                sequence_number=0,
+            ),
             resp.ResponseIncompleteEvent(
                 response=incomplete_response,
                 type='response.incomplete',
-                sequence_number=0,
+                sequence_number=1,
             ),
         ]
     )
@@ -12541,8 +12553,8 @@ async def test_run_stream_content_filter_raises_content_filter_error(allow_model
     with pytest.raises(
         ContentFilterError, match=re.escape("Content filter triggered. Finish reason: 'content_filter'")
     ):
-        async with agent.run_stream('hello') as result:
-            await result.get_output()  # pragma: no cover — the error-terminated empty response raises on entry
+        async with agent.run_stream('hello'):
+            pass
 
 
 async def test_agent_allows_none_output_after_tool():
