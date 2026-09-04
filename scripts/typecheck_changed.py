@@ -25,6 +25,7 @@ import hashlib
 import importlib.metadata
 import os
 import platform
+import posixpath
 import subprocess
 import sys
 from collections import defaultdict, deque
@@ -384,6 +385,11 @@ def _load_project() -> _Project | None:
     ):
         return None
 
+    include = [_normalize_path(path) for path in include]
+    exclude = [_normalize_path(path) for path in exclude]
+    members = [_normalize_path(path) for path in members]
+    extra_paths = [_normalize_path(path) for path in extra_paths]
+    environment_roots = [_normalize_path(path) for path in environment_roots]
     roots = sorted({'', *members, *extra_paths}, key=len, reverse=True)
     return _Project(tuple(include), tuple(exclude), tuple(roots), tuple(sorted(set(environment_roots))))
 
@@ -418,7 +424,12 @@ def _is_checked(path: str, project: _Project) -> bool:
 
 
 def _covers(entry: str, path: str) -> bool:
-    return path == entry or path.startswith(f'{entry}/')
+    return not entry or path == entry or path.startswith(f'{entry}/')
+
+
+def _normalize_path(path: str) -> str:
+    normalized = posixpath.normpath(path)
+    return '' if normalized == '.' else normalized
 
 
 def _invalidation_keys(requested_version: str) -> dict[str, str]:

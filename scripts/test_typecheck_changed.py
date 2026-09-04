@@ -216,6 +216,15 @@ def test_a_dot_directory_is_skipped_when_exclude_is_unset(project: Path):
     assert _typecheck().commands == []
 
 
+@pytest.mark.parametrize('include', ['.', './pkg_src/', 'pkg_src/'])
+def test_relative_include_path_spellings_are_checked(project: Path, include: str):
+    _write(project, 'pyproject.toml', _PYPROJECT.replace('include = ["pkg_src"]', f'include = ["{include}"]'))
+    _typecheck()
+    _edit(project, 'pkg_src/pkg/aside.py')
+
+    assert _typecheck().checked == ['pkg_src/pkg/aside.py']
+
+
 def test_a_file_that_does_not_parse_is_still_checked(project: Path):
     _typecheck()
     _write(project, 'pkg_src/pkg/middle.py', 'from pkg.leaf import (\n')
