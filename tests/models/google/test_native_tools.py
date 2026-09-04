@@ -48,6 +48,7 @@ with try_import() as imports_successful:
     from pydantic_ai.models.google import (
         GeminiStreamedResponse,
         _content_model_response,  # pyright: ignore[reportPrivateUsage]
+        _is_media_processing_native_part,  # pyright: ignore[reportPrivateUsage]
         _process_response_from_parts,  # pyright: ignore[reportPrivateUsage]
     )
 
@@ -338,6 +339,8 @@ def test_vertex_agentic_video_bare_signatures_are_scoped_and_paired():
 
 
 def test_agentic_video_parts_do_not_hide_metadata_native_tools():
+    assert not _is_media_processing_native_part(Part(text='done'))
+
     response = _process_response_from_parts(
         parts=[
             Part.model_validate({'tool_call': {'id': 'processing', 'args': None}}),
