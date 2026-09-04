@@ -686,7 +686,10 @@ class BedrockConverseModel(Model[BaseClient]):
                     'NativeOutput' if self.profile.get('supports_json_schema_output', False) else 'PromptedOutput'
                 )
                 if thinking_type == 'adaptive':
-                    limitation = f'Adaptive thinking with output tools has not been verified for {self.model_name!r}.'
+                    limitation = (
+                        f'{self.model_name!r} does not support output tools with adaptive thinking because it rejects '
+                        'the forced tool choice they require.'
+                    )
                 elif profile.get('bedrock_thinking_variant') == 'anthropic':
                     limitation = 'Bedrock does not support extended thinking and output tools at the same time.'
                 else:
@@ -1990,9 +1993,7 @@ def _support_tool_forcing(
     if _thinking_blocks_tool_forcing(thinking_type, profile):
         explicit_choice = (model_settings or {}).get('tool_choice')
         if explicit_choice == 'required' or isinstance(explicit_choice, list):
-            if thinking_type == 'adaptive':
-                limitation = f'Forced tool choice with adaptive thinking has not been verified for {model_name!r}.'
-            elif profile.get('bedrock_thinking_variant') == 'anthropic':
+            if profile.get('bedrock_thinking_variant') == 'anthropic':
                 limitation = 'Bedrock does not support forced tool choice with extended thinking.'
             else:
                 limitation = 'Bedrock does not support forced tool choice with thinking enabled.'

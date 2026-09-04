@@ -6988,11 +6988,12 @@ def test_bedrock_anthropic_model_without_tool_forcing_does_not_force(allow_model
 
 
 @pytest.mark.parametrize(
-    'model_name,model_settings',
+    'model_name,model_settings,error_match',
     [
         pytest.param(
             'anthropic.claude-sonnet-4-6',
             {'bedrock_additional_model_requests_fields': {'thinking': {'type': 'enabled', 'budget_tokens': 1024}}},
+            'extended thinking and output tools',
             id='manual-extended-thinking',
         ),
         pytest.param(
@@ -7001,19 +7002,26 @@ def test_bedrock_anthropic_model_without_tool_forcing_does_not_force(allow_model
                 'thinking': True,
                 'bedrock_additional_model_requests_fields': {'thinking': {'type': 'enabled', 'budget_tokens': 1024}},
             },
+            'extended thinking and output tools',
             id='explicit-enabled-overrides-unified-adaptive',
+        ),
+        pytest.param(
+            'anthropic.claude-fable-5-1',
+            {'thinking': True},
+            'rejects the forced tool choice',
+            id='adaptive-model-without-tool-forcing',
         ),
     ],
 )
 def test_bedrock_agent_output_tool_with_unsupported_thinking_raises(
-    allow_model_requests: None, model_name: str, model_settings: ModelSettings
+    allow_model_requests: None, model_name: str, model_settings: ModelSettings, error_match: str
 ) -> None:
-    """Output tools remain blocked for manual extended thinking."""
+    """Output tools remain blocked for extended thinking and models that cannot force tools."""
     client = _AdaptiveThinkingStubClient(_tool_use_response())
     model = BedrockConverseModel(model_name, provider=BedrockProvider(bedrock_client=cast(BaseClient, client)))
     agent = Agent(model, output_type=ToolOutput(int))
 
-    with pytest.raises(UserError, match='output tools'):
+    with pytest.raises(UserError, match=error_match):
         agent.run_sync('What is 6 * 7?', model_settings=model_settings)
 
     assert client.requests == []
