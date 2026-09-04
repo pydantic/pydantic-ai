@@ -22,7 +22,7 @@ Additional external SDK integrations:
 
 ## How tool calls run durably
 
-Each engine wraps your toolsets so that every tool call executes inside the engine's durable unit (a Temporal activity, Prefect task, DBOS step, and so on). The shared scaffolding lives in `pydantic_ai.durable_exec._toolset` and is specialized per toolset kind:
+Each engine wraps your toolsets so that, by default, every tool call executes inside the engine's durable unit (a Temporal activity, Prefect task, DBOS step, and so on). The shared scaffolding lives in `pydantic_ai.durable_exec._toolset` and is specialized per toolset kind:
 
 - `DurableFunctionToolset` wraps `FunctionToolset` (your `@agent.tool` functions).
 - `DurableDynamicToolset` wraps toolsets supplied at run time via `DynamicToolset`.
@@ -33,6 +33,6 @@ These wrappers are applied automatically by the engine-specific agent classes; y
 Two extension points control per-tool behavior:
 
 - `resolve_tool_config` maps each tool to either a durable config mapping (merged into the engine's per-operation config, e.g. a Temporal `ActivityConfig`) or `False` to run the tool inline, outside any durable unit. Engines that restrict inline execution reject it here with their own error wording (for example, Temporal requires async tools and forbids inline MCP tools).
-- `lifecycle` controls when the wrapped toolset is entered relative to the durable context: `'enter-outside-durable'` (function and MCP toolsets; entered only outside the durable unit), `'enter-always'`, or `'enter-never'` (dynamic toolsets, whose members are managed per step).
+- `lifecycle` controls when the wrapped toolset is entered relative to the durable context. Its value is engine- and toolset-specific: `'enter-outside-durable'`, `'enter-always'`, or `'enter-never'` (dynamic toolsets, whose members are managed per step).
 
 If you need custom hook work to survive retries, move it into a durable unit too — see [durable capability operations](../capabilities/custom.md#durable-capability-operations).
