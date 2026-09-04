@@ -135,11 +135,21 @@ an unbound `$BASE_REF_NAME` makes the fetch take the remote's `HEAD` and an unbo
 `$POLICY_BASE_SHA` makes `git merge-base HEAD ""` fail into the `origin/main` fallback — both exit
 zero on a diff against the wrong branch.
 
+Guard the merge base too. A shallow checkout has no common ancestor to find, so `git merge-base`
+exits 1 with no output — and an empty `$MERGE_BASE` turns the next command into
+`git diff --stat ..HEAD`, which prints nothing and exits zero. An agent reads that as a PR with no
+changes and studies nothing.
+
 ```bash
 BASE_REF_NAME=$(gh pr view "$PR_NUMBER" --json baseRefName -q .baseRefName)
 [ -n "$BASE_REF_NAME" ] || { echo "no base ref; stop"; exit 1; }
 git fetch upstream "$BASE_REF_NAME" || git fetch origin "$BASE_REF_NAME"
-MERGE_BASE=$(git merge-base HEAD FETCH_HEAD)
+MERGE_BASE=$(git merge-base HEAD FETCH_HEAD) || {
+  git fetch --unshallow upstream "$BASE_REF_NAME" 2>/dev/null \
+    || git fetch --deepen=200 upstream "$BASE_REF_NAME"
+  MERGE_BASE=$(git merge-base HEAD FETCH_HEAD)
+}
+[ -n "$MERGE_BASE" ] || { echo "no merge base; stop"; exit 1; }
 git diff --stat $MERGE_BASE..HEAD
 git log --oneline $MERGE_BASE..HEAD
 ```
