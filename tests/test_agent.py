@@ -1256,7 +1256,7 @@ def test_plain_response_then_tuple():
                 parts=[
                     ToolCallPart(tool_name='final_result', args='{"response": ["foo", "bar"]}', tool_call_id=IsStr())
                 ],
-                usage=RequestUsage(input_tokens=66, output_tokens=8),
+                usage=RequestUsage(input_tokens=60, output_tokens=8),
                 model_name='function:return_tuple:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
@@ -1972,7 +1972,7 @@ def test_output_type_text_output_function_with_retry():
             ),
             ModelResponse(
                 parts=[TextPart(content='Mexico City')],
-                usage=RequestUsage(input_tokens=66, output_tokens=5),
+                usage=RequestUsage(input_tokens=61, output_tokens=5),
                 model_name='function:call_tool:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -3066,7 +3066,7 @@ def test_native_output():
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city": "Mexico City", "country": "Mexico"}')],
-                usage=RequestUsage(input_tokens=78, output_tokens=12),
+                usage=RequestUsage(input_tokens=74, output_tokens=12),
                 model_name='function:return_city_location:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -3146,7 +3146,7 @@ def test_prompted_output_function_with_retry():
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city": "Mexico City"}')],
-                usage=RequestUsage(input_tokens=66, output_tokens=11),
+                usage=RequestUsage(input_tokens=61, output_tokens=11),
                 model_name='function:call_tool:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -3802,7 +3802,7 @@ def test_empty_response():
             ),
             ModelResponse(
                 parts=[TextPart(content='ok here is text')],
-                usage=RequestUsage(input_tokens=61, output_tokens=4),
+                usage=RequestUsage(input_tokens=55, output_tokens=4),
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -3857,7 +3857,7 @@ def test_empty_response_exceeds_max_retries():
             ),
             ModelResponse(
                 parts=[],
-                usage=RequestUsage(input_tokens=69),
+                usage=RequestUsage(input_tokens=63),
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -8978,7 +8978,7 @@ def test_empty_final_response():
             ),
             ModelResponse(
                 parts=[TextPart(content='baz')],
-                usage=RequestUsage(input_tokens=67, output_tokens=11),
+                usage=RequestUsage(input_tokens=61, output_tokens=11),
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -10658,7 +10658,7 @@ async def test_thinking_only_response_retry():
             ),
             ModelResponse(
                 parts=[TextPart(content='Final answer')],
-                usage=RequestUsage(input_tokens=61, output_tokens=8),
+                usage=RequestUsage(input_tokens=55, output_tokens=8),
                 model_name='function:model_function:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -10720,7 +10720,7 @@ async def test_retry_message_no_tools():
             ),
             ModelResponse(
                 parts=[TextPart(content='result')],
-                usage=RequestUsage(input_tokens=61, output_tokens=3),
+                usage=RequestUsage(input_tokens=55, output_tokens=3),
                 model_name='function:model_function:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -10788,7 +10788,7 @@ async def test_thinking_only_response_retry_with_tool_output():
                         tool_call_id=IsStr(),
                     )
                 ],
-                usage=RequestUsage(input_tokens=66, output_tokens=9),
+                usage=RequestUsage(input_tokens=60, output_tokens=9),
                 model_name='function:model_function:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -10907,7 +10907,7 @@ async def test_thinking_only_response_after_tool_call_retries():
             ),
             ModelResponse(
                 parts=[TextPart(content='Your progress is saved.')],
-                usage=RequestUsage(input_tokens=66, output_tokens=20),
+                usage=RequestUsage(input_tokens=60, output_tokens=20),
                 model_name='function:model_function:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -12945,7 +12945,7 @@ async def test_agent_allows_none_output_validator_retry():
             ),
             ModelResponse(
                 parts=[TextPart(content='hello')],
-                usage=RequestUsage(input_tokens=61, output_tokens=1),
+                usage=RequestUsage(input_tokens=56, output_tokens=1),
                 model_name='function:model_then_text:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),

@@ -37,7 +37,7 @@ interactions:
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-c1cc2b20b28b791dc2513e00b32e11bc-df80bc78038eb06b-01
+      - 00-4f50395a9b6f0eaee0032da48d5985d6-2d6c1a4754037377-01
       transfer-encoding:
       - chunked
       vary:
@@ -46,7 +46,7 @@ interactions:
       content:
       - text: '7'
         type: text
-      id: msg_011Cdp9Z938JGUhbRTPX7eoj
+      id: msg_011CehMbmfRkzGiKKYJcVFPL
       model: claude-sonnet-4-5-20250929
       role: assistant
       stop_details: null
@@ -75,7 +75,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '436'
+      - '404'
       content-type:
       - application/json
       host:
@@ -93,9 +93,7 @@ interactions:
           type: text
         role: assistant
       - content:
-        - text: |-
-            <system>The response was not accepted:
-            answer with the number spelled out as a word, nothing else</system>
+        - text: <system>answer with the number spelled out as a word, nothing else</system>
           type: text
         role: user
       model: claude-sonnet-4-5
@@ -114,7 +112,7 @@ interactions:
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-7b076a8686fdc4818c374b7361dbf60a-5e4088dafce04457-01
+      - 00-189b494d2330989b9aefa2511d47db1f-00677f610003b303-01
       transfer-encoding:
       - chunked
       vary:
@@ -123,7 +121,7 @@ interactions:
       content:
       - text: seven
         type: text
-      id: msg_011Cdp9ZDJMX8vLQwF93NJd8
+      id: msg_011CehMbqizzEgB8kpnsfFFw
       model: claude-sonnet-4-5-20250929
       role: assistant
       stop_details: null
@@ -137,7 +135,7 @@ interactions:
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
         inference_geo: not_available
-        input_tokens: 53
+        input_tokens: 46
         output_tokens: 4
         service_tier: standard
     status:

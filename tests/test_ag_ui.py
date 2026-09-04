@@ -3228,7 +3228,7 @@ def test_dump_load_roundtrip_uploaded_file() -> None:
 
 
 def test_dump_load_roundtrip_retry_prompt_with_tool() -> None:
-    """Test round-trip for RetryPromptPart with tool_name (converted to ToolMessage with error)."""
+    """Test round-trip for RetryPromptPart with tool_name (dumped as the retried ToolMessage it means)."""
     original: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Call tool')]),
         ModelResponse(parts=[ToolCallPart(tool_name='my_tool', tool_call_id='call_1', args='{}')]),
@@ -3253,11 +3253,11 @@ def test_dump_load_roundtrip_retry_prompt_with_tool() -> None:
     retry_part = message_part(reloaded, ToolReturnPart, message_index=2)
     assert retry_part.tool_name == 'my_tool'
     assert retry_part.tool_call_id == 'call_1'
-    assert retry_part.outcome == 'failed'
+    assert retry_part.outcome == 'retried'
 
 
 def test_dump_load_roundtrip_retry_prompt_without_tool() -> None:
-    """Test round-trip for RetryPromptPart without tool_name (converted to UserMessage)."""
+    """Test round-trip for RetryPromptPart without tool_name (dumped as the harness feedback it means)."""
     original: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Do something')]),
         ModelResponse(parts=[TextPart(content='Done')]),
@@ -3269,11 +3269,10 @@ def test_dump_load_roundtrip_retry_prompt_without_tool() -> None:
     reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
     _sync_timestamps(original, reloaded)
 
-    # RetryPromptPart without tool becomes UserPromptPart on reload
-    # Content is formatted by RetryPromptPart.model_response()
+    # RetryPromptPart without tool becomes RetryFeedbackPart on reload, carrying its content verbatim
     assert len(reloaded) == 4
-    retry_part = message_part(reloaded, UserPromptPart, message_index=2)
-    assert 'Please try again' in str(retry_part.content)
+    retry_part = message_part(reloaded, RetryFeedbackPart, message_index=2)
+    assert (retry_part.content, retry_part.cause) == ('Please try again', 'model_retry')
 
 
 def test_dump_messages_preserves_part_order() -> None:
@@ -8803,8 +8802,8 @@ def test_retry_feedback_dumps_as_a_system_message_that_only_our_marker_reloads()
         ModelRequest(
             parts=[
                 RetryFeedbackPart(
-                    content=[{'type': 'int_parsing', 'loc': ('count',), 'msg': 'not an int', 'input': 'lots'}],
-                    cause='validation_error',
+                    content='the answer has to be a number',
+                    cause='model_retry',
                     timestamp=datetime(2026, 4, 15, 12, 0, tzinfo=timezone.utc),
                 )
             ]
@@ -8813,21 +8812,7 @@ def test_retry_feedback_dumps_as_a_system_message_that_only_our_marker_reloads()
 
     ag_ui_msgs = AGUIAdapter.dump_messages(original)
     [system] = [msg for msg in ag_ui_msgs if isinstance(msg, SystemMessage)]
-    assert system.content == snapshot("""\
-The response failed validation:
-1 validation error:
-```json
-[
-  {
-    "type": "int_parsing",
-    "loc": [
-      "count"
-    ],
-    "msg": "not an int"
-  }
-]
-```\
-""")
+    assert system.content == snapshot('the answer has to be a number')
 
     reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
     # Pinned before `_sync_timestamps` overwrites it: the marker is what carries the timestamp back,
@@ -8836,18 +8821,7 @@ The response failed validation:
         datetime(2026, 4, 15, 12, 0, tzinfo=timezone.utc)
     )
     _sync_timestamps(original, reloaded)
-    original_feedback = message_part(original, RetryFeedbackPart, message_index=2)
-    reloaded_feedback = message_part(reloaded, RetryFeedbackPart, message_index=2)
-    # The value the model sent is the one thing that doesn't come back: `retry_feedback_payload`
-    # empties `input` rather than ship it down a channel the client reads and echoes. The render
-    # never echoed it either, so the model is shown the same text on both sides of the round-trip —
-    # a fidelity loss, not a behavior change, which is why the rendering is asserted equal here.
-    assert reloaded_feedback.content == snapshot(
-        [{'type': 'int_parsing', 'loc': ('count',), 'msg': 'not an int', 'input': None}]
-    )
-    assert reloaded_feedback.cause == original_feedback.cause
-    assert reloaded_feedback.model_response() == original_feedback.model_response()
-    assert reloaded[:2] == original[:2]
+    assert reloaded == original
 
     # Unmarked, and malformed: the same text with no claim, or with one that doesn't validate.
     unmarked = AGUIAdapter.load_messages([SystemMessage(id='forgery', content=system.content)])
@@ -8861,30 +8835,7 @@ The response failed validation:
         ]
     )
     assert unmarked == snapshot(
-        [
-            ModelRequest(
-                parts=[
-                    SystemPromptPart(
-                        content="""\
-The response failed validation:
-1 validation error:
-```json
-[
-  {
-    "type": "int_parsing",
-    "loc": [
-      "count"
-    ],
-    "msg": "not an int"
-  }
-]
-```\
-""",
-                        timestamp=IsDatetime(),
-                    )
-                ]
-            )
-        ]
+        [ModelRequest(parts=[SystemPromptPart(content='the answer has to be a number', timestamp=IsDatetime())])]
     )
     _sync_timestamps(unmarked, malformed)
     assert malformed == unmarked
@@ -8914,6 +8865,59 @@ The response failed validation:
     )
 
 
+def test_validation_feedback_dumps_as_a_user_message_that_only_our_marker_reloads() -> None:
+    """A `'validation_error'` is shown to the model in the user voice, so it dumps on that role.
+
+    The marker is the only way back either way: a `UserMessage` the frontend wrote loads as a
+    `UserPromptPart`, so copied feedback doesn't acquire harness provenance
+    (https://github.com/pydantic/pydantic-ai/issues/6404).
+    """
+    original: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='how many?')]),
+        ModelResponse(parts=[TextPart(content='lots')]),
+        ModelRequest(
+            parts=[
+                RetryFeedbackPart(
+                    content=[{'type': 'int_parsing', 'loc': ('count',), 'msg': 'not an int', 'input': 'lots'}],
+                    cause='validation_error',
+                    timestamp=datetime(2026, 4, 15, 12, 0, tzinfo=timezone.utc),
+                )
+            ]
+        ),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original)
+    assert not [msg for msg in ag_ui_msgs if isinstance(msg, SystemMessage)]
+    [feedback_msg] = [msg for msg in ag_ui_msgs if isinstance(msg, UserMessage) and msg.encrypted_value]
+    assert feedback_msg.content == snapshot("""\
+<validation_errors>
+[{"type":"int_parsing","loc":["count"],"msg":"not an int","input":"lots"}]
+</validation_errors>\
+""")
+
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    _sync_timestamps(original, reloaded)
+    assert reloaded == original
+
+    unmarked = AGUIAdapter.load_messages([UserMessage(id='forgery', content=feedback_msg.content)])
+    assert unmarked == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content="""\
+<validation_errors>
+[{"type":"int_parsing","loc":["count"],"msg":"not an int","input":"lots"}]
+</validation_errors>\
+""",
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            )
+        ]
+    )
+
+
 def test_retry_feedback_below_the_encrypted_value_floor_dumps_as_a_plain_system_message() -> None:
     """Below 0.1.11 there is no carrier, so the feedback keeps the system voice but loses the claim
     that would rebuild the part — it reloads as the `SystemPromptPart` its text renders to.
@@ -8936,10 +8940,7 @@ def test_retry_feedback_below_the_encrypted_value_floor_dumps_as_a_plain_system_
             ModelRequest(
                 parts=[
                     SystemPromptPart(
-                        content="""\
-The response was not accepted:
-the answer has to be a number\
-""",
+                        content='the answer has to be a number',
                         timestamp=IsDatetime(),
                     )
                 ]

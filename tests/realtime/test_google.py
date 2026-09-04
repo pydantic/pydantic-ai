@@ -1721,14 +1721,9 @@ async def test_connect_seeds_message_history(monkeypatch: pytest.MonkeyPatch) ->
                     {'text': 'This is file weather.png:'},
                     {'inline_data': {'data': b'tool-image', 'mime_type': 'image/png'}},
                     {'text': '[Tool plain-call: plain returned: ok]'},
-                    {'text': '[Tool call-1: weather error: invalid city\n\nFix the errors and try again.]'},
-                    {'text': 'Validation feedback:\nanswer in prose\n\nFix the errors and try again.'},
-                    {
-                        'text': """\
-<system>The response was not accepted:
-answer in prose</system>\
-"""
-                    },
+                    {'text': '[Tool call-1: weather error: invalid city]'},
+                    {'text': '<system>answer in prose</system>'},
+                    {'text': '<system>answer in prose</system>'},
                     {'inline_data': {'data': b'url-image', 'mime_type': 'image/png'}},
                     {'inline_data': {'data': b'inline-image', 'mime_type': 'image/png'}},
                     {'text': 'spoken question'},

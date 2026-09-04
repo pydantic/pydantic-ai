@@ -32,11 +32,11 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '621'
+      - '618'
       content-type:
       - application/json
       openai-processing-ms:
-      - '1405'
+      - '921'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -52,24 +52,24 @@ interactions:
           content: '7'
           refusal: null
           role: assistant
-      created: 1786140388
-      id: chatcmpl-EAMzs8sX57zNGCQzck4Rvg1TsezbE
+      created: 1788477288
+      id: chatcmpl-EKAvowDjg3pihN6ix9SkzfrS7cvW9
       model: o3-mini-2025-01-31
       object: chat.completion
       service_tier: default
-      system_fingerprint: fp_736b519f26
+      system_fingerprint: fp_960d86c856
       usage:
-        completion_tokens: 142
+        completion_tokens: 78
         completion_tokens_details:
           accepted_prediction_tokens: 0
           audio_tokens: 0
-          reasoning_tokens: 128
+          reasoning_tokens: 64
           rejected_prediction_tokens: 0
         prompt_tokens: 18
         prompt_tokens_details:
           audio_tokens: 0
           cached_tokens: 0
-        total_tokens: 160
+        total_tokens: 96
     status:
       code: 200
       message: OK
@@ -82,7 +82,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '307'
+      - '275'
       content-type:
       - application/json
       host:
@@ -94,9 +94,7 @@ interactions:
         role: user
       - content: '7'
         role: assistant
-      - content: |-
-          The response was not accepted:
-          answer with the number spelled out as a word, nothing else
+      - content: answer with the number spelled out as a word, nothing else
         role: system
       model: o3-mini
       stream: false
@@ -112,11 +110,11 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '625'
+      - '623'
       content-type:
       - application/json
       openai-processing-ms:
-      - '3581'
+      - '1125'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -132,24 +130,24 @@ interactions:
           content: seven
           refusal: null
           role: assistant
-      created: 1786140392
-      id: chatcmpl-EAMzwDBLzUNjjzj0XaHibbxmMs3kw
+      created: 1788477290
+      id: chatcmpl-EKAvqBMgfy7a31zlO5O0gLtArg0Vz
       model: o3-mini-2025-01-31
       object: chat.completion
       service_tier: default
-      system_fingerprint: fp_736b519f26
+      system_fingerprint: fp_e9ba46dff8
       usage:
-        completion_tokens: 142
+        completion_tokens: 78
         completion_tokens_details:
           accepted_prediction_tokens: 0
           audio_tokens: 0
-          reasoning_tokens: 128
+          reasoning_tokens: 64
           rejected_prediction_tokens: 0
-        prompt_tokens: 45
+        prompt_tokens: 39
         prompt_tokens_details:
           audio_tokens: 0
           cached_tokens: 0
-        total_tokens: 187
+        total_tokens: 117
     status:
       code: 200
       message: OK

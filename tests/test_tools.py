@@ -2470,7 +2470,7 @@ def test_parallel_tool_return_with_deferred():
             ),
             ModelResponse(
                 parts=[TextPart(content='Done!')],
-                usage=RequestUsage(input_tokens=125, output_tokens=36),
+                usage=RequestUsage(input_tokens=121, output_tokens=36),
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -2514,7 +2514,7 @@ def test_parallel_tool_return_with_deferred():
             ),
             ModelResponse(
                 parts=[TextPart(content='Done!')],
-                usage=RequestUsage(input_tokens=125, output_tokens=36),
+                usage=RequestUsage(input_tokens=121, output_tokens=36),
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -2596,11 +2596,12 @@ def test_parallel_tool_return_with_deferred():
                         metadata={'fruit': 'banana', 'price': 100.0},
                         timestamp=IsDatetime(),
                     ),
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='The purchase of pears was denied.',
                         tool_name='buy',
                         tool_call_id='buy_pear',
                         timestamp=IsDatetime(),
+                        outcome='retried',
                     ),
                     UserPromptPart(
                         content='The price of apple is 10.0.',

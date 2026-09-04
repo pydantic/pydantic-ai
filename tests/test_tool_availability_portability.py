@@ -1244,9 +1244,10 @@ async def test_unrenderable_delta_raises_user_error_not_assertion(allow_model_re
 async def test_unrendered_retry_feedback_raises_user_error_not_assertion(allow_model_requests: None) -> None:
     """`RetryFeedbackPart` reaches an adapter the same way, and gets told the same thing.
 
-    It is the other part that only becomes sendable at `prepare_messages` time — rendered into the
-    system voice there rather than projected into an exchange — so the public `Model.request` that
-    skips that step leaves it raw in front of the adapter just as an availability delta.
+    It is the other part that only becomes sendable at `prepare_messages` time — translated into the
+    prompt part its `cause` calls for rather than projected into an exchange — so the public
+    `Model.request` that skips that step leaves it raw in front of the adapter just as an
+    availability delta does.
     """
     model = GoogleModel('gemini-3-flash-preview', provider=GoogleProvider(api_key='x'))
     history: list[ModelMessage] = [

@@ -1652,7 +1652,7 @@ async def test_connect_seeds_message_history(monkeypatch: pytest.MonkeyPatch) ->
                 'item': {
                     'type': 'function_call_output',
                     'call_id': 'call-2',
-                    'output': 'invalid id\n\nFix the errors and try again.',
+                    'output': '{"error":"invalid id"}',
                 },
             },
             {
@@ -1663,7 +1663,7 @@ async def test_connect_seeds_message_history(monkeypatch: pytest.MonkeyPatch) ->
                     'content': [
                         {
                             'type': 'input_text',
-                            'text': 'Validation feedback:\nanswer in prose\n\nFix the errors and try again.',
+                            'text': '<system>answer in prose</system>',
                         }
                     ],
                 },
@@ -1676,10 +1676,7 @@ async def test_connect_seeds_message_history(monkeypatch: pytest.MonkeyPatch) ->
                     'content': [
                         {
                             'type': 'input_text',
-                            'text': """\
-<system>The response was not accepted:
-answer in prose</system>\
-""",
+                            'text': '<system>answer in prose</system>',
                         }
                     ],
                 },

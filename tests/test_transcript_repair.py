@@ -737,7 +737,11 @@ async def test_duplicate_result_ignored():
 
 
 async def test_retry_prompt_answers_tool_call():
-    """A tool-bound `RetryPromptPart` answers its call, so the call is not repaired."""
+    """A tool-bound `RetryPromptPart` answers its call, so the call is not repaired.
+
+    The model is handed the retried tool return the part is translated into rather than the part
+    itself, so the assertion is on what repair did (nothing) and not on byte identity.
+    """
     agent, received = capture_agent()
 
     message_history: list[ModelMessage] = [
@@ -756,7 +760,28 @@ async def test_retry_prompt_answers_tool_call():
 
     await agent.run('Thanks.', message_history=message_history)
 
-    assert received[0][: len(message_history)] == message_history
+    assert received[0][: len(message_history)] == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='What is the weather?', timestamp=TS)], timestamp=TS),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='get_weather', args={'city': 'Atlantis'}, tool_call_id='call_1')],
+                timestamp=TS,
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_weather',
+                        content='Unknown city, try again.',
+                        tool_call_id='call_1',
+                        timestamp=TS,
+                        outcome='retried',
+                    )
+                ],
+                timestamp=TS,
+            ),
+            ModelResponse(parts=[TextPart(content='I could not find that city.')], timestamp=TS),
+        ]
+    )
 
 
 async def test_plain_retry_prompt_does_not_answer_tool_call():
@@ -791,7 +816,7 @@ async def test_plain_retry_prompt_does_not_answer_tool_call():
                 timestamp=TS,
                 outcome='interrupted',
             ),
-            RetryPromptPart(content='Response was not valid, try again.', tool_call_id='call_1', timestamp=TS),
+            UserPromptPart(content='<system>Response was not valid, try again.</system>', timestamp=TS),
         ]
     )
 

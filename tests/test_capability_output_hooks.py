@@ -282,7 +282,7 @@ class TestOnOutputValidateError:
                 ),
                 ModelResponse(
                     parts=[TextPart(content='{"value": 42}')],
-                    usage=RequestUsage(input_tokens=84, output_tokens=7),
+                    usage=RequestUsage(input_tokens=77, output_tokens=7),
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
@@ -352,7 +352,7 @@ class TestOnOutputValidateErrorModelRetry:
                 ),
                 ModelResponse(
                     parts=[TextPart(content='{"value": 42}')],
-                    usage=RequestUsage(input_tokens=63, output_tokens=7),
+                    usage=RequestUsage(input_tokens=58, output_tokens=7),
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
@@ -419,7 +419,7 @@ class TestModelRetryFromOutputHooks:
                 ),
                 ModelResponse(
                     parts=[TextPart(content='{"value": 42}')],
-                    usage=RequestUsage(input_tokens=61, output_tokens=6),
+                    usage=RequestUsage(input_tokens=56, output_tokens=6),
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
@@ -483,7 +483,7 @@ class TestModelRetryFromOutputHooks:
                 ),
                 ModelResponse(
                     parts=[TextPart(content='{"value": 42}')],
-                    usage=RequestUsage(input_tokens=62, output_tokens=6),
+                    usage=RequestUsage(input_tokens=57, output_tokens=6),
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
@@ -546,7 +546,7 @@ class TestModelRetryFromOutputHooks:
                 ),
                 ModelResponse(
                     parts=[TextPart(content='this is long enough')],
-                    usage=RequestUsage(input_tokens=61, output_tokens=5),
+                    usage=RequestUsage(input_tokens=56, output_tokens=5),
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
@@ -620,7 +620,7 @@ class TestModelRetryFromOutputHooks:
                 ),
                 ModelResponse(
                     parts=[TextPart(content='good')],
-                    usage=RequestUsage(input_tokens=61, output_tokens=2),
+                    usage=RequestUsage(input_tokens=56, output_tokens=2),
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
@@ -685,7 +685,7 @@ class TestModelRetryFromOutputHooks:
                 ),
                 ModelResponse(
                     parts=[TextPart(content='{"value": 5}')],
-                    usage=RequestUsage(input_tokens=61, output_tokens=6),
+                    usage=RequestUsage(input_tokens=56, output_tokens=6),
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
@@ -2225,7 +2225,7 @@ class TestOutputHookErrorPaths:
                 ),
                 ModelResponse(
                     parts=[TextPart(content='{"value": 42}')],
-                    usage=RequestUsage(input_tokens=78, output_tokens=6),
+                    usage=RequestUsage(input_tokens=73, output_tokens=6),
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
@@ -2384,7 +2384,7 @@ class TestOutputHookErrorPaths:
                 ),
                 ModelResponse(
                     parts=[TextPart(content='{"value": 1}')],
-                    usage=RequestUsage(input_tokens=78, output_tokens=4),
+                    usage=RequestUsage(input_tokens=71, output_tokens=4),
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
@@ -2536,7 +2536,7 @@ class TestOutputHookErrorPaths:
                 ),
                 ModelResponse(
                     parts=[TextPart(content='{"value": 99}')],
-                    usage=RequestUsage(input_tokens=78, output_tokens=5),
+                    usage=RequestUsage(input_tokens=72, output_tokens=5),
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
@@ -2749,7 +2749,7 @@ class TestDefaultOutputErrorHooks:
                 ),
                 ModelResponse(
                     parts=[TextPart(content='{"value": 7}')],
-                    usage=RequestUsage(input_tokens=78, output_tokens=5),
+                    usage=RequestUsage(input_tokens=72, output_tokens=5),
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),

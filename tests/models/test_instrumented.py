@@ -1037,11 +1037,18 @@ Output did not validate.
 
 Fix the errors and try again.\
 """,
-                    }
+                    },
+                    {
+                        'type': 'text',
+                        'content': """\
+<validation_errors>
+Output did not validate.
+</validation_errors>\
+""",
+                    },
+                    {'type': 'text', 'content': 'Thanks.'},
                 ],
             },
-            {'role': 'system', 'parts': [{'type': 'text', 'content': 'Output did not validate.'}]},
-            {'role': 'user', 'parts': [{'type': 'text', 'content': 'Thanks.'}]},
         ]
     )
 
@@ -1055,16 +1062,14 @@ Fix the errors and try again.\
 def test_messages_to_otel_messages_retry_feedback_across_versions():
     """A retry that answers no tool call, on each setting that renders it differently.
 
-    The content is the part's own feedback at every version. The sentence that frames it as the
-    harness speaking is chosen per `cause` at `prepare_messages` time, so it belongs to the request,
-    not to the stored history this renders — which is why nothing here is version-gated but the role.
+    The content is the same text the model is shown at every version, so nothing here is
+    version-gated but the role.
 
-    Version 6 gives the part the `system` role it reaches the model in. Versions 2-5 keep the `user`
-    the tool-less `RetryPromptPart` this part replaced was emitted on, so a consumer written against
-    them keeps reading the role it was built for.
-
-    A validation error's `input` — the value the model sent — is dropped at every version, so the
-    largest model-chosen string in the run never lands in a `system` message.
+    Version 6 gives each cause the role it reaches the model in: `system` for a `'model_retry'`,
+    `user` for a `'validation_error'`, which quotes the model's own output back inside its fence.
+    Versions 2-5 keep every cause on the `user` the tool-less `RetryPromptPart` this part replaced was
+    emitted on, so a consumer written against them keeps reading the role it was built for — and for a
+    validation error that is already the role the wire uses, so the gate moves nothing there.
     """
     errors: list[ErrorDetails] = [
         {'type': 'missing', 'loc': ('answer',), 'msg': 'Field required', 'input': {'answr': 'oui'}},
@@ -1093,26 +1098,9 @@ def test_messages_to_otel_messages_retry_feedback_across_versions():
                         {
                             'type': 'text',
                             'content': """\
-2 validation errors:
-```json
-[
-  {
-    "type": "missing",
-    "loc": [
-      "answer"
-    ],
-    "msg": "Field required"
-  },
-  {
-    "type": "string_type",
-    "loc": [
-      "answer",
-      "text"
-    ],
-    "msg": "Input should be a valid string"
-  }
-]
-```\
+<validation_errors>
+[{"type":"missing","loc":["answer"],"msg":"Field required","input":{"answr":"oui"}},{"type":"string_type","loc":["answer","text"],"msg":"Input should be a valid string","input":42}]
+</validation_errors>\
 """,
                         },
                         {'type': 'text', 'content': 'Answer in French.'},
@@ -1121,38 +1109,24 @@ def test_messages_to_otel_messages_retry_feedback_across_versions():
             ],
             'v6': [
                 {
-                    'role': 'system',
+                    'role': 'user',
                     'parts': [
                         {
                             'type': 'text',
                             'content': """\
-2 validation errors:
-```json
-[
-  {
-    "type": "missing",
-    "loc": [
-      "answer"
-    ],
-    "msg": "Field required"
-  },
-  {
-    "type": "string_type",
-    "loc": [
-      "answer",
-      "text"
-    ],
-    "msg": "Input should be a valid string"
-  }
-]
-```\
+<validation_errors>
+[{"type":"missing","loc":["answer"],"msg":"Field required","input":{"answr":"oui"}},{"type":"string_type","loc":["answer","text"],"msg":"Input should be a valid string","input":42}]
+</validation_errors>\
 """,
-                        },
-                        {'type': 'text', 'content': 'Answer in French.'},
+                        }
                     ],
-                }
+                },
+                {'role': 'system', 'parts': [{'type': 'text', 'content': 'Answer in French.'}]},
             ],
-            'v6 without content': [{'role': 'system', 'parts': [{'type': 'text'}, {'type': 'text'}]}],
+            'v6 without content': [
+                {'role': 'user', 'parts': [{'type': 'text'}]},
+                {'role': 'system', 'parts': [{'type': 'text'}]},
+            ],
         }
     )
 
@@ -1215,10 +1189,7 @@ async def test_run_records_retry_feedback_on_both_spans(capfire: CaptureLogfire)
                         'parts': [
                             {
                                 'type': 'text',
-                                'content': """\
-The response was not accepted:
-Answer in English.\
-""",
+                                'content': 'Answer in English.',
                             }
                         ],
                     },
@@ -1239,10 +1210,7 @@ Answer in English.\
                         'parts': [
                             {
                                 'type': 'text',
-                                'content': """\
-<system>The response was not accepted:
-Answer in English.</system>\
-""",
+                                'content': '<system>Answer in English.</system>',
                             }
                         ],
                     },
@@ -1263,10 +1231,7 @@ Answer in English.</system>\
                         'parts': [
                             {
                                 'type': 'text',
-                                'content': """\
-The response was not accepted:
-Answer in English.\
-""",
+                                'content': 'Answer in English.',
                             }
                         ],
                     },
@@ -1287,10 +1252,7 @@ Answer in English.\
                         'parts': [
                             {
                                 'type': 'text',
-                                'content': """\
-<system>The response was not accepted:
-Answer in English.</system>\
-""",
+                                'content': '<system>Answer in English.</system>',
                             }
                         ],
                     },

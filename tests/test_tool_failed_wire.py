@@ -78,14 +78,16 @@ WireMapper = Callable[[ModelRequestPart], Awaitable[Sequence[object]]]
 async def _map_openai_chat(part: ModelRequestPart) -> Sequence[object]:
     model = OpenAIChatModel('gpt-5', provider=OpenAIProvider(api_key='test-key'))
     return await model._map_messages(  # pyright: ignore[reportPrivateUsage]
-        [ModelRequest(parts=[part])], ModelRequestParameters()
+        model.prepare_messages([ModelRequest(parts=[part])], ModelRequestParameters()), ModelRequestParameters()
     )
 
 
 async def _map_openai_responses(part: ModelRequestPart) -> Sequence[object]:
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key='test-key'))
     _, messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
-        [ModelRequest(parts=[part])], OpenAIResponsesModelSettings(), ModelRequestParameters()
+        model.prepare_messages([ModelRequest(parts=[part])], ModelRequestParameters()),
+        OpenAIResponsesModelSettings(),
+        ModelRequestParameters(),
     )
     return messages
 
@@ -93,14 +95,14 @@ async def _map_openai_responses(part: ModelRequestPart) -> Sequence[object]:
 async def _map_groq(part: ModelRequestPart) -> Sequence[object]:
     model = GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(api_key='test-key'))
     return await model._map_messages(  # pyright: ignore[reportPrivateUsage]
-        [ModelRequest(parts=[part])], ModelRequestParameters()
+        model.prepare_messages([ModelRequest(parts=[part])], ModelRequestParameters()), ModelRequestParameters()
     )
 
 
 async def _map_mistral(part: ModelRequestPart) -> Sequence[object]:
     model = MistralModel('mistral-large-latest', provider=MistralProvider(api_key='test-key'))
     messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
-        [ModelRequest(parts=[part])], ModelRequestParameters()
+        model.prepare_messages([ModelRequest(parts=[part])], ModelRequestParameters()), ModelRequestParameters()
     )
     return [message.model_dump() for message in messages]
 
@@ -108,7 +110,7 @@ async def _map_mistral(part: ModelRequestPart) -> Sequence[object]:
 async def _map_xai(part: ModelRequestPart) -> Sequence[object]:
     model = XaiModel('grok-4-fast-non-reasoning', provider=XaiProvider(api_key='test-key'))
     messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
-        [ModelRequest(parts=[part])], ModelRequestParameters()
+        model.prepare_messages([ModelRequest(parts=[part])], ModelRequestParameters()), ModelRequestParameters()
     )
     return [MessageToDict(message, preserving_proto_field_name=True) for message in messages]
 
@@ -116,7 +118,7 @@ async def _map_xai(part: ModelRequestPart) -> Sequence[object]:
 async def _map_huggingface(part: ModelRequestPart) -> Sequence[object]:
     model = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(api_key='test-key'))
     messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
-        [ModelRequest(parts=[part])], ModelRequestParameters()
+        model.prepare_messages([ModelRequest(parts=[part])], ModelRequestParameters()), ModelRequestParameters()
     )
     return [{key: value for key, value in asdict(message).items() if value is not None} for message in messages]
 
@@ -124,7 +126,7 @@ async def _map_huggingface(part: ModelRequestPart) -> Sequence[object]:
 async def _map_cohere(part: ModelRequestPart) -> Sequence[object]:
     model = CohereModel('command-r7b-12-2024', provider=CohereProvider(api_key='test-key'))
     messages = model._map_messages(  # pyright: ignore[reportPrivateUsage]
-        [ModelRequest(parts=[part])], ModelRequestParameters()
+        model.prepare_messages([ModelRequest(parts=[part])], ModelRequestParameters()), ModelRequestParameters()
     )
     return [getattr(message, 'content', None) for message in messages]
 
@@ -136,7 +138,7 @@ class ChannelLessCase:
     success_wire: object
     failed_wire: object
     legacy_retry_wire: object = None
-    """What a user-supplied [tool-bound, tool-less] pair of legacy `RetryPromptPart`s maps to."""
+    """What a user-supplied [tool-bound, tool-less] pair of legacy `RetryPromptPart`s reaches the wire as."""
     marks: tuple[pytest.MarkDecorator, ...] = ()
 
 
@@ -154,20 +156,11 @@ _CHANNEL_LESS_CASES = [
                 {
                     'role': 'tool',
                     'tool_call_id': 'call_1',
-                    'content': """\
-Disk full
-
-Fix the errors and try again.\
-""",
+                    'content': '{"error":"Disk full"}',
                 },
                 {
-                    'role': 'user',
-                    'content': """\
-Validation feedback:
-Disk full
-
-Fix the errors and try again.\
-""",
+                    'role': 'system',
+                    'content': 'Disk full',
                 },
             ]
         ),
@@ -183,25 +176,11 @@ Fix the errors and try again.\
                 {
                     'type': 'function_call_output',
                     'call_id': 'call_1',
-                    'output': """\
-Disk full
-
-Fix the errors and try again.\
-""",
+                    'output': '{"error":"Disk full"}',
                 },
                 {
-                    'role': 'user',
-                    'content': [
-                        {
-                            'type': 'input_text',
-                            'text': """\
-Validation feedback:
-Disk full
-
-Fix the errors and try again.\
-""",
-                        }
-                    ],
+                    'role': 'system',
+                    'content': 'Disk full',
                 },
             ]
         ),
@@ -217,20 +196,11 @@ Fix the errors and try again.\
                 {
                     'role': 'tool',
                     'tool_call_id': 'call_1',
-                    'content': """\
-Disk full
-
-Fix the errors and try again.\
-""",
+                    'content': '{"error":"Disk full"}',
                 },
                 {
-                    'role': 'user',
-                    'content': """\
-Validation feedback:
-Disk full
-
-Fix the errors and try again.\
-""",
+                    'role': 'system',
+                    'content': 'Disk full',
                 },
             ]
         ),
@@ -244,22 +214,13 @@ Fix the errors and try again.\
         legacy_retry_wire=snapshot(
             [
                 {
-                    'content': """\
-Disk full
-
-Fix the errors and try again.\
-""",
+                    'content': '{"error":"Disk full"}',
                     'role': 'tool',
                     'tool_call_id': 'call_1',
                 },
                 {
-                    'content': """\
-Validation feedback:
-Disk full
-
-Fix the errors and try again.\
-""",
-                    'role': 'user',
+                    'content': 'Disk full',
+                    'role': 'system',
                 },
             ]
         ),
@@ -277,30 +238,13 @@ Fix the errors and try again.\
         legacy_retry_wire=snapshot(
             [
                 {
-                    'content': [
-                        {
-                            'text': """\
-Disk full
-
-Fix the errors and try again.\
-"""
-                        }
-                    ],
+                    'content': [{'text': '{"error":"Disk full"}'}],
                     'role': 'ROLE_TOOL',
                     'tool_call_id': 'call_1',
                 },
                 {
-                    'content': [
-                        {
-                            'text': """\
-Validation feedback:
-Disk full
-
-Fix the errors and try again.\
-"""
-                        }
-                    ],
-                    'role': 'ROLE_USER',
+                    'content': [{'text': 'Disk full'}],
+                    'role': 'ROLE_SYSTEM',
                 },
             ]
         ),
@@ -313,22 +257,10 @@ Fix the errors and try again.\
         failed_wire=_CHAT_FAILED_WIRE,
         legacy_retry_wire=snapshot(
             [
+                {'role': 'tool', 'content': '{"error":"Disk full"}', 'tool_call_id': 'call_1'},
                 {
-                    'role': 'tool',
-                    'content': """\
-Disk full
-
-Fix the errors and try again.\
-""",
-                },
-                {
-                    'role': 'user',
-                    'content': """\
-Validation feedback:
-Disk full
-
-Fix the errors and try again.\
-""",
+                    'role': 'system',
+                    'content': 'Disk full',
                 },
             ]
         ),
@@ -341,17 +273,8 @@ Fix the errors and try again.\
         failed_wire=[_FAILED_WIRE_CONTENT],
         legacy_retry_wire=snapshot(
             [
-                """\
-Disk full
-
-Fix the errors and try again.\
-""",
-                """\
-Validation feedback:
-Disk full
-
-Fix the errors and try again.\
-""",
+                '{"error":"Disk full"}',
+                'Disk full',
             ]
         ),
         marks=(pytest.mark.skipif(not cohere_imports_successful(), reason='cohere not installed'),),
@@ -384,12 +307,13 @@ async def test_channel_less_tool_return_framing(
 
 @pytest.mark.parametrize('case', [pytest.param(case, id=case.id, marks=case.marks) for case in _CHANNEL_LESS_CASES])
 async def test_legacy_retry_prompt_part_framing(case: ChannelLessCase) -> None:
-    """A `RetryPromptPart` out of a stored history still maps exactly as it always did.
+    """A `RetryPromptPart` out of a stored history reaches the wire as the parts that replaced it.
 
-    Nothing the framework emits reaches these branches any more, so only a history a user hands back
-    — or one saved before this release — does. Both shapes are pinned: the tool-bound one answering
-    a call, and the tool-less one that reaches the model as bare user text, which is the confusion
-    [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart] exists to end for new runs.
+    Nothing the framework emits is one any more, so only a history a user hands back — or one saved
+    before this release — carries one, and `prepare_messages` translates it before any adapter sees
+    it. Both shapes are pinned: the tool-bound one, which arrives as its call's own retried result,
+    and the tool-less one, which no longer arrives as the bare user text
+    [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart] exists to end.
     """
     parts: list[ModelRequestPart] = [
         RetryPromptPart(content=_TOOL_CONTENT, tool_name='tool', tool_call_id='call_1'),
@@ -610,12 +534,14 @@ _LEGACY_RETRY_PARTS: list[ModelRequestPart] = [
 
 @pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
 async def test_anthropic_legacy_retry_prompt_part_framing() -> None:
-    """A stored `RetryPromptPart` still takes Anthropic's error channel, and its tool-less shape still
-    arrives as plain text — unchanged by the redesign, since only what the framework emits changed."""
+    """A stored `RetryPromptPart` still takes Anthropic's error channel, now as the retried tool
+    return it is translated into, and its tool-less shape arrives in the harness's voice."""
     model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(api_key='test-key'))
 
     _, wire = await model._map_message(  # pyright: ignore[reportPrivateUsage]
-        [ModelRequest(parts=_LEGACY_RETRY_PARTS)], ModelRequestParameters(), AnthropicModelSettings()
+        model.prepare_messages([ModelRequest(parts=_LEGACY_RETRY_PARTS)], ModelRequestParameters()),
+        ModelRequestParameters(),
+        AnthropicModelSettings(),
     )
 
     assert wire == snapshot(
@@ -626,21 +552,12 @@ async def test_anthropic_legacy_retry_prompt_part_framing() -> None:
                     {
                         'tool_use_id': 'call_1',
                         'type': 'tool_result',
-                        'content': """\
-Disk full
-
-Fix the errors and try again.\
-""",
+                        'content': [{'text': 'Disk full', 'type': 'text'}],
                         'is_error': True,
                     },
                     {
                         'type': 'text',
-                        'text': """\
-Validation feedback:
-Disk full
-
-Fix the errors and try again.\
-""",
+                        'text': '<system>Disk full</system>',
                     },
                 ],
             }
@@ -654,7 +571,9 @@ async def test_bedrock_legacy_retry_prompt_part_framing(bedrock_provider: Bedroc
     model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
 
     _, wire = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
-        [ModelRequest(parts=_LEGACY_RETRY_PARTS)], ModelRequestParameters(), BedrockModelSettings()
+        model.prepare_messages([ModelRequest(parts=_LEGACY_RETRY_PARTS)], ModelRequestParameters()),
+        ModelRequestParameters(),
+        BedrockModelSettings(),
     )
 
     assert wire == snapshot(
@@ -665,26 +584,11 @@ async def test_bedrock_legacy_retry_prompt_part_framing(bedrock_provider: Bedroc
                     {
                         'toolResult': {
                             'toolUseId': 'call_1',
-                            'content': [
-                                {
-                                    'text': """\
-Disk full
-
-Fix the errors and try again.\
-"""
-                                }
-                            ],
+                            'content': [{'text': 'Disk full'}],
                             'status': 'error',
                         }
                     },
-                    {
-                        'text': """\
-Validation feedback:
-Disk full
-
-Fix the errors and try again.\
-"""
-                    },
+                    {'text': '<system>Disk full</system>'},
                 ],
             }
         ]
@@ -697,7 +601,8 @@ async def test_google_legacy_retry_prompt_part_framing() -> None:
     model = GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key='test-key'))
 
     _, wire = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
-        [ModelRequest(parts=_LEGACY_RETRY_PARTS)], ModelRequestParameters()
+        model.prepare_messages([ModelRequest(parts=_LEGACY_RETRY_PARTS)], ModelRequestParameters()),
+        ModelRequestParameters(),
     )
 
     assert wire == snapshot(
@@ -708,13 +613,7 @@ async def test_google_legacy_retry_prompt_part_framing() -> None:
                     {
                         'function_response': {
                             'name': 'tool',
-                            'response': {
-                                'error': """\
-Disk full
-
-Fix the errors and try again.\
-"""
-                            },
+                            'response': {'error': 'Disk full'},
                             'id': 'call_1',
                         }
                     }
@@ -722,16 +621,7 @@ Fix the errors and try again.\
             },
             {
                 'role': 'user',
-                'parts': [
-                    {
-                        'text': """\
-Validation feedback:
-Disk full
-
-Fix the errors and try again.\
-"""
-                    }
-                ],
+                'parts': [{'text': '<system>Disk full</system>'}],
             },
         ]
     )
