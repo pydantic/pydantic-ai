@@ -154,7 +154,8 @@ interruption note to the prepared request without modifying stored history.
 
 Send a text turn to have the agent open the conversation. Wait for the greeting's finalized
 [`SpeechPart`][pydantic_ai.messages.SpeechPart], which arrives once it has been spoken, before
-opening the microphone; a fixed sleep does not tell you whether the greeting has played.
+opening the microphone, and let your playback loop drain first: the part marks the end of
+generation, not of playback. A fixed sleep tells you neither.
 
 ```python
 import asyncio
@@ -183,7 +184,7 @@ can request the greeting without adding a text turn. If a response is already ac
 held until that response completes and is dropped if the user barges in, so returning from
 `create_response()` does not mean speech has started.
 
-Server VAD enables `interrupt_response`, so any detected speech cancels a greeting in flight. This
+Server VAD enables `interrupt_response` by default, so any detected speech cancels a greeting in flight. This
 includes speaker echo and microphone transients while the audio path opens; keeping the microphone
 closed until the greeting has played avoids that race.
 

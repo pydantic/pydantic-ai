@@ -210,8 +210,9 @@ while analysis runs. To continue the entire conversation after the voice session
 
 ## Edge cases
 
-- A response can speak and then call a tool. Its speech is finalized and reaches
-  [`stream_transcripts()`][pydantic_ai.realtime.RealtimeSession.stream_transcripts] before the tool
+- A response can speak and then call a tool. Its speech is finalized (and, with output
+  transcription on, reaches
+  [`stream_transcripts()`][pydantic_ai.realtime.RealtimeSession.stream_transcripts]) before the tool
   body runs, so a "has the agent spoken?" check inside the tool already includes that response's
   speech.
 - A tool finishing does not necessarily finish the turn; see the
