@@ -80,7 +80,6 @@ from pydantic_ai.realtime import (
 )
 from pydantic_ai.realtime.codec import RealtimeConnection
 from pydantic_ai.run import AgentRunResult
-from pydantic_ai.sandboxes import SandboxRef
 from pydantic_ai.usage import RequestUsage, UsageLimits
 
 from ..conftest import IsDatetime, IsNow, IsStr
@@ -4659,30 +4658,3 @@ async def test_dbos_agent_run_sync_from_sync_tool_is_rejected():
 
     with pytest.raises(UserError, match=r'cannot be used inside a synchronous tool'):
         await outer_agent.run('delegate')
-
-
-async def test_dbos_durability_runs_sandbox_lifecycle_in_steps(dbos: DBOS) -> None:
-    """Inherited sandbox lifecycle operations execute as DBOS steps."""
-
-    class SandboxCapability(AbstractCapability[Any]):
-        id = 'sandbox'
-
-        def __init__(self) -> None:
-            self.in_step: list[bool] = []
-
-        async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
-            self.in_step.append(DBOS.step_id is not None)
-            return SandboxRef(sandbox_id=ctx.run_id or 'run')
-
-        async def release_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
-            self.in_step.append(DBOS.step_id is not None)
-
-    sandbox = SandboxCapability()
-    agent = Agent(TestModel(), name='dbos_sandbox_lifecycle', capabilities=[DBOSDurability(), sandbox])
-
-    @DBOS.workflow(name='test_dbos_sandbox_lifecycle')
-    async def run_agent() -> str:
-        return (await agent.run('Hello')).output
-
-    assert await run_agent() == 'success (no tool calls)'
-    assert sandbox.in_step == [True, True]

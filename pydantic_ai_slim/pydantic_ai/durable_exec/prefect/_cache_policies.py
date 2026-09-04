@@ -140,8 +140,9 @@ def _replace_run_context(
                 'usage_limits': value.usage_limits,
             }
             # Sandbox identity forks the key because tools can produce environment-specific
-            # results. `sandbox_id` is known without connecting a deferred sandbox.
-            projected['sandbox'] = value.sandbox.sandbox_id
+            # results. Reading `ref` does no I/O: it is `None` until the backend has created or
+            # attached an environment, and `None` is itself a distinct key.
+            projected['sandbox'] = value.sandbox.ref
             inputs[key] = projected
 
     return inputs

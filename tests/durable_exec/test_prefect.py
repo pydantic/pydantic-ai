@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import itertools
 import os
 import threading
 import uuid
@@ -4737,40 +4736,3 @@ async def test_prefect_agent_run_sync_from_sync_tool_is_rejected():
 
     with pytest.raises(UserError, match=r'cannot be used inside a synchronous tool'):
         await outer_agent.run('delegate')
-
-
-@pytest.mark.parametrize('blockbuster_enabled', [False])
-async def test_prefect_durability_runs_sandbox_lifecycle_in_tasks(blockbuster_enabled: bool) -> None:
-    """Sandbox lifecycle operations execute as distinct Prefect tasks for each agent run."""
-
-    class SandboxCapability(AbstractCapability[Any]):
-        id = 'sandbox'
-
-        def __init__(self) -> None:
-            self.events: list[tuple[str, str, bool]] = []
-            self.created = itertools.count(1)
-
-        async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
-            sandbox_id = f'sandbox-{next(self.created)}'
-            self.events.append(('acquire', sandbox_id, TaskRunContext.get() is not None))
-            return SandboxRef(sandbox_id=sandbox_id)
-
-        async def release_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
-            self.events.append(('release', ref.sandbox_id, TaskRunContext.get() is not None))
-
-    sandbox = SandboxCapability()
-    agent = Agent(TestModel(), name='prefect_sandbox_lifecycle', capabilities=[PrefectDurability(), sandbox])
-
-    @flow
-    async def run_agent_twice() -> tuple[str, str]:
-        first = await agent.run('Hello')
-        second = await agent.run('Hello')
-        return first.output, second.output
-
-    assert await run_agent_twice() == ('success (no tool calls)', 'success (no tool calls)')
-    assert sandbox.events == [
-        ('acquire', 'sandbox-1', True),
-        ('release', 'sandbox-1', True),
-        ('acquire', 'sandbox-2', True),
-        ('release', 'sandbox-2', True),
-    ]

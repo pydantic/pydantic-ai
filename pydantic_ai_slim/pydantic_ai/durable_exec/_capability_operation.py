@@ -15,16 +15,7 @@ from pydantic_ai._function_schema import (
     validate_schema_signature,
 )
 from pydantic_ai._run_context import get_current_run_context
-from pydantic_ai.capabilities._durable_operation import (
-    DurableOperationMarker,
-    base_hook_durable_operation as base_hook_durable_operation,
-    get_durable_operation_marker,
-    invoke_durable_operation,
-    set_durable_operation_marker,
-    validate_operation_name as _validate_operation_name,
-)
 from pydantic_ai.capabilities.abstract import AbstractCapability, leaf_capabilities
-from pydantic_ai.capabilities.wrapper import WrapperCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
@@ -62,7 +53,7 @@ _NEVER_DURABLE_HOOKS = {
     'wrap_run_event_stream': '`wrap_run_event_stream` receives a live stream and cannot be a durable operation.',
     'get_toolset': '`get_toolset` returns a live toolset and cannot be a durable operation.',
     'get_wrapper_toolset': '`get_wrapper_toolset` returns a live toolset and cannot be a durable operation.',
-    'get_sandbox': '`get_sandbox` returns a live sandbox handle and cannot be a durable operation.',
+    'get_sandbox': '`get_sandbox` returns a live sandbox backend and cannot be a durable operation.',
 }
 
 
@@ -173,6 +164,36 @@ class CapabilityCacheIdentity(CacheIdentity[CapabilityOperationParams]):
         return (params.model_id, params.arguments, params.run_context)
 
 
+@dataclass(frozen=True)
+class _DurableOperationMarker:
+    name: str
+    _: KW_ONLY
+    function: Callable[..., Awaitable[Any]]
+    base_hook: bool = False
+
+
+Marker = _DurableOperationMarker
+_MARKER_ATTRIBUTE = '__pydantic_ai_durable_operation__'
+
+
+def get_durable_operation_marker(obj: object) -> Marker | None:
+    """Return the durable-operation marker attached to `obj`, if present."""
+    return cast(Marker | None, getattr(obj, _MARKER_ATTRIBUTE, None))
+
+
+def set_durable_operation_marker(obj: object, marker: Marker) -> None:
+    """Attach a durable-operation `marker` to `obj`."""
+    setattr(obj, _MARKER_ATTRIBUTE, marker)
+
+
+def _validate_operation_name(name: object) -> str:
+    if not isinstance(name, str):
+        raise TypeError(f'`durable_operation` name must be a string, got {type(name).__name__}')
+    if not name:
+        raise ValueError('`durable_operation` name must not be empty')
+    return name
+
+
 def durable_operation(name: str) -> Callable[[Callable[P, A]], Callable[P, A]]:
     """Declare an async capability method as a durable operation.
 
@@ -217,14 +238,14 @@ def durable_operation(name: str) -> Callable[[Callable[P, A]], Callable[P, A]]:
             if target.__name__ in _SYNC_NEVER_DURABLE_HOOKS:
                 set_durable_operation_marker(
                     target,
-                    DurableOperationMarker(
+                    Marker(
                         name=name,
                         function=cast(Callable[..., Awaitable[Any]], target),
                     ),
                 )
                 return target
             raise TypeError('`durable_operation` can only decorate async methods')
-        marker = DurableOperationMarker(name=name, function=cast(Callable[..., Awaitable[Any]], target))
+        marker = Marker(name=name, function=cast(Callable[..., Awaitable[Any]], target))
 
         @wraps(target)
         async def decorated(self: AbstractCapability[Any], *args: Any, **kwargs: Any) -> Any:
@@ -246,8 +267,28 @@ def durable_operation(name: str) -> Callable[[Callable[P, A]], Callable[P, A]]:
                 (value for value in bound.arguments.values() if isinstance(value, ModelRequestContext)), None
             )
 
+            # Resolve the per-run operation first, then the agent-bound fallback.
             handler = target.__get__(self, type(self))
-            result = await invoke_durable_operation(self, marker.name, ctx, handler, args, kwargs)
+            operations = ctx._durable_operations  # pyright: ignore[reportPrivateUsage]
+            operation = (
+                operations.get((self.id, marker.name)) if operations is not None and self.id is not None else None
+            )
+            if operation is not None:
+                result = await operation(*args, **kwargs)
+            else:
+                dispatcher = (
+                    self._get_durable_operation_bindings().get(ctx.agent, {}).get(marker.name)  # pyright: ignore[reportPrivateUsage]
+                    if ctx.agent is not None
+                    else None
+                )
+                if dispatcher is None:
+                    result = await handler(*args, **kwargs)
+                else:
+                    result = await dispatcher(
+                        ctx,
+                        cast(tuple[object, ...], args),
+                        cast(dict[str, object], kwargs),
+                    )
 
             # Apply worker-side model-request mutations back to the live context.
             if request_context is not None and isinstance(result, _ResolvedModelRequestContext):
@@ -257,6 +298,26 @@ def durable_operation(name: str) -> Callable[[Callable[P, A]], Callable[P, A]]:
 
         set_durable_operation_marker(decorated, marker)
         return cast(Callable[P, A], decorated)
+
+    return decorate
+
+
+def base_hook_durable_operation(
+    name: str,
+) -> Callable[[Callable[..., Awaitable[ResultT]]], Callable[..., Awaitable[ResultT]]]:
+    """Mark a base hook so every override inherits durable execution automatically."""
+    name = _validate_operation_name(name)
+
+    def decorate(function: Callable[..., Awaitable[ResultT]]) -> Callable[..., Awaitable[ResultT]]:
+        set_durable_operation_marker(
+            function,
+            Marker(
+                name=name,
+                function=cast(Callable[..., Awaitable[Any]], function),
+                base_hook=True,
+            ),
+        )
+        return function
 
     return decorate
 
@@ -277,18 +338,6 @@ def collect_capability_operations(
                 continue
             member = getattr(type(capability), method_name)
             if member is not base_member:
-                if isinstance(capability, WrapperCapability) and member is getattr(
-                    WrapperCapability, method_name, None
-                ):
-                    wrapped = capability.wrapped
-                    wrapper_member = getattr(WrapperCapability, method_name, None)
-                    while (
-                        isinstance(wrapped, WrapperCapability)
-                        and getattr(type(wrapped), method_name, None) is wrapper_member
-                    ):
-                        wrapped = wrapped.wrapped
-                    if getattr(type(wrapped), method_name, None) is base_member:
-                        continue
                 handlers[marker.name] = cast(Callable[..., Awaitable[Any]], member)
 
     for method_name, member in inspect.getmembers(type(capability)):
