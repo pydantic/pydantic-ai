@@ -600,10 +600,10 @@ class GoogleModel(Model[Client]):
             model_request_parameters,
         )
         model_settings = cast(GoogleModelSettings, model_settings or {})
-        response = await self._generate_content(messages, False, model_settings, model_request_parameters)
-        return self._process_response(
-            response, agentic_video_processing=_messages_have_agentic_video_processing(messages)
+        response, agentic_video_processing = await self._generate_content(
+            messages, False, model_settings, model_request_parameters
         )
+        return self._process_response(response, agentic_video_processing=agentic_video_processing)
 
     async def count_tokens(
         self,
@@ -681,12 +681,14 @@ class GoogleModel(Model[Client]):
             model_request_parameters,
         )
         model_settings = cast(GoogleModelSettings, model_settings or {})
-        response = await self._generate_content(messages, True, model_settings, model_request_parameters)
+        response, agentic_video_processing = await self._generate_content(
+            messages, True, model_settings, model_request_parameters
+        )
         try:
-            yield await self._process_streamed_response(  # pyright: ignore[reportArgumentType]
-                response,
+            yield await self._process_streamed_response(
+                response,  # pyright: ignore[reportArgumentType]
                 model_request_parameters,
-                agentic_video_processing=_messages_have_agentic_video_processing(messages),
+                agentic_video_processing=agentic_video_processing,
             )
         finally:
             aclose = getattr(response, 'aclose', None)
@@ -866,7 +868,7 @@ class GoogleModel(Model[Client]):
         stream: Literal[False],
         model_settings: GoogleModelSettings,
         model_request_parameters: ModelRequestParameters,
-    ) -> GenerateContentResponse: ...
+    ) -> tuple[GenerateContentResponse, bool]: ...
 
     @overload
     async def _generate_content(
@@ -875,7 +877,7 @@ class GoogleModel(Model[Client]):
         stream: Literal[True],
         model_settings: GoogleModelSettings,
         model_request_parameters: ModelRequestParameters,
-    ) -> Awaitable[AsyncIterator[GenerateContentResponse]]: ...
+    ) -> tuple[Awaitable[AsyncIterator[GenerateContentResponse]], bool]: ...
 
     async def _generate_content(
         self,
@@ -883,7 +885,7 @@ class GoogleModel(Model[Client]):
         stream: bool,
         model_settings: GoogleModelSettings,
         model_request_parameters: ModelRequestParameters,
-    ) -> GenerateContentResponse | Awaitable[AsyncIterator[GenerateContentResponse]]:
+    ) -> tuple[GenerateContentResponse | Awaitable[AsyncIterator[GenerateContentResponse]], bool]:
         contents, config = await self._build_content_and_config(
             messages,
             model_settings,
@@ -891,7 +893,10 @@ class GoogleModel(Model[Client]):
         )
         func = self.client.aio.models.generate_content_stream if stream else self.client.aio.models.generate_content
         try:
-            return await func(model=self._model_name, contents=contents, config=config)  # pyright: ignore[reportReturnType]
+            response = await func(model=self._model_name, contents=contents, config=config)
+            return response, _contents_have_agentic_video_processing(  # pyright: ignore[reportReturnType]
+                cast(list[ContentDict], contents)
+            )
         except errors.APIError as e:
             raise _map_api_error(e, self._model_name, self._provider.model_id_namespace) from e
 
@@ -1924,22 +1929,16 @@ def _can_echo_server_side_tool_part(tool_call_id: str, *, supports_tool_combinat
     return not tool_call_id.startswith('pyd_ai_')
 
 
-def _messages_have_agentic_video_processing(messages: list[ModelMessage]) -> bool:
-    """Whether the request includes a video with per-part media processing enabled."""
-    for message in messages:
-        if not isinstance(message, ModelRequest):
+def _contents_have_agentic_video_processing(contents: list[ContentDict]) -> bool:
+    """Whether the mapped request actually contains an agentic video part."""
+    for content in contents:
+        parts = content.get('parts')
+        if parts is None:  # pragma: no cover
             continue
-        for part in message.parts:
-            if not isinstance(part, UserPromptPart) or isinstance(part.content, str):
-                continue
-            for item in part.content:
-                if (
-                    isinstance(item, (BinaryContent, VideoUrl, UploadedFile))
-                    and item.media_type.startswith('video/')
-                    and item.vendor_metadata is not None
-                    and 'media_processing' in item.vendor_metadata
-                ):
-                    return True
+        for part in parts:
+            media_processing = part.get('media_processing')
+            if media_processing == 'AGENTIC' or getattr(media_processing, 'value', None) == 'AGENTIC':
+                return True
     return False
 
 

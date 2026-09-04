@@ -13,6 +13,7 @@ from __future__ import annotations as _annotations
 
 from copy import deepcopy
 from dataclasses import dataclass
+from typing import cast
 
 import pytest
 from pytest_mock import MockerFixture
@@ -34,9 +35,13 @@ from ..._inline_snapshot import snapshot
 from ...conftest import try_import
 
 with try_import() as imports_successful:
-    from google.genai.types import ToolCall
+    from google.genai.types import ContentDict, ToolCall
 
-    from pydantic_ai.models.google import GoogleModel, _map_tool_call  # pyright: ignore[reportPrivateUsage]
+    from pydantic_ai.models.google import (
+        GoogleModel,
+        _contents_have_agentic_video_processing,  # pyright: ignore[reportPrivateUsage]
+        _map_tool_call,  # pyright: ignore[reportPrivateUsage]
+    )
     from pydantic_ai.providers.google import GoogleProvider
 
 pytestmark = [
@@ -201,6 +206,15 @@ MEDIA_PROCESSING_CASES = [
         expected='AGENTIC',
     ),
     MediaProcessingCase(
+        id='vertex_gcs_video_url',
+        content=VideoUrl(
+            url='gs://bucket/video.mp4',
+            vendor_metadata={'media_processing': 'AGENTIC'},
+        ),
+        expected='AGENTIC',
+        google_cloud=True,
+    ),
+    MediaProcessingCase(
         id='binary_video',
         content=BinaryContent(data=b'video', media_type='video/mp4', vendor_metadata={'media_processing': 'AGENTIC'}),
         expected='AGENTIC',
@@ -283,14 +297,15 @@ async def test_media_processing_requires_supported_sdk(mapping_model: GoogleMode
         await mapping_model._map_user_prompt(UserPromptPart(content=[video]))  # pyright: ignore[reportPrivateUsage]
 
 
-async def test_media_processing_composes_with_video_metadata(mapping_model: GoogleModel, mocker: MockerFixture) -> None:
+async def test_media_processing_composes_with_media_resolution(
+    mapping_model: GoogleModel, mocker: MockerFixture
+) -> None:
     mocker.patch('pydantic_ai.models.google._SDK_SUPPORTS_MEDIA_PROCESSING', True)
     video = VideoUrl(
         url='https://www.youtube.com/watch?v=lCdaVNyHtjU',
         vendor_metadata={
             'media_processing': 'AGENTIC',
             'media_resolution': 'MEDIA_RESOLUTION_LOW',
-            'start_offset': '10s',
         },
     )
 
@@ -305,7 +320,6 @@ async def test_media_processing_composes_with_video_metadata(mapping_model: Goog
                 },
                 'media_processing': 'AGENTIC',
                 'media_resolution': 'MEDIA_RESOLUTION_LOW',
-                'video_metadata': {'start_offset': '10s'},
             }
         ]
     )
@@ -319,6 +333,24 @@ def test_missing_native_tool_type_with_payload_is_rejected() -> None:
 def test_missing_native_tool_type_without_agentic_video_is_rejected() -> None:
     with pytest.raises(UnexpectedModelBehavior, match='Missing tool_type on native tool part'):
         _map_tool_call(ToolCall(id='call-1'), 'google')
+
+
+@pytest.mark.parametrize(
+    ('media_processing', 'expected'),
+    [('AGENTIC', True), ('STATIC', False), ('MEDIA_PROCESSING_UNSPECIFIED', False), (None, False)],
+)
+def test_agentic_response_handling_uses_mapped_setting(media_processing: str | None, expected: bool) -> None:
+    contents = cast(
+        list[ContentDict],
+        [
+            {
+                'role': 'user',
+                'parts': [{'file_data': {'file_uri': 'gs://bucket/video.mp4'}, 'media_processing': media_processing}],
+            }
+        ],
+    )
+
+    assert _contents_have_agentic_video_processing(contents) is expected
 
 
 # =============================================================================
