@@ -3,7 +3,6 @@ from __future__ import annotations as _annotations
 import argparse
 import functools
 import json
-import platform
 import sys
 from collections.abc import Sequence
 from contextlib import AsyncExitStack, ExitStack
@@ -140,16 +139,11 @@ def cli_exit(prog_name: str = 'clai'):  # pragma: no cover
     sys.exit(cli(prog_name=prog_name))
 
 
-def _clai_heading(prog_name: str) -> str:
-    return f'{prog_name} - Pydantic AI CLI v{__version__} • Python {platform.python_version()}'
-
-
 def _print_intro(
     console: Console,
     agent: Agent[Any, Any],
     model_name: str,
     *,
-    heading: str | None = None,
     agent_path: str | None = None,
 ) -> None:
     """Print the intro a chat session opens with.
@@ -161,29 +155,24 @@ def _print_intro(
         console: Console to print to.
         agent: The agent the session will run.
         model_name: ID of the model the agent will use.
-        heading: First line, naming the program. Defaults to the library version, as a script gets.
         agent_path: How the user asked for the agent, for one that doesn't name itself.
     """
-    from ..agent import _registered_counts  # pyright: ignore[reportPrivateUsage]
+    from ..agent import _registered_capability_count  # pyright: ignore[reportPrivateUsage]
 
-    registered = _registered_counts(agent, agent.root_capability)
     banner = _display.render_banner(
-        heading=heading,
         # A loaded agent doesn't always name itself, so fall back to how the user asked for it.
         name=agent.name or agent_path,
         model=model_name,
         output_type=agent.output_type,
-        tools=registered.tools,
-        capabilities=registered.capabilities,
+        # Only the tools registered on the agent itself are knowable before a run resolves dynamic
+        # toolsets and MCP servers; a run's own banner counts everything the model will be offered.
+        tools=len(agent._function_toolset.tools),  # pyright: ignore[reportPrivateUsage]
+        capabilities=_registered_capability_count(agent.root_capability),
         observability=not agent.instrument,
     )
-    # The banner is plain text laid out in columns, so rich must not re-highlight or re-wrap it, and
-    # an output type like `list[str]` must not be read as markup.
-    text = Text()
-    for line in banner.splitlines():
-        text.append(line[: _display.LOGO_WIDTH], style='green')
-        text.append(f'{line[_display.LOGO_WIDTH :]}\n')
-    console.print(text, end='', soft_wrap=True)
+    # The banner arrives laid out in columns and pre-coloured, so rich reads its ANSI back rather
+    # than re-highlighting or re-wrapping it; an output type like `list[str]` isn't markup either.
+    console.print(Text.from_ansi(banner), soft_wrap=True)
 
 
 def cli(args_list: Sequence[str] | None = None, *, prog_name: str = 'clai', default_model: str = 'openai:gpt-5') -> int:
@@ -388,10 +377,9 @@ def _run_chat_command(
             return 1
 
     model_name = agent.model if isinstance(agent.model, str) else agent.model.model_id
-    # Claimed last, so the banner is only spent when it's actually about to be printed. Nothing can
-    # print a second one later: `ask_agent` claims it before every run.
-    if not _display.banner_suppressed() and console.is_terminal and _display.claim_banner():
-        _print_intro(console, agent, model_name, heading=_clai_heading(prog_name), agent_path=args.agent)
+    # Nothing can print a second one later: `ask_agent` claims it before every run.
+    if _display.banner_available(is_terminal=console.is_terminal):
+        _print_intro(console, agent, model_name, agent_path=args.agent)
     elif args.agent and model_arg_set:
         console.print(
             f'{name_version} using custom agent [magenta]{args.agent}[/magenta] with [magenta]{model_name}[/magenta]',
@@ -443,9 +431,7 @@ async def run_chat(
     if (
         isinstance(agent, Agent)
         and chat_model is not None
-        and not _display.banner_suppressed()
-        and console.is_terminal
-        and _display.claim_banner()
+        and _display.banner_available(is_terminal=console.is_terminal)
     ):
         _print_intro(console, agent, chat_model if isinstance(chat_model, str) else chat_model.model_id)
 

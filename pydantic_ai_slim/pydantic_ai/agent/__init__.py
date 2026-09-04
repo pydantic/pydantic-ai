@@ -26,7 +26,7 @@ from contextvars import ContextVar
 from copy import copy
 from dataclasses import replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, NamedTuple, cast, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, cast, overload
 from uuid import uuid4
 
 import anyio
@@ -41,6 +41,7 @@ from pydantic_ai.capabilities._deferred_capability_loader import DeferredCapabil
 
 from .. import (
     _agent_graph,
+    _display,
     _instructions,
     _output,
     _system_prompt,
@@ -1660,19 +1661,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             tracer = NoOpTracer()
             instrumentation_cap = None
 
-        from .._display import display_agent_banner
-
-        registered = _registered_counts(self, bootstrap_capability)
-        display_agent_banner(
-            name=self.name,
-            model=model_id or model_used.model_id,
-            # A run-level `output_type=` overrides what the agent was built with.
-            output_type=output_type_,
-            tools=registered.tools,
-            capabilities=registered.capabilities,
-            instrumented=instrumentation_settings is not None,
-        )
-
         # Build initial RunContext for for_run lifecycle hooks. Includes every
         # field that's already known here — `tool_manager` and `validation_context`
         # are populated later by `build_run_context` once the run is iterating.
@@ -1839,6 +1827,19 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 resolved_models=resolved_models_by_selection,
             )
 
+        def display_banner(*, model: str, tools: int) -> None:
+            # Called by the graph once the run's first step has resolved the model it will actually
+            # use and the tools it will actually offer; everything else is settled here and now.
+            _display.display_agent_banner(
+                name=self.name,
+                model=model,
+                # A run-level `output_type=` overrides what the agent was built with.
+                output_type=output_type_,
+                tools=tools,
+                capabilities=_registered_capability_count(bootstrap_capability),
+                instrumented=instrumentation_settings is not None,
+            )
+
         model_resources = _RunModelResources(self._entered_model_ids.copy())
         graph_deps = _agent_graph.GraphAgentDeps[AgentDepsT, OutputDataT](
             user_deps=deps,
@@ -1866,6 +1867,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             discovered_tool_names=discovered_tool_names,
             native_tools=cap_native_tools,
             tool_manager=tool_manager,
+            display_banner=display_banner,
             tracer=tracer,
             get_instructions=get_instructions,
             instrumentation_settings=instrumentation_settings,
@@ -4304,23 +4306,13 @@ _AUTO_INJECT_CAPABILITY_TYPES: tuple[type[AbstractCapability[Any]], ...] = (
 """Infrastructure capabilities auto-injected when not already present."""
 
 
-class _RegisteredCounts(NamedTuple):
-    """How much the user gave an agent to work with, as summarized by `pydantic_ai._display`."""
-
-    tools: int
-    capabilities: int
-
-
-def _registered_counts(agent: Agent[Any, Any], capability: AbstractCapability[Any]) -> _RegisteredCounts:
-    """Count what the user registered on `agent`, for a run rooted at `capability`.
+def _registered_capability_count(capability: AbstractCapability[Any]) -> int:
+    """Count the capabilities the user registered, for a `pydantic_ai._display` banner.
 
     Infrastructure capabilities are injected for every agent, so counting those would say nothing
     about the agent the user actually wrote.
     """
-    return _RegisteredCounts(
-        tools=len(agent._function_toolset.tools),  # pyright: ignore[reportPrivateUsage]
-        capabilities=sum(not isinstance(leaf, _AUTO_INJECT_CAPABILITY_TYPES) for leaf in leaf_capabilities(capability)),
-    )
+    return sum(not isinstance(leaf, _AUTO_INJECT_CAPABILITY_TYPES) for leaf in leaf_capabilities(capability))
 
 
 def _inject_auto_capabilities(capabilities: list[AbstractCapability[Any]]) -> None:

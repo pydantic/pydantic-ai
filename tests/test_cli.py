@@ -17,6 +17,7 @@ from pytest_mock import MockerFixture
 from rich.console import Console
 from rich.live import Live
 from rich.markdown import Markdown
+from rich.text import Text
 
 from pydantic_ai import Agent, ModelMessage, ModelResponse, ModelRetry, TextPart, ToolCallPart, __version__, _display
 from pydantic_ai.agent import WrapperAgent
@@ -1516,18 +1517,26 @@ def terminal_clai(env: TestEnv) -> Iterator[None]:
         _display._banner_displayed = False  # pyright: ignore[reportPrivateUsage]
 
 
+def _plain(output: str) -> str:
+    """The output as the user reads it, with the colour the banner is styled in taken back off."""
+    return Text.from_ansi(output).plain
+
+
 def test_clai_intro_shows_banner(capfd: CaptureFixture[str], mocker: MockerFixture, env: TestEnv, terminal_clai: None):
     env.set('OPENAI_API_KEY', 'test')
     mocker.patch('pydantic_ai._cli.ask_agent')
 
     assert cli(['hello']) == 0
 
-    output = capfd.readouterr().out
+    output = _plain(capfd.readouterr().out)
     assert '·.______|______.·' in output
-    assert 'clai - Pydantic AI CLI' in output
-    assert 'model: openai:gpt-5 • tools: 0' in output
+    # clai shows the same banner a script gets, rather than heading it with its own name and version.
+    assert f'pydantic-ai v{__version__}' in output
+    assert 'clai - Pydantic AI CLI' not in output
+    assert 'model: openai:gpt-5 • tools: 0 • capabilities: 0' in output
     # The banner carries the observability pointer, so clai doesn't repeat its own header line.
-    assert 'observability: not configured' in output
+    # Matched on the label, not the prose, which is the banner's to reword.
+    assert 'observability:' in output
     assert 'with openai:gpt-5' not in output
 
 
@@ -1545,7 +1554,7 @@ def test_clai_intro_names_the_agent_the_user_asked_for(
     assert cli(['--agent', 'test_module:custom_agent', 'hello']) == 0
 
     # The loaded agent has no name of its own, so the banner falls back to the path the user gave.
-    assert 'agent: test_module:custom_agent' in capfd.readouterr().out
+    assert 'agent: test_module:custom_agent' in _plain(capfd.readouterr().out)
 
 
 def test_clai_intro_drops_observability_for_an_instrumented_agent(
@@ -1563,7 +1572,7 @@ def test_clai_intro_drops_observability_for_an_instrumented_agent(
 
     assert cli(['--agent', 'test_module:custom_agent', 'hello']) == 0
 
-    output = capfd.readouterr().out
+    output = _plain(capfd.readouterr().out)
     assert 'agent: observed' in output
     assert 'observability' not in output
 
@@ -1624,12 +1633,12 @@ def test_run_chat_shows_banner_for_a_users_own_agent(mocker: MockerFixture, tmp_
         _exit_immediately(mocker, inp)
         anyio.run(run_chat, True, agent, console, 'monokai', 'pydantic-ai', tmp_path)
 
-    output = io.getvalue()
+    output = _plain(io.getvalue())
     assert '·.______|______.·' in output
-    # A user's own agent gets the same heading a script does, not clai's.
+    # A user's own agent gets the same banner a script does, not clai's.
     assert 'Pydantic AI CLI' not in output
     assert f'pydantic-ai v{__version__}' in output
-    assert 'agent: support_agent • model: test:test • tools: 0' in output
+    assert 'agent: support_agent • model: test:test • tools: 0 • capabilities: 0' in output
 
 
 def test_run_chat_without_a_model_shows_no_banner(mocker: MockerFixture, tmp_path: Path, terminal_clai: None):

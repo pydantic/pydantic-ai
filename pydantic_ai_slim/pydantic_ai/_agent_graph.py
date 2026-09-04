@@ -42,7 +42,17 @@ from pydantic_ai.toolsets._tool_search import (
 from pydantic_graph import BaseNode, End, Graph, GraphBuilder, GraphRunContext
 from pydantic_graph.basenode import NodeRunEndT
 
-from . import _enqueue, _output, _system_prompt, exceptions, messages as _messages, models, result, usage as _usage
+from . import (
+    _display,
+    _enqueue,
+    _output,
+    _system_prompt,
+    exceptions,
+    messages as _messages,
+    models,
+    result,
+    usage as _usage,
+)
 from ._cancel import RunCancellation
 from ._deferred_capabilities import (
     _parse_loaded_capabilities,  # pyright: ignore[reportPrivateUsage]
@@ -428,6 +438,9 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
 
     tracer: Tracer
     instrumentation_settings: InstrumentationSettings | None
+
+    display_banner: _display.BannerDisplay
+    """Shows the first-run banner, once this run has resolved the model and tools it will use."""
 
     agent: Agent[DepsT, Any] | None = None
 
@@ -1532,6 +1545,16 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # Note: for_run_step may already have been called by UserPromptNode for the
         # resume-without-prompt path; ToolManager.for_run_step is a no-op for the same step.
         ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
+
+        if ctx.state.run_step == 1:
+            # The first step is the earliest point that knows which tools the model will be offered:
+            # dynamic toolsets and MCP servers have been resolved by now. Output tools are left out,
+            # as the banner reports the output type separately and counting them would make the
+            # number move with the output mode rather than with what the agent was given.
+            ctx.deps.display_banner(
+                model=ctx.deps.model_id or ctx.deps.model.model_id,
+                tools=sum(tool_def.kind != 'output' for tool_def in ctx.deps.tool_manager.tool_defs),
+            )
 
         # Fetch instructions now that dynamic toolsets have been resolved by for_run_step.
         instruction_parts = await _get_instructions(ctx, run_context)
