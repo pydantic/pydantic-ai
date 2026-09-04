@@ -298,19 +298,14 @@ def test_a_second_durability_engine_is_refused_behind_a_wrapper() -> None:
 def test_a_per_run_engine_beside_an_agent_level_one_is_refused() -> None:
     """A capability added for a run composes *inside* the agent's, which is what makes this wrong.
 
-    Refused before the per-run capability binds rather than when the resolved tree is sorted:
-    binding is where an engine registers its durable units, and a configuration that is going to
-    be refused should not register anything first.
+    Refused before the per-run capability binds rather than when the resolved tree is sorted. The
+    sort would catch the pair too, but only after `for_agent` has run -- and `for_agent` is where
+    an engine registers its durable units, so a configuration that is going to be refused would
+    have registered first.
     """
     agent = Agent(TestModel(), name='per_run', capabilities=[JournalDurability()])
 
-    with pytest.raises(
-        UserError,
-        match=(
-            r'`JournalDurability` requires that nothing nests inside it when a tool executes, but '
-            r'`SecondJournalDurability` would, having been added for this run'
-        ),
-    ):
+    with pytest.raises(UserError, match=_TWO_ENGINES):
         agent.run_sync('hello', capabilities=[SecondJournalDurability()])
 
 

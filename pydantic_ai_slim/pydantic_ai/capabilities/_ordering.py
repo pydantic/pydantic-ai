@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, TypeVar
 from pydantic_ai.exceptions import UserError
 
 from .abstract import AbstractCapability, CapabilityOrdering, CapabilityRef
+from .wrapper import WrapperCapability
 
 if TYPE_CHECKING:
     from .abstract import CapabilityPosition
@@ -39,21 +40,19 @@ def sort_capabilities(
     return _topo_sort(caps, orderings, leaf_types, cap_leaves, exclusive)
 
 
-_EXECUTION_HOOKS = ('wrap_tool_execute', 'get_wrapper_toolset')
-"""The two ways a capability can take part in executing a tool.
+def _declares_hook(leaf: AbstractCapability[Any], name: str) -> bool:
+    """Whether this capability's own class implements `name`, rather than inheriting it.
 
-A capability reaching execution by wrapping the toolset is nested inside another just as surely as
-one reaching it through the hook, so a rule about what may nest inside what has to see both.
-"""
-
-
-def participates_in_tool_execution(cap: AbstractCapability[Any]) -> bool:
-    """Whether any leaf of `cap` takes part in executing a tool, rather than only observing it."""
-    return any(
-        getattr(type(leaf), name) is not getattr(AbstractCapability, name)
-        for leaf in claimed_leaves(cap)
-        for name in _EXECUTION_HOOKS
-    )
+    Compared against the base it actually derives from. `WrapperCapability` overrides the execution
+    hooks to *delegate*, so measuring a wrapper against `AbstractCapability` reads every wrapper as
+    a participant -- and `Thinking().prefix_tools('p')` was refused beside a durability capability
+    where the bare `Thinking()` was not, though neither goes near executing a tool. What the
+    wrapper holds is a leaf of its own (see `claimed_leaves`) and is judged on its own account, so
+    a wrapper around something that *does* execute still counts.
+    """
+    cls = type(leaf)
+    baseline = WrapperCapability if isinstance(leaf, WrapperCapability) else AbstractCapability
+    return getattr(cls, name) is not getattr(baseline, name)
 
 
 def claimed_leaves(cap: AbstractCapability[Any]) -> list[AbstractCapability[Any]]:
@@ -65,8 +64,6 @@ def claimed_leaves(cap: AbstractCapability[Any]) -> list[AbstractCapability[Any]
     it being the engine, and the claim has to be visible through the wrapper for the pair to be
     seen at all.
     """
-    from .wrapper import WrapperCapability
-
     found: list[AbstractCapability[Any]] = []
     for leaf in collect_leaves(cap):
         found.append(leaf)
@@ -98,14 +95,19 @@ def _validate_exclusive_execution(caps: list[AbstractCapability[Any]], exclusive
     """
     if len(exclusive) < 2:
         return
-    type_names = sorted({type(_exclusive_leaf(caps[i])).__name__ for i in exclusive})
+    raise _two_claimants_error([_exclusive_leaf(caps[i]) for i in exclusive])
+
+
+def _two_claimants_error(claimants: Sequence[AbstractCapability[Any] | None]) -> UserError:
+    """The one error for two capabilities that each claim to own execution, wherever it is caught."""
+    type_names = sorted({type(claimant).__name__ for claimant in claimants})
     # A repeat of one capability reads as a count; distinct ones read as a list.
     subject = (
-        f'{len(exclusive)} `{type_names[0]}` capabilities'
+        f'{len(claimants)} `{type_names[0]}` capabilities'
         if len(type_names) == 1
         else ' and '.join(f'`{name}`' for name in type_names)
     )
-    raise UserError(
+    return UserError(
         f'{subject} each require that nothing nests inside them when a tool executes, and only one '
         'capability can be innermost. Whichever ran outside the other would be wrapping it rather '
         'than the tool, so what it observed or recorded would be about the wrong thing. Attach one.'
@@ -127,10 +129,14 @@ def reject_nested_execution(
     exclusive = next((leaf for cap in existing if (leaf := _exclusive_leaf(cap)) is not None), None)
     if exclusive is None:
         return
-    # `_safe_at_runtime` already says "adding this per-run is fine even under a capability that has
-    # taken over execution" -- `Instrumentation` wraps a tool call to time it and changes nothing
-    # about what runs. Reusing it keeps one answer to that question rather than two.
-    intruders = [cap for cap in added if participates_in_tool_execution(cap) and not _safe_at_runtime(cap)]
+    # A per-run capability that claims exclusivity too is the two-claimant case, which the sort
+    # would also catch -- but only after `for_agent` has bound it, and binding is where a durability
+    # capability registers its durable units. Caught here so a refused configuration registers
+    # nothing, which is the whole reason this runs before binding rather than after.
+    added_claimants = [leaf for cap in added if (leaf := _exclusive_leaf(cap)) is not None]
+    if added_claimants:
+        raise _two_claimants_error([exclusive, *added_claimants])
+    intruders = [cap for cap in added if _would_nest_inside(cap)]
     if not intruders:
         return
     names = ', '.join(sorted(f'`{type(cap).__name__}`' for cap in intruders))
@@ -140,6 +146,22 @@ def reject_nested_execution(
         'that takes part in executing a tool has to be there when the agent is built, so the two '
         'can be ordered against each other.'
     )
+
+
+def _would_nest_inside(cap: AbstractCapability[Any]) -> bool:
+    """Whether adding `cap` for a run would put it inside a capability that owns execution.
+
+    Asked of the hook chain, which is the chain `exclusive_execution` places the claimant last in.
+    A capability contributing a wrapper toolset is a different layer: it runs beneath every hook,
+    so it is *always* inside the claimant, and refusing that would refuse `ToolSearch` beside every
+    durability capability -- a composition an agent can be built with today, and which works. The
+    flag says what it can enforce rather than more than it can, and its own docs say so.
+
+    `_safe_at_runtime` then exempts what it was written to exempt. For a hook capability that holds
+    for a reason rather than by assertion: it sorts outside the claimant, so what the claimant
+    hands to its handler is still the tool. `Instrumentation` is exactly that shape.
+    """
+    return any(_declares_hook(leaf, 'wrap_tool_execute') for leaf in claimed_leaves(cap)) and not _safe_at_runtime(cap)
 
 
 def _validate_requires(

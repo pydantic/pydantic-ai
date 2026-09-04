@@ -187,14 +187,22 @@ class CapabilityOrdering:
     operation, say, reports the wrong outcome the moment another capability's wrapper is what it
     actually called.
 
-    Declaring this places the capability last, and refuses the configurations that would defeat it:
-    a second capability claiming the same thing, and any capability that takes part in executing a
-    tool ending up inside it. "Takes part" covers both ways of doing so -- overriding
-    [`wrap_tool_execute`][pydantic_ai.capabilities.AbstractCapability.wrap_tool_execute], and
-    wrapping the toolset via
-    [`get_wrapper_toolset`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_toolset] --
-    since a capability that reaches execution through the second is nested just as surely as one
-    that reaches it through the first.
+    Declaring this places the capability last in the hook chain, and refuses the two configurations
+    that would defeat it: a second capability claiming the same thing, and a capability added for a
+    run whose
+    [`wrap_tool_execute`][pydantic_ai.capabilities.AbstractCapability.wrap_tool_execute] would end
+    up inside it.
+
+    It says nothing about
+    [`get_wrapper_toolset`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_toolset], and
+    cannot: the hook chain runs *above* the whole toolset chain, so even a capability that is both
+    `innermost` and exclusive still wraps every contributed toolset rather than the tool. That is
+    two layers, not two positions in one, and no ordering reconciles them.
+
+    A capability that must reach the tool body with nothing in between belongs in the lower layer
+    instead -- contributing a wrapper toolset that overrides `call_tool` and sorting innermost, the
+    way the durability capabilities do to journal a tool's real outcome. Only one capability can
+    hold that slot, which is why a durable engine claims it.
 
     Durability capabilities declare it: an agent runs under one durable engine, and each wraps
     every tool call as its own durable unit. That is what makes two of them, of any engines,
