@@ -277,6 +277,9 @@ async def main(microphone_chunk: bytes):
 
 Key facts for building realtime agents:
 
+- **A string sent with `session.send()` solicits a response**: use `respond=False` to add passive
+  text context. Images are context-only by default; use `respond=True` to ask for a response to an
+  image. Never pair `session.send('...')` with `session.create_response()`, because that asks twice.
 - **History handoff is the marquee integration**: `session.all_messages()` / `session.new_messages()`
   return real `ModelMessage`s; seed with `realtime(model, message_history=...).session()`. Transcripts
   are what carry over; OpenAI and Azure can also replay retained transcript-less *user* audio, Gemini

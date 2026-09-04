@@ -35,6 +35,7 @@ from pydantic_ai.messages import (
     RealtimeSessionErrorEvent,
     SpeechPart,
     SpeechPartDelta,
+    SystemPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -73,6 +74,104 @@ pytestmark = [
     pytest.mark.anyio,
     pytest.mark.skipif(not imports_successful(), reason='openai / websockets not installed'),
 ]
+
+
+async def test_session_when_idle_enqueue_waits_for_response_boundary(
+    openai_ws_cassette: tuple[Provider[Any], RealtimeCassette],
+) -> None:
+    """A session-level system prompt waits for OpenAI's active response to finish."""
+    provider, _ = openai_ws_cassette
+    model = OpenAIRealtimeModel(
+        'gpt-realtime', provider=provider, settings=OpenAIRealtimeModelSettings(output_modality='text')
+    )
+    agent = Agent(
+        instructions=(
+            'First say exactly "FIRST RESPONSE COMPLETE". After any later message, follow its instruction exactly.'
+        )
+    )
+
+    completions: list[RealtimeTurnCompleteEvent] = []
+    enqueued = False
+    async with agent.realtime(model).session() as session:
+        await session.send('Begin.')
+        with anyio.fail_after(30):
+            async for event in session:  # pragma: no branch
+                if not enqueued and isinstance(event, PartDeltaEvent):
+                    session.enqueue(
+                        SystemPromptPart(content='Say exactly "QUEUED MARKER RECEIVED".'),
+                        priority='when_idle',
+                    )
+                    enqueued = True
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    completions.append(event)
+                    if len(completions) == 2:
+                        break
+
+    assert len(completions) == 2
+    assert session.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Begin.', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='FIRST RESPONSE COMPLETE')],
+                usage=RequestUsage(
+                    details={
+                        'input_text_tokens': 24,
+                        'input_image_tokens': 0,
+                        'output_text_tokens': 5,
+                        'audio_tokens': 0,
+                    },
+                    output_tokens=5,
+                    input_tokens=24,
+                ),
+                model_name='gpt-realtime',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
+                provider_details={'status': 'completed'},
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='<system>Say exactly "QUEUED MARKER RECEIVED".</system>', timestamp=IsDatetime()
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='QUEUED MARKER RECEIVED')],
+                usage=RequestUsage(
+                    details={
+                        'input_text_tokens': 52,
+                        'input_image_tokens': 0,
+                        'output_text_tokens': 9,
+                        'audio_tokens': 0,
+                    },
+                    output_tokens=9,
+                    input_tokens=52,
+                ),
+                model_name='gpt-realtime',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
+                provider_details={'status': 'completed'},
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
 
 
 async def test_text_in_audio_out_turn(openai_ws_cassette: tuple[Provider[Any], RealtimeCassette]) -> None:
@@ -136,6 +235,51 @@ async def test_text_in_audio_out_turn(openai_ws_cassette: tuple[Provider[Any], R
     assert isinstance(part.audio, BinaryContent)
     assert part.audio.media_type == 'audio/wav'
     assert len(part.audio.data) > 0
+
+
+async def test_text_context_waits_for_next_turn(openai_ws_cassette: tuple[Provider[Any], RealtimeCassette]) -> None:
+    provider, _ = openai_ws_cassette
+    model = OpenAIRealtimeModel('gpt-realtime', provider=provider)
+    agent = Agent(instructions='Answer in one short sentence.')
+
+    async with agent.realtime(model).session() as session:
+        await session.send('The visitor is called Ada.', respond=False)
+        await asyncio.sleep(1)
+        assert not [message for message in session.new_messages() if isinstance(message, ModelResponse)]
+        await session.send('What is the visitor called?')
+        with anyio.fail_after(30):
+            async for event in session:  # pragma: no branch
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+
+    messages = session.all_messages()
+    assert [type(message).__name__ for message in messages] == snapshot(
+        ['ModelRequest', 'ModelRequest', 'ModelResponse']
+    )
+    response = messages[-1]
+    assert isinstance(response, ModelResponse)
+    part = response.parts[0]
+    assert isinstance(part, SpeechPart)
+    assert 'ada' in (part.transcript or '').lower()
+
+
+async def test_image_can_solicit_one_response(
+    openai_ws_cassette: tuple[Provider[Any], RealtimeCassette], assets_path: Path
+) -> None:
+    provider, _ = openai_ws_cassette
+    model = OpenAIRealtimeModel('gpt-realtime', provider=provider)
+    agent = Agent(instructions='Describe the image briefly.')
+    image = BinaryContent(data=assets_path.joinpath('kiwi.jpg').read_bytes(), media_type='image/jpeg')
+
+    async with agent.realtime(model).session() as session:
+        await session.send(image, respond=True)
+        with anyio.fail_after(30):
+            async for event in session:  # pragma: no branch
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+
+    responses = [message for message in session.all_messages() if isinstance(message, ModelResponse)]
+    assert len(responses) == 1
 
 
 async def test_media_views_subscribe_before_iteration(

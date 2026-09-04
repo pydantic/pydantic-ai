@@ -99,6 +99,7 @@ from pydantic_ai.realtime.codec import (
     RealtimeInput,
     ResponseDone,
     SessionUsage,
+    TextContext,
     ToolCall,
     ToolCallCancelled,
     ToolResult,
@@ -3301,6 +3302,112 @@ async def test_send_accepts_sequence() -> None:
     assert conn.sent == ['look at this', BinaryImage(data=b'image', media_type='image/png')]
 
 
+async def test_send_respond_controls_text_and_image_turns() -> None:
+    conn = FakeRealtimeConnection([])
+    session = RealtimeSession(conn, _noop_runner)
+    image = BinaryImage(data=b'image', media_type='image/png')
+
+    await session.send('default')
+    await session.send('explicit', respond=True)
+    await session.send('context', respond=False)
+    await session.send(image)
+    await session.send(image, respond=False)
+    await session.send(image, respond=True)
+
+    assert conn.sent == snapshot(
+        [
+            'default',
+            'explicit',
+            TextContext(text='context'),
+            BinaryImage(data=b'image', media_type='image/png'),
+            BinaryImage(data=b'image', media_type='image/png'),
+            BinaryImage(data=b'image', media_type='image/png'),
+            CreateResponse(),
+        ]
+    )
+    assert session._pending_response_requests == 3  # pyright: ignore[reportPrivateUsage]
+    assert len(session.new_messages()) == 6
+
+
+async def test_send_respond_sequence_contextualizes_all_but_last() -> None:
+    conn = FakeRealtimeConnection([])
+    session = RealtimeSession(conn, _noop_runner)
+    image = BinaryImage(data=b'image', media_type='image/png')
+
+    await session.send(['first', image, 'last'], respond=True)
+
+    assert conn.sent == [TextContext('first'), image, 'last']
+    assert session._pending_response_requests == 1  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_send_respond_rejects_audio_and_unsupported_image_response() -> None:
+    conn = FakeRealtimeConnection([])
+    session = RealtimeSession(conn, _noop_runner)
+
+    for audio in (_wav_content(b'\x01\x02'), BinaryContent(data=b'\x01\x02', media_type='audio/pcm')):
+        with pytest.raises(UserError, match=r'`respond=True` cannot be used with audio.*`commit_audio\(\)`'):
+            await session.send(audio, respond=True)
+
+    unsupported = RealtimeSession(conn, _noop_runner, profile=_profile(supports_manual_turn_control=False))
+    with pytest.raises(UserError, match='does not support manual turn-taking'):
+        await unsupported.send(BinaryImage(data=b'image', media_type='image/png'), respond=True)
+    assert conn.sent == []
+
+
+async def test_send_respond_sequence_can_lead_with_audio() -> None:
+    """Non-last items are sent as context, so audio ahead of the text turn is fine with an explicit `respond`."""
+    conn = FakeRealtimeConnection([])
+    session = RealtimeSession(conn)
+
+    audio = BinaryContent(data=b'\x01\x02', media_type='audio/pcm')
+    async with session:
+        await session.send([audio, 'How does it look?'], respond=True)
+        # `respond=False` is a no-op for audio on its own too: it never solicits a reply.
+        await session.send(audio, respond=False)
+
+    assert [type(item).__name__ for item in conn.sent] == ['BinaryAudio', 'str', 'BinaryAudio']
+
+
+async def test_image_respond_frames_cannot_be_interleaved() -> None:
+    image_started = asyncio.Event()
+    release_image = asyncio.Event()
+
+    class _PausedImageConnection(FakeRealtimeConnection):
+        async def send(self, content: RealtimeInput) -> None:
+            if isinstance(content, BinaryImage):
+                image_started.set()
+                await release_image.wait()
+            await super().send(content)
+
+    conn = _PausedImageConnection([])
+    session = RealtimeSession(conn, _noop_runner)
+    image_task = asyncio.create_task(session.send(BinaryImage(data=b'image', media_type='image/png'), respond=True))
+    await image_started.wait()
+    text_task = asyncio.create_task(session.send('later'))
+    await asyncio.sleep(0)
+    release_image.set()
+    await asyncio.gather(image_task, text_task)
+
+    assert conn.sent == [BinaryImage(data=b'image', media_type='image/png'), CreateResponse(), 'later']
+
+
+async def test_respond_send_failures_roll_back_history_and_reservations() -> None:
+    class _FailingConnection(FakeRealtimeConnection):
+        async def send(self, content: RealtimeInput) -> None:
+            raise RuntimeError('send failed')
+
+    conn = _FailingConnection([])
+    session = RealtimeSession(conn, _noop_runner)
+
+    with pytest.raises(RuntimeError, match='send failed'):
+        await session.send('context', respond=False)
+    with pytest.raises(RuntimeError, match='send failed'):
+        await session.send(BinaryImage(data=b'image', media_type='image/png'), respond=True)
+
+    assert session.new_messages() == []
+    assert session._pending_response_requests == 0  # pyright: ignore[reportPrivateUsage]
+
+
 async def test_image_history_retention_samples_and_round_trips() -> None:
     conn = FakeRealtimeConnection([])
     session = RealtimeSession(conn, _noop_runner, retain_images_every_n=2)
@@ -5312,6 +5419,26 @@ class _EnqueueDuringSpeechConnection(FakeRealtimeConnection):
         yield ResponseDone()
 
 
+class _SessionEnqueueDuringSpeechConnection(FakeRealtimeConnection):
+    """Expose session-level enqueue and immediate send behavior during assistant speech."""
+
+    def __init__(self) -> None:
+        super().__init__([])
+        self.audio_started = asyncio.Event()
+        self.enqueued = asyncio.Event()
+        self.sent_before_response_complete: list[RealtimeInput] = []
+
+    async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+        yield AudioDelta(data=b'audio')
+        self.audio_started.set()
+        await self.enqueued.wait()
+        for _ in range(3):
+            await asyncio.sleep(0)
+        self.sent_before_response_complete = list(self.sent)
+        yield OutputTranscript(text='still speaking')
+        yield ResponseDone()
+
+
 async def test_asap_enqueue_waits_for_active_response_to_complete() -> None:
     """`asap` is provider-agnostic: active assistant output finishes before queued text is sent."""
     agent: Agent[None, str] = Agent()
@@ -5332,6 +5459,116 @@ async def test_asap_enqueue_waits_for_active_response_to_complete() -> None:
 
     assert not any(isinstance(item, str) for item in conn.sent_before_response_complete)
     assert [item for item in conn.sent if isinstance(item, str)] == ['follow-up context']
+
+
+async def test_session_enqueue_asap_waits_for_active_response_to_complete() -> None:
+    conn = _SessionEnqueueDuringSpeechConnection()
+    agent: Agent[None, str] = Agent()
+
+    async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
+
+        async def send_and_enqueue_during_speech() -> None:
+            await conn.audio_started.wait()
+            await session.send('sent immediately')
+            assert session.enqueue('queued for the boundary') is not None
+            conn.enqueued.set()
+
+        task = asyncio.create_task(send_and_enqueue_during_speech())
+        _ = [event async for event in session]
+        await task
+
+    assert [item for item in conn.sent_before_response_complete if isinstance(item, str)] == ['sent immediately']
+    assert [item for item in conn.sent if isinstance(item, str)] == ['sent immediately', 'queued for the boundary']
+    assert session.new_messages()[-1] == ModelRequest(
+        parts=[UserPromptPart(content='queued for the boundary', timestamp=IsDatetime())],
+        timestamp=IsDatetime(),
+        conversation_id=IsStr(),
+        run_id=IsStr(),
+    )
+
+
+class _RespondingConnection(FakeRealtimeConnection):
+    """Replies to each send with a transcript and `ResponseDone`, and stops after `replies` turns."""
+
+    def __init__(self, replies: int) -> None:
+        super().__init__([])
+        self._replies = replies
+        self._text_sent = asyncio.Event()
+        self.sent_before_each_done: list[list[str]] = []
+
+    async def send(self, content: RealtimeInput) -> None:
+        await super().send(content)
+        self._text_sent.set()
+
+    async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+        for _ in range(self._replies):
+            await self._text_sent.wait()
+            self._text_sent.clear()
+            yield OutputTranscript(text='reply', is_final=True)
+            self.sent_before_each_done.append([item for item in self.sent if isinstance(item, str)])
+            yield ResponseDone()
+
+
+async def test_session_enqueue_when_idle_follows_asap() -> None:
+    """`when_idle` waits for queued `asap` items even when no reply is in flight when both are enqueued."""
+    conn = _RespondingConnection(replies=2)
+    agent: Agent[None, str] = Agent()
+
+    with anyio.fail_after(5):
+        async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
+            assert session.enqueue('idle', priority='when_idle') is not None
+            assert session.enqueue('soon') is not None
+            _ = [event async for event in session]
+
+    assert [item for item in conn.sent if isinstance(item, str)] == ['soon', 'idle']
+    assert conn.sent_before_each_done == [['soon'], ['soon', 'idle']]
+
+
+async def test_session_enqueue_requires_entered_session() -> None:
+    session = RealtimeSession(FakeRealtimeConnection([]))
+
+    with pytest.raises(UserError, match='before enqueuing'):
+        session.enqueue('too early')
+
+
+async def test_session_enqueue_renders_system_prompt() -> None:
+    conn = FakeRealtimeConnection([ResponseDone()])
+    agent: Agent[None, str] = Agent()
+
+    async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
+        assert session.enqueue('context', SystemPromptPart(content='wrap up')) is not None
+        _ = [event async for event in session]
+
+    assert [item for item in conn.sent if isinstance(item, str)] == ['context\n\n<system>wrap up</system>']
+    assert session.new_messages()[-1] == ModelRequest(
+        parts=[UserPromptPart(content='context\n\n<system>wrap up</system>', timestamp=IsDatetime())],
+        timestamp=IsDatetime(),
+        conversation_id=IsStr(),
+        run_id=IsStr(),
+    )
+
+
+async def test_session_enqueue_empty_call_is_noop() -> None:
+    agent: Agent[None, str] = Agent()
+    async with agent.realtime(FakeRealtimeModel(FakeRealtimeConnection([]))).session() as session:
+        assert session.enqueue() is None
+
+
+async def test_session_enqueue_after_close_raises() -> None:
+    agent: Agent[None, str] = Agent()
+    async with agent.realtime(FakeRealtimeModel(FakeRealtimeConnection([]))).session() as session:
+        await session.close()
+        with pytest.raises(UserError, match='session is closed'):
+            session.enqueue('late')
+
+
+async def test_session_enqueue_rejects_invalid_content_immediately() -> None:
+    agent: Agent[None, str] = Agent()
+    async with agent.realtime(FakeRealtimeModel(FakeRealtimeConnection([]))).session() as session:
+        with pytest.raises(UserError, match='Enqueued content must end with a `ModelRequest`'):
+            session.enqueue(ModelResponse(parts=[TextPart(content='not a request')]))
+        with pytest.raises(UserError, match='support plain-text prompts and system-prompt parts only'):
+            session.enqueue(BinaryImage(data=b'image', media_type='image/png'))
 
 
 @pytest.mark.parametrize(
@@ -5422,7 +5659,7 @@ async def test_agent_realtime_session_rejects_non_text_enqueue() -> None:
 
     conn = FakeRealtimeConnection([ToolCall(tool_call_id='tc', tool_name='queue_image', args='{}')])
     async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
-        with pytest.raises(UserError, match='supports plain-text prompts and system-prompt parts only'):
+        with pytest.raises(UserError, match='support plain-text prompts and system-prompt parts only'):
             _ = [event async for event in session]
 
 
@@ -5439,7 +5676,7 @@ async def test_realtime_pending_messages_reject_unsupported_message_shapes(messa
     manager = session._tool_manager  # pyright: ignore[reportPrivateUsage]
     assert manager.ctx is not None
     assert manager.ctx.pending_messages is not None
-    with pytest.raises(UserError, match='supports plain-text prompts and system-prompt parts only'):
+    with pytest.raises(UserError, match='support plain-text prompts and system-prompt parts only'):
         manager.ctx.pending_messages.append(PendingMessage(messages=messages))
 
 

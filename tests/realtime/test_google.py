@@ -63,6 +63,7 @@ from pydantic_ai.realtime.codec import (
     OutputTranscript,
     ResponseDone,
     SessionUsage,
+    TextContext,
     ToolCall,
     ToolCallCancelled,
     ToolResult,
@@ -1005,6 +1006,15 @@ async def test_send_text() -> None:
     assert sent['turn_complete'] is True
     assert sent['turns'].role == 'user'
     assert sent['turns'].parts[0].text == 'hello'
+
+
+async def test_send_text_context() -> None:
+    session = _RecordingSession()
+    await _conn(session).send(TextContext('background'))
+    sent = session.client_content[0]
+    assert sent['turn_complete'] is False
+    assert sent['turns'].role == 'user'
+    assert sent['turns'].parts[0].text == 'background'
 
 
 async def test_send_image_as_video_frame() -> None:

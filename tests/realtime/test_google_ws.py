@@ -10,6 +10,7 @@ Recorded once against the live API with `--record-mode=rewrite`, then replayed o
 
 from __future__ import annotations as _annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +28,7 @@ from pydantic_ai.messages import (
     PartDeltaEvent,
     SpeechPart,
     SpeechPartDelta,
+    SystemPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -152,6 +154,32 @@ async def test_text_in_audio_out_turn(gemini_ws_cassette: tuple[Provider[Any], R
     # Reasoning (`thoughtsTokenCount`) is billed but left out of Gemini's response/total counts, so the
     # session captures it in `details` rather than dropping it.
     assert response.usage.details.get('thoughts_tokens') == snapshot(24)
+
+
+async def test_text_context_waits_for_next_turn(gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette]) -> None:
+    provider, _ = gemini_ws_cassette
+    model = GoogleRealtimeModel(_MODEL, provider=provider)
+    agent = Agent(instructions='Answer in one short sentence.')
+
+    async with agent.realtime(model).session() as session:
+        await session.send('The visitor is called Ada.', respond=False)
+        await asyncio.sleep(1)
+        assert not [message for message in session.new_messages() if isinstance(message, ModelResponse)]
+        await session.send('What is the visitor called?')
+        with anyio.fail_after(30):
+            async for event in session:  # pragma: no branch
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+
+    messages = session.all_messages()
+    assert [type(message).__name__ for message in messages] == snapshot(
+        ['ModelRequest', 'ModelRequest', 'ModelResponse']
+    )
+    response = messages[-1]
+    assert isinstance(response, ModelResponse)
+    part = response.parts[0]
+    assert isinstance(part, SpeechPart)
+    assert 'ada' in (part.transcript or '').lower()
 
 
 async def test_tool_call_round(gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette]) -> None:
@@ -332,6 +360,54 @@ async def test_asap_enqueue_waits_for_response_boundary(
         if isinstance(part, SpeechPart)
     ]
     assert transcripts == ['FIRST RESPONSE COMPLETE', 'QUEUED MARKER RECEIVED']
+
+
+async def test_session_when_idle_enqueue_waits_for_response_boundary(
+    gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette],
+) -> None:
+    """A `when_idle` system prompt enqueued on the session waits for Gemini's active spoken response to finish."""
+    provider, _ = gemini_ws_cassette
+    model = GoogleRealtimeModel(_MODEL, provider=provider)
+    agent: Agent[None, str] = Agent(
+        instructions='First say exactly "FIRST RESPONSE COMPLETE". After any later message, follow its instruction exactly.',
+    )
+
+    completions: list[RealtimeTurnCompleteEvent] = []
+    enqueued = False
+    async with agent.realtime(model).session() as session:
+        await session.send('Begin.')
+        with anyio.fail_after(60):
+            async for event in session:  # pragma: no branch
+                if (
+                    not enqueued
+                    and isinstance(event, PartDeltaEvent)
+                    and isinstance(event.delta, SpeechPartDelta)
+                    and event.delta.audio_chunk
+                ):
+                    session.enqueue(
+                        SystemPromptPart(content='Say exactly "QUEUED MARKER RECEIVED".'), priority='when_idle'
+                    )
+                    enqueued = True
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    completions.append(event)
+                    if len(completions) == 2:
+                        break
+
+    assert len(completions) == 2
+    assert [
+        part.content
+        for message in session.all_messages()
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, UserPromptPart)
+    ] == ['Begin.', '<system>Say exactly "QUEUED MARKER RECEIVED".</system>']
+    assert [
+        part.transcript
+        for message in session.all_messages()
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+        if isinstance(part, SpeechPart)
+    ] == ['FIRST RESPONSE COMPLETE', 'QUEUED MARKER RECEIVED']
 
 
 async def test_message_history_seeding(gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette]) -> None:

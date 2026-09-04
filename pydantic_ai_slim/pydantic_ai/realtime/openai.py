@@ -113,6 +113,7 @@ from .codec import (
     RealtimeConnection,
     RealtimeInput,
     SessionUsage,
+    TextContext,
     ToolResult,
     TruncateOutput,
 )
@@ -440,8 +441,8 @@ class OpenAIRealtimeConnection(RealtimeConnection):
     async def send(self, content: RealtimeInput) -> None:
         """Send content to the OpenAI Realtime API.
 
-        Accepts `BinaryAudio` (raw PCM16, 24kHz, mono), a `str` text turn, `BinaryImage`,
-        `ToolResult`, and the control verbs `CommitAudio`, `ClearAudio`, `CreateResponse`,
+        Accepts `BinaryAudio` (raw PCM16, 24kHz, mono), a `str` text turn, `TextContext` (text added
+        without soliciting a reply), `BinaryImage`, `ToolResult`, and the control verbs `CommitAudio`, `ClearAudio`, `CreateResponse`,
         `CancelResponse`, and `TruncateOutput`.
         """
         if isinstance(content, BinaryAudio):
@@ -452,18 +453,9 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                     'audio': base64.b64encode(content.data).decode('ascii'),
                 }
             )
-        elif isinstance(content, str):
-            await self._send_event(
-                {
-                    'type': CONVERSATION_ITEM_CREATE_EVENT,
-                    'item': {
-                        'type': 'message',
-                        'role': 'user',
-                        'content': [{'type': 'input_text', 'text': content}],
-                    },
-                }
-            )
-            await self._request_response()
+        elif isinstance(content, (str, TextContext)):
+            text = content if isinstance(content, str) else content.text
+            await self._send_text(text, respond=isinstance(content, str))
         elif isinstance(content, ToolResult):
             # Normalize any follow-up content (downloading and re-encoding media) before the first
             # frame goes out, so content this provider can't carry fails with nothing sent rather than
@@ -546,6 +538,20 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                 )
         else:
             raise UserError(f'{self._provider_label} does not support {type(content).__name__} input.')
+
+    async def _send_text(self, text: str, *, respond: bool) -> None:
+        await self._send_event(
+            {
+                'type': CONVERSATION_ITEM_CREATE_EVENT,
+                'item': {
+                    'type': 'message',
+                    'role': 'user',
+                    'content': [{'type': 'input_text', 'text': text}],
+                },
+            }
+        )
+        if respond:
+            await self._request_response()
 
     async def _request_response(self) -> None:
         """Ask the model to respond now, or defer until the active response completes."""
