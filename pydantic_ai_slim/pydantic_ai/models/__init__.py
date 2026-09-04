@@ -2537,6 +2537,7 @@ def _synthesize_tool_availability_delta_messages(
     }
 
     def answers_tool_call(part: ModelRequestPart) -> bool:
+        # A tool-less retry is user-facing validation feedback, not a result for an open call.
         return isinstance(part, ToolReturnPart) or isinstance(part, RetryPromptPart) and part.tool_name is not None
 
     for message in messages:
