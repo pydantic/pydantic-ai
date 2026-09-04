@@ -131,6 +131,43 @@ async def test_text_in_audio_out_turn(openai_ws_cassette: tuple[Provider[Any], R
     assert len(part.audio.data) > 0
 
 
+async def test_media_views_subscribe_before_iteration(
+    openai_ws_cassette: tuple[Provider[Any], RealtimeCassette],
+) -> None:
+    """Audio and transcripts produced before their consumers start are buffered by the live session."""
+    provider, _ = openai_ws_cassette
+    model = OpenAIRealtimeModel('gpt-realtime', provider=provider)
+    agent = Agent(instructions='Reply only with hello.')
+
+    async with agent.realtime(model).session() as session:
+        audio = session.stream_audio()
+        transcripts = session.stream_transcripts()
+        await session.send('Say hello.')
+        with anyio.fail_after(30):
+            async for event in session:  # pragma: no branch
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+
+        async def consume_audio() -> list[bytes]:
+            return [chunk async for chunk in audio]
+
+        async def consume_transcripts() -> list[SpeechPart]:
+            return [part async for part in transcripts]
+
+        audio_task = asyncio.create_task(consume_audio())
+        transcript_task = asyncio.create_task(consume_transcripts())
+        for _ in range(5):
+            await asyncio.sleep(0)
+
+    audio_chunks = await audio_task
+    transcript_parts = await transcript_task
+    assert audio_chunks
+    assert all(audio_chunks)
+    assert len(transcript_parts) == 1
+    assert transcript_parts[0].speaker == 'assistant'
+    assert transcript_parts[0].transcript
+
+
 async def test_audio_in_server_vad_turn(
     openai_ws_cassette: tuple[Provider[Any], RealtimeCassette], assets_path: Path
 ) -> None:

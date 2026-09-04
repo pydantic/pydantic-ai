@@ -3,6 +3,7 @@
 from __future__ import annotations as _annotations
 
 import asyncio
+import gc
 import io
 import wave
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Sequence
@@ -646,22 +647,81 @@ async def test_close_ends_views_and_is_idempotent() -> None:
             await anext(session.stream_audio())
 
 
-async def test_view_is_lazy_and_does_not_replay_events() -> None:
+async def test_view_subscribes_at_call_time_and_does_not_replay_earlier_events() -> None:
     session = RealtimeSession(FakeRealtimeConnection([AudioDelta(b'audio')]))
 
     async with session:
-        unused_audio = session.stream_audio()
-        unused_transcripts = session.stream_transcripts()
+        audio = session.stream_audio()
         assert [event async for event in session]
-        assert [chunk async for chunk in unused_audio] == []
-        assert [part async for part in unused_transcripts] == []
+        assert [chunk async for chunk in audio] == [b'audio']
+        assert [chunk async for chunk in session.stream_audio()] == []
 
 
 async def test_view_requires_entered_session() -> None:
     session = RealtimeSession(FakeRealtimeConnection([]))
 
     with pytest.raises(UserError, match='Enter the realtime session'):
-        await anext(session.stream_audio())
+        session.stream_audio()
+
+
+async def test_views_created_before_response_are_consumed_after_it() -> None:
+    conn = BlockingRealtimeConnection(
+        [AudioDelta(b'a1'), AudioDelta(b'a2'), OutputTranscript(text='hi there', is_final=True), ResponseDone()]
+    )
+    session = RealtimeSession(conn)
+
+    async with session:
+        audio = session.stream_audio()
+        transcripts = session.stream_transcripts()
+        await session.create_response()
+        audio_task = asyncio.create_task(aiter_to_list(audio))
+        transcript_task = asyncio.create_task(aiter_to_list(transcripts))
+        events: list[RealtimeEvent] = []
+        async for event in session:
+            events.append(event)
+            if isinstance(event, RealtimeTurnCompleteEvent):
+                break
+        for _ in range(5):
+            await asyncio.sleep(0)
+
+    assert RealtimeTurnCompleteEvent() in events
+    assert await audio_task == [b'a1', b'a2']
+    assert [part.transcript for part in await transcript_task] == ['hi there']
+
+
+async def test_view_consumer_can_await_before_iterating() -> None:
+    session = RealtimeSession(BlockingRealtimeConnection([AudioDelta(b'audio'), ResponseDone()]))
+    got: list[bytes] = []
+
+    async def play_audio(chunks: AsyncIterator[bytes]) -> None:
+        await asyncio.sleep(0)
+        async for chunk in chunks:
+            got.append(chunk)
+
+    async with session:
+        task = asyncio.create_task(play_audio(session.stream_audio()))
+        async for event in session:
+            if isinstance(event, RealtimeTurnCompleteEvent):
+                break
+        for _ in range(5):
+            await asyncio.sleep(0)
+
+    await task
+    assert got == [b'audio']
+
+
+async def test_abandoned_unstarted_view_releases_its_tap() -> None:
+    chunks = [bytes([index]) for index in range(40)]
+    session = RealtimeSession(FakeRealtimeConnection([AudioDelta(chunk) for chunk in chunks]))
+
+    async with session:
+        view = session.stream_audio()
+        assert len(session._audio_taps) == 1  # pyright: ignore[reportPrivateUsage]
+        del view
+        gc.collect()
+        assert len(session._audio_taps) == 0  # pyright: ignore[reportPrivateUsage]
+        await drain_events(session)
+        assert session._audio_tap_drops == 0  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_assistant_transcript_partials_then_final() -> None:
