@@ -6,6 +6,7 @@ state for the pending message queue, not part of the wire-serializable message h
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal, TypeAlias
@@ -164,3 +165,29 @@ class PendingMessage:
                 'items that form one), so the agent has a request to respond to.'
             )
         return cls(messages=messages, priority=priority)
+
+
+class PendingMessageQueue:
+    """Thread-safe access to a run's pending-message list."""
+
+    def __init__(self, messages: list[PendingMessage]) -> None:
+        self.messages = messages
+        self._lock = threading.Lock()
+
+    def append(self, pending: PendingMessage) -> None:
+        with self._lock:
+            self.messages.append(pending)
+
+    def pop_priority(self, priority: PendingMessagePriority) -> list[PendingMessage]:
+        with self._lock:
+            return self._pop_priority(priority)
+
+    def pop_all_by_priority(self) -> tuple[list[PendingMessage], list[PendingMessage]]:
+        """Remove both priorities atomically, returning `'asap'` first."""
+        with self._lock:
+            return self._pop_priority('asap'), self._pop_priority('when_idle')
+
+    def _pop_priority(self, priority: PendingMessagePriority) -> list[PendingMessage]:
+        selected = [pending for pending in self.messages if pending.priority == priority]
+        self.messages[:] = [pending for pending in self.messages if pending.priority != priority]
+        return selected

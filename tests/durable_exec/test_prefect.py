@@ -2425,6 +2425,7 @@ def test_cache_key_run_context_projection_is_exhaustive():
         'capabilities',  # live capability objects, not hashable run state
         'root_capability',  # live capability tree (static config); run-varying loaded state is projected via loaded_capability_ids/discovered_tool_names
         'pending_messages',  # live run queue, not hashable run state
+        '_pending_message_queue',  # runtime-only synchronization, not hashable run state
         'trace_include_content',  # tracing config, fixed for the agent rather than varying per run
         'instrumentation_version',  # tracing config, fixed for the agent rather than varying per run
         'partial_output',  # only set for output validators, which run in flow code, never inside a task

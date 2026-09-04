@@ -53,6 +53,7 @@ _NONE_UNLESS_ATTACHED = (
     'pending_messages',
     'tool_manager',
     'realtime_session',
+    '_pending_message_queue',
     '_durable_operations',
     '_run_capabilities_by_id',
 )

@@ -760,6 +760,7 @@ def test_temporal_run_context_serialization_is_exhaustive():
         'capabilities',  # live capability objects (toolsets/hooks/callables), not serializable
         'root_capability',  # live capability chain, not serializable; reattached from the bound agent by deserialize_run_context
         'pending_messages',  # live run queue, meaningless outside the running agent; replaced by an EnqueueGuard
+        '_pending_message_queue',  # runtime-only synchronization, not serializable
         'messages',  # full history would be duplicated into every activity payload, against Temporal's 2MB limit
         'prompt',  # multi-modal BinaryContent would ride in every payload, against Temporal's 2MB limit; text-only subclasses can opt in
         'validation_context',  # arbitrary user object with no serialization contract

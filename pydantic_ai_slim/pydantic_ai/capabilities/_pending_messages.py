@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from pydantic_ai._agent_graph import ModelRequestNode
-from pydantic_ai._enqueue import PendingMessage, PendingMessagePriority
+from pydantic_ai._enqueue import PendingMessage
 from pydantic_ai._utils import fill_run_metadata
 from pydantic_ai.capabilities.abstract import AbstractCapability, CapabilityOrdering
 from pydantic_ai.exceptions import UserError
@@ -17,22 +17,6 @@ if TYPE_CHECKING:
     from pydantic_ai import _agent_graph
     from pydantic_ai.models import ModelRequestContext
     from pydantic_ai.result import FinalResult
-
-
-def _drain_by_priority(
-    queue: list[PendingMessage],
-    priority: PendingMessagePriority,
-) -> list[PendingMessage]:
-    """Remove and return all messages with the given priority from the queue."""
-    drained: list[PendingMessage] = []
-    remaining: list[PendingMessage] = []
-    for msg in queue:
-        if msg.priority == priority:
-            drained.append(msg)
-        else:
-            remaining.append(msg)
-    queue[:] = remaining
-    return drained
 
 
 def _stamped_messages(
@@ -99,8 +83,9 @@ class PendingMessageDrainCapability(AbstractCapability[Any]):
         [`enqueue`][pydantic_ai.tools.RunContext.enqueue] call, in enqueue order, describing the
         messages exactly as delivered here.
         """
-        assert ctx.pending_messages is not None, 'drain runs during an agent run, which always has a queue'
-        drained = _drain_by_priority(ctx.pending_messages, 'asap')
+        queue = ctx._pending_message_queue  # pyright: ignore[reportPrivateUsage]
+        assert queue is not None, 'drain runs during an agent run, which always has a queue'
+        drained = queue.pop_priority('asap')
         for pending in drained:
             messages = _stamped_messages(
                 pending, fallback_run_id=ctx.run_id, fallback_conversation_id=ctx.conversation_id
@@ -136,13 +121,13 @@ class PendingMessageDrainCapability(AbstractCapability[Any]):
         if not isinstance(result, End):
             return result
 
-        assert ctx.pending_messages is not None, 'drain runs during an agent run, which always has a queue'
+        queue = ctx._pending_message_queue  # pyright: ignore[reportPrivateUsage]
+        assert queue is not None, 'drain runs during an agent run, which always has a queue'
         # Pi-mono parity: drain `'asap'` first so anything that arrived during the
         # final step (e.g. a background task completing while the model produced
         # its final response) gets delivered before `'when_idle'` messages, and the
         # agent gets another turn rather than terminating with the message lost.
-        leftover_asap = _drain_by_priority(ctx.pending_messages, 'asap')
-        when_idle = _drain_by_priority(ctx.pending_messages, 'when_idle')
+        leftover_asap, when_idle = queue.pop_all_by_priority()
         if not leftover_asap and not when_idle:
             return result
 

@@ -5,6 +5,7 @@ Split out of `test_capabilities.py` per #7304.
 
 from __future__ import annotations
 
+import threading
 from collections.abc import AsyncIterable, AsyncIterator
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -16,7 +17,7 @@ import pytest
 from pydantic import BaseModel, TypeAdapter
 
 from pydantic_ai import _agent_graph
-from pydantic_ai._enqueue import PendingMessage
+from pydantic_ai._enqueue import PendingMessage, PendingMessagePriority, PendingMessageQueue
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.agent import Agent
 from pydantic_ai.capabilities import (
@@ -65,6 +66,52 @@ pytestmark = [
 
 
 # ===== Pending Message Queue Tests =====
+
+
+@pytest.mark.parametrize('drain_all', [False, True], ids=['one-priority', 'all-priorities'])
+def test_sync_enqueue_does_not_race_pending_message_drain(drain_all: bool):
+    """A worker-thread enqueue waits for the drain transaction instead of being overwritten."""
+    drain_started = threading.Event()
+    release_drain = threading.Event()
+    enqueue_started = threading.Event()
+
+    class BlockingQueue(PendingMessageQueue):
+        def _pop_priority(self, priority: PendingMessagePriority) -> list[PendingMessage]:
+            drain_started.set()
+            assert release_drain.wait(timeout=5)
+            return super()._pop_priority(priority)
+
+    pending_messages: list[PendingMessage] = []
+    queue = BlockingQueue(pending_messages)
+    ctx = RunContext(
+        deps=None,
+        model=TestModel(),
+        usage=RunUsage(),
+        pending_messages=pending_messages,
+        _pending_message_queue=queue,
+    )
+
+    drain = queue.pop_all_by_priority if drain_all else lambda: queue.pop_priority('asap')
+    drain_thread = threading.Thread(target=drain)
+    drain_thread.start()
+    assert drain_started.wait(timeout=5)
+
+    def enqueue() -> None:
+        enqueue_started.set()
+        ctx.enqueue('from sync tool')
+
+    enqueue_thread = threading.Thread(target=enqueue)
+    enqueue_thread.start()
+    assert enqueue_started.wait(timeout=5)
+    assert enqueue_thread.is_alive()
+
+    release_drain.set()
+    drain_thread.join(timeout=5)
+    enqueue_thread.join(timeout=5)
+
+    assert not drain_thread.is_alive()
+    assert not enqueue_thread.is_alive()
+    assert len(pending_messages) == 1
 
 
 async def test_enqueue_asap_message_from_tool():
