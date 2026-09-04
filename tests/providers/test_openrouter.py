@@ -24,11 +24,13 @@ from ..conftest import TestEnv, try_import
 with try_import() as imports_successful:
     import openai
 
+    from pydantic_ai.models import ModelRequestParameters
     from pydantic_ai.models.openrouter import OpenRouterModel
     from pydantic_ai.providers.openrouter import (
         OpenRouterProvider,
         _OpenRouterGoogleJsonSchemaTransformer,  # pyright: ignore[reportPrivateUsage]
     )
+    from pydantic_ai.tools import ToolDefinition
 
 
 pytestmark = [
@@ -345,3 +347,67 @@ def test_openrouter_google_json_schema_transformer():
     # Removed fields
     assert '$schema' not in result
     assert 'title' not in result
+
+
+@pytest.mark.parametrize(
+    'model_name',
+    [
+        'google/gemini-2.5-flash',
+        'google/gemini-2.5-pro',
+        'google/gemini-3.0-pro',
+    ],
+)
+def test_openrouter_google_model_profile_supports_tool_return_schema(model_name: str) -> None:
+    """Google models relayed through OpenRouter set supports_tool_return_schema=False."""
+    # The native Google profile sets supports_tool_return_schema=True
+    native_profile = google_model_profile(model_name)
+    assert native_profile is not None
+    assert native_profile.get('supports_tool_return_schema') is True
+
+    # The OpenRouter overlay clears supports_tool_return_schema so schemas are injected into descriptions
+    provider = OpenRouterProvider(api_key='api-key')
+    profile = provider.model_profile(model_name)
+    assert profile is not None
+    assert profile.get('supports_tool_return_schema') is False
+
+
+def test_openrouter_google_model_return_schema_injection() -> None:
+    """Return schemas are injected into tool definitions for Google models on OpenRouter."""
+    provider = OpenRouterProvider(api_key='api-key')
+    model = OpenRouterModel('google/gemini-2.5-flash', provider=provider)
+    assert model.profile.get('supports_tool_return_schema') is False
+
+    td_opt_in = ToolDefinition(
+        name='lookup_user',
+        description='Look up user by ID',
+        parameters_json_schema={'type': 'object', 'properties': {'user_id': {'type': 'string'}}},
+        return_schema={'type': 'object', 'properties': {'name': {'type': 'string'}}},
+        include_return_schema=True,
+    )
+    td_no_opt_in = ToolDefinition(
+        name='delete_user',
+        description='Delete a user',
+        parameters_json_schema={'type': 'object', 'properties': {'user_id': {'type': 'string'}}},
+        return_schema={'type': 'object', 'properties': {'success': {'type': 'boolean'}}},
+        include_return_schema=False,
+    )
+    params = ModelRequestParameters(
+        function_tools=[td_opt_in, td_no_opt_in],
+        output_tools=[],
+        output_mode='auto',
+        output_object=None,
+    )
+
+    _, prepared_params = model.prepare_request(None, params)
+
+    # Opted-in tool gets return schema injected into its description, and return_schema field cleared
+    assert prepared_params.function_tools[0].return_schema is None
+    assert prepared_params.function_tools[0].description is not None
+    assert 'Look up user by ID' in prepared_params.function_tools[0].description
+    assert 'Return schema:' in prepared_params.function_tools[0].description
+    assert '"name": {\n      "type": "string"\n    }' in prepared_params.function_tools[0].description
+
+    # Tool without opt-in gets return_schema cleared without injection into description
+    assert prepared_params.function_tools[1].return_schema is None
+    assert prepared_params.function_tools[1].description == 'Delete a user'
+    assert 'Return schema:' not in (prepared_params.function_tools[1].description or '')

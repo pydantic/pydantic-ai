@@ -113,12 +113,20 @@ def _openrouter_google_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a Google model accessed via OpenRouter.
 
     Uses the legacy transformer to maintain compatibility with OpenRouter's
-    translation layer, which doesn't fully support modern JSON Schema features.
+    translation layer, which doesn't fully support modern JSON Schema features,
+    and sets `supports_tool_return_schema=False` so return schemas are injected
+    into tool descriptions rather than dropped by OpenAI-compatible gateway transports.
     """
     profile = google_model_profile(model_name)
     if profile is None:  # pragma: no cover
         return None
-    return merge_profile(profile, ModelProfile(json_schema_transformer=_OpenRouterGoogleJsonSchemaTransformer))
+    return merge_profile(
+        profile,
+        ModelProfile(
+            json_schema_transformer=_OpenRouterGoogleJsonSchemaTransformer,
+            supports_tool_return_schema=False,
+        ),
+    )
 
 
 class OpenRouterProvider(_OpenAICompatibleProvider):
