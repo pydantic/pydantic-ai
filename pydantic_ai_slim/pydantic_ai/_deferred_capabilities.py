@@ -37,6 +37,7 @@ class LoadCapabilityArgs(TypedDict):
     """ID of the capability to load."""
 
 
+@pydantic.with_config(pydantic.ConfigDict(extra='allow'))
 class LoadCapabilityReturn(TypedDict):
     """Typed return value for the `load_capability` tool."""
 

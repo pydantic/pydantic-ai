@@ -12,6 +12,7 @@ from typing import Any, cast
 
 import pytest
 
+from pydantic_ai._deferred_capabilities import LoadCapabilityReturn
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.agent import Agent
 from pydantic_ai.capabilities import (
@@ -33,6 +34,7 @@ from pydantic_ai.messages import (
     LoadCapabilityCallPart,
     LoadCapabilityReturnPart,
     ModelMessage,
+    ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
     RetryPromptPart,
@@ -1004,6 +1006,43 @@ def test_load_capability_parts_round_trip_through_message_history() -> None:
     rebuilt = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json([response, request]))
     assert isinstance(rebuilt[0].parts[0], LoadCapabilityCallPart)
     assert isinstance(rebuilt[1].parts[0], LoadCapabilityReturnPart)
+
+
+def test_load_capability_return_part_round_trip_preserves_extra_content() -> None:
+    """Unknown load-capability return fields survive message-history serialization."""
+    content = cast(
+        'LoadCapabilityReturn', {'instructions': 'Confirm the order id.', 'version': 2, 'tools': ['refunds']}
+    )
+    messages: list[ModelMessage] = [ModelRequest(parts=[LoadCapabilityReturnPart(content=content, tool_call_id='c1')])]
+
+    rebuilt = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(messages))
+
+    assert isinstance(rebuilt[0].parts[0], LoadCapabilityReturnPart)
+    assert rebuilt[0].parts[0].content == content
+
+
+def test_load_capability_return_part_from_history_preserves_extra_content() -> None:
+    """Unknown load-capability return fields survive loading persisted message history."""
+    content = {'instructions': 'Confirm the order id.', 'version': 2, 'tools': ['refunds']}
+    raw = [
+        {
+            'kind': 'request',
+            'parts': [
+                {
+                    'part_kind': 'tool-return',
+                    'tool_name': 'load_capability',
+                    'tool_kind': 'capability-load',
+                    'content': content,
+                    'tool_call_id': 'c1',
+                }
+            ],
+        }
+    ]
+
+    loaded = ModelMessagesTypeAdapter.validate_python(raw)
+
+    assert isinstance(loaded[0].parts[0], LoadCapabilityReturnPart)
+    assert loaded[0].parts[0].content == content
 
 
 async def test_deferred_capability_loads_instructions_and_tools_e2e() -> None:
