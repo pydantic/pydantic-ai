@@ -12211,6 +12211,7 @@ async def test_anthropic_tool_return_reveal_parallel_batch_live(
 
 
 def test_anthropic_synthesized_reveal_does_not_cross_unrelated_parts() -> None:
+    """A cassette cannot detect changes to the projected message order."""
     model = AnthropicModel(
         'claude-sonnet-5', provider=AnthropicProvider(anthropic_client=cast(AsyncAnthropic, MockAnthropic()))
     )
@@ -12239,6 +12240,7 @@ def test_anthropic_synthesized_reveal_does_not_cross_unrelated_parts() -> None:
 
 
 def test_anthropic_synthesized_reveals_follow_parallel_results() -> None:
+    """A cassette cannot detect changes to the projected message order."""
     model = AnthropicModel(
         'claude-sonnet-5', provider=AnthropicProvider(anthropic_client=cast(AsyncAnthropic, MockAnthropic()))
     )
