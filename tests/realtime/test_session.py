@@ -3,6 +3,7 @@
 from __future__ import annotations as _annotations
 
 import asyncio
+import gc
 import io
 import wave
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Sequence
@@ -81,7 +82,7 @@ from pydantic_ai.realtime import (
     RealtimeTurnCompleteEvent,
     TranscriptUpdate,
 )
-from pydantic_ai.realtime._session import _pending_message_text  # pyright: ignore[reportPrivateUsage]
+from pydantic_ai.realtime._session import _pending_message_text, _TapView  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.realtime._utils import resolve_advertised_tools, seed_pcm_audio, seed_speech_content
 from pydantic_ai.realtime.codec import (
     AudioDelta,
@@ -646,22 +647,101 @@ async def test_close_ends_views_and_is_idempotent() -> None:
             await anext(session.stream_audio())
 
 
-async def test_view_is_lazy_and_does_not_replay_events() -> None:
+async def test_view_subscribes_at_call_time_and_does_not_replay_earlier_events() -> None:
     session = RealtimeSession(FakeRealtimeConnection([AudioDelta(b'audio')]))
 
     async with session:
-        unused_audio = session.stream_audio()
-        unused_transcripts = session.stream_transcripts()
+        audio = session.stream_audio()
         assert [event async for event in session]
-        assert [chunk async for chunk in unused_audio] == []
-        assert [part async for part in unused_transcripts] == []
+        assert [chunk async for chunk in audio] == [b'audio']
+        # Views created after the pump has finished get nothing: no replay, and they end at once.
+        assert [chunk async for chunk in session.stream_audio()] == []
+        assert [part async for part in session.stream_transcripts()] == []
 
 
 async def test_view_requires_entered_session() -> None:
     session = RealtimeSession(FakeRealtimeConnection([]))
 
     with pytest.raises(UserError, match='Enter the realtime session'):
-        await anext(session.stream_audio())
+        session.stream_audio()
+
+
+async def test_views_created_before_response_are_consumed_after_it() -> None:
+    conn = BlockingRealtimeConnection(
+        [AudioDelta(b'a1'), AudioDelta(b'a2'), OutputTranscript(text='hi there', is_final=True), ResponseDone()]
+    )
+    session = RealtimeSession(conn)
+
+    async with session:
+        audio = session.stream_audio()
+        transcripts = session.stream_transcripts()
+        await session.create_response()
+        audio_task = asyncio.create_task(aiter_to_list(audio))
+        transcript_task = asyncio.create_task(aiter_to_list(transcripts))
+        events: list[RealtimeEvent] = []
+        async for event in session:  # pragma: no branch
+            events.append(event)
+            if isinstance(event, RealtimeTurnCompleteEvent):
+                break
+        for _ in range(5):
+            await asyncio.sleep(0)
+
+    assert RealtimeTurnCompleteEvent() in events
+    assert await audio_task == [b'a1', b'a2']
+    assert [part.transcript for part in await transcript_task] == ['hi there']
+
+
+async def test_view_consumer_can_await_before_iterating() -> None:
+    session = RealtimeSession(BlockingRealtimeConnection([AudioDelta(b'audio'), ResponseDone()]))
+    got: list[bytes] = []
+
+    async def play_audio(chunks: AsyncIterator[bytes]) -> None:
+        await asyncio.sleep(0)
+        async for chunk in chunks:
+            got.append(chunk)
+
+    async with session:
+        task = asyncio.create_task(play_audio(session.stream_audio()))
+        async for event in session:  # pragma: no branch
+            if isinstance(event, RealtimeTurnCompleteEvent):
+                break
+        for _ in range(5):
+            await asyncio.sleep(0)
+
+    await task
+    assert got == [b'audio']
+
+
+async def test_closing_an_unstarted_view_releases_its_tap() -> None:
+    session = RealtimeSession(FakeRealtimeConnection([AudioDelta(b'audio')]))
+
+    async with session:
+        audio = session.stream_audio()
+        transcripts = session.stream_transcripts()
+        assert isinstance(audio, _TapView) and isinstance(transcripts, _TapView)
+        assert len(session._audio_taps) == 1  # pyright: ignore[reportPrivateUsage]
+        assert len(session._transcript_taps) == 1  # pyright: ignore[reportPrivateUsage]
+        # `aclose()` on a never-started async generator runs no `finally`; the view releases the tap itself.
+        await audio.aclose()
+        await transcripts.aclose()
+        assert len(session._audio_taps) == 0  # pyright: ignore[reportPrivateUsage]
+        assert len(session._transcript_taps) == 0  # pyright: ignore[reportPrivateUsage]
+        await drain_events(session)
+        assert session._audio_tap_drops == 0  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_abandoned_unstarted_view_releases_its_tap() -> None:
+    chunks = [bytes([index]) for index in range(40)]
+    session = RealtimeSession(FakeRealtimeConnection([AudioDelta(chunk) for chunk in chunks]))
+
+    async with session:
+        view = session.stream_audio()
+        assert len(session._audio_taps) == 1  # pyright: ignore[reportPrivateUsage]
+        del view
+        gc.collect()
+        assert len(session._audio_taps) == 0  # pyright: ignore[reportPrivateUsage]
+        await drain_events(session)
+        assert session._audio_tap_drops == 0  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_assistant_transcript_partials_then_final() -> None:
@@ -1411,7 +1491,7 @@ async def test_interrupt_played_bytes_anchors_at_the_subscription_point() -> Non
     async with session:
         stream = session.stream_audio()
         assert await anext(stream) == b'a' * _CHUNK
-        assert isinstance(stream, AsyncGenerator)
+        assert isinstance(stream, _TapView)
         await stream.aclose()  # unsubscribe, so the second stream is the session's only one
 
         conn.release.set()
@@ -2668,26 +2748,64 @@ async def test_upstream_error_surfaces_at_close_when_the_stream_was_never_iterat
             raise ValueError('mine')
 
 
-async def test_tool_error_surfaces_at_close_when_the_stream_was_never_iterated() -> None:
-    """A failed tool reaches the consumer through the queue, which has no reader here.
-
-    Like the pump-error case above, `close()` is the only place left for it to surface: without this
-    a caller using only `send()` and the audio/transcript views would exit cleanly from a tool that
-    actually crashed.
-    """
+async def test_tool_error_ends_views_when_the_stream_was_never_iterated() -> None:
+    """A failed tool ends taps so a taps-only caller reaches `close()` and receives the error."""
 
     async def runner(*args: Any) -> str:
-        raise RuntimeError('tool exploded')
+        raise ValueError('tool exploded')
 
     session = RealtimeSession(
-        FakeRealtimeConnection([ToolCall(tool_call_id='tc1', tool_name='noop', args='{}')]),
+        BlockingRealtimeConnection([ToolCall(tool_call_id='tc1', tool_name='noop', args='{}')]),
         runner=runner,
     )
-    with pytest.raises(RuntimeError, match='tool exploded'):
+    with pytest.raises(ValueError, match='tool exploded'):
         async with session:
-            # Drive the pump through an audio view alone, like the quickstart's playback task.
-            assert [chunk async for chunk in session.stream_audio()] == []
-            await asyncio.sleep(0.05)  # let the failed tool's error reach the queue
+            assert await asyncio.wait_for(_collect(session.stream_audio()), timeout=1) == []
+            # A view subscribed after the failure also ends immediately.
+            assert await asyncio.wait_for(_collect(session.stream_transcripts()), timeout=1) == []
+
+
+async def test_tool_retry_exhaustion_ends_views_when_the_stream_was_never_iterated() -> None:
+    async def runner(*args: Any) -> str:
+        raise UnexpectedModelBehavior('retry budget exhausted')
+
+    session = RealtimeSession(
+        BlockingRealtimeConnection([ToolCall(tool_call_id='tc1', tool_name='noop', args='{}')]),
+        runner=runner,
+    )
+    with pytest.raises(UnexpectedModelBehavior, match='retry budget exhausted'):
+        async with session:
+            assert await asyncio.wait_for(_collect(session.stream_transcripts()), timeout=1) == []
+
+
+async def test_tool_error_leaves_views_open_for_an_iterating_consumer() -> None:
+    async def runner(*args: Any) -> str:
+        raise ValueError('tool exploded')
+
+    session = RealtimeSession(
+        BlockingRealtimeConnection([ToolCall(tool_call_id='tc1', tool_name='noop', args='{}')]),
+        runner=runner,
+    )
+    async with session:
+        audio = session.stream_audio()
+
+        async def consume_events() -> None:
+            with pytest.raises(ValueError, match='tool exploded'):
+                async for _ in session:
+                    pass
+
+        consumer = asyncio.create_task(consume_events())
+        await asyncio.sleep(0)
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(anext(audio), timeout=0.05)
+        await consumer
+        assert session._pump_task is not None and not session._pump_task.done()  # pyright: ignore[reportPrivateUsage]
+    with pytest.raises(StopAsyncIteration):
+        await anext(audio)
+
+
+async def _collect(iterator: AsyncIterator[Any]) -> list[Any]:
+    return [item async for item in iterator]
 
 
 async def test_upstream_error_does_not_wait_for_running_tool() -> None:
@@ -7006,6 +7124,38 @@ async def test_agent_realtime_session_capability_tool_hooks() -> None:
     result = next(e for e in events if isinstance(e, FunctionToolResultEvent))
     assert result.part.content == '[hooked] hi'
     assert cap.events == ['before:greet', 'after:hi']
+
+
+async def test_agent_realtime_session_capability_recovers_tool_error_for_taps_only_consumer() -> None:
+    class RecoverToolError(AbstractCapability[object]):
+        async def on_tool_execute_error(
+            self,
+            ctx: RunContext[object],
+            *,
+            call: ToolCallPart,
+            tool_def: ToolDefinition,
+            args: dict[str, Any],
+            error: Exception,
+        ) -> str:
+            assert str(error) == 'service unavailable'
+            return 'fallback result'
+
+    agent: Agent[None, str] = Agent()
+
+    @agent.tool_plain
+    def lookup() -> str:
+        raise ValueError('service unavailable')
+
+    conn = BlockingRealtimeConnection([ToolCall(tool_call_id='t1', tool_name='lookup', args='{}'), ResponseDone()])
+    model = FakeRealtimeModel(conn)
+    async with agent.realtime(model, capabilities=[RecoverToolError()]).session() as session:
+        audio = asyncio.create_task(_collect(session.stream_audio()))
+        with anyio.fail_after(1):
+            while not conn.sent:
+                await asyncio.sleep(0)
+
+    assert conn.sent == [ToolResult(tool_call_id='t1', output='fallback result')]
+    assert await audio == []
 
 
 async def test_agent_realtime_session_metadata_and_conversation_id() -> None:
