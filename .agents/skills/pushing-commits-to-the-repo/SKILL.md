@@ -257,14 +257,30 @@ if the head changes, capture the new SHA and restart the loop.
    is the source of truth for eligibility and accepted verdicts or no-ops.
    - **Same-repository PR:** require the `CI Review` terminal outcome to identify the captured SHA.
      A `CI Review skipped` check is not that outcome; read its summary for the reason. When the
-     reason is a standing `REQUEST_CHANGES`, escalate: only someone with the permission can dismiss
-     it, and no push clears it. Dismissal restores eligibility without producing a verdict —
-     something still has to fire the workflow. Any of three do: a new commit's `CI`, a re-run of
-     the existing `CI` run, or `workflow_dispatch` with the PR in `aw_context`.
+     reason is a standing `REQUEST_CHANGES`, escalate: dismissing a review needs a permission you
+     do not have, and no push clears it. A dismissal alone produces no verdict either — something
+     still has to fire the workflow, and what works depends on whether the head moved.
+
+     After a dismissal, when the head has moved since the dismissed review, any of three fire it:
+     that new commit's `CI`, a re-run of the existing `CI` run, or `workflow_dispatch` carrying the
+     PR in `aw_context`. When the head has **not** moved — you refuted every finding and changed no
+     code — none of the three reaches a verdict. The gate's rerun-dedup matches a review on
+     `commit_id` plus its marker and never looks at `.state`, so the dismissed review still counts
+     and the run skips with `already reviewed <sha>`. Only a new commit clears that.
+
      Do not read the head's `CI Review skipped` check as evidence the review did not run. That
-     check is written only when the gate skips, so an eligible run leaves it untouched and stale.
-     The run itself is attributed to the default branch, not to your head, so it never appears
-     among the head's workflow runs either. Read the review workflow's own latest run.
+     check is written only when the gate skips, so an eligible run leaves it untouched and stale,
+     and a run that dies after the gate leaves no check at all. The run is attributed to the
+     default branch, so it never appears among the head's runs, and its `.pull_requests` field
+     lists unrelated PRs. Correlate on time instead — your run is the one created seconds after
+     your `CI` run finished:
+
+     ```bash
+     gh api "repos/$REPO/actions/runs?head_sha=$HEAD_SHA&per_page=50" \
+       --jq '.workflow_runs[] | select(.name=="CI") | .updated_at'
+     gh run list --repo "$REPO" --workflow pydantic-ai-pr-review.lock.yml \
+       --limit 20 --json databaseId,createdAt,conclusion,url
+     ```
    - **Fork PR:** `CI Review` deliberately skips without leaving a head check. First apply the
      agent-config guard from `.github/workflows/bots.yml` to the captured base-to-head diff. If the
      PR changes an `AGENTS.md` or `CLAUDE.md` at any depth, `CLAUDE.local.md`, `.mcp.json`,
@@ -296,8 +312,9 @@ if the head changes, capture the new SHA and restart the loop.
      either: the workflow's eligibility gate skips whenever the PR's `reviewDecision` is
      `CHANGES_REQUESTED`, which its own standing verdict satisfies. Resolving the threads is not
      enough — the review itself has to be dismissed by someone with that permission, and the
-     dismissal alone still produces no verdict: it only makes the next run eligible. Say so when
-     you hand the PR back, and name the review.
+     dismissal alone still produces no verdict. On an unmoved head it does not even make the next
+     run eligible; see the `CI Review` notes in step 3. Say so when you hand the PR back, and name
+     the review.
    - Minimize issue-level review dumps when handled. Never silently ignore feedback or close it
      without a reply.
 
