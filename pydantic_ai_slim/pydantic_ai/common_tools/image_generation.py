@@ -63,8 +63,8 @@ _IMAGE_ONLY_MODELS: dict[str, str] = {
     'imagen-3.0-generate-002': 'google:gemini-3-pro-image',
     'imagen-3.0-fast-generate-001': 'google:gemini-3-pro-image',
     # xAI has no conversational model that supports the `ImageGenerationTool`, so the Grok Imagine
-    # family's suggested alternative crosses providers; `local='xai:grok-imagine-image'` is the way
-    # to stay on xAI, which the error's first sentence points at.
+    # family's suggested alternative crosses providers; `fallback_image_model='xai:grok-imagine-image'`
+    # is the way to stay on xAI, which the error's first sentence points at.
     'grok-imagine-image': 'openai-responses:gpt-5.5',
     'grok-imagine-image-2.0': 'openai-responses:gpt-5.5',
     'grok-imagine-image-2026-03-02': 'openai-responses:gpt-5.5',
@@ -81,9 +81,8 @@ def _check_image_only_model(model: str) -> None:
     if suggestion := _IMAGE_ONLY_MODELS.get(model_name):
         raise UserError(
             f'{model_name!r} is a dedicated image generation model that cannot be used as '
-            f'`fallback_model` directly. Pass an `ImageGenerator` with a direct image model '
-            f'to `local` instead, or use a conversational model with image generation support, '
-            f'e.g. {suggestion!r}.'
+            f'`fallback_model` directly. Pass it to `fallback_image_model` instead, or use a '
+            f'conversational model with image generation support, e.g. {suggestion!r}.'
         )
 
 

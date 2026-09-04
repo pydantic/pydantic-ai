@@ -225,7 +225,7 @@ def test_agent_from_spec_direct_image_generation():
                 {
                     'ImageGeneration': {
                         'native': False,
-                        'local': 'openai:gpt-image-1.5',
+                        'fallback_image_model': 'openai:gpt-image-1.5',
                         'dimensions': [1280, 720],
                     }
                 }
@@ -1938,12 +1938,16 @@ def test_model_json_schema_with_capabilities():
                             'title': 'Native',
                         },
                         'local': {
-                            'anyOf': [{'type': 'string'}, {'const': False, 'type': 'boolean'}, {'type': 'null'}],
+                            'anyOf': [{'const': False, 'type': 'boolean'}, {'type': 'null'}],
                             'title': 'Local',
                         },
                         'fallback_model': {
                             'anyOf': [{'$ref': '#/$defs/KnownModelName'}, {'type': 'string'}, {'type': 'null'}],
                             'title': 'Fallback Model',
+                        },
+                        'fallback_image_model': {
+                            'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                            'title': 'Fallback Image Model',
                         },
                         'action': {
                             'anyOf': [{'enum': ['generate', 'edit', 'auto'], 'type': 'string'}, {'type': 'null'}],

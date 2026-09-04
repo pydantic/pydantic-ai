@@ -22,20 +22,23 @@ agent = Agent(
     capabilities=[
         ImageGeneration(
             native=False,
-            local=image_generator,
+            fallback_image_model=image_generator,
             dimensions=(1024, 1024),
         )
     ],
 )
 ```
 
-`ImageGeneration()` is native-only by default. Set `local` to a direct image model name,
+`ImageGeneration()` is native-only by default. Set `fallback_image_model` to a direct image model name,
 [`ImageGenerator`][pydantic_ai.images.ImageGenerator], or
 [`ImageGenerationModel`][pydantic_ai.images.ImageGenerationModel] to add a fallback without creating another agent.
-`local` names where the tool runs, not where the model runs: like every
-[`NativeOrLocalTool`][pydantic_ai.capabilities.NativeOrLocalTool] fallback, including
-[`WebSearch`][pydantic_ai.capabilities.WebSearch]'s `'duckduckgo'` strategy, it runs in your Python process, so
-`local='openai:gpt-image-2'` still calls OpenAI's API:
+The direct model generates through the image API, where `fallback_model` runs a conversational model in a subagent,
+and it is reached when the agent's model has no native image generation — or on every call, with `native=False`.
+`ImageGeneration` has no bundled local strategy, so `local` here is a tool of your own.
+
+Two of the fields name an image model and they are not interchangeable: `image_model` configures the provider's native
+tool and is unprefixed (`image_model='gpt-image-2'`), while `fallback_image_model` selects the direct model and carries
+its provider:
 
 ```python {title="image_generation_routing.py"}
 from pydantic_ai import ImageGenerator
@@ -43,10 +46,10 @@ from pydantic_ai.capabilities import ImageGeneration
 from pydantic_ai.images.openai import OpenAIImageGenerationSettings
 
 # Native preferred; use the direct model when native generation is unavailable
-ImageGeneration(local='openai:gpt-image-1.5')
+ImageGeneration(fallback_image_model='openai:gpt-image-1.5')
 
 # Always use the direct image API
-ImageGeneration(native=False, local='google:gemini-3.1-flash-lite-image')
+ImageGeneration(native=False, fallback_image_model='google:gemini-3.1-flash-lite-image')
 
 # Supply reusable direct settings through an explicit generator
 generator = ImageGenerator(
@@ -56,14 +59,14 @@ generator = ImageGenerator(
         openai_quality='low',
     ),
 )
-ImageGeneration(native=False, local=generator, dimensions=(1280, 720))
+ImageGeneration(native=False, fallback_image_model=generator, dimensions=(1280, 720))
 
 
-# A custom callable or Tool can still implement the local side
-def my_generator(prompt: str) -> bytes: ...
+# A custom callable or Tool of your own is what `local` is for
+def my_image_tool(prompt: str) -> bytes: ...
 
 
-ImageGeneration(local=my_generator)
+ImageGeneration(local=my_image_tool)
 ```
 
 The portable `dimensions` and `aspect_ratio` capability settings override defaults on an explicit generator.
@@ -74,10 +77,12 @@ settings went unapplied. Native-tool-only settings such as
 `quality` and `output_format` do not apply to a direct fallback; configure their
 provider-prefixed equivalents on the generator. `action='edit'` and `image_model` do not apply either: the direct
 fallback raises [`UserError`][pydantic_ai.exceptions.UserError] for `action='edit'`, because the `generate_image` tool
-receives no reference images, and ignores `image_model` with a warning, because `local` already names the image model.
-`native=False` makes the direct generator the only path, so both of those land at construction — the dropped settings as
-a warning and `action='edit'` as the error; with native enabled the native tool still carries them, so a request that
-routes to the direct generator instead is what warns that they went unapplied, and what raises for `action='edit'`. The direct `local=` generator must return exactly one generated
+receives no reference images, and ignores `image_model` with a warning, because `fallback_image_model` already names
+the image model it generates with.
+`native=False` makes the direct generator the only path, so both of those land at construction — the dropped settings
+as a warning and `action='edit'` as the error; with native enabled the native tool still carries them, so a request
+that routes to the direct generator instead is what warns that they went unapplied, and what raises for
+`action='edit'`. The direct generator must return exactly one generated
 [`BinaryImage`][pydantic_ai.messages.BinaryImage]; use
 [`ImageGenerator`][pydantic_ai.images.ImageGenerator] directly for multiple images or reference-image editing.
 
@@ -90,15 +95,15 @@ when the `fallback_model` subagent runs. Both resolutions receive the same `deps
 `RunContext`; use `ctx.deps` for configuration that must match across both. Capability-level fields override the
 factory result on the subagent.
 
-A static native instance's `aspect_ratio` reaches both fallbacks — the `fallback_model` subagent and the direct `local=`
-generator — while a capability-level `aspect_ratio` takes precedence over it, as does a capability-level `dimensions`,
-which is the same geometry spelled differently and cannot be combined with it. Only inheritance yields that way:
-setting both `dimensions` and `aspect_ratio` on the capability itself raises
-[`UserError`][pydantic_ai.exceptions.UserError] at construction, once a direct `local` generator is configured to apply
+A static native instance's `aspect_ratio` reaches whichever fallback you configured — the `fallback_model` subagent or
+the `fallback_image_model` generator — while a capability-level `aspect_ratio` takes precedence over it, as does a
+capability-level `dimensions`, which is the same geometry spelled differently and cannot be combined with it. Only
+inheritance yields that way: setting both `dimensions` and `aspect_ratio` on the capability itself raises
+[`UserError`][pydantic_ai.exceptions.UserError] at construction, once a `fallback_image_model` is configured to apply
 them.
 
 Instrumentation is per generator, not per agent: the agent-level
-[`Instrumentation`][pydantic_ai.capabilities.Instrumentation] capability does not reach the direct `local=` generator,
+[`Instrumentation`][pydantic_ai.capabilities.Instrumentation] capability does not reach the direct generator,
 so a run records no `image_generation` span unless the generator carries its own. Pass `instrument=` when you construct
 it, or switch it on globally with
 [`ImageGenerator.instrument_all()`][pydantic_ai.images.ImageGenerator.instrument_all]:
@@ -107,19 +112,20 @@ it, or switch it on globally with
 from pydantic_ai import ImageGenerator
 from pydantic_ai.capabilities import ImageGeneration
 
-ImageGeneration(native=False, local=ImageGenerator('openai:gpt-image-2', instrument=True))
+ImageGeneration(native=False, fallback_image_model=ImageGenerator('openai:gpt-image-2', instrument=True))
 ```
 
 See [Instrumentation](../image-generation.md#instrumentation) for what those spans carry.
 
 !!! warning "Durable execution with Temporal"
-    Generated images have to cross Temporal's activity boundary, where the payload size limit leaves roughly 1.5MB for raw image bytes. A larger image fails with a `UserError` — naming the tool when it came from a local generator (a direct `local=` image model or [`ImageGenerator`][pydantic_ai.images.ImageGenerator], the subagent fallback, or your own `local=` callable or toolset), or naming the model when the native tool put it on the response. See [Large Payloads](../durable_execution/temporal.md#large-payloads) for the options.
+    Generated images have to cross Temporal's activity boundary, where the payload size limit leaves roughly 1.5MB for raw image bytes. A larger image fails with a `UserError` — naming the tool when it came from a local generator (a `fallback_image_model` model name or [`ImageGenerator`][pydantic_ai.images.ImageGenerator], the subagent fallback, or your own `local=` callable or toolset), or naming the model when the native tool put it on the response. See [Large Payloads](../durable_execution/temporal.md#large-payloads) for the options.
 
 ## Fallback Options
 
 Two built-in mechanisms cover a model that does not generate images natively:
 
-- **Direct model**: `local=` with an image model name, [`ImageGenerator`][pydantic_ai.images.ImageGenerator], or
+- **Direct model**: `fallback_image_model=` with an image model name,
+  [`ImageGenerator`][pydantic_ai.images.ImageGenerator], or
   [`ImageGenerationModel`][pydantic_ai.images.ImageGenerationModel]. The tool call is a single image API call, with no
   extra agent run, and it applies the portable `dimensions` and `aspect_ratio` settings. Reach for it when the geometry
   or the choice of image model is yours to make.
@@ -127,7 +133,8 @@ Two built-in mechanisms cover a model that does not generate images natively:
   additional agent whose native [`ImageGenerationTool`][pydantic_ai.native_tools.ImageGenerationTool] produces the
   image. Reach for it when you want that model's native tool semantics and the settings the native tool carries.
 
-A `local=` callable, `Tool`, or toolset of your own replaces both with an implementation you write.
+A `local=` callable, `Tool`, or toolset of your own replaces both with an implementation you write. The three are
+alternatives: stating more than one raises [`UserError`][pydantic_ai.exceptions.UserError].
 
 !!! note "A factory returning `None`"
     Without `fallback_model`, `None` omits the native tool for that request. With `fallback_model`, the subagent tool
@@ -142,7 +149,8 @@ A `local=` callable, `Tool`, or toolset of your own replaces both with an implem
 
 The subagent speaks the native tool's geometry vocabulary. Direct-only values such as `dimensions`, arbitrary GPT
 Image 2 sizes, and additional aspect ratios are ignored with a warning. Use `native=False` with
-`local='provider:image-model'` to apply the [direct geometry settings](../image-generation.md#output-geometry).
+`fallback_image_model='provider:image-model'` to apply the
+[direct geometry settings](../image-generation.md#output-geometry).
 
 A provider content block becomes a retry prompt on either local path, so the model that wrote the prompt gets to
 rephrase it rather than failing the run. Other failures differ between the two: the subagent also turns an
@@ -154,17 +162,18 @@ direct model raises it. Using
 
 ## Agent Specs
 
-Direct model names such as `local='openai:gpt-image-1.5'` can be represented in JSON or YAML agent specs. Runtime
-objects accepted by the Python constructor — `ImageGenerator`, `ImageGenerationModel`, `Tool`, and callables — are not
-serializable and must be configured in Python. [`from_spec()`][pydantic_ai.capabilities.ImageGeneration.from_spec]
-keeps that serializable subset explicit while exposing the same setting names. Write `dimensions` as the two-item array
-used by JSON and YAML; Pydantic AI converts it to the `(width, height)` tuple used by the Python API:
+Direct model names such as `fallback_image_model='openai:gpt-image-1.5'` can be represented in JSON or YAML agent
+specs. Runtime objects accepted by the Python constructor — `ImageGenerator`, `ImageGenerationModel`, `Tool`, and
+callables — are not serializable and must be configured in Python.
+[`from_spec()`][pydantic_ai.capabilities.ImageGeneration.from_spec] keeps that serializable subset explicit while
+exposing the same setting names. Write `dimensions` as the two-item array used by JSON and YAML; Pydantic AI converts
+it to the `(width, height)` tuple used by the Python API:
 
 ```yaml
 model: anthropic:claude-sonnet-4-6
 capabilities:
   - ImageGeneration:
       native: false
-      local: openai:gpt-image-2
+      fallback_image_model: openai:gpt-image-2
       dimensions: [1280, 720]
 ```

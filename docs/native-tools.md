@@ -24,7 +24,7 @@ These tools are passed to the agent's `capabilities` list, wrapped in [`NativeTo
     If a provider supports a native tool that is not currently supported by Pydantic AI, please file an issue.
 
 !!! tip "Provider-adaptive capabilities"
-    For a higher-level, model-agnostic approach, consider the [provider-adaptive tool capabilities](capabilities/overview.md#provider-adaptive-tools): [`WebSearch`][pydantic_ai.capabilities.WebSearch], [`WebFetch`][pydantic_ai.capabilities.WebFetch], [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration], and [`MCP`][pydantic_ai.capabilities.MCP]. These automatically use the model's native tool when supported and fall back to a local implementation you enable with `local=`, so your agent works across providers without code changes. `MCP` is the exception: it runs locally by default and you opt into native MCP with `native=True`.
+    For a higher-level, model-agnostic approach, consider the [provider-adaptive tool capabilities](capabilities/overview.md#provider-adaptive-tools): [`WebSearch`][pydantic_ai.capabilities.WebSearch], [`WebFetch`][pydantic_ai.capabilities.WebFetch], [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration], and [`MCP`][pydantic_ai.capabilities.MCP]. These automatically use the model's native tool when supported and fall back to a local implementation you enable with `local=`, so your agent works across providers without code changes. Two work differently: `ImageGeneration` enables its built-in fallbacks with `fallback_image_model=` or `fallback_model=`, and `MCP` runs locally by default and opts into native MCP with `native=True`.
 
 ### Google tool combinations
 
@@ -425,7 +425,7 @@ For details on file management, container lifecycle, and persistence behavior, s
 !!! tip
     For application-controlled generation and editing with dedicated image models, see the
     [direct image-generation API](image-generation.md). For an agent tool that uses the model's native image
-    generation and falls back to a direct image model you pass as `local=`, see the
+    generation and falls back to a direct image model you pass as `fallback_image_model=`, see the
     [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] [capability](capabilities/image-generation.md).
 
 The [`ImageGenerationTool`][pydantic_ai.native_tools.ImageGenerationTool] enables your agent to generate images.

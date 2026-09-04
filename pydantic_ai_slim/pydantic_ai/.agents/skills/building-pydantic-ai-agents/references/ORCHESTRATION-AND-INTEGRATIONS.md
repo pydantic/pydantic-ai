@@ -132,7 +132,7 @@ Use `await generator.generate(...)` from async code. `result.image` is the first
 
 Pass reference images through `images=[...]` to edit or transform them. A provider content block raises `ContentFilterError` instead of returning an empty result, so a rejected prompt can be retried explicitly.
 
-When the agent rather than the application should decide, use the `ImageGeneration` capability with `local='openai:gpt-image-2'` (or an `ImageGenerator` / `ImageGenerationModel`), which calls the direct image model as a tool when the conversational model has no native image generation.
+When the agent rather than the application should decide, use the `ImageGeneration` capability with `fallback_image_model='openai:gpt-image-2'` (or an `ImageGenerator` / `ImageGenerationModel`), which calls the direct image model as a tool when the conversational model has no native image generation.
 
 ## Use LangChain Tools
 

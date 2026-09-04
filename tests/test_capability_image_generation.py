@@ -62,6 +62,12 @@ from .conftest import IsDatetime, IsInstance, IsStr, iter_message_parts, try_imp
 
 _REQUEST_BODY_ADAPTER = TypeAdapter(dict[str, Any])
 
+
+def _custom_local_tool(prompt: str) -> str:
+    """A local tool of the user's own, for cases that only need `local` to be stated."""
+    return 'image_url'  # pragma: no cover
+
+
 with try_import() as openai_imports:
     from pydantic_ai.models.openai import OpenAIResponsesModel
     from pydantic_ai.providers.openai import OpenAIProvider
@@ -89,6 +95,7 @@ class TestImageGenerationCapability:
             'native',
             'local',
             'fallback_model',
+            'fallback_image_model',
             'id',
             'defer_loading',
             'description',
@@ -124,38 +131,53 @@ class TestImageGenerationCapability:
     def test_image_generation_accepts_direct_image_model(self):
         """A direct image model is kept as declared; the capability tool is derived from it later."""
         image_model = TestImageGenerationModel()
-        cap = ImageGeneration(local=image_model)
+        cap = ImageGeneration(fallback_image_model=image_model)
 
-        assert cap.local is image_model
+        assert cap.fallback_image_model is image_model
+        assert cap.local is None
         assert cap.get_toolset() is not None
+
+    def test_image_generation_native_false_requires_a_fallback(self):
+        """`native=False` with nothing to fall back to is a capability that contributes nothing.
+
+        The base raises for this as well, but it offers remedies -- a strategy string, `local=True`
+        -- that this capability rejects, and names neither fallback field.
+        """
+        with pytest.raises(UserError, match=r'requires an explicit fallback.*fallback_image_model'):
+            ImageGeneration(native=False)
+
+    def test_image_generation_rejects_a_direct_image_model_on_local(self):
+        """`local` is the custom-tool field, so a direct image model is sent to its own."""
+        with pytest.raises(UserError, match=r'goes to `fallback_image_model`, not `local`'):
+            ImageGeneration(local=TestImageGenerationModel())  # pyright: ignore[reportArgumentType]
 
     def test_image_generation_accepts_direct_model_name(self):
         """A direct image model name resolves to an `ImageGenerator`, with the model itself deferred."""
-        cap = ImageGeneration(native=False, local='openai:gpt-image-1.5')
+        cap = ImageGeneration(native=False, fallback_image_model='openai:gpt-image-1.5')
 
-        assert isinstance(cap.local, ImageGenerator)
-        assert cap.local.model == 'openai:gpt-image-1.5'
+        assert isinstance(cap.fallback_image_model, ImageGenerator)
+        assert cap.fallback_image_model.model == 'openai:gpt-image-1.5'
         assert cap.get_toolset() is not None
 
     def test_image_generation_direct_model_name_warns_for_native_only_settings(self):
-        """The `local='provider:model'` arm drops native-only settings, and blames the caller's line.
+        """The `fallback_image_model='provider:model'` arm drops native-only settings, and blames the caller's line.
 
         The `stacklevel` that produces that attribution is a literal counted through four framework
         frames, so the warning's own `filename` is what pins it.
         """
         with pytest.warns(UserWarning, match='ignored native-tool setting.*quality') as recorded:
-            ImageGeneration(native=False, local='openai:gpt-image-1.5', quality='high')
+            ImageGeneration(native=False, fallback_image_model='openai:gpt-image-1.5', quality='high')
 
         assert [warning.filename for warning in recorded] == [__file__]
 
     def test_image_generation_from_spec_warns_for_native_only_settings(self):
-        """A spec-loaded string `local` drops the same settings, one frame short of the caller.
+        """A spec-loaded model name drops the same settings, one frame short of the caller.
 
         `from_spec` adds a frame the `stacklevel` literals don't count, so the warning lands on the
         capability module itself rather than on the spec's loader.
         """
         with pytest.warns(UserWarning, match='ignored native-tool setting.*quality') as recorded:
-            ImageGeneration.from_spec(native=False, local='openai:gpt-image-1.5', quality='high')
+            ImageGeneration.from_spec(native=False, fallback_image_model='openai:gpt-image-1.5', quality='high')
 
         assert [warning.filename for warning in recorded] == [inspect.getsourcefile(ImageGeneration)]
 
@@ -166,7 +188,9 @@ class TestImageGenerationCapability:
         generator is used at all is decided per request against the model's profile, and on the
         requests that drop it the native tool carries every one of these values.
         """
-        capability = ImageGeneration(local=ImageGenerator(TestImageGenerationModel()), quality='high', size='1024x1024')
+        capability = ImageGeneration(
+            fallback_image_model=ImageGenerator(TestImageGenerationModel()), quality='high', size='1024x1024'
+        )
 
         native_tool = capability.get_native_tools()[0]
         assert isinstance(native_tool, ImageGenerationTool)
@@ -191,7 +215,7 @@ class TestImageGenerationCapability:
         with pytest.warns(UserWarning, match='ignored native-tool setting'):
             capability = ImageGeneration(
                 native=False,
-                local=generator,
+                fallback_image_model=generator,
                 background='opaque',
                 input_fidelity='high',
                 moderation='low',
@@ -221,15 +245,15 @@ class TestImageGenerationCapability:
         aspect_ratio_model = TestImageGenerationModel()
         aspect_ratio_agent = Agent(
             outer_model,
-            capabilities=[ImageGeneration(native=False, local=aspect_ratio_model, aspect_ratio='1:1')],
+            capabilities=[ImageGeneration(native=False, fallback_image_model=aspect_ratio_model, aspect_ratio='1:1')],
         )
         await aspect_ratio_agent.run('Generate an image')
         assert aspect_ratio_model.last_settings == {'aspect_ratio': '1:1'}
 
-    async def test_image_generation_spec_string_local_resolves_deferred_model_during_run(
+    async def test_image_generation_spec_model_name_resolves_deferred_model_during_run(
         self, allow_model_requests: None, monkeypatch: pytest.MonkeyPatch
     ):
-        """A spec-loaded string `local` stays unresolved until the tool generates, then applies the JSON dimensions."""
+        """A spec-loaded model name stays unresolved until the tool generates, then applies the JSON dimensions."""
         image_model = TestImageGenerationModel()
         inferred_models: list[object] = []
 
@@ -250,7 +274,7 @@ class TestImageGenerationCapability:
                     {
                         'ImageGeneration': {
                             'native': False,
-                            'local': 'openai:gpt-image-1.5',
+                            'fallback_image_model': 'openai:gpt-image-1.5',
                             'dimensions': [1280, 720],
                         }
                     }
@@ -296,7 +320,7 @@ class TestImageGenerationCapability:
         agent = Agent(
             outer_model,
             capabilities=[
-                ImageGeneration(native=False, local=TestImageGenerationModel()),
+                ImageGeneration(native=False, fallback_image_model=TestImageGenerationModel()),
                 Instrumentation(settings=InstrumentationSettings(include_binary_content=False)),
             ],
         )
@@ -316,7 +340,7 @@ class TestImageGenerationCapability:
     def test_image_generation_direct_only_rejects_edit_action_at_construction(self):
         """`native=False` makes the prompt-only direct tool the only path, so the edit is refused up front."""
         with pytest.raises(UserError, match='cannot honor `action="edit"`'):
-            ImageGeneration(native=False, local=TestImageGenerationModel(), action='edit')
+            ImageGeneration(native=False, fallback_image_model=TestImageGenerationModel(), action='edit')
 
     async def test_image_generation_direct_fallback_rejects_edit_action(self, allow_model_requests: None):
         """The prompt-only capability tool cannot silently turn a requested edit into generation.
@@ -332,7 +356,7 @@ class TestImageGenerationCapability:
         outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
         agent = Agent(
             outer_model,
-            capabilities=[ImageGeneration(local=TestImageGenerationModel(), action='edit')],
+            capabilities=[ImageGeneration(fallback_image_model=TestImageGenerationModel(), action='edit')],
         )
 
         with pytest.raises(UserError, match='cannot honor `action="edit"`'):
@@ -350,7 +374,7 @@ class TestImageGenerationCapability:
             outer_model_fn,
             profile=ModelProfile(supported_native_tools=frozenset({ImageGenerationTool})),
         )
-        capability = ImageGeneration(local=ImageGenerator(image_model), action='edit')
+        capability = ImageGeneration(fallback_image_model=ImageGenerator(image_model), action='edit')
         agent = Agent(outer_model, capabilities=[capability])
 
         result = await agent.run('Edit an image')
@@ -361,7 +385,7 @@ class TestImageGenerationCapability:
         assert native_tool.action == 'edit'
 
     async def test_image_generation_direct_fallback_warns_for_image_model(self, allow_model_requests: None):
-        """The direct model is selected by `local`, so the legacy model override is explicit about being ignored."""
+        """The direct model is `fallback_image_model`'s to name, so the native override says it is ignored."""
 
         def outer_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             if any(isinstance(p, ToolReturnPart) for m in messages if isinstance(m, ModelRequest) for p in m.parts):
@@ -374,7 +398,7 @@ class TestImageGenerationCapability:
             capabilities=[
                 ImageGeneration(
                     native=False,
-                    local=TestImageGenerationModel(),
+                    fallback_image_model=TestImageGenerationModel(),
                     image_model='gpt-image-1',
                 )
             ],
@@ -386,18 +410,22 @@ class TestImageGenerationCapability:
         assert result.output == 'done'
 
     def test_image_generation_rejects_local_true(self):
-        """Unlike named image models, `local=True` is not an image generation strategy."""
+        """`local=True` is not an image generation strategy: the capability has no bundled local tool."""
         with pytest.raises(UserError, match=r'`local=True` is not supported'):
             ImageGeneration(local=True)  # pyright: ignore[reportArgumentType]
 
-    def test_image_generation_rejects_local_string_without_provider_prefix(self):
-        """A `local` string that is not a `provider:model` id is rejected where every other one is.
+    def test_image_generation_rejects_a_local_strategy_string(self):
+        """Every `local` string is rejected, and the message names the field a model belongs on."""
+        with pytest.raises(UserError, match=r"`local='duckduckgo'` is not supported.*fallback_image_model"):
+            ImageGeneration(native=False, local='duckduckgo')  # pyright: ignore[reportArgumentType]
 
-        Only the direct image model resolution behind a well-formed id is deferred to the first
-        generate call; a name no provider prefix can be split out of never gets that far.
+    def test_image_generation_rejects_a_model_name_without_a_provider_prefix(self):
+        """A name no provider prefix can be split out of is rejected at construction.
+
+        Only the model resolution behind a well-formed id is deferred to the first generate call.
         """
-        with pytest.raises(UserError, match=r"`local='duckduckgo'` is not supported"):
-            ImageGeneration(native=False, local='duckduckgo')
+        with pytest.raises(UserError, match=r"`fallback_image_model='gpt-image-1.5'` is not a direct image model"):
+            ImageGeneration(native=False, fallback_image_model='gpt-image-1.5')
 
     async def test_image_generation_direct_fallback_rejects_multiple_images(self, allow_model_requests: None):
         """The single-image capability contract never silently discards direct API outputs."""
@@ -419,7 +447,7 @@ class TestImageGenerationCapability:
         outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
         agent = Agent(
             outer_model,
-            capabilities=[ImageGeneration(native=False, local=MultipleImageGenerationModel())],
+            capabilities=[ImageGeneration(native=False, fallback_image_model=MultipleImageGenerationModel())],
             retries=0,
         )
 
@@ -438,7 +466,7 @@ class TestImageGenerationCapability:
             outer_model_fn,
             profile=ModelProfile(supported_native_tools=frozenset({ImageGenerationTool})),
         )
-        agent = Agent(outer_model, capabilities=[ImageGeneration(local=ImageGenerator(image_model))])
+        agent = Agent(outer_model, capabilities=[ImageGeneration(fallback_image_model=ImageGenerator(image_model))])
 
         result = await agent.run('Generate an image')
 
@@ -464,7 +492,7 @@ class TestImageGenerationCapability:
         )
         agent = Agent(
             outer_model,
-            capabilities=[ImageGeneration(local=ImageGenerator(image_model), dimensions=(1280, 720))],
+            capabilities=[ImageGeneration(fallback_image_model=ImageGenerator(image_model), dimensions=(1280, 720))],
         )
 
         with pytest.warns(UserWarning, match=r'direct-only setting\(s\) go unapplied: dimensions'):
@@ -489,7 +517,7 @@ class TestImageGenerationCapability:
             outer_model_fn,
             profile=ModelProfile(supported_native_tools=frozenset({ImageGenerationTool})),
         )
-        capability = ImageGeneration(local=ImageGenerator(image_model), dimensions=(1280, 720))
+        capability = ImageGeneration(fallback_image_model=ImageGenerator(image_model), dimensions=(1280, 720))
 
         copy = replace(capability, aspect_ratio=None)
 
@@ -520,7 +548,7 @@ class TestImageGenerationCapability:
         replaced.
         """
         image_model = TestImageGenerationModel()
-        capability = ImageGeneration(native=False, local=image_model, dimensions=(1024, 1024))
+        capability = ImageGeneration(native=False, fallback_image_model=image_model, dimensions=(1024, 1024))
 
         agent = Agent(direct_generation_model, capabilities=[replace(capability, dimensions=(1536, 1024))])
         await agent.run('Generate an image')
@@ -533,7 +561,9 @@ class TestImageGenerationCapability:
         `native=False` makes the prompt-only direct tool the only path, so the edit is unserviceable
         however the capability carrying it was built.
         """
-        capability = ImageGeneration(native=False, local=TestImageGenerationModel(), dimensions=(1024, 1024))
+        capability = ImageGeneration(
+            native=False, fallback_image_model=TestImageGenerationModel(), dimensions=(1024, 1024)
+        )
 
         with pytest.raises(UserError, match='cannot honor `action="edit"`'):
             replace(capability, action='edit')
@@ -550,12 +580,39 @@ class TestImageGenerationCapability:
         with pytest.warns(UserWarning, match=r'ignored direct-only setting\(s\): dimensions'):
             agent = Agent(
                 direct_generation_model,
-                capabilities=[ImageGeneration(local=image_model), ImageGeneration(dimensions=(1536, 1024))],
+                capabilities=[
+                    ImageGeneration(fallback_image_model=image_model),
+                    ImageGeneration(dimensions=(1536, 1024)),
+                ],
             )
 
         await agent.run('Generate an image')
 
         assert image_model.last_settings == snapshot({'dimensions': (1536, 1024)})
+
+    async def test_image_generation_merged_fallback_image_model_takes_the_later_one(
+        self, allow_model_requests: None, direct_generation_model: FunctionModel
+    ):
+        """Two capabilities naming different direct models leave one unused, so the later one wins.
+
+        A single value, merged the way the scalar fields are: the pair cannot be reconciled and
+        nothing about a generator makes the earlier one the answer. The two models are given
+        different names to make them different values — two equal ones merge to the first, which is
+        the same generator either way.
+        """
+        first = TestImageGenerationModel('first')
+        later = TestImageGenerationModel('later')
+        merged = ImageGeneration.combine(
+            [
+                ImageGeneration(native=False, fallback_image_model=first),
+                ImageGeneration(native=False, fallback_image_model=later, dimensions=(1536, 1024)),
+            ]
+        )
+
+        await Agent(direct_generation_model, capabilities=[merged]).run('Generate an image')
+
+        assert first.last_settings is None
+        assert later.last_settings == snapshot({'dimensions': (1536, 1024)})
 
     async def test_image_generation_merged_dimensions_take_the_later_pair(
         self, allow_model_requests: None, direct_generation_model: FunctionModel
@@ -569,8 +626,8 @@ class TestImageGenerationCapability:
         overlapping_model = TestImageGenerationModel()
         overlapping = ImageGeneration.combine(
             [
-                ImageGeneration(native=False, local=overlapping_model, dimensions=(1024, 1024)),
-                ImageGeneration(native=False, local=overlapping_model, dimensions=(1536, 1024)),
+                ImageGeneration(native=False, fallback_image_model=overlapping_model, dimensions=(1024, 1024)),
+                ImageGeneration(native=False, fallback_image_model=overlapping_model, dimensions=(1536, 1024)),
             ]
         )
         await Agent(direct_generation_model, capabilities=[overlapping]).run('Generate an image')
@@ -579,8 +636,8 @@ class TestImageGenerationCapability:
         disjoint_model = TestImageGenerationModel()
         disjoint = ImageGeneration.combine(
             [
-                ImageGeneration(native=False, local=disjoint_model, dimensions=(512, 768)),
-                ImageGeneration(native=False, local=disjoint_model, dimensions=(1024, 1024)),
+                ImageGeneration(native=False, fallback_image_model=disjoint_model, dimensions=(512, 768)),
+                ImageGeneration(native=False, fallback_image_model=disjoint_model, dimensions=(1024, 1024)),
             ]
         )
         await Agent(direct_generation_model, capabilities=[disjoint]).run('Generate an image')
@@ -638,7 +695,9 @@ class TestImageGenerationCapability:
         agent = Agent(
             outer_model,
             capabilities=[
-                ImageGeneration(native=lambda ctx: None, local=ImageGenerator(image_model), dimensions=(1280, 720))
+                ImageGeneration(
+                    native=lambda ctx: None, fallback_image_model=ImageGenerator(image_model), dimensions=(1280, 720)
+                )
             ],
         )
 
@@ -660,7 +719,7 @@ class TestImageGenerationCapability:
         outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
         agent = Agent(
             outer_model,
-            capabilities=[ImageGeneration(local=ImageGenerator(image_model), dimensions=(1280, 720))],
+            capabilities=[ImageGeneration(fallback_image_model=ImageGenerator(image_model), dimensions=(1280, 720))],
         )
 
         result = await agent.run('Generate an image')
@@ -690,7 +749,7 @@ class TestImageGenerationCapability:
             capabilities=[
                 ImageGeneration(
                     native=ImageGenerationTool(aspect_ratio='16:9'),
-                    local=ImageGenerator(image_model),
+                    fallback_image_model=ImageGenerator(image_model),
                     dimensions=(1280, 720),
                 )
             ],
@@ -709,7 +768,7 @@ class TestImageGenerationCapability:
         """
         with pytest.raises(UserError, match=r'`dimensions` and `aspect_ratio` are mutually exclusive'):
             ImageGeneration(
-                local=ImageGenerator(TestImageGenerationModel()),
+                fallback_image_model=ImageGenerator(TestImageGenerationModel()),
                 dimensions=(1280, 720),
                 aspect_ratio='16:9',
             )
@@ -733,7 +792,9 @@ class TestImageGenerationCapability:
         outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
         agent = Agent(
             outer_model,
-            capabilities=[ImageGeneration(local=ImageGenerator(image_model), output_format='webp', quality='high')],
+            capabilities=[
+                ImageGeneration(fallback_image_model=ImageGenerator(image_model), output_format='webp', quality='high')
+            ],
         )
 
         with pytest.warns(UserWarning, match=r'ignored native-tool setting\(s\): output_format, quality'):
@@ -760,7 +821,9 @@ class TestImageGenerationCapability:
         )
         agent = Agent(
             outer_model,
-            capabilities=[ImageGeneration(local=ImageGenerator(image_model), output_format='webp', quality='high')],
+            capabilities=[
+                ImageGeneration(fallback_image_model=ImageGenerator(image_model), output_format='webp', quality='high')
+            ],
         )
 
         result = await agent.run('Generate an image')
@@ -783,7 +846,7 @@ class TestImageGenerationCapability:
         )
         agent = Agent(
             outer_model,
-            capabilities=[ImageGeneration(local=ImageGenerator(image_model), aspect_ratio='2:1')],
+            capabilities=[ImageGeneration(fallback_image_model=ImageGenerator(image_model), aspect_ratio='2:1')],
         )
 
         with pytest.warns(UserWarning, match=r'direct-only setting\(s\) go unapplied: aspect_ratio'):
@@ -803,7 +866,7 @@ class TestImageGenerationCapability:
             outer_model_fn,
             profile=ModelProfile(supported_native_tools=frozenset({ImageGenerationTool})),
         )
-        capability = ImageGeneration(local=ImageGenerator(image_model), aspect_ratio='16:9')
+        capability = ImageGeneration(fallback_image_model=ImageGenerator(image_model), aspect_ratio='16:9')
         agent = Agent(outer_model, capabilities=[capability])
 
         result = await agent.run('Generate an image')
@@ -918,13 +981,13 @@ class TestImageGenerationCapability:
         """Geometry the native tool can't express is not "ignored" when a direct generator applies it.
 
         `native=True` is the default, so the native tool is still built and still drops these values —
-        but warning about it is wrong when `local` is a direct generator that honors them. Both cases
+        but warning about it is wrong when a `fallback_image_model` honors them. Both cases
         use a value outside the native vocabulary so they take the non-native branch.
 
         `size` is deliberately absent: the direct fallback carries only `dimensions` and
         `aspect_ratio`, so a non-native `size` really is dropped by both paths and still warns.
         """
-        cap = ImageGeneration(local=ImageGenerator(TestImageGenerationModel()), **kwargs)
+        cap = ImageGeneration(fallback_image_model=ImageGenerator(TestImageGenerationModel()), **kwargs)
         builtins = cap.get_native_tools()
 
         assert len(builtins) == 1
@@ -967,7 +1030,8 @@ class TestImageGenerationCapability:
 
         direct_model = TestImageGenerationModel()
         direct_agent = Agent(
-            outer_model, capabilities=[ImageGeneration(native=native, local=ImageGenerator(direct_model))]
+            outer_model,
+            capabilities=[ImageGeneration(native=native, fallback_image_model=ImageGenerator(direct_model))],
         )
         await direct_agent.run('Generate an image')
         assert direct_model.last_settings == snapshot({'aspect_ratio': '16:9'})
@@ -975,7 +1039,11 @@ class TestImageGenerationCapability:
         overridden_model = TestImageGenerationModel()
         overridden_agent = Agent(
             outer_model,
-            capabilities=[ImageGeneration(native=native, local=ImageGenerator(overridden_model), aspect_ratio='4:3')],
+            capabilities=[
+                ImageGeneration(
+                    native=native, fallback_image_model=ImageGenerator(overridden_model), aspect_ratio='4:3'
+                )
+            ],
         )
         await overridden_agent.run('Generate an image')
         assert overridden_model.last_settings == snapshot({'aspect_ratio': '4:3'})
@@ -1003,19 +1071,35 @@ class TestImageGenerationCapability:
         assert isinstance(cap.local, Tool)
         assert cap.get_toolset() is not None
 
-    def test_image_generation_fallback_model_and_local_conflict(self):
-        """ImageGeneration(fallback_model=..., local=func) raises UserError."""
-
-        def my_gen(prompt: str) -> str:
-            return 'image_url'  # pragma: no cover
-
-        with pytest.raises(UserError, match='cannot specify both `fallback_model` and `local`'):
-            ImageGeneration(fallback_model='openai-responses:gpt-5.4', local=my_gen)
-
-    def test_image_generation_fallback_model_with_local_false(self):
-        """ImageGeneration(fallback_model=..., local=False) raises UserError."""
-        with pytest.raises(UserError, match='cannot specify both `fallback_model` and `local`'):
-            ImageGeneration(fallback_model='openai-responses:gpt-5.4', local=False)
+    @pytest.mark.parametrize(
+        ('kwargs', 'stated'),
+        [
+            pytest.param(
+                {'fallback_model': 'openai-responses:gpt-5.4', 'local': _custom_local_tool},
+                '`local`, `fallback_model`',
+                id='subagent-and-custom-tool',
+            ),
+            pytest.param(
+                {'fallback_model': 'openai-responses:gpt-5.4', 'local': False},
+                '`local`, `fallback_model`',
+                id='subagent-and-disabled-local',
+            ),
+            pytest.param(
+                {'fallback_model': 'openai-responses:gpt-5.4', 'fallback_image_model': 'openai:gpt-image-2'},
+                '`fallback_model`, `fallback_image_model`',
+                id='subagent-and-direct',
+            ),
+            pytest.param(
+                {'fallback_image_model': 'openai:gpt-image-2', 'local': _custom_local_tool},
+                '`local`, `fallback_image_model`',
+                id='direct-and-custom-tool',
+            ),
+        ],
+    )
+    def test_image_generation_rejects_more_than_one_fallback(self, kwargs: dict[str, Any], stated: str):
+        """The three fallbacks are alternatives: two of them leave one silently unused."""
+        with pytest.raises(UserError, match=f'cannot specify more than one of {re.escape(stated)}'):
+            ImageGeneration(**kwargs)
 
     async def test_image_generation_callable_fallback_model(self, allow_model_requests: None):
         """ImageGeneration with async callable fallback_model resolves the model per-run."""
@@ -1129,7 +1213,7 @@ class TestImageGenerationCapability:
                 fallback_model=FunctionModel(blocked_model_fn, profile=ModelProfile(supports_image_output=True))
             )
             if fallback == 'subagent'
-            else ImageGeneration(native=False, local=BlockedImageGenerationModel())
+            else ImageGeneration(native=False, fallback_image_model=BlockedImageGenerationModel())
         )
 
         call_count = 0
@@ -1230,7 +1314,7 @@ class TestImageGenerationCapability:
             ('google', 'imagen-3.0-generate-002', 'google:gemini-3-pro-image'),
             ('google', 'imagen-3.0-fast-generate-001', 'google:gemini-3-pro-image'),
             # xAI has no conversational model that carries the `ImageGenerationTool`, so the
-            # suggested alternative crosses providers; `local=` is the way to stay on xAI.
+            # suggested alternative crosses providers; `fallback_image_model=` stays on xAI.
             ('xai', 'grok-imagine-image', 'openai-responses:gpt-5.5'),
             ('xai', 'grok-imagine-image-2.0', 'openai-responses:gpt-5.5'),
             ('xai', 'grok-imagine-image-quality', 'openai-responses:gpt-5.5'),
@@ -1242,9 +1326,8 @@ class TestImageGenerationCapability:
             UserError,
             match=re.escape(
                 f'{model_name!r} is a dedicated image generation model that cannot be used as '
-                f'`fallback_model` directly. Pass an `ImageGenerator` with a direct image model '
-                f'to `local` instead, or use a conversational model with image generation support, '
-                f'e.g. {suggestion!r}.'
+                f'`fallback_model` directly. Pass it to `fallback_image_model` instead, or use a '
+                f'conversational model with image generation support, e.g. {suggestion!r}.'
             ),
         ):
             ImageGeneration(fallback_model=f'{provider}:{model_name}')

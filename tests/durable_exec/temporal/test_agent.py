@@ -3062,7 +3062,9 @@ async def test_image_generation_prepare_function_reads_the_model_inside_an_activ
         _ = reconstructed.model
 
     capability = ImageGeneration(
-        native=ImageGenerationTool(), local=ImageGenerator(TestImageGenerationModel()), dimensions=(1280, 720)
+        native=ImageGenerationTool(),
+        fallback_image_model=ImageGenerator(TestImageGenerationModel()),
+        dimensions=(1280, 720),
     )
     toolset = capability.get_toolset()
     assert isinstance(toolset, PreparedToolset)

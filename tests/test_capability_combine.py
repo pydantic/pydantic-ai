@@ -751,18 +751,25 @@ def test_a_chain_of_wrappers_walks_its_subtree_once_per_level() -> None:
     assert len(seen) == 8
 
 
-@pytest.mark.parametrize('capability_type', [ImageGeneration, XSearch])
+@pytest.mark.parametrize(
+    ('capability_type', 'message'),
+    [
+        (ImageGeneration, 'cannot specify more than one of `local`, `fallback_model`'),
+        (XSearch, 'cannot specify both `fallback_model` and `local`'),
+    ],
+)
 def test_a_merge_cannot_reach_a_combination_the_constructor_rejects(
-    capability_type: type[ImageGeneration[Any]] | type[XSearch[Any]],
+    capability_type: type[ImageGeneration[Any]] | type[XSearch[Any]], message: str
 ) -> None:
     """`fallback_model` and `local` are alternatives, and merging two instances must not pair them.
 
     Each states one half of a combination `__init__` refuses, so the merged capability would carry
     both -- and the local tool would take effect while `fallback_model` was silently ignored. The
     invariant lives in `__post_init__`, which `combine` re-runs, rather than in `__init__`, which
-    it cannot.
+    it cannot. `ImageGeneration` has a third alternative, `fallback_image_model`, so it words the
+    same refusal as a list.
     """
-    with pytest.raises(UserError, match='cannot specify both `fallback_model` and `local`'):
+    with pytest.raises(UserError, match=message):
         capability_type.combine(
             [
                 capability_type(fallback_model=TestModel()),

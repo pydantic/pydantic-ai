@@ -72,7 +72,8 @@ class _DirectImageGenerationTool:
             raise UserError(_EDIT_ACTION_UNSUPPORTED)
         if self.image_model is not None:
             warnings.warn(
-                'Direct `ImageGeneration` fallback ignored `image_model`; `local` already selects the direct image model',
+                'Direct `ImageGeneration` fallback ignored `image_model`; '
+                '`fallback_image_model` already selects the direct image model',
                 UserWarning,
                 stacklevel=2,
             )
@@ -99,12 +100,14 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
     """Image generation capability.
 
     Uses the model's native image generation when available. When the model doesn't
-    support it, pass an `ImageGenerator` or `ImageGenerationModel` to `local` to use
-    the direct image generation API as a fallback.
+    support it, pass an image model to `fallback_image_model` to fall back to the direct
+    image generation API.
 
     The `fallback_model` path is the other way to cover such a model: it runs an additional
     agent on an image-capable conversational model, so the image comes from that model's
-    native `ImageGenerationTool`. Use it when you want those native tool semantics.
+    native `ImageGenerationTool`. Use it when you want those native tool semantics. `local`
+    is the third way, for a fallback tool you write yourself. The three are alternatives:
+    stating more than one raises `UserError`.
 
     Portable `dimensions` and `aspect_ratio` settings are applied to the direct fallback
     using `ImageGenerationSettings`. Other fields configure the native
@@ -116,26 +119,13 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
     instance's `aspect_ratio` is also inherited by the direct fallback.
     """
 
-    local: (
-        str
-        | Tool[AgentDepsT]
-        | Callable[..., Any]
-        | AbstractToolset[AgentDepsT]
-        | ImageGenerator
-        | ImageGenerationModel
-        | bool
-        | None
-    ) = None
+    local: str | Tool[AgentDepsT] | Callable[..., Any] | AbstractToolset[AgentDepsT] | bool | None = None
     """Configure the local fallback tool.
 
-    Besides the `Tool`, toolset and callable shapes
-    [`NativeOrLocalTool`][pydantic_ai.capabilities.NativeOrLocalTool] accepts, takes an
-    [`ImageGenerator`][pydantic_ai.images.ImageGenerator] or an
-    [`ImageGenerationModel`][pydantic_ai.images.ImageGenerationModel], which generate through the
-    direct image API, or a `'provider:model'` string that resolves to an `ImageGenerator`. Any other
-    string and `local=True` raise `UserError`: there is no named local strategy. The generator is
-    kept as declared; the `generate_image` tool is derived from it and the capability's settings
-    each time the toolset is requested.
+    Takes the `Tool`, toolset and callable shapes
+    [`NativeOrLocalTool`][pydantic_ai.capabilities.NativeOrLocalTool] accepts, for a fallback you
+    implement yourself. Every string and `local=True` raise `UserError`: there is no named local
+    strategy, and a direct image model goes to `fallback_image_model`.
     """
 
     fallback_model: ImageGenerationFallbackModel
@@ -153,6 +143,24 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
     that returns a `Model` instance or model name string.
     """
 
+    fallback_image_model: ImageGenerator | ImageGenerationModel | str | None = None
+    """Direct image model to generate with when the agent's model doesn't support it natively.
+
+    Takes an [`ImageGenerator`][pydantic_ai.images.ImageGenerator], an
+    [`ImageGenerationModel`][pydantic_ai.images.ImageGenerationModel], or a `'provider:model'`
+    string that resolves to an `ImageGenerator`; a string without a provider prefix raises
+    `UserError`. The tool calls the [direct image generation API](../image-generation.md) rather
+    than running a second agent, which is what `fallback_model` does.
+
+    Note which of the two image-model fields applies to which path: `image_model` names the model
+    *within* the provider's native tool and is unprefixed (`'gpt-image-2'`), while this one selects
+    the direct model and carries the provider (`'openai:gpt-image-2'`). The direct fallback ignores
+    `image_model` with a warning.
+
+    The model is kept as declared; the `generate_image` tool is derived from it and the
+    capability's settings each time the toolset is requested.
+    """
+
     # Keep these fields in sync with ImageGenerationTool in native_tools.py.
 
     action: Literal['generate', 'edit', 'auto'] | None
@@ -160,8 +168,8 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
 
     Supported by: OpenAI Responses. Default: `'auto'`.
 
-    The direct `local=` generator receives no reference images, so `'edit'` raises `UserError`: at
-    construction with `native=False`, and when the tool runs otherwise.
+    The direct `fallback_image_model` generator receives no reference images, so `'edit'` raises
+    `UserError`: at construction with `native=False`, and when the tool runs otherwise.
     """
 
     background: Literal['transparent', 'opaque', 'auto'] | None
@@ -169,7 +177,8 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
 
     Supported by: OpenAI Responses.
 
-    The direct `local=` generator ignores it; set the provider-prefixed equivalent on the generator instead.
+    The direct `fallback_image_model` generator ignores it; set the provider-prefixed equivalent on the
+    generator instead.
     """
 
     input_fidelity: Literal['high', 'low'] | None
@@ -177,7 +186,8 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
 
     Supported by: OpenAI Responses. Default: `'low'`.
 
-    The direct `local=` generator ignores it; set the provider-prefixed equivalent on the generator instead.
+    The direct `fallback_image_model` generator ignores it; set the provider-prefixed equivalent on the
+    generator instead.
     """
 
     moderation: Literal['auto', 'low'] | None
@@ -185,7 +195,8 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
 
     Supported by: OpenAI Responses.
 
-    The direct `local=` generator ignores it; set the provider-prefixed equivalent on the generator instead.
+    The direct `fallback_image_model` generator ignores it; set the provider-prefixed equivalent on the
+    generator instead.
     """
 
     image_model: ImageGenerationModelName | None
@@ -193,7 +204,8 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
 
     Supported by: OpenAI Responses.
 
-    The direct `local=` generator ignores it with a warning, because `local` already names the model.
+    The direct fallback ignores it with a warning, because `fallback_image_model` already names the
+    model it generates with. `image_model` is unprefixed and names the model inside the native tool.
     """
 
     output_compression: int | None
@@ -201,7 +213,8 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
 
     Supported by: OpenAI Responses (jpeg/webp, default: 100), Google Cloud (jpeg, default: 75).
 
-    The direct `local=` generator ignores it; set the provider-prefixed equivalent on the generator instead.
+    The direct `fallback_image_model` generator ignores it; set the provider-prefixed equivalent on the
+    generator instead.
     """
 
     output_format: Literal['png', 'webp', 'jpeg'] | None
@@ -209,7 +222,8 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
 
     Supported by: OpenAI Responses (default: `'png'`), Google Cloud.
 
-    The direct `local=` generator ignores it; set the provider-prefixed equivalent on the generator instead.
+    The direct `fallback_image_model` generator ignores it; set the provider-prefixed equivalent on the
+    generator instead.
     """
 
     quality: Literal['low', 'medium', 'high', 'auto'] | None
@@ -217,7 +231,8 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
 
     Supported by: OpenAI Responses.
 
-    The direct `local=` generator ignores it; set the provider-prefixed equivalent on the generator instead.
+    The direct `fallback_image_model` generator ignores it; set the provider-prefixed equivalent on the
+    generator instead.
     """
 
     size: ImageSize | None
@@ -232,9 +247,9 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
     dimensions: ImageDimensions | None
     """Exact direct-model output dimensions as `(width, height)` in pixels.
 
-    This is mutually exclusive with `aspect_ratio`: passing both alongside a direct `local`
-    generator raises `UserError` at construction. Only the direct `local` generator can apply it,
-    so pass `native=False` to guarantee it takes effect: with the default `native=True` the direct
+    This is mutually exclusive with `aspect_ratio`: passing both alongside a `fallback_image_model`
+    raises `UserError` at construction. Only the direct generator can apply it, so pass
+    `native=False` to guarantee it takes effect: with the default `native=True` the direct
     generator is dropped whenever the conversational model generates images natively, and the
     native tool has no equivalent — that request warns. The `fallback_model` path ignores it with a
     warning. Supported shapes are model-specific; see the
@@ -268,18 +283,13 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         native: ImageGenerationTool
         | Callable[[RunContext[AgentDepsT]], Awaitable[ImageGenerationTool | None] | ImageGenerationTool | None]
         | bool = True,
-        local: Tool[AgentDepsT]
-        | Callable[..., Any]
-        | ImageGenerator
-        | ImageGenerationModel
-        | str
-        | Literal[False]
-        | None = None,
+        local: Tool[AgentDepsT] | Callable[..., Any] | AbstractToolset[AgentDepsT] | Literal[False] | None = None,
         fallback_model: Model
         | KnownModelName
         | str
         | Callable[[RunContext[AgentDepsT]], Awaitable[Model | KnownModelName | str] | Model | KnownModelName | str]
         | None = None,
+        fallback_image_model: ImageGenerator | ImageGenerationModel | str | None = None,
         action: Literal['generate', 'edit', 'auto'] | None = None,
         background: Literal['transparent', 'opaque', 'auto'] | None = None,
         input_fidelity: Literal['high', 'low'] | None = None,
@@ -300,6 +310,7 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         self.defer_loading = defer_loading
         self.native = native
         self.fallback_model = fallback_model
+        self.fallback_image_model = fallback_image_model
         self.action = action
         self.background = background
         self.input_fidelity = input_fidelity
@@ -315,29 +326,53 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         self.__post_init__()
 
     def __post_init__(self) -> None:
-        # Checked here rather than in `__init__` so a merge is held to it too: `combine` can pair
-        # one instance's `fallback_model` with another's `local`, which no constructor accepts, and
-        # the local tool would then take effect with `fallback_model` silently ignored. Runs before
-        # the base resolves `local`, so it reads what was declared rather than what was
-        # materialized.
-        if self.fallback_model is not None and self.local is not None:
+        # The three fallbacks are alternatives: two of them leave one silently unused. Checked here
+        # rather than in `__init__` so a merge is held to it too: `combine` can pair one instance's
+        # `fallback_model` with another's `local`, which no constructor accepts. Runs before the base
+        # resolves `local`, so it reads what was declared rather than what was materialized.
+        stated = [
+            name
+            for name, value in (
+                ('local', self.local),
+                ('fallback_model', self.fallback_model),
+                ('fallback_image_model', self.fallback_image_model),
+            )
+            if value is not None
+        ]
+        if len(stated) > 1:
             raise UserError(
-                'ImageGeneration: cannot specify both `fallback_model` and `local` — '
-                'use `fallback_model` for the default subagent fallback, or `local` for a custom tool'
+                f'ImageGeneration: cannot specify more than one of {", ".join(f"`{name}`" for name in stated)} — '
+                'use `fallback_image_model` for a direct image model, `fallback_model` for the subagent '
+                'fallback, or `local` for a custom tool'
             )
 
-        if isinstance(self.local, str):
-            if ':' not in self.local:
-                raise UserError(self._unsupported_local(self.local))
+        if self.native is False and not stated:
+            # The base raises for this too, but its message offers a strategy string and `local=True`,
+            # which this capability rejects, and never names either fallback field.
+            raise UserError(
+                'ImageGeneration(native=False) requires an explicit fallback — pass '
+                '`fallback_image_model` for a direct image model, `fallback_model` for the subagent '
+                'fallback, or `local` for a custom tool'
+            )
+
+        if isinstance(self.local, (ImageGenerator, ImageGenerationModel)):
+            raise UserError(
+                'ImageGeneration: a direct image model goes to `fallback_image_model`, not `local`, '
+                'which takes a custom `Tool`, `AbstractToolset`, or callable.'
+            )
+
+        if isinstance(self.fallback_image_model, str):
+            if ':' not in self.fallback_image_model:
+                raise UserError(
+                    f'ImageGeneration: `fallback_image_model={self.fallback_image_model!r}` is not a direct '
+                    "image model. Name it as `'provider:model'`."
+                )
             # The provider prefix is the only part of the id resolvable without credentials, so
-            # checking it here keeps the unsupported-strategy rejection at construction while the
-            # model itself stays deferred to the first generate call. `local` keeps the generator
-            # rather than a tool built from it: the tool is derived in `get_toolset`, so the settings
-            # it carries can still change until then.
-            #
-            # The suppression covers the widened `local` field, which pyright reports at the field's
-            # last assignment; `get_toolset` narrows the generator back to the `Tool` the base expects.
-            self.local = ImageGenerator(self.local)  # pyright: ignore[reportIncompatibleVariableOverride]
+            # checking it here keeps the rejection at construction while the model itself stays
+            # deferred to the first generate call. The field keeps the generator rather than a tool
+            # built from it: the tool is derived in `get_toolset`, so the settings it carries can
+            # still change until then.
+            self.fallback_image_model = ImageGenerator(self.fallback_image_model)
 
         if self._has_direct_generator:
             # Reject at construction what only the direct generator could have served.
@@ -384,21 +419,27 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
             # user → `__init__` → here → `warn`; `from_spec` adds a frame and so lands one short.
             warnings.warn(
                 f'`ImageGeneration` ignored direct-only setting(s): {", ".join(ignored)}. '
-                "Only a direct generator applies them: use `native=False` with `local='provider:image-model'` "
-                'or an `ImageGenerator`.',
+                'Only a direct generator applies them: use `native=False` with '
+                "`fallback_image_model='provider:image-model'` or an `ImageGenerator`.",
                 UserWarning,
                 stacklevel=3,
             )
 
     @property
     def _has_direct_generator(self) -> bool:
-        """Whether `local` generates through the direct image API.
+        """Whether a `fallback_image_model` generates through the direct image API.
 
         Derived rather than recorded, so every instance the framework builds from this
         configuration -- `dataclasses.replace`, `combine` -- reads the same answer as the
         constructed one.
         """
-        return isinstance(self.local, (ImageGenerator, ImageGenerationModel))
+        return self.fallback_image_model is not None
+
+    def _has_local_fallback(self) -> bool:
+        # The direct fallback is a local implementation the base cannot see: it lives on
+        # `fallback_image_model`, and `get_toolset` is where the `generate_image` tool it stands for
+        # gets built. Without this, `native=False` beside one would read as a no-op capability.
+        return super()._has_local_fallback() or self._has_direct_generator
 
     @classmethod
     def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
@@ -427,8 +468,9 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         cls,
         *,
         native: ImageGenerationTool | bool = True,
-        local: str | Literal[False] | None = None,
+        local: Literal[False] | None = None,
         fallback_model: KnownModelName | str | None = None,
+        fallback_image_model: str | None = None,
         action: Literal['generate', 'edit', 'auto'] | None = None,
         background: Literal['transparent', 'opaque', 'auto'] | None = None,
         input_fidelity: Literal['high', 'low'] | None = None,
@@ -446,10 +488,11 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
     ) -> ImageGeneration[AgentDepsT]:
         """Construct from the JSON/YAML-serializable subset of the runtime API.
 
-        Runtime objects accepted by `local`, such as `ImageGenerator`, `ImageGenerationModel`,
-        `Tool`, and callables, can be passed to `ImageGeneration(...)` directly but cannot be
-        represented in an agent spec. A direct image model name is serializable and can be passed
-        as `local='provider:model'`.
+        Runtime objects, such as the `ImageGenerator` and `ImageGenerationModel` that
+        `fallback_image_model` also takes and the `Tool`, toolset and callables `local` takes, can
+        be passed to `ImageGeneration(...)` directly but cannot be represented in an agent spec. A
+        direct image model name is serializable and can be passed as
+        `fallback_image_model='provider:model'`.
         """
         # JSON and YAML have no tuple, so a spec always spells `dimensions` as a list, and spec
         # kwargs reach here unvalidated — the annotation above is what the published spec schema
@@ -463,6 +506,7 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
             native=native,
             local=local,
             fallback_model=fallback_model,
+            fallback_image_model=fallback_image_model,
             action=action,
             background=background,
             input_fidelity=input_fidelity,
@@ -563,17 +607,14 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
     def _default_native(self) -> ImageGenerationTool:
         return ImageGenerationTool(**self._image_gen_kwargs())
 
-    def _unsupported_local(self, value: str | bool) -> str:
-        return (
-            f'{type(self).__name__}: `local={value!r}` is not supported. Name a direct image '
-            "model as `local='provider:model'`, or pass a `Tool`, `AbstractToolset`, or "
-            'callable directly.'
-        )
-
     def _resolve_local_strategy(self, name: str | bool) -> Tool[AgentDepsT] | AbstractToolset[AgentDepsT]:
-        # `__post_init__` turns a `'provider:model'` string into an `ImageGenerator` and rejects
-        # every other string, so only `local=True` reaches the base's strategy hook.
-        raise UserError(self._unsupported_local(name))
+        # Every string and `local=True` land here: the capability has no named local strategy, and
+        # a direct image model is `fallback_image_model`'s to name.
+        raise UserError(
+            f'{type(self).__name__}: `local={name!r}` is not supported. Pass a `Tool`, '
+            '`AbstractToolset`, or callable directly, or name a direct image model as '
+            "`fallback_image_model='provider:model'`."
+        )
 
     def _direct_local_tool(self, generator: ImageGenerator | ImageGenerationModel) -> Tool[Any]:
         """Build the `generate_image` tool from the capability's current settings.
@@ -623,11 +664,13 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
 
     def get_toolset(self) -> AbstractToolset[AgentDepsT] | None:
         capability = self
-        if isinstance(self.local, (ImageGenerator, ImageGenerationModel)):
-            # The base only knows how to wrap a `Tool` or a toolset, so the generator is resolved
-            # into one on a copy. Building it here rather than keeping it on the capability is what
-            # keeps a replaced or merged instance from sending an earlier one's settings.
-            capability = replace_no_init(self, local=self._direct_local_tool(self.local))
+        if isinstance(self.fallback_image_model, (ImageGenerator, ImageGenerationModel)):
+            # The base resolves a local fallback from `local` alone, so the direct generator becomes
+            # the `generate_image` tool on a copy. Building it here rather than keeping it on the
+            # capability is what keeps a replaced or merged instance from sending an earlier one's
+            # settings. `__post_init__` has already turned a model-name string into an
+            # `ImageGenerator`, so the isinstance is a narrowing, not a branch.
+            capability = replace_no_init(self, local=self._direct_local_tool(self.fallback_image_model))
         toolset = super(ImageGeneration, capability).get_toolset()
         # A callable `native` is resolved per request by the framework, so whether it yields a tool
         # that supersedes the generator can't be known here without invoking it a second time.

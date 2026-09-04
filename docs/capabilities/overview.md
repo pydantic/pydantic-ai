@@ -44,7 +44,7 @@ Connections to systems outside the agent's workspace, and abilities the provider
 | Capability | Package | What it does |
 |---|---|---|
 | [MCP](mcp.md) | Core | Connect any MCP server's tools; local by default, provider-native connectors opt-in |
-| [Image Generation](image-generation.md) | Core | Generate and edit images; provider-native where supported, direct image-model fallback via `local` elsewhere |
+| [Image Generation](image-generation.md) | Core | Generate and edit images; provider-native where supported, direct image-model fallback via `fallback_image_model` elsewhere |
 | [Native Tool](../native-tools.md) | Core | Register any provider-native tool with the agent |
 | [StackOne](https://pydantic.dev/docs/ai/harness/stackone/) | Harness | Act on linked SaaS accounts (HRIS, ATS, CRM, …) via [StackOne](https://www.stackone.com) |
 | [LocalStack](https://pydantic.dev/docs/ai/harness/localstack/) | Harness | An emulated AWS environment with AWS CLI tools |
@@ -382,7 +382,7 @@ For immediate dispatch, Pydantic AI buffers the event before invoking listeners,
 |---|---|---|
 | [`WebSearch`][pydantic_ai.capabilities.WebSearch] | `local='duckduckgo'` or `local=True` (DuckDuckGo) | Requires the `duckduckgo` optional group |
 | [`WebFetch`][pydantic_ai.capabilities.WebFetch] | `local=True` (markdownify-based fetch) | Requires the `web-fetch` optional group |
-| [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] | Direct model via `local='provider:image-model'` | Uses the [direct image-generation API](../image-generation.md) without a subagent |
+| [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] | Direct model via `fallback_image_model='provider:image-model'` | Uses the [direct image-generation API](../image-generation.md) without a subagent |
 | [`XSearch`][pydantic_ai.capabilities.XSearch] | Subagent via `fallback_model=` | No default non-xAI fallback; set `fallback_model` to an xAI model that supports [`XSearchTool`][pydantic_ai.native_tools.XSearchTool] |
 | [`MCP`][pydantic_ai.capabilities.MCP] | Direct connection to the MCP server (the default) | Accepts any [`MCPToolset`][pydantic_ai.mcp.MCPToolset] input; transport is auto-detected from a URL |
 
@@ -407,7 +407,7 @@ agent = Agent(
         # Native when supported; markdownify-based fallback on unsupported models
         WebFetch(local=True),
         # Native when supported; direct image-model fallback otherwise
-        ImageGeneration(local='openai:gpt-image-1.5'),
+        ImageGeneration(fallback_image_model='openai:gpt-image-1.5'),
         # Native on xAI; on other models, explicitly delegate to an xAI model
         XSearch(fallback_model='xai:grok-4.3'),
         # Runs the MCP server locally by default; pass `native=True` to also advertise native MCP
