@@ -3148,11 +3148,15 @@ def _map_usage(
 
     # Anthropic reports top-level tokens excluding compaction iteration usage; add the
     # compaction totals back in so the extracted `RequestUsage` reflects the real request cost.
-    usage_for_extraction = dict(details)
+    usage_for_extraction: dict[str, Any] = dict(details)
     for key in _COMPACTION_TOKEN_KEYS:
         if compaction_value := details.get(f'compaction_{key}'):
             usage_for_extraction[key] = usage_for_extraction.get(key, 0) + compaction_value
 
+    # Server tools (e.g. web search) are billed separately from tokens: forward the raw
+    # `server_tool_use` payload so genai-prices can extract and price the counts.
+    if server_tool_use := response_usage.server_tool_use:
+        usage_for_extraction['server_tool_use'] = server_tool_use.model_dump(exclude_none=True)
     # Note: genai-prices already extracts cache_creation_input_tokens and cache_read_input_tokens
     # from the Anthropic response and maps them to cache_write_tokens and cache_read_tokens
     return usage.RequestUsage.extract(

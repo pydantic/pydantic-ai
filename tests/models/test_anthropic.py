@@ -149,6 +149,7 @@ with try_import() as imports_successful:
         BetaRawMessageStartEvent,
         BetaRawMessageStopEvent,
         BetaRawMessageStreamEvent,
+        BetaServerToolUsage,
         BetaServerToolUseBlock,
         BetaTextBlock,
         BetaTextDelta,
@@ -5047,6 +5048,85 @@ def test_streaming_usage_thinking_tokens():
             details={'input_tokens': 1, 'output_tokens': 5, 'thinking_tokens': 3},
         )
     )
+
+
+async def test_web_search_retained_usage(allow_model_requests: None):
+    """Native web-search usage is retained in `RequestUsage` and priced end-to-end.
+
+    See https://github.com/pydantic/pydantic-ai/issues/8088.
+    """
+    c = completion_message(
+        [BetaTextBlock(text='world', type='text')],
+        BetaUsage(
+            input_tokens=100,
+            output_tokens=20,
+            server_tool_use=BetaServerToolUsage(web_search_requests=3, web_fetch_requests=0),
+        ),
+    )
+    m = AnthropicModel('claude-opus-5', provider=AnthropicProvider(anthropic_client=MockAnthropic.create_mock(c)))
+    agent = Agent(m)
+
+    result = await agent.run('hello')
+    assert result.output == 'world'
+
+    request_usage = message(result.all_messages(), ModelResponse, index=-1).usage
+    # `web_searches` is set by genai-prices from the raw `server_tool_use` payload.
+    assert getattr(request_usage, 'web_searches', None) == 3
+    assert request_usage.input_tokens == 100
+    assert request_usage.output_tokens == 20
+    # Details keep carrying plain token counts; the raw server-tool payload stays out of them.
+    assert request_usage.details == {'input_tokens': 100, 'output_tokens': 20}
+    # Includes the $0.03 web-search charge on top of token pricing.
+    assert request_usage.cost == Decimal('0.03016')
+    assert result.usage.cost == Decimal('0.03016')
+
+
+async def test_web_search_retained_usage_streaming(allow_model_requests: None):
+    """Native web-search usage survives the streaming usage merge.
+
+    Both `message_start` and `message_delta` carry `server_tool_use`, matching recorded traffic.
+    See https://github.com/pydantic/pydantic-ai/issues/8088.
+    """
+    stream: list[MockRawMessageStreamEvent] = [
+        BetaRawMessageStartEvent(
+            message=anth_msg(
+                BetaUsage(
+                    input_tokens=100,
+                    output_tokens=20,
+                    server_tool_use=BetaServerToolUsage(web_search_requests=3, web_fetch_requests=0),
+                )
+            ),
+            type='message_start',
+        ),
+        BetaRawContentBlockStartEvent(
+            content_block=BetaTextBlock(text='hello', type='text'), index=0, type='content_block_start'
+        ),
+        BetaRawContentBlockStopEvent(index=0, type='content_block_stop'),
+        BetaRawMessageDeltaEvent(
+            delta=Delta(stop_reason='end_turn'),
+            usage=BetaMessageDeltaUsage(
+                output_tokens=20, server_tool_use=BetaServerToolUsage(web_search_requests=3, web_fetch_requests=0)
+            ),
+            type='message_delta',
+        ),
+        BetaRawMessageStopEvent(type='message_stop'),
+    ]
+    m = AnthropicModel(
+        'claude-opus-5', provider=AnthropicProvider(anthropic_client=MockAnthropic.create_stream_mock(stream))
+    )
+    agent = Agent(m)
+
+    async with agent.run_stream('hello') as result:
+        output = await result.get_output()
+    assert output == 'hello'
+
+    request_usage = message(result.all_messages(), ModelResponse, index=-1).usage
+    assert getattr(request_usage, 'web_searches', None) == 3
+    assert request_usage.input_tokens == 100
+    assert request_usage.output_tokens == 20
+    assert request_usage.details == {'input_tokens': 100, 'output_tokens': 20}
+    # Includes the $0.03 web-search charge on top of token pricing.
+    assert request_usage.cost == Decimal('0.0306')
 
 
 def test_map_usage_bedrock_start_event_without_message():
