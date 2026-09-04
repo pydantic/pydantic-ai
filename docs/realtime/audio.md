@@ -105,6 +105,10 @@ configured with `google_input_transcription`: a pinned model ID in the shared se
 (native transcription stays on), and only `None` turns it off. Provider-specific defaults and
 deployment constraints live on the provider pages.
 
+The user transcript is a separate transcription pass, not a readout of what the realtime model
+heard directly from the audio. It can be less accurate or simply differ, so treat it as a caption
+and history record rather than ground truth for why the model responded as it did.
+
 Disabling transcription changes what a spoken turn contributes to history, replay, and text-agent
 handoff; see [History and handoff](history.md#retaining-audio) before relying on it. A
 [WebRTC sideband](deployment.md#browser-webrtc-server-sideband) receives no audio bytes to retain, so without input
@@ -129,8 +133,9 @@ async def send_image(session):
 Streaming images continuously approximates live video: the
 [camera example](../examples/realtime-camera.md) sends one camera frame per second alongside
 microphone audio. For continuous streams like that, use the session's image-retention controls to
-bound local history; see [Retaining images](history.md#retaining-images). Gemini-specific live-video
-settings belong on the [Gemini provider page](gemini.md#settings).
+bound local history; they do not change which frames the provider receives. See
+[Retaining images](history.md#retaining-images). Gemini-specific live-video settings belong on the
+[Gemini provider page](gemini.md#settings).
 
 ## Edge cases
 

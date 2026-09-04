@@ -150,6 +150,53 @@ History records a known cutoff on
 response state as interrupted. When this history is sent to a text model, Pydantic AI adds a readable
 interruption note to the prepared request without modifying stored history.
 
+## Speaking first
+
+Send a text turn to have the agent open the conversation, with playback already running. Wait for
+the greeting's finalized [`SpeechPart`][pydantic_ai.messages.SpeechPart], which arrives once it has
+been generated, then let your playback loop drain before opening the microphone. A fixed sleep tells
+you neither.
+
+```python
+import asyncio
+from collections.abc import AsyncIterator
+
+from pydantic_ai import Agent
+from pydantic_ai.realtime import RealtimeSession
+
+agent = Agent(instructions='You are a welcoming museum guide.')
+
+
+async def play_audio(chunks: AsyncIterator[bytes]) -> None:
+    async for chunk in chunks:
+        ...  # Write the PCM16 chunk to your speaker or audio output stream.
+
+
+async def wait_for_assistant_speech(session: RealtimeSession) -> None:
+    async for part in session.stream_transcripts():
+        if part.speaker == 'assistant':
+            return
+
+
+async def main():
+    async with agent.realtime('openai:gpt-realtime').session() as session:
+        playback = asyncio.create_task(play_audio(session.stream_audio()))
+        greeted = asyncio.create_task(wait_for_assistant_speech(session))
+        await session.send('Greet the visitor.')
+        await greeted
+        ...  # wait for the speaker to drain, then open the microphone and start sending audio
+        await playback
+```
+
+With manual turn control, [`create_response()`][pydantic_ai.realtime.RealtimeSession.create_response]
+can request the greeting without adding a text turn. If a response is already active, the request is
+held until that response completes and is dropped if the user barges in, so returning from
+`create_response()` does not mean speech has started.
+
+Server VAD enables `interrupt_response` by default, so any detected speech cancels a greeting in flight. This
+includes speaker echo and microphone transients while the audio path opens; keeping the microphone
+closed until the greeting has played avoids that race.
+
 ## Push-to-talk
 
 Disable automatic detection with `turn_detection=False` on models whose profile declares
