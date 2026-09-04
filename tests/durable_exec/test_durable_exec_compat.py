@@ -58,6 +58,7 @@ from pydantic_ai.durable_exec._toolset import (
     validate_tool_args,
     wrap_tool_call_result,
 )
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import CapabilityEvent, CustomEvent
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.test import TestModel
@@ -252,6 +253,60 @@ class JournalDurability(BaseDurabilityCapability[Any]):
 
     def get_durable_operation_backend(self) -> durable_exec.DurableOperationBackend[ToolConfig]:
         return _JournalBackend(self)
+
+
+class SecondJournalDurability(JournalDurability):
+    """A second engine, to stand for `DBOSDurability` beside a `TemporalDurability`.
+
+    Written here rather than with the real pair because the two live behind different optional
+    dependency groups, and no lane is guaranteed to install both.
+    """
+
+
+def test_a_second_durability_engine_is_refused() -> None:
+    """Two engines never meet under a shared `id`, so `combine` cannot be what settles them.
+
+    An engine's default `id` names that engine, which is what makes a *repeat* of one reachable as
+    a duplicate. Two different engines carry two ids and are invisible there -- and there is no id
+    under which they could meet, since neither restates the other. Both would wrap the agent's
+    model and toolsets and register their own durable units.
+    """
+    with pytest.raises(
+        UserError,
+        match=(
+            r'An agent runs under one durability engine, but JournalDurability and '
+            r'SecondJournalDurability are attached\.'
+        ),
+    ):
+        Agent(TestModel(), name='two_engines', capabilities=[JournalDurability(), SecondJournalDurability()])
+
+    # Order does not decide it: whichever engine binds first sees the other already attached.
+    with pytest.raises(UserError, match=r'JournalDurability and SecondJournalDurability are attached\.'):
+        Agent(TestModel(), name='reversed', capabilities=[SecondJournalDurability(), JournalDurability()])
+
+
+def test_a_second_durability_engine_is_refused_behind_a_wrapper() -> None:
+    """A wrapped engine is still the engine, registering the same units under the same name."""
+    with pytest.raises(UserError, match=r'JournalDurability and SecondJournalDurability are attached\.'):
+        Agent(
+            TestModel(),
+            name='wrapped',
+            capabilities=[JournalDurability(), SecondJournalDurability().prefix_tools('second')],
+        )
+
+
+def test_a_repeated_engine_without_a_default_id_is_refused() -> None:
+    """`combine` only sees a repeat that met under a shared `id`, which this engine never declares.
+
+    `JournalDurability` stands for a third-party engine here. Without a default `id` its two
+    instances are two capabilities all the way through id resolution, so the check that catches
+    them has to be the one every engine passes through on its way to binding.
+    """
+    with pytest.raises(
+        UserError,
+        match=r'An agent runs under one durability engine, but 2 JournalDurability capabilities are attached\.',
+    ):
+        Agent(TestModel(), name='repeated', capabilities=[JournalDurability(), JournalDurability()])
 
 
 async def test_journal_operation_name_assembly_sequence() -> None:

@@ -142,6 +142,23 @@ def construction_toolsets(agent: AbstractAgent[AgentDepsT, Any]) -> Sequence[Abs
     return agent.toolsets
 
 
+def attached_durability_capabilities(
+    agent: AbstractAgent[Any, Any],
+) -> list[BaseDurabilityCapability[Any]]:
+    """Every durability capability on `agent`, whatever engine each one is for.
+
+    Transparent wrappers are unwrapped, because a wrapped engine is still the engine: it registers
+    the same durable units under the same name.
+    """
+    found: list[BaseDurabilityCapability[Any]] = []
+    for capability in leaf_capabilities(agent.root_capability):
+        while isinstance(capability, WrapperCapability):
+            capability = capability.wrapped
+        if isinstance(capability, BaseDurabilityCapability):
+            found.append(capability)
+    return found
+
+
 @runtime_checkable
 class _RestrictedRunContext(Protocol):
     def _expose_field(self, name: str) -> None: ...
@@ -318,6 +335,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
     def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> Self:
         """Bind to the agent and register this engine's durable units on a new copy."""
         self._check_bindable()
+        self._reject_second_engine(agent)
         if not (self.name or agent.name):
             raise UserError(
                 f'An agent needs to have a unique `name` in order to be used with {self.engine_name} '
@@ -550,15 +568,41 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         are registered with the worker. Walks the agent's capability chain and returns the single
         match or `None`, raising a `UserError` if multiple instances are attached.
         """
-        found: list[Self] = []
-        for capability in leaf_capabilities(agent.root_capability):
-            while isinstance(capability, WrapperCapability):
-                capability = capability.wrapped
-            if isinstance(capability, cls):
-                found.append(capability)
+        found = [capability for capability in attached_durability_capabilities(agent) if isinstance(capability, cls)]
         if len(found) > 1:
             raise UserError(f'Multiple {cls.__name__} capabilities are attached to this agent; attach at most one.')
         return found[0] if found else None
+
+    def _reject_second_engine(self, agent: AbstractAgent[AgentDepsT, Any]) -> None:
+        """Refuse to bind beside any other durability capability.
+
+        `combine` settles a repeat of *one* engine, because the pair meets under that engine's
+        shared default `id`. Nothing reaches it here: two engines carry two ids, and there is no id
+        under which they could meet, since neither restates the other. An engine that declares no
+        default `id` at all -- a third-party one, say -- never reaches `combine` either.
+
+        Which leaves this, asked of the whole attached set rather than of one class, at the point
+        every engine passes through. Two engines each wrap the agent's model and toolsets and
+        register their own durable units, so a run would be dispatched through both.
+        """
+        attached = [capability for capability in attached_durability_capabilities(agent) if capability is not self]
+        if not attached:
+            return
+        attached.append(self)
+        engine_names = sorted({type(capability).__name__ for capability in attached})
+        # A repeat of one engine reads as a count; distinct engines read as a list. Engines that
+        # declare a default `id` are settled by `combine` before they reach here, so its more
+        # specific wording still wins wherever it applies.
+        engines = (
+            f'{len(attached)} {engine_names[0]} capabilities are'
+            if len(engine_names) == 1
+            else f'{" and ".join(engine_names)} are'
+        )
+        raise UserError(
+            f'An agent runs under one durability engine, but {engines} attached. Each engine wraps '
+            "the agent's model and toolsets and registers its own durable units, so a run would be "
+            'dispatched through every one of them. Attach one.'
+        )
 
     def _reject_runtime_toolsets(self, toolset: AbstractToolset[AgentDepsT]) -> None:
         """Reject executing toolsets added per-run inside a durable workflow or flow.
