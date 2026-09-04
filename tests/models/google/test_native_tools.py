@@ -333,6 +333,8 @@ def test_vertex_agentic_video_bare_signatures_are_scoped_and_paired():
     assert isinstance(text, TextPart)
     assert call.tool_name == result.tool_name == 'media_processing'
     assert call.tool_call_id == result.tool_call_id
+    assert call.provider_details == {'thought_signature': 'Y2FsbA=='}
+    assert result.provider_details == {'thought_signature': 'cmV0dXJu'}
 
 
 def test_agentic_video_parts_do_not_hide_metadata_native_tools():
