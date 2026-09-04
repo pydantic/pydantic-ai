@@ -1223,7 +1223,11 @@ class RealtimeSession:
                 delivery supports text parts and
                 [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s, which are joined into
                 one user turn. System parts use the `<system>…</system>` convention to indicate that
-                the text is not the person speaking. The delivered turn is recorded in history as a
+                the text is not the person speaking; that marks where it came from, not that it should
+                be handled silently. The model still gets a turn and decides whether to reply, call a
+                tool, or move on. To add context without prompting a turn at all, use
+                [`send(..., respond=False)`][pydantic_ai.realtime.RealtimeSession.send]. The delivered
+                turn is recorded in history as a
                 [`UserPromptPart`][pydantic_ai.messages.UserPromptPart]. Calling with no positional
                 arguments is a no-op.
             priority: When to deliver:

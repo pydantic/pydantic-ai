@@ -187,8 +187,11 @@ if __name__ == '__main__':
 The default `priority='asap'` delivers after any active response finishes;
 `priority='when_idle'` waits until the model is idle, after all `'asap'` items. Neither priority
 interrupts assistant speech. Text parts and system parts are joined into one user turn, with system
-parts wrapped in `<system>…</system>` to distinguish them from the person speaking. Delivered turns
-become ordinary [`UserPromptPart`][pydantic_ai.messages.UserPromptPart]s in history, as in
+parts wrapped in `<system>…</system>` to distinguish them from the person speaking. A system part
+marks where the text came from, not that it should be handled silently: the model still gets a turn
+and may reply, call a tool, or move on. To add context without prompting a turn, use
+[`send(..., respond=False)`](turns.md#text-turns) instead. Delivered turns become ordinary
+[`UserPromptPart`][pydantic_ai.messages.UserPromptPart]s in history, as in
 [injecting messages mid-run](../message-history.md#injecting-messages-mid-run).
 
 Multimodal content and model responses are rejected because the realtime live-input channel cannot
