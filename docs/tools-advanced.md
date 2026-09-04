@@ -525,7 +525,7 @@ All providers support `'auto'` and `'none'`. Key differences for other options:
 | Cohere | ✓ | ✓ | Maps `'required'` to `'REQUIRED'`; a named subset is applied by trimming the tools array |
 | xAI | ✓ | ✓ | Some models may not support forcing; falls back to 'auto' |
 
-With Bedrock adaptive thinking, automatic structured output keeps using native or prompted output so visible thinking is preserved. Explicit `ToolOutput` opts into forced tool use, for which Bedrock may omit visible thinking.
+When adaptive thinking is explicitly configured on Bedrock, automatic structured output keeps using native or prompted output so visible thinking is preserved. Explicit `ToolOutput` opts into forced tool use, for which Bedrock may omit visible thinking.
 
 The model classes built on `OpenAIChatModel` — Cerebras, Crusoe, Ollama, OpenRouter, Snowflake, Z.AI and Bedrock Mantle Chat — behave as the OpenAI row describes, with two exceptions. Ollama documents `tool_choice` as unsupported and ignores it. OpenRouter raises a `UserError` for an explicit `'required'` or named subset on models that can't combine forced tool choice with thinking, rather than silently dropping the reasoning; forcing that Pydantic AI merely inferred falls back to `'auto'` instead.
 
