@@ -4918,8 +4918,10 @@ class _SafeToolsetWrapper(AbstractCapability[Any]):
 
     _safe_at_runtime: ClassVar[bool] = True
 
+    trace: list[str] = field(default_factory=list[str])
+
     def get_wrapper_toolset(self, toolset: AbstractToolset[Any]) -> AbstractToolset[Any] | None:
-        return _TracingToolset(toolset)
+        return _TracingToolset(toolset, trace=self.trace)
 
 
 async def test_a_runtime_safe_call_wrapper_may_be_added_beside_one_owning_execution() -> None:
@@ -4943,16 +4945,23 @@ async def test_a_runtime_safe_call_wrapper_may_be_added_beside_one_owning_execut
 async def test_a_toolset_wrapper_is_outside_what_the_flag_promises() -> None:
     """A contributed wrapper toolset runs beneath every hook, so it is always inside the claimant.
 
-    Refusing that would refuse `ToolSearch` beside every durability capability, which is a
-    composition agents are built with — so the flag says what it can enforce rather than more. A
-    capability that must reach the tool body with nothing at all in between is choosing what else
-    the agent is built with, which is the author's decision.
+    Shown by letting it happen rather than by the absence of an error: the guard's handler reaches
+    the toolset wrapper, not the tool. Refusing that would refuse `ToolSearch` beside every
+    durability capability, which is a composition agents are built with — so the flag says what it
+    can enforce, and a capability needing more belongs in the toolset layer itself.
     """
-    agent = Agent(TestModel(), capabilities=[_Guard()])
+    guard = _Guard()
+    nester = _SafeToolsetWrapper()
+    agent = Agent(TestModel(call_tools=['echo']), capabilities=[guard])
 
-    result = await agent.run('go', capabilities=[_SafeToolsetWrapper()])
+    @agent.tool_plain
+    def echo(text: str) -> str:
+        return text
 
-    assert result.output == 'success (no tool calls)'
+    await agent.run('go', capabilities=[nester])
+
+    assert guard.seen == ['guard:echo'], 'the guard ran'
+    assert nester.trace == ['toolset-wrapper'], 'and the toolset wrapper ran inside it, not refused'
 
 
 async def test_tool_search_may_be_added_per_run_beside_a_durability_capability() -> None:
