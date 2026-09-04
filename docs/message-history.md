@@ -598,6 +598,8 @@ into the conversation mid-run with [`RunContext.enqueue`][pydantic_ai.tools.RunC
 [`agent.iter()`][pydantic_ai.agent.AbstractAgent.iter]). Use this when something happens during a
 run that the agent should know about — a tool wants to add follow-up context, an external event
 needs to *steer* the agent's plan, or background work needs to reach the agent when it completes.
+You can call either method directly from synchronous or asynchronous code, including a tool or
+callback running in another thread.
 
 A `priority` controls when the enqueued content is delivered:
 
@@ -691,11 +693,6 @@ loop all deliver enqueued messages.
       system-prompt callback that re-enqueues on each reinjection), the run will
       loop indefinitely. Set [`UsageLimits`][pydantic_ai.usage.UsageLimits] on the
       run as a safety net.
-    - [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue] synchronizes calls from
-      sync tools running in worker threads with pending-message drains. If you're forwarding
-      events from a different thread or loop (e.g. a webhook handler), marshal
-      [`AgentRun.enqueue`][pydantic_ai.run.AgentRun.enqueue] onto the loop driving the run,
-      e.g. `loop.call_soon_threadsafe(agent_run.enqueue, msg)`.
 
 ## Processing Message History
 

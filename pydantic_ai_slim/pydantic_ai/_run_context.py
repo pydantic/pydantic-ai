@@ -718,9 +718,8 @@ class RunContext(Generic[RunContextAgentDepsT]):
     ) -> str | None:
         """Enqueue content to be injected into the conversation.
 
-        Safe to call from async tools, sync tools running in a worker thread,
-        and capability hooks. Submission and draining are synchronized during
-        a standard agent run.
+        Safe to call directly from async tools, sync tools running in another
+        thread, and capability hooks.
 
         Args:
             *content: One or more [`EnqueueContent`][pydantic_ai.run.EnqueueContent] items.

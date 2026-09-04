@@ -560,10 +560,8 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
     ) -> str | None:
         """Enqueue content to be injected into the conversation.
 
-        Designed to be called from the same event loop driving `agent.iter()`. If
-        you're forwarding events from a different thread (e.g. a webhook handler
-        running on its own loop or thread), marshal the call back onto the agent's
-        loop first (e.g. `loop.call_soon_threadsafe(agent_run.enqueue, msg)`).
+        Safe to call directly from synchronous or asynchronous code, including
+        a callback running in another thread.
 
         Args:
             *content: One or more [`EnqueueContent`][pydantic_ai.run.EnqueueContent] items.
