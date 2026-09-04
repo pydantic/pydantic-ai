@@ -149,9 +149,10 @@ and on seeing it `make typecheck-changed` narrows nothing and hands the whole pr
 `make typecheck-pyright`. A fresh runner has no record to narrow against in the first place. CI still
 skips the hook outright on a pull request that touches nothing Pyright reads, as it did before.
 
-Locally it falls back to the full run whenever the narrower one is not provably the same answer: a
-first run; an interpreter older than Python 3.11, which is what it needs to read `pyproject.toml`; a
-new Pyright or Python version, including one asked for through `PYRIGHT_PYTHON`; a change to
+Locally it follows the imports Pyright resolves statically, and falls back to the full run whenever
+something could leave that set incomplete: a first run; an interpreter older than Python 3.11, which
+is what it needs to read `pyproject.toml`; a new Pyright or Python version, including one asked for
+through `PYRIGHT_PYTHON`; a change to
 `pyproject.toml`, `uv.lock` or the `Makefile`; an import that would now resolve to a different file
 or a new top-level module that could shadow an installed one; or a change reaching more than half the
 project. A narrowed run only ever considers tracked files, so run `make typecheck` yourself before

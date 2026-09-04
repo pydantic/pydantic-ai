@@ -252,7 +252,16 @@ def _parse_imports(paths: Sequence[str], universe: Sequence[str], roots: Sequenc
 
 
 def _imports_of(path: str, modules: Mapping[str, str], roots: Sequence[str]) -> list[str]:
-    """Return the first-party files `path` imports, wherever in the file the import appears."""
+    """Return the first-party files `path` imports, wherever in the file the import appears.
+
+    Only static imports are edges, and that is enough. A symbol a package hands out through a
+    module-level `__getattr__` is typed by that function's declared return type, which lives
+    in the package's own `__init__.py`, so editing the submodule behind it cannot move a
+    consumer's diagnostics; editing the `__init__.py` can, and every consumer of it is an
+    importer already. Where such a package also declares the symbols under `if TYPE_CHECKING:`
+    -- which is how consumers get real types rather than `object` -- that block is a static
+    import like any other and is walked here.
+    """
     try:
         tree = ast.parse(Path(path).read_bytes(), filename=path)
     except (SyntaxError, ValueError):
