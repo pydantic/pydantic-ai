@@ -2027,7 +2027,7 @@ def _process_part(
         assert data and mime_type, 'Inline data must have data and mime type'
         content = BinaryContent(data=data, media_type=mime_type)
         item = FilePart(content=BinaryContent.narrow_type(content))
-    else:  # pragma: no cover
+    else:
         raise UnexpectedModelBehavior(f'Unsupported response from Gemini: {part!r}')
 
     if provider_details:
