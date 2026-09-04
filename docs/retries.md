@@ -129,6 +129,21 @@ Both are triggered by validation failures, by an [output function](output.md#out
 
 The last of those triggers has an exception: if the output type allows `None` — `output_type=str | None`, for instance — an empty or thinking-only response is a valid final result of `None` rather than a retry. Models that finish their work in a tool call and then emit only thinking would otherwise be pushed into producing filler text. Output validators still run on that `None`, so they can force a retry themselves by raising `ModelRetry`.
 
+Both budgets are configured through one argument:
+
+```python {title="retry_budgets.py"}
+from pydantic_ai import Agent
+
+agent = Agent('openai:gpt-5.2', retries=3)  # (1)!
+
+strict_output = Agent('openai:gpt-5.2', retries={'tools': 5, 'output': 1})  # (2)!
+```
+
+1. A bare `int` sets both the tool and output budgets.
+2. An [`AgentRetries`][pydantic_ai.agent.AgentRetries] dict sets only the keys it names; unnamed keys keep the default of `1`.
+
+The same argument is accepted per run — `agent.run(..., retries=...)` and friends — and for a block of runs via [`agent.override()`][pydantic_ai.agent.Agent.override]. [Which retry limit wins](tools-advanced.md#which-retry-limit-wins) has the full precedence table.
+
 ### Feedback that belongs to no tool call
 
 A text-path retry, and a `ModelRetry` from a [model-request hook](hooks.md#triggering-retries-with-modelretry), have no tool call to answer. They become a [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart], which records *why* the response couldn't be used and nothing about how to say it:
@@ -186,12 +201,12 @@ A closing tag inside either wrapper is escaped, so text the model had a hand in 
 !!! warning "What goes in the system voice"
     The system channel is the highest-privilege text a model reads, and a [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] message goes there verbatim. Interpolating model output into that message hands the model's words the system voice; pass a fixed message and let the validation errors carry the specifics — those go out in the user voice, inside the fence, precisely because they quote the model.
 
-    A `RetryFeedbackPart` that opens a history — through a hand-built `message_history`, an adapter load, [compaction](capabilities/compaction.md), or [`ProcessHistory`](capabilities/process-history.md) filtering — is treated exactly like a [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] written in that position, so a `'model_retry'` one there joins the run's standing prompt and reaches the provider's own system field. Put your own system prompt first if that matters.
+    A `RetryFeedbackPart` that opens a history — through a hand-built `message_history`, an adapter load, [compaction](capabilities/compaction.md), or [`ProcessHistory`](capabilities/process-history.md) filtering — is treated exactly like a [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] written in that position, so a `'model_retry'` one there joins the run's standing prompt and reaches the provider's own system field, ahead of the agent's own [`instructions`][pydantic_ai.Agent]. Put a `SystemPromptPart` of your own first if that matters; feedback recorded by a run of its own never lands there, because the request that carries it follows the response it is about.
 
 !!! note "`RetryPromptPart` is deprecated"
     Both retries used to be a single [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart], which meant a tool-less retry arrived at the model as ordinary user text it couldn't tell from something a person wrote. That class is deprecated and will be removed in v3: constructing one raises a `PydanticAIDeprecationWarning` naming the part to build instead, and Pydantic AI never emits one.
 
-    Nothing you already stored has to change. A `'retry-prompt'` part in a serialized history loads as whichever of the two parts above it always meant — a tool-bound one as a `ToolReturnPart` with `outcome='retried'`, a tool-less one as a `RetryFeedbackPart` — so loading costs no warning and re-dumping writes the new part kind. An instance your own code still holds is translated the same way before the request goes out, including one handed back through [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] to answer a [deferred tool call](deferred-tools.md).
+    Nothing you already stored has to change. A `'retry-prompt'` part in a serialized history loads as whichever of the two parts above it always meant — a tool-bound one as a `ToolReturnPart` with `outcome='retried'`, a tool-less one as a `RetryFeedbackPart` — so loading costs no warning and re-dumping writes the new part kind. An instance your own code still holds is translated the same way before the request goes out, including one handed back through [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] to answer a [deferred tool call](deferred-tools.md). Building the request yourself — [`Model.request()`][pydantic_ai.models.Model.request] or [`Model.count_tokens()`][pydantic_ai.models.Model.count_tokens] rather than an agent run or [`direct`](direct.md) — skips that step, and raises a `UserError` naming it, the same as for any other part that only becomes sendable there.
 
     Code that reads history is what has to change: `isinstance(part, RetryPromptPart)` stops matching, and finds nothing in a history recorded from now on. Match [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] with `outcome='retried'` for a retry that answers a tool call, and `RetryFeedbackPart` for one that answers none.
 

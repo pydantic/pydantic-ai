@@ -80,10 +80,10 @@ from ..messages import (
     ToolReturnPart,
     UserContent,
     UserPromptPart,
+    _retry_feedback_speaks_for_the_harness,  # pyright: ignore[reportPrivateUsage]
     _translate_legacy_retry_part,  # pyright: ignore[reportPrivateUsage]
 )
 from ..models import (
-    _retry_feedback_speaks_for_the_harness,  # pyright: ignore[reportPrivateUsage]
     _wrap_in_system_tags,  # pyright: ignore[reportPrivateUsage]
 )
 from ..models._tool_choice import ResolvedToolChoice

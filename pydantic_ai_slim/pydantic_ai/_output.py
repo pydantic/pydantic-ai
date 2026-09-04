@@ -131,7 +131,7 @@ def build_retried_tool_return(
     model the same JSON: `ctx` is dropped by `include_context=False`, and `input` is kept once per
     distinct value.
     """
-    content: list[Any] | str
+    content: list[dict[str, Any]] | str
     if isinstance(error, ValidationError):
         content = _messages._dump_error_details(  # pyright: ignore[reportPrivateUsage]
             error.errors(include_url=False, include_context=False)

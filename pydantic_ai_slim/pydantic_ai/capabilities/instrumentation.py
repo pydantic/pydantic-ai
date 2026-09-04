@@ -35,7 +35,7 @@ from pydantic_ai.exceptions import (
     ToolFailedError,
     ToolRetryError,
 )
-from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart, tool_return_ta
+from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart, ToolReturnPart, tool_return_ta
 from pydantic_ai.tools import ToolDefinition
 
 from .abstract import (
@@ -505,7 +505,7 @@ class Instrumentation(AbstractCapability[Any]):
                     span.set_attribute(
                         names.tool_result_attr,
                         retry_part.model_response_str(wrap_if_error=False)
-                        if retry_part.part_kind == 'tool-return'
+                        if isinstance(retry_part, ToolReturnPart)
                         else retry_part.model_response(),
                     )
                 span.record_exception(e, escaped=True)

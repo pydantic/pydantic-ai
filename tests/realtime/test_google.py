@@ -1679,6 +1679,9 @@ async def test_connect_seeds_message_history(monkeypatch: pytest.MonkeyPatch) ->
                 ),
                 ToolReturnPart(tool_name='plain', content='ok', tool_call_id='plain-call'),
                 legacy_retry_prompt_part(tool_name='weather', content='invalid city', tool_call_id='call-1'),
+                # The shape the framework emits for that same failure, seeded beside the legacy one
+                # so the two are held to the same text.
+                ToolReturnPart(tool_name='weather', content='invalid city', tool_call_id='call-1', outcome='retried'),
                 legacy_retry_prompt_part(content='answer in prose'),
                 RetryFeedbackPart(content='answer in prose', cause='model_retry'),
                 RetryFeedbackPart(
@@ -1724,7 +1727,8 @@ async def test_connect_seeds_message_history(monkeypatch: pytest.MonkeyPatch) ->
                     {'text': 'This is file weather.png:'},
                     {'inline_data': {'data': b'tool-image', 'mime_type': 'image/png'}},
                     {'text': '[Tool plain-call: plain returned: ok]'},
-                    {'text': '[Tool call-1: weather error: invalid city]'},
+                    {'text': '[Tool call-1: weather returned: {"error":"invalid city"}]'},
+                    {'text': '[Tool call-1: weather returned: {"error":"invalid city"}]'},
                     {'text': '<system>answer in prose</system>'},
                     {'text': '<system>answer in prose</system>'},
                     {

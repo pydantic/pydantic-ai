@@ -908,7 +908,12 @@ async def test_zero_argument_tool_call(arguments: str | None, expected_args: str
 
     parts = [part for message in result.all_messages() for part in message.parts]
     assert ToolCallPart(tool_name='get_current_time', args=expected_args, tool_call_id='tc-1') in parts
-    assert any(isinstance(part, ToolReturnPart) and part.tool_name == 'get_current_time' for part in parts)
+    # `outcome == 'success'` is what says the tool actually ran: an args-validation failure answers
+    # the same call with a retried return carrying the same name.
+    assert any(
+        isinstance(part, ToolReturnPart) and part.tool_name == 'get_current_time' and part.outcome == 'success'
+        for part in parts
+    )
     assert not any(isinstance(part, RetryFeedbackPart) for part in parts)
     assert result.output == 'it is noon'
 

@@ -719,7 +719,9 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         # tool kind from its `tool_name` (the parallel exhaustive path keys off `call_kinds` instead,
         # but both funnel through `_is_retry_wins_trigger`).
         for part in self.output_parts[before:]:
-            if isinstance(part, _messages.ToolReturnPart):
+            # The outcome is checked here as well as inside the predicate so a batch of successful
+            # returns doesn't pay a tool-def lookup each to be discarded.
+            if isinstance(part, _messages.ToolReturnPart) and part.outcome == 'retried':
                 tool_def = self.tool_manager.get_tool_def(part.tool_name)
                 kind = tool_def.kind if tool_def is not None else 'unknown'
                 if self._is_retry_wins_trigger(part, kind=kind):

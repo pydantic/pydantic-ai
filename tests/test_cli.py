@@ -493,9 +493,10 @@ async def test_streaming_ignores_output_tool_calls():
 async def test_streaming_clears_indicator_for_retried_tool(live_frames: list[str]):
     """A call that comes back as a retry drops its in-flight indicator instead of pinning it.
 
-    `pending_calls` is popped for any `FunctionToolResultEvent`, not only a `ToolReturnPart`.
-    Popping on success alone left `> _Calling tool ...` on screen for the rest of the run. A retry
-    still renders no `Called tool` line — surfacing retries is a separate feature.
+    `pending_calls` is popped for any `FunctionToolResultEvent`. Popping on success alone left
+    `> _Calling tool ...` on screen for the rest of the run. The retried call reports `Called tool`
+    like any other: it is a call that ran and returned, and the run's next line is its second
+    attempt.
     """
 
     async def retrying_tool_stream(

@@ -70,6 +70,7 @@ from ..messages import (
     UserPromptPart,
     VideoUrl,
     _compaction_part_is_wire_boundary,  # pyright: ignore[reportPrivateUsage]
+    _retry_feedback_speaks_for_the_harness,  # pyright: ignore[reportPrivateUsage]
     _tool_results_first_sort_key,  # pyright: ignore[reportPrivateUsage]
     _translate_legacy_retry_part,  # pyright: ignore[reportPrivateUsage]
     _wrap_in_tag,  # pyright: ignore[reportPrivateUsage]
@@ -2339,22 +2340,6 @@ leaves it unable to explain a list that grew mid-conversation. Naming them is en
 more — urging the model to use them, explaining why they arrived — is an instruction nobody asked
 for, on a turn the user didn't write.
 """
-
-
-def _retry_feedback_speaks_for_the_harness(part: RetryFeedbackPart) -> bool:
-    """Whether this feedback reaches the model in the harness's voice rather than the user's.
-
-    A `'validation_error'` quotes back the output the model itself wrote, which may in turn quote
-    untrusted user input, so it goes in the user voice inside the `<validation_errors>` fence
-    [`RetryFeedbackPart.model_response`][pydantic_ai.messages.RetryFeedbackPart.model_response] puts
-    it in — near enough to a person's turn in authority, and marked off from one by the tag. The
-    other causes carry a message the agent's author wrote knowing it would be shown, which is the
-    authority a system message already has.
-
-    Every channel asks the same question and answers it here: `prepare_messages` picks the part,
-    the realtime seeders pick whether to `<system>`-tag the text, the UI adapters pick the role.
-    """
-    return part.cause != 'validation_error'
 
 
 def _translate_retry_parts(messages: list[ModelMessage]) -> list[ModelMessage]:

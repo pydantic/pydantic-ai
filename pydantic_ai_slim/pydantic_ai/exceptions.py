@@ -622,9 +622,12 @@ class ToolRetryError(Exception):
 
     def __init__(self, tool_retry: RetryFeedbackPart | ToolReturnPart):
         self.tool_retry = tool_retry
+        # `part_kind` rather than `isinstance`: the parts are imported under `TYPE_CHECKING` only,
+        # because `messages` imports this module.
         if tool_retry.part_kind == 'tool-return':
-            # A retried tool return already carries its validation details as serialized content, so
-            # there are no `ErrorDetails` left to format.
+            # Rendered the way `ToolFailedError` below renders its own part, so both read as what the
+            # model was shown. The tool this answers is named by the `UnexpectedModelBehavior` the
+            # exhausted retry budget raises, which this is chained to.
             message = tool_retry.model_response_str(wrap_if_error=False)
         elif isinstance(tool_retry.content, str):
             message = tool_retry.content

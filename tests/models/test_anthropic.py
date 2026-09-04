@@ -11,8 +11,6 @@ from functools import cached_property
 from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeVar, cast
 from unittest.mock import AsyncMock, MagicMock
 
-from pydantic_ai import RetryFeedbackPart
-
 if TYPE_CHECKING:
     from vcr.cassette import Cassette
 
@@ -38,6 +36,7 @@ from pydantic_ai import (
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
+    RetryFeedbackPart,
     RunContext,
     SystemPromptPart,
     TextContent,

@@ -73,11 +73,11 @@ from ..messages import (
     UploadedFile,
     UserPromptPart,
     VideoUrl,
+    _retry_feedback_speaks_for_the_harness,  # pyright: ignore[reportPrivateUsage]
     _translate_legacy_retry_part,  # pyright: ignore[reportPrivateUsage]
 )
 from ..models import (
     ModelRequestParameters,
-    _retry_feedback_speaks_for_the_harness,  # pyright: ignore[reportPrivateUsage]
     _wrap_in_system_tags,  # pyright: ignore[reportPrivateUsage]
 )
 
@@ -398,6 +398,11 @@ async def _seed_request_parts(
 ) -> list[genai_types.Part]:
     parts: list[genai_types.Part] = []
     for part in message_parts:
+        # TODO(v3): remove `RetryPromptPart`. Translated ahead of the branches rather than inside one
+        # of them, so a tool-bound legacy retry seeds through the `ToolReturnPart` branch below and
+        # reads exactly like the retried return the framework emits for the same failure.
+        if isinstance(part, RetryPromptPart):  # pyright: ignore[reportDeprecated]
+            part = _translate_legacy_retry_part(part)
         if isinstance(part, (SystemPromptPart, ToolAvailabilityDeltaPart)):
             # System prompts are seeded through session instructions, and tool-availability news
             # from a prior standard run is stale here: the session advertises its own tools.
@@ -427,29 +432,19 @@ async def _seed_request_parts(
                         )
                     )
                 )
-        # TODO(v3): remove `RetryPromptPart`
-        elif isinstance(part, RetryPromptPart | RetryFeedbackPart):  # pyright: ignore[reportDeprecated]
+        elif isinstance(part, RetryFeedbackPart):
             # A seeded turn has no system role — a `SystemPromptPart` is hoisted to
             # `system_instruction` instead — and a retry answers one response rather than standing
             # over the session, so hoisting it there would be wrong. Feedback bound for the system
             # voice takes the same `<system>` tagging every model without a mid-conversation system
             # message gets, which is what keeps the model from reading it as something a person said
             # (https://github.com/pydantic/pydantic-ai/issues/6404).
-            translated = (
-                _translate_legacy_retry_part(part)
-                if isinstance(part, RetryPromptPart)  # pyright: ignore[reportDeprecated]
-                else part
+            text = part.model_response()
+            parts.append(
+                genai_types.Part(
+                    text=_wrap_in_system_tags(text) if _retry_feedback_speaks_for_the_harness(part) else text
+                )
             )
-            if isinstance(translated, ToolReturnPart):
-                # The framing already says `error`, so the `{"error": ...}` wrapper a channel-less
-                # provider gets would only say it twice.
-                output = translated.model_response_str(wrap_if_error=False)
-                text = f'[Tool {translated.tool_call_id}: {translated.tool_name} error: {output}]'
-            elif _retry_feedback_speaks_for_the_harness(translated):
-                text = _wrap_in_system_tags(translated.model_response())
-            else:
-                text = translated.model_response()
-            parts.append(genai_types.Part(text=text))
         else:
             assert_never(part)
     return parts

@@ -40,17 +40,11 @@ from ..messages import (
     RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
     SystemPromptPart,
     ToolAvailabilityDeltaPart,
+    _retry_feedback_speaks_for_the_harness,  # pyright: ignore[reportPrivateUsage]
 )
 from ..settings import ModelSettings
 from ..usage import UsageBase
-from . import (
-    KnownModelName,
-    Model,
-    ModelRequestContext,
-    ModelRequestParameters,
-    StreamedResponse,
-    _retry_feedback_speaks_for_the_harness,  # pyright: ignore[reportPrivateUsage]
-)
+from . import KnownModelName, Model, ModelRequestContext, ModelRequestParameters, StreamedResponse
 from .wrapper import WrapperModel
 
 __all__ = 'instrument_model', 'InstrumentationSettings', 'InstrumentedModel'

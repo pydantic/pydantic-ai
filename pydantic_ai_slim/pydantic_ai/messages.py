@@ -1687,20 +1687,29 @@ class NativeToolReturnPart(BaseToolReturnPart):
 error_details_ta = pydantic.TypeAdapter(list[pydantic_core.ErrorDetails], config=pydantic.ConfigDict(defer_build=True))
 
 
-def _wrap_in_tag(content: str, *, tag: str) -> str:
+_CLOSE_TAG_OPENERS = {
+    tag: re.compile(rf'<(?=\s*/\s*{tag}\s*>)', re.IGNORECASE) for tag in ('system', 'validation_errors')
+}
+"""Per-tag patterns matching only the `<` of a closing tag, in every spelling a model might reach for.
+
+Compiled once per tag `_wrap_in_tag` is asked for, since it runs over every mid-conversation system
+prompt of every request on a provider without inline system prompts.
+"""
+
+
+def _wrap_in_tag(content: str, *, tag: Literal['system', 'validation_errors']) -> str:
     """Wrap text in `<tag>…</tag>`, neutralizing any closing tag the text carries itself.
 
-    Only the `<` of a closing tag is escaped, in every spelling a model might reach for, so the rest
-    of the text goes in exactly as written. Without that, text the model had a hand in — a validation
-    error's `loc` is a key it invented for a mapping output, and a `value_error`'s `msg` is whatever a
-    validator raised, commonly with the offending value interpolated in — could end the statement
-    early and let whatever follows read as if it stood outside it.
+    Only the `<` of a closing tag is escaped, so the rest of the text goes in exactly as written.
+    Without that, text the model had a hand in — a validation error's `loc` is a key it invented for a
+    mapping output, and a `value_error`'s `msg` is whatever a validator raised, commonly with the
+    offending value interpolated in — could end the statement early and let whatever follows read as
+    if it stood outside it.
     """
-    escaped = re.sub(rf'<(?=\s*/\s*{tag}\s*>)', '&lt;', content, flags=re.IGNORECASE)
-    return f'<{tag}>{escaped}</{tag}>'
+    return f'<{tag}>{_CLOSE_TAG_OPENERS[tag].sub("&lt;", content)}</{tag}>'
 
 
-def _dump_error_details(errors: list[pydantic_core.ErrorDetails]) -> list[pydantic_core.ErrorDetails]:
+def _dump_error_details(errors: list[pydantic_core.ErrorDetails]) -> list[dict[str, Any]]:
     """Serialize validation error details for a model, carrying each distinct `input` once.
 
     Root-level errors share one `input` — the whole value that failed — so serializing it into each
@@ -1710,8 +1719,16 @@ def _dump_error_details(errors: list[pydantic_core.ErrorDetails]) -> list[pydant
     model still sees what it sent; a later one drops it only when it is that same value. A distinct
     input is information of its own and stays, as does a nested error's, which is the offending
     sub-value rather than the whole object.
+
+    `ctx` never goes: it holds whatever a validator was handed as context, which is the agent
+    author's data rather than anything the model has to correct. A framework-built part never has it
+    (`errors(include_context=False)`), so dropping it here is what makes that true of a hand-built or
+    legacy-translated one too, and of the copy the UI adapters carry in their metadata channel.
+
+    The result is plain JSON data rather than `ErrorDetails`: dropping a key the `TypedDict` requires
+    leaves a shape that is not one any more.
     """
-    exclude: dict[int, set[str]] = {}
+    exclude: dict[int, set[str]] = {index: {'ctx'} for index in range(len(errors))}
     root_input: object = None
     seen_root_error = False
     for index, detail in enumerate(errors):
@@ -1721,7 +1738,7 @@ def _dump_error_details(errors: list[pydantic_core.ErrorDetails]) -> list[pydant
             root_input = detail.get('input')
             seen_root_error = True
         elif detail.get('input') == root_input:
-            exclude[index] = {'input'}
+            exclude[index].add('input')
     return error_details_ta.dump_python(errors, mode='json', exclude=exclude)
 
 
@@ -1955,6 +1972,22 @@ class RetryFeedbackPart:
         ]
 
     __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+def _retry_feedback_speaks_for_the_harness(part: RetryFeedbackPart) -> bool:  # pyright: ignore[reportUnusedFunction]
+    """Whether this feedback reaches the model in the harness's voice rather than the user's.
+
+    A `'validation_error'` quotes back the output the model itself wrote, which may in turn quote
+    untrusted user input, so it goes in the user voice inside the `<validation_errors>` fence
+    [`RetryFeedbackPart.model_response`][pydantic_ai.messages.RetryFeedbackPart.model_response] puts
+    it in — near enough to a person's turn in authority, and marked off from one by the tag. The
+    other causes carry a message the agent's author wrote knowing it would be shown, which is the
+    authority a system message already has.
+
+    Every channel asks the same question and answers it here: `prepare_messages` picks the part,
+    the realtime seeders pick whether to `<system>`-tag the text, the UI adapters pick the role.
+    """
+    return part.cause != 'validation_error'
 
 
 # TODO(v3): remove `_LegacyRetryPromptFields` along with `RetryPromptPart`.

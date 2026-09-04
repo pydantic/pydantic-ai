@@ -1597,7 +1597,7 @@ def test_tool_retries():
 
 
 def test_tool_failed():
-    """A tool raising `ToolFailed` produces a `ToolReturnPart(outcome='failed')` in history (not a `RetryPromptPart`), and the run continues."""
+    """A tool raising `ToolFailed` produces a `ToolReturnPart(outcome='failed')` in history (not a retried one), and the run continues."""
 
     def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
@@ -3143,7 +3143,7 @@ def test_retry_tool_until_last_attempt():
 
 @pytest.mark.anyio
 async def test_tool_timeout_triggers_retry():
-    """Test that a slow tool triggers RetryPromptPart when timeout is exceeded."""
+    """Test that a slow tool is answered with a retried tool return when its timeout is exceeded."""
     import asyncio
 
     call_count = 0

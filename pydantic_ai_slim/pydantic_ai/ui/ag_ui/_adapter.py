@@ -21,6 +21,7 @@ from typing_extensions import assert_never
 from ... import ExternalToolset, ToolDefinition
 from ..._utils import is_str_dict
 from ...messages import (
+    ERROR_OUTCOMES,
     AudioUrl,
     BinaryContent,
     CachePoint,
@@ -49,11 +50,9 @@ from ...messages import (
     UserContent,
     UserPromptPart,
     VideoUrl,
+    _retry_feedback_speaks_for_the_harness,  # pyright: ignore[reportPrivateUsage]
     _translate_legacy_retry_part,  # pyright: ignore[reportPrivateUsage]
     narrow_message_parts,
-)
-from ...models import (
-    _retry_feedback_speaks_for_the_harness,  # pyright: ignore[reportPrivateUsage]
 )
 from ...output import OutputDataT
 from ...tools import (
@@ -744,7 +743,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         content=dump_tool_return_content(part.content),
                         tool_call_id=part.tool_call_id,
                         error=part.model_response_str(wrap_if_error=False)
-                        if part.outcome in ('failed', 'denied', 'retried')
+                        if part.outcome in ERROR_OUTCOMES or part.outcome == 'denied'
                         else None,
                         **tool_kind_encrypted_value_kwargs(
                             part.tool_kind, outcome=part.outcome, supported=use_encrypted_value
@@ -899,7 +898,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             content=dump_tool_return_content(builtin_return.content),
                             tool_call_id=prefixed_id,
                             error=builtin_return.model_response_str(wrap_if_error=False)
-                            if builtin_return.outcome in ('failed', 'denied', 'retried')
+                            if builtin_return.outcome in ERROR_OUTCOMES or builtin_return.outcome == 'denied'
                             else None,
                             **tool_kind_encrypted_value_kwargs(
                                 builtin_return.tool_kind, outcome=builtin_return.outcome, supported=use_encrypted_value
@@ -1021,6 +1020,11 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
 
         if parse_ag_ui_version(ag_ui_version) < ENCRYPTED_VALUE_VERSION and any(
             isinstance(part, RetryFeedbackPart)
+            # TODO(v3): remove `RetryPromptPart`. A tool-less one is translated into the feedback
+            # part it always meant and rides the same marker channel, so it is lost below the floor
+            # the same way. A tool-bound one becomes a `tool_kind`-less return, which falls into the
+            # outcome gap described below.
+            or (isinstance(part, RetryPromptPart) and part.tool_name is None)  # pyright: ignore[reportDeprecated]
             or (
                 isinstance(part, (ToolCallPart, ToolReturnPart, NativeToolCallPart, NativeToolReturnPart))
                 # A non-`'success'` `outcome` on a `tool_kind`-less return also degrades below the

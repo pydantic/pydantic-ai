@@ -45,13 +45,11 @@ from ...messages import (
     UserContent,
     UserPromptPart,
     VideoUrl,
+    _retry_feedback_speaks_for_the_harness,  # pyright: ignore[reportPrivateUsage]
     _translate_legacy_retry_part,  # pyright: ignore[reportPrivateUsage]
     narrow_message_parts,
     parse_tool_kind,
     tool_return_content_ta,
-)
-from ...models import (
-    _retry_feedback_speaks_for_the_harness,  # pyright: ignore[reportPrivateUsage]
 )
 from ...output import OutputDataT
 from ...tools import AgentDepsT, DeferredToolResults, ToolDenied
