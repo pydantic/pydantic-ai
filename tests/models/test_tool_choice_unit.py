@@ -536,6 +536,35 @@ def test_support_tool_forcing_implicit_resolution(provider_name: str, resolved_t
     assert result is expected
 
 
+@pytest.mark.parametrize(
+    'profile,error_match',
+    [
+        pytest.param(
+            BedrockModelProfile(
+                bedrock_supports_tool_choice=True,
+                bedrock_thinking_variant='anthropic',
+                bedrock_supports_adaptive_thinking=True,
+            ),
+            'has not been verified',
+            id='unverified-adaptive',
+        ),
+        pytest.param(
+            BedrockModelProfile(
+                bedrock_supports_tool_choice=True,
+                bedrock_thinking_variant='qwen',
+            ),
+            'with thinking enabled',
+            id='non-anthropic',
+        ),
+    ],
+)
+def test_bedrock_explicit_tool_forcing_thinking_errors(profile: BedrockModelProfile, error_match: str):
+    settings = BedrockModelSettings(thinking=True, tool_choice='required')
+
+    with pytest.raises(UserError, match=error_match):
+        bedrock_support_tool_forcing('test-model', profile, settings, ModelRequestParameters(), 'required')
+
+
 @skip_if_no_anthropic
 @pytest.mark.parametrize(
     'settings,params_thinking,expected',
