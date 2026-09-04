@@ -873,7 +873,6 @@ from pydantic_ai import (
     Agent,
     ModelMessage,
     ModelRequest,
-    RetryPromptPart,
     RunContext,
     ToolReturnPart,
     UserPromptPart,
@@ -895,7 +894,7 @@ def compact_when_window_fills(
         if not isinstance(message, ModelRequest):
             continue
         has_user_prompt = any(isinstance(part, UserPromptPart) for part in message.parts)
-        has_tool_result = any(isinstance(part, (ToolReturnPart, RetryPromptPart)) for part in message.parts)
+        has_tool_result = any(isinstance(part, ToolReturnPart) for part in message.parts)
         if has_user_prompt and not has_tool_result:
             return messages[index:]
     return messages

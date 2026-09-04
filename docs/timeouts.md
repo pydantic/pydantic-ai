@@ -9,7 +9,7 @@ Each knob below bounds a different unit of work. None of them bounds the wall-cl
 | What you want to bound | How to set it | What happens on expiry |
 |---|---|---|
 | A single model request attempt — a provider SDK client's retries re-arm it for every attempt | `timeout` on [`ModelSettings`][pydantic_ai.settings.ModelSettings] | The provider client raises; the run fails unless a [`FallbackModel`](models/overview.md#fallback-model) or a [transport retry](models/http-request-retries.md) handles it |
-| A function tool call | `Agent(tool_timeout=...)`, or `timeout=` on an individual tool — see [Tool Timeout](tools-advanced.md#tool-timeout) | The model receives a retry prompt `'Timed out after N seconds.'`, consuming that tool's [retry budget](retries.md#tool-retries). A `def` tool is not actually stopped: the deadline is enforced around the await, so the worker thread runs to completion |
+| A function tool call | `Agent(tool_timeout=...)`, or `timeout=` on an individual tool — see [Tool Timeout](tools-advanced.md#tool-timeout) | The model receives a retried tool result `'Timed out after N seconds.'`, consuming that tool's [retry budget](retries.md#tool-retries). A `def` tool is not actually stopped: the deadline is enforced around the await, so the worker thread runs to completion |
 | A [hook](hooks.md) function | `timeout=` on the `@hooks.on.*` decorator | [`HookTimeoutError`][pydantic_ai.capabilities.HookTimeoutError], which is an [`AgentRunError`][pydantic_ai.exceptions.AgentRunError] and aborts the run. Like a `def` tool, a `def` hook is not actually stopped: the worker thread runs to completion |
 | Connecting to an MCP server | `MCPToolset(init_timeout=...)`, default `5` seconds | The connection and `initialize` handshake fail |
 | A single MCP request | `MCPToolset(read_timeout=...)`, default `300` seconds | The request fails; under the default [`tool_error_behavior='retry'`](mcp/client.md#tool-errors) the model sees it as a retryable tool error |
@@ -27,7 +27,7 @@ Two of these need qualifying:
 If you enforce a deadline inside a tool body yourself, catch the `TimeoutError` and re-raise it as [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] or [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] rather than letting it escape. What happens to a bare `TimeoutError` depends on whether that tool has a timeout of its own:
 
 - **No `timeout` on the tool or its toolset.** It is an ordinary exception and propagates out of the agent run — unless a [capability](capabilities/overview.md) implements `on_tool_execute_error`, which can turn it into a replacement tool result or a `ModelRetry`.
-- **A `timeout` is configured.** The call runs inside `anyio.fail_after(timeout)`, which signals expiry with `TimeoutError` too, so a `TimeoutError` you raised yourself is indistinguishable from the deadline expiring and becomes the same `'Timed out after N seconds.'` retry prompt — reporting a deadline that may never have passed.
+- **A `timeout` is configured.** The call runs inside `anyio.fail_after(timeout)`, which signals expiry with `TimeoutError` too, so a `TimeoutError` you raised yourself is indistinguishable from the deadline expiring and becomes the same `'Timed out after N seconds.'` retried tool result — reporting a deadline that may never have passed.
 
 Re-raising in the tool is the more local choice; the hook is for applying one policy across every tool.
 
@@ -37,7 +37,7 @@ What a tool raises decides whether the run continues, and what the model gets to
 
 | Raise | Run continues? | The model sees |
 |---|---|---|
-| [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] | Yes | A [retry prompt](retries.md#tool-retries) asking it to correct the call — consumes that tool's retry budget |
+| [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] | Yes | A [retried tool result](retries.md#tool-retries) asking it to correct the call — consumes that tool's retry budget |
 | [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] | Yes | A [failed tool result](tools-advanced.md#tool-failed) to adapt to — does not consume the retry budget |
 | [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] / [`CallDeferred`][pydantic_ai.exceptions.CallDeferred] | Ends the run with a [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] output, unless a [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] handler resolves the call inline | Nothing yet — see [Deferred Tools](deferred-tools.md) |
 | Any other exception | No | By default nothing — it propagates out of `agent.run()`. A [capability](capabilities/overview.md) implementing `on_tool_execute_error` sees it first and can return a replacement tool result or raise `ModelRetry`, letting the run continue |

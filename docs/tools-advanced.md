@@ -604,7 +604,7 @@ You can also raise `ModelRetry` or `ToolFailed` from tool validation and executi
 
 ### Tool Timeout
 
-You can set a timeout for tool execution to prevent tools from running indefinitely. If a tool exceeds its timeout, it is treated as a retryable failure and a retry prompt is sent to the model (counting towards the retry limit).
+You can set a timeout for tool execution to prevent tools from running indefinitely. If a tool exceeds its timeout, it is treated as a retryable failure and the call is answered with a retried tool result (counting towards the retry limit).
 
 ```python
 import asyncio
@@ -632,7 +632,7 @@ async def fast_tool() -> str:
 - **Agent-level timeout**: Set `tool_timeout` on the [`Agent`][pydantic_ai.agent.Agent] to apply a default timeout to the tools registered on it.
 - **Per-tool timeout**: Set `timeout` on individual tools via [`@agent.tool`][pydantic_ai.agent.Agent.tool], [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain], or the [`Tool`][pydantic_ai.tools.Tool] dataclass. This overrides the agent-level default.
 
-When a timeout occurs, the tool is treated as a retryable failure and the model receives a retry prompt with the message `"Timed out after {timeout} seconds."`. This counts towards the tool's retry limit just like validation errors or explicit [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] exceptions.
+When a timeout occurs, the tool is treated as a retryable failure and the model receives a retried tool result with the message `"Timed out after {timeout} seconds."`. This counts towards the tool's retry limit just like validation errors or explicit [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] exceptions.
 
 Both settings are enforced by [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset], which is what backs the agent's own tools. Tools served by an [MCP server](mcp/client.md), an [external toolset](deferred-tools.md), or a custom [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset] do not read them — bind those deadlines at the server or transport level instead. See [Timeouts](timeouts.md#bounding-how-long-a-step-takes) for how tool timeouts relate to the other deadlines in a run.
 

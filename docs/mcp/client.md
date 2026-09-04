@@ -320,7 +320,7 @@ When an MCP server reports a tool error, [`MCPToolset`][pydantic_ai.mcp.MCPTools
 
 | `tool_error_behavior` | Behavior |
 | --- | --- |
-| `'retry'` | Default. Raises [`ModelRetry`][pydantic_ai.exceptions.ModelRetry], sending the server error back to the model as a retry prompt. Use this when the model may be able to correct the call. |
+| `'retry'` | Default. Raises [`ModelRetry`][pydantic_ai.exceptions.ModelRetry], sending the server error back to the model as a retried tool result. Use this when the model may be able to correct the call. |
 | `'failed'` | Raises [`ToolFailed`][pydantic_ai.exceptions.ToolFailed], which is recorded as a tool result with `outcome='failed'`. Use this when the tool call is complete but failed, and the model should decide what to do next. |
 | `'error'` | Propagates the underlying MCP tool exception and fails the agent run. Use this for errors you want application code to handle outside the model loop. |
 

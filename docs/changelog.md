@@ -2,6 +2,14 @@
 
 In September 2025, Pydantic AI reached V1 and committed to API stability: no changes that break your code until V2. V2 is now available, collecting the breaking and behavior changes that stability guarantee didn't allow. This guide is the canonical place to learn what's in V2, how to install it, and how to upgrade; for the guarantees behind these version numbers, see the [Version Policy](version-policy.md).
 
+## Deprecations
+
+Functionality deprecated in a V2 release keeps working until V3, and using it raises a `PydanticAIDeprecationWarning` naming its replacement. Resolving these as they appear is the smooth path to the next major, the same way [resolving V1's warnings](#changes-covered-by-deprecation-warnings) was the smooth path to this one.
+
+### Deprecated in V2, to be removed in V3
+
+- [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] is deprecated in favor of the two parts it conflated: a retry that answers a tool call is that call's own [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] with `outcome='retried'`, and one that answers no tool call is a [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart]. The old part reached the model as bare user text in the second case, which the model couldn't tell from something a person wrote. Pydantic AI no longer emits it, and constructing one warns. Nothing you already stored has to change: a `'retry-prompt'` part in a serialized history loads as whichever of the two it always meant, and an instance your own code holds — including one handed back through [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] — is translated the same way before it reaches a model. What does change is code that reads history: `isinstance(part, RetryPromptPart)` no longer matches, so match the two parts above instead. The text each retry sends the model changes with it — a tool retry carries the serialized validation errors or the `ModelRetry` message, with no `N validation errors:` header and no `Fix the errors and try again.` suffix, and one that answers no call arrives in the voice its cause calls for rather than as bare user text. See [Retries](retries.md#feedback-that-belongs-to-no-tool-call), [#6404](https://github.com/pydantic/pydantic-ai/issues/6404), and [#7799](https://github.com/pydantic/pydantic-ai/issues/7799).
+
 ## Breaking Changes
 
 Here's a filtered list of the breaking changes for each version to help you upgrade Pydantic AI.
