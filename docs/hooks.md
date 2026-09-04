@@ -310,6 +310,29 @@ Prefer naming the classes. Filtering by type isn't only about narrowing the `eve
 
 Returning a replacement event from `hooks.on.event` is deprecated. Use `hooks.on.run_event_stream` to transform, replace, or filter events.
 
+#### Listening without a `Hooks` capability
+
+When events are all you want to observe, [`@agent.on_event`][pydantic_ai.agent.Agent.on_event] registers a listener straight on the agent, with the same filtering, typing and `timeout=`:
+
+```python {title="agent_on_event.py"}
+from pydantic_ai import Agent, PartStartEvent, RunContext
+
+agent = Agent('test')
+event_count = 0
+
+
+@agent.on_event(PartStartEvent)
+async def count_events(ctx: RunContext, event: PartStartEvent) -> None:
+    global event_count
+    event_count += 1
+```
+
+Bare works the same way: `@agent.on_event` on its own sees every event.
+
+Listeners registered on the agent run after those contributed by its capabilities, so they observe what the capabilities did, and they survive an overridden root capability. An agent that never calls `on_event` is unaffected: with nothing registered, the listener capability is never added to the run at all.
+
+Only events can be registered this way. The other hook families are interceptors — they sit in a wrap chain, take and return the value, and where they sit relative to the other capabilities is a choice you need to make — so they go on a `Hooks` capability whose position in `capabilities=` is yours to pick.
+
 ## Tool hook filtering
 
 Tool hooks (validation and execution) support a `tools` parameter to target specific tools by name:

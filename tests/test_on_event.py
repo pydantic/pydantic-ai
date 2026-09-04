@@ -986,3 +986,105 @@ async def test_hooks_filters_non_matching_callbacks_once_dispatch_is_entered() -
     assert 'any:capability' in seen
     assert seen.count('read:file') == 1
     assert not any(entry == 'read:dir' for entry in seen)
+
+
+@dataclass(kw_only=True)
+class AgentLevelEvent(CapabilityEvent, namespace='on_event_agent_level'):
+    value: str
+
+
+@dataclass(kw_only=True)
+class AgentLevelNoteEvent(CustomEvent, name='on_event_agent_level_note'):
+    value: str
+
+
+@dataclass
+class AgentLevelEmitter(AbstractCapability[Any]):
+    """Emits one `AgentLevelEvent` before the model request."""
+
+    value: str = 'x'
+
+    async def before_model_request(
+        self, ctx: RunContext[Any], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        await ctx.emit(AgentLevelEvent(value=self.value))
+        return request_context
+
+
+@dataclass
+class AgentLevelListener(AbstractCapability[Any]):
+    seen: list[str]
+
+    @on_event(AgentLevelEvent)
+    async def heard(self, ctx: RunContext[Any], event: AgentLevelEvent) -> None:
+        self.seen.append('capability')
+
+
+async def test_agent_on_event_filters_and_runs_after_capability_listeners() -> None:
+    seen: list[str] = []
+    agent = Agent(
+        FunctionModel(stream_function=simple_stream_function),
+        capabilities=[AgentLevelEmitter(), AgentLevelListener(seen)],
+    )
+
+    @agent.on_event(AgentLevelEvent)
+    async def typed(ctx: RunContext[None], event: AgentLevelEvent) -> None:
+        seen.append(f'agent:{event.value}')
+
+    await agent.run('hello')
+
+    # The capability's listener runs first: an agent-level listener observes what the
+    # registered capabilities did.
+    assert seen == ['capability', 'agent:x']
+
+
+async def test_agent_on_event_bare_sees_every_event() -> None:
+    kinds: list[str] = []
+    agent = Agent(FunctionModel(stream_function=simple_stream_function), capabilities=[AgentLevelEmitter()])
+
+    @agent.on_event
+    async def every(ctx: RunContext[None], event: AgentStreamEvent) -> None:
+        kinds.append(event.event_kind)
+
+    await agent.run('hello')
+
+    assert 'capability' in kinds
+    assert len(kinds) > 1
+
+
+async def test_agent_on_event_listener_can_emit_a_custom_event() -> None:
+    agent = Agent(FunctionModel(stream_function=simple_stream_function), capabilities=[AgentLevelEmitter()])
+
+    @agent.on_event(AgentLevelEvent)
+    async def republish(ctx: RunContext[None], event: AgentLevelEvent) -> None:
+        await ctx.emit(AgentLevelNoteEvent(value=event.value))
+
+    notes: list[AgentLevelNoteEvent] = []
+    async with agent.run_stream_events('hello') as stream:
+        async for event in stream:
+            if isinstance(event, AgentLevelNoteEvent):
+                notes.append(event)
+
+    assert [note.value for note in notes] == ['x']
+
+
+async def test_agent_without_listeners_registers_no_capability() -> None:
+    agent = Agent(FunctionModel(stream_function=simple_stream_function), capabilities=[AgentLevelEmitter()])
+
+    hooks = agent._event_hooks  # pyright: ignore[reportPrivateUsage]
+    before, _ = agent._base_run_capability()  # pyright: ignore[reportPrivateUsage]
+
+    # Until a listener is registered the agent's `Hooks` is not wrapped in at all, so an agent
+    # that never calls `on_event` runs against exactly the capability tree it was built with.
+    assert before is agent._effective_root_capability()  # pyright: ignore[reportPrivateUsage]
+    assert hooks not in before.capabilities
+
+    @agent.on_event(AgentLevelEvent)
+    async def typed(ctx: RunContext[None], event: AgentLevelEvent) -> None: ...
+
+    after, _ = agent._base_run_capability()  # pyright: ignore[reportPrivateUsage]
+
+    # Once one is, it joins last (`CombinedCapability` flattens, so the agent's own capabilities
+    # keep their order ahead of it) and nothing else about the tree changes.
+    assert after.capabilities[-1] is hooks
+    assert list(after.capabilities[:-1]) == list(before.capabilities)
