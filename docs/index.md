@@ -45,7 +45,7 @@ description: "How Python does AI: agents, realtime voice, image generation, embe
 
 From simple typed data extraction to complex, long-running multi-agent collaboration, Pydantic AI and [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) have got you covered.
 
-=== "Coding agent"
+=== "Coding agent" {#coding-agent}
 
     A complete coding agent in your terminal: workspace-rooted [file access](https://pydantic.dev/docs/ai/harness/filesystem/), allowlisted [shell](https://pydantic.dev/docs/ai/harness/shell/), [repo orientation](https://pydantic.dev/docs/ai/harness/repo-context/), [planning](https://pydantic.dev/docs/ai/harness/planning/), and [context management](https://pydantic.dev/docs/ai/harness/compaction/) that survives long sessions. Here with [web search](capabilities/web-search.md) and a second-opinion [advisor](https://pydantic.dev/docs/ai/harness/advisor/) snapped on alongside:
 
@@ -86,7 +86,7 @@ From simple typed data extraction to complex, long-running multi-agent collabora
 
     **Build this →** [Coder](https://pydantic.dev/docs/ai/harness/coder/), from the [Harness](https://pydantic.dev/docs/ai/harness/)
 
-=== "Data extraction"
+=== "Data extraction" {#data-extraction}
 
     Give the agent an [output type](output.md) and [tools](tools.md), and every run comes back validated and typed:
 
@@ -125,7 +125,7 @@ From simple typed data extraction to complex, long-running multi-agent collabora
 
     **Build this →** [Agents](agent.md), [Function Tools](tools.md), and [Structured Output](output.md)
 
-=== "Durable workflow"
+=== "Durable workflow" {#durable-workflow}
 
     Attach [`TemporalDurability`](durable_execution/temporal.md) and the same agent runs inside a [Temporal](durable_execution/temporal.md) workflow under [durable execution](durable_execution/overview.md): every model and tool call becomes a durable activity, so a run working through a background queue survives restarts, failures, and long waits:
 
@@ -162,7 +162,7 @@ From simple typed data extraction to complex, long-running multi-agent collabora
 
     **Build this →** [Durable Execution](durable_execution/overview.md)
 
-=== "Realtime voice"
+=== "Realtime voice" {#realtime-voice}
 
     Put the same agent on a live voice session, [tools](realtime/tools.md) and [capabilities](realtime/capabilities.md) included:
 
@@ -197,7 +197,7 @@ From simple typed data extraction to complex, long-running multi-agent collabora
 
     **Build this →** [Realtime Voice](realtime/overview.md), starting from the [voice assistant example](examples/realtime-voice.md)
 
-=== "Image gen"
+=== "Image gen" {#image-gen}
 
     Ask for an image and make it the run's typed [output](output.md):
 
