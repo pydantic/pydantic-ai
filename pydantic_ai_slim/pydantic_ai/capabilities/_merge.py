@@ -72,7 +72,9 @@ def merge_capability_fields(
     """
     merged = capabilities[-1]
     field_names = {field.name for field in dataclasses.fields(merged)}
-    rebuildable = _rebuildable_attributes(type(merged))
+    # A subclass may turn an inherited `cached_property`'s name into a real field. It is then
+    # configuration, merged like any other, and dropping it would leave the class default showing.
+    rebuildable = _rebuildable_attributes(type(merged)) - field_names
     for capability in capabilities:
         # Not "cannot be merged" -- `replace_no_init` copies the last instance, so an undeclared
         # attribute does get *a* value. What it cannot get is the promise above: a value only an

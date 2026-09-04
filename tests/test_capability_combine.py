@@ -872,6 +872,35 @@ def test_a_merged_collection_keeps_the_type_the_field_declared() -> None:
     assert type(merged.unique) is frozenset
 
 
+def test_a_field_shadowing_an_inherited_cached_property_is_merged_not_dropped() -> None:
+    """A name can be a cache on the base and configuration on the subclass, and the field wins.
+
+    Dropping is keyed on the name, so an inherited `cached_property` would otherwise take the
+    merged field's value with it and leave the class default showing -- a merge that silently
+    reports something neither instance stated.
+    """
+
+    @dataclass
+    class Base(AbstractCapability[Any]):
+        names: list[str] = field(default_factory=list[str])
+        _: KW_ONLY
+        id: str | None = 'shadowed'
+
+        @cached_property
+        def count(self) -> int:
+            return len(self.names)  # pragma: no cover
+
+    @dataclass
+    class Sub(Base):
+        count: int = 0  # pyright: ignore[reportIncompatibleVariableOverride]
+
+    merged = Sub.combine([Sub(names=['a'], count=1), Sub(names=['b'], count=9)])
+
+    assert isinstance(merged, Sub)
+    assert merged.names == ['a', 'b']
+    assert merged.count == 9, 'the later declared value, not the class default a dropped field falls back to'
+
+
 def test_a_record_that_merely_looks_like_a_sequence_takes_the_later_value() -> None:
     """A `NamedTuple` is a record, not a collection, so the later value wins as for any scalar.
 
