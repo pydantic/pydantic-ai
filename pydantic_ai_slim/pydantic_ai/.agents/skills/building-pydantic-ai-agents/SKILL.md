@@ -252,8 +252,6 @@ async def main(microphone_chunk: bytes):
         await session.send_audio(microphone_chunk)
         await session.commit_audio()
         await session.create_response()
-        # Input transcription can finish after the model's response.
-        turn_complete = user_turn_complete = False
         async for event in session:
             match event:
                 case PartDeltaEvent(delta=SpeechPartDelta(audio_chunk=chunk)) if chunk:
@@ -261,14 +259,13 @@ async def main(microphone_chunk: bytes):
                 case PartEndEvent(part=SpeechPart(speaker='user', transcript=t)):
                     if t is not None:
                         print('user said:', t)
-                    user_turn_complete = True
                 case RealtimeTurnCompleteEvent():
-                    turn_complete = True
+                    # Input transcription may finish later, or be disabled or fail.
+                    # Do not wait for it past the exchange boundary.
+                    break
                 case RealtimeSessionErrorEvent(message=message, recoverable=True):
                     # The connection remains usable, but this turn may not complete.
                     raise RuntimeError(message)
-            if turn_complete and user_turn_complete:
-                break
 
     # A session builds ordinary ModelMessage history: hand it off to a text agent.
     notes = Agent('openai:gpt-5.2', instructions='Summarize.')
