@@ -140,7 +140,6 @@ with try_import() as imports_successful:
         BetaMessage,
         BetaMessageDeltaUsage,
         BetaMessageIterationUsage,
-        BetaMessageParam,
         BetaMessageTokensCount,
         BetaOutputTokensDetails,
         BetaRawContentBlockDeltaEvent,
@@ -12167,237 +12166,94 @@ def _deferred_tools_params() -> ModelRequestParameters:
             ToolDefinition(name='reveal', parameters_json_schema={'type': 'object'}),
             ToolDefinition(name='list_maps', parameters_json_schema={'type': 'object'}),
             ToolDefinition(name='delete_map', parameters_json_schema={'type': 'object'}, defer_loading=True),
+            ToolDefinition(name='archive_map', parameters_json_schema={'type': 'object'}, defer_loading=True),
         ],
     )
 
 
-def _parallel_reveal_history() -> list[ModelRequest | ModelResponse]:
-    """The history from issue 7878: one response calls a reveal-capable tool and a sibling, and
-    their results plus the reveal delta land in one request."""
-    return [
-        ModelRequest(parts=[UserPromptPart(content='clean up the maps')]),
-        ModelResponse(
-            parts=[
-                ToolCallPart(tool_name='reveal', args={'q': 'tools'}, tool_call_id='pyd_ai_reveal'),
-                ToolCallPart(tool_name='list_maps', args={}, tool_call_id='pyd_ai_list_maps'),
-            ]
-        ),
-        ModelRequest(
-            parts=[
-                ToolReturnPart(tool_name='reveal', content='delete_map is available', tool_call_id='pyd_ai_reveal'),
-                ToolAvailabilityDeltaPart(tools_added=['delete_map'], tool_call_id='pyd_ai_reveal'),
-                ToolReturnPart(tool_name='list_maps', content=[], tool_call_id='pyd_ai_list_maps'),
-            ]
-        ),
-    ]
-
-
-def test_anthropic_defer_loading_parallel_batch_keeps_sibling_tool_results_before_synthesized_exchange() -> None:
-    """https://github.com/pydantic/pydantic-ai/issues/7878 — results answering a parallel batch
-    stay in the message right after their calls; the synthesized exchange follows them."""
-    from pydantic_ai.models.anthropic import AnthropicModel
-
-    model = AnthropicModel(
-        'claude-sonnet-5', provider=AnthropicProvider(anthropic_client=cast(AsyncAnthropic, MockAnthropic()))
-    )
-    projected = model.prepare_messages(_parallel_reveal_history(), _deferred_tools_params())
-
-    # the prompt and the parallel calls pass through untouched
-    assert isinstance(projected[0], ModelRequest)
-    assert isinstance(projected[0].parts[0], UserPromptPart)
-    assert isinstance(projected[1], ModelResponse)
-    assert isinstance(projected[1].parts[0], ToolCallPart)
-    assert isinstance(projected[1].parts[1], ToolCallPart)
-    assert [projected[1].parts[0].tool_call_id, projected[1].parts[1].tool_call_id] == [
-        'pyd_ai_reveal',
-        'pyd_ai_list_maps',
-    ]
-
-    # both sibling results stay together in the message immediately after their calls
-    assert isinstance(projected[2], ModelRequest)
-    assert len(projected[2].parts) == 2
-    assert isinstance(projected[2].parts[0], ToolReturnPart)
-    assert isinstance(projected[2].parts[1], ToolReturnPart)
-    assert projected[2].parts[0].tool_call_id == 'pyd_ai_reveal'
-    assert projected[2].parts[1].tool_call_id == 'pyd_ai_list_maps'
-
-    # the synthesized search_tools exchange follows the sibling results, with a fresh id
-    assert isinstance(projected[3], ModelResponse)
-    assert isinstance(projected[3].parts[0], ToolSearchCallPart)
-    assert projected[3].parts[0].args == {'queries': ['delete_map']}
-    assert projected[3].parts[0].tool_call_id not in {'pyd_ai_reveal', 'pyd_ai_list_maps'}
-    assert isinstance(projected[4], ModelRequest)
-    assert isinstance(projected[4].parts[0], ToolSearchReturnPart)
-    assert projected[4].parts[0].tool_call_id == projected[3].parts[0].tool_call_id
-    assert len(projected) == 5
-
-
-def _tool_use_ids(message: BetaMessageParam) -> list[str]:
-    content = message['content']
-    assert isinstance(content, list)
-    ids: list[str] = []
-    for block in content:
-        if isinstance(block, dict) and block['type'] == 'tool_use':
-            ids.append(block['id'])
-    return ids
-
-
-def _tool_result_ids(message: BetaMessageParam) -> set[str]:
-    content = message['content']
-    assert isinstance(content, list)
-    ids: set[str] = set()
-    for block in content:
-        if isinstance(block, dict) and block['type'] == 'tool_result':
-            ids.add(block['tool_use_id'])
-    return ids
-
-
-def _assert_tool_result_adjacency(mapped: list[BetaMessageParam]) -> None:
-    """Every `tool_use` id must get its `tool_result` in the immediately following user message."""
-    for index, wire_message in enumerate(mapped):
-        tool_use_ids = _tool_use_ids(wire_message)
-        if not tool_use_ids:
-            continue
-        assert index + 1 < len(mapped), f'tool_use ids {tool_use_ids} appear in the final message'
-        following = mapped[index + 1]
-        assert following['role'] == 'user', f'message {index + 1} does not answer tool_use {tool_use_ids}'
-        missing = set(tool_use_ids) - _tool_result_ids(following)
-        assert not missing, f'tool_use ids {missing} have no tool_result in message {index + 2}'
-
-
-async def test_anthropic_defer_loading_parallel_batch_satisfies_tool_result_adjacency_in_mapped_request() -> None:
-    """The projected history must map to a request Anthropic accepts: every `tool_use` id gets its
-    `tool_result` in the immediately following user message
-    (https://github.com/pydantic/pydantic-ai/issues/7878)."""
-    from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
-
-    model = AnthropicModel(
-        'claude-sonnet-5', provider=AnthropicProvider(anthropic_client=cast(AsyncAnthropic, MockAnthropic()))
-    )
-    projected = model.prepare_messages(_parallel_reveal_history(), _deferred_tools_params())
-    _, mapped = await model._map_message(  # pyright: ignore[reportPrivateUsage]
-        projected, _deferred_tools_params(), AnthropicModelSettings()
-    )
-
-    _assert_tool_result_adjacency(mapped)
-
-
-async def test_anthropic_defer_loading_agent_run_parallel_batch_history_projects_valid_request() -> None:
-    """A production-emitted history — the reveal and a sibling called in one batch — must project
-    to a request Anthropic accepts (https://github.com/pydantic/pydantic-ai/issues/7878)."""
-    from pydantic_ai import Agent
-    from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
-    from pydantic_ai.models.test import TestModel
-    from pydantic_ai.profiles import ModelProfile
-
+async def test_anthropic_tool_return_reveal_parallel_batch_live(
+    allow_model_requests: None,
+    anthropic_model: AnthropicModelFactory,
+    request_capture: RequestCapture,
+) -> None:
     agent = Agent(
-        TestModel(
-            profile=ModelProfile(tool_deferral_mode='standalone', tool_addition_mode='with_definitions'),
-            call_tools=['reveal', 'list_maps'],
-        )
+        anthropic_model('claude-haiku-4-5', capture=True),
+        instructions=(
+            'On your first response, call reveal_cleanup and list_maps together in one parallel tool-use response. '
+            'Do not write any text before those calls. After both results, reply exactly DONE. Do not call delete_map.'
+        ),
+        model_settings=AnthropicModelSettings(parallel_tool_calls=True, temperature=0),
     )
 
     @agent.tool_plain
-    def reveal() -> ToolReturn:
-        return ToolReturn(return_value='delete_map is available', tools=['delete_map'])
+    def reveal_cleanup() -> ToolReturn[str]:
+        return ToolReturn('cleanup enabled', tools=['delete_map'])
 
     @agent.tool_plain
     def list_maps() -> list[str]:
-        return ['paris']
+        return ['world']
 
-    @agent.tool_plain(defer_loading=True)
-    def delete_map(name: str) -> str:  # pragma: no cover
-        return f'deleted {name}'
+    agent.tool_plain(name='delete_map', defer_loading=True)(list_maps)
 
-    result = await agent.run('clean up the maps')
-    messages = result.all_messages()
+    result = await agent.run('Prepare to clean up the maps.')
 
-    # the run natively stores the triggering shape: one request holding both the reveal delta and
-    # a sibling result answering the same parallel response
-    delta_requests = [
-        message
-        for message in messages
-        if isinstance(message, ModelRequest)
-        and any(isinstance(part, ToolAvailabilityDeltaPart) for part in message.parts)
+    assert result.output == 'DONE'
+    first_response = result.all_messages()[1]
+    assert isinstance(first_response, ModelResponse)
+    assert [part.tool_name for part in first_response.parts if isinstance(part, ToolCallPart)] == [
+        'reveal_cleanup',
+        'list_maps',
     ]
-    assert len(delta_requests) == 1
-    assert any(isinstance(part, ToolReturnPart) and part.tool_name == 'list_maps' for part in delta_requests[0].parts)
+    request_bodies = request_capture.bodies('/v1/messages')
+    assert len(request_bodies) == 2
+    assert message_shape(request_bodies[1]) == snapshot(
+        [
+            ('user', ['text']),
+            ('assistant', ['tool_use', 'tool_use']),
+            ('user', ['tool_result', 'tool_result']),
+            ('assistant', ['tool_use']),
+            ('user', ['tool_result']),
+        ]
+    )
 
+
+def test_anthropic_defer_loading_exchange_precedes_non_tool_part_after_delta() -> None:
     model = AnthropicModel(
         'claude-sonnet-5', provider=AnthropicProvider(anthropic_client=cast(AsyncAnthropic, MockAnthropic()))
     )
-    projected = model.prepare_messages(messages, _deferred_tools_params())
-    _, mapped = await model._map_message(  # pyright: ignore[reportPrivateUsage]
-        projected, _deferred_tools_params(), AnthropicModelSettings()
-    )
-
-    _assert_tool_result_adjacency(mapped)
-
-
-async def test_anthropic_defer_loading_exchange_precedes_non_tool_part_after_delta() -> None:
-    """A part that answers no call (frontend-authored user text mixed into the tool-results
-    request) keeps the exchange ahead of it, with the return rejoining that part."""
-    from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
-
-    model = AnthropicModel(
-        'claude-sonnet-5', provider=AnthropicProvider(anthropic_client=cast(AsyncAnthropic, MockAnthropic()))
-    )
-
     projected = model.prepare_messages(
         [
             ModelRequest(
                 parts=[
-                    ToolReturnPart(tool_name='reveal', content='delete_map is available', tool_call_id='pyd_ai_reveal'),
-                    ToolAvailabilityDeltaPart(tools_added=['delete_map'], tool_call_id='pyd_ai_reveal'),
-                    UserPromptPart(content='continue'),
-                ]
-            ),
-        ],
-        _deferred_tools_params(),
-    )
-    assert isinstance(projected[0], ModelRequest)
-    assert len(projected[0].parts) == 1
-    assert isinstance(projected[0].parts[0], ToolReturnPart)
-    assert isinstance(projected[1], ModelResponse)
-    assert isinstance(projected[1].parts[0], ToolSearchCallPart)
-    assert isinstance(projected[2], ModelRequest)
-    assert [type(part).__name__ for part in projected[2].parts] == ['ToolSearchReturnPart', 'UserPromptPart']
-
-    # the mapped wire request stays valid: the exchange's tool_use is answered by the
-    # tool_result leading the following message, with the user text trailing it
-    _, mapped = await model._map_message(  # pyright: ignore[reportPrivateUsage]
-        projected, _deferred_tools_params(), AnthropicModelSettings()
-    )
-    _assert_tool_result_adjacency(mapped)
-
-    # a delta first in the request behaves the same when nothing precedes it
-    projected = model.prepare_messages(
-        [
-            ModelRequest(
-                parts=[
+                    ToolReturnPart(tool_name='reveal', content='ready', tool_call_id='reveal'),
                     ToolAvailabilityDeltaPart(tools_added=['delete_map']),
-                    UserPromptPart(content='continue'),
+                    UserPromptPart(content='first barrier'),
+                    ToolAvailabilityDeltaPart(tools_added=['archive_map']),
+                    UserPromptPart(content='second barrier'),
                 ]
             ),
         ],
         _deferred_tools_params(),
     )
-    assert isinstance(projected[0], ModelResponse)
-    assert isinstance(projected[0].parts[0], ToolSearchCallPart)
-    assert isinstance(projected[1], ModelRequest)
-    assert [type(part).__name__ for part in projected[1].parts] == ['ToolSearchReturnPart', 'UserPromptPart']
 
-    _, mapped = await model._map_message(  # pyright: ignore[reportPrivateUsage]
-        projected, _deferred_tools_params(), AnthropicModelSettings()
-    )
-    _assert_tool_result_adjacency(mapped)
+    assert len(projected) == 5
+    first_request, first_call, first_return, second_call, second_return = projected
+    assert isinstance(first_request, ModelRequest)
+    assert isinstance(first_call, ModelResponse)
+    assert isinstance(first_return, ModelRequest)
+    assert isinstance(second_call, ModelResponse)
+    assert isinstance(second_return, ModelRequest)
+    assert len(first_return.parts) == 2
+    assert isinstance(first_return.parts[0], ToolSearchReturnPart)
+    assert isinstance(first_return.parts[1], UserPromptPart)
+    assert first_return.parts[1].content == 'first barrier'
+    assert len(second_return.parts) == 2
+    assert isinstance(second_return.parts[0], ToolSearchReturnPart)
+    assert isinstance(second_return.parts[1], UserPromptPart)
+    assert second_return.parts[1].content == 'second barrier'
 
 
-def test_anthropic_defer_loading_parallel_batch_keeps_retry_prompt_sibling_before_synthesized_exchange() -> None:
-    """A failed sibling call's retry is a `tool_result` on the wire too, so it stays with the
-    batch's results ahead of the exchange (https://github.com/pydantic/pydantic-ai/issues/7878)."""
-    from pydantic_ai.models.anthropic import AnthropicModel
-
+def test_anthropic_defer_loading_multiple_deltas_keep_each_synthetic_exchange_adjacent() -> None:
     model = AnthropicModel(
         'claude-sonnet-5', provider=AnthropicProvider(anthropic_client=cast(AsyncAnthropic, MockAnthropic()))
     )
@@ -12405,24 +12261,42 @@ def test_anthropic_defer_loading_parallel_batch_keeps_retry_prompt_sibling_befor
         [
             ModelRequest(
                 parts=[
-                    ToolReturnPart(tool_name='reveal', content='delete_map is available', tool_call_id='pyd_ai_reveal'),
-                    ToolAvailabilityDeltaPart(tools_added=['delete_map'], tool_call_id='pyd_ai_reveal'),
-                    RetryPromptPart(
-                        tool_name='list_maps',
-                        tool_call_id='pyd_ai_list_maps',
-                        content='arguments failed validation',
-                    ),
+                    ToolReturnPart(tool_name='reveal', content='x', tool_call_id='reveal'),
+                    ToolAvailabilityDeltaPart(tools_added=['delete_map']),
+                    RetryPromptPart(tool_name='list_maps', content='retry', tool_call_id='list_maps'),
+                    ToolAvailabilityDeltaPart(tools_added=['archive_map']),
+                    ToolReturnPart(tool_name='status', content='ready', tool_call_id='status'),
+                    UserPromptPart(content='continue'),
                 ]
-            ),
+            )
         ],
         _deferred_tools_params(),
     )
-    assert isinstance(projected[0], ModelRequest)
-    assert [type(part).__name__ for part in projected[0].parts] == ['ToolReturnPart', 'RetryPromptPart']
-    assert isinstance(projected[1], ModelResponse)
-    assert isinstance(projected[1].parts[0], ToolSearchCallPart)
-    assert isinstance(projected[2], ModelRequest)
-    assert [type(part).__name__ for part in projected[2].parts] == ['ToolSearchReturnPart']
+
+    assert len(projected) == 5
+    sibling_results, first_call, first_return, second_call, second_return = projected
+    assert isinstance(sibling_results, ModelRequest)
+    assert isinstance(first_call, ModelResponse)
+    assert isinstance(first_return, ModelRequest)
+    assert isinstance(second_call, ModelResponse)
+    assert isinstance(second_return, ModelRequest)
+    assert len(first_call.parts) == 1
+    assert isinstance(first_call.parts[0], ToolSearchCallPart)
+    assert first_call.parts[0].args == {'queries': ['delete_map']}
+    assert len(second_call.parts) == 1
+    assert isinstance(second_call.parts[0], ToolSearchCallPart)
+    assert second_call.parts[0].args == {'queries': ['archive_map']}
+    assert len(sibling_results.parts) == 3
+    assert isinstance(sibling_results.parts[0], ToolReturnPart)
+    assert isinstance(sibling_results.parts[1], RetryPromptPart)
+    assert isinstance(sibling_results.parts[2], ToolReturnPart)
+    assert len(first_return.parts) == 1
+    assert isinstance(first_return.parts[0], ToolSearchReturnPart)
+    assert first_return.parts[0].tool_call_id == first_call.parts[0].tool_call_id
+    assert len(second_return.parts) == 2
+    assert isinstance(second_return.parts[0], ToolSearchReturnPart)
+    assert second_return.parts[0].tool_call_id == second_call.parts[0].tool_call_id
+    assert isinstance(second_return.parts[1], UserPromptPart)
 
 
 @pytest.mark.parametrize(

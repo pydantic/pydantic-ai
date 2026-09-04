@@ -2506,11 +2506,9 @@ def _synthesize_tool_availability_delta_messages(
     the model ran a search.
 
     The exchange spans a turn boundary — an assistant call, then its return — so a request holding
-    other parts alongside the delta has to be split around it, and where the split falls matters:
-    a provider rejects any message between a tool call and the result answering it, so parts
-    answering the previous response's calls stay in the message right after it and the exchange
-    follows them. A part that answers no call still gets the exchange ahead of it, so an assistant
-    turn is never hoisted before a user prompt that originally preceded the delta.
+    other parts alongside the delta has to be split around it. Tool results answering the previous
+    response must stay together in the next request, so deltas interleaved with that leading group
+    move behind it. Other parts are ordering barriers that deltas never cross.
     """
     transformed: list[ModelMessage] = []
     changed = False
@@ -2537,6 +2535,10 @@ def _synthesize_tool_availability_delta_messages(
         for part in message.parts
         if isinstance(part, BaseToolCallPart | BaseToolReturnPart | RetryPromptPart)
     }
+
+    def answers_tool_call(part: ModelRequestPart) -> bool:
+        return isinstance(part, ToolReturnPart) or isinstance(part, RetryPromptPart) and part.tool_name is not None
+
     for message in messages:
         if not isinstance(message, ModelRequest) or not any(
             isinstance(part, ToolAvailabilityDeltaPart) for part in message.parts
@@ -2545,28 +2547,28 @@ def _synthesize_tool_availability_delta_messages(
             continue
 
         changed = True
+        # Tool execution can interleave availability deltas with the sibling results from one
+        # parallel response. Keep that leading settlement group intact before inserting new turns.
+        settlement_end = next(
+            (
+                index
+                for index, part in enumerate(message.parts)
+                if not isinstance(part, ToolAvailabilityDeltaPart) and not answers_tool_call(part)
+            ),
+            len(message.parts),
+        )
+        settlement = message.parts[:settlement_end]
+        ordered_parts = [
+            *(part for part in settlement if answers_tool_call(part)),
+            *(part for part in settlement if isinstance(part, ToolAvailabilityDeltaPart)),
+            *message.parts[settlement_end:],
+        ]
+
         # Parts accumulated since the last split; flushed as their own `ModelRequest` before each
-        # synthetic assistant turn so everything keeps the order it was authored in.
+        # synthetic assistant turn so everything keeps the order established above.
         pending: list[ModelRequestPart] = []
-        # Exchanges held back while the request still carries results answering the previous
-        # response's calls: a provider rejects any message between a tool call and the result
-        # answering it, so those results stay in the message right after it and each exchange
-        # follows them.
-        deferred: list[tuple[ToolSearchCallPart, ToolSearchReturnPart]] = []
-        for part in message.parts:
+        for part in ordered_parts:
             if not isinstance(part, ToolAvailabilityDeltaPart):
-                if deferred and not (
-                    isinstance(part, ToolReturnPart) or isinstance(part, RetryPromptPart) and part.tool_name is not None
-                ):
-                    # A part answering no call ends the sibling run: the exchange goes out ahead
-                    # of it, with its return rejoining that part in one request.
-                    if pending:
-                        transformed.append(replace(message, parts=pending))
-                        pending = []
-                    for call_part, return_part in deferred:
-                        transformed.append(ModelResponse(parts=[call_part]))
-                        pending.append(return_part)
-                    deferred = []
                 pending.append(part)
                 continue
             added = [name for name in part.tools_added if deferred_tool_names is None or name in deferred_tool_names]
@@ -2589,19 +2591,19 @@ def _synthesize_tool_availability_delta_messages(
                     if tool_call_id not in synthesized_ids and tool_call_id not in history_call_ids:
                         break
             synthesized_ids.add(tool_call_id)
-            deferred.append(
-                (
-                    ToolSearchCallPart(args={'queries': added}, tool_call_id=tool_call_id),
-                    ToolSearchReturnPart(
-                        content={'discovered_tools': [{'name': name} for name in added]},
-                        tool_call_id=tool_call_id,
-                    ),
+            if pending:
+                transformed.append(replace(message, parts=pending))
+                pending = []
+            transformed.append(
+                ModelResponse(parts=[ToolSearchCallPart(args={'queries': added}, tool_call_id=tool_call_id)])
+            )
+            pending.append(
+                ToolSearchReturnPart(
+                    content={'discovered_tools': [{'name': name} for name in added]},
+                    tool_call_id=tool_call_id,
                 )
             )
         if pending:
             transformed.append(replace(message, parts=pending))
-        for call_part, return_part in deferred:
-            transformed.append(ModelResponse(parts=[call_part]))
-            transformed.append(replace(message, parts=[return_part]))
 
     return transformed if changed else messages
