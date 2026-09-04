@@ -252,7 +252,10 @@ from pydantic_ai import Embedder
 
 embedder = Embedder('azure:text-embedding-3-small')
 embedder = Embedder('ollama:nomic-embed-text')
+embedder = Embedder('vllm:intfloat/e5-mistral-7b-instruct')
 ```
+
+The `vllm:` shorthand uses `VLLM_BASE_URL` and, for authenticated servers, `VLLM_API_KEY`. The server must be running an [embedding model supported by vLLM](https://docs.vllm.ai/en/stable/serving/online_serving/openai_compatible_server/#embeddings-api).
 
 See [OpenAI-compatible Models](models/openai.md#openai-compatible-models) for the full list of supported providers.
 

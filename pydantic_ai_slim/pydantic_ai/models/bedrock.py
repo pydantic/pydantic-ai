@@ -62,7 +62,10 @@ from pydantic_ai import (
 from pydantic_ai._output import DEFAULT_OUTPUT_TOOL_NAME
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
-from pydantic_ai.messages import is_multi_modal_content
+from pydantic_ai.messages import (
+    _tool_result_provenance_tags,  # pyright: ignore[reportPrivateUsage]
+    is_multi_modal_content,
+)
 from pydantic_ai.models import (
     Model,
     ModelRequestParameters,
@@ -322,7 +325,9 @@ LatestBedrockModelNames = Literal[
     'us.anthropic.claude-sonnet-5',
     'global.anthropic.claude-sonnet-5',
     'us.anthropic.claude-fable-5',
+    'us.anthropic.claude-fable-5-1',
     'global.anthropic.claude-fable-5',
+    'global.anthropic.claude-fable-5-1',
     # Amazon Nova
     'us.amazon.nova-premier-v1:0',
     'global.amazon.nova-2-lite-v1:0',
@@ -1249,15 +1254,22 @@ class BedrockConverseModel(Model[BaseClient]):
                                     tool_result_content.append(file_block)
                                 else:
                                     tool_result_content.append({'text': f'See file {item.identifier}.'})
-                                    media_note: ContentBlockUnionTypeDef = {'text': f'This is file {item.identifier}:'}
+                                    # This media lands on a user turn, so it is framed with the call it
+                                    # came from — see `_tool_result_provenance_tags`.
+                                    open_tag, close_tag = _tool_result_provenance_tags(
+                                        part.tool_name, part.tool_call_id, item.identifier
+                                    )
+                                    framed_media: list[ContentBlockUnionTypeDef] = [
+                                        {'text': open_tag},
+                                        file_block,
+                                        {'text': close_tag},
+                                    ]
                                     if kind in colocatable_content:
                                         # This model allows the media alongside the `toolResult`; keep it in the same turn.
-                                        colocated_media_content.append(media_note)
-                                        colocated_media_content.append(file_block)
+                                        colocated_media_content.extend(framed_media)
                                     else:
                                         # The media can't share the `toolResult`'s turn; defer it to a later user turn.
-                                        deferred_media_content.append(media_note)
-                                        deferred_media_content.append(file_block)
+                                        deferred_media_content.extend(framed_media)
                             else:
                                 tool_result_content.append({'text': item} if isinstance(item, str) else {'json': item})
                         if not tool_result_content:

@@ -369,10 +369,60 @@ See [Deferred tools and human-in-the-loop tool approval](../deferred-tools.md) f
 
 ### Events
 
-Pydantic AI tools can send [AG-UI events](https://docs.ag-ui.com/concepts/events) simply by returning a
+To send events to the client while a run is in progress — for example progress updates from a long-running tool — emit a [`CustomEvent`](../agent.md#custom-events) via [`ctx.emit()`][pydantic_ai.tools.RunContext.emit]:
+
+```python {title="ag_ui_custom_events.py"}
+from dataclasses import dataclass
+
+from pydantic_ai import Agent, CustomEvent, RunContext
+
+agent = Agent('openai:gpt-5.2')
+
+
+@dataclass(kw_only=True)
+class SearchIndexProgressEvent(CustomEvent):
+    done: int
+    total: int
+
+
+@agent.tool
+async def reindex(ctx: RunContext, total: int) -> str:
+    for done in range(1, total + 1):
+        # Do a unit of work, then tell the frontend how far along we are.
+        await ctx.emit(SearchIndexProgressEvent(done=done, total=total))
+    return f'Reindexed {total} documents'
+```
+
+Each event reaches the client as an AG-UI [`CustomEvent`](https://docs.ag-ui.com/sdk/python/core/events#customevent) with its `name` and the result of [`to_payload()`][pydantic_ai.messages.CustomEvent.to_payload] as its `value` — here, `name='search_index_progress'` and `value={'done': 1, 'total': 3}`. Events arrive as they are emitted, while the tool is still running.
+
+The `value` shape is the same whether or not the event was emitted from inside a tool call, so a frontend written against one shape doesn't break when the same event class is later emitted from somewhere else. Override [`to_payload()`][pydantic_ai.messages.CustomEvent.to_payload] to control the shape — to name the fields the way the frontend expects, or to put the tool attribution on the wire:
+
+```python {title="ag_ui_custom_event_payload.py"}
+from dataclasses import dataclass
+from typing import Any
+
+from pydantic_ai import CustomEvent
+
+
+@dataclass(kw_only=True)
+class SearchIndexPhaseEvent(CustomEvent):
+    done: int
+    total: int
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            'completed': self.done,
+            'total': self.total,
+            'toolCallId': self.tool_call_id,
+        }
+```
+
+Returning an AG-UI [`BaseEvent`](https://docs.ag-ui.com/sdk/python/core/events#baseevent) from `to_payload()` sends that event verbatim instead, so an emitted event can also carry a protocol event such as a state snapshot. An event class declared [`ui=False`](../agent.md#custom-events) is never forwarded, so events meant only for server-side consumers stay off the wire; nor is an event whose class this process never imported, since its opt-out travels on the class rather than the wire.
+
+Pydantic AI tools can also attach [AG-UI events](https://docs.ag-ui.com/concepts/events) to a **tool result**, by returning a
 [`ToolReturn`](../tools-advanced.md#advanced-tool-returns) object with a
-[`BaseEvent`](https://docs.ag-ui.com/sdk/python/core/events#baseevent) (or a list of events) as `metadata`,
-which allows for custom events and state updates.
+[`BaseEvent`](https://docs.ag-ui.com/sdk/python/core/events#baseevent) (or a list of events) as `metadata`.
+Unlike emitted events, these are part of the message and survive a message-history round-trip, which is what you want for state updates the frontend must be able to rebuild; the trade-off is that they are sent when the tool returns rather than while it runs.
 
 ```python {title="ag_ui_tool_events.py"}
 from dataclasses import replace

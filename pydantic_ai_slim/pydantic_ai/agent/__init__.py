@@ -49,11 +49,11 @@ from .._agent_graph import (
     build_run_context,
     capture_run_messages,
 )
-from .._cancel import CancellationToken, RunCancellation, take_run_binding
+from .._cancel import CancellationToken, RunBinding, RunCancellation, take_run_binding
 from .._deferred_capabilities import registered_loaded_capability_ids
 from .._instructions import AgentInstructions
 from .._output import OutputToolset
-from .._run_context import set_current_run_context
+from .._run_context import dispatch_event_stream, set_current_run_context
 from .._template import validate_from_spec_args
 from .._warnings import PydanticAIDeprecationWarning
 from ..capabilities import (
@@ -66,9 +66,15 @@ from ..capabilities import (
     ToolSearch as ToolSearchCap,
 )
 from ..capabilities._dynamic import wrap_capability_funcs
-from ..capabilities._ordering import find_capability, has_capability_type
+from ..capabilities._ordering import has_capability_type
 from ..capabilities._pending_messages import PendingMessageDrainCapability
-from ..capabilities.abstract import leaf_capabilities
+from ..capabilities.abstract import (
+    _combine_duplicate_capabilities,  # pyright: ignore[reportPrivateUsage]
+    _declares_default_id,  # pyright: ignore[reportPrivateUsage]
+    _reject_class_crossing_id,  # pyright: ignore[reportPrivateUsage]
+    _repeated_id_message,  # pyright: ignore[reportPrivateUsage]
+    leaf_capabilities,
+)
 from ..capabilities.combined import bind_capabilities_tier
 from ..capabilities.instrumentation import Instrumentation as InstrumentationCap
 from ..models.instrumented import InstrumentationSettings, InstrumentedModel
@@ -129,8 +135,9 @@ from .wrapper import WrapperAgent
 if TYPE_CHECKING:
     from starlette.applications import Starlette
 
-    from pydantic_graph import GraphRunContext
+    from pydantic_graph import Graph, GraphRunContext
 
+    from .. import result as _result
     from ..realtime import (
         AudioRetention,
         KnownRealtimeModelName,
@@ -391,6 +398,8 @@ def _normalize_agent_retry_overrides(retries: int | AgentRetries | None) -> Agen
 
 T = TypeVar('T')
 S = TypeVar('S')
+_PreparedDepsT = TypeVar('_PreparedDepsT')
+_PreparedOutputT = TypeVar('_PreparedOutputT')
 NoneType = type(None)
 
 
@@ -602,7 +611,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 overridable via [`ToolOutput(max_retries=...)`][pydantic_ai.output.ToolOutput.max_retries].
                 Both budgets can be overridden per run via `agent.run(retries=...)` (and friends), passing
                 an `AgentRetries` dict (e.g. `retries={'tools': 3}`) for per-category control.
-                For model request retries, see the [HTTP Request Retries](../models/http-request-retries.md) documentation.
+                For model request retries, see the [transport retries](../retries.md#transport-retries) documentation.
             validation_context: Pydantic [validation context](https://docs.pydantic.dev/latest/concepts/validators/#validation-context) used to validate tool arguments and outputs.
             tools: Tools to register with the agent, you can also register tools via the decorators
                 [`@agent.tool`][pydantic_ai.agent.Agent.tool] and [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain].
@@ -649,6 +658,17 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         self._root_capability = CombinedCapability(capabilities)
         _validate_capability_ids(self._root_capability.capabilities)
+        # Two capabilities the agent itself was given meet under their shared id here, before
+        # anything reads what they contribute: `for_agent`, toolset extraction and native-tool
+        # validation all run below, and each would otherwise see a pair that is really one --
+        # native tools most visibly, since two differently configured `WebSearch` instances carry
+        # the same native tool id and reading them as two makes that a conflict. Duplicates
+        # *across* layers stay with run setup, where the run-level list first exists.
+        combined = _combine_duplicate_capabilities(self._root_capability, [capabilities])
+        # `visit_and_replace` on a container rebuilds a container, and combining keeps one
+        # occurrence of every id, so it can neither change shape nor empty the tree.
+        assert isinstance(combined, CombinedCapability), 'combining the agent capabilities kept a container'
+        self._root_capability = combined
         _validate_instruction_source_ids([self._root_capability])
 
         # Keep the constructor value untouched while capabilities bind. A capability may interpret
@@ -711,6 +731,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             for toolset in agent_toolsets
             if not isinstance(toolset, AbstractToolset)
         ]
+        self._constructor_dynamic_toolset_count = len(self._dynamic_toolsets)
         self._user_toolsets = [toolset for toolset in agent_toolsets if isinstance(toolset, AbstractToolset)]
 
         # Populated by durable-execution subclasses; base agents use the run-level kwarg.
@@ -1222,7 +1243,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, RunOutputDataT]]: ...
 
     @asynccontextmanager
-    async def iter(  # noqa: C901
+    async def iter(
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
@@ -1345,6 +1366,51 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
 
+        prepared = await self._prepare_run(
+            user_prompt,
+            output_type=output_type,
+            message_history=message_history,
+            deferred_tool_results=deferred_tool_results,
+            conversation_id=conversation_id,
+            run_id=run_id,
+            model=model,
+            instructions=instructions,
+            deps=deps,
+            model_settings=model_settings,
+            usage_limits=usage_limits,
+            cancellation_token=cancellation_token,
+            usage=usage,
+            metadata=metadata,
+            retries=retries,
+            toolsets=toolsets,
+            capabilities=capabilities,
+            spec=spec,
+        )
+        async with prepared.open() as agent_run:
+            yield agent_run
+
+    async def _prepare_run(  # noqa: C901
+        self,
+        user_prompt: str | Sequence[_messages.UserContent] | None = None,
+        *,
+        output_type: OutputSpec[Any] | None = None,
+        message_history: Sequence[_messages.ModelMessage] | None = None,
+        deferred_tool_results: DeferredToolResults | None = None,
+        conversation_id: str | None = None,
+        run_id: str | None = None,
+        model: models.Model | models.KnownModelName | str | None = None,
+        instructions: AgentInstructions[AgentDepsT] = None,
+        deps: AgentDepsT = None,
+        model_settings: AgentModelSettings[AgentDepsT] | None = None,
+        usage_limits: _usage.UsageLimits | None = None,
+        cancellation_token: CancellationToken | None = None,
+        usage: _usage.RunUsage | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
+        retries: int | AgentRetries | None = None,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        spec: dict[str, Any] | AgentSpec | None = None,
+    ) -> _PreparedAgentRun[AgentDepsT, Any]:
         # Consume the pending `AgentRunEvents` binding before ANY user-supplied code (capability /
         # toolset `for_run()` hooks below) runs in this context: a hook that starts a nested agent
         # run would otherwise consume it and attach the outer handle to the wrong run.
@@ -1742,17 +1808,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 resolved_models=resolved_models_by_selection,
             )
 
-        model_stack: AsyncExitStack | None = None
-        entered_model_ids = self._entered_model_ids.copy()
-
-        async def enter_model(selected_model: models.Model) -> None:
-            model_identity = id(selected_model)
-            if model_identity in entered_model_ids:
-                return
-            assert model_stack is not None
-            await model_stack.enter_async_context(selected_model)
-            entered_model_ids.add(model_identity)
-
+        model_resources = _RunModelResources(self._entered_model_ids.copy())
         graph_deps = _agent_graph.GraphAgentDeps[AgentDepsT, OutputDataT](
             user_deps=deps,
             agent=self,
@@ -1765,7 +1821,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             model_selector=model_selector,
             model_selected_for_step=model_selected_for_step,
             evaluate_model_selector=evaluate_model_selector,
-            enter_model=enter_model,
+            enter_model=model_resources.enter_model,
             get_model_settings=get_model_settings,
             usage_limits=usage_limits,
             max_output_retries=effective_output_toolset_max_retries,
@@ -1795,119 +1851,23 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             system_prompt_dynamic_functions=self._system_prompt_dynamic_functions,
         )
 
-        agent_name = self.name or 'agent'
-
-        @asynccontextmanager
-        async def _translate_cancellation() -> AsyncGenerator[None]:
-            def _run_cancelled(message: str) -> exceptions.RunCancelled:
-                return _agent_graph.run_cancelled_snapshot(message, state, graph_deps)
-
-            try:
-                yield
-            except exceptions.RunCancelled as exc:
-                # A `RunCancelled` reaching this run's outer edge from below — e.g. a delegate tool
-                # awaited a sub-agent run that cancelled itself via `cancel()` — carries the
-                # *nested* run's history, not this run's. Presenting it to this run's caller
-                # unchanged would make `RunCancelled.all_messages()` (and a resume from it) silently
-                # use the wrong conversation. Re-stamp it with this run's state, keeping the nested
-                # cancellation as the cause. Whether a nested cancellation should terminate this run
-                # at all, or be isolated as a tool failure, is a separate semantics question tracked
-                # in https://github.com/pydantic/pydantic-ai/issues/7199.
-                raise _run_cancelled('The agent run was cancelled by a nested run.') from exc
-            except asyncio.CancelledError as exc:
-                first_party = graph_deps.cancellation.resolve()
-                if first_party:
-                    raise _run_cancelled('The agent run was cancelled.') from exc
-                # An external cancellation must keep propagating as `CancelledError`, but the run
-                # state rides along on the exception instance for `RunCancelled.from_cancellation()`.
-                # Nested runs attach to the same propagating exception; the outermost run attaches
-                # last and wins, giving its awaiter the outer run's history.
-                _run_cancelled('The agent run was cancelled by an external asyncio cancellation.')._attach_to(exc)  # pyright: ignore[reportPrivateUsage]
-                raise
-            finally:
-                # On every exit path — translation above, a clean exit after user code swallowed a
-                # requested cancellation, a superseded driving task, or a non-cancellation error
-                # overtaking a requested cancel — an issued-but-unresolved cancellation must not
-                # leak an elevated `Task.cancelling()` count past the run: it would spuriously
-                # cancel unrelated later work on the task that drove the run.
-                graph_deps.cancellation.release_issued()
-
-        async with AsyncExitStack() as stack:
-            # Enter first so cancellation is classified only after every other context has torn down.
-            await stack.enter_async_context(_translate_cancellation())
-
-            # Bind the run's cancellation controller to this task and register the token BEFORE any
-            # potentially-blocking setup (the concurrency limiter, model entry): a run queued behind
-            # the concurrency limiter must still be cancellable via its token or `cancel()`, and a
-            # pre-cancelled token must prevent it from starting. `finish` neutralizes `cancel()` once
-            # the run is over so it can never cancel unrelated later work on this task.
-            graph_deps.cancellation.bind()
-            stack.callback(graph_deps.cancellation.finish)
-            if cancellation_token is not None:
-                graph_deps.cancellation.attach_token(cancellation_token)
-
-            model_stack = stack
-            await stack.enter_async_context(
-                _concurrency.get_concurrency_context(self._concurrency_limiter, f'agent:{agent_name}')
-            )
-            if capability_owns_current_model:
-                await enter_model(model_used)
-            graph_run = await stack.enter_async_context(
-                graph.iter(
-                    inputs=user_prompt_node,
-                    state=state,
-                    deps=graph_deps,
-                    span=None,
-                    infer_name=False,
-                )
-            )
-            agent_run = AgentRun(graph_run)
-            if binding is not None:
-                # Hand the live `AgentRun` to the `AgentRunEvents` handle that started this run, so
-                # its `cancel()`/run-state accessors reach the run. The controller was already bound
-                # to this task above, before `wrap_run`/`before_run`.
-                binding.agent_run = agent_run
-            self._resolve_and_store_metadata(agent_run.ctx, metadata)
-
-            # Build RunContext for run lifecycle hooks
-            run_ctx = _agent_graph.build_run_context(agent_run.ctx)
-
-            async def _finalize_result(result: AgentRunResult[Any]) -> None:
-                usage_limits.check_cost(result.usage)
-                # A first-party cancellation request remains terminal even if a hook consumed the
-                # task's cancellation counter (past the helper's `raise_if_cancelling` backstop).
-                if graph_deps.cancellation.cancel_requested:
-                    raise asyncio.CancelledError('pydantic-ai: re-asserting a requested run cancellation')
-                agent_run._result_override = result  # pyright: ignore[reportPrivateUsage]
-
-            def _extract_error(error: BaseException) -> BaseException:
-                # Use the original node error if available, since context manager __aexit__ chains
-                # (GraphRun → anyio TaskGroup) may transform it into CancelledError or ExceptionGroup.
-                return agent_run._node_error or error  # pyright: ignore[reportPrivateUsage]
-
-            def _build_result() -> AgentRunResult[Any]:
-                result = agent_run.result
-                assert result is not None
-                return result
-
-            async with _run_lifecycle_hooks(
-                run_capability,
-                run_ctx,
-                build_result=_build_result,
-                finalize=_finalize_result,
-                extract_error=_extract_error,
-                result_ready=lambda: agent_run.result is not None,
-                # Restore on `stack` in LIFO order (after toolset exit, before graph run exit).
-                restore_context_on=stack,
-            ):
-                # Enter toolset AFTER context vars are propagated so that toolset
-                # __aenter__/__aexit__ run inside the run span context.
-                await stack.enter_async_context(toolset)
-                try:
-                    yield agent_run
-                finally:
-                    if agent_run.result is not None:
-                        self._resolve_and_store_metadata(agent_run.ctx, metadata)
+        return _PreparedAgentRun[AgentDepsT, Any](
+            graph=graph,
+            state=state,
+            graph_deps=graph_deps,
+            user_prompt_node=user_prompt_node,
+            agent_name=self.name or 'agent',
+            binding=binding,
+            cancellation_token=cancellation_token,
+            model=model_used,
+            capability_owns_current_model=capability_owns_current_model,
+            model_resources=model_resources,
+            run_capability=run_capability,
+            toolset=toolset,
+            usage_limits=usage_limits,
+            concurrency_limiter=self._concurrency_limiter,
+            resolve_metadata=functools.partial(self._resolve_and_store_metadata, metadata=metadata),
+        )
 
     def _get_metadata(
         self,
@@ -2757,8 +2717,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         Args:
             func: The toolset function to register.
             per_run_step: Whether to re-evaluate the toolset for each run step. Defaults to True.
-            id: An optional unique ID for the dynamic toolset. Required for use with durable execution
-                environments like Temporal, where the ID identifies the toolset's activities within the workflow.
+            id: An optional unique ID for the dynamic toolset. Under durable execution, construct a
+                [`DynamicToolset`][pydantic_ai.toolsets.DynamicToolset] with this ID and pass it to
+                `Agent(toolsets=[...])` instead; decorator registrations cannot be used inside a
+                workflow or flow because they happen after durable units are created.
         """
 
         def toolset_decorator(func_: ToolsetFunc[AgentDepsT]) -> ToolsetFunc[AgentDepsT]:
@@ -2961,12 +2923,35 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             ctx,
             [capability for extra in resolved_extras for capability in leaf_capabilities(extra)],
         )
-        run_capability = CombinedCapability(resolved_layers) if len(resolved_layers) > 1 else resolved_layers[0]
+        # Two capabilities under one `id` name the same thing, so the tree is resolved down to one
+        # each before anything reads it. Duplicates *within* a layer are one configuration stated
+        # twice and `combine` settles them; they are combined here, exactly once, and the merged
+        # survivor is the only form anyone reads -- the per-layer native-tool validation below and
+        # the contributions above draw on the same trees, so validation and advertisement cannot
+        # see different merged instances. The agent's capabilities and the run's are then settled
+        # against each other as separate layers: a run-level capability overrides its agent-level
+        # namesake outright -- `run(capabilities=[WebSearch(allowed_domains=[...])])` states what
+        # this run may reach, and merging it into the agent's list would widen the restriction it
+        # was passed to impose.
+        combined_layers = [
+            _combine_duplicate_capabilities(CombinedCapability(list(layer)) if len(layer) > 1 else layer[0], [layer])
+            for layer in (resolved_layers[: len(resolved_layers) - len(extra_capabilities)], resolved_extras)
+            if layer
+        ]
+        run_capability = (
+            _combine_duplicate_capabilities(
+                CombinedCapability(combined_layers) if len(combined_layers) > 1 else combined_layers[0],
+                [[layer] for layer in combined_layers],
+            )
+            if len(combined_layers) > 1
+            else combined_layers[0]
+        )
         # Not covered by the construction-time check: a run's capabilities compose with a retained
         # overriding container exactly as a registered sibling does, and `for_run` may hand back a
         # capability whose `id` differs from the one that was validated, so the resolved tree is
-        # checked even when no additional layer was composed.
-        _validate_instruction_source_ids(resolved_layers)
+        # checked even when no additional layer was composed. Reads the *combined* tree, so a
+        # duplicate `combine` has already resolved is not reported twice over.
+        _validate_instruction_source_ids([run_capability])
 
         # Re-extract get_*() from the resolved capability if anything is contributed per-run.
         capabilities = _build_run_capabilities(run_capability)
@@ -3003,22 +2988,17 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             model_settings = self._cap_model_settings
             toolsets = None
 
-        # Native tool ids are validated per layer, from each layer's *resolved* form (contributions
-        # from e.g. capability functions only materialize in `for_run`). Conflicting definitions
-        # sharing a `unique_id` *within* a layer are ambiguous; last-wins *across* layers is the
-        # intentional override mechanism. Instrumentation contributes no native tools.
-        base_native_tools = [
-            tool
-            for cap in resolved_layers[: len(resolved_layers) - len(extra_capabilities)]
-            for tool in cap.get_native_tools()
-        ]
+        # Native tool ids are validated per layer, off each layer's *combined* form above -- the
+        # same merged trees the run tree is built from, so validation and advertisement read one
+        # instance. Conflicting definitions sharing a `unique_id` *within* a layer are ambiguous;
+        # last-wins *across* layers is the intentional override mechanism. Instrumentation
+        # contributes no native tools.
+        base_native_tools = list(combined_layers[0].get_native_tools())
         _validate_native_tool_ids(
             base_native_tools,
             source='override spec capabilities' if base_is_override else 'agent capabilities',
         )
-        extra_native_tools: list[AgentNativeTool[AgentDepsT]] = [
-            tool for cap in resolved_extras for tool in cap.get_native_tools()
-        ]
+        extra_native_tools = list(combined_layers[1].get_native_tools()) if len(combined_layers) > 1 else []
         _validate_native_tool_ids(extra_native_tools, source='run capabilities')
 
         # `override(native_tools=...)` replaces the agent's *baseline* native tools while still
@@ -3156,14 +3136,31 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         """
         return self._build_toolset_list()
 
+    @property
+    def _construction_toolsets(self) -> Sequence[AbstractToolset[AgentDepsT]]:
+        """The toolsets this agent was built with, ignoring anything added afterwards.
+
+        Read by `pydantic_ai.durable_exec` through `construction_toolsets`, which is where the
+        reason it exists is written down.
+        """
+        return self._build_toolset_list(ignore_overrides=True)
+
     def _build_toolset_list(
         self,
         cap_toolsets: Sequence[AgentToolset[AgentDepsT]] | None = None,
+        *,
+        ignore_overrides: bool = False,
     ) -> list[AbstractToolset[AgentDepsT]]:
-        """Build the list of toolsets, optionally with per-run capability toolsets."""
+        """Build the list of toolsets, optionally with per-run capability toolsets.
+
+        With `ignore_overrides`, active `override(tools=...)`/`override(toolsets=...)` values and
+        dynamic toolsets added with `@agent.toolset` after construction are skipped, so the result
+        is what the agent was built with. See
+        `Agent._construction_toolsets`.
+        """
         toolsets: list[AbstractToolset[AgentDepsT]] = []
 
-        if some_tools := self._override_tools.get():
+        if not ignore_overrides and (some_tools := self._override_tools.get()):
             # `max_retries=None` for the same reason as the agent's own function toolset: the
             # tool-retry default rides `ToolManager.default_max_retries` rather than being baked here.
             function_toolset = _AgentFunctionToolset(
@@ -3176,11 +3173,16 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             function_toolset = self._function_toolset
         toolsets.append(function_toolset)
 
-        if some_user_toolsets := self._override_toolsets.get():
+        if not ignore_overrides and (some_user_toolsets := self._override_toolsets.get()):
             toolsets.extend(some_user_toolsets.value)
         else:
             toolsets.extend(self._user_toolsets)
-            toolsets.extend(self._dynamic_toolsets)
+            dynamic_toolsets = (
+                self._dynamic_toolsets[: self._constructor_dynamic_toolset_count]
+                if ignore_overrides
+                else self._dynamic_toolsets
+            )
+            toolsets.extend(dynamic_toolsets)
             for cap_ts in cap_toolsets if cap_toolsets is not None else self._cap_toolsets:
                 if isinstance(cap_ts, AbstractToolset):
                     toolsets.append(cap_ts)  # pyright: ignore[reportUnknownArgumentType]
@@ -3289,9 +3291,22 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # will actually win: an explicit `Instrumentation` capability's (agent- or call-level) over the
         # `instrument=`-derived ones, matching the precedence `_resolve_run_capabilities` applies to the
         # tool spans.
-        explicit_instrumentation = find_capability(
-            [self._effective_root_capability(), *extra_capabilities], InstrumentationCap
-        )
+        # The winner is *selected* here, not combined: `combine` settles duplicates *within* one
+        # layer and never runs across the agent-to-run boundary, so the session reads the
+        # configuration off the instance `_resolve_run_capabilities` would keep -- the last
+        # explicit `Instrumentation` in application order (a call-level one supersedes the
+        # agent-level one, and within a layer the guarded combine resolves to the last instance's
+        # values). Taking the first match would drive the session spans from settings the
+        # effective configuration had already turned off. Id guards apply once, where the layers
+        # actually combine.
+        instrumentation_layers = [self._effective_root_capability(), *extra_capabilities]
+        explicit_instrumentations = [
+            leaf
+            for layer in instrumentation_layers
+            for leaf in leaf_capabilities(layer)
+            if isinstance(leaf, InstrumentationCap)
+        ]
+        explicit_instrumentation = explicit_instrumentations[-1] if explicit_instrumentations else None
         session_instrumentation_settings = (
             explicit_instrumentation.settings if explicit_instrumentation is not None else instrumentation_settings
         )
@@ -3567,8 +3582,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 ]
                 | None
             ) = (
-                (lambda stream: run_capability.wrap_run_event_stream(run_context, stream=stream))
-                if run_capability.has_wrap_run_event_stream
+                (
+                    lambda stream: run_capability.wrap_run_event_stream(
+                        run_context, stream=dispatch_event_stream(run_context, stream)
+                    )
+                )
+                if run_capability.has_wrap_run_event_stream or run_capability.has_on_event
                 else None
             )
 
@@ -3961,6 +3980,172 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         )
 
 
+@dataclasses.dataclass
+class _RunModelResources:
+    """Enter every model selected by a run on its shared resource stack."""
+
+    entered_model_ids: set[int]
+    _stack: AsyncExitStack | None = dataclasses.field(default=None, init=False, repr=False)
+
+    def bind_stack(self, stack: AsyncExitStack) -> None:
+        assert self._stack is None
+        self._stack = stack
+
+    async def enter_model(self, selected_model: models.Model) -> None:
+        model_identity = id(selected_model)
+        if model_identity in self.entered_model_ids:
+            return
+        assert self._stack is not None
+        await self._stack.enter_async_context(selected_model)
+        self.entered_model_ids.add(model_identity)
+
+
+@dataclasses.dataclass
+class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
+    """The fully assembled inputs and resources for one graph-based agent run."""
+
+    graph: Graph[
+        _agent_graph.GraphAgentState,
+        _agent_graph.GraphAgentDeps[_PreparedDepsT, _PreparedOutputT],
+        _agent_graph.UserPromptNode[_PreparedDepsT, _PreparedOutputT],
+        _result.FinalResult[_PreparedOutputT],
+    ]
+    state: _agent_graph.GraphAgentState
+    graph_deps: _agent_graph.GraphAgentDeps[_PreparedDepsT, _PreparedOutputT]
+    user_prompt_node: _agent_graph.UserPromptNode[_PreparedDepsT, _PreparedOutputT]
+    agent_name: str
+    binding: RunBinding | None
+    cancellation_token: CancellationToken | None
+    model: models.Model
+    capability_owns_current_model: bool
+    model_resources: _RunModelResources
+    run_capability: AbstractCapability[_PreparedDepsT]
+    toolset: AbstractToolset[_PreparedDepsT]
+    usage_limits: _usage.UsageLimits
+    concurrency_limiter: _concurrency.AbstractConcurrencyLimiter | None
+    resolve_metadata: Callable[
+        [GraphRunContext[_agent_graph.GraphAgentState, _agent_graph.GraphAgentDeps[_PreparedDepsT, _PreparedOutputT]]],
+        dict[str, Any] | None,
+    ]
+
+    @asynccontextmanager
+    async def open(self) -> AsyncGenerator[AgentRun[_PreparedDepsT, _PreparedOutputT]]:
+        graph_deps = self.graph_deps
+        state = self.state
+
+        @asynccontextmanager
+        async def _translate_cancellation() -> AsyncGenerator[None]:
+            def _run_cancelled(message: str) -> exceptions.RunCancelled:
+                return _agent_graph.run_cancelled_snapshot(message, state, graph_deps)
+
+            try:
+                yield
+            except exceptions.RunCancelled as exc:
+                # A `RunCancelled` reaching this run's outer edge from below — e.g. a delegate tool
+                # awaited a sub-agent run that cancelled itself via `cancel()` — carries the
+                # *nested* run's history, not this run's. Presenting it to this run's caller
+                # unchanged would make `RunCancelled.all_messages()` (and a resume from it) silently
+                # use the wrong conversation. Re-stamp it with this run's state, keeping the nested
+                # cancellation as the cause. Whether a nested cancellation should terminate this run
+                # at all, or be isolated as a tool failure, is a separate semantics question tracked
+                # in https://github.com/pydantic/pydantic-ai/issues/7199.
+                raise _run_cancelled('The agent run was cancelled by a nested run.') from exc
+            except asyncio.CancelledError as exc:
+                first_party = graph_deps.cancellation.resolve()
+                if first_party:
+                    raise _run_cancelled('The agent run was cancelled.') from exc
+                # An external cancellation must keep propagating as `CancelledError`, but the run
+                # state rides along on the exception instance for `RunCancelled.from_cancellation()`.
+                # Nested runs attach to the same propagating exception; the outermost run attaches
+                # last and wins, giving its awaiter the outer run's history.
+                _run_cancelled('The agent run was cancelled by an external asyncio cancellation.')._attach_to(exc)  # pyright: ignore[reportPrivateUsage]
+                raise
+            finally:
+                # On every exit path — translation above, a clean exit after user code swallowed a
+                # requested cancellation, a superseded driving task, or a non-cancellation error
+                # overtaking a requested cancel — an issued-but-unresolved cancellation must not
+                # leak an elevated `Task.cancelling()` count past the run: it would spuriously
+                # cancel unrelated later work on the task that drove the run.
+                graph_deps.cancellation.release_issued()
+
+        async with AsyncExitStack() as stack:
+            # Enter first so cancellation is classified only after every other context has torn down.
+            await stack.enter_async_context(_translate_cancellation())
+
+            # Bind the run's cancellation controller to this task and register the token BEFORE any
+            # potentially-blocking setup (the concurrency limiter, model entry): a run queued behind
+            # the concurrency limiter must still be cancellable via its token or `cancel()`, and a
+            # pre-cancelled token must prevent it from starting. `finish` neutralizes `cancel()` once
+            # the run is over so it can never cancel unrelated later work on this task.
+            graph_deps.cancellation.bind()
+            stack.callback(graph_deps.cancellation.finish)
+            if self.cancellation_token is not None:
+                graph_deps.cancellation.attach_token(self.cancellation_token)
+
+            self.model_resources.bind_stack(stack)
+            await stack.enter_async_context(
+                _concurrency.get_concurrency_context(self.concurrency_limiter, f'agent:{self.agent_name}')
+            )
+            if self.capability_owns_current_model:
+                await self.model_resources.enter_model(self.model)
+            graph_run = await stack.enter_async_context(
+                self.graph.iter(
+                    inputs=self.user_prompt_node,
+                    state=state,
+                    deps=graph_deps,
+                    span=None,
+                    infer_name=False,
+                )
+            )
+            agent_run = AgentRun(graph_run)
+            if self.binding is not None:
+                # Hand the live `AgentRun` to the `AgentRunEvents` handle that started this run, so
+                # its `cancel()`/run-state accessors reach the run. The controller was already bound
+                # to this task above, before `wrap_run`/`before_run`.
+                self.binding.agent_run = agent_run
+            self.resolve_metadata(agent_run.ctx)
+
+            # Build RunContext for run lifecycle hooks
+            run_ctx = _agent_graph.build_run_context(agent_run.ctx)
+
+            async def _finalize_result(result: AgentRunResult[Any]) -> None:
+                self.usage_limits.check_cost(result.usage)
+                # A first-party cancellation request remains terminal even if a hook consumed the
+                # task's cancellation counter (past the helper's `raise_if_cancelling` backstop).
+                if graph_deps.cancellation.cancel_requested:
+                    raise asyncio.CancelledError('pydantic-ai: re-asserting a requested run cancellation')
+                agent_run._result_override = result  # pyright: ignore[reportPrivateUsage]
+
+            def _extract_error(error: BaseException) -> BaseException:
+                # Use the original node error if available, since context manager __aexit__ chains
+                # (GraphRun → anyio TaskGroup) may transform it into CancelledError or ExceptionGroup.
+                return agent_run._node_error or error  # pyright: ignore[reportPrivateUsage]
+
+            def _build_result() -> AgentRunResult[Any]:
+                result = agent_run.result
+                assert result is not None
+                return result
+
+            async with _run_lifecycle_hooks(
+                self.run_capability,
+                run_ctx,
+                build_result=_build_result,
+                finalize=_finalize_result,
+                extract_error=_extract_error,
+                result_ready=lambda: agent_run.result is not None,
+                # Restore on `stack` in LIFO order (after toolset exit, before graph run exit).
+                restore_context_on=stack,
+            ):
+                # Enter toolset AFTER context vars are propagated so that toolset
+                # __aenter__/__aexit__ run inside the run span context.
+                await stack.enter_async_context(self.toolset)
+                try:
+                    yield agent_run
+                finally:
+                    if agent_run.result is not None:
+                        self.resolve_metadata(agent_run.ctx)
+
+
 def _merge_retries_with_spec(
     explicit: int | AgentRetries | None,
     spec: AgentSpec,
@@ -4011,13 +4196,19 @@ def _inject_auto_capabilities(capabilities: list[AbstractCapability[Any]]) -> No
 def _validate_capability_ids(capabilities: Sequence[AbstractCapability[Any]]) -> set[str]:
     """Validate capability `id`s and return the set of explicit ones.
 
-    Rejects deferred capabilities that lack an explicit `id` and explicit ids used by more than
-    one capability. Shared by two call sites: construction-time validation over the
-    statically-provided capabilities (so misconfiguration fails fast in `Agent(...)` rather than
-    on the first run), and run-time assembly in `_build_run_capabilities`, which also covers
-    capabilities supplied per-run or returned by `for_run` and so can't be checked at construction.
+    Rejects deferred capabilities that lack an explicit `id`, and ids shared by capabilities that
+    have not said how they compose. Capabilities whose class declares a default `id` (what
+    `_declares_default_id` reads off the class body -- `Thinking` declares one and overrides
+    nothing) are allowed to repeat: their duplication is resolved over the whole composed tree at
+    run setup by `_combine_duplicate_capabilities`, the only place `combine` is called. Rejecting
+    the rest here means the common mistake still surfaces in `Agent(...)` rather than on the first
+    run.
+
+    Shared by construction-time validation over the statically-provided capabilities and run-time
+    assembly, which also covers capabilities supplied per-run or returned by `for_run` and so can't
+    be checked at construction.
     """
-    explicit_ids: set[str] = set()
+    owners: dict[str, type[AbstractCapability[Any]]] = {}
     for cap in capabilities:
         if cap.defer_loading is True and cap.id is None:
             raise exceptions.UserError(
@@ -4027,13 +4218,16 @@ def _validate_capability_ids(capabilities: Sequence[AbstractCapability[Any]]) ->
         if cap.id is None:
             continue
         _instructions.validate_instruction_id_segment(cap.id, kind='Capability id')
-        if cap.id in explicit_ids:
-            raise exceptions.UserError(
-                f'Capability id {cap.id!r} is used by multiple capabilities. '
-                'Capability ids must be unique within a run.'
-            )
-        explicit_ids.add(cap.id)
-    return explicit_ids
+        # Both classes decide, not just the one that happens to come second: whether an id can
+        # repeat is a property of the pair, so reading it off the later capability alone would let
+        # one order through and reject the other.
+        owner = owners.get(cap.id)
+        if owner is not None:
+            _reject_class_crossing_id(cap.id, {owner, type(cap)})
+            if not _declares_default_id(type(cap)):
+                raise exceptions.UserError(_repeated_id_message(cap.id))
+        owners.setdefault(cap.id, type(cap))
+    return set(owners)
 
 
 def _validate_instruction_source_ids(capabilities: Sequence[AbstractCapability[Any]]) -> None:
@@ -4049,6 +4243,11 @@ def _validate_instruction_source_ids(capabilities: Sequence[AbstractCapability[A
     The last of those is not redundant: a capability passed to `run()` joins the retained container
     the same way a registered sibling does, and `for_run` may hand back a capability carrying a
     different `id` than the one construction saw.
+
+    Sources whose class declares a default `id` are exempt at construction for the same reason they
+    are in `_validate_capability_ids`: the run resolves them to one source before any instructions
+    are collected, so the `capability:<id>` key is unambiguous by the time it is used. The run-setup
+    call sees the already-combined tree, where a surviving duplicate is a genuine conflict.
     """
     sources_by_id: dict[str, AbstractCapability[Any]] = {}
     for capability in capabilities:
@@ -4060,7 +4259,9 @@ def _validate_instruction_source_ids(capabilities: Sequence[AbstractCapability[A
         for source in sources:
             if source.id is None:
                 continue
-            if (existing := sources_by_id.setdefault(source.id, source)) is not source:
+            if (existing := sources_by_id.setdefault(source.id, source)) is not source and not _declares_default_id(
+                type(source)
+            ):
                 raise exceptions.UserError(
                     f'Capability id {existing.id!r} is used by multiple capabilities that contribute '
                     'instructions. Capability ids must be unique within a run.'
@@ -4141,6 +4342,10 @@ def _build_run_capabilities(capability: AbstractCapability[AgentDepsT]) -> dict[
     capabilities: list[AbstractCapability[AgentDepsT]] = []
     capability.apply(capabilities.append)
 
+    # Runs on the tree `_combine_duplicate_capabilities` has already resolved, so a shared id that
+    # survives to here is one no `combine` accepted. Still needed at run time, not just at
+    # construction: `defer_loading` and `id` can be set after the agent was built, and `for_run` may
+    # hand back a capability carrying neither of the values construction saw.
     explicit_ids = _validate_capability_ids(capabilities)
 
     by_id: dict[str, AbstractCapability[AgentDepsT]] = {}

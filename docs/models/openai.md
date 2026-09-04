@@ -126,7 +126,7 @@ You can use the unified [`service_tier`][pydantic_ai.settings.ModelSettings.serv
 
 ### Prompt caching
 
-GPT-5.6 models support OpenAI's [implicit and explicit prompt cache breakpoints](https://developers.openai.com/api/docs/guides/prompt-caching#prompt-cache-breakpoints) with both the Responses and Chat Completions APIs. OpenAI creates an implicit breakpoint by default. To control the cacheable prefix precisely, insert [`CachePoint`][pydantic_ai.messages.CachePoint] after the user content block that should end the prefix:
+GPT-5.6 and later models (including GPT-6 Astra) support OpenAI's [implicit and explicit prompt cache breakpoints](https://developers.openai.com/api/docs/guides/prompt-caching#prompt-cache-breakpoints) with both the Responses and Chat Completions APIs. OpenAI creates an implicit breakpoint by default. To control the cacheable prefix precisely, insert [`CachePoint`][pydantic_ai.messages.CachePoint] after the user content block that should end the prefix:
 
 ```python {test="skip"}
 from pydantic_ai import Agent, CachePoint
@@ -177,7 +177,7 @@ The features below are specific to the Responses API and only available on [`Ope
 
 ### Reasoning mode
 
-Models that support it (currently the GPT-5.6 family) can use OpenAI's [`standard` and `pro` reasoning modes](https://developers.openai.com/api/docs/guides/reasoning#reasoning-mode). `standard` is the default; `pro` performs more model work to improve reliability on difficult tasks, at the cost of higher latency and token usage. The mode is independent of the reasoning effort: any combination of mode and effort is valid, and the unified [`thinking`](../capabilities/thinking.md) setting only ever influences the effort, so `pro` is used only when you set it explicitly.
+Models that support it (currently the GPT-5.6 family and GPT-6 Astra) can use OpenAI's [`standard` and `pro` reasoning modes](https://developers.openai.com/api/docs/guides/reasoning#reasoning-mode). `standard` is the default; `pro` performs more model work to improve reliability on difficult tasks, at the cost of higher latency and token usage. The mode is independent of the reasoning effort: any combination of mode and effort is valid, and the unified [`thinking`](../capabilities/thinking.md) setting only ever influences the effort, so `pro` is used only when you set it explicitly.
 
 Configure the mode with [`openai_reasoning_mode`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_reasoning_mode]; there is no separate `pro` model to select:
 
@@ -211,7 +211,7 @@ agent = Agent(model, model_settings=settings)
 ...
 ```
 
-`auto` and `current_turn` are sent to any model that supports reasoning. `all_turns` is sent only to models whose profile sets [`OpenAIModelProfile.openai_responses_supports_reasoning_context`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_responses_supports_reasoning_context] (currently the GPT-5.4, GPT-5.5, and GPT-5.6 families); on other models it is ignored.
+`auto` and `current_turn` are sent to any model that supports reasoning. `all_turns` is sent only to models whose profile sets [`OpenAIModelProfile.openai_responses_supports_reasoning_context`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_responses_supports_reasoning_context] (currently the GPT-5.4, GPT-5.5, GPT-5.6, and GPT-6 Astra families); on other models it is ignored.
 
 ### Native tools
 
@@ -986,6 +986,44 @@ print(result.output)
     `openai_chat_supports_multiple_system_messages=False` on its profile. See
     [Models that accept only one leading system message](#models-that-accept-only-one-leading-system-message)
     for details.
+
+### vLLM
+
+[vLLM](https://docs.vllm.ai/) is a high-throughput inference server with an OpenAI-compatible API. Connect with [`VLLMProvider`][pydantic_ai.providers.vllm.VLLMProvider], setting `base_url` directly or through `VLLM_BASE_URL`. For authenticated servers, set `api_key` or `VLLM_API_KEY`.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.vllm import VLLMProvider
+
+model = OpenAIChatModel(
+    'Qwen/Qwen3.8-27B',
+    provider=VLLMProvider(base_url='http://localhost:8000/v1'),
+)
+agent = Agent(model)
+
+result = agent.run_sync('What is the capital of France?')
+print(result.output)
+#> The capital of France is Paris.
+```
+
+With those environment variables set, you can instead reference the provider by name:
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent('vllm:Qwen/Qwen3.8-27B')
+
+result = agent.run_sync('What is the capital of France?')
+print(result.output)
+#> The capital of France is Paris.
+```
+
+!!! note "Tool calling requires server configuration"
+    For agents that let the model decide whether to call a tool, start vLLM with `--enable-auto-tool-choice` and select the model-specific parser with `--tool-call-parser`. See the [vLLM tool calling guide](https://docs.vllm.ai/en/stable/features/tool_calling/) for supported models and parser values.
+
+!!! note "Multiple system messages are merged by default"
+    Some vLLM chat templates reject multiple leading system messages, so `VLLMProvider` merges them by default. To opt out, pass an [`OpenAIModelProfile`][pydantic_ai.profiles.openai.OpenAIModelProfile] with `openai_chat_supports_multiple_system_messages=True`. See [Models that accept only one leading system message](#models-that-accept-only-one-leading-system-message).
 
 ### Nebius AI Studio
 

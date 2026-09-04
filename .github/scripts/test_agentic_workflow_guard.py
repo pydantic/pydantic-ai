@@ -19,6 +19,10 @@ import agentic_workflow_guard
 from agentic_workflow_guard import (
     Violation,
     changed_files,
+    check_ai_credits_accounting,
+    check_awf_binary_version,
+    check_compiled_runner_contract,
+    check_compiler_version_compatibility,
     check_compiler_versions,
     check_dangling_needs,
     check_job_timeout_env,
@@ -647,6 +651,228 @@ def test_compiler_versions_accepts_a_uniform_set(tmp_path: Path):
     assert check_compiler_versions([a, b]) == []
 
 
+def test_compiled_runner_contract_rejects_drift_from_the_gh_aw_shim(tmp_path: Path):
+    """The generated agent command is the seam between gh-aw and our custom runner."""
+    lock = _write(
+        tmp_path / 'w.lock.yml',
+        """
+jobs:
+  agent:
+    steps:
+      - name: Run agent
+        run: |
+          awf -- /bin/bash -c '/tmp/gh-aw/bin/pydantic-ai-runner-launch --allowed-tools "Read,mcp__safeoutputs_fake"' --output-format stream-json --mcp-config ignored
+""",
+    )
+
+    violations = check_compiled_runner_contract(lock)
+
+    assert [v.check for v in violations] == ['compiled-runner-contract']
+    assert '`mcp__safeoutputs`' in violations[0].message
+
+
+def test_compiled_runner_contract_accepts_the_supported_interface(tmp_path: Path):
+    lock = _write(
+        tmp_path / 'w.lock.yml',
+        """
+jobs:
+  agent:
+    steps:
+      - name: Run agent
+        run: >-
+          awf -- /bin/bash -c '/tmp/gh-aw/bin/pydantic-ai-runner-launch
+          --allowed-tools "Read,mcp__safeoutputs"
+          --output-format stream-json
+          --mcp-config mcp-servers.json'
+""",
+    )
+
+    assert check_compiled_runner_contract(lock) == []
+
+
+# --- AWF binary pin (the #8041 skew) ------------------------------------------
+
+_AWF_LOCK = """
+jobs:
+  agent:
+    steps:
+      - name: Setup Scripts
+        run: bash setup.sh
+        env:
+          GH_AW_INFO_AWF_VERSION: "v0.27.44"
+      - name: Install AWF firewall binary (skipped by custom engine.command)
+        run: bash "${{RUNNER_TEMP}}/gh-aw/actions/install_awf_binary.sh" {pinned}
+"""
+
+
+def test_awf_binary_version_catches_the_gh_aw_upgrade_skew(tmp_path: Path):
+    """The shape #8041 shipped: gh-aw moved to AWF v0.27.44, the hand-written pin stayed.
+
+    The v0.27.42 binary then rejected the v0.27.44 firewall config with
+    `config.apiProxy.providers is not supported`, so the agent job exited before
+    the model ever started.
+    """
+    lock = _write(tmp_path / 'w.lock.yml', _AWF_LOCK.format(pinned='v0.27.42'))
+
+    violations = check_awf_binary_version(lock)
+
+    assert [v.check for v in violations] == ['awf-binary-version']
+    assert 'v0.27.42' in violations[0].message and 'v0.27.44' in violations[0].message
+
+
+def test_awf_binary_version_accepts_a_matched_pin(tmp_path: Path):
+    lock = _write(tmp_path / 'w.lock.yml', _AWF_LOCK.format(pinned='v0.27.44'))
+
+    assert check_awf_binary_version(lock) == []
+
+
+def test_awf_binary_version_accepts_a_quoted_version(tmp_path: Path):
+    """The pin is hand-written, so a quoted argument is a shape a maintainer will produce."""
+    lock = _write(tmp_path / 'w.lock.yml', _AWF_LOCK.format(pinned='"v0.27.44"'))
+
+    assert check_awf_binary_version(lock) == []
+
+
+def test_awf_binary_version_reads_every_installer_invocation_in_one_step(tmp_path: Path):
+    """The last install wins, so a stale second call must not hide behind a correct first."""
+    lock = _write(
+        tmp_path / 'w.lock.yml',
+        """
+jobs:
+  agent:
+    steps:
+      - name: Setup Scripts
+        env:
+          GH_AW_INFO_AWF_VERSION: "v0.27.44"
+      - name: Install AWF firewall binary (skipped by custom engine.command)
+        run: |
+          bash "${RUNNER_TEMP}/gh-aw/actions/install_awf_binary.sh" v0.27.44
+          bash "${RUNNER_TEMP}/gh-aw/actions/install_awf_binary.sh" v0.27.42
+""",
+    )
+
+    violations = check_awf_binary_version(lock)
+
+    assert [v.check for v in violations] == ['awf-binary-version']
+    assert 'v0.27.42' in violations[0].message
+
+
+def test_awf_binary_version_ignores_a_lock_without_the_hand_written_install(tmp_path: Path):
+    """Only workflows setting `engine.command` re-run the installer themselves."""
+    lock = _write(
+        tmp_path / 'w.lock.yml',
+        """
+jobs:
+  agent:
+    steps:
+      - name: Setup Scripts
+        env:
+          GH_AW_INFO_AWF_VERSION: "v0.27.44"
+      - name: Run agent
+        run: awf -- /bin/bash -c 'agent'
+  detect:
+    runs-on: ubuntu-latest
+""",
+    )
+
+    assert check_awf_binary_version(lock) == []
+
+
+def test_awf_binary_version_rejects_a_pin_with_no_declared_version_to_check(tmp_path: Path):
+    """A pin gh-aw no longer declares a version for is an unchecked pin, not a passing one.
+
+    Returning empty here is how the check would disarm itself if gh-aw ever renamed
+    `GH_AW_INFO_AWF_VERSION` — and the next skew would then ship green, as #8041 did.
+    """
+    lock = _write(
+        tmp_path / 'w.lock.yml',
+        """
+jobs:
+  agent:
+    steps:
+      - run: bash "${RUNNER_TEMP}/gh-aw/actions/install_awf_binary.sh" v0.27.42
+""",
+    )
+
+    violations = check_awf_binary_version(lock)
+
+    assert [v.check for v in violations] == ['awf-binary-version']
+    assert 'GH_AW_INFO_AWF_VERSION' in violations[0].message
+
+
+# --- AI-credits accounting (the overlay that 403'd every agent job) -----------
+
+
+def test_ai_credits_accounting_rejects_a_priced_model_in_the_awf_config(tmp_path: Path):
+    """The shape that shipped: `models.providers` compiled into `apiProxy.providers`.
+
+    AWF then charged `MiniMax-M3` against a 10,000-credit cap no frontmatter field can
+    raise, and every agent job 403'd with `ai_credits_limit_exceeded` on its first call.
+    """
+    lock = _write(
+        tmp_path / 'w.lock.yml',
+        """
+jobs:
+  agent:
+    steps:
+      - run: printf '%s' '{"apiProxy":{"enabled":true,"maxRuns":500,"providers":{"anthropic":{"models":{"MiniMax-M3":{"cost":{"input":0.6}}}}}}}'
+""",
+    )
+
+    violations = check_ai_credits_accounting(lock)
+
+    assert [v.check for v in violations] == ['ai-credits-accounting']
+    assert '`models.providers`' in violations[0].message
+
+
+def test_ai_credits_accounting_reads_the_escaped_nested_config(tmp_path: Path):
+    """The detection job's config is escaped one level deeper than the agent's."""
+    lock = _write(
+        tmp_path / 'w.lock.yml',
+        """
+jobs:
+  detection:
+    steps:
+      - run: printf '%s' '{\\"apiProxy\\":{\\"maxRuns\\":500,\\"providers\\":{\\"anthropic\\":{}}}}'
+""",
+    )
+
+    assert [v.check for v in check_ai_credits_accounting(lock)] == ['ai-credits-accounting']
+
+
+def test_ai_credits_accounting_ignores_the_informational_model_costs_env(tmp_path: Path):
+    """`GH_AW_INFO_MODEL_COSTS` carries the same overlay but configures nothing."""
+    lock = _write(
+        tmp_path / 'w.lock.yml',
+        """
+jobs:
+  agent:
+    steps:
+      - name: Setup Scripts
+        env:
+          GH_AW_INFO_MODEL_COSTS: '{"providers":{"anthropic":{"models":{"MiniMax-M3":{"cost":{"input":0.6}}}}}}'
+      - run: printf '%s' '{"apiProxy":{"enabled":true,"maxRuns":500}}'
+""",
+    )
+
+    assert check_ai_credits_accounting(lock) == []
+
+
+def test_compiler_version_compatibility_rejects_a_blocked_version(tmp_path: Path):
+    lock = _write(tmp_path / 'w.lock.yml', '# gh-aw-metadata: {"compiler_version":"v0.83.4"}\njobs: {}\n')
+
+    violations = check_compiler_version_compatibility([lock], {'blockedVersions': ['v0.83.4']})
+
+    assert [v.check for v in violations] == ['compiler-version-blocked']
+    assert '`v0.83.4`' in violations[0].message
+
+
+def test_compiler_version_compatibility_accepts_an_unblocked_version(tmp_path: Path):
+    lock = _write(tmp_path / 'w.lock.yml', '# gh-aw-metadata: {"compiler_version":"v0.86.2"}\njobs: {}\n')
+
+    assert check_compiler_version_compatibility([lock], {'blockedVersions': ['v0.83.4']}) == []
+
+
 @pytest.fixture
 def workflows_dir(tmp_path: Path) -> Path:
     """A minimal workflows tree: one agentic source importing one shared fragment."""
@@ -801,6 +1027,24 @@ def test_main_reads_a_changed_file_list_one_path_per_line(tmp_path: Path, monkey
     assert seen == [['.github/workflows/pydantic-ai-my workflow.md', '.github/workflows/other.md']]
 
 
+def test_main_checks_versions_against_a_compatibility_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    policy = _write(tmp_path / 'compat.json', '{"blockedVersions":["v0.83.4"]}\n')
+    seen: list[dict[str, object] | None] = []
+
+    def record(
+        workflows_dir: Path = WORKFLOWS_DIR,
+        changed: list[str] | None = None,
+        compatibility: dict[str, object] | None = None,
+    ) -> list[Violation]:
+        seen.append(compatibility)
+        return []
+
+    monkeypatch.setattr(agentic_workflow_guard, 'run_checks', record)
+
+    assert agentic_workflow_guard.main(['check', '--compatibility-file', str(policy)]) == 0
+    assert seen == [{'blockedVersions': ['v0.83.4']}]
+
+
 def test_changed_files_returns_empty_for_an_unresolvable_ref():
 
     assert changed_files('definitely-not-a-ref-8f3a2b') == []
@@ -862,7 +1106,19 @@ def test_run_checks_scans_shared_fragments_under_the_given_root(tmp_path: Path):
         workflows / 'pydantic-ai-x.md',
         '---\ntimeout-minutes: 30\nenv:\n  PYDANTIC_AI_JOB_TIMEOUT_MINUTES: "30"\n---\nprompt\n',
     )
-    _write(workflows / 'pydantic-ai-x.lock.yml', 'jobs: {}\n')
+    _write(
+        workflows / 'pydantic-ai-x.lock.yml',
+        """
+jobs:
+  agent:
+    steps:
+      - run: >-
+          awf -- /bin/bash -c '/tmp/gh-aw/bin/pydantic-ai-runner-launch
+          --allowed-tools "Read,mcp__safeoutputs"
+          --output-format stream-json
+          --mcp-config mcp-servers.json'
+""",
+    )
     _write(workflows / 'shared' / 'ctx.md', '---\nname: ctx\n---\nRead /tmp/gh-aw/.review-context/x\n')
 
     violations = run_checks(workflows)

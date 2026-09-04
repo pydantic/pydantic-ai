@@ -18,6 +18,7 @@ from ..._uuid import uuid7
 from ...exceptions import RunCancelled
 from ...messages import (
     CompactionPart,
+    CustomEvent,
     FunctionToolResultEvent,
     NativeToolCallPart,
     NativeToolReturnPart,
@@ -58,6 +59,7 @@ from ._utils import (
 try:
     from ag_ui.core import (
         BaseEvent,
+        CustomEvent as AGUICustomEvent,
         EventType,
         RunAgentInput,
         RunErrorEvent,
@@ -440,6 +442,18 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
     async def handle_output_tool_result(self, event: OutputToolResultEvent) -> AsyncIterator[BaseEvent]:
         async for e in self._handle_tool_result(event.part):
             yield e
+
+    async def handle_custom_event(self, event: CustomEvent) -> AsyncIterator[BaseEvent]:
+        # An `ag_ui.core.BaseEvent` payload is passed through verbatim, mirroring the tool-return metadata passthrough.
+        payload = event.to_payload()
+        if isinstance(payload, BaseEvent):
+            yield payload
+        else:
+            # The value is always the bare payload, whether or not the event is tool-scoped: a
+            # frontend written against one shape must not break when the same event class is later
+            # emitted from inside a tool. An event that wants its attribution on the wire includes
+            # it by overriding `to_payload`.
+            yield AGUICustomEvent(name=event.name, value=payload)
 
     async def _handle_tool_result(self, result: ToolReturnPart | RetryPromptPart) -> AsyncIterator[BaseEvent]:
         if isinstance(result, RetryPromptPart):

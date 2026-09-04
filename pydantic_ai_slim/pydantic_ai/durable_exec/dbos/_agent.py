@@ -156,7 +156,10 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
                     if toolset.id is None:
                         raise UserError(
                             'MCP toolsets need to have a unique `id` in order to be used with DBOS. '
-                            "The ID will be used to identify the MCP server's steps within the workflow."
+                            "The ID will be used to identify the MCP server's steps within the workflow. "
+                            'Set it on the toolset itself with `MCPToolset(..., id=...)`, or, when the toolset '
+                            "is contributed by a capability, set the capability's `id` "
+                            "(for example, `MCP(url='...', id='...')`)."
                         )
                     # The id keys the per-run tool-defs cache and the step names, so two leaf toolsets
                     # sharing one id would silently collide (the second server would return the first's
