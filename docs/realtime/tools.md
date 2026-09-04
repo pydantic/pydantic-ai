@@ -12,7 +12,13 @@ When a model calls a tool, the session emits
 result, and emits [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent]. Parse
 failures and [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] produce a
 [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart], matching a standard agent run. Other tool
-exceptions end the session and propagate from iteration.
+exceptions end the session and propagate from iteration; if the event stream was never iterated,
+they end the audio and transcript views and are raised when the session closes. (A consumer that
+started iterating and then stopped has chosen to stop listening: nothing is raised on its behalf.)
+The general
+[`on_tool_execute_error`][pydantic_ai.capabilities.AbstractCapability.on_tool_execute_error]
+capability hook also applies in realtime and can turn an exception into a replacement result or
+`ModelRetry` so the model can recover.
 
 Tool return values reach the model exactly as in a
 [standard run](../tools-advanced.md#advanced-tool-returns): the model receives the string rendering
@@ -210,6 +216,11 @@ while analysis runs. To continue the entire conversation after the voice session
 
 ## Edge cases
 
+- A response can speak and then call a tool. Its speech is finalized (and, with output
+  transcription on, reaches
+  [`stream_transcripts()`][pydantic_ai.realtime.RealtimeSession.stream_transcripts]) before the tool
+  body runs, so a "has the agent spoken?" check inside the tool already includes that response's
+  speech.
 - A tool finishing does not necessarily finish the turn; see the
   [turn boundary](events.md#the-turn-boundary).
 - Short tools can make asynchronous Gemini tool calling counterproductive: the result may interrupt
