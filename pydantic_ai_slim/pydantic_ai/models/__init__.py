@@ -2506,9 +2506,8 @@ def _synthesize_tool_availability_delta_messages(
     the model ran a search.
 
     The exchange spans a turn boundary — an assistant call, then its return — so a request holding
-    other parts alongside the delta has to be split around it. Tool results answering the previous
-    response must stay together in the next request, so deltas interleaved with that leading group
-    move behind it. Other parts are ordering barriers that deltas never cross.
+    other parts alongside the delta has to be split around it. When parallel tool results and deltas
+    are interleaved, all results stay together before the synthetic exchanges. No other parts move.
     """
     transformed: list[ModelMessage] = []
     changed = False
@@ -2536,9 +2535,9 @@ def _synthesize_tool_availability_delta_messages(
         if isinstance(part, BaseToolCallPart | BaseToolReturnPart | RetryPromptPart)
     }
 
-    def answers_tool_call(part: ModelRequestPart) -> bool:
-        # A tool-less retry is user-facing validation feedback, not a result for an open call.
-        return isinstance(part, ToolReturnPart) or isinstance(part, RetryPromptPart) and part.tool_name is not None
+    def is_tool_result(part: ModelRequestPart) -> bool:
+        # A retry without a tool name is output-validation feedback, not a tool result.
+        return isinstance(part, ToolReturnPart) or (isinstance(part, RetryPromptPart) and part.tool_name is not None)
 
     for message in messages:
         if not isinstance(message, ModelRequest) or not any(
@@ -2548,29 +2547,26 @@ def _synthesize_tool_availability_delta_messages(
             continue
 
         changed = True
-        # Tool execution can interleave availability deltas with the sibling results from one
-        # parallel response. Keep that leading settlement group intact before inserting new turns.
-        settlement_end = next(
+        first_unrelated_part_index = next(
             (
                 index
                 for index, part in enumerate(message.parts)
-                if not isinstance(part, ToolAvailabilityDeltaPart) and not answers_tool_call(part)
+                if not isinstance(part, ToolAvailabilityDeltaPart) and not is_tool_result(part)
             ),
             len(message.parts),
         )
-        settlement = message.parts[:settlement_end]
-        ordered_parts = [
-            *(part for part in settlement if answers_tool_call(part)),
-            *(part for part in settlement if isinstance(part, ToolAvailabilityDeltaPart)),
-            *message.parts[settlement_end:],
+        parallel_results_and_deltas = message.parts[:first_unrelated_part_index]
+        parts = [
+            *(part for part in parallel_results_and_deltas if is_tool_result(part)),
+            *(part for part in parallel_results_and_deltas if isinstance(part, ToolAvailabilityDeltaPart)),
+            *message.parts[first_unrelated_part_index:],
         ]
 
-        # Parts accumulated since the last split; flushed as their own `ModelRequest` before each
-        # synthetic assistant turn so everything keeps the order established above.
-        pending: list[ModelRequestPart] = []
-        for part in ordered_parts:
+        # Parts to emit before the next synthetic call.
+        request_parts: list[ModelRequestPart] = []
+        for part in parts:
             if not isinstance(part, ToolAvailabilityDeltaPart):
-                pending.append(part)
+                request_parts.append(part)
                 continue
             added = [name for name in part.tools_added if deferred_tool_names is None or name in deferred_tool_names]
             if not added:
@@ -2592,19 +2588,19 @@ def _synthesize_tool_availability_delta_messages(
                     if tool_call_id not in synthesized_ids and tool_call_id not in history_call_ids:
                         break
             synthesized_ids.add(tool_call_id)
-            if pending:
-                transformed.append(replace(message, parts=pending))
-                pending = []
+            if request_parts:
+                transformed.append(replace(message, parts=request_parts))
+                request_parts = []
             transformed.append(
                 ModelResponse(parts=[ToolSearchCallPart(args={'queries': added}, tool_call_id=tool_call_id)])
             )
-            pending.append(
+            request_parts.append(
                 ToolSearchReturnPart(
                     content={'discovered_tools': [{'name': name} for name in added]},
                     tool_call_id=tool_call_id,
                 )
             )
-        if pending:
-            transformed.append(replace(message, parts=pending))
+        if request_parts:
+            transformed.append(replace(message, parts=request_parts))
 
     return transformed if changed else messages

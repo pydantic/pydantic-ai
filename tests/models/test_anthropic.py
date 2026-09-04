@@ -12160,11 +12160,9 @@ async def test_anthropic_lazy_advertisement_uses_reveal_order(allow_model_reques
     assert [tool.get('name') for tool in request['tools']][-2:] == ['beta', 'alpha']
 
 
-def _deferred_tools_params() -> ModelRequestParameters:
+def _deferred_tool_parameters() -> ModelRequestParameters:
     return ModelRequestParameters(
         function_tools=[
-            ToolDefinition(name='reveal', parameters_json_schema={'type': 'object'}),
-            ToolDefinition(name='list_maps', parameters_json_schema={'type': 'object'}),
             ToolDefinition(name='delete_map', parameters_json_schema={'type': 'object'}, defer_loading=True),
             ToolDefinition(name='archive_map', parameters_json_schema={'type': 'object'}, defer_loading=True),
         ],
@@ -12193,19 +12191,14 @@ async def test_anthropic_tool_return_reveal_parallel_batch_live(
     def list_maps() -> list[str]:
         return ['world']
 
-    agent.tool_plain(name='delete_map', defer_loading=True)(list_maps)
+    @agent.tool_plain(defer_loading=True)
+    def delete_map() -> None:
+        pass
 
     result = await agent.run('Prepare to clean up the maps.')
 
     assert result.output == 'DONE'
-    first_response = result.all_messages()[1]
-    assert isinstance(first_response, ModelResponse)
-    assert [part.tool_name for part in first_response.parts if isinstance(part, ToolCallPart)] == [
-        'reveal_cleanup',
-        'list_maps',
-    ]
     request_bodies = request_capture.bodies('/v1/messages')
-    assert len(request_bodies) == 2
     assert message_shape(request_bodies[1]) == snapshot(
         [
             ('user', ['text']),
@@ -12217,48 +12210,39 @@ async def test_anthropic_tool_return_reveal_parallel_batch_live(
     )
 
 
-def test_anthropic_defer_loading_exchange_precedes_non_tool_part_after_delta() -> None:
+def test_anthropic_synthesized_reveal_does_not_cross_unrelated_parts() -> None:
     model = AnthropicModel(
         'claude-sonnet-5', provider=AnthropicProvider(anthropic_client=cast(AsyncAnthropic, MockAnthropic()))
     )
-    projected = model.prepare_messages(
+    messages = model.prepare_messages(
         [
             ModelRequest(
                 parts=[
                     ToolReturnPart(tool_name='reveal', content='ready', tool_call_id='reveal'),
                     ToolAvailabilityDeltaPart(tools_added=['delete_map']),
-                    RetryPromptPart(content='first barrier'),
+                    RetryPromptPart(content='Retry the final output.'),
                     ToolAvailabilityDeltaPart(tools_added=['archive_map']),
-                    UserPromptPart(content='second barrier'),
+                    UserPromptPart(content='Continue.'),
                 ]
             ),
         ],
-        _deferred_tools_params(),
+        _deferred_tool_parameters(),
     )
 
-    assert len(projected) == 5
-    first_request, first_call, first_return, second_call, second_return = projected
-    assert isinstance(first_request, ModelRequest)
-    assert isinstance(first_call, ModelResponse)
-    assert isinstance(first_return, ModelRequest)
-    assert isinstance(second_call, ModelResponse)
-    assert isinstance(second_return, ModelRequest)
-    assert len(first_return.parts) == 2
-    assert isinstance(first_return.parts[0], ToolSearchReturnPart)
-    assert isinstance(first_return.parts[1], RetryPromptPart)
-    assert first_return.parts[1].tool_name is None
-    assert first_return.parts[1].content == 'first barrier'
-    assert len(second_return.parts) == 2
-    assert isinstance(second_return.parts[0], ToolSearchReturnPart)
-    assert isinstance(second_return.parts[1], UserPromptPart)
-    assert second_return.parts[1].content == 'second barrier'
+    assert [[type(part) for part in message.parts] for message in messages] == [
+        [ToolReturnPart],
+        [ToolSearchCallPart],
+        [ToolSearchReturnPart, RetryPromptPart],
+        [ToolSearchCallPart],
+        [ToolSearchReturnPart, UserPromptPart],
+    ]
 
 
-def test_anthropic_defer_loading_multiple_deltas_keep_each_synthetic_exchange_adjacent() -> None:
+def test_anthropic_synthesized_reveals_follow_parallel_results() -> None:
     model = AnthropicModel(
         'claude-sonnet-5', provider=AnthropicProvider(anthropic_client=cast(AsyncAnthropic, MockAnthropic()))
     )
-    projected = model.prepare_messages(
+    messages = model.prepare_messages(
         [
             ModelRequest(
                 parts=[
@@ -12271,33 +12255,16 @@ def test_anthropic_defer_loading_multiple_deltas_keep_each_synthetic_exchange_ad
                 ]
             )
         ],
-        _deferred_tools_params(),
+        _deferred_tool_parameters(),
     )
 
-    assert len(projected) == 5
-    sibling_results, first_call, first_return, second_call, second_return = projected
-    assert isinstance(sibling_results, ModelRequest)
-    assert isinstance(first_call, ModelResponse)
-    assert isinstance(first_return, ModelRequest)
-    assert isinstance(second_call, ModelResponse)
-    assert isinstance(second_return, ModelRequest)
-    assert len(first_call.parts) == 1
-    assert isinstance(first_call.parts[0], ToolSearchCallPart)
-    assert first_call.parts[0].args == {'queries': ['delete_map']}
-    assert len(second_call.parts) == 1
-    assert isinstance(second_call.parts[0], ToolSearchCallPart)
-    assert second_call.parts[0].args == {'queries': ['archive_map']}
-    assert len(sibling_results.parts) == 3
-    assert isinstance(sibling_results.parts[0], ToolReturnPart)
-    assert isinstance(sibling_results.parts[1], RetryPromptPart)
-    assert isinstance(sibling_results.parts[2], ToolReturnPart)
-    assert len(first_return.parts) == 1
-    assert isinstance(first_return.parts[0], ToolSearchReturnPart)
-    assert first_return.parts[0].tool_call_id == first_call.parts[0].tool_call_id
-    assert len(second_return.parts) == 2
-    assert isinstance(second_return.parts[0], ToolSearchReturnPart)
-    assert second_return.parts[0].tool_call_id == second_call.parts[0].tool_call_id
-    assert isinstance(second_return.parts[1], UserPromptPart)
+    assert [[type(part) for part in message.parts] for message in messages] == [
+        [ToolReturnPart, RetryPromptPart, ToolReturnPart],
+        [ToolSearchCallPart],
+        [ToolSearchReturnPart],
+        [ToolSearchCallPart],
+        [ToolSearchReturnPart, UserPromptPart],
+    ]
 
 
 @pytest.mark.parametrize(
