@@ -4979,12 +4979,13 @@ async def test_tool_search_may_be_added_per_run_beside_a_durability_capability()
 
 
 async def test_the_hook_chain_runs_above_every_wrapper_toolset() -> None:
-    """Why `exclusive_execution` says nothing about `get_wrapper_toolset`: they are two layers.
+    """The gap `exclusive_execution` cannot close, because the two are layers and not positions.
 
     A capability that is both `innermost` and exclusive still wraps every contributed toolset
-    rather than the tool, so no ordering within the hook chain brings it closer to the body. A
-    capability that must reach the body with nothing in between belongs in the lower layer, which
-    is where the durability capabilities put themselves.
+    rather than the tool, so no ordering within the hook chain brings a `wrap_tool_execute` closer
+    to the body. A capability that must reach the body with nothing in between belongs in the lower
+    layer, which is where the durability capabilities put themselves -- and where the flag places
+    it deterministically, as the test below pins.
     """
     trace: list[str] = []
 
@@ -5020,3 +5021,55 @@ async def test_the_hook_chain_runs_above_every_wrapper_toolset() -> None:
     await agent.run('go')
 
     assert trace == ['hook', 'toolset', 'tool body'], 'the exclusive hook is still outside the toolset'
+
+
+async def test_exclusive_execution_puts_a_contributed_toolset_innermost_in_any_order() -> None:
+    """What the flag does do in the lower layer: `'innermost'` alone leaves it to listed order.
+
+    `get_wrapper_toolset` is applied over the reversed chain, so chain-last is the wrapper closest
+    to the tool. Two `'innermost'` toolset capabilities are only tie-broken by the order they were
+    listed in, which is not enough for one whose correctness depends on reaching the body. The flag
+    forces it chain-last, so it lands inside the other either way round.
+    """
+    trace: list[str] = []
+
+    @dataclass
+    class _Traced(WrapperToolset[Any]):
+        marker: str = ''
+
+        async def call_tool(self, name: str, tool_args: dict[str, Any], ctx: Any, tool: Any) -> Any:
+            trace.append(self.marker)
+            return await super().call_tool(name, tool_args, ctx, tool)
+
+    @dataclass
+    class _Contributor(AbstractCapability[Any]):
+        marker: str = ''
+        exclusive: bool = False
+
+        def get_ordering(self) -> CapabilityOrdering:
+            return CapabilityOrdering(position='innermost', exclusive_execution=self.exclusive)
+
+        def get_wrapper_toolset(self, toolset: AbstractToolset[Any]) -> AbstractToolset[Any] | None:
+            return _Traced(toolset, marker=self.marker)
+
+    async def order(*capabilities: AbstractCapability[Any]) -> list[str]:
+        trace.clear()
+        agent = Agent(TestModel(call_tools=['echo']), capabilities=list(capabilities))
+
+        @agent.tool_plain
+        def echo(text: str) -> str:
+            trace.append('tool body')
+            return text
+
+        await agent.run('go')
+        return list(trace)
+
+    other = _Contributor(marker='other')
+
+    tiered = _Contributor(marker='tiered')
+    assert await order(other, tiered) == ['other', 'tiered', 'tool body']
+    assert await order(tiered, other) == ['tiered', 'other', 'tool body'], 'listed order is the only tiebreaker'
+
+    exclusive = _Contributor(marker='exclusive', exclusive=True)
+    assert await order(other, exclusive) == ['other', 'exclusive', 'tool body']
+    assert await order(exclusive, other) == ['other', 'exclusive', 'tool body'], 'innermost either way round'
