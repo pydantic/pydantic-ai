@@ -37,7 +37,7 @@ class FakeFilesystem:
         self.reads: list[str] = []
 
     async def read_bytes(self, path: str) -> bytes:
-        await self._backend._ensure_ready()
+        await self._backend.ensure_ready()
         self.reads.append(path)
         try:
             return self.files[path]
@@ -45,11 +45,11 @@ class FakeFilesystem:
             raise FileNotFoundError(path) from None
 
     async def write_bytes(self, path: str, data: bytes) -> None:
-        await self._backend._ensure_ready()
+        await self._backend.ensure_ready()
         self.files[path] = data
 
     async def stat(self, path: str) -> FakeEntry:
-        await self._backend._ensure_ready()
+        await self._backend.ensure_ready()
         try:
             data = self.files[path]
         except KeyError:
@@ -57,21 +57,21 @@ class FakeFilesystem:
         return FakeEntry(name=path.rsplit('/', 1)[-1], path=path, size=len(data))
 
     async def list_dir(self, path: str) -> Sequence[FakeEntry]:
-        await self._backend._ensure_ready()
+        await self._backend.ensure_ready()
         return [FakeEntry(name=p.rsplit('/', 1)[-1], path=p, size=len(data)) for p, data in self.files.items()]
 
     async def make_dir(self, path: str) -> None:
-        await self._backend._ensure_ready()
+        await self._backend.ensure_ready()
 
     async def remove(self, path: str) -> None:
-        await self._backend._ensure_ready()
+        await self._backend.ensure_ready()
         try:
             del self.files[path]
         except KeyError:
             raise FileNotFoundError(path) from None
 
     async def exists(self, path: str) -> bool:
-        await self._backend._ensure_ready()
+        await self._backend.ensure_ready()
         return path in self.files
 
 
@@ -87,8 +87,11 @@ class FakeSandbox:
         self._lock = anyio.Lock()
         self.create_calls = 0
         self.attach_calls = 0
-        self.cleanup_calls: list[str] = []
         self.commands: list[str | Sequence[str]] = []
+        # Teardown that must never happen. Nothing in Pydantic AI closes or releases a sandbox,
+        # and these record it if anything ever does; `pragma: no cover` because staying uncalled
+        # is the assertion.
+        self.cleanup_calls: list[str] = []
         self._sed = sed
         self.fs = FakeFilesystem(self, files)
 
@@ -96,7 +99,7 @@ class FakeSandbox:
     def ref(self) -> SandboxRef | None:
         return self._ref
 
-    async def _ensure_ready(self) -> None:
+    async def ensure_ready(self) -> None:
         async with self._lock:
             if self._ready:
                 return
@@ -117,7 +120,7 @@ class FakeSandbox:
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
     ) -> FakeSandboxResult:
-        await self._ensure_ready()
+        await self.ensure_ready()
         if not isinstance(command, str) and list(command[:2]) == ['sed', '-n']:
             if not self._sed:
                 return FakeSandboxResult(exit_code=127, stderr='sed: not found')
@@ -140,13 +143,13 @@ class FakeSandbox:
         return FakeSandboxResult(stdout='connected')
 
     async def working_dir(self) -> str:
-        await self._ensure_ready()
+        await self.ensure_ready()
         return '/workspace'
 
-    async def close(self, *, terminate: bool = False) -> None:
+    async def close(self, *, terminate: bool = False) -> None:  # pragma: no cover
         self.cleanup_calls.append(f'close:{terminate}')
 
-    async def release(self) -> None:
+    async def release(self) -> None:  # pragma: no cover
         self.cleanup_calls.append('release')
 
 
@@ -156,7 +159,6 @@ class RecordingSandboxBackend:
     def __init__(self, sandbox_id: str, *, ref: SandboxRef | None = None) -> None:
         self._ref = ref or SandboxRef(sandbox_id=sandbox_id)
         self.commands: list[str | Sequence[str]] = []
-        self.cleanup_calls: list[str] = []
 
     @property
     def ref(self) -> SandboxRef | None:
@@ -176,9 +178,6 @@ class RecordingSandboxBackend:
 
     async def working_dir(self) -> str:
         return '/workspace'
-
-    async def close(self, *, terminate: bool = False) -> None:
-        self.cleanup_calls.append(f'close:{terminate}')
 
 
 def ref_sandbox(ref: SandboxRef) -> Sandbox:

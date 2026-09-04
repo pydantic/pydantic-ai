@@ -10,6 +10,8 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from pydantic_ai.sandboxes import SandboxRef
+
 if TYPE_CHECKING:
     from pydantic_ai.sandboxes import SandboxBackend
 
@@ -23,7 +25,7 @@ class ContainerResult:
 
 class DockerSandbox:
     def __init__(self, *, sandbox_id: str = 'container-0123456789ab'):
-        self.sandbox_id = sandbox_id
+        self.ref = SandboxRef(sandbox_id=sandbox_id)
 
     async def run(
         self,

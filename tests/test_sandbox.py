@@ -111,6 +111,7 @@ async def test_run_only_backend_supports_bounded_reads_through_shell() -> None:
             return await inner.working_dir()
 
     sandbox = Sandbox(RunOnlyBackend())
+    assert sandbox.ref == inner.ref
     window = await sandbox.read_file('data.txt', limit=2)
 
     assert window.lines == ('one', 'two')
@@ -145,7 +146,11 @@ async def test_bounded_read_shell_failures_fall_back_to_filesystem(result: FakeS
 
     backend = FailedSed('failed-sed', {'/workspace/data.txt': b'one\ntwo\nthree\n'})
 
-    window = await Sandbox(backend).read_file('data.txt', offset=2, limit=1)
+    sandbox = Sandbox(backend)
+    assert sandbox.ref == backend.ref
+    # Only the `sed` slice is broken here; ordinary commands still run.
+    assert (await sandbox.run(['true'])).stdout == 'connected'
+    window = await sandbox.read_file('data.txt', offset=2, limit=1)
 
     assert window.lines == ('two',)
     assert window.has_more is True
@@ -176,7 +181,9 @@ async def test_bounded_read_without_shell_or_filesystem_names_both_options() -> 
             return await inner.working_dir()
 
     with pytest.raises(NotImplementedError, match=r'working `sed`.*SupportsFilesystem'):
-        await Sandbox(RunOnlyBackend()).read_file('data.txt', limit=1)
+        sandbox = Sandbox(RunOnlyBackend())
+        assert sandbox.ref == inner.ref
+        await sandbox.read_file('data.txt', limit=1)
 
 
 async def test_slice_timeout_falls_back_to_filesystem() -> None:
@@ -194,10 +201,23 @@ async def test_slice_timeout_falls_back_to_filesystem() -> None:
 
     backend = TimedOutSed('timed-out-sed', {'/workspace/data.txt': b'one\ntwo\nthree\n'})
 
-    window = await Sandbox(backend).read_file('data.txt', offset=2, limit=1)
+    sandbox = Sandbox(backend)
+    assert sandbox.ref == backend.ref
+    window = await sandbox.read_file('data.txt', offset=2, limit=1)
 
     assert window.lines == ('two',)
     assert backend.fs.reads == ['/workspace/data.txt']
+
+
+async def test_a_file_without_a_trailing_newline_reads_to_its_last_line() -> None:
+    """The last line still counts, and the window still knows it reached the end."""
+    backend = FakeSandbox('no-trailing-newline', {'/workspace/data.txt': b'one\ntwo'})
+
+    window = await Sandbox(backend).read_file('data.txt', limit=5)
+
+    assert window.lines == ('one', 'two')
+    assert window.has_more is False
+    assert window.total_lines == 2
 
 
 @pytest.mark.parametrize('kwargs', [{'offset': 0}, {'limit': 0}])
@@ -312,6 +332,24 @@ async def test_explicit_backend_wins_over_a_capability_backend() -> None:
 
     assert observed[0].backend is explicit
     assert capability.refs == []
+
+
+async def test_missing_paths_raise_the_builtin_error_through_the_facade() -> None:
+    """The protocol promises `FileNotFoundError` for a path that is not there, for every operation."""
+    sandbox = Sandbox(FakeSandbox('missing-paths'))
+
+    for operation in (
+        sandbox.read_bytes('gone.txt'),
+        sandbox.stat('gone.txt'),
+        sandbox.remove('gone.txt'),
+    ):
+        with pytest.raises(FileNotFoundError):
+            await operation
+
+    # The `sed` fast path sees the same missing file and reports it the way `sed` does, so the
+    # windowed read falls through to the filesystem and raises there instead of returning empty.
+    with pytest.raises(FileNotFoundError):
+        await sandbox.read_file('gone.txt', limit=1)
 
 
 async def test_the_result_carries_the_sandbox_the_run_used() -> None:
@@ -604,4 +642,13 @@ async def test_capability_can_supply_a_backend_for_an_explicit_ref() -> None:
     result: AgentRunResult[Any] = await agent.run('go', sandbox=SandboxRef(sandbox_id='existing'))
 
     assert result.output == 'done'
+    assert capability.sandbox_ids == ['existing']
+    assert result.sandbox.ref == SandboxRef(sandbox_id='existing')
+    assert await result.sandbox.working_dir() == '/workspace'
+
+    # The same capability only attaches: with no ref to attach to it declines, and the run gets
+    # the placeholder that explains how to attach one.
+    without_ref: AgentRunResult[Any] = await Agent(TestModel(), capabilities=[capability]).run('go')
+
+    assert isinstance(without_ref.sandbox.backend, UnavailableSandbox)
     assert capability.sandbox_ids == ['existing']

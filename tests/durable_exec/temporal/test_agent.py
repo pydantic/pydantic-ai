@@ -2794,7 +2794,8 @@ async def test_temporal_activity_rebuilds_the_sandbox_and_leaves_it_running():
             super().__init__('provider-only')
             self.close_calls: list[bool] = []
 
-        async def close(self, *, terminate: bool = False) -> None:
+        async def close(self, *, terminate: bool = False) -> None:  # pragma: no cover
+            # Staying uncalled is the assertion: nothing tears an environment down.
             self.close_calls.append(terminate)
 
     backend = ClosableBackend()
