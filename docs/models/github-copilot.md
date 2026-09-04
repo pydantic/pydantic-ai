@@ -1,6 +1,6 @@
 # GitHub Copilot
 
-[GitHub Copilot](https://docs.github.com/en/copilot) serves Anthropic, OpenAI, Google, xAI and MoonshotAI models through an OpenAI-compatible Chat Completions API, billed against your Copilot subscription rather than per token.
+[GitHub Copilot](https://docs.github.com/en/copilot) serves Anthropic, OpenAI, Google, xAI and MoonshotAI models through an OpenAI-compatible Chat Completions API, metered in AI credits drawn from your Copilot subscription at published per-model token rates.
 
 !!! note "This is not GitHub Models"
     [`GitHubProvider`][pydantic_ai.providers.github.GitHubProvider] and the `github:` prefix served [GitHub Models](openai.md#github-models), which was retired in July 2026. Copilot is a different API with a different host, its own model ids, and its own credentials.
