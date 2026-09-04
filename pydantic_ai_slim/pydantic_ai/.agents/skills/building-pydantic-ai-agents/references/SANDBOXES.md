@@ -65,14 +65,19 @@ argument or an earlier run in the conversation. `None` means make a fresh one.
 
 ```python
 from collections.abc import Awaitable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 import anyio
 
 from pydantic_ai import RunContext
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.sandboxes import CommandResult, SandboxBackend, SandboxCommand, SandboxRef
+from pydantic_ai.sandboxes import (
+    CommandResult,
+    SandboxBackend,
+    SandboxCommand,
+    SandboxRef,
+)
 
 
 class MyBackend:
@@ -100,11 +105,11 @@ class MyBackend:
 
     async def run(self, command: SandboxCommand, **kwargs: Any) -> CommandResult:
         sandbox = await self.sandbox
-        ...
+        return await sandbox.exec(command, **kwargs)
 
     async def working_dir(self) -> str:
         sandbox = await self.sandbox
-        ...
+        return sandbox.workdir
 
 
 @dataclass

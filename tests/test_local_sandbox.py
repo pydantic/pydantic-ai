@@ -255,7 +255,10 @@ async def test_timeout_during_spawn_still_kills_the_process_group(tmp_path: Path
     monkeypatch.setattr(asyncio, 'create_subprocess_shell', held_spawn)
     try:
         with pytest.raises(SandboxTimeoutError, match='was killed'):
-            await sandbox.run(_background_sleep_command(pid_file), shell=True, timeout=0.01)
+            # Long enough that the spawn always begins: `held_spawn` then holds it open past the
+            # deadline, so the timeout always lands mid-spawn without racing the interpreter's
+            # first subprocess start.
+            await sandbox.run(_background_sleep_command(pid_file), shell=True, timeout=0.5)
     finally:
         release.set()
 

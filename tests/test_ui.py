@@ -69,6 +69,7 @@ from pydantic_ai.toolsets import AbstractToolset, ExternalToolset
 
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, message, message_part
+from .sandbox_fakes import ConnectOnlySandboxCapability
 
 pytest.importorskip('starlette')
 
@@ -1337,7 +1338,9 @@ async def test_run_stream_native_metadata_forwarded():
 
 
 async def test_adapter_dispatch_request(monkeypatch: pytest.MonkeyPatch):
-    agent = Agent(model=TestModel())
+    # The agent carries a capability that recognizes the ref: a `SandboxRef` no capability can
+    # supply is a `UserError`, and this test is about the forwarding, not that failure.
+    agent = Agent(model=TestModel(), capabilities=[ConnectOnlySandboxCapability()])
     request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
     sandbox = SandboxRef(sandbox_id='test')
     captured_sandbox: list[object] = []
