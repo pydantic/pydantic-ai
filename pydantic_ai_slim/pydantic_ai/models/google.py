@@ -135,6 +135,12 @@ _TOOL_TYPE_TO_NATIVE_TOOL_NAME: dict[ToolType, str] = {
     ToolType.FILE_SEARCH: FileSearchTool.kind,
 }
 
+_MEDIA_PROCESSING_TOOL_NAME = 'media_processing'
+_SDK_SUPPORTS_MEDIA_PROCESSING = 'media_processing' in PartDict.__annotations__
+_MEDIA_PROCESSING_TOOL_TYPE: ToolType | None = getattr(ToolType, 'MEDIA_PROCESSING', None)
+if _MEDIA_PROCESSING_TOOL_TYPE is not None:
+    _TOOL_TYPE_TO_NATIVE_TOOL_NAME[_MEDIA_PROCESSING_TOOL_TYPE] = _MEDIA_PROCESSING_TOOL_NAME
+
 _NATIVE_TOOL_NAME_TO_TOOL_TYPE: dict[str, ToolType] = {v: k for k, v in _TOOL_TYPE_TO_NATIVE_TOOL_NAME.items()}
 
 LatestGoogleModelNames = Literal[
@@ -594,8 +600,10 @@ class GoogleModel(Model[Client]):
             model_request_parameters,
         )
         model_settings = cast(GoogleModelSettings, model_settings or {})
-        response = await self._generate_content(messages, False, model_settings, model_request_parameters)
-        return self._process_response(response)
+        response, agentic_video_processing = await self._generate_content(
+            messages, False, model_settings, model_request_parameters
+        )
+        return self._process_response(response, agentic_video_processing=agentic_video_processing)
 
     async def count_tokens(
         self,
@@ -673,9 +681,15 @@ class GoogleModel(Model[Client]):
             model_request_parameters,
         )
         model_settings = cast(GoogleModelSettings, model_settings or {})
-        response = await self._generate_content(messages, True, model_settings, model_request_parameters)
+        response, agentic_video_processing = await self._generate_content(
+            messages, True, model_settings, model_request_parameters
+        )
         try:
-            yield await self._process_streamed_response(response, model_request_parameters)  # pyright: ignore[reportArgumentType]
+            yield await self._process_streamed_response(
+                response,  # pyright: ignore[reportArgumentType]
+                model_request_parameters,
+                agentic_video_processing=agentic_video_processing,
+            )
         finally:
             aclose = getattr(response, 'aclose', None)
             if aclose is not None:  # pragma: no branch
@@ -854,7 +868,7 @@ class GoogleModel(Model[Client]):
         stream: Literal[False],
         model_settings: GoogleModelSettings,
         model_request_parameters: ModelRequestParameters,
-    ) -> GenerateContentResponse: ...
+    ) -> tuple[GenerateContentResponse, bool]: ...
 
     @overload
     async def _generate_content(
@@ -863,7 +877,7 @@ class GoogleModel(Model[Client]):
         stream: Literal[True],
         model_settings: GoogleModelSettings,
         model_request_parameters: ModelRequestParameters,
-    ) -> Awaitable[AsyncIterator[GenerateContentResponse]]: ...
+    ) -> tuple[Awaitable[AsyncIterator[GenerateContentResponse]], bool]: ...
 
     async def _generate_content(
         self,
@@ -871,7 +885,7 @@ class GoogleModel(Model[Client]):
         stream: bool,
         model_settings: GoogleModelSettings,
         model_request_parameters: ModelRequestParameters,
-    ) -> GenerateContentResponse | Awaitable[AsyncIterator[GenerateContentResponse]]:
+    ) -> tuple[GenerateContentResponse | Awaitable[AsyncIterator[GenerateContentResponse]], bool]:
         contents, config = await self._build_content_and_config(
             messages,
             model_settings,
@@ -879,7 +893,10 @@ class GoogleModel(Model[Client]):
         )
         func = self.client.aio.models.generate_content_stream if stream else self.client.aio.models.generate_content
         try:
-            return await func(model=self._model_name, contents=contents, config=config)  # pyright: ignore[reportReturnType]
+            response = await func(model=self._model_name, contents=contents, config=config)
+            return response, _contents_have_agentic_video_processing(  # pyright: ignore[reportReturnType]
+                cast(list[ContentDict], contents)
+            )
         except errors.APIError as e:
             raise _map_api_error(e, self._model_name, self._provider.model_id_namespace) from e
 
@@ -1017,7 +1034,9 @@ class GoogleModel(Model[Client]):
 
         return contents, config
 
-    def _process_response(self, response: GenerateContentResponse) -> ModelResponse:
+    def _process_response(
+        self, response: GenerateContentResponse, *, agentic_video_processing: bool = False
+    ) -> ModelResponse:
         candidate = response.candidates[0] if response.candidates else None
 
         provider_response_id = response.response_id
@@ -1080,10 +1099,15 @@ class GoogleModel(Model[Client]):
             provider_details=provider_details or None,
             finish_reason=finish_reason,
             url_context_metadata=url_context_metadata,
+            agentic_video_processing=agentic_video_processing,
         )
 
     async def _process_streamed_response(
-        self, response: AsyncIterator[GenerateContentResponse], model_request_parameters: ModelRequestParameters
+        self,
+        response: AsyncIterator[GenerateContentResponse],
+        model_request_parameters: ModelRequestParameters,
+        *,
+        agentic_video_processing: bool = False,
     ) -> StreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
         peekable_response: _utils.PeekableAsyncStream[
@@ -1107,6 +1131,7 @@ class GoogleModel(Model[Client]):
             _model_id_namespace=self._provider.model_id_namespace,
             _provider_url=self._provider.base_url,
             _provider_timestamp=first_chunk.create_time,
+            _agentic_video_processing=agentic_video_processing,
         )
 
     async def _map_messages(  # noqa: C901
@@ -1324,14 +1349,12 @@ class GoogleModel(Model[Client]):
             vendor_metadata = dict(file.vendor_metadata)  # copy to avoid mutating user dict
             if 'media_resolution' in vendor_metadata:
                 part_dict['media_resolution'] = vendor_metadata.pop('media_resolution')
-            # `media_processing` is likewise a per-Part field. `'AGENTIC'` lets the model navigate
-            # long video/audio itself, fetching segments and transcripts as it needs them, instead
-            # of consuming a fixed sampling of the whole file, see
-            # https://ai.google.dev/gemini-api/docs/video-understanding#agentic-video-understanding
             if 'media_processing' in vendor_metadata:
-                if not _SDK_SUPPORTS_MEDIA_PROCESSING:
-                    raise UserError('`vendor_metadata["media_processing"]` requires `google-genai>=2.21.0`')
-                part_dict['media_processing'] = vendor_metadata.pop('media_processing')
+                media_processing = vendor_metadata.pop('media_processing')
+                if resolved[2].startswith('video/'):
+                    if not _SDK_SUPPORTS_MEDIA_PROCESSING:
+                        raise UserError('`vendor_metadata["media_processing"]` requires `google-genai>=2.20.0`')
+                    part_dict['media_processing'] = media_processing
             # The remaining keys map to `video_metadata`, which only applies to video parts.
             if vendor_metadata and isinstance(file, (BinaryContent, VideoUrl, UploadedFile)):
                 part_dict['video_metadata'] = VideoMetadataDict(**vendor_metadata)
@@ -1395,6 +1418,7 @@ class GeminiStreamedResponse(StreamedResponse):
     _model_id_namespace: str
     _provider_url: str
     _provider_timestamp: datetime | None = None
+    _agentic_video_processing: bool = False
     _timestamp: datetime = field(default_factory=_utils.now_utc)
     _file_search_tool_call_id: str | None = field(default=None, init=False)
     _code_execution_tool_call_id: str | None = field(default=None, init=False)
@@ -1510,7 +1534,9 @@ class GeminiStreamedResponse(StreamedResponse):
                     continue  # pragma: no cover
 
                 if not self._has_tool_invocations:
-                    self._has_tool_invocations = _has_native_tool_invocations(parts)
+                    self._has_tool_invocations = _has_native_tool_invocations(
+                        parts, agentic_video_processing=self._agentic_video_processing
+                    )
 
                 for part in parts:
                     provider_details: dict[str, Any] | None = None
@@ -1571,11 +1597,19 @@ class GeminiStreamedResponse(StreamedResponse):
                             ),
                         )
                     elif part.tool_call:
-                        tool_call_part = _map_tool_call(part.tool_call, self.provider_name)
+                        tool_call_part = _map_tool_call(
+                            part.tool_call,
+                            self.provider_name,
+                            allow_media_processing=self._agentic_video_processing,
+                        )
                         tool_call_part.provider_details = provider_details
                         yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=tool_call_part)
                     elif part.tool_response:
-                        tool_response_part = _map_tool_response(part.tool_response, self.provider_name)
+                        tool_response_part = _map_tool_response(
+                            part.tool_response,
+                            self.provider_name,
+                            allow_media_processing=self._agentic_video_processing,
+                        )
                         tool_response_part.provider_details = provider_details
                         if tool_response_part.tool_name == FileSearchTool.kind and tool_response_part.content is None:
                             # Reserve the part's slot but defer its `PartStartEvent` until it's filled below,
@@ -1595,7 +1629,7 @@ class GeminiStreamedResponse(StreamedResponse):
                         part = self._map_code_execution_result(part.code_execution_result)
                         part.provider_details = provider_details
                         yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=part)
-                    elif _is_bare_thought_signature(part):
+                    elif self._agentic_video_processing and _is_bare_thought_signature(part):
                         step, self._media_processing_call_id = _map_media_processing_step(
                             part, self._media_processing_call_id, self.provider_name
                         )
@@ -1834,9 +1868,9 @@ def _native_tool_call_part_dict(
         return None
     if item.tool_name == CodeExecutionTool.kind:
         return _attach_signature({'executable_code': cast(ExecutableCodeDict, item.args_as_dict())}, signature)
-    if item.tool_name == MEDIA_PROCESSING_TOOL_NAME:
-        # Agentic media processing steps exist only inside the turn that produced them and their
-        # signatures are rejected on replay; see `MEDIA_PROCESSING_TOOL_NAME`.
+    if item.tool_name == _MEDIA_PROCESSING_TOOL_NAME:
+        # Gemini rejects its internal media-processing calls when they are replayed without the
+        # provider-only tool context that produced them.
         return None
     tool_type = _NATIVE_TOOL_NAME_TO_TOOL_TYPE.get(item.tool_name)
     if tool_type is None:  # pragma: no cover
@@ -1863,9 +1897,7 @@ def _native_tool_return_part_dict(
             {'code_execution_result': cast(CodeExecutionResultDict, item.content)},  # pyright: ignore[reportUnknownMemberType]
             signature,
         )
-    if item.tool_name == MEDIA_PROCESSING_TOOL_NAME:
-        # Agentic media processing steps exist only inside the turn that produced them and their
-        # signatures are rejected on replay; see `MEDIA_PROCESSING_TOOL_NAME`.
+    if item.tool_name == _MEDIA_PROCESSING_TOOL_NAME:
         return None
     tool_type = _NATIVE_TOOL_NAME_TO_TOOL_TYPE.get(item.tool_name)
     if tool_type is None:  # pragma: no cover
@@ -1897,59 +1929,60 @@ def _can_echo_server_side_tool_part(tool_call_id: str, *, supports_tool_combinat
     return not tool_call_id.startswith('pyd_ai_')
 
 
-MEDIA_PROCESSING_TOOL_NAME = 'media_processing'
-
-# The per-Part `media_processing` field arrived in google-genai 2.21.0; the `google` extra's floor is older.
-_SDK_SUPPORTS_MEDIA_PROCESSING = 'media_processing' in PartDict.__annotations__
-"""`tool_name` of the native tool parts that represent agentic media processing steps.
-
-With `media_processing='AGENTIC'` on a video/audio Part, the model fetches the segments and
-transcript ranges it needs itself. Each fetch is reported as two Parts carrying only a
-`thought_signature` (a `processing_call` and its `processing_result`, in Google's terms) and is
-surfaced as a `NativeToolCallPart`/`NativeToolReturnPart` pair with this name, like other
-provider-executed tools. The API exposes neither the segment requested nor its content, so
-`args` and `content` are `None`. The pair is never sent back to the model: those signatures are
-rejected with `400 Invalid thought signature` if replayed, and only the turn's final Part's
-signature round-trips.
-"""
+def _contents_have_agentic_video_processing(contents: list[ContentDict]) -> bool:
+    """Whether the mapped request actually contains an agentic video part."""
+    for content in contents:
+        parts = content.get('parts')
+        if parts is None:  # pragma: no cover
+            continue
+        for part in parts:
+            media_processing = part.get('media_processing')
+            media_processing_value = getattr(media_processing, 'value', media_processing)
+            if isinstance(media_processing_value, str) and media_processing_value.upper() == 'AGENTIC':
+                return True
+    return False
 
 
 def _is_bare_thought_signature(part: Part) -> bool:
-    """Whether `part` carries a `thought_signature` and nothing else: an agentic media processing step."""
+    """Whether a part contains only a thought signature, as Vertex returns for agentic video steps."""
     return bool(part.thought_signature) and not part.model_dump(exclude_none=True, exclude={'thought_signature'})
 
 
 def _map_media_processing_step(
     part: Part, pending_call_id: str | None, provider_name: str
 ) -> tuple[NativeToolCallPart | NativeToolReturnPart, str | None]:
-    """Map one bare-signature Part to the call or the return half of a `media_processing` pair.
-
-    Steps arrive in even counts, call then result; a trailing unpaired call is kept as a call.
-    Returns the part and the `tool_call_id` still awaiting its return, if any.
-    """
+    """Map one bare-signature agentic-video step to alternating call and return parts."""
     assert part.thought_signature is not None
     provider_details = {'thought_signature': base64.b64encode(part.thought_signature).decode('utf-8')}
     if pending_call_id is None:
         tool_call_id = _utils.generate_tool_call_id()
-        call = NativeToolCallPart(
-            tool_name=MEDIA_PROCESSING_TOOL_NAME,
-            tool_call_id=tool_call_id,
+        return (
+            NativeToolCallPart(
+                tool_name=_MEDIA_PROCESSING_TOOL_NAME,
+                tool_call_id=tool_call_id,
+                provider_name=provider_name,
+                provider_details=provider_details,
+            ),
+            tool_call_id,
+        )
+    return (
+        NativeToolReturnPart(
+            tool_name=_MEDIA_PROCESSING_TOOL_NAME,
+            content=None,
+            tool_call_id=pending_call_id,
             provider_name=provider_name,
             provider_details=provider_details,
-        )
-        return call, tool_call_id
-    result = NativeToolReturnPart(
-        tool_name=MEDIA_PROCESSING_TOOL_NAME,
-        content=None,
-        tool_call_id=pending_call_id,
-        provider_name=provider_name,
-        provider_details=provider_details,
+        ),
+        None,
     )
-    return result, None
 
 
 def _process_part(
-    part: Part, code_execution_tool_call_id: str | None, provider_name: str
+    part: Part,
+    code_execution_tool_call_id: str | None,
+    provider_name: str,
+    *,
+    allow_media_processing: bool = False,
 ) -> tuple[ModelResponsePart | None, str | None]:
     """Process a Google Part and return the corresponding ModelResponsePart.
 
@@ -1985,9 +2018,9 @@ def _process_part(
         if part.function_call.id is not None:
             item.tool_call_id = part.function_call.id
     elif part.tool_call:
-        item = _map_tool_call(part.tool_call, provider_name)
+        item = _map_tool_call(part.tool_call, provider_name, allow_media_processing=allow_media_processing)
     elif part.tool_response:
-        item = _map_tool_response(part.tool_response, provider_name)
+        item = _map_tool_response(part.tool_response, provider_name, allow_media_processing=allow_media_processing)
     elif inline_data := part.inline_data:
         data = inline_data.data
         mime_type = inline_data.mime_type
@@ -2015,10 +2048,11 @@ def _process_response_from_parts(
     provider_details: dict[str, Any] | None = None,
     finish_reason: FinishReason | None = None,
     url_context_metadata: UrlContextMetadata | None = None,
+    agentic_video_processing: bool = False,
 ) -> ModelResponse:
     items: list[ModelResponsePart] = []
 
-    if not _has_native_tool_invocations(parts):
+    if not _has_native_tool_invocations(parts, agentic_video_processing=agentic_video_processing):
         web_search_call, web_search_return = _map_grounding_metadata(grounding_metadata, provider_name)
         if web_search_call and web_search_return:
             items.append(web_search_call)
@@ -2037,11 +2071,16 @@ def _process_response_from_parts(
     code_execution_tool_call_id: str | None = None
     media_processing_call_id: str | None = None
     for part in parts:
-        if _is_bare_thought_signature(part):
+        if agentic_video_processing and _is_bare_thought_signature(part):
             step, media_processing_call_id = _map_media_processing_step(part, media_processing_call_id, provider_name)
             items.append(step)
             continue
-        item, code_execution_tool_call_id = _process_part(part, code_execution_tool_call_id, provider_name)
+        item, code_execution_tool_call_id = _process_part(
+            part,
+            code_execution_tool_call_id,
+            provider_name,
+            allow_media_processing=agentic_video_processing,
+        )
         if item is not None:
             if isinstance(item, NativeToolReturnPart):
                 _fill_empty_file_search_return_content(item, grounding_metadata)
@@ -2059,16 +2098,34 @@ def _process_response_from_parts(
     )
 
 
-def _has_native_tool_invocations(parts: list[Part]) -> bool:
+def _has_native_tool_invocations(parts: list[Part], *, agentic_video_processing: bool = False) -> bool:
     """Whether the response carries explicit `tool_call`/`tool_response` parts.
 
     When the API returned these (because `include_server_side_tool_invocations` was set),
     metadata-based reconstruction (`_map_grounding_metadata`, `_map_url_context_metadata`,
     `_map_file_search_grounding_metadata`) must be skipped — otherwise we emit duplicate
-    `NativeToolCallPart`/`NativeToolReturnPart` pairs for the same tool invocation.
+    `NativeToolCallPart`/`NativeToolReturnPart` pairs for the same tool invocation. Agentic video
+    processing parts are excluded because they do not replace grounding metadata.
     See https://ai.google.dev/api/caching#ToolConfig.
     """
-    return any(p.tool_call or p.tool_response for p in parts)
+    return any(
+        (part.tool_call or part.tool_response)
+        and not (agentic_video_processing and _is_media_processing_native_part(part))
+        for part in parts
+    )
+
+
+def _is_media_processing_native_part(part: Part) -> bool:
+    """Whether Gemini emitted this part for agentic video processing."""
+    if tool_call := part.tool_call:
+        return (_MEDIA_PROCESSING_TOOL_TYPE is not None and tool_call.tool_type == _MEDIA_PROCESSING_TOOL_TYPE) or (
+            tool_call.tool_type is None and tool_call.args is None
+        )
+    if tool_response := part.tool_response:
+        return (_MEDIA_PROCESSING_TOOL_TYPE is not None and tool_response.tool_type == _MEDIA_PROCESSING_TOOL_TYPE) or (
+            tool_response.tool_type is None and tool_response.response is None
+        )
+    return False
 
 
 def _function_declaration_from_tool(tool: ToolDefinition) -> FunctionDeclarationDict:
@@ -2212,8 +2269,13 @@ def _map_code_execution_result(
     )
 
 
-def _resolve_native_tool_name(tool_type: ToolType | None) -> str:
-    if tool_type is None:  # pragma: no cover
+def _resolve_native_tool_name(
+    tool_type: ToolType | None, payload: object | None, *, allow_media_processing: bool = False
+) -> str:
+    # Gemini currently omits both `tool_type` and the payload from agentic video processing parts.
+    if tool_type is None:
+        if allow_media_processing and payload is None:
+            return _MEDIA_PROCESSING_TOOL_NAME
         raise UnexpectedModelBehavior('Missing tool_type on native tool part')
     tool_name = _TOOL_TYPE_TO_NATIVE_TOOL_NAME.get(tool_type)
     if tool_name is None:  # pragma: no cover
@@ -2221,19 +2283,27 @@ def _resolve_native_tool_name(tool_type: ToolType | None) -> str:
     return tool_name
 
 
-def _map_tool_call(tool_call: ToolCall, provider_name: str) -> NativeToolCallPart:
+def _map_tool_call(
+    tool_call: ToolCall, provider_name: str, *, allow_media_processing: bool = False
+) -> NativeToolCallPart:
     return NativeToolCallPart(
         provider_name=provider_name,
-        tool_name=_resolve_native_tool_name(tool_call.tool_type),
+        tool_name=_resolve_native_tool_name(
+            tool_call.tool_type, tool_call.args, allow_media_processing=allow_media_processing
+        ),
         tool_call_id=tool_call.id or _utils.generate_tool_call_id(),
         args=tool_call.args,
     )
 
 
-def _map_tool_response(tool_response: ToolResponse, provider_name: str) -> NativeToolReturnPart:
+def _map_tool_response(
+    tool_response: ToolResponse, provider_name: str, *, allow_media_processing: bool = False
+) -> NativeToolReturnPart:
     return NativeToolReturnPart(
         provider_name=provider_name,
-        tool_name=_resolve_native_tool_name(tool_response.tool_type),
+        tool_name=_resolve_native_tool_name(
+            tool_response.tool_type, tool_response.response, allow_media_processing=allow_media_processing
+        ),
         tool_call_id=tool_response.id or _utils.generate_tool_call_id(),
         content=tool_response.response,
     )
