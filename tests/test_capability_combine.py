@@ -566,7 +566,12 @@ def test_a_plain_class_capability_cannot_silently_lose_private_configuration() -
 
 
 def test_generic_alias_metadata_is_not_capability_configuration() -> None:
-    """`__orig_class__` is typing metadata attached after initialization, not hidden user state."""
+    """`__orig_class__` is typing metadata attached after initialization, not hidden user state.
+
+    Exempt from the undeclared-attribute check but *not* dropped from the merged copy, unlike a
+    `cached_property`: `copy.copy` carries it over correctly and nothing could recompute it, so
+    dropping it would lose the parameterization for good.
+    """
 
     merged = ReinjectSystemPrompt[Any].combine(
         [ReinjectSystemPrompt[Any](replace_existing=False), ReinjectSystemPrompt[Any](replace_existing=True)]
@@ -574,6 +579,7 @@ def test_generic_alias_metadata_is_not_capability_configuration() -> None:
 
     assert isinstance(merged, ReinjectSystemPrompt)
     assert merged.replace_existing is True
+    assert getattr(merged, '__orig_class__', None) is ReinjectSystemPrompt[Any]
 
 
 def test_durable_operation_bindings_are_not_capability_configuration() -> None:

@@ -61,12 +61,14 @@ def merge_capability_fields(
     earlier instance was the only one to state it. Refusing says so instead.
 
     A leading underscore does not exempt an attribute from that: it does not distinguish
-    configuration from derived state, and configuration is exactly what must not be dropped. What
-    is exempt is state the class can produce again -- see `_rebuildable_attributes` -- which the
-    merge discards from its copy so it is recomputed from the merged fields rather than carried
-    over stale. Nothing here re-runs `__post_init__` (`replace_no_init` exists precisely to skip
-    it), so state a `__post_init__` derives is declared as a field and recomputed in the
-    capability's own `combine`, the way `NativeOrLocalTool` rebuilds its native tool.
+    configuration from derived state, and configuration is exactly what must not be dropped. Two
+    kinds are exempt, and they are exempt for different reasons. State the class can produce again
+    -- a `cached_property` -- is *dropped* from the copy, so it is recomputed from the merged fields
+    rather than carried over stale. `__orig_class__` is not the capability's state at all, so it is
+    left alone and simply not counted against it. Nothing here re-runs `__post_init__`
+    (`replace_no_init` exists precisely to skip it), so state a `__post_init__` derives is declared
+    as a field and recomputed in the capability's own `combine`, the way `NativeOrLocalTool`
+    rebuilds its native tool.
     """
     merged = capabilities[-1]
     field_names = {field.name for field in dataclasses.fields(merged)}
@@ -76,7 +78,7 @@ def merge_capability_fields(
         # attribute does get *a* value. What it cannot get is the promise above: a value only an
         # earlier instance stated would be dropped rather than survive. Refuse rather than let that
         # differ silently from every declared field.
-        undeclared = set(vars(capability)) - field_names - rebuildable
+        undeclared = set(vars(capability)) - field_names - rebuildable - _NOT_CAPABILITY_STATE
         if undeclared:
             cls_name = type(merged).__name__
             names = ', '.join(sorted(undeclared))
@@ -110,6 +112,15 @@ def merge_capability_fields(
     return result
 
 
+_NOT_CAPABILITY_STATE = frozenset({'__orig_class__'})
+"""Instance attributes that are not the capability's own state, so the merge has no say over them.
+
+`typing` attaches `__orig_class__` when a generic class is instantiated through a subscription. It
+records what the annotation said, which `copy.copy` carries over correctly and nothing can
+recompute -- so it is neither counted against the class nor dropped, only left where it is.
+"""
+
+
 def _rebuildable_attributes(cls: type[AbstractCapability[Any]]) -> frozenset[str]:
     """Attribute names the class can produce again on demand, so merging drops rather than keeps them.
 
@@ -118,10 +129,11 @@ def _rebuildable_attributes(cls: type[AbstractCapability[Any]]) -> frozenset[str
     value is what makes the merged capability recompute against the merged fields instead of
     reporting what the last instance happened to have cached.
 
-    `__orig_class__` is not state at all: `typing` attaches it when a generic class is instantiated
-    through a subscription, and it says what the annotation said.
+    Only names that can actually be recomputed belong here, since everything here is deleted from
+    the merged copy -- an attribute that is merely uninteresting to the merge goes in
+    `_NOT_CAPABILITY_STATE` instead, where it is exempt from the check without being destroyed.
     """
-    names = {'__orig_class__'}
+    names: set[str] = set()
     for klass in cls.__mro__:
         names.update(name for name, value in vars(klass).items() if isinstance(value, cached_property))
     return frozenset(names)
