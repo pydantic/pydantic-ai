@@ -230,6 +230,8 @@ passing raw microphone bytes to `send_audio`, convert them to mono PCM16 at `ses
 chunks carry no sample-rate metadata.
 
 ```python {test="skip"}
+import anyio
+
 from pydantic_ai import Agent
 from pydantic_ai.messages import (
     PartDeltaEvent,
@@ -252,20 +254,26 @@ async def main(microphone_chunk: bytes):
         await session.send_audio(microphone_chunk)
         await session.commit_audio()
         await session.create_response()
-        async for event in session:
-            match event:
-                case PartDeltaEvent(delta=SpeechPartDelta(audio_chunk=chunk)) if chunk:
-                    ...  # play audio out
-                case PartEndEvent(part=SpeechPart(speaker='user', transcript=t)):
-                    if t is not None:
-                        print('user said:', t)
-                case RealtimeTurnCompleteEvent():
-                    # Input transcription may finish later, or be disabled or fail.
-                    # Do not wait for it past the exchange boundary.
+        # Input transcription can finish after the model exchange. Give it a
+        # bounded grace period so a missing transcript cannot hang the session.
+        turn_complete = user_turn_complete = False
+        with anyio.move_on_after(None) as transcript_wait:
+            async for event in session:
+                match event:
+                    case PartDeltaEvent(delta=SpeechPartDelta(audio_chunk=chunk)) if chunk:
+                        ...  # play audio out
+                    case PartEndEvent(part=SpeechPart(speaker='user', transcript=t)):
+                        if t is not None:
+                            print('user said:', t)
+                        user_turn_complete = True
+                    case RealtimeTurnCompleteEvent():
+                        turn_complete = True
+                        transcript_wait.deadline = anyio.current_time() + 1
+                    case RealtimeSessionErrorEvent(message=message, recoverable=True):
+                        # The connection remains usable, but this turn may not complete.
+                        raise RuntimeError(message)
+                if turn_complete and user_turn_complete:
                     break
-                case RealtimeSessionErrorEvent(message=message, recoverable=True):
-                    # The connection remains usable, but this turn may not complete.
-                    raise RuntimeError(message)
 
     # A session builds ordinary ModelMessage history: hand it off to a text agent.
     notes = Agent('openai:gpt-5.2', instructions='Summarize.')
