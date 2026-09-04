@@ -131,6 +131,33 @@ async def test_text_in_audio_out_turn(openai_ws_cassette: tuple[Provider[Any], R
     assert len(part.audio.data) > 0
 
 
+async def test_dated_ga_snapshot_ignores_thinking(
+    openai_ws_cassette: tuple[Provider[Any], RealtimeCassette],
+) -> None:
+    """The dated GA snapshot completes a turn without receiving unsupported `reasoning` config."""
+    provider, cassette = openai_ws_cassette
+    model = OpenAIRealtimeModel(
+        'gpt-realtime-2025-08-28',
+        provider=provider,
+        settings=OpenAIRealtimeModelSettings(thinking='low', output_modality='text'),
+    )
+
+    events: list[Any] = []
+    async with Agent(instructions='Answer in two or three words.').realtime(model).session() as session:
+        await session.send('Say a short greeting.')
+        with anyio.fail_after(30):
+            async for event in session:  # pragma: no branch
+                events.append(event)
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+
+    session_updates = sent_frames_containing(cassette, 'session.update')
+    assert len(session_updates) == 1
+    assert 'reasoning' not in session_updates[0]['session']
+    assert any(isinstance(event, PartEndEvent) for event in events)
+    assert isinstance(events[-1], RealtimeTurnCompleteEvent)
+
+
 async def test_audio_in_server_vad_turn(
     openai_ws_cassette: tuple[Provider[Any], RealtimeCassette], assets_path: Path
 ) -> None:
@@ -731,3 +758,59 @@ async def test_webrtc_sideband_audio_turn(
             }
         ]
     )
+
+
+async def test_handle_barge_in_over_live_speech(
+    openai_ws_cassette: tuple[Provider[Any], RealtimeCassette], assets_path: Path
+) -> None:
+    """`handle_barge_in=True` runs the whole barge-in against the live protocol.
+
+    The user speaks over the model's reply: the session must send the truncation on its own — and
+    *only* the truncation, because with the default `interrupt_response: true` server VAD the
+    provider cancels the response itself (`reason: turn_detected`), and a client cancel racing that
+    was observed being applied to the *next* response, silencing the reply to the barge-in. The
+    provider must accept the truncate, and the session must stay usable: the barged-in utterance
+    still gets a completed reply. The playback position is deterministic across record and replay:
+    exactly one audio chunk is pulled and never confirmed, so the truncation point is 0 ms (any
+    other value would be recomputed on replay from cassette-truncated chunk sizes and mismatch the
+    recorded frame).
+    """
+    provider, cassette = openai_ws_cassette
+    model = OpenAIRealtimeModel('gpt-realtime', provider=provider)
+    agent = Agent(instructions='Reply in a few words.')
+    pcm = assets_path.joinpath('marcelo_24khz.pcm').read_bytes()
+
+    events: list[Any] = []
+    async with agent.realtime(model).session(handle_barge_in=True) as session:
+        stream = session.stream_audio()
+        with anyio.fail_after(90):
+            for start in range(0, len(pcm), 4800):
+                await session.send_audio(pcm[start : start + 4800])
+            # Wait for the reply's audio to start flowing; the chunk stays unconfirmed, pinning the
+            # session's tracked playback position at 0.
+            assert len(await anext(stream)) > 0
+            # Speak over the reply: server VAD reports speech onset and the session barges in.
+            for start in range(0, len(pcm), 4800):
+                await session.send_audio(pcm[start : start + 4800])
+            turns_complete = 0
+            async for event in session:  # pragma: no branch
+                events.append(event)
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    # The interrupted reply settles as its own turn; break after the reply to the
+                    # barge-in utterance.
+                    turns_complete += 1
+                    if turns_complete == 2:
+                        break
+
+    # The session sent the barge-in itself — nothing in this test called `interrupt()` — and left
+    # the cancellation to the server's own VAD.
+    truncates = sent_frames_containing(cassette, 'conversation.item.truncate')
+    assert [frame['audio_end_ms'] for frame in truncates] == [0]
+    assert sent_frames_containing(cassette, 'response.cancel') == []
+
+    # The provider accepted it: the first reply settles as interrupted with the truncation point on
+    # its speech part, and the barged-in utterance still got a completed reply.
+    responses = [message for message in session.all_messages() if isinstance(message, ModelResponse)]
+    assert [response.state for response in responses] == snapshot(['interrupted', 'complete'])
+    speech = next(part for part in responses[0].parts if isinstance(part, SpeechPart))
+    assert speech.interrupted_at_ms == 0

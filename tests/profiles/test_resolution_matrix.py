@@ -343,7 +343,43 @@ def test_openai_gpt_5_6():
     )
 
 
-@pytest.mark.parametrize('model_name', ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna'])
+def test_openai_gpt_6_astra():
+    """Not a VCR test: this pins the resolved GPT-6 Astra profile against drift.
+
+    Pinned from OpenAI's model guide and docs (the model is not callable from this environment
+    yet): reasons by default with no `effort='none'`, supports `reasoning.mode` and
+    `reasoning.context='all_turns'`, native `tool_search`, prompt cache breakpoints, and no
+    `minimal` effort. Unlike GPT-5.6 it does not list image output.
+    """
+    from pydantic_ai.providers.openai import OpenAIProvider
+
+    profile = OpenAIProvider.model_profile('gpt-6-astra')
+    assert _normalize(profile) == snapshot(
+        {
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_inline_system_prompts': True,
+            'supports_thinking': True,
+            'thinking_always_enabled': True,
+            'supported_native_tools': frozenset(
+                {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool, ToolSearchTool}
+            ),
+            'openai_supports_encrypted_reasoning_content': True,
+            'openai_supports_reasoning': True,
+            'openai_reasoning_enabled_by_default': True,
+            'openai_responses_supports_reasoning_context': True,
+            'openai_responses_supports_reasoning_mode': True,
+            'tool_addition_mode': 'with_definitions',
+            'openai_supports_phase': True,
+            'openai_supports_prompt_cache_breakpoints': True,
+            'tool_deferral_mode': 'with_tool_search',
+            'openai_supports_minimal_reasoning_effort': False,
+        }
+    )
+
+
+@pytest.mark.parametrize('model_name', ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-6-astra'])
 def test_openai_gpt_5_6_reasoning_mode(model_name: str):
     """Not a VCR test: this validates local provider-profile capability resolution."""
     from pydantic_ai.providers.openai import OpenAIProvider
@@ -355,7 +391,7 @@ def test_openai_gpt_5_6_reasoning_mode(model_name: str):
 
 @pytest.mark.parametrize(
     'model_name',
-    ['openai/gpt-5.6-sol', 'openai/gpt-5.6-terra', 'openai/gpt-5.6-luna'],
+    ['openai/gpt-5.6-sol', 'openai/gpt-5.6-terra', 'openai/gpt-5.6-luna', 'openai/gpt-6-astra'],
 )
 def test_openrouter_openai_gpt_5_6_reasoning_mode(model_name: str):
     """Not a VCR test: this validates local provider-profile capability resolution."""
@@ -366,7 +402,7 @@ def test_openrouter_openai_gpt_5_6_reasoning_mode(model_name: str):
     assert profile.get('openai_responses_supports_reasoning_mode') is True
 
 
-@pytest.mark.parametrize('model_name', ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna'])
+@pytest.mark.parametrize('model_name', ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-6-astra'])
 def test_azure_gpt_5_6_reasoning_mode(model_name: str):
     """Not a VCR test: this validates local provider-profile capability resolution."""
     profile = AzureProvider.model_profile(model_name)
@@ -375,7 +411,7 @@ def test_azure_gpt_5_6_reasoning_mode(model_name: str):
 
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
-@pytest.mark.parametrize('model_name', ['gpt-5.4', 'gpt-5.5', 'gpt-5.6-sol'])
+@pytest.mark.parametrize('model_name', ['gpt-5.4', 'gpt-5.5', 'gpt-5.6-sol', 'gpt-6-astra'])
 def test_openai_gpt_5_reasoning_context(model_name: str):
     """Not a VCR test: this validates local provider-profile capability resolution."""
     profile = OpenAIProvider.model_profile(model_name)
@@ -384,7 +420,7 @@ def test_openai_gpt_5_reasoning_context(model_name: str):
 
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
-@pytest.mark.parametrize('model_name', ['openai/gpt-5.4', 'openai/gpt-5.5', 'openai/gpt-5.6-sol'])
+@pytest.mark.parametrize('model_name', ['openai/gpt-5.4', 'openai/gpt-5.5', 'openai/gpt-5.6-sol', 'openai/gpt-6-astra'])
 def test_openrouter_openai_gpt_5_reasoning_context(model_name: str):
     """Not a VCR test: this validates local provider-profile capability resolution."""
     profile = OpenRouterProvider.model_profile(model_name)
@@ -393,7 +429,7 @@ def test_openrouter_openai_gpt_5_reasoning_context(model_name: str):
 
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
-@pytest.mark.parametrize('model_name', ['gpt-5.4', 'gpt-5.5', 'gpt-5.6-sol'])
+@pytest.mark.parametrize('model_name', ['gpt-5.4', 'gpt-5.5', 'gpt-5.6-sol', 'gpt-6-astra'])
 def test_azure_gpt_5_reasoning_context(model_name: str):
     """Not a VCR test: this validates local provider-profile capability resolution."""
     profile = AzureProvider.model_profile(model_name)
