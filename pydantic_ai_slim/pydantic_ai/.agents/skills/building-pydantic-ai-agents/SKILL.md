@@ -306,7 +306,9 @@ Key facts for building realtime agents:
   makes `played_audio_bytes` read too far: count real device consumption and pass `played_ms`.
 - **Tools**: every tool runs in the background, so a slow tool never blocks the session. Whether
   the model keeps speaking meanwhile is provider-specific (OpenAI/Azure do; Gemini needs
-  `google_async_tool_calls=True` on a native-audio model).
+  `google_async_tool_calls=True` on a native-audio model). To end the call from a tool, await
+  `ctx.realtime_session.close()` for a clean hang-up (the tool does not resume and its call is
+  recorded as interrupted), or call `ctx.cancel()` to make the session context raise `RunCancelled`.
 - **Browser WebRTC (OpenAI and Azure OpenAI)**: for browser voice agents, relay the browser's SDP
   offer server-side with `agent.realtime(model).answer_webrtc_offer(sdp_offer)` — the agent's
   resolved instructions and tools are baked in and the API key stays on the server — then attach a

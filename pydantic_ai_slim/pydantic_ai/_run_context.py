@@ -291,7 +291,8 @@ class RunContext(Generic[RunContextAgentDepsT]):
     Use [`realtime`][pydantic_ai.tools.RunContext.realtime] to detect a realtime run in those
     stages. Tools and hooks that run during the live session can use it to e.g.
     [`interrupt()`][pydantic_ai.realtime.RealtimeSession.interrupt] playback or
-    [`send()`][pydantic_ai.realtime.RealtimeSession.send] follow-up content.
+    [`send()`][pydantic_ai.realtime.RealtimeSession.send] follow-up content, or call
+    [`close()`][pydantic_ai.realtime.RealtimeSession.close] to hang up.
     """
 
     root_capability: AbstractCapability[RunContextAgentDepsT] | None = None
