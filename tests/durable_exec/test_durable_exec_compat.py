@@ -295,6 +295,26 @@ def test_a_second_durability_engine_is_refused_behind_a_wrapper() -> None:
         )
 
 
+def test_a_per_run_engine_beside_an_agent_level_one_is_refused() -> None:
+    """A per-run engine binds before it joins the tree, so it is not among what it finds there.
+
+    `_bind_run_capabilities` calls `for_agent` on each per-run capability ahead of capability
+    resolution, so the tree it reads holds the agent's own engine and not itself. Counting itself
+    in is what makes the pair two rather than one. Two engines in the *same* per-run list still
+    slip through, because neither is on the tree yet when the other binds -- see #8098.
+    """
+    agent = Agent(TestModel(), name='per_run', capabilities=[JournalDurability()])
+
+    with pytest.raises(
+        UserError,
+        match=(
+            r'An agent runs under one durability engine, but JournalDurability and '
+            r'SecondJournalDurability are attached\.'
+        ),
+    ):
+        agent.run_sync('hello', capabilities=[SecondJournalDurability()])
+
+
 def test_one_engine_written_twice_is_refused() -> None:
     """The same object listed twice is two registrations, not one capability seen twice.
 
