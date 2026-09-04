@@ -90,6 +90,7 @@ with try_import() as imports_successful:
         ResponseFunctionWebSearch,
         ResponseQueuedEvent,
     )
+    from openai.types.responses.response import IncompleteDetails
     from openai.types.responses.response_compaction_item import ResponseCompactionItem
     from openai.types.responses.response_output_message import Content, ResponseOutputMessage
     from openai.types.responses.response_output_refusal import ResponseOutputRefusal
@@ -12967,8 +12968,11 @@ async def test_openai_responses_refusal_non_streaming(allow_model_requests: None
     assert response_msg['provider_details']['refusal'] == "I can't help with that request."
 
 
-async def test_openai_responses_refusal_streaming(allow_model_requests: None):
-    """Test that ResponseRefusalDeltaEvent/DoneEvent in streaming triggers ContentFilterError."""
+@pytest.mark.parametrize('terminal_status', ['completed', 'incomplete', 'failed'])
+async def test_openai_responses_refusal_streaming(
+    allow_model_requests: None, terminal_status: Literal['completed', 'incomplete', 'failed']
+):
+    """A streamed refusal takes precedence over the terminal finish reason."""
     base_response = resp.Response(
         id='resp_001',
         model='gpt-4o',
@@ -12979,6 +12983,26 @@ async def test_openai_responses_refusal_streaming(allow_model_requests: None):
         tool_choice='auto',
         tools=[],
     )
+    terminal_response = base_response.model_copy(update={'status': terminal_status})
+    if terminal_status == 'completed':
+        terminal_event = resp.ResponseCompletedEvent(
+            response=terminal_response,
+            type='response.completed',
+            sequence_number=6,
+        )
+    elif terminal_status == 'incomplete':
+        terminal_response.incomplete_details = IncompleteDetails(reason='max_output_tokens')
+        terminal_event = resp.ResponseIncompleteEvent(
+            response=terminal_response,
+            type='response.incomplete',
+            sequence_number=6,
+        )
+    else:
+        terminal_event = resp.ResponseFailedEvent(
+            response=terminal_response,
+            type='response.failed',
+            sequence_number=6,
+        )
 
     stream: list[resp.ResponseStreamEvent] = [
         resp.ResponseCreatedEvent(response=base_response, type='response.created', sequence_number=0),
@@ -13019,11 +13043,7 @@ async def test_openai_responses_refusal_streaming(allow_model_requests: None):
             type='response.refusal.done',
             sequence_number=5,
         ),
-        resp.ResponseCompletedEvent(
-            response=base_response.model_copy(update={'status': 'completed'}),
-            type='response.completed',
-            sequence_number=6,
-        ),
+        terminal_event,
     ]
 
     mock_client = MockOpenAIResponses.create_mock_stream(stream)
@@ -13040,6 +13060,7 @@ async def test_openai_responses_refusal_streaming(allow_model_requests: None):
     assert response_msg['parts'] == []
     assert response_msg['finish_reason'] == 'content_filter'
     assert response_msg['provider_details']['refusal'] == "I can't help with that."
+    assert 'finish_reason' not in response_msg['provider_details']
 
 
 async def test_stream_cancel(allow_model_requests: None):
@@ -13250,6 +13271,101 @@ async def test_background_marker_stamped_from_terminal_event_only(allow_model_re
     response = result.all_messages()[-1]
     assert isinstance(response, ModelResponse)
     assert (response.provider_details or {}).get('background') is True
+
+
+async def test_stream_response_incomplete_finish_reason_length(allow_model_requests: None):
+    """A terminal `response.incomplete` maps `max_output_tokens` to 'length', like the non-streaming path."""
+
+    incomplete_response = response_message([])
+    incomplete_response.status = 'incomplete'
+    incomplete_response.incomplete_details = IncompleteDetails(reason='max_output_tokens')
+
+    mock_client = MockOpenAIResponses.create_mock_stream(
+        [
+            resp.ResponseIncompleteEvent(
+                response=incomplete_response,
+                type='response.incomplete',
+                sequence_number=0,
+            ),
+        ]
+    )
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    async with model.request_stream(
+        [ModelRequest(parts=[UserPromptPart(content='hello')])],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+    ) as streamed:
+        async for _ in streamed:
+            pass
+
+    response = streamed.get()
+
+    assert response.finish_reason == 'length'
+    assert (response.provider_details or {}).get('finish_reason') == 'max_output_tokens'
+
+
+async def test_stream_response_failed_finish_reason_error(allow_model_requests: None):
+    """A terminal `response.failed` maps to 'error' and keeps the raw reason, like the non-streaming path."""
+
+    failed_response = response_message([])
+    failed_response.status = 'failed'
+
+    mock_client = MockOpenAIResponses.create_mock_stream(
+        [
+            resp.ResponseFailedEvent(
+                response=failed_response,
+                type='response.failed',
+                sequence_number=0,
+            ),
+        ]
+    )
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    async with model.request_stream(
+        [ModelRequest(parts=[UserPromptPart(content='hello')])],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+    ) as streamed:
+        async for _ in streamed:
+            pass
+
+    response = streamed.get()
+
+    assert response.finish_reason == 'error'
+    assert (response.provider_details or {}).get('finish_reason') == 'failed'
+
+
+async def test_stream_response_incomplete_content_filter_finish_reason(allow_model_requests: None):
+    """A terminal `response.incomplete` maps `content_filter` to 'content_filter', like the non-streaming path."""
+
+    incomplete_response = response_message([])
+    incomplete_response.status = 'incomplete'
+    incomplete_response.incomplete_details = IncompleteDetails(reason='content_filter')
+
+    mock_client = MockOpenAIResponses.create_mock_stream(
+        [
+            resp.ResponseIncompleteEvent(
+                response=incomplete_response,
+                type='response.incomplete',
+                sequence_number=0,
+            ),
+        ]
+    )
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    async with model.request_stream(
+        [ModelRequest(parts=[UserPromptPart(content='hello')])],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+    ) as streamed:
+        async for _ in streamed:
+            pass
+
+    response = streamed.get()
+
+    assert response.finish_reason == 'content_filter'
+    assert (response.provider_details or {}).get('finish_reason') == 'content_filter'
 
 
 async def test_cancel_suspended_response_only_cancels_background_jobs(allow_model_requests: None):
