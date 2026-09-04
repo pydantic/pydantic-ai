@@ -23,6 +23,7 @@ from __future__ import annotations
 import warnings
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
+from functools import cached_property
 from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar, overload
 
 import anyio
@@ -888,7 +889,7 @@ class Hooks(AbstractCapability[AgentDepsT]):
                 entry = _EventHookEntry(func) if key == 'on_event' else _HookEntry(func)
                 self._registry.setdefault(key, []).append(entry)
 
-    @property
+    @cached_property
     def on(self) -> _HookRegistration[AgentDepsT]:
         """Decorator namespace for registering hook functions."""
         return _HookRegistration(self)
