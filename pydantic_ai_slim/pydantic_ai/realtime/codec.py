@@ -494,6 +494,7 @@ __all__ = (
     'CommitAudio',
     'ClearAudio',
     'CreateResponse',
+    'TextContext',
     'CancelResponse',
     'TruncateOutput',
     # Model-profile helpers for provider implementations.
