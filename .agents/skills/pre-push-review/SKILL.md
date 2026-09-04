@@ -16,6 +16,7 @@ allowed-tools:
   - Bash(git show:*)
   - WebSearch
   - WebFetch
+  - Agent
 ---
 
 # Pre-push Review
@@ -32,6 +33,20 @@ developer's model subscription. It is independent of the hosted review that runs
 - In Codex, use the Terra-pinned `reviewer` agent.
 - Never use Fable or Sol for this review.
 - In other harnesses, use the normal reviewer selection.
+
+## Decompose the diff, or don't
+
+Work the rubric below yourself when it already names what could go wrong here. Decompose instead
+when the diff's risk is specific enough that the rubric would not name it: write a charter per
+concern, dispatch one subagent per charter, and adjudicate their findings before you report. You
+decide this from the diff. A charter handed to you by the agent that wrote the diff is that agent
+setting your scope, which the context contract forbids — review the diff, not the charter.
+
+Every subagent you dispatch inherits the contract you run under: the same policy-base instructions,
+no branch-continuity state, and text back to you. Bind it to the read-only boundary in its prompt —
+most harnesses will not narrow a subagent's tools for you, so the instruction is the boundary. A
+subagent that writes anything has broken the contract; report that instead of its findings. What
+comes back is yours to adjudicate, not to forward.
 
 ## Read the review rubric
 
