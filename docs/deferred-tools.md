@@ -92,7 +92,7 @@ The sections below describe the two kinds of deferred tools the handler can reso
 
 If a tool function always requires approval, you can pass the `requires_approval=True` argument to the [`@agent.tool`][pydantic_ai.agent.Agent.tool] decorator, [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain] decorator, [`Tool`][pydantic_ai.tools.Tool] class, [`FunctionToolset.tool`][pydantic_ai.toolsets.FunctionToolset.tool] decorator, or [`FunctionToolset.add_function()`][pydantic_ai.toolsets.FunctionToolset.add_function] method. Inside the function, you can then assume that the tool call has been approved.
 
-In a [realtime session](realtime/tools.md#deferred-and-approval-required-tools), approval must be resolved inline by a [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] handler; without one, the call is refused every time.
+In a [realtime session](realtime/tools.md#deferred-and-approval-required-tools), approval must be resolved inline, typically by a [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] handler (a capability hook can resolve it too); a call nothing resolves is refused every time.
 
 If approval depends on the tool call's arguments or the agent [run context][pydantic_ai.tools.RunContext], such as [dependencies](dependencies.md) or message history, raise [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] from the tool function. The [`RunContext.tool_call_approved`][pydantic_ai.tools.RunContext.tool_call_approved] property will be `True` if the tool call has already been approved.
 
