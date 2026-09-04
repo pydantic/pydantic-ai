@@ -34,7 +34,6 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -52,7 +51,7 @@ from .capability_models import (
     MyOutput,
     make_text_response,
 )
-from .conftest import IsDatetime, IsStr, iter_message_parts
+from .conftest import IsDatetime, IsStr, iter_message_parts, legacy_retry_prompt_part
 
 _SEARCH_TOOLS_NAME = ToolSearch.function_tool_name
 
@@ -4945,7 +4944,7 @@ async def test_deferred_tool_handler_batch_external_model_retry():
 
 
 async def test_deferred_tool_handler_batch_external_retry_prompt_part():
-    """Batch path: handler-supplied `RetryPromptPart` in `calls` surfaces as a retry (names stamped from the deferred call)."""
+    """Batch path: a handler-supplied `RetryPromptPart` in `calls` settles as the call's retried return."""
     call_count = 0
 
     def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -4958,7 +4957,7 @@ async def test_deferred_tool_handler_batch_external_retry_prompt_part():
     async def handle_deferred(ctx: RunContext, requests: DeferredToolRequests) -> DeferredToolResults:
         return DeferredToolResults(
             calls={
-                call.tool_call_id: RetryPromptPart(content='retry via part', tool_name='', tool_call_id='')
+                call.tool_call_id: legacy_retry_prompt_part(content='retry via part', tool_name='', tool_call_id='')
                 for call in requests.calls
             }
         )
@@ -4971,7 +4970,11 @@ async def test_deferred_tool_handler_batch_external_retry_prompt_part():
 
     result = await agent.run('go')
     assert result.output == 'retried'
-    retry_parts = list(iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart))
+    retry_parts = [
+        part
+        for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
+        if part.outcome == 'retried'
+    ]
     assert len(retry_parts) == 1
     assert retry_parts[0].tool_call_id == 'c1'
     assert retry_parts[0].tool_name == 'external_tool'
@@ -5608,7 +5611,7 @@ async def test_deferred_tool_handler_via_handle_call_external_model_retry():
 
 
 async def test_deferred_tool_handler_via_handle_call_external_retry_prompt_part():
-    """When a handler supplies a `RetryPromptPart` external-call result, handle_call raises `ToolRetryError` with the part."""
+    """When a handler supplies a `RetryPromptPart` external-call result, handle_call raises `ToolRetryError` with the retried return it means."""
     from pydantic_ai.exceptions import CallDeferred, ToolRetryError
     from pydantic_ai.toolsets import FunctionToolset
 
@@ -5621,7 +5624,7 @@ async def test_deferred_tool_handler_via_handle_call_external_retry_prompt_part(
     async def handle_deferred(ctx: RunContext, requests: DeferredToolRequests) -> DeferredToolResults:
         return DeferredToolResults(
             calls={
-                call.tool_call_id: RetryPromptPart(content='retry via part', tool_name='', tool_call_id='')
+                call.tool_call_id: legacy_retry_prompt_part(content='retry via part', tool_name='', tool_call_id='')
                 for call in requests.calls
             }
         )

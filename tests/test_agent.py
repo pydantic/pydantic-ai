@@ -44,7 +44,6 @@ from pydantic_ai import (
     PrefixedToolset,
     RequestUsage,
     RetryFeedbackPart,
-    RetryPromptPart,
     RunContext,
     SystemPromptPart,
     TemplateStr,
@@ -183,7 +182,17 @@ else:
         MistralProvider = None
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsInstance, IsNow, IsStr, TestEnv, iter_message_parts, message, message_part
+from .conftest import (
+    IsDatetime,
+    IsInstance,
+    IsNow,
+    IsStr,
+    TestEnv,
+    iter_message_parts,
+    legacy_retry_prompt_part,
+    message,
+    message_part,
+)
 from .continuation_utils import ScriptedContinuationModel, scripted_response
 
 pytestmark = pytest.mark.anyio
@@ -11198,7 +11207,7 @@ async def test_run_with_deferred_tool_results_errors():
         ModelRequest(
             parts=[
                 ToolReturnPart(tool_name='run_me', tool_call_id='run_me', content='Success'),
-                RetryPromptPart(tool_name='run_me_too', tool_call_id='run_me_too', content='Failure'),
+                legacy_retry_prompt_part(tool_name='run_me_too', tool_call_id='run_me_too', content='Failure'),
             ]
         ),
     ]

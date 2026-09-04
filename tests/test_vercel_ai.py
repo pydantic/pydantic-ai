@@ -49,7 +49,7 @@ from pydantic_ai.messages import (
     PartStartEvent,
     RequestUsage,
     RetryFeedbackPart,
-    RetryPromptPart,
+    RetryPromptPart,  # pyright: ignore[reportDeprecated]
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -85,7 +85,16 @@ from pydantic_ai.toolsets._tool_search import parse_discovered_tools
 from pydantic_ai.usage import UsageLimits
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsSameStr, IsStr, iter_message_parts, message, message_part, try_import
+from .conftest import (
+    IsDatetime,
+    IsSameStr,
+    IsStr,
+    iter_message_parts,
+    legacy_retry_prompt_part,
+    message,
+    message_part,
+    try_import,
+)
 
 with try_import() as starlette_import_successful:
     from starlette.requests import Request
@@ -6019,7 +6028,7 @@ async def test_adapter_dump_messages_with_retry():
         ),
         ModelRequest(
             parts=[
-                RetryPromptPart(
+                legacy_retry_prompt_part(
                     content='Tool failed with error',
                     tool_name='my_tool',
                     tool_call_id='tool_789',
@@ -6084,7 +6093,7 @@ async def test_adapter_dump_messages_with_retry_no_tool_name():
         ModelResponse(parts=[TextPart(content='Not a valid number')]),
         ModelRequest(
             parts=[
-                RetryPromptPart(
+                legacy_retry_prompt_part(
                     content='Output validation failed: expected integer',
                     # No tool_name - this is an output validation error, not a tool error
                 )
@@ -6152,10 +6161,10 @@ async def test_adapter_dump_messages_with_retry_no_tool_name():
         )
     )
     # Get original tool_call_id and replace with original RetryPromptPart
-    original_retry = message_part(messages, RetryPromptPart, message_index=2)
+    original_retry = message_part(messages, RetryPromptPart, message_index=2)  # pyright: ignore[reportDeprecated]
     reloaded_messages[2] = ModelRequest(
         parts=[
-            RetryPromptPart(
+            legacy_retry_prompt_part(
                 content='Output validation failed: expected integer', tool_call_id=original_retry.tool_call_id
             )
         ]
@@ -8458,7 +8467,7 @@ async def test_adapter_dump_messages_tool_error_with_provider_metadata():
         ),
         ModelRequest(
             parts=[
-                RetryPromptPart(
+                legacy_retry_prompt_part(
                     content='Tool execution failed',
                     tool_name='failing_tool',
                     tool_call_id='tc_fail',
@@ -8591,8 +8600,9 @@ async def test_event_stream_text_with_provider_metadata():
 
 async def test_event_stream_tool_input_error_with_provider_metadata():
     """`FunctionToolCallEvent` with `args_valid=False` suppresses `tool-input-available`; the
-    matching `FunctionToolResultEvent(RetryPromptPart)` then produces a `tool-input-error` chunk
-    carrying the part's raw args, provider metadata, and the retry prompt as `errorText`."""
+    matching `FunctionToolResultEvent` carrying the retried return then produces a
+    `tool-input-error` chunk with the part's raw args, provider metadata, and the feedback as
+    `errorText`."""
 
     async def event_generator():
         part = ToolCallPart(
@@ -8607,7 +8617,12 @@ async def test_event_stream_tool_input_error_with_provider_metadata():
         yield PartEndEvent(index=0, part=part)
         yield FunctionToolCallEvent(part, args_valid=False)
         yield FunctionToolResultEvent(
-            RetryPromptPart(content='Validation failed: bad arg', tool_name='my_tool', tool_call_id='tc_err')
+            ToolReturnPart(
+                tool_name='my_tool',
+                content='Validation failed: bad arg',
+                tool_call_id='tc_err',
+                outcome='retried',
+            )
         )
 
     request = SubmitMessage(
@@ -8649,7 +8664,7 @@ async def test_event_stream_tool_input_error_with_provider_metadata():
                         'provider_details': {'tool_index': 0},
                     }
                 },
-                'errorText': 'Validation failed: bad arg\n\nFix the errors and try again.',
+                'errorText': 'Validation failed: bad arg',
             },
             {'type': 'finish-step'},
             {'type': 'finish'},
@@ -8669,7 +8684,12 @@ async def test_event_stream_tool_input_error_sdk_v5_falls_back_to_input_availabl
         yield PartEndEvent(index=0, part=part)
         yield FunctionToolCallEvent(part, args_valid=False)
         yield FunctionToolResultEvent(
-            RetryPromptPart(content='Validation failed: bad arg', tool_name='my_tool', tool_call_id='tc_v5_err')
+            ToolReturnPart(
+                tool_name='my_tool',
+                content='Validation failed: bad arg',
+                tool_call_id='tc_v5_err',
+                outcome='retried',
+            )
         )
 
     request = SubmitMessage(
@@ -8815,7 +8835,7 @@ async def test_event_stream_output_tool_input_available():
 
 async def test_event_stream_output_tool_input_error():
     """An `OutputToolCallEvent` with `args_valid=False` suppresses `tool-input-available`; the
-    matching `OutputToolResultEvent(RetryPromptPart)` produces `tool-input-error` (not
+    matching `OutputToolResultEvent` carrying the retried return produces `tool-input-error` (not
     `tool-output-error`) so the chunk type reflects the actual cause (validation, not execution)."""
 
     async def event_generator():
@@ -8829,7 +8849,12 @@ async def test_event_stream_output_tool_input_error():
         yield PartEndEvent(index=0, part=part)
         yield OutputToolCallEvent(part, args_valid=False)
         yield OutputToolResultEvent(
-            RetryPromptPart(content='Output validation failed', tool_name='final_result', tool_call_id='out_err')
+            ToolReturnPart(
+                tool_name='final_result',
+                content='Output validation failed',
+                tool_call_id='out_err',
+                outcome='retried',
+            )
         )
 
     request = SubmitMessage(
@@ -8859,7 +8884,7 @@ async def test_event_stream_output_tool_input_error():
                 'toolName': 'final_result',
                 'input': {'value': 'bad'},
                 'providerMetadata': {'pydantic_ai': {'id': 'output_tool_id'}},
-                'errorText': 'Output validation failed\n\nFix the errors and try again.',
+                'errorText': 'Output validation failed',
             },
             {'type': 'finish-step'},
             {'type': 'finish'},
@@ -10509,7 +10534,7 @@ async def test_roundtrip_load_capability_invalid_args():
         ),
         ModelRequest(
             parts=[
-                RetryPromptPart(
+                legacy_retry_prompt_part(
                     tool_name='load_capability',
                     tool_call_id='load-foobar',
                     content='Field required: id',

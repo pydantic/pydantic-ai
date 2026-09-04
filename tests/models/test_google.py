@@ -48,7 +48,6 @@ from pydantic_ai import (
     PartEndEvent,
     PartStartEvent,
     RetryFeedbackPart,
-    RetryPromptPart,
     SystemPromptPart,
     TextPart,
     TextPartDelta,
@@ -89,7 +88,7 @@ from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
 from .._inline_snapshot import Is, snapshot
 from ..cassette_utils import single_request_body
-from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, try_import
+from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, legacy_retry_prompt_part, try_import
 from ..parts_from_messages import part_types_from_messages
 
 with try_import() as imports_successful:
@@ -6379,7 +6378,9 @@ async def test_google_splits_tool_return_from_user_prompt(google_provider: Googl
         ModelRequest(
             parts=[
                 ToolReturnPart(tool_name='final_result', content='Final result processed.', tool_call_id='test_id_1'),
-                RetryPromptPart(content='Tool error occurred', tool_name='another_tool', tool_call_id='test_id_2'),
+                legacy_retry_prompt_part(
+                    content='Tool error occurred', tool_name='another_tool', tool_call_id='test_id_2'
+                ),
                 UserPromptPart(content="What's 2 + 2?"),
                 UserPromptPart(content="What's 3 + 3?"),
             ]

@@ -38,7 +38,6 @@ from pydantic_ai import (
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
-    RetryPromptPart,
     RunContext,
     SystemPromptPart,
     TextContent,
@@ -95,6 +94,7 @@ from ..conftest import (
     RequestCapture,
     TestEnv,
     iter_message_parts,
+    legacy_retry_prompt_part,
     message,
     raise_if_exception,
     try_import,
@@ -13123,7 +13123,7 @@ async def test_anthropic_malformed_tool_args_no_crash(allow_model_requests: None
         ),
         ModelRequest(
             parts=[
-                RetryPromptPart(
+                legacy_retry_prompt_part(
                     tool_name='search_knowledge',
                     tool_call_id='toolu_123',
                     content='Invalid JSON: expected `,` or `}` at line 1 column 99',
@@ -13156,7 +13156,7 @@ async def test_anthropic_malformed_tool_args_no_crash(allow_model_requests: None
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    legacy_retry_prompt_part(
                         content='Invalid JSON: expected `,` or `}` at line 1 column 99',
                         tool_name='search_knowledge',
                         tool_call_id='toolu_123',

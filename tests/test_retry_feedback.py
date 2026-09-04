@@ -13,6 +13,7 @@ tell harness feedback from something a person wrote
 from __future__ import annotations
 
 import json
+import warnings
 from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -27,7 +28,14 @@ from pydantic_ai._instrumentation import get_instructions
 from pydantic_ai._output import build_retried_tool_return
 from pydantic_ai._tool_execution import tool_bound_retry_part
 from pydantic_ai.direct import model_request, model_request_stream
-from pydantic_ai.exceptions import CallDeferred, ModelRetry, ToolRetryError, UnexpectedModelBehavior, UserError
+from pydantic_ai.exceptions import (
+    CallDeferred,
+    ModelRetry,
+    PydanticAIDeprecationWarning,
+    ToolRetryError,
+    UnexpectedModelBehavior,
+    UserError,
+)
 from pydantic_ai.messages import (
     InstructionPart,
     ModelMessage,
@@ -36,7 +44,7 @@ from pydantic_ai.messages import (
     ModelRequestPart,
     ModelResponse,
     RetryFeedbackPart,
-    RetryPromptPart,
+    RetryPromptPart,  # pyright: ignore[reportDeprecated]
     SystemPromptPart,
     TextPart,
     ThinkingPart,
@@ -52,7 +60,7 @@ from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults
 from pydantic_ai.ui._adapter import retry_feedback_from_payload, retry_feedback_payload
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsStr, message_part, try_import
+from .conftest import IsDatetime, IsStr, legacy_retry_prompt_part, message_part, try_import
 
 with try_import() as anthropic_imports_successful:
     from pydantic_ai.models.anthropic import AnthropicModel
@@ -437,9 +445,9 @@ async def test_a_legacy_retry_prompt_part_is_translated_to_the_part_it_always_me
         ModelResponse(parts=[ToolCallPart('count_things', {'count': 'lots'}, tool_call_id='call_1')]),
         ModelRequest(
             parts=[
-                RetryPromptPart(content=errors, tool_name='count_things', tool_call_id='call_1'),
-                RetryPromptPart(content='the answer has to be a number'),
-                RetryPromptPart(content=errors),
+                legacy_retry_prompt_part(content=errors, tool_name='count_things', tool_call_id='call_1'),
+                legacy_retry_prompt_part(content='the answer has to be a number'),
+                legacy_retry_prompt_part(content=errors),
             ]
         ),
     ]
@@ -551,7 +559,7 @@ async def test_feedback_opening_the_first_request_joins_the_standing_prompt():
 @pytest.mark.parametrize(
     'retry',
     [
-        pytest.param(RetryPromptPart(content='no good'), id='retry-prompt'),
+        pytest.param(legacy_retry_prompt_part(content='no good'), id='retry-prompt'),
         pytest.param(RetryFeedbackPart(content='no good', cause='model_retry'), id='retry-feedback'),
     ],
 )
@@ -777,9 +785,9 @@ async def test_a_retried_tool_return_takes_the_provider_native_error_channel(
 async def test_legacy_retry_prompt_part_handed_back_through_deferred_results():
     """User code can still answer a deferred call with a `RetryPromptPart`.
 
-    It is kept in history as the part that was handed back, and reaches the model as the retried tool
-    return every retry answering a call now is — so the instruction suffix the old rendering appended
-    is gone from the wire while `model_response()` still produces it for code that reads the part.
+    It resolves exactly as the `ModelRetry` beside it in `DeferredToolResults` does: the retry
+    answers this call, so history and wire both record the call's own result. The instruction suffix
+    the old rendering appended is gone with it.
     """
     sent: list[Sequence[ModelRequestPart]] = []
 
@@ -803,17 +811,13 @@ async def test_legacy_retry_prompt_part_handed_back_through_deferred_results():
     result = await agent.run(
         message_history=deferred.all_messages(),
         deferred_tool_results=DeferredToolResults(
-            calls={'buy_pear': RetryPromptPart(content='pears are out of stock')}
+            calls={'buy_pear': legacy_retry_prompt_part(content='pears are out of stock')}
         ),
     )
 
     assert result.output == 'understood'
-    retry = message_part(result.all_messages(), RetryPromptPart, message_index=2)
-    assert retry.model_response() == snapshot("""\
-pears are out of stock
-
-Fix the errors and try again.\
-""")
+    recorded = message_part(result.all_messages(), ToolReturnPart, message_index=2)
+    assert recorded.outcome == 'retried'
     assert sent[-1] == snapshot(
         [
             ToolReturnPart(
@@ -837,12 +841,15 @@ def test_retry_prompt_part_from_error_builds_the_legacy_content():
     try:
         Answer.model_validate({'count': 'lots'})
     except ValidationError as e:
-        part = RetryPromptPart.from_error(e, tool_name='count_things', tool_call_id='call_1')
+        with pytest.warns(PydanticAIDeprecationWarning):
+            part = RetryPromptPart.from_error(  # pyright: ignore[reportDeprecated]
+                e, tool_name='count_things', tool_call_id='call_1'
+            )
     else:  # pragma: no cover
         raise AssertionError('expected a validation error')
 
     assert part == snapshot(
-        RetryPromptPart(
+        legacy_retry_prompt_part(
             content=[
                 {
                     'type': 'int_parsing',
@@ -857,7 +864,8 @@ def test_retry_prompt_part_from_error_builds_the_legacy_content():
         )
     )
 
-    from_retry = RetryPromptPart.from_error(ModelRetry('try again'))
+    with pytest.warns(PydanticAIDeprecationWarning):
+        from_retry = RetryPromptPart.from_error(ModelRetry('try again'))  # pyright: ignore[reportDeprecated]
     assert (from_retry.content, from_retry.tool_name) == ('try again', None)
 
 
@@ -1015,7 +1023,7 @@ async def test_the_direct_helpers_prepare_only_a_history_that_carries_a_retry(st
                 RetryFeedbackPart(content='the answer has to be a number', cause='model_retry'),
                 # A legacy `RetryPromptPart` is no longer rendered by any adapter either, so the same
                 # scoping has to cover it.
-                RetryPromptPart(content='and spell it out'),
+                legacy_retry_prompt_part(content='and spell it out'),
             ]
         ),
     ]
@@ -1188,3 +1196,228 @@ def test_a_string_retry_feedback_payload_round_trips_whole():
     assert retry_feedback_from_payload(payload) == snapshot(
         RetryFeedbackPart(content='answer with the number spelled out', cause='model_retry', timestamp=IsDatetime())
     )
+
+
+# region legacy `RetryPromptPart`
+
+
+def test_constructing_a_retry_prompt_part_warns():
+    """The deprecation is the migration signal, so it has to fire and it has to name both successors."""
+    with pytest.warns(
+        PydanticAIDeprecationWarning,
+        match=r"`RetryPromptPart` is deprecated.*outcome='retried'.*`RetryFeedbackPart\(content=\.\.\., cause=\.\.\.\)`",
+    ):
+        RetryPromptPart(content='try again')  # pyright: ignore[reportDeprecated]
+
+    with pytest.warns(PydanticAIDeprecationWarning, match=r'`RetryPromptPart` is deprecated'):
+        RetryPromptPart.from_error(ModelRetry('try again'))  # pyright: ignore[reportDeprecated]
+
+
+LEGACY_TOOL_RETRY = {
+    'content': [
+        {'type': 'int_parsing', 'loc': ['count'], 'msg': 'Input should be a valid integer', 'input': {'count': 'lots'}},
+        {'type': 'missing', 'loc': ['unit'], 'msg': 'Field required', 'input': {'count': 'lots'}},
+    ],
+    'tool_name': 'count_things',
+    'tool_call_id': 'call_1',
+    'timestamp': '2026-09-03T21:18:08.878178Z',
+    'part_kind': 'retry-prompt',
+}
+"""A tool-bound `RetryPromptPart` as `ModelMessagesTypeAdapter` dumped it before the retry split."""
+
+LEGACY_FEEDBACK_RETRY = {
+    'content': 'answer with the number spelled out',
+    'tool_name': None,
+    'tool_call_id': 'pyd_ai_ba79e8cb0dbe4e1d9f3b7a1c2d0e5f64',
+    'timestamp': '2026-09-03T21:18:08.878213Z',
+    'part_kind': 'retry-prompt',
+}
+"""The same, for a retry that answered no tool call."""
+
+
+def _legacy_history(*parts: dict[str, Any]) -> list[dict[str, Any]]:
+    return [{'parts': list(parts), 'kind': 'request'}]
+
+
+def test_a_stored_retry_prompt_part_loads_as_the_part_it_meant():
+    """A history recorded before the split is upgraded by loading it, and costs no warning to load.
+
+    Warning-free is the point: the reader never chose to write the deprecated part, and the class is
+    never constructed — the discriminator sends the stored shape straight to its replacement. Which
+    replacement is `tool_name`'s call, and for a tool-less one the `cause` is read off the content:
+    error details mean validation failed, a string means somebody's `ModelRetry` message.
+    """
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        messages = ModelMessagesTypeAdapter.validate_python(_legacy_history(LEGACY_TOOL_RETRY, LEGACY_FEEDBACK_RETRY))
+
+    assert messages[0].parts == snapshot(
+        [
+            ToolReturnPart(
+                tool_name='count_things',
+                content=[
+                    {
+                        'type': 'int_parsing',
+                        'loc': ['count'],
+                        'msg': 'Input should be a valid integer',
+                        'input': {'count': 'lots'},
+                    },
+                    {'type': 'missing', 'loc': ['unit'], 'msg': 'Field required'},
+                ],
+                tool_call_id='call_1',
+                timestamp=IsDatetime(),
+                outcome='retried',
+            ),
+            RetryFeedbackPart(
+                content='answer with the number spelled out', cause='model_retry', timestamp=IsDatetime()
+            ),
+        ]
+    )
+
+
+def test_a_stored_tool_less_validation_retry_loads_as_validation_feedback():
+    """Error details in a tool-less retry are what a `'validation_error'` carries, so that is its cause.
+
+    They arrive as `ErrorDetails` rather than the raw mapping — `loc` is a tuple — because
+    `RetryFeedbackPart` serializes them itself when the model is shown them. The tool-bound half is
+    the other way round: its content is pre-serialized, since a `ToolReturnPart` renders whatever it
+    holds.
+    """
+    stored = {**LEGACY_FEEDBACK_RETRY, 'content': LEGACY_TOOL_RETRY['content']}
+
+    messages = ModelMessagesTypeAdapter.validate_python(_legacy_history(stored))
+
+    feedback = message_part(messages, RetryFeedbackPart)
+    assert (feedback.cause, feedback.content) == snapshot(
+        (
+            'validation_error',
+            [
+                {
+                    'type': 'int_parsing',
+                    'loc': ('count',),
+                    'msg': 'Input should be a valid integer',
+                    'input': {'count': 'lots'},
+                },
+                {'type': 'missing', 'loc': ('unit',), 'msg': 'Field required', 'input': {'count': 'lots'}},
+            ],
+        )
+    )
+
+
+def test_a_stored_retry_prompt_part_that_omits_its_generated_fields_still_loads():
+    """`tool_call_id` and `timestamp` were generated defaults, so a hand-written history can omit them."""
+    messages = ModelMessagesTypeAdapter.validate_python(
+        _legacy_history({'content': 'try again', 'tool_name': 'count_things', 'part_kind': 'retry-prompt'})
+    )
+
+    retried = message_part(messages, ToolReturnPart)
+    assert retried.tool_call_id.startswith('pyd_ai_')
+    assert retried.timestamp is not None
+
+
+def test_the_translation_is_one_way_and_settles_after_one_load():
+    """Re-dumping a loaded history emits the new kinds, and loading that again changes nothing more.
+
+    Without this the deprecation could never end: a stored `'retry-prompt'` that survives a
+    load/dump round trip is one v3 would still have to read.
+    """
+    dumped = ModelMessagesTypeAdapter.dump_json(
+        ModelMessagesTypeAdapter.validate_python(_legacy_history(LEGACY_TOOL_RETRY, LEGACY_FEEDBACK_RETRY))
+    )
+
+    assert [part['part_kind'] for part in json.loads(dumped)[0]['parts']] == snapshot(['tool-return', 'retry-feedback'])
+    assert ModelMessagesTypeAdapter.dump_json(ModelMessagesTypeAdapter.validate_json(dumped)) == dumped
+
+
+def test_an_unvalidated_retry_prompt_part_still_dumps_in_its_own_shape():
+    """A part a caller built by hand and never loaded keeps dumping as it always did.
+
+    Serialization is where the class is still itself: only validation upgrades it, so a history
+    someone assembled in memory doesn't quietly change shape underneath them on the way out.
+    """
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[legacy_retry_prompt_part('try again', tool_name='count_things')])
+    ]
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        dumped = json.loads(ModelMessagesTypeAdapter.dump_json(history))
+
+    assert dumped[0]['parts'] == snapshot(
+        [
+            {
+                'content': 'try again',
+                'tool_name': 'count_things',
+                'tool_call_id': IsStr(),
+                'timestamp': IsStr(),
+                'part_kind': 'retry-prompt',
+            }
+        ]
+    )
+
+
+def test_the_published_message_schema_still_offers_the_deprecated_part():
+    """The union member outlives the translation because `ModelRequestPart` is public.
+
+    Code annotating a value `ModelRequestPart` and assigning a `RetryPromptPart` still type-checks,
+    and a consumer generating types off the schema sees no member disappear before v3.
+    """
+    schema = ModelMessagesTypeAdapter.json_schema()
+
+    assert 'RetryPromptPart' in schema['$defs']
+    request_parts = schema['$defs']['ModelRequest']['properties']['parts']['items']['oneOf']
+    assert {'$ref': '#/$defs/RetryPromptPart'} in request_parts
+
+
+async def test_a_retry_prompt_part_in_a_passed_history_reaches_the_model_translated():
+    """A caller's in-memory legacy part is translated for the model, and stays itself in history.
+
+    `Agent.run` takes the history as given rather than validating it, so the discriminator's upgrade
+    doesn't apply here; `prepare_messages` translates it on the way to the model instead. What
+    `all_messages()` shows is therefore what the caller passed, which is also what they'd get back
+    from the run they built it in.
+
+    The tool-less half reaches `FunctionModel` as `<system>`-tagged user text rather than a
+    `SystemPromptPart`: that is the degradation any model without `supports_inline_system_prompts`
+    gives a mid-conversation system prompt, and the translation hands the part to that existing rule
+    rather than carrying one of its own.
+    """
+    sent: list[Sequence[ModelRequestPart]] = []
+
+    def respond(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        request = messages[-1]
+        assert isinstance(request, ModelRequest)
+        sent.append(request.parts)
+        return ModelResponse(parts=[TextPart('two')])
+
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='how many?')]),
+        ModelResponse(parts=[ToolCallPart('count_things', {'count': 'lots'}, tool_call_id='call_1')]),
+        ModelRequest(
+            parts=[
+                legacy_retry_prompt_part('count must be an integer', tool_name='count_things', tool_call_id='call_1'),
+                legacy_retry_prompt_part('answer with the number spelled out'),
+            ]
+        ),
+    ]
+
+    result = await Agent(FunctionModel(respond)).run(message_history=history)
+
+    assert [type(part).__name__ for part in result.all_messages()[2].parts] == snapshot(
+        ['RetryPromptPart', 'RetryPromptPart']
+    )
+    assert sent[-1] == snapshot(
+        [
+            ToolReturnPart(
+                tool_name='count_things',
+                content='count must be an integer',
+                tool_call_id='call_1',
+                timestamp=IsDatetime(),
+                outcome='retried',
+            ),
+            UserPromptPart(content='<system>answer with the number spelled out</system>', timestamp=IsDatetime()),
+        ]
+    )
+
+
+# endregion

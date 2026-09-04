@@ -43,7 +43,7 @@ from pydantic_ai import (
     PartStartEvent,
     RequestUsage,
     RetryFeedbackPart,
-    RetryPromptPart,
+    RetryPromptPart,  # pyright: ignore[reportDeprecated]
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -96,7 +96,17 @@ from pydantic_ai.toolsets._tool_search import parse_discovered_tools
 from pydantic_ai.usage import UsageLimits
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsInt, IsSameStr, IsStr, iter_message_parts, message, message_part, try_import
+from .conftest import (
+    IsDatetime,
+    IsInt,
+    IsSameStr,
+    IsStr,
+    iter_message_parts,
+    legacy_retry_prompt_part,
+    message,
+    message_part,
+    try_import,
+)
 
 with try_import() as imports_successful:
     # Only symbols that exist at our declared floor (`ag-ui-protocol>=0.1.10`) belong here: this gate
@@ -2333,7 +2343,13 @@ def test_activity_message_file_part_missing_url() -> None:
         )
 
 
-_TIMESTAMPED_PARTS = (UserPromptPart, RetryPromptPart, ToolReturnPart, NativeToolReturnPart, SystemPromptPart)
+_TIMESTAMPED_PARTS = (
+    UserPromptPart,
+    RetryPromptPart,  # pyright: ignore[reportDeprecated]
+    ToolReturnPart,
+    NativeToolReturnPart,
+    SystemPromptPart,
+)
 
 
 def _sync_part_timestamps(
@@ -2471,7 +2487,7 @@ def test_dump_load_roundtrip_load_capability_invalid_args() -> None:
         ModelResponse(parts=[LoadCapabilityCallPart(tool_call_id='load-foobar', args='{"name": "foobar"}')]),
         ModelRequest(
             parts=[
-                RetryPromptPart(
+                legacy_retry_prompt_part(
                     tool_name='load_capability',
                     tool_call_id='load-foobar',
                     content='Field required: id',
@@ -3234,7 +3250,7 @@ def test_dump_load_roundtrip_retry_prompt_with_tool() -> None:
         ModelResponse(parts=[ToolCallPart(tool_name='my_tool', tool_call_id='call_1', args='{}')]),
         ModelRequest(
             parts=[
-                RetryPromptPart(
+                legacy_retry_prompt_part(
                     tool_name='my_tool',
                     tool_call_id='call_1',
                     content='Invalid args',
@@ -3261,7 +3277,7 @@ def test_dump_load_roundtrip_retry_prompt_without_tool() -> None:
     original: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Do something')]),
         ModelResponse(parts=[TextPart(content='Done')]),
-        ModelRequest(parts=[RetryPromptPart(content='Please try again')]),
+        ModelRequest(parts=[legacy_retry_prompt_part(content='Please try again')]),
         ModelResponse(parts=[TextPart(content='OK')]),
     ]
 
@@ -7998,11 +8014,11 @@ async def test_client_submitted_tool_call_resolved_by_deferred_results_runs() ->
 
 
 async def test_deferred_result_handed_back_as_a_legacy_retry_prompt_part() -> None:
-    """A `RetryPromptPart` supplied by user code still streams as the tool result it always did.
+    """A handler answering a deferred call with a `RetryPromptPart` streams the result it means.
 
-    Pydantic AI no longer builds one, so this branch is now reachable only from a handler answering
-    a deferred call with a retry of its own — including the `'Fix the errors and try again.'` tail
-    the framework's own retries have dropped.
+    It resolves the same way the `ModelRetry` beside it in `DeferredToolResults` does, so what
+    reaches the client is the call's own retried result — the feedback alone, without the
+    `'Fix the errors and try again.'` tail the old rendering appended.
     """
     agent = Agent(model=TestModel(), output_type=[str, DeferredToolRequests])
 
@@ -8030,7 +8046,7 @@ async def test_deferred_result_handed_back_as_a_legacy_retry_prompt_part() -> No
         async for encoded in adapter.encode_stream(
             adapter.run_stream(
                 deferred_tool_results=DeferredToolResults(
-                    calls={'deferred-call-1': RetryPromptPart(content='stale key')}
+                    calls={'deferred-call-1': legacy_retry_prompt_part(content='stale key')}
                 )
             )
         )
@@ -8041,11 +8057,7 @@ async def test_deferred_result_handed_back_as_a_legacy_retry_prompt_part() -> No
         [
             (
                 'deferred-call-1',
-                """\
-stale key
-
-Fix the errors and try again.\
-""",
+                'stale key',
             )
         ]
     )

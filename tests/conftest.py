@@ -8,6 +8,7 @@ import os
 import re
 import secrets
 import sys
+import warnings
 from collections.abc import AsyncIterator, Callable, Generator, Iterator, Sequence
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
@@ -20,6 +21,7 @@ from typing import TYPE_CHECKING, Any, TypeAlias, TypeVar, cast, overload
 
 import httpx
 import httpx2
+import pydantic_core
 import pytest
 from _pytest.assertion.rewrite import AssertionRewritingHook
 from pydantic import JsonValue, TypeAdapter
@@ -30,6 +32,7 @@ from vcr.record_mode import RecordMode
 import pydantic_ai._http
 import pydantic_ai.models
 from pydantic_ai import Agent, BinaryContent, BinaryImage, Embedder
+from pydantic_ai.exceptions import PydanticAIDeprecationWarning
 from pydantic_ai.messages import (
     DocumentUrl,
     FilePart,
@@ -40,7 +43,7 @@ from pydantic_ai.messages import (
     NativeToolCallPart,
     NativeToolReturnPart,
     RetryFeedbackPart,
-    RetryPromptPart,
+    RetryPromptPart,  # pyright: ignore[reportDeprecated]
     SystemPromptPart,
     TextPart,
     ThinkingPart,
@@ -1383,8 +1386,36 @@ def disable_ssrf_protection_for_vcr():
         yield
 
 
+def legacy_retry_prompt_part(
+    content: list[pydantic_core.ErrorDetails] | str,
+    *,
+    tool_name: str | None = None,
+    tool_call_id: str | None = None,
+    timestamp: datetime | None = None,
+) -> RetryPromptPart:  # pyright: ignore[reportDeprecated]
+    """Build the deprecated `RetryPromptPart` for a test that exercises how a legacy part is handled.
+
+    `filterwarnings = ["error"]` turns the deprecation into a failure, and every one of these tests
+    wants the part, not the warning — `test_retry_feedback.py` owns proving that it fires.
+    """
+    # TODO(v3): remove `legacy_retry_prompt_part` along with `RetryPromptPart`
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore', PydanticAIDeprecationWarning)
+        part = RetryPromptPart(content=content, tool_name=tool_name)  # pyright: ignore[reportDeprecated]
+    if tool_call_id is not None:
+        part.tool_call_id = tool_call_id
+    if timestamp is not None:
+        part.timestamp = timestamp
+    return part
+
+
 _RequestPartT = TypeVar(
-    '_RequestPartT', bound=SystemPromptPart | UserPromptPart | ToolReturnPart | RetryPromptPart | RetryFeedbackPart
+    '_RequestPartT',
+    bound=SystemPromptPart
+    | UserPromptPart
+    | ToolReturnPart
+    | RetryPromptPart  # pyright: ignore[reportDeprecated]
+    | RetryFeedbackPart,
 )
 _ResponsePartT = TypeVar(
     '_ResponsePartT',

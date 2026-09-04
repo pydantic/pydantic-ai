@@ -50,7 +50,6 @@ from pydantic_ai.messages import (
     PartEndEvent,
     PartStartEvent,
     RealtimeSessionErrorEvent,
-    RetryPromptPart,
     SpeechPart,
     SpeechPartDelta,
     SystemPromptPart,
@@ -109,7 +108,7 @@ from pydantic_ai.toolsets import AbstractToolset, ExternalToolset, FunctionTools
 from pydantic_ai.toolsets.abstract import ToolsetTool
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
-from ..conftest import IsDatetime, IsStr
+from ..conftest import IsDatetime, IsStr, legacy_retry_prompt_part
 
 pytestmark = pytest.mark.anyio
 T = TypeVar('T')
@@ -5174,9 +5173,9 @@ async def test_agent_realtime_session_denied_tool_returns_denial_message() -> No
 async def test_agent_realtime_session_deferred_call_answered_with_a_legacy_retry_prompt() -> None:
     """A handler can still answer a deferred call with a `RetryPromptPart` of its own.
 
-    The framework no longer builds one for a tool retry — that settles as a `ToolReturnPart` with
-    `outcome='retried'` — so this hand-back is the only way the legacy part still reaches the wire
-    here, and it goes out with the wording it always had.
+    It settles the way the `ModelRetry` beside it in `DeferredToolResults` does: the retry answers
+    this call, so the session records and sends the call's own retried result — the feedback alone,
+    without the `'Fix the errors and try again.'` tail the old rendering appended.
     """
     agent: Agent[None, str] = Agent()
 
@@ -5186,7 +5185,9 @@ async def test_agent_realtime_session_deferred_call_answered_with_a_legacy_retry
 
     def out_of_stock(ctx: RunContext[Any], requests: DeferredToolRequests) -> DeferredToolResults:
         return DeferredToolResults(
-            calls={call.tool_call_id: RetryPromptPart(content='pears are out of stock') for call in requests.calls}
+            calls={
+                call.tool_call_id: legacy_retry_prompt_part(content='pears are out of stock') for call in requests.calls
+            }
         )
 
     conn = FakeRealtimeConnection(
@@ -5197,13 +5198,8 @@ async def test_agent_realtime_session_deferred_call_answered_with_a_legacy_retry
         events = [e async for e in session]
 
     result = next(e for e in events if isinstance(e, FunctionToolResultEvent))
-    assert isinstance(result.part, RetryPromptPart)
-    assert conn.sent == [ToolResult(tool_call_id='tc', output=result.part.model_response())]
-    assert result.part.model_response() == snapshot("""\
-pears are out of stock
-
-Fix the errors and try again.\
-""")
+    assert (result.part.tool_name, result.part.outcome) == ('buy', 'retried')
+    assert conn.sent == snapshot([ToolResult(tool_call_id='tc', output='{"error":"pears are out of stock"}')])
 
 
 # --- declarative `requires_approval=True` gating ------------------------------------------------

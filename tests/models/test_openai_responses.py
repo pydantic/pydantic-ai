@@ -36,7 +36,6 @@ from pydantic_ai import (
     PartEndEvent,
     PartStartEvent,
     RetryFeedbackPart,
-    RetryPromptPart,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -77,6 +76,7 @@ from ..conftest import (
     IsNow,
     IsStr,
     TestEnv,
+    legacy_retry_prompt_part,
     message,
     try_import,
 )
@@ -16031,7 +16031,7 @@ async def test_openai_responses_function_call_grouping_profile_on_off() -> None:
         ),
         ModelRequest(
             parts=[
-                RetryPromptPart('read failed', tool_name='read', tool_call_id='call-a'),
+                legacy_retry_prompt_part('read failed', tool_name='read', tool_call_id='call-a'),
                 ToolReturnPart('view', 'contents', tool_call_id='call-b'),
             ]
         ),
@@ -16167,7 +16167,7 @@ async def test_openai_responses_function_call_grouping_ignores_active_tool_searc
         ModelRequest(
             parts=[
                 ToolSearchReturnPart(content={'discovered_tools': []}, tool_call_id='shared-id'),
-                RetryPromptPart('search again', tool_name='search_tools', tool_call_id='shared-id'),
+                legacy_retry_prompt_part('search again', tool_name='search_tools', tool_call_id='shared-id'),
             ]
         ),
     ]
@@ -16608,7 +16608,7 @@ async def test_openai_responses_malformed_tool_args_degraded_on_the_wire(allow_m
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    legacy_retry_prompt_part(
                         tool_name='search_knowledge',
                         tool_call_id='call_123',
                         content='Invalid JSON: expected `,` or `}` at line 1 column 99',

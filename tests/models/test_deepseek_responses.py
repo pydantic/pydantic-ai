@@ -34,18 +34,17 @@ from pydantic_ai import (
     ModelRequest,
     ModelResponse,
     NativeOutput,
-    RetryPromptPart,
     TextPart,
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.exceptions import ModelHTTPError
+from pydantic_ai.exceptions import ModelHTTPError, PydanticAIDeprecationWarning
 from pydantic_ai.usage import RequestUsage
 
 from .._inline_snapshot import snapshot
-from ..conftest import IsDatetime, IsDecimal, IsStr, try_import
+from ..conftest import IsDatetime, IsDecimal, IsStr, legacy_retry_prompt_part, try_import
 
 with try_import() as imports_successful:
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
@@ -1007,12 +1006,14 @@ async def test_deepseek_responses_replay_interleaved_settled_function_calls(
         ),
         ModelRequest(
             parts=[
-                RetryPromptPart('read failed', tool_name='read', tool_call_id='call-a'),
+                legacy_retry_prompt_part('read failed', tool_name='read', tool_call_id='call-a'),
                 ToolReturnPart('view', 'contents', tool_call_id='call-b'),
             ]
         ),
     ]
-    original_history = deepcopy(history)
+    # `deepcopy` rebuilds the deprecated part through its constructor, which warns.
+    with pytest.warns(PydanticAIDeprecationWarning):
+        original_history = deepcopy(history)
 
     async with httpx2.AsyncClient(event_hooks={'request': [capture_request]}) as http_client:
         model = OpenAIResponsesModel(

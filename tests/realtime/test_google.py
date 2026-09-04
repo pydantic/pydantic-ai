@@ -38,7 +38,6 @@ from pydantic_ai.messages import (
     PartStartEvent,
     RealtimeSessionErrorEvent,
     RetryFeedbackPart,
-    RetryPromptPart,
     SpeechPart,
     SystemPromptPart,
     TextContent,
@@ -71,7 +70,7 @@ from pydantic_ai.realtime.codec import (
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
-from ..conftest import IsDatetime, IsSameStr, IsStr, try_import
+from ..conftest import IsDatetime, IsSameStr, IsStr, legacy_retry_prompt_part, try_import
 from .test_session import FakeRealtimeModel, make_tool_manager
 
 with try_import() as imports_successful:
@@ -1679,8 +1678,8 @@ async def test_connect_seeds_message_history(monkeypatch: pytest.MonkeyPatch) ->
                     tool_call_id='call-1',
                 ),
                 ToolReturnPart(tool_name='plain', content='ok', tool_call_id='plain-call'),
-                RetryPromptPart(tool_name='weather', content='invalid city', tool_call_id='call-1'),
-                RetryPromptPart(content='answer in prose'),
+                legacy_retry_prompt_part(tool_name='weather', content='invalid city', tool_call_id='call-1'),
+                legacy_retry_prompt_part(content='answer in prose'),
                 RetryFeedbackPart(content='answer in prose', cause='model_retry'),
                 UserPromptPart(
                     content=[

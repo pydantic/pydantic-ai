@@ -46,7 +46,6 @@ from pydantic_ai import (
     PartStartEvent,
     RequestUsage,
     RetryFeedbackPart,
-    RetryPromptPart,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -76,7 +75,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RunUsage
 
 from .._inline_snapshot import snapshot
-from ..conftest import IsDatetime, IsNow, IsStr, message, message_part, try_import
+from ..conftest import IsDatetime, IsNow, IsStr, legacy_retry_prompt_part, message, message_part, try_import
 from .mock_xai import (
     MockXai,
     create_code_execution_response,
@@ -761,9 +760,9 @@ async def test_xai_reorders_retry_prompt_tool_results_by_tool_call_id(allow_mode
         # Intentionally shuffled, but these are tool-results too (tool_name is set).
         ModelRequest(
             parts=[
-                RetryPromptPart(content='retry tool_b', tool_name='tool_b', tool_call_id='tool_b'),
-                RetryPromptPart(content='retry tool_a', tool_name='tool_a', tool_call_id='tool_a'),
-                RetryPromptPart(content='retry tool_c', tool_name='tool_c', tool_call_id='tool_c'),
+                legacy_retry_prompt_part(content='retry tool_b', tool_name='tool_b', tool_call_id='tool_b'),
+                legacy_retry_prompt_part(content='retry tool_a', tool_name='tool_a', tool_call_id='tool_a'),
+                legacy_retry_prompt_part(content='retry tool_c', tool_name='tool_c', tool_call_id='tool_c'),
             ]
         ),
     ]

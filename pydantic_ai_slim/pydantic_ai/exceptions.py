@@ -629,14 +629,14 @@ class ToolRetryError(Exception):
         elif isinstance(tool_retry.content, str):
             message = tool_retry.content
         else:
-            message = self._format_error_details(tool_retry.content, None)
+            message = self._format_error_details(tool_retry.content)
         super().__init__(message)
 
     def __reduce__(self) -> tuple[type, tuple[Any, ...]]:
         return self.__class__, (self.tool_retry,)
 
     @staticmethod
-    def _format_error_details(errors: list[pydantic_core.ErrorDetails], tool_name: str | None) -> str:
+    def _format_error_details(errors: list[pydantic_core.ErrorDetails]) -> str:
         """Format ErrorDetails as a human-readable message.
 
         We format manually rather than using ValidationError.from_exception_data because
@@ -645,9 +645,7 @@ class ToolRetryError(Exception):
         The 'msg' field already contains the human-readable message, so we use that directly.
         """
         error_count = len(errors)
-        lines = [
-            f'{error_count} validation error{"" if error_count == 1 else "s"}{f" for {tool_name!r}" if tool_name else ""}'
-        ]
+        lines = [f'{error_count} validation error{"" if error_count == 1 else "s"}']
         for e in errors:
             loc = '.'.join(str(x) for x in e['loc']) if e['loc'] else '__root__'
             lines.append(loc)

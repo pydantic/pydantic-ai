@@ -49,7 +49,6 @@ from pydantic_ai import (
     PartEndEvent,
     PartStartEvent,
     RetryFeedbackPart,
-    RetryPromptPart,
     RunContext,
     TextPart,
     TextPartDelta,
@@ -95,7 +94,7 @@ from pydantic_ai.usage import RequestUsage
 from pydantic_graph import End
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsInt, IsNow, IsStr, message_part
+from .conftest import IsDatetime, IsInt, IsNow, IsStr, legacy_retry_prompt_part, message_part
 
 pytestmark = pytest.mark.anyio
 
@@ -3858,7 +3857,7 @@ class TestMultipleToolCalls:
                 ),
                 ModelRequest(
                     parts=[
-                        RetryPromptPart(
+                        legacy_retry_prompt_part(
                             content='First output validation failed',
                             tool_name='first_output',
                             tool_call_id=IsStr(),
@@ -4108,7 +4107,7 @@ class TestMultipleToolCalls:
                 ),
                 ModelRequest(
                     parts=[
-                        RetryPromptPart(
+                        legacy_retry_prompt_part(
                             content=[
                                 ErrorDetails(
                                     type='missing',

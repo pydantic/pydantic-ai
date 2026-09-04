@@ -17,13 +17,12 @@ from pydantic_ai.messages import (
     ImageUrl,
     ModelRequest,
     ModelRequestPart,
-    RetryPromptPart,
     ToolReturnPart,
 )
 from pydantic_ai.models import ModelRequestParameters
 
 from ._inline_snapshot import snapshot
-from .conftest import try_import
+from .conftest import legacy_retry_prompt_part, try_import
 
 with try_import() as anthropic_imports_successful:
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
@@ -316,8 +315,8 @@ async def test_legacy_retry_prompt_part_framing(case: ChannelLessCase) -> None:
     [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart] exists to end.
     """
     parts: list[ModelRequestPart] = [
-        RetryPromptPart(content=_TOOL_CONTENT, tool_name='tool', tool_call_id='call_1'),
-        RetryPromptPart(content=_TOOL_CONTENT),
+        legacy_retry_prompt_part(content=_TOOL_CONTENT, tool_name='tool', tool_call_id='call_1'),
+        legacy_retry_prompt_part(content=_TOOL_CONTENT),
     ]
 
     wire = [item for part in parts for item in await case.mapper(part)]
@@ -526,8 +525,8 @@ async def test_bedrock_failed_tool_return_signal(
 
 
 _LEGACY_RETRY_PARTS: list[ModelRequestPart] = [
-    RetryPromptPart(content=_TOOL_CONTENT, tool_name='tool', tool_call_id='call_1'),
-    RetryPromptPart(content=_TOOL_CONTENT),
+    legacy_retry_prompt_part(content=_TOOL_CONTENT, tool_name='tool', tool_call_id='call_1'),
+    legacy_retry_prompt_part(content=_TOOL_CONTENT),
 ]
 """The two shapes a stored `RetryPromptPart` can take: bound to a tool call, and not."""
 

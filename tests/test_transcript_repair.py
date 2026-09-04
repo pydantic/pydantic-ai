@@ -34,7 +34,6 @@ from pydantic_ai.messages import (
     ModelResponse,
     NativeToolCallPart,
     NativeToolReturnPart,
-    RetryPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -44,7 +43,7 @@ from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls
 from pydantic_ai.tools import DeferredToolRequests
 from pydantic_ai.usage import RequestUsage
 
-from .conftest import IsDatetime, IsSameStr, IsStr, iter_message_parts
+from .conftest import IsDatetime, IsSameStr, IsStr, iter_message_parts, legacy_retry_prompt_part
 
 pytestmark = pytest.mark.anyio
 
@@ -749,7 +748,7 @@ async def test_retry_prompt_answers_tool_call():
         ModelResponse(parts=[ToolCallPart('get_weather', {'city': 'Atlantis'}, tool_call_id='call_1')], timestamp=TS),
         ModelRequest(
             parts=[
-                RetryPromptPart(
+                legacy_retry_prompt_part(
                     'Unknown city, try again.', tool_name='get_weather', tool_call_id='call_1', timestamp=TS
                 )
             ],
@@ -796,7 +795,7 @@ async def test_plain_retry_prompt_does_not_answer_tool_call():
         ModelRequest(parts=[UserPromptPart('What is the weather?', timestamp=TS)], timestamp=TS),
         ModelResponse(parts=[ToolCallPart('get_weather', {'city': 'Atlantis'}, tool_call_id='call_1')], timestamp=TS),
         ModelRequest(
-            parts=[RetryPromptPart('Response was not valid, try again.', tool_call_id='call_1', timestamp=TS)],
+            parts=[legacy_retry_prompt_part('Response was not valid, try again.', tool_call_id='call_1', timestamp=TS)],
             timestamp=TS,
         ),
         ModelResponse(parts=[TextPart('Let me try again.')], timestamp=TS),

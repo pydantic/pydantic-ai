@@ -39,7 +39,6 @@ from pydantic_ai.messages import (
     NativeToolReturnPart,
     RealtimeSessionErrorEvent,
     RetryFeedbackPart,
-    RetryPromptPart,
     SpeechPart,
     SystemPromptPart,
     TextContent,
@@ -96,7 +95,7 @@ from pydantic_ai.settings import ThinkingLevel, ToolOrOutput
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
-from ..conftest import try_import
+from ..conftest import legacy_retry_prompt_part, try_import
 from .test_session import FakeRealtimeModel, make_tool_manager
 from .ws_helpers import collect_codec_events, collect_session_events
 
@@ -1577,8 +1576,8 @@ async def test_connect_seeds_message_history(monkeypatch: pytest.MonkeyPatch) ->
         ModelRequest(
             parts=[
                 ToolReturnPart(tool_name='weather', content='sunny', tool_call_id='call-1'),
-                RetryPromptPart(tool_name='lookup', content='invalid id', tool_call_id='call-2'),
-                RetryPromptPart(content='answer in prose'),
+                legacy_retry_prompt_part(tool_name='lookup', content='invalid id', tool_call_id='call-2'),
+                legacy_retry_prompt_part(content='answer in prose'),
                 RetryFeedbackPart(content='answer in prose', cause='model_retry'),
                 UserPromptPart(
                     content=[

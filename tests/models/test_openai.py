@@ -36,7 +36,6 @@ from pydantic_ai import (
     PartDeltaEvent,
     PartEndEvent,
     RetryFeedbackPart,
-    RetryPromptPart,
     TextContent,
     TextPart,
     TextPartDelta,
@@ -74,7 +73,7 @@ from pydantic_ai.tools import Tool, ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
 from .._inline_snapshot import snapshot
-from ..conftest import IsDatetime, IsNow, IsStr, TestEnv, message, try_import
+from ..conftest import IsDatetime, IsNow, IsStr, TestEnv, legacy_retry_prompt_part, message, try_import
 from .mock_openai import (
     MockOpenAI,
     MockOpenAIResponses,
@@ -6360,7 +6359,7 @@ async def test_openai_malformed_tool_args_degraded_on_the_wire(allow_model_reque
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    legacy_retry_prompt_part(
                         tool_name='search_knowledge',
                         tool_call_id='call_123',
                         content='Invalid JSON: expected `,` or `}` at line 1 column 99',

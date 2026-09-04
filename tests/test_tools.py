@@ -22,7 +22,6 @@ from pydantic_ai import (
     ModelRequest,
     ModelResponse,
     PrefixedToolset,
-    RetryPromptPart,
     RunContext,
     TextPart,
     Tool,
@@ -34,7 +33,14 @@ from pydantic_ai import (
     UserPromptPart,
 )
 from pydantic_ai.capabilities import HandleDeferredToolCalls, PrepareTools
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, ToolFailed, UnexpectedModelBehavior
+from pydantic_ai.exceptions import (
+    ApprovalRequired,
+    CallDeferred,
+    ModelRetry,
+    PydanticAIDeprecationWarning,
+    ToolFailed,
+    UnexpectedModelBehavior,
+)
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import ToolOutput
@@ -49,7 +55,7 @@ from pydantic_ai.tools import (
 from pydantic_ai.usage import RequestUsage, RunUsage
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsStr, iter_message_parts, message, message_part
+from .conftest import IsDatetime, IsStr, iter_message_parts, legacy_retry_prompt_part, message, message_part
 
 
 def test_tool_no_ctx():
@@ -2359,7 +2365,7 @@ def test_parallel_tool_return_with_deferred():
                     content='I bought a banana',
                     metadata={'fruit': 'banana', 'price': 100.0},
                 ),
-                'buy_pear': RetryPromptPart(
+                'buy_pear': legacy_retry_prompt_part(
                     content='The purchase of pears was denied.',
                 ),
             },
@@ -2453,11 +2459,12 @@ def test_parallel_tool_return_with_deferred():
                         metadata={'fruit': 'banana', 'price': 100.0},
                         timestamp=IsDatetime(),
                     ),
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='The purchase of pears was denied.',
                         tool_name='buy',
                         tool_call_id='buy_pear',
                         timestamp=IsDatetime(),
+                        outcome='retried',
                     ),
                     UserPromptPart(
                         content='I bought a banana',
@@ -2497,11 +2504,12 @@ def test_parallel_tool_return_with_deferred():
                         metadata={'fruit': 'banana', 'price': 100.0},
                         timestamp=IsDatetime(),
                     ),
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='The purchase of pears was denied.',
                         tool_name='buy',
                         tool_call_id='buy_pear',
                         timestamp=IsDatetime(),
+                        outcome='retried',
                     ),
                     UserPromptPart(
                         content='I bought a banana',
@@ -2872,7 +2880,7 @@ def test_deferred_tool_results_serializable():
             ),
             'tool-failed': ToolFailed('The tool failed.'),
             'model-retry': ModelRetry('The tool call was denied.'),
-            'retry-prompt-part': RetryPromptPart(
+            'retry-prompt-part': legacy_retry_prompt_part(
                 content='The tool call was denied.',
                 tool_name='foo',
                 tool_call_id='foo',
@@ -2918,7 +2926,10 @@ def test_deferred_tool_results_serializable():
             'metadata': {},
         }
     )
-    deserialized = results_ta.validate_python(serialized)
+    # `DeferredToolCallResult` still accepts the deprecated part, and unlike a message history it
+    # doesn't translate one — so reloading results that hold one rebuilds the class, and warns.
+    with pytest.warns(PydanticAIDeprecationWarning):
+        deserialized = results_ta.validate_python(serialized)
     assert deserialized == results
     assert TypeAdapter(DeferredToolCallResult).validate_python(results.calls['tool-failed']) == ToolFailed(
         'The tool failed.'

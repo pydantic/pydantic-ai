@@ -39,7 +39,6 @@ from pydantic_ai import (
     PartStartEvent,
     RequestUsage,
     RetryFeedbackPart,
-    RetryPromptPart,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -72,7 +71,7 @@ from pydantic_ai.usage import RunUsage, UsageLimits
 
 from .._inline_snapshot import snapshot
 from ..cassette_utils import single_request_body
-from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, TestEnv, try_import
+from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, TestEnv, legacy_retry_prompt_part, try_import
 
 with try_import() as imports_successful:
     from botocore.client import BaseClient
@@ -6446,7 +6445,7 @@ async def test_bedrock_writer_omits_tool_result_status(bedrock_provider: Bedrock
         ModelRequest(
             parts=[
                 ToolReturnPart(tool_name='ok_tool', content='done', tool_call_id='okcall1'),
-                RetryPromptPart(content='boom', tool_name='bad_tool', tool_call_id='badcall1'),
+                legacy_retry_prompt_part(content='boom', tool_name='bad_tool', tool_call_id='badcall1'),
             ]
         ),
     ]

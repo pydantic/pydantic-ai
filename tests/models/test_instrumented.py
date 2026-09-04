@@ -29,7 +29,6 @@ from pydantic_ai import (
     PartEndEvent,
     PartStartEvent,
     RetryFeedbackPart,
-    RetryPromptPart,
     SystemPromptPart,
     TextPart,
     TextPartDelta,
@@ -52,7 +51,7 @@ from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
 from .._inline_snapshot import snapshot, warns
-from ..conftest import IsDatetime, IsFloat, IsInt, IsStr, try_import
+from ..conftest import IsDatetime, IsFloat, IsInt, IsStr, legacy_retry_prompt_part, try_import
 
 with try_import() as imports_successful:
     from logfire.testing import CaptureLogfire
@@ -175,8 +174,8 @@ async def test_instrumented_model(capfire: CaptureLogfire):
                 SystemPromptPart('system_prompt'),
                 UserPromptPart('user_prompt'),
                 ToolReturnPart('tool3', 'tool_return_content', 'tool_call_3'),
-                RetryPromptPart('retry_prompt1', tool_name='tool4', tool_call_id='tool_call_4'),
-                RetryPromptPart('retry_prompt2'),
+                legacy_retry_prompt_part('retry_prompt1', tool_name='tool4', tool_call_id='tool_call_4'),
+                legacy_retry_prompt_part('retry_prompt2'),
                 {},  # test unexpected parts  # pyright: ignore[reportArgumentType]
             ],
             timestamp=IsDatetime(),
@@ -709,8 +708,8 @@ async def test_instrumented_model_attributes_mode(capfire: CaptureLogfire):
                 SystemPromptPart('system_prompt'),
                 UserPromptPart('user_prompt'),
                 ToolReturnPart('tool3', 'tool_return_content', 'tool_call_3'),
-                RetryPromptPart('retry_prompt1', tool_name='tool4', tool_call_id='tool_call_4'),
-                RetryPromptPart('retry_prompt2'),
+                legacy_retry_prompt_part('retry_prompt1', tool_name='tool4', tool_call_id='tool_call_4'),
+                legacy_retry_prompt_part('retry_prompt2'),
                 {},  # test unexpected parts  # pyright: ignore[reportArgumentType]
             ],
             timestamp=IsDatetime(),
@@ -995,8 +994,8 @@ def test_messages_to_otel_messages_request_roles_v6():
         ModelRequest(
             parts=[
                 ToolReturnPart(tool_name='convert', content='11 USD', tool_call_id='call_1'),
-                RetryPromptPart(content='Unknown currency.', tool_name='convert', tool_call_id='call_2'),
-                RetryPromptPart(content='Output did not validate.'),
+                legacy_retry_prompt_part(content='Unknown currency.', tool_name='convert', tool_call_id='call_2'),
+                legacy_retry_prompt_part(content='Output did not validate.'),
                 RetryFeedbackPart(content='Output did not validate.', cause='validation_error'),
                 UserPromptPart(content='Thanks.'),
             ]
@@ -1650,12 +1649,12 @@ def test_messages_without_content(document_content: BinaryContent):
         ModelResponse(parts=[TextPart('text2'), ToolCallPart(tool_name='my_tool', args={'a': 13, 'b': 4})]),
         ModelRequest(parts=[ToolReturnPart('tool', 'tool_return_content', 'tool_call_1')], timestamp=IsDatetime()),
         ModelRequest(
-            parts=[RetryPromptPart('retry_prompt', tool_name='tool', tool_call_id='tool_call_2')],
+            parts=[legacy_retry_prompt_part('retry_prompt', tool_name='tool', tool_call_id='tool_call_2')],
             timestamp=IsDatetime(),
         ),
         # A tool-less legacy retry and the harness feedback that replaced it: both carry
         # model-visible prose, so both must honor `include_content=False` like every sibling part.
-        ModelRequest(parts=[RetryPromptPart('retry_prompt_no_tool')], timestamp=IsDatetime()),
+        ModelRequest(parts=[legacy_retry_prompt_part('retry_prompt_no_tool')], timestamp=IsDatetime()),
         ModelRequest(
             parts=[RetryFeedbackPart(content='harness feedback', cause='model_retry')], timestamp=IsDatetime()
         ),
