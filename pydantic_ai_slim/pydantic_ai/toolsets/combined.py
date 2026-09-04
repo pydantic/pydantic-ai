@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from contextlib import AsyncExitStack
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field, fields, replace
 from typing import Any
 
 from typing_extensions import Self
@@ -13,6 +13,7 @@ from ..exceptions import UserError
 from ..messages import InstructionPart
 from ._instruction_collection import flatten_instruction_contributions
 from .abstract import AbstractToolset, ToolsetTool
+from .function import FunctionToolsetTool
 
 
 @dataclass(kw_only=True)
@@ -21,6 +22,8 @@ class _CombinedToolsetTool(ToolsetTool[AgentDepsT]):
 
     source_toolset: AbstractToolset[AgentDepsT]
     source_tool: ToolsetTool[AgentDepsT]
+    combined_tool_def_fields: tuple[tuple[str, object], ...]
+    combined_toolset_id: str | None
 
 
 @dataclass
@@ -89,6 +92,12 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
                     args_validator_func=tool.args_validator_func,
                     source_toolset=toolset,
                     source_tool=tool,
+                    combined_tool_def_fields=tuple(
+                        (field.name, getattr(tool_def, field.name))
+                        for field in fields(tool_def)
+                        if field.name != 'toolset_id'
+                    ),
+                    combined_toolset_id=tool_def.toolset_id,
                 )
         return all_tools
 
@@ -96,7 +105,23 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
     ) -> Any:
         assert isinstance(tool, _CombinedToolsetTool)
-        return await tool.source_toolset.call_tool(name, tool_args, ctx, tool.source_tool)
+        source_tool = tool.source_tool
+        source_tool_def = tool.tool_def
+        toolset_id_changed = source_tool_def.toolset_id != tool.combined_toolset_id
+        other_field_changed = any(
+            getattr(source_tool_def, name) is not original_value
+            for name, original_value in tool.combined_tool_def_fields
+        )
+        if not toolset_id_changed and not other_field_changed:
+            source_tool_def = source_tool.tool_def
+        elif not toolset_id_changed:
+            source_tool_def = replace(source_tool_def, toolset_id=source_tool.tool_def.toolset_id)
+
+        if source_tool.tool_def is not source_tool_def:
+            source_tool = replace(source_tool, tool_def=source_tool_def)
+        if isinstance(source_tool, FunctionToolsetTool) and source_tool.timeout != source_tool_def.timeout:
+            source_tool = replace(source_tool, timeout=source_tool_def.timeout)
+        return await tool.source_toolset.call_tool(name, tool_args, ctx, source_tool)
 
     def apply(self, visitor: Callable[[AbstractToolset[AgentDepsT]], None]) -> None:
         for toolset in self.toolsets:
