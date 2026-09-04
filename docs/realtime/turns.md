@@ -152,20 +152,27 @@ interruption note to the prepared request without modifying stored history.
 
 ## Speaking first
 
-Send a text turn to have the agent open the conversation. Wait for the greeting's finalized
-[`SpeechPart`][pydantic_ai.messages.SpeechPart], which arrives once it has been spoken, before
-opening the microphone, and let your playback loop drain first: the part marks the end of
-generation, not of playback. A fixed sleep tells you neither.
+Send a text turn to have the agent open the conversation, with playback already running. Wait for
+the greeting's finalized [`SpeechPart`][pydantic_ai.messages.SpeechPart], which arrives once it has
+been generated, then let your playback loop drain before opening the microphone. A fixed sleep tells
+you neither.
 
 ```python
 import asyncio
+from collections.abc import AsyncIterator
 
 from pydantic_ai import Agent
+from pydantic_ai.realtime import RealtimeSession
 
 agent = Agent(instructions='You are a welcoming museum guide.')
 
 
-async def wait_for_assistant_speech(session):
+async def play_audio(chunks: AsyncIterator[bytes]) -> None:
+    async for chunk in chunks:
+        ...  # Write the PCM16 chunk to your speaker or audio output stream.
+
+
+async def wait_for_assistant_speech(session: RealtimeSession) -> None:
     async for part in session.stream_transcripts():
         if part.speaker == 'assistant':
             return
@@ -173,10 +180,12 @@ async def wait_for_assistant_speech(session):
 
 async def main():
     async with agent.realtime('openai:gpt-realtime').session() as session:
-        speech_started = asyncio.create_task(wait_for_assistant_speech(session))
+        playback = asyncio.create_task(play_audio(session.stream_audio()))
+        greeted = asyncio.create_task(wait_for_assistant_speech(session))
         await session.send('Greet the visitor.')
-        await speech_started
-        ...  # open the microphone and start sending audio
+        await greeted
+        ...  # wait for the speaker to drain, then open the microphone and start sending audio
+        await playback
 ```
 
 With manual turn control, [`create_response()`][pydantic_ai.realtime.RealtimeSession.create_response]
