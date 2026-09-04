@@ -6209,6 +6209,33 @@ async def test_tool_can_close_realtime_session_without_iterating(loop_errors: li
     assert loop_errors == []
 
 
+async def test_tool_that_swallows_the_cancel_after_closing_records_one_return(
+    loop_errors: list[dict[str, Any]],
+) -> None:
+    agent = Agent[None, str](deps_type=type(None))
+
+    @agent.tool
+    async def hang_up(ctx: RunContext[None]) -> str:
+        assert ctx.realtime_session is not None
+        try:
+            await ctx.realtime_session.close()
+        except asyncio.CancelledError:
+            pass
+        return 'must not be recorded'
+
+    conn = IdleAfterToolConnection(ToolCall(tool_call_id='tc', tool_name='hang_up', args='{}'))
+    with anyio.fail_after(5):
+        async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
+            _ = [event async for event in session]
+
+    assert session.closed
+    assert not any(isinstance(item, ToolResult) for item in conn.sent)
+    assert _tool_returns(session) == [
+        ('tc', 'The tool call was interrupted before a result was produced.', 'interrupted')
+    ]
+    assert loop_errors == []
+
+
 async def test_tool_closing_realtime_session_drains_sibling_tools(loop_errors: list[dict[str, Any]]) -> None:
     agent = Agent[None, str](deps_type=type(None))
     sibling_started = asyncio.Event()

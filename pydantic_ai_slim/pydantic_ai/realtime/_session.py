@@ -2430,8 +2430,17 @@ class RealtimeSession:
             wire_content.append(user_content)
         elif user_content:
             wire_content.extend(user_content)
+        if self._closed:
+            # The session closed while the tool ran: it hung up with `close()` and then swallowed the
+            # `CancelledError`. Its call already has an interrupted return in history and there is no
+            # provider left to send to, so the result goes nowhere (`_run_tool` drops it too).
+            return result_part, user_content
         if not response_usage_follows:
             await self._drain_pending_messages('asap')
+        await self._send_tool_result(call_part, output, wire_content)
+        return result_part, user_content
+
+    async def _send_tool_result(self, call_part: ToolCallPart, output: str, wire_content: list[UserContent]) -> None:
         self._reserve_response_request()
         try:
             await self._send_frame(
@@ -2444,7 +2453,6 @@ class RealtimeSession:
         except BaseException:
             self._pending_response_requests -= 1
             raise
-        return result_part, user_content
 
     # --- streaming --------------------------------------------------------------------------------
 
@@ -2599,6 +2607,11 @@ class RealtimeSession:
             self._tool_completion_events.discard(completion)
             # Settled (completed, failed, or cancelled): no longer cancellable by `ToolCallCancelled`.
             self._pending_tool_calls.pop(call_part.tool_call_id, None)
+        if self._closed:
+            # The session closed while this tool ran, so its call already has an interrupted return
+            # in history. Reached by a tool that hung up with `close()` and then swallowed the
+            # `CancelledError`: recording its result too would leave two returns for one call.
+            return
         events = self._complete_tool_call(call_part, result_part, content)
         if ordered_events:
             # Held until nothing is still running, then released in call order — the graph waits for a
