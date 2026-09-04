@@ -2707,10 +2707,15 @@ def test_temporal_run_context_preserves_unavailable_sandbox_reason():
         _ = reconstructed.sandbox
 
 
-def test_temporal_run_context_does_not_serialize_connected_backend():
-    serialized = TemporalRunContext.serialize_run_context(
-        _sandbox_context(Sandbox.wrap(RecordingSandboxBackend('caller-owned')))
-    )
+def test_temporal_run_context_does_not_serialize_a_caller_owned_backend():
+    """A backend the caller passed in has no capability on the worker that could rebuild it.
+
+    Its identity would name an environment nothing in the activity can reach, so it does not
+    cross the boundary at all.
+    """
+    caller_owned = Sandbox(RecordingSandboxBackend('caller-owned'), caller_owned=True)
+
+    serialized = TemporalRunContext.serialize_run_context(_sandbox_context(caller_owned))
 
     assert '_sandbox_state' not in serialized
 
@@ -2741,6 +2746,25 @@ async def test_temporal_run_context_reconnects_sandbox_ref_through_agent():
 
     assert (await reconstructed.sandbox.run(['true'])).stdout == 'connected'
     assert connector.sandbox_ids == ['temporal-ref']
+
+
+async def test_temporal_run_context_ref_no_capability_recognizes_cannot_connect():
+    """An agent whose capabilities all decline the ref cannot rebuild it either.
+
+    Recorded rather than raised at the boundary: an activity that never touches the sandbox
+    must not fail because of one.
+    """
+    agent = Agent(TestModel())
+
+    reconstructed = deserialize_run_context(
+        TemporalRunContext,
+        TemporalRunContext.serialize_run_context(_sandbox_context(ref_sandbox(SandboxRef(sandbox_id='stranger')))),
+        deps=None,
+        agent=agent,
+    )
+
+    with pytest.raises(UserError, match='No capability can supply sandbox'):
+        await reconstructed.sandbox.run(['true'])
 
 
 async def test_temporal_run_context_ref_without_agent_cannot_connect():
@@ -2813,7 +2837,6 @@ async def test_temporal_activity_rebuilds_the_sandbox_and_leaves_it_running():
 
     assert unwrap_tool_call_result(result) == 'connected'
     assert backend.close_calls == []
-
 
 
 def test_temporal_run_context_context_window_used_is_none_without_messages():

@@ -29,7 +29,6 @@ TEMPORAL_SANDBOX_UNAVAILABLE_REASON = (
 )
 
 
-
 # The serialized run context crosses the activity boundary as untyped JSON (`Any`, so
 # `TemporalRunContext` subclasses can add their own fields), which means a value whose type isn't
 # JSON-native arrives back in a different shape than it went in: a model or content object as a
@@ -260,12 +259,15 @@ class TemporalRunContext(RunContext[AgentDepsT]):
             '_deferred_capability_ids': ctx._deferred_capability_ids,
             'capability_active': ctx.capability_active,
         }
-        backend = ctx.sandbox.backend
+        sandbox = ctx.sandbox
+        backend = sandbox.backend
         if isinstance(backend, UnavailableSandbox):
             serialized['_sandbox_state'] = {'unavailable_reason': backend.reason}
-        elif (ref := backend.ref) is not None:
+        elif not sandbox.caller_owned and (ref := backend.ref) is not None:
             # Only the identity crosses the boundary; the activity rebuilds a backend for it
-            # through the worker's own capability tree, credentials included.
+            # through the worker's own capability tree, credentials included. A backend the
+            # caller passed in is skipped: there is no capability on the worker that could
+            # rebuild it, so its identity would name an environment nothing here can reach.
             serialized['_sandbox_state'] = {'sandbox_id': ref.sandbox_id}
         return serialized
 
@@ -317,17 +319,23 @@ def _restore_sandbox(
         # The worker's capability tree is the registry: the capability that recognizes this ref
         # exists on the agent this worker constructed, credentials included. Building the backend
         # does no I/O, so it is safe here; it reaches the provider on its first operation.
+        #
+        # When it cannot be rebuilt, the reason is recorded rather than raised: this runs for
+        # every activity, and one that never touches the sandbox must not fail because of it.
+        # Reading `ctx.sandbox` is what surfaces the explanation.
         if agent is None:
-            raise UserError(
+            ctx.__dict__['_sandbox_unavailable_reason'] = (
                 f'Cannot rebuild sandbox {sandbox_id!r}: no agent is attached to this Temporal activity, '
                 'so there is no capability chain to resolve the reference through.'
             )
+            return
         backend = get_run_sandbox(agent.root_capability, ctx, SandboxRef(sandbox_id=sandbox_id))
         if backend is None:
-            raise UserError(
+            ctx.__dict__['_sandbox_unavailable_reason'] = (
                 f'No capability can supply sandbox {sandbox_id!r}: every `get_sandbox` returned `None`. '
                 'Attach a capability whose `get_sandbox` recognizes it.'
             )
+            return
         ctx.__dict__['_sandbox'] = Sandbox(backend)
     elif isinstance(unavailable_reason, str):
         ctx.__dict__['_sandbox_unavailable_reason'] = unavailable_reason

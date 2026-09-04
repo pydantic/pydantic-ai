@@ -5,9 +5,7 @@ import dataclasses
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from copy import deepcopy
 from datetime import datetime
-from typing import TYPE_CHECKING, Annotated, Any, Generic, Literal, overload
-
-import pydantic
+from typing import TYPE_CHECKING, Any, Generic, Literal, overload
 
 from pydantic_graph import BaseNode, End, EndMarker, ErrorMarker, GraphRun, GraphRunContext, GraphTaskRequest, JoinItem
 from pydantic_graph.step import NodeStep
@@ -159,14 +157,17 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         graph_run_output = self._graph_run.output
         if graph_run_output is None:
             return None
-        return AgentRunResult(
+        result = AgentRunResult(
             graph_run_output.output,
             graph_run_output.tool_name,
             self._graph_run.state,
             self._graph_run.deps.new_message_index,
             self._traceparent(required=False),
-            _sandbox=self._graph_run.deps.sandbox,
         )
+        # Set outside the constructor because `sandbox` is not a dataclass field: see the
+        # property on `AgentRunResult`.
+        result.__dict__['_sandbox'] = self._graph_run.deps.sandbox
+        return result
 
     def all_messages(self) -> list[_messages.ModelMessage]:
         """Return all messages for the run so far.
@@ -651,13 +652,6 @@ class AgentRunResult(Generic[OutputDataT]):
     )
     _new_message_index: int = dataclasses.field(repr=False, compare=False, default=0)
     _traceparent_value: str | None = dataclasses.field(repr=False, compare=False, default=None)
-    # `Any` and excluded, read through the `sandbox` property below: a result round-trips through
-    # JSON (`TypeAdapter(AgentRunResult[...])`) and a sandbox does not, because it holds a live
-    # handle to an environment. A deserialized result therefore gets the placeholder sandbox,
-    # whose operations say that no environment is attached.
-    _sandbox: Annotated[Any, pydantic.Field(exclude=True)] = dataclasses.field(
-        repr=False, compare=False, kw_only=True, default_factory=unattached_sandbox
-    )
 
     @property
     def sandbox(self) -> Sandbox:
@@ -668,10 +662,16 @@ class AgentRunResult(Generic[OutputDataT]):
         out, or destroy it yourself through
         [`backend`][pydantic_ai.sandboxes.Sandbox.backend] if your provider supports that.
 
-        A result created outside an agent run has a placeholder whose operations explain that no
-        sandbox is attached.
+        A result that did not come from a run — one deserialized from JSON, or built by hand — has
+        a placeholder whose operations explain that no sandbox is attached.
         """
-        return self._sandbox
+        # Deliberately not a dataclass field. A result is serializable and a sandbox is not: it
+        # holds a live handle to an environment, and Temporal and Prefect both put whole results
+        # on the wire. Keeping it off `__dataclass_fields__` keeps it out of every serializer.
+        sandbox = self.__dict__.get('_sandbox')
+        if sandbox is None:
+            sandbox = self.__dict__['_sandbox'] = unattached_sandbox()
+        return sandbox
 
     @overload
     def _traceparent(self, *, required: Literal[False]) -> str | None: ...

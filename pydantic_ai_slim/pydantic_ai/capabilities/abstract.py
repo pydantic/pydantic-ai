@@ -622,9 +622,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """Return native tools to register with the agent."""
         return []
 
-    def get_sandbox(
-        self, ctx: RunContext[AgentDepsT], *, ref: SandboxRef | None
-    ) -> SandboxBackend | None:
+    def get_sandbox(self, ctx: RunContext[AgentDepsT], *, ref: SandboxRef | None) -> SandboxBackend | None:
         """Supply the run's sandbox backend, or `None` if this capability does not provide one.
 
         Called once per run, synchronously, and must do no I/O: return a backend configured from

@@ -131,7 +131,9 @@ class LocalSandbox:
     [`UnavailableSandbox`][pydantic_ai.sandboxes.UnavailableSandbox] — so attaching it is an
     explicit opt-in for trusted workloads, tests, and development. POSIX-only: construction
     raises `NotImplementedError` elsewhere, where the timeout contract (kill the whole process
-    group at the deadline) can't be honored.
+    group at the deadline) can't be honored. A command that calls `setsid` itself puts its own
+    children in a new group, which that kill does not reach; a command you do not trust needs a
+    real sandbox, not this one.
 
     Commands receive only `PATH`, `HOME`, `LANG`, and `TMPDIR` from the parent when present, plus
     variables explicitly supplied through `env`. This prevents framework credentials from being
@@ -491,7 +493,9 @@ class LocalSandbox:
         # The child leads its own process group (`start_new_session=True`), so "already
         # exited" is the only benign failure. If a hardened host denies `killpg`, kill the
         # direct child as a fallback but still raise: grandchildren may survive, and the
-        # caller must not believe the whole group was killed.
+        # caller must not believe the whole group was killed. A descendant that calls `setsid`
+        # itself leaves this group and outlives the kill either way, which is one more reason
+        # this backend is not an isolation boundary.
         try:
             os.killpg(process.pid, signal.SIGKILL)
         except ProcessLookupError:
