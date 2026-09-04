@@ -53,26 +53,37 @@ def merge_capability_fields(
     needs a numeric budget to take the *smaller* value rather than the later one — overrides
     `combine` itself.
 
-    Configuration outside those fields is a harder limit: a plain class keeps its state in plain
-    attributes the fields never declare, so this refuses rather than silently keep only the last
-    instance's. Such a class declares its configuration as dataclass fields, or overrides `combine`.
+    An attribute no field declares is a harder limit, and is refused. The table above is what the
+    merge promises, and its first row is the load-bearing one: a value only one side states
+    survives. That cannot hold for an attribute the merge cannot enumerate -- `replace_no_init`
+    copies the last instance, so such an attribute silently takes the last value even where an
+    earlier instance was the only one to state it. Refusing says so instead.
+
+    A leading underscore does not distinguish configuration from derived state. Nothing here
+    re-runs `__post_init__` (`replace_no_init` exists precisely to skip it). A capability with
+    state derived from a merged field computes it on access, or declares it as a field and
+    recomputes it in its own `combine`, the way `NativeOrLocalTool` rebuilds its native tool.
     """
     merged = capabilities[-1]
     field_names = {field.name for field in dataclasses.fields(merged)}
     for capability in capabilities:
-        # Configuration no field declares (a plain class keeping its state in plain attributes)
-        # cannot be merged, so refuse rather than silently keep only the last instance's.
-        # Generic aliases and durable integrations attach runtime bookkeeping after initialization;
-        # neither is capability configuration.
+        # Not "cannot be merged" -- `replace_no_init` copies the last instance, so an undeclared
+        # attribute does get *a* value. What it cannot get is the promise above: a value only an
+        # earlier instance stated would be dropped rather than survive. Refuse rather than let that
+        # differ silently from every declared field.
+        # Generic aliases and durable integrations attach runtime bookkeeping, not configuration.
         runtime_attributes = {'__orig_class__', '_pydantic_ai_durable_operation_bindings'}
-        invisible = set(vars(capability)) - field_names - runtime_attributes
-        if invisible:
+        undeclared = set(vars(capability)) - field_names - runtime_attributes
+        if undeclared:
             cls_name = type(merged).__name__
+            names = ', '.join(sorted(undeclared))
             raise UserError(
                 f'Capability id {merged.id!r} is used by multiple {cls_name} capabilities, but {cls_name} '
-                f'stores {", ".join(sorted(invisible))} outside dataclass fields, where the merge cannot see '
-                'it -- one instance would silently win and the rest would be dropped. Declare the '
-                'configuration as dataclass fields, or override `combine` to merge it yourself.'
+                f'sets {names} outside its dataclass fields. Merging keeps a value only one of them states, '
+                'and cannot do that for an attribute it cannot enumerate -- the last instance would win '
+                f'silently. Declare {names} as dataclass fields to have them merged; or, for state derived '
+                'from other fields, compute it with a property or declare it as a field and override '
+                '`combine` to recompute it after merging, since this does not re-run `__post_init__`.'
             )
     changes: dict[str, Any] = {}
     for field in dataclasses.fields(merged):

@@ -302,7 +302,7 @@ Pydantic AI has two families of user-defined events. They ride the same stream a
 |---|---|---|
 | **Use it when** | your application wants to tell its own stream consumer or frontend something | your [capability](capabilities/overview.md) wants to tell other capabilities and the host application something |
 | **Emit from** | an application tool, an [output validator](output.md#output-validator-functions), a [hook](hooks.md), an `event_stream_handler`, or [`AgentRun.emit()`][pydantic_ai.run.AgentRun.emit] | a [capability](capabilities/custom.md) hook or a tool the capability contributes |
-| **Naming** | flat and process-wide, like `progress` | namespaced, like `file_system.file_read` |
+| **Naming** | flat and process-wide, like `progress` | namespaced, like `workspace.file_read` |
 | **Reaches the frontend** | yes, via the [AG-UI](ui/ag-ui.md) and [Vercel AI](ui/vercel-ai.md) adapters | no, it is an internal signal; re-publish it as a `CustomEvent` if the frontend needs it |
 | **Can carry a decision** | no | yes, with `dispatch='immediate'` |
 

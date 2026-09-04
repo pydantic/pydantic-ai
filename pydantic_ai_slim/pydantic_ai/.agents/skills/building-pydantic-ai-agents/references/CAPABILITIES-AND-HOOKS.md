@@ -110,7 +110,7 @@ Use hooks when the user wants observability, auditing, or light interception wit
 
 A capability announces things to other capabilities and to the host application with `CapabilityEvent`, not with the application-owned `CustomEvent` covered in AGENTS-CORE.md. The split is enforced: emitting a `CustomEvent` from a capability raises `UserError`, and so does emitting a `CapabilityEvent` from application code.
 
-Define each event as a dataclass subclass carrying a namespace, and await `ctx.emit(event)` from an async capability hook or a tool the capability contributes. The namespace plus the event name form the serialized `kind` (`file_system.file_read`), which is the wire identifier, so a published capability should pin `name=` on each event. The payload can't reuse the envelope's field names: `data`, `capability_id`, `tool_call_id`, `tool_name`, and `event_kind` are rejected at class definition.
+Define each event as a dataclass subclass carrying a namespace, and await `ctx.emit(event)` from an async capability hook or a tool the capability contributes. The namespace plus the event name form the serialized `kind` (`workspace.file_read`), which is the wire identifier, so a published capability should pin `name=` on each event. The payload can't reuse the envelope's field names: `data`, `capability_id`, `tool_call_id`, `tool_name`, and `event_kind` are rejected at class definition.
 
 React with `@on_event(SomeEvent, OtherEvent)` on an async capability method; a bare `@on_event` sees every `AgentStreamEvent`. Listeners run in capability order, then definition order, and the emitting capability receives its own events. This is the way to coordinate two capabilities without a shared object between them.
 
@@ -129,7 +129,7 @@ from pydantic_ai.capabilities import AbstractCapability, on_event
 
 
 @dataclass(kw_only=True)
-class FileReadEvent(CapabilityEvent, namespace='file_system', name='file_read'):
+class FileReadEvent(CapabilityEvent, namespace='workspace', name='file_read'):
     path: str
 
 

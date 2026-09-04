@@ -1431,6 +1431,8 @@ def _combine_duplicate_capabilities(  # pyright: ignore[reportUnusedFunction]
     earlier, and reading "last" off the tree would turn a run-level override into the agent-level
     capability winning.
     """
+    from .wrapper import WrapperCapability
+
     # `CombinedCapability` may sort top-level branches, but it retains each non-combined branch as
     # the object supplied by its source layer. Associate provenance with that branch before walking
     # its leaves: a wrapper can move ahead of an earlier layer while the same leaf object appears
@@ -1456,10 +1458,12 @@ def _combine_duplicate_capabilities(  # pyright: ignore[reportUnusedFunction]
                 position = leaf_positions[id(leaf)].pop(0)
                 occurrence = _CapabilityOccurrence(leaf, occurrence_index, layer_index, position)
                 by_id.setdefault(leaf.id, []).append(occurrence)
-    duplicate_groups = dict(filter(lambda item: len(item[1]) > 1, by_id.items()))
-    for duplicates in duplicate_groups.values():
-        # Stable, so duplicates the application order does not distinguish keep their tree order.
-        duplicates.sort(key=lambda occurrence: occurrence.position)
+    # Stable, so duplicates the application order does not distinguish keep their tree order.
+    duplicate_groups = {
+        capability_id: sorted(duplicates, key=lambda occurrence: occurrence.position)
+        for capability_id, duplicates in by_id.items()
+        if len(duplicates) > 1
+    }
 
     # The combined capability takes the last occurrence's place, so what survives keeps the position
     # the run's last word on that id had; the earlier occurrences are removed.
@@ -1471,21 +1475,34 @@ def _combine_duplicate_capabilities(  # pyright: ignore[reportUnusedFunction]
     # per visit lines the decisions up with the occurrences they were made for.
     replacements: dict[int, list[AbstractCapability[AgentDepsT] | None]] = {}
     for capability_id, duplicates in duplicate_groups.items():
-        _reject_class_crossing_id(capability_id, {type(duplicate.capability) for duplicate in duplicates})
         # Only the last layer to state this id has a say; everything an earlier layer said under it
         # is overridden, not merged in. `combine` then settles what the survivors within that one
         # layer mean -- and with a single survivor there is nothing to settle, so it isn't called.
         last_layer = max(duplicate.layer_index for duplicate in duplicates)
         surviving = [duplicate.capability for duplicate in duplicates if duplicate.layer_index == last_layer]
+        # Transparent wrappers name the same capability across layers, not the same mergeable
+        # class within a layer. Explicitly renamed wrappers keep their own identity.
+        identity_types: set[type[AbstractCapability[AgentDepsT]]] = set()
+        for duplicate in duplicates:
+            identity = duplicate.capability
+            while (
+                last_layer != duplicates[0].layer_index
+                and isinstance(identity, WrapperCapability)
+                and identity.id == identity.wrapped.id
+            ):
+                identity = identity.wrapped
+            identity_types.add(type(identity))
+        _reject_class_crossing_id(capability_id, identity_types)
         # With a single survivor there is nothing to settle, so `combine` isn't called.
         combined_duplicate = surviving[-1]
         if len(surviving) > 1:
+            _reject_class_crossing_id(capability_id, {type(survivor) for survivor in surviving})
             if not _declares_default_id(type(combined_duplicate)):
                 raise UserError(_repeated_id_message(capability_id))
             combined_duplicate = combined_duplicate.combine(surviving)
-        for duplicate in duplicates:
-            capability_identity = id(duplicate.capability)
-            replacements.setdefault(capability_identity, [None] * occurrence_counts[capability_identity])
+        replacements.update(
+            {id(duplicate.capability): [None] * occurrence_counts[id(duplicate.capability)] for duplicate in duplicates}
+        )
         last_duplicate = duplicates[-1]
         replacements[id(last_duplicate.capability)][last_duplicate.occurrence_index] = combined_duplicate
 
