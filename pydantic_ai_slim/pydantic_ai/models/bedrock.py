@@ -672,26 +672,25 @@ class BedrockConverseModel(Model[BaseClient]):
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
         settings = merge_model_settings(self.settings, model_settings)
-        thinking_type = _effective_thinking_type(
-            settings, model_request_parameters, cast(BedrockModelProfile, self.profile)
-        )
-        thinking_blocks_output_tools = thinking_type is not None and not (
-            thinking_type == 'adaptive'
-            and self.profile.get('bedrock_supports_forced_tool_choice_with_adaptive_thinking', False)
-        )
-        if model_request_parameters.output_tools and thinking_blocks_output_tools:
+        profile = cast(BedrockModelProfile, self.profile)
+        thinking_type = _effective_thinking_type(settings, model_request_parameters, profile)
+        thinking_blocks_output_tools = _thinking_blocks_tool_forcing(thinking_type, profile)
+        if model_request_parameters.output_tools and thinking_type is not None:
             if model_request_parameters.output_mode == 'auto':
+                # Preserve the existing automatic fallback. Bedrock may omit visible reasoning when tool use is forced.
                 output_mode = 'native' if self.profile.get('supports_json_schema_output', False) else 'prompted'
                 model_request_parameters = replace(model_request_parameters, output_mode=output_mode)
-            elif (
+            elif thinking_blocks_output_tools and (
                 model_request_parameters.output_mode == 'tool' and not model_request_parameters.allow_text_output
             ):  # pragma: no branch
                 suggested_output_type = (
                     'NativeOutput' if self.profile.get('supports_json_schema_output', False) else 'PromptedOutput'
                 )
-                raise UserError(
-                    f'Bedrock does not support thinking and output tools at the same time. Use `output_type={suggested_output_type}(...)` instead.'
-                )
+                if thinking_type == 'adaptive':
+                    limitation = f'Adaptive thinking with output tools has not been verified for {self.model_name!r}.'
+                else:
+                    limitation = 'Bedrock does not support extended thinking and output tools at the same time.'
+                raise UserError(f'{limitation} Use `output_type={suggested_output_type}(...)` instead.')
 
         # Resolve 'auto' to the profile default here (a no-op if already resolved above) so the
         # strict-forcing check below also applies when native mode is reached via the profile default
@@ -1957,6 +1956,14 @@ def _effective_thinking_type(
     return 'enabled'
 
 
+def _thinking_blocks_tool_forcing(
+    thinking_type: Literal['adaptive', 'enabled'] | None, profile: BedrockModelProfile
+) -> bool:
+    return thinking_type is not None and not (
+        thinking_type == 'adaptive' and profile.get('bedrock_supports_forced_tool_choice_with_adaptive_thinking', False)
+    )
+
+
 def _support_tool_forcing(
     model_name: str,
     profile: BedrockModelProfile,
@@ -1979,14 +1986,14 @@ def _support_tool_forcing(
         return False
 
     thinking_type = _effective_thinking_type(model_settings, model_request_parameters, profile)
-    if thinking_type is not None and not (
-        thinking_type == 'adaptive' and profile.get('bedrock_supports_forced_tool_choice_with_adaptive_thinking', False)
-    ):
+    if _thinking_blocks_tool_forcing(thinking_type, profile):
         explicit_choice = (model_settings or {}).get('tool_choice')
         if explicit_choice == 'required' or isinstance(explicit_choice, list):
-            raise UserError(
-                "Bedrock does not support forcing specific tools with thinking mode. Disable thinking or use `tool_choice='auto'`."
-            )
+            if thinking_type == 'adaptive':
+                limitation = f'Forced tool choice with adaptive thinking has not been verified for {model_name!r}.'
+            else:
+                limitation = 'Bedrock does not support forced tool choice with extended thinking.'
+            raise UserError(f"{limitation} Disable thinking or use `tool_choice='auto'`.")
         if effective_tool_choice == 'required' or isinstance(effective_tool_choice, tuple):
             return False
 

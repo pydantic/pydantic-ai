@@ -2998,21 +2998,24 @@ Mexico City is an important cultural, financial, and political center for the co
 
 
 @pytest.mark.parametrize(
-    'thinking_field',
+    'thinking_field,error_match',
     [
-        pytest.param({'type': 'enabled', 'budget_tokens': 1024}, id='enabled'),
-        pytest.param({'type': 'adaptive'}, id='adaptive'),
+        pytest.param({'type': 'enabled', 'budget_tokens': 1024}, 'extended thinking and output tools', id='enabled'),
+        pytest.param({'type': 'adaptive'}, 'has not been verified', id='adaptive'),
     ],
 )
 async def test_bedrock_output_tool_with_thinking_raises(
-    allow_model_requests: None, bedrock_provider: BedrockProvider, thinking_field: dict[str, Any]
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+    thinking_field: dict[str, Any],
+    error_match: str,
 ):
-    """Bedrock does not support output tools (tool_choice=required) with thinking enabled.
+    """Legacy Sonnet 4 profiles keep output tools blocked while thinking is enabled.
 
     Uses the legacy `bedrock_additional_model_requests_fields` form. See
     `test_bedrock_output_tool_with_unified_thinking_raises` for the unified `thinking` field.
-    Fixes https://github.com/pydantic/pydantic-ai/issues/3092 (`enabled`) and
-    https://github.com/pydantic/pydantic-ai/issues/5650 (`adaptive`).
+    Covers https://github.com/pydantic/pydantic-ai/issues/3092 (`enabled`) and the conservative
+    fallback for unverified adaptive-thinking profiles.
     """
     m = BedrockConverseModel(
         'us.anthropic.claude-sonnet-4-20250514-v1:0',
@@ -3022,10 +3025,7 @@ async def test_bedrock_output_tool_with_thinking_raises(
 
     agent = Agent(m, output_type=ToolOutput(int))
 
-    with pytest.raises(
-        UserError,
-        match='Bedrock does not support thinking and output tools at the same time',
-    ):
+    with pytest.raises(UserError, match=error_match):
         await agent.run('What is 3 + 3?')
 
 
@@ -3048,7 +3048,7 @@ async def test_bedrock_output_tool_with_unified_thinking_raises(
 
     with pytest.raises(
         UserError,
-        match='Bedrock does not support thinking and output tools at the same time',
+        match='extended thinking and output tools',
     ):
         await agent.run('What is 3 + 3?')
 
@@ -3100,7 +3100,7 @@ async def test_bedrock_unified_thinking_with_tool_forcing_raises(
 
     settings: BedrockModelSettings = {'thinking': True, 'tool_choice': 'required'}
 
-    with pytest.raises(UserError, match='Bedrock does not support forcing specific tools with thinking mode'):
+    with pytest.raises(UserError, match='forced tool choice with extended thinking'):
         await model.request([ModelRequest.user_text_prompt('hi')], settings, mrp)
 
 
@@ -6842,7 +6842,6 @@ def _tool_use_response(tool_name: str = 'final_result', tool_input: dict[str, An
             'message': {
                 'role': 'assistant',
                 'content': [
-                    {'reasoningContent': {'reasoningText': {'text': 'Reasoning about the answer', 'signature': 'sig'}}},
                     {
                         'toolUse': {
                             'toolUseId': 'toolu_adaptive_1',
@@ -6914,9 +6913,15 @@ async def test_bedrock_specific_tool_choice_with_adaptive_thinking_runs(allow_mo
     assert request['toolConfig']['toolChoice'] == {'tool': {'name': 'get_weather'}}
 
 
-def test_bedrock_agent_auto_output_with_adaptive_thinking_runs(allow_model_requests: None) -> None:
-    """The default structured-output mode stays Tool Output when adaptive forcing is supported."""
-    client = _AdaptiveThinkingStubClient(_tool_use_response())
+def test_bedrock_agent_auto_output_with_adaptive_thinking_stays_prompted(allow_model_requests: None) -> None:
+    """The default structured-output mode keeps the existing prompted fallback."""
+    client = _AdaptiveThinkingStubClient(
+        {
+            'output': {'message': {'role': 'assistant', 'content': [{'text': '{"response": 42}'}]}},
+            'stopReason': 'end_turn',
+            'usage': {'inputTokens': 12, 'outputTokens': 8, 'totalTokens': 20},
+        }
+    )
     model = BedrockConverseModel(
         'anthropic.claude-sonnet-5', provider=BedrockProvider(bedrock_client=cast(BaseClient, client))
     )
@@ -6925,7 +6930,7 @@ def test_bedrock_agent_auto_output_with_adaptive_thinking_runs(allow_model_reque
     result = agent.run_sync('What is 6 * 7?', model_settings={'thinking': True})
 
     assert result.output == 42
-    assert client.requests[0]['toolConfig']['toolChoice'] == {'any': {}}
+    assert 'toolConfig' not in client.requests[0]
 
 
 @pytest.mark.parametrize(
@@ -6959,7 +6964,7 @@ def test_bedrock_agent_output_tool_with_unsupported_thinking_raises(
     model = BedrockConverseModel(model_name, provider=BedrockProvider(bedrock_client=cast(BaseClient, client)))
     agent = Agent(model, output_type=ToolOutput(int))
 
-    with pytest.raises(UserError, match='thinking and output tools'):
+    with pytest.raises(UserError, match='output tools'):
         agent.run_sync('What is 6 * 7?', model_settings=model_settings)
 
     assert client.requests == []

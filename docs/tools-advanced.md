@@ -519,7 +519,7 @@ All providers support `'auto'` and `'none'`. Key differences for other options:
 | OpenAI | ✓ | ✓ | Full support |
 | Anthropic | ⚠️ | ⚠️ | Not supported with extended thinking; adaptive thinking is compatible |
 | Google | ✓ | ✓ | |
-| Bedrock | ✓ | Single only | Multiple tools fall back to 'any' mode. Extended thinking is incompatible; adaptive thinking is compatible on supported model profiles |
+| Bedrock | ✓ | Single only | Multiple tools fall back to 'any' mode. Extended thinking is incompatible; Sonnet 4.6 and Sonnet 5 support explicit required or single-tool choices with adaptive thinking |
 | Groq/HuggingFace | ✓ | Single only | Multiple tools fall back to 'required' mode |
 | Mistral | ✓ | ✓ | Maps `'required'` to `'any'` mode |
 | Cohere | ✓ | ✓ | Maps `'required'` to `'REQUIRED'`; a named subset is applied by trimming the tools array |
@@ -540,7 +540,7 @@ The table below covers the cases where Pydantic AI must filter client-side and t
 |----------|---------------------|
 | Anthropic | `tool_choice` is a list of multiple tools, OR a single tool with extended thinking or on a model that doesn't support forcing |
 | OpenAI Chat | `tool_choice` is a list of multiple tools, OR a single tool on a model that doesn't support forcing |
-| Bedrock | `tool_choice` is a list of multiple tools, OR a single tool with extended thinking or on a model that doesn't support forcing (supported adaptive-thinking profiles send it natively) |
+| Bedrock | `tool_choice` is a list of multiple tools, OR a single tool with extended thinking or on a model that doesn't support forcing (Sonnet 4.6 and Sonnet 5 send verified adaptive-thinking choices natively) |
 | Groq / HuggingFace | `tool_choice` is a list of multiple tools |
 | Mistral | `tool_choice` is a list (any size) — the API doesn't accept specific tool names |
 | Cohere | `tool_choice` is a list (any size) — the API doesn't accept specific tool names |
