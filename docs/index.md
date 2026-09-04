@@ -50,7 +50,7 @@ From simple typed data extraction to complex, long-running multi-agent collabora
     A complete coding agent in your terminal: workspace-rooted [file access](https://pydantic.dev/docs/ai/harness/filesystem/), allowlisted [shell](https://pydantic.dev/docs/ai/harness/shell/), [repo orientation](https://pydantic.dev/docs/ai/harness/repo-context/), [planning](https://pydantic.dev/docs/ai/harness/planning/), and [context management](https://pydantic.dev/docs/ai/harness/compaction/) that survives long sessions. Here with [web search](capabilities/web-search.md) and a second-opinion [advisor](https://pydantic.dev/docs/ai/harness/advisor/) snapped on alongside:
 
     ```bash
-    pip/uv-add pydantic-ai pydantic-ai-harness
+    uv add pydantic-ai pydantic-ai-harness
     ```
 
     ```python {test="skip" lint="skip"}
@@ -91,7 +91,7 @@ From simple typed data extraction to complex, long-running multi-agent collabora
     Give the agent an [output type](output.md) and [tools](tools.md), and every run comes back validated and typed:
 
     ```bash
-    pip/uv-add pydantic-ai
+    uv add pydantic-ai
     ```
 
     ```python {title="review_sentiment.py"}
@@ -130,7 +130,7 @@ From simple typed data extraction to complex, long-running multi-agent collabora
     Attach [`TemporalDurability`](durable_execution/temporal.md) and the same agent runs inside a [Temporal](durable_execution/temporal.md) workflow under [durable execution](durable_execution/overview.md): every model and tool call becomes a durable activity, so a run working through a background queue survives restarts, failures, and long waits:
 
     ```bash
-    pip/uv-add "pydantic-ai[temporal]"
+    uv add "pydantic-ai[temporal]"
     ```
 
     ```python {title="durable_research.py"}
@@ -167,7 +167,7 @@ From simple typed data extraction to complex, long-running multi-agent collabora
     Put the same agent on a live voice session, [tools](realtime/tools.md) and [capabilities](realtime/capabilities.md) included:
 
     ```bash
-    pip/uv-add "pydantic-ai[openai-realtime]"
+    uv add "pydantic-ai[openai-realtime]"
     ```
 
     ```python {test="skip" lint="skip"}
@@ -202,7 +202,7 @@ From simple typed data extraction to complex, long-running multi-agent collabora
     Ask for an image and make it the run's typed [output](output.md):
 
     ```bash
-    pip/uv-add pydantic-ai
+    uv add pydantic-ai
     ```
 
     ```python {title="logo_generation.py"}
