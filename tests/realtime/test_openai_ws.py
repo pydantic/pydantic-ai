@@ -45,7 +45,7 @@ from pydantic_ai.usage import RunUsage
 
 from ..conftest import IsDatetime, IsStr, try_import
 from .conftest import REAL_SDP_OFFER
-from .ws_cassettes import RealtimeCassette
+from .ws_cassettes import RealtimeCassette, ReplayWebSocket
 from .ws_helpers import collapse_event_types, sent_frames_containing
 
 with try_import() as imports_successful:
@@ -398,6 +398,65 @@ async def test_tool_call_round(openai_ws_cassette: tuple[Provider[Any], Realtime
     # tool-calling turn reports two usage updates, not just the final text response's.
     assert session.usage.requests == 2
     assert session.usage.input_tokens > 0 and session.usage.output_tokens > 0
+
+
+async def test_tool_error_ends_transcript_only_session(
+    openai_ws_cassette: tuple[Provider[Any], RealtimeCassette],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A raising tool ends a transcript-only consumer instead of leaving the live session mute."""
+    replay_recv = ReplayWebSocket.recv
+
+    async def yielding_replay_recv(self: ReplayWebSocket, *, decode: bool | None = None) -> str | bytes:
+        # A real socket yields between frames; give the spawned tool task the same scheduling chance
+        # during cassette playback before end-of-recording is interpreted as a provider close.
+        await asyncio.sleep(0)
+        return await replay_recv(self, decode=decode)
+
+    monkeypatch.setattr(ReplayWebSocket, 'recv', yielding_replay_recv)
+    provider, _ = openai_ws_cassette
+    model = OpenAIRealtimeModel(
+        'gpt-realtime', provider=provider, settings=OpenAIRealtimeModelSettings(output_modality='text')
+    )
+    agent = Agent(instructions='Use the get_weather tool for any weather question.')
+
+    @agent.tool_plain
+    async def get_weather(city: str) -> str:
+        """Look up the weather for a city."""
+        raise ValueError(f'weather service unavailable for {city}')
+
+    with pytest.raises(ValueError, match='weather service unavailable for London'):
+        async with agent.realtime(model).session() as session:
+            await session.send('What is the weather in London?')
+            with anyio.fail_after(30):
+                assert [part async for part in session.stream_transcripts()] == []
+
+    assert session.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='What is the weather in London?', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='get_weather',
+                        args=IsStr(),
+                        tool_call_id=IsStr(),
+                    )
+                ],
+                model_name='gpt-realtime',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+                state='interrupted',
+            ),
+        ]
+    )
 
 
 async def test_message_history_seeding(openai_ws_cassette: tuple[Provider[Any], RealtimeCassette]) -> None:

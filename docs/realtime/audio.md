@@ -136,5 +136,7 @@ settings belong on the [Gemini provider page](gemini.md#settings).
 
 - Audio and transcript iterators deliberately drop old buffered items when consumers fall behind.
   [Logfire attributes](observability.md#logfire-instrumentation) report those drops.
+- Session failures have different propagation paths when only these views are consumed; see
+  [Errors](lifecycle.md#errors).
 - Provider speech/interruption signals differ. Use the profile flags and the
   [turns guide](turns.md#barge-in) rather than branching on provider names.

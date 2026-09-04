@@ -12,7 +12,11 @@ When a model calls a tool, the session emits
 result, and emits [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent]. Parse
 failures and [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] produce a
 [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart], matching a standard agent run. Other tool
-exceptions end the session and propagate from iteration.
+exceptions end the session and propagate from iteration; if the event stream isn't being iterated,
+they end the audio and transcript views and are raised when the session closes. The general
+[`on_tool_execute_error`][pydantic_ai.capabilities.AbstractCapability.on_tool_execute_error]
+capability hook also applies in realtime and can turn an exception into a replacement result or
+`ModelRetry` so the model can recover.
 
 Tool return values reach the model exactly as in a
 [standard run](../tools-advanced.md#advanced-tool-returns): the model receives the string rendering

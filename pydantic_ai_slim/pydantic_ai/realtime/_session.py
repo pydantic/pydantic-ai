@@ -834,8 +834,8 @@ class RealtimeSession:
         finish cleanly, with any buffered items discarded. The surrounding model context owns the
         underlying connection, so it remains open until that context exits.
 
-        Raises whatever ended the session — a provider hangup, an exceeded `usage_limits` — if the event
-        stream was never iterated, since there was nowhere else for it to surface.
+        Raises whatever ended the session — a provider hangup, an exceeded `usage_limits`, or a failed
+        tool — if the event stream was never iterated, since there was nowhere else for it to surface.
         """
         if not self._entered or self._closed:
             return
@@ -983,7 +983,8 @@ class RealtimeSession:
         barge-in [`interrupt(played_bytes=...)`][pydantic_ai.realtime.RealtimeSession.interrupt]
         discards buffered chunks the user will never hear, so a playback loop can iterate one
         stream for the whole session. Closing the session discards buffered chunks and ends the
-        iterator cleanly.
+        iterator cleanly. If a tool fails while the event stream has no consumer, this view ends and
+        the error is raised when the session closes.
         """
         self._require_media_ownership('stream_audio')
         self._ensure_streamable()
@@ -1055,7 +1056,9 @@ class RealtimeSession:
         Final transcripts and deltas are separate subscriptions, so one never crowds out the other.
         Each iterator buffers up to 512 items; if its consumer falls behind, the oldest is dropped,
         because captioning must not be able to stall tool execution, turn tracking, or the main event
-        stream. Closing the session discards buffered items and ends the iterator cleanly.
+        stream. Closing the session discards buffered items and ends the iterator cleanly. If a tool
+        fails while the event stream has no consumer, this view ends and the error is raised when the
+        session closes.
         """
         self._ensure_streamable()
         # Each kind gets its own subscription, so a consumer's window is never spent on items it
@@ -2564,6 +2567,14 @@ class RealtimeSession:
             # vanish into `__aexit__`'s cleanup-only drain and hang the session on a completion that
             # never arrives.
             await self._queue.put(e)
+            if not self._stream_consumed and self._pump_task is not None:
+                # Nobody is reading the event stream, so the parked error can only surface from
+                # `close()` — and with the provider still waiting on a tool result it will never get,
+                # the session would sit open but mute until the caller happens to close it. End the
+                # receive side now, exactly as a pump error does: the audio/transcript views finish,
+                # the caller's own playback loop returns, and `close()` raises the error. A consumer
+                # that is iterating gets it from iteration and keeps its views, as before.
+                self._pump_task.cancel()
             return
         finally:
             validation_done.set()
