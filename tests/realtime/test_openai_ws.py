@@ -20,7 +20,7 @@ import anyio
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai import Agent, RequestUsage
+from pydantic_ai import Agent
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
