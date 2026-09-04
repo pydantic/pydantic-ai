@@ -7004,7 +7004,7 @@ def test_bedrock_non_anthropic_raw_thinking_does_not_override_unified_thinking()
         bedrock_additional_model_requests_fields={'thinking': {'type': 'disabled'}},
     )
 
-    with pytest.raises(UserError, match='extended thinking and output tools'):
+    with pytest.raises(UserError, match='does not support thinking and output tools'):
         model.prepare_request(settings, params)
 
 

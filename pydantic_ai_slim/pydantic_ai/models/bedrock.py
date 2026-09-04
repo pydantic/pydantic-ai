@@ -688,8 +688,10 @@ class BedrockConverseModel(Model[BaseClient]):
                 )
                 if thinking_type == 'adaptive':
                     limitation = f'Adaptive thinking with output tools has not been verified for {self.model_name!r}.'
-                else:
+                elif profile.get('bedrock_thinking_variant') == 'anthropic':
                     limitation = 'Bedrock does not support extended thinking and output tools at the same time.'
+                else:
+                    limitation = 'Bedrock does not support thinking and output tools at the same time.'
                 raise UserError(f'{limitation} Use `output_type={suggested_output_type}(...)` instead.')
 
         # Resolve 'auto' to the profile default here (a no-op if already resolved above) so the
@@ -1991,8 +1993,10 @@ def _support_tool_forcing(
         if explicit_choice == 'required' or isinstance(explicit_choice, list):
             if thinking_type == 'adaptive':
                 limitation = f'Forced tool choice with adaptive thinking has not been verified for {model_name!r}.'
-            else:
+            elif profile.get('bedrock_thinking_variant') == 'anthropic':
                 limitation = 'Bedrock does not support forced tool choice with extended thinking.'
+            else:
+                limitation = 'Bedrock does not support forced tool choice with thinking enabled.'
             raise UserError(f"{limitation} Disable thinking or use `tool_choice='auto'`.")
         if effective_tool_choice == 'required' or isinstance(effective_tool_choice, tuple):
             return False
