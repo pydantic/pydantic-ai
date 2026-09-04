@@ -30,6 +30,7 @@ from pydantic_ai import (
     UserError,
     UserPromptPart,
 )
+from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage
 
@@ -38,7 +39,7 @@ from ..conftest import IsDatetime, IsStr, RequestCapture, try_import
 
 with try_import() as imports_successful:
     from pydantic_ai.models.github_copilot import GitHubCopilotModel
-    from pydantic_ai.models.openai import OpenAIChatModel
+    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIChatModelSettings
     from pydantic_ai.providers.github_copilot import GitHubCopilotProvider
 
 
@@ -324,6 +325,35 @@ async def test_github_copilot_thinking_false_is_dropped_for_claude(
 
     assert 'reasoning_effort' not in request_capture.body('/chat/completions')
     assert result.output == snapshot('The capital of France is Paris.')
+
+
+@pytest.mark.parametrize('thinking', [None, False])
+def test_github_copilot_reasoning_effort_is_forwarded_for_claude(
+    allow_model_requests: None, github_copilot_api_key: str, thinking: bool | None
+):
+    """The gate covers the unified `thinking` setting only, and deliberately stops there.
+
+    `openai_reasoning_effort` is provider-namespaced, so a user who sets it has opted into the
+    OpenAI wire field itself. `models/AGENTS.md` requires forwarding such a setting and letting the
+    API report the incompatibility, rather than guarding on a capability we assumed; `SnowflakeModel
+    ._translate_thinking` draws the same line for Claude on Cortex. Copilot answers `400`, which is
+    the intended outcome; a `UserError` here would mean someone widened the gate to cover it.
+
+    `thinking=False` is included because the gate rewrites it to `None`: the explicit effort must
+    still win, which is the precedence `capabilities/thinking.py` documents.
+    """
+    model = GitHubCopilotModel(
+        'claude-haiku-4.5',
+        provider=GitHubCopilotProvider(api_key=github_copilot_api_key),
+    )
+    settings = OpenAIChatModelSettings(openai_reasoning_effort='low')
+    if thinking is not None:
+        settings['thinking'] = thinking
+
+    resolved, _ = model.prepare_request(settings, ModelRequestParameters())
+
+    assert resolved is not None
+    assert resolved.get('openai_reasoning_effort') == 'low'
 
 
 @pytest.mark.xfail(

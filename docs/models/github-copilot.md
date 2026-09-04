@@ -95,7 +95,7 @@ agent = Agent(
 ...
 ```
 
-Copilot's Anthropic models are the exception. They think, but only through an API Pydantic AI doesn't speak yet: Copilot's Chat Completions endpoint rejects `reasoning_effort` for them outright, so requesting `thinking` on a `claude-` id raises a [`UserError`][pydantic_ai.exceptions.UserError] rather than silently returning an answer with no reasoning. `thinking=False` is accepted and sends nothing, since that is what it asks for.
+Copilot's Anthropic models are the exception. They think, but only through an API Pydantic AI doesn't speak yet: Copilot's Chat Completions endpoint rejects `reasoning_effort` for them outright, so requesting `thinking` on a `claude-` id raises a [`UserError`][pydantic_ai.exceptions.UserError] rather than silently returning an answer with no reasoning. `thinking=False` is accepted and sends nothing, since that is what it asks for. The gate covers the unified setting only: [`openai_reasoning_effort`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_reasoning_effort] is a provider-namespaced setting you opted into, so it goes out verbatim and Copilot answers `400`.
 
 ## Custom endpoints
 
@@ -119,4 +119,4 @@ agent = Agent(model)
 
 ## Not supported
 
-Copilot's Responses (`/responses`) and Messages (`/v1/messages`) APIs, embeddings, and realtime are not implemented. Cost and context-window data are also unavailable: [genai-prices](https://github.com/pydantic/genai-prices) has no `github-copilot` entry yet, tracked in [genai-prices#681](https://github.com/pydantic/genai-prices/issues/681).
+Copilot's Responses (`/responses`) and Messages (`/v1/messages`) APIs and realtime are not implemented. Neither are embeddings, but because `github-copilot` counts as an OpenAI-chat-compatible provider, `Embedder('github-copilot:...')` still builds an [`OpenAIEmbeddingModel`](../embeddings.md) rather than raising — it points at the gateway's `/embeddings`, which answers `400`. Cost and context-window data are also unavailable: [genai-prices](https://github.com/pydantic/genai-prices) has no `github-copilot` entry yet, tracked in [genai-prices#681](https://github.com/pydantic/genai-prices/issues/681).

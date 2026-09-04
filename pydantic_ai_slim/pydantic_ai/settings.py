@@ -160,7 +160,8 @@ class ModelSettings(TypedDict, total=False):
     * HuggingFace
     * Cerebras
     * Crusoe
-    * GitHub Copilot
+    * GitHub Copilot (not sent for the Anthropic models that reject sampling settings, e.g.
+      `claude-opus-4.8`)
     * Ollama
     * OpenRouter
     * Snowflake
@@ -188,7 +189,8 @@ class ModelSettings(TypedDict, total=False):
     * HuggingFace
     * Cerebras
     * Crusoe
-    * GitHub Copilot
+    * GitHub Copilot (not sent for the Anthropic models that reject sampling settings, e.g.
+      `claude-opus-4.8`)
     * Ollama
     * OpenRouter
     * Snowflake
