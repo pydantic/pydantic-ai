@@ -3063,7 +3063,7 @@ async def test_image_generation_prepare_function_reads_the_model_inside_an_activ
 
     capability = ImageGeneration(
         native=ImageGenerationTool(),
-        fallback_image_model=ImageGenerator(TestImageGenerationModel()),
+        local=ImageGenerator(TestImageGenerationModel()),
         dimensions=(1280, 720),
     )
     toolset = capability.get_toolset()
