@@ -135,6 +135,11 @@ _TOOL_TYPE_TO_NATIVE_TOOL_NAME: dict[ToolType, str] = {
     ToolType.FILE_SEARCH: FileSearchTool.kind,
 }
 
+_MEDIA_PROCESSING_TOOL_NAME = 'media_processing'
+_SDK_SUPPORTS_MEDIA_PROCESSING = 'media_processing' in PartDict.__annotations__
+if _SDK_SUPPORTS_MEDIA_PROCESSING:
+    _TOOL_TYPE_TO_NATIVE_TOOL_NAME[ToolType('MEDIA_PROCESSING')] = _MEDIA_PROCESSING_TOOL_NAME
+
 _NATIVE_TOOL_NAME_TO_TOOL_TYPE: dict[str, ToolType] = {v: k for k, v in _TOOL_TYPE_TO_NATIVE_TOOL_NAME.items()}
 
 LatestGoogleModelNames = Literal[
@@ -1324,6 +1329,12 @@ class GoogleModel(Model[Client]):
             vendor_metadata = dict(file.vendor_metadata)  # copy to avoid mutating user dict
             if 'media_resolution' in vendor_metadata:
                 part_dict['media_resolution'] = vendor_metadata.pop('media_resolution')
+            if 'media_processing' in vendor_metadata:
+                media_processing = vendor_metadata.pop('media_processing')
+                if resolved[2].startswith('video/'):
+                    if not _SDK_SUPPORTS_MEDIA_PROCESSING:
+                        raise UserError('`vendor_metadata["media_processing"]` requires `google-genai>=2.20.0`')
+                    part_dict['media_processing'] = media_processing  # pyright: ignore[reportGeneralTypeIssues]
             # The remaining keys map to `video_metadata`, which only applies to video parts.
             if vendor_metadata and isinstance(file, (BinaryContent, VideoUrl, UploadedFile)):
                 part_dict['video_metadata'] = VideoMetadataDict(**vendor_metadata)
@@ -1820,6 +1831,10 @@ def _native_tool_call_part_dict(
         return None
     if item.tool_name == CodeExecutionTool.kind:
         return _attach_signature({'executable_code': cast(ExecutableCodeDict, item.args_as_dict())}, signature)
+    if item.tool_name == _MEDIA_PROCESSING_TOOL_NAME:
+        # Gemini rejects its internal media-processing calls when they are replayed without the
+        # provider-only tool context that produced them.
+        return None
     tool_type = _NATIVE_TOOL_NAME_TO_TOOL_TYPE.get(item.tool_name)
     if tool_type is None:  # pragma: no cover
         raise UnexpectedModelBehavior(f'Unknown native tool name: {item.tool_name!r}')
@@ -1845,6 +1860,8 @@ def _native_tool_return_part_dict(
             {'code_execution_result': cast(CodeExecutionResultDict, item.content)},  # pyright: ignore[reportUnknownMemberType]
             signature,
         )
+    if item.tool_name == _MEDIA_PROCESSING_TOOL_NAME:
+        return None
     tool_type = _NATIVE_TOOL_NAME_TO_TOOL_TYPE.get(item.tool_name)
     if tool_type is None:  # pragma: no cover
         raise UnexpectedModelBehavior(f'Unknown native tool name: {item.tool_name!r}')
@@ -2134,8 +2151,11 @@ def _map_code_execution_result(
     )
 
 
-def _resolve_native_tool_name(tool_type: ToolType | None) -> str:
-    if tool_type is None:  # pragma: no cover
+def _resolve_native_tool_name(tool_type: ToolType | None, payload: object | None) -> str:
+    # Gemini currently omits both `tool_type` and the payload from agentic video processing parts.
+    if tool_type is None:
+        if payload is None:
+            return _MEDIA_PROCESSING_TOOL_NAME
         raise UnexpectedModelBehavior('Missing tool_type on native tool part')
     tool_name = _TOOL_TYPE_TO_NATIVE_TOOL_NAME.get(tool_type)
     if tool_name is None:  # pragma: no cover
@@ -2146,7 +2166,7 @@ def _resolve_native_tool_name(tool_type: ToolType | None) -> str:
 def _map_tool_call(tool_call: ToolCall, provider_name: str) -> NativeToolCallPart:
     return NativeToolCallPart(
         provider_name=provider_name,
-        tool_name=_resolve_native_tool_name(tool_call.tool_type),
+        tool_name=_resolve_native_tool_name(tool_call.tool_type, tool_call.args),
         tool_call_id=tool_call.id or _utils.generate_tool_call_id(),
         args=tool_call.args,
     )
@@ -2155,7 +2175,7 @@ def _map_tool_call(tool_call: ToolCall, provider_name: str) -> NativeToolCallPar
 def _map_tool_response(tool_response: ToolResponse, provider_name: str) -> NativeToolReturnPart:
     return NativeToolReturnPart(
         provider_name=provider_name,
-        tool_name=_resolve_native_tool_name(tool_response.tool_type),
+        tool_name=_resolve_native_tool_name(tool_response.tool_type, tool_response.response),
         tool_call_id=tool_response.id or _utils.generate_tool_call_id(),
         content=tool_response.response,
     )
