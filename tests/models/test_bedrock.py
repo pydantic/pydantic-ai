@@ -75,7 +75,7 @@ from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, TestEnv, try_import
 
 with try_import() as imports_successful:
     from botocore.client import BaseClient
-    from botocore.exceptions import ClientError
+    from botocore.exceptions import BotoCoreError, ClientError, ReadTimeoutError
     from botocore.hooks import HierarchicalEmitter
     from mypy_boto3_bedrock_runtime import BedrockRuntimeClient
     from mypy_boto3_bedrock_runtime.type_defs import MessageUnionTypeDef, SystemContentBlockTypeDef, ToolTypeDef
@@ -96,7 +96,7 @@ pytestmark = [
 class _StubBedrockClient:
     """Minimal Bedrock client that always raises the provided error."""
 
-    def __init__(self, error: ClientError):
+    def __init__(self, error: ClientError | BotoCoreError):
         self._error = error
         self.meta = SimpleNamespace(endpoint_url='https://bedrock.stub', events=HierarchicalEmitter())
 
@@ -164,7 +164,7 @@ async def test_bedrock_model_blocks_requests_when_disabled():
         await model.count_tokens(messages, None, model_request_parameters)
 
 
-def _bedrock_model_with_client_error(error: ClientError) -> BedrockConverseModel:
+def _bedrock_model_with_client_error(error: ClientError | BotoCoreError) -> BedrockConverseModel:
     """Instantiate a BedrockConverseModel wired to always raise the given error."""
     return BedrockConverseModel(
         'us.amazon.nova-micro-v1:0',
@@ -630,6 +630,32 @@ async def test_bedrock_count_tokens_non_http_error(allow_model_requests: None):
     assert exc_info.value.message == snapshot(
         'An error occurred (TestException) when calling the count_tokens operation: broken connection'
     )
+
+
+async def test_bedrock_botocore_error(allow_model_requests: None):
+    """Transport errors raised by botocore itself (`ReadTimeoutError`, `EndpointConnectionError`, ...) derive from
+    `BotoCoreError`, not `ClientError`, so they need their own `ModelAPIError` mapping for `FallbackModel` and
+    `except ModelAPIError` handlers to see them.
+
+    Not a VCR test: a cassette replays a recorded HTTP response, it can't make botocore time out or fail to connect.
+    """
+    error = ReadTimeoutError(endpoint_url='https://bedrock.stub')
+    model = _bedrock_model_with_client_error(error)
+    params = ModelRequestParameters()
+
+    with pytest.raises(ModelAPIError) as exc_info:
+        await model.request([ModelRequest.user_text_prompt('hi')], None, params)
+
+    assert exc_info.value.message == snapshot('Read timeout on endpoint URL: "https://bedrock.stub"')
+    assert exc_info.value.__cause__ is error
+
+    with pytest.raises(ModelAPIError):
+        async with model.request_stream([ModelRequest.user_text_prompt('hi')], None, params) as stream:
+            async for _ in stream:
+                pass
+
+    with pytest.raises(ModelAPIError):
+        await model.count_tokens([ModelRequest.user_text_prompt('hi')], None, params)
 
 
 def _bedrock_arn(resource: str) -> str:

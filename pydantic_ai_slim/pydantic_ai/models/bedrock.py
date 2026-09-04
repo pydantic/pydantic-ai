@@ -204,6 +204,7 @@ async def _call_bedrock(
     method: Callable[..., _BedrockCallResult],
     params: Mapping[str, Any],
     extra_headers: dict[str, str] | None,
+    model_name: str,
 ) -> _BedrockCallResult:
     _register_extra_headers(client)
     headers = dict(extra_headers or {})
@@ -215,7 +216,17 @@ async def _call_bedrock(
         finally:
             _extra_headers_var.reset(context_token)
 
-    return await anyio.to_thread.run_sync(call)
+    try:
+        return await anyio.to_thread.run_sync(call)
+    except BotoCoreError as e:
+        # botocore raises its transport failures (`ReadTimeoutError`, `EndpointConnectionError`,
+        # `ConnectionClosedError`, ...) as `BotoCoreError`, not `ClientError`, so `_map_api_errors` doesn't see
+        # them and they'd escape unwrapped, bypassing `FallbackModel` and `except ModelAPIError` handlers. Wrap
+        # them here, at the call that opens the request, rather than in `_map_api_errors`: that also guards the
+        # chunk reads in `BedrockStreamedResponse._get_event_iterator`, where the cancel guard
+        # (`get_stream_cancel_errors`) relies on seeing botocore's own types. Mirrors the Anthropic and OpenAI
+        # models, which wrap their SDKs' `APIConnectionError` on the request but let chunk-read errors through.
+        raise ModelAPIError(model_name=model_name, message=str(e)) from e
 
 
 _SUPPORTED_IMAGE_FORMATS = ('jpeg', 'png', 'gif', 'webp')
@@ -815,7 +826,9 @@ class BedrockConverseModel(Model[BaseClient]):
         # One client object for both registration and the call, in case the property is reassigned mid-request.
         client = self.client
         with _map_api_errors(self.model_name, self._provider.model_id_namespace):
-            response = await _call_bedrock(client, client.count_tokens, params, settings.get('extra_headers'))
+            response = await _call_bedrock(
+                client, client.count_tokens, params, settings.get('extra_headers'), self.model_name
+            )
         return usage.RequestUsage(input_tokens=response['inputTokens'])
 
     @asynccontextmanager
@@ -1057,10 +1070,12 @@ class BedrockConverseModel(Model[BaseClient]):
         with _map_api_errors(self.model_name, self._provider.model_id_namespace):
             if stream:
                 model_response = await _call_bedrock(
-                    client, client.converse_stream, params, settings.get('extra_headers')
+                    client, client.converse_stream, params, settings.get('extra_headers'), self.model_name
                 )
             else:
-                model_response = await _call_bedrock(client, client.converse, params, settings.get('extra_headers'))
+                model_response = await _call_bedrock(
+                    client, client.converse, params, settings.get('extra_headers'), self.model_name
+                )
         return model_response
 
     @staticmethod
