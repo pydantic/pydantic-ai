@@ -208,8 +208,7 @@ preserve their standard-run semantics.
 
 ## Ending the session from a tool
 
-A tool can end a call in two ways. To hang up cleanly, call
-[`close()`][pydantic_ai.realtime.RealtimeSession.close] through
+To hang up from a tool, call [`close()`][pydantic_ai.realtime.RealtimeSession.close] through
 [`ctx.realtime_session`][pydantic_ai.tools.RunContext.realtime_session]:
 
 ```python
@@ -229,23 +228,9 @@ exits. The tool does not resume after `close()`: there is no provider left to re
 the call is recorded locally with an interrupted result. The code that owns the `session()` context
 does not receive an exception.
 
-To cancel the run instead, call [`RunContext.cancel()`][pydantic_ai.tools.RunContext.cancel]:
-
-```python
-from pydantic_ai import Agent, RunContext
-
-agent = Agent(instructions='Cancel the call if continuing would be unsafe.')
-
-
-@agent.tool
-async def cancel_call(ctx: RunContext[None]) -> None:
-    ctx.cancel()
-```
-
-As in [cancelling a standard run from a tool](../tools-advanced.md#cancelling-the-run-from-a-tool),
-`cancel()` returns normally and cancellation is delivered at the tool's next `await`. The tool's
-return value is discarded, history records the call as interrupted, and the `session()` context
-raises [`RunCancelled`][pydantic_ai.exceptions.RunCancelled] carrying the completed history.
+To abort the run instead, [`ctx.cancel()`](../tools-advanced.md#cancelling-the-run-from-a-tool)
+works as in a standard run: the call is likewise recorded as interrupted, and the `session()`
+context raises [`RunCancelled`][pydantic_ai.exceptions.RunCancelled] carrying the completed history.
 
 ## Delegating work during a call
 

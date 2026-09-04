@@ -57,7 +57,6 @@ a realtime model. Pass [`RealtimeModelSettings`][pydantic_ai.realtime.RealtimeMo
 !!! note
     `ctx.realtime_session` is still `None` in `before_run`, in instruction functions, and in the
     pre-handler part of `wrap_run`, which all run before the connection is established.
-    A tool can use the live session to [hang up cleanly or cancel the run](tools.md#ending-the-session-from-a-tool).
 
 ## Seeded history is not processed
 
