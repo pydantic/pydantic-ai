@@ -2454,12 +2454,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         @dataclass(kw_only=True)
         class ToolStarted(CustomEvent):
-            tool_name: str
+            started: str  # not `tool_name`, which the event envelope reserves
 
 
         @agent.on_event(FunctionToolCallEvent)
         async def announce(ctx: RunContext[None], event: FunctionToolCallEvent) -> None:
-            await ctx.emit(ToolStarted(tool_name=event.part.tool_name))
+            await ctx.emit(ToolStarted(started=event.part.tool_name))
         ```
         """
         # `Hooks.on.event` already sorts the bare form from the filtered one; forward verbatim so
