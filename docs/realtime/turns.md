@@ -152,9 +152,9 @@ interruption note to the prepared request without modifying stored history.
 
 ## Speaking first
 
-Send a text turn to have the agent open the conversation. Wait for the first assistant
-[`SpeechPart`][pydantic_ai.messages.SpeechPart] before opening the microphone; sleeping for a fixed
-delay does not tell you whether speech has started.
+Send a text turn to have the agent open the conversation. Wait for the greeting's finalized
+[`SpeechPart`][pydantic_ai.messages.SpeechPart], which arrives once it has been spoken, before
+opening the microphone; a fixed sleep does not tell you whether the greeting has played.
 
 ```python
 import asyncio
@@ -180,14 +180,12 @@ async def main():
 
 With manual turn control, [`create_response()`][pydantic_ai.realtime.RealtimeSession.create_response]
 can request the greeting without adding a text turn. If a response is already active, the request is
-held until that response completes and is dropped if the user barges in. Returning from
-`create_response()` means the request was accepted, not that speech has started. You can also wait
-for a [`RealtimeTurnCompleteEvent`][pydantic_ai.realtime.RealtimeTurnCompleteEvent] when the whole
-greeting must finish before the microphone opens.
+held until that response completes and is dropped if the user barges in, so returning from
+`create_response()` does not mean speech has started.
 
 Server VAD enables `interrupt_response`, so any detected speech cancels a greeting in flight. This
 includes speaker echo and microphone transients while the audio path opens; keeping the microphone
-closed until assistant speech starts avoids that race.
+closed until the greeting has played avoids that race.
 
 ## Push-to-talk
 
