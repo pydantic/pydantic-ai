@@ -2557,8 +2557,10 @@ def _synthesize_tool_availability_delta_messages(
         )
         parallel_results_and_deltas = message.parts[:first_unrelated_part_index]
         parts = [
-            *(part for part in parallel_results_and_deltas if is_tool_result(part)),
-            *(part for part in parallel_results_and_deltas if isinstance(part, ToolAvailabilityDeltaPart)),
+            *sorted(
+                parallel_results_and_deltas,
+                key=lambda part: isinstance(part, ToolAvailabilityDeltaPart),
+            ),
             *message.parts[first_unrelated_part_index:],
         ]
 
