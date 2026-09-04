@@ -8930,17 +8930,26 @@ def test_validation_feedback_dumps_as_a_user_message_that_only_our_marker_reload
     )
 
 
-def test_retry_feedback_below_the_encrypted_value_floor_dumps_as_a_plain_system_message() -> None:
+@pytest.mark.parametrize(
+    'part',
+    [
+        pytest.param(RetryFeedbackPart(content='the answer has to be a number', cause='model_retry'), id='feedback'),
+        pytest.param(legacy_retry_prompt_part(content='the answer has to be a number'), id='legacy'),
+    ],
+)
+def test_retry_feedback_below_the_encrypted_value_floor_dumps_as_a_plain_system_message(
+    part: ModelRequestPart,
+) -> None:
     """Below 0.1.11 there is no carrier, so the feedback keeps the system voice but loses the claim
     that would rebuild the part — it reloads as the `SystemPromptPart` its text renders to.
 
     Harness feedback turning into an operator-authored system prompt is exactly the provenance
     collapse the part exists to prevent, so the dump warns even when no `tool_kind`-carrying part
-    is in the history to trigger the sibling half of the same guard.
+    is in the history to trigger the sibling half of the same guard. A legacy tool-less
+    `RetryPromptPart` is translated into that same feedback part on the way out, so it is lost the
+    same way and warns on the same terms.
     """
-    original: list[ModelMessage] = [
-        ModelRequest(parts=[RetryFeedbackPart(content='the answer has to be a number', cause='model_retry')]),
-    ]
+    original: list[ModelMessage] = [ModelRequest(parts=[part])]
 
     with pytest.warns(UserWarning, match=r'a `RetryFeedbackPart` reloads as a plain `SystemPromptPart`'):
         ag_ui_msgs = AGUIAdapter.dump_messages(original, ag_ui_version='0.1.10')
