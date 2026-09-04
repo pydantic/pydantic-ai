@@ -60,7 +60,7 @@ from .._instrumentation import get_instructions
 from ..exceptions import UserError
 from ..messages import ModelMessage, RealtimeSessionReconnectEvent
 from ..models import ModelRequestParameters
-from ..providers import infer_provider
+from ..providers import Provider, infer_provider
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
 from ._openai_protocol import (
@@ -90,6 +90,8 @@ from .profiles import RealtimeModelProfileSpec
 from .settings import RealtimeModelSettings, ReconnectPolicy
 
 if TYPE_CHECKING:
+    from xai_sdk import AsyncClient
+
     from ..providers.xai import XaiProvider
 
 # `input_transcription_model='auto'` resolves to this — xAI's realtime transcription model. Kept behind
@@ -363,15 +365,17 @@ class XaiRealtimeModel(RealtimeModel):
         self,
         model: XaiRealtimeModelName,
         *,
-        provider: XaiProvider | str = 'xai',
+        provider: Provider[AsyncClient] | str = 'xai',
         settings: RealtimeModelSettings | None = None,
         profile: RealtimeModelProfileSpec | None = None,
     ) -> None:
         super().__init__(settings=settings, profile=profile)
         self.model = model
+        from ..providers.xai import XaiProvider
+
         if isinstance(provider, str):
-            provider = cast('XaiProvider', infer_provider(provider))
-        if provider.name != 'xai':
+            provider = infer_provider(provider)
+        if not isinstance(provider, XaiProvider):
             # Reading the xAI-specific `api_key`/`api_host` off a foreign provider below would fail with
             # an `AttributeError` naming a field the user never heard of, instead of the real mistake.
             raise UserError(f"`XaiRealtimeModel` requires an `XaiProvider` or `provider='xai'`; got {provider.name!r}.")

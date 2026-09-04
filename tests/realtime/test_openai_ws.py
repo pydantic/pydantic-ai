@@ -41,7 +41,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.realtime import RealtimeModelProfile, RealtimeOutputSpeechEndEvent, RealtimeTurnCompleteEvent
-from pydantic_ai.usage import RunUsage
+from pydantic_ai.usage import RequestUsage, RunUsage
 
 from ..conftest import IsDatetime, IsStr, try_import
 from .conftest import REAL_SDP_OFFER
@@ -50,6 +50,8 @@ from .ws_helpers import collapse_event_types, sent_frames_containing
 
 with try_import() as imports_successful:
     from pydantic_ai.providers import Provider
+    from pydantic_ai.providers.openai import OpenAIProvider
+    from pydantic_ai.realtime import infer_realtime_model
     from pydantic_ai.realtime.openai import (
         OpenAIRealtimeConnection,
         OpenAIRealtimeModel,
@@ -166,6 +168,56 @@ async def test_media_views_subscribe_before_iteration(
     assert len(transcript_parts) == 1
     assert transcript_parts[0].speaker == 'assistant'
     assert transcript_parts[0].transcript
+
+
+async def test_provider_factory_text_turn(
+    openai_ws_cassette: tuple[Provider[Any], RealtimeCassette], openai_api_key: str
+) -> None:
+    """A factory-built provider authenticates and runs an inferred realtime model end to end."""
+    model = infer_realtime_model(
+        'openai:gpt-realtime', provider_factory=lambda _: OpenAIProvider(api_key=openai_api_key)
+    )
+    agent = Agent(instructions='Answer in two words.')
+
+    async with agent.realtime(model, model_settings={'output_modality': 'text'}).session() as session:
+        await session.send('Say hello.')
+        with anyio.fail_after(30):
+            async for event in session:  # pragma: no branch
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+
+    assert session.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Say hello.', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Hello there!')],
+                usage=RequestUsage(
+                    input_tokens=12,
+                    output_tokens=5,
+                    details={
+                        'input_text_tokens': 12,
+                        'input_image_tokens': 0,
+                        'output_text_tokens': 5,
+                        'audio_tokens': 0,
+                    },
+                ),
+                model_name='gpt-realtime',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
+                provider_details={'status': 'completed'},
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
 
 
 async def test_dated_ga_snapshot_ignores_thinking(
