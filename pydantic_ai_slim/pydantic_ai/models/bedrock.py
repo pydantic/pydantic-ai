@@ -675,12 +675,11 @@ class BedrockConverseModel(Model[BaseClient]):
         profile = cast(BedrockModelProfile, self.profile)
         thinking_type = _effective_thinking_type(settings, model_request_parameters, profile)
         thinking_blocks_output_tools = _thinking_blocks_tool_forcing(thinking_type, profile)
-        if model_request_parameters.output_tools and thinking_type is not None:
+        if model_request_parameters.output_tools and thinking_blocks_output_tools:
             if model_request_parameters.output_mode == 'auto':
-                # Preserve the existing automatic fallback. Bedrock may omit visible reasoning when tool use is forced.
                 output_mode = 'native' if self.profile.get('supports_json_schema_output', False) else 'prompted'
                 model_request_parameters = replace(model_request_parameters, output_mode=output_mode)
-            elif thinking_blocks_output_tools and (
+            elif (
                 model_request_parameters.output_mode == 'tool' and not model_request_parameters.allow_text_output
             ):  # pragma: no branch
                 suggested_output_type = (
@@ -1961,8 +1960,8 @@ def _effective_thinking_type(
 def _thinking_blocks_tool_forcing(
     thinking_type: Literal['adaptive', 'enabled'] | None, profile: BedrockModelProfile
 ) -> bool:
-    return thinking_type is not None and not (
-        thinking_type == 'adaptive' and profile.get('bedrock_supports_forced_tool_choice_with_adaptive_thinking', False)
+    return thinking_type == 'enabled' or (
+        thinking_type == 'adaptive' and not profile.get('bedrock_supports_tool_choice', False)
     )
 
 

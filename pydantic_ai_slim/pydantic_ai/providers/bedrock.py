@@ -223,16 +223,6 @@ class BedrockModelProfile(ModelProfile, total=False):
     Default: `False`.
     """
 
-    bedrock_supports_forced_tool_choice_with_adaptive_thinking: bool
-    """Whether this model accepts forced tool choice (`'required'` or a specific tool) together with
-    `{'thinking': {'type': 'adaptive'}}` thinking.
-
-    Only Sonnet 4.6 and Sonnet 5 Anthropic models have been validated for this on Bedrock; other
-    models stay conservative.
-
-    Default: `False`.
-    """
-
     bedrock_top_k_variant: Literal['anthropic', 'nova'] | None
     """How the unified `top_k` setting is placed in `additionalModelRequestFields`.
 
@@ -274,17 +264,11 @@ def bedrock_anthropic_model_profile(model_name: str) -> ModelProfile | None:
     # support for non-adaptive models (e.g. Opus 4.5) even when the direct Anthropic API supports it.
     supports_effort = supports_adaptive and bool((downstream or {}).get('anthropic_supports_effort', False))
 
-    # Forced tool choice with adaptive thinking has only been validated on Bedrock for Sonnet 4.6
-    # and Sonnet 5; stay conservative for other adaptive-capable models (e.g. Opus 4.6+).
-    supports_forced_tool_choice_with_adaptive_thinking = (
-        supports_adaptive
-        and bool((downstream or {}).get('anthropic_supports_forced_tool_choice', False))
-        and model_name.startswith(('claude-sonnet-4-6', 'claude-sonnet-5'))
-    )
+    supports_forced_tool_choice = bool((downstream or {}).get('anthropic_supports_forced_tool_choice', False))
 
     profile = merge_profile(
         BedrockModelProfile(
-            bedrock_supports_tool_choice=True,
+            bedrock_supports_tool_choice=supports_forced_tool_choice,
             bedrock_send_back_thinking_parts=True,
             bedrock_supports_prompt_caching=True,
             bedrock_supports_tool_caching=True,
@@ -296,9 +280,6 @@ def bedrock_anthropic_model_profile(model_name: str) -> ModelProfile | None:
             bedrock_thinking_variant='anthropic',
             bedrock_supports_adaptive_thinking=supports_adaptive,
             bedrock_supports_effort=supports_effort,
-            bedrock_supports_forced_tool_choice_with_adaptive_thinking=(
-                supports_forced_tool_choice_with_adaptive_thinking
-            ),
             bedrock_top_k_variant='anthropic',
         ),
         _strip_builtin_tools(downstream),
