@@ -136,6 +136,19 @@ To run code formatting, linting, static type checks, and tests with coverage rep
 make
 ```
 
+If type checking swaps or stalls on your machine, cap `pyright`'s worker count with
+`PYRIGHT_THREADS`. It defaults to `auto`, which spawns up to one worker process per logical core;
+a positive integer caps them, with `1` dropping to a single process, which can be faster when a
+worker per core exhausts memory. Any other value falls back to `auto`.
+
+```bash
+export PYRIGHT_THREADS=1
+```
+
+Export it rather than setting it per command, and add it to your shell profile to make it stick:
+`pre-commit` runs the same type check on every commit that touches Python, and `make` runs it as
+part of the default goal.
+
 ## Documentation Changes
 
 [`docs/navigation.yml`](https://github.com/pydantic/pydantic-ai/blob/main/docs/navigation.yml)
