@@ -1937,7 +1937,8 @@ def _contents_have_agentic_video_processing(contents: list[ContentDict]) -> bool
             continue
         for part in parts:
             media_processing = part.get('media_processing')
-            if media_processing == 'AGENTIC' or getattr(media_processing, 'value', None) == 'AGENTIC':
+            media_processing_value = getattr(media_processing, 'value', media_processing)
+            if isinstance(media_processing_value, str) and media_processing_value.upper() == 'AGENTIC':
                 return True
     return False
 

@@ -337,7 +337,7 @@ def test_missing_native_tool_type_without_agentic_video_is_rejected() -> None:
 
 @pytest.mark.parametrize(
     ('media_processing', 'expected'),
-    [('AGENTIC', True), ('STATIC', False), ('MEDIA_PROCESSING_UNSPECIFIED', False), (None, False)],
+    [('AGENTIC', True), ('agentic', True), ('STATIC', False), ('MEDIA_PROCESSING_UNSPECIFIED', False), (None, False)],
 )
 def test_agentic_response_handling_uses_mapped_setting(media_processing: str | None, expected: bool) -> None:
     contents = cast(
