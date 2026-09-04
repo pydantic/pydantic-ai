@@ -204,6 +204,7 @@ async def test_run_only_backend_has_a_complete_binary_safe_shell_filesystem(tmp_
     payload = bytes(range(256)) * 800
     filename = "nested/weird '\n blob.bin"
 
+    assert backend.ref is None
     await sandbox.write_bytes(filename, payload)
 
     assert await sandbox.read_bytes(filename) == payload

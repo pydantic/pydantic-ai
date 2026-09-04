@@ -337,7 +337,9 @@ async def test_durability_allows_live_sandbox_outside_durable_context() -> None:
 
 async def test_durable_sandbox_dispatcher_requires_a_stable_supplier_id() -> None:
     class UnnamedSupplier(AbstractCapability[Any]):
-        def get_sandbox(self, ctx: RunContext[Any], *, ref: SandboxRef | None) -> SandboxBackend:
+        def get_sandbox(  # pragma: no cover - construction rejects the missing id before supplying
+            self, ctx: RunContext[Any], *, ref: SandboxRef | None
+        ) -> SandboxBackend:
             from ..sandbox_fakes import FakeSandbox
 
             return FakeSandbox('unnamed', ref=ref)
@@ -573,13 +575,17 @@ def test_wrap_sandbox_rejects_unstable_or_runtime_only_suppliers() -> None:
     from ..sandbox_fakes import FakeSandbox
 
     class UnnamedSupplier(AbstractCapability[Any]):
-        def get_sandbox(self, ctx: RunContext[Any], *, ref: SandboxRef | None) -> SandboxBackend:
+        def get_sandbox(  # pragma: no cover - wrapping rejects the missing id before supplying
+            self, ctx: RunContext[Any], *, ref: SandboxRef | None
+        ) -> SandboxBackend:
             return FakeSandbox('unnamed', ref=ref)
 
     class LateSupplier(AbstractCapability[Any]):
         id = 'late'
 
-        def get_sandbox(self, ctx: RunContext[Any], *, ref: SandboxRef | None) -> SandboxBackend:
+        def get_sandbox(  # pragma: no cover - wrapping rejects the unregistered id before supplying
+            self, ctx: RunContext[Any], *, ref: SandboxRef | None
+        ) -> SandboxBackend:
             return FakeSandbox('late', ref=ref)
 
     agent = Agent(TestModel(), name='runtime_supplier', capabilities=[RecordingDurability()])
