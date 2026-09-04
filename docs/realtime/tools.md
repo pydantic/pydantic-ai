@@ -173,6 +173,7 @@ import asyncio
 
 from pydantic_ai import Agent
 from pydantic_ai.messages import SystemPromptPart
+from pydantic_ai.realtime import RealtimeTurnCompleteEvent
 
 agent = Agent()
 
@@ -183,7 +184,9 @@ async def main():
             SystemPromptPart(content='A watchdog detected elevated latency. Mention this briefly.'),
             priority='when_idle',
         )
-        _ = [event async for event in session]
+        async for event in session:
+            if isinstance(event, RealtimeTurnCompleteEvent):
+                break
 
 
 if __name__ == '__main__':
