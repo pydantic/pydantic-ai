@@ -36,13 +36,20 @@ from ._inline_snapshot import snapshot
 pytestmark = pytest.mark.anyio
 
 
-def _has_tool_return(messages: list[ModelMessage]) -> bool:
-    return any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts)
+def _tool_has_answered(messages: list[ModelMessage]) -> bool:
+    """Whether the tool call has already come back with something other than a retry.
+
+    A retry is that call's own `ToolReturnPart` carrying `outcome='retried'`, so a plain
+    `isinstance` check reads one as an answer and stops the model calling the tool again.
+    """
+    return any(
+        isinstance(part, ToolReturnPart) and part.outcome != 'retried' for message in messages for part in message.parts
+    )
 
 
 async def _tool_then_text(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
-    """Stream a `progress` tool call on the first request, then final text."""
-    if not _has_tool_return(messages):
+    """Stream a `progress` tool call while the call is unanswered, then final text."""
+    if not _tool_has_answered(messages):
         yield {0: DeltaToolCall(name='progress', json_args='{}', tool_call_id='call_1')}
     else:
         yield 'done'

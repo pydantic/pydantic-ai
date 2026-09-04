@@ -3243,8 +3243,13 @@ def test_dump_load_roundtrip_uploaded_file() -> None:
     assert reloaded == expected
 
 
+@requires_ag_ui('0.1.11')
 def test_dump_load_roundtrip_retry_prompt_with_tool() -> None:
-    """Test round-trip for RetryPromptPart with tool_name (dumped as the retried ToolMessage it means)."""
+    """Test round-trip for RetryPromptPart with tool_name (dumped as the retried ToolMessage it means).
+
+    The `outcome='retried'` claim rides `encrypted_value`, so it only survives from 0.1.11. Dumped at
+    exactly 0.1.11 to pin the floor; below it the return reloads as `'failed'`.
+    """
     original: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Call tool')]),
         ModelResponse(parts=[ToolCallPart(tool_name='my_tool', tool_call_id='call_1', args='{}')]),
@@ -3260,7 +3265,7 @@ def test_dump_load_roundtrip_retry_prompt_with_tool() -> None:
         ModelResponse(parts=[TextPart(content='OK')]),
     ]
 
-    ag_ui_msgs = AGUIAdapter.dump_messages(original)
+    ag_ui_msgs = AGUIAdapter.dump_messages(original, ag_ui_version='0.1.11')
     reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
     _sync_timestamps(original, reloaded)
 
@@ -3272,8 +3277,14 @@ def test_dump_load_roundtrip_retry_prompt_with_tool() -> None:
     assert retry_part.outcome == 'retried'
 
 
+@requires_ag_ui('0.1.11')
 def test_dump_load_roundtrip_retry_prompt_without_tool() -> None:
-    """Test round-trip for RetryPromptPart without tool_name (dumped as the harness feedback it means)."""
+    """Test round-trip for RetryPromptPart without tool_name (dumped as the harness feedback it means).
+
+    The `retry_feedback` marker rides `encrypted_value`, so the part only comes back from 0.1.11.
+    Dumped at exactly 0.1.11 to pin the floor; below it is
+    `test_retry_feedback_below_the_encrypted_value_floor_dumps_as_a_plain_system_message`.
+    """
     original: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Do something')]),
         ModelResponse(parts=[TextPart(content='Done')]),
@@ -3281,7 +3292,7 @@ def test_dump_load_roundtrip_retry_prompt_without_tool() -> None:
         ModelResponse(parts=[TextPart(content='OK')]),
     ]
 
-    ag_ui_msgs = AGUIAdapter.dump_messages(original)
+    ag_ui_msgs = AGUIAdapter.dump_messages(original, ag_ui_version='0.1.11')
     reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
     _sync_timestamps(original, reloaded)
 
@@ -8877,12 +8888,17 @@ def test_retry_feedback_dumps_as_a_system_message_that_only_our_marker_reloads()
     )
 
 
+@requires_ag_ui('0.1.11')
 def test_validation_feedback_dumps_as_a_user_message_that_only_our_marker_reloads() -> None:
     """A `'validation_error'` is shown to the model in the user voice, so it dumps on that role.
 
     The marker is the only way back either way: a `UserMessage` the frontend wrote loads as a
     `UserPromptPart`, so copied feedback doesn't acquire harness provenance
     (https://github.com/pydantic/pydantic-ai/issues/6404).
+
+    The marker rides `encrypted_value`, so it exists from 0.1.11. Dumped at exactly 0.1.11 to pin the
+    floor; below it is
+    `test_retry_feedback_below_the_encrypted_value_floor_dumps_as_a_plain_system_message`.
     """
     original: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='how many?')]),
@@ -8898,7 +8914,7 @@ def test_validation_feedback_dumps_as_a_user_message_that_only_our_marker_reload
         ),
     ]
 
-    ag_ui_msgs = AGUIAdapter.dump_messages(original)
+    ag_ui_msgs = AGUIAdapter.dump_messages(original, ag_ui_version='0.1.11')
     assert not [msg for msg in ag_ui_msgs if isinstance(msg, SystemMessage)]
     [feedback_msg] = [msg for msg in ag_ui_msgs if isinstance(msg, UserMessage) and msg.encrypted_value]
     assert feedback_msg.content == snapshot("""\
