@@ -101,10 +101,13 @@ class _Project:
     include: tuple[str, ...]
     exclude: tuple[str, ...]
     # The project root, the workspace packages and every execution environment's
-    # `extraPaths`, longest first so the most specific one names a file's own module. An
-    # execution environment's own `root` is a search path too, but adding one would mint a
-    # top-level module name for every file directly beneath it, and the project root
-    # already names those files through their directory.
+    # `extraPaths`, longest first so the most specific one names a file's own module.
+    #
+    # An execution environment's own `root` is a search path for Pyright too, and adding it
+    # here looks like the more faithful model, but it is not: naming `tests` a root makes
+    # every file under it stop being part of the `tests` package, so each one loses the
+    # relative-import edge that ties it to `tests/__init__.py`. Measured on this repository,
+    # adding it drops 228 edges and adds 1.
     import_roots: tuple[str, ...]
 
 
