@@ -66,7 +66,7 @@ from ..capabilities import (
     ToolSearch as ToolSearchCap,
 )
 from ..capabilities._dynamic import wrap_capability_funcs
-from ..capabilities._ordering import has_capability_type
+from ..capabilities._ordering import has_capability_type, reject_nested_execution
 from ..capabilities._pending_messages import PendingMessageDrainCapability
 from ..capabilities.abstract import (
     _combine_duplicate_capabilities,  # pyright: ignore[reportPrivateUsage]
@@ -2772,6 +2772,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         skipping it uses a capability that overrides `for_agent` (e.g. the durability capabilities)
         unbound, a silent divergence. KEEP the two call sites in sync.
         """
+        # Before binding, not after: `for_agent` is where a durability capability registers its
+        # durable units, and the sort that would otherwise catch this runs later, on the resolved
+        # tree — by which point a configuration that is about to be refused has already registered.
+        reject_nested_execution([self._root_capability], extra_capabilities)
         return [capability.for_agent(self) for capability in extra_capabilities]
 
     async def _resolve_model_selection(

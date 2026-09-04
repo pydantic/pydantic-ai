@@ -176,6 +176,29 @@ class CapabilityOrdering:
     requires: Sequence[type[AbstractCapability[Any]]] = ()
     """These types must be present in the chain (no ordering implied)."""
 
+    exclusive_execution: bool = False
+    """This capability owns the innermost execution of a tool: nothing may nest inside it.
+
+    `position='innermost'` is a *tier*, not a position, so listed order is the only tiebreaker
+    among its members. That is not enough for a capability whose correctness depends on reaching
+    the tool body itself -- one that authorizes a call and records its outcome as a single
+    operation, say, reports the wrong outcome the moment another capability's wrapper is what it
+    actually called.
+
+    Declaring this places the capability last, and refuses the configurations that would defeat it:
+    a second capability claiming the same thing, and any capability that takes part in executing a
+    tool ending up inside it. "Takes part" covers both ways of doing so -- overriding
+    [`wrap_tool_execute`][pydantic_ai.capabilities.AbstractCapability.wrap_tool_execute], and
+    wrapping the toolset via
+    [`get_wrapper_toolset`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_toolset] --
+    since a capability that reaches execution through the second is nested just as surely as one
+    that reaches it through the first.
+
+    Durability capabilities declare it: an agent runs under one durable engine, and each wraps
+    every tool call as its own durable unit. That is what makes two of them, of any engines,
+    refused rather than silently dispatched through both.
+    """
+
 
 class _DurableOperationBindings:
     """Agent-identity bindings that do not retain unhashable agent instances."""

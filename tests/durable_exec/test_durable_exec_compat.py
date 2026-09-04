@@ -263,31 +263,31 @@ class SecondJournalDurability(JournalDurability):
     """
 
 
-def test_a_second_durability_engine_is_refused() -> None:
-    """Two engines never meet under a shared `id`, so `combine` cannot be what settles them.
+_TWO_ENGINES = (
+    r'`JournalDurability` and `SecondJournalDurability` each require that nothing nests inside them '
+    r'when a tool executes'
+)
 
-    An engine's default `id` names that engine, which is what makes a *repeat* of one reachable as
-    a duplicate. Two different engines carry two ids and are invisible there -- and there is no id
-    under which they could meet, since neither restates the other. Both would wrap the agent's
-    model and toolsets and register their own durable units.
+
+def test_a_second_durability_engine_is_refused() -> None:
+    """An agent runs under one durable engine, whatever engines the two are.
+
+    Two engines carry two `id`s, and there is no id under which they could meet, since neither
+    restates the other -- so an id is not what settles this. What they do share is the claim to be
+    innermost: each wraps every tool call as its own durable unit, so the second would be nesting a
+    durable unit inside a durable unit.
     """
-    with pytest.raises(
-        UserError,
-        match=(
-            r'An agent runs under one durability engine, but JournalDurability and '
-            r'SecondJournalDurability are attached\.'
-        ),
-    ):
+    with pytest.raises(UserError, match=_TWO_ENGINES):
         Agent(TestModel(), name='two_engines', capabilities=[JournalDurability(), SecondJournalDurability()])
 
-    # Order does not decide it: whichever engine binds first sees the other already attached.
-    with pytest.raises(UserError, match=r'JournalDurability and SecondJournalDurability are attached\.'):
+    # Order does not decide it: the claim is refused before anything is placed.
+    with pytest.raises(UserError, match=_TWO_ENGINES):
         Agent(TestModel(), name='reversed', capabilities=[SecondJournalDurability(), JournalDurability()])
 
 
 def test_a_second_durability_engine_is_refused_behind_a_wrapper() -> None:
-    """A wrapped engine is still the engine, registering the same units under the same name."""
-    with pytest.raises(UserError, match=r'JournalDurability and SecondJournalDurability are attached\.'):
+    """A wrapped engine is still the engine, and still claims to be innermost."""
+    with pytest.raises(UserError, match=_TWO_ENGINES):
         Agent(
             TestModel(),
             name='wrapped',
@@ -296,51 +296,52 @@ def test_a_second_durability_engine_is_refused_behind_a_wrapper() -> None:
 
 
 def test_a_per_run_engine_beside_an_agent_level_one_is_refused() -> None:
-    """A per-run engine binds before it joins the tree, so it is not among what it finds there.
+    """A capability added for a run composes *inside* the agent's, which is what makes this wrong.
 
-    `_bind_run_capabilities` calls `for_agent` on each per-run capability ahead of capability
-    resolution, so the tree it reads holds the agent's own engine and not itself. Counting itself
-    in is what makes the pair two rather than one. Two engines in the *same* per-run list still
-    slip through, because neither is on the tree yet when the other binds -- see #8098.
+    Refused before the per-run capability binds rather than when the resolved tree is sorted:
+    binding is where an engine registers its durable units, and a configuration that is going to
+    be refused should not register anything first.
     """
     agent = Agent(TestModel(), name='per_run', capabilities=[JournalDurability()])
 
     with pytest.raises(
         UserError,
         match=(
-            r'An agent runs under one durability engine, but JournalDurability and '
-            r'SecondJournalDurability are attached\.'
+            r'`JournalDurability` requires that nothing nests inside it when a tool executes, but '
+            r'`SecondJournalDurability` would, having been added for this run'
         ),
     ):
         agent.run_sync('hello', capabilities=[SecondJournalDurability()])
 
 
-def test_one_engine_written_twice_is_refused() -> None:
-    """The same object listed twice is two registrations, not one capability seen twice.
+def test_two_engines_in_one_per_run_list_are_refused() -> None:
+    """Neither is on the agent's tree when the other binds, so only the pair itself shows this."""
+    agent = Agent(TestModel(), name='per_run_pair')
 
-    Each entry is bound in its own right, so counting distinct objects rather than occurrences
-    would read this pair as nothing at all -- and an engine declaring no default `id` has no
-    `combine` behind it to catch what that misses.
-    """
+    with pytest.raises(UserError, match=_TWO_ENGINES):
+        agent.run_sync('hello', capabilities=[JournalDurability(), SecondJournalDurability()])
+
+
+def test_one_engine_written_twice_is_refused() -> None:
+    """The same object listed twice is two registrations, not one capability seen twice."""
     durability = JournalDurability()
 
     with pytest.raises(
         UserError,
-        match=r'An agent runs under one durability engine, but 2 JournalDurability capabilities are attached\.',
+        match=r'2 `JournalDurability` capabilities each require that nothing nests inside them',
     ):
         Agent(TestModel(), name='written_twice', capabilities=[durability, durability])
 
 
 def test_a_repeated_engine_without_a_default_id_is_refused() -> None:
-    """`combine` only sees a repeat that met under a shared `id`, which this engine never declares.
+    """`JournalDurability` stands for a third-party engine, declaring no default `id` at all.
 
-    `JournalDurability` stands for a third-party engine here. Without a default `id` its two
-    instances are two capabilities all the way through id resolution, so the check that catches
-    them has to be the one every engine passes through on its way to binding.
+    Nothing keyed on an `id` can see this pair, which is why the rule is about what the two claim
+    rather than what they are called.
     """
     with pytest.raises(
         UserError,
-        match=r'An agent runs under one durability engine, but 2 JournalDurability capabilities are attached\.',
+        match=r'2 `JournalDurability` capabilities each require that nothing nests inside them',
     ):
         Agent(TestModel(), name='repeated', capabilities=[JournalDurability(), JournalDurability()])
 

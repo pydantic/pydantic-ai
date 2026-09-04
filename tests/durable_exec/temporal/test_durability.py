@@ -468,14 +468,14 @@ def test_durability_rejects_default_model_key():
 def test_durability_rejects_duplicates_at_construction():
     """Two engines are refused where they are written, not later.
 
-    `TemporalDurability` declares a default `id`, so the agent resolves the pair while it is being
-    built. That matters because `from_agent` -- the check this used to rely on -- is only reached
-    through `AgentPlugin`: an agent that never uses the plugin, or one under any other engine,
-    would have registered both and run.
+    `TemporalDurability` declares `exclusive_execution`, so the agent refuses the pair while its
+    capabilities are being sorted. That matters because `from_agent` -- the check this used to rely
+    on -- is only reached through `AgentPlugin`: an agent that never uses the plugin, or one under
+    any other engine, would have registered both and run.
     """
     with pytest.raises(
         UserError,
-        match=r'An agent has one durability engine, but 2 TemporalDurability capabilities were attached',
+        match=r'2 `TemporalDurability` capabilities each require that nothing nests inside them when a tool executes',
     ):
         Agent(
             _durability_fn_model,
@@ -485,10 +485,14 @@ def test_durability_rejects_duplicates_at_construction():
 
 
 def test_durability_from_agent_still_guards_against_duplicates():
-    """`from_agent` keeps its own check, for a pair that never went through id resolution."""
+    """`from_agent` keeps its own check, for a pair that never went through capability sorting."""
     agent = Agent(_durability_fn_model, name='duplicate_durability_direct')
     durability = TemporalDurability()
-    object.__setattr__(agent, '_root_capability', CombinedCapability([durability, TemporalDurability()]))
+    # Built with one and mutated afterwards, so the sort that refuses the pair never saw it. No
+    # real path produces this, which is the point: the guard is what stands behind the sort.
+    combined = CombinedCapability([durability])
+    object.__setattr__(combined, 'capabilities', [durability, TemporalDurability()])
+    object.__setattr__(agent, '_root_capability', combined)
 
     with pytest.raises(
         UserError,

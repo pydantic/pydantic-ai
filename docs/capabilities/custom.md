@@ -1077,8 +1077,11 @@ The available constraints are:
 * **`wraps`** — list of capabilities this one wraps around (is outside of). Each entry can be a capability **type** (matches all instances via `issubclass`) or a specific **instance** (matches by identity). Use when your capability needs to see the output of another: `CapabilityOrdering(wraps=[OtherCapability])`.
 * **`wrapped_by`** — list of capabilities that wrap around this one (are outside of it). Accepts types or instances, like `wraps`. The inverse of `wraps`.
 * **`requires`** — list of capability types that must be present. Raises [`UserError`][pydantic_ai.exceptions.UserError] if any are missing. Does not imply ordering.
+* **`exclusive_execution`** — this capability owns the innermost execution of a tool, and nothing may nest inside it. `'innermost'` is a *tier*, so listed order is its only tiebreaker; that is not enough for a capability whose correctness depends on reaching the tool body itself. One that authorizes a call and records its outcome as a single operation records the wrong outcome the moment another capability's wrapper is what it actually called. Declaring this places the capability last and refuses two configurations: a second capability claiming the same thing, and a capability that takes part in executing a tool being added for a run, which would compose inside it. "Takes part" covers both `wrap_tool_execute` and wrapping the toolset through [`get_wrapper_toolset`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_toolset]. Capabilities marked safe to add at runtime, like [`Instrumentation`][pydantic_ai.capabilities.Instrumentation], are exempt from the second rule — timing a call changes nothing about what runs.
 
 When constraints are declared, [`CombinedCapability`][pydantic_ai.capabilities.CombinedCapability] topologically sorts its children at construction time, preserving user-provided order as a tiebreaker.
+
+The [durability capabilities](../durable_execution/overview.md) declare `exclusive_execution`, which is what makes two of them — of one engine or of two different ones — refused rather than silently dispatching every request through both. An agent runs under one durable engine.
 
 [`Hooks`][pydantic_ai.capabilities.Hooks] supports ordering via the `ordering` parameter, so you can declare ordering constraints without subclassing:
 

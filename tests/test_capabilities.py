@@ -4668,3 +4668,105 @@ async def test_tool_return_can_reveal_capability_owned_tools_once_loaded() -> No
 
     result = await agent.run('Load, then reveal by name.')
     assert result.output == 'done'
+
+
+# --- exclusive_execution ---
+
+
+@dataclass
+class _Guard(AbstractCapability[Any]):
+    """Authorizes a call and records its outcome, so it must reach the tool body itself."""
+
+    label: str = 'guard'
+    seen: list[str] = field(default_factory=list[str])
+
+    def get_ordering(self) -> CapabilityOrdering:
+        return CapabilityOrdering(position='innermost', exclusive_execution=True)
+
+    async def wrap_tool_execute(
+        self, ctx: RunContext[Any], *, call: Any, tool_def: Any, args: Any, handler: Any
+    ) -> Any:
+        result = await handler(args)
+        self.seen.append(f'{self.label}:{tool_def.name}')
+        return result
+
+
+@dataclass
+class _Nester(AbstractCapability[Any]):
+    """Takes part in execution without claiming to own it."""
+
+    async def wrap_tool_execute(
+        self, ctx: RunContext[Any], *, call: Any, tool_def: Any, args: Any, handler: Any
+    ) -> Any:
+        return await handler(args)  # pragma: no cover
+
+
+@dataclass
+class _Bystander(AbstractCapability[Any]):
+    """Contributes nothing to executing a tool, so nesting it inside a guard means nothing."""
+
+    async def before_run(self, ctx: RunContext[Any]) -> None:
+        pass
+
+
+def test_two_capabilities_cannot_both_own_execution() -> None:
+    """Only one capability can be innermost, so two claims are a configuration with no answer."""
+    with pytest.raises(
+        UserError,
+        match=r'2 `_Guard` capabilities each require that nothing nests inside them when a tool executes',
+    ):
+        Agent(TestModel(), capabilities=[_Guard(label='a'), _Guard(label='b')])
+
+
+def test_a_capability_owning_execution_is_placed_last() -> None:
+    """Declaring it is not just a veto: it also settles the order within the innermost tier.
+
+    `position='innermost'` is a tier, and listed order is its only tiebreaker, so a guard listed
+    first would otherwise wrap the other innermost member rather than the tool.
+    """
+    guard = _Guard()
+    nester = _Nester()
+    combined = CombinedCapability([guard, nester])
+
+    assert list(combined.capabilities) == [nester, guard], 'the guard sorts after what it must not wrap'
+
+
+def test_a_capability_owning_execution_still_admits_bystanders() -> None:
+    """The rule is about taking part in execution, not about being inside at all."""
+    guard = _Guard()
+    combined = CombinedCapability([guard, _Bystander()])
+
+    assert isinstance(combined.capabilities[-1], _Guard), 'the guard is still last'
+    assert len(combined.capabilities) == 2, 'and the bystander is not refused'
+
+
+async def test_a_per_run_capability_cannot_nest_inside_one_owning_execution() -> None:
+    """A capability added for a run composes inside the agent's, which is what makes this wrong."""
+    agent = Agent(TestModel(), capabilities=[_Guard()])
+
+    with pytest.raises(
+        UserError,
+        match=(
+            r'`_Guard` requires that nothing nests inside it when a tool executes, but `_Nester` '
+            r'would, having been added for this run'
+        ),
+    ):
+        await agent.run('hello', capabilities=[_Nester()])
+
+
+async def test_a_per_run_bystander_is_admitted_beside_one_owning_execution() -> None:
+    """Only capabilities that take part in executing a tool are refused per-run."""
+    agent = Agent(TestModel(), capabilities=[_Guard()])
+
+    result = await agent.run('hello', capabilities=[_Bystander()])
+
+    assert result.output == 'success (no tool calls)'
+
+
+def test_a_wrapped_capability_still_owns_execution() -> None:
+    """Wrapping a capability to prefix its tools does not stop it claiming to be innermost."""
+    with pytest.raises(
+        UserError,
+        match=r'2 `_Guard` capabilities each require that nothing nests inside them when a tool executes',
+    ):
+        Agent(TestModel(), capabilities=[_Guard(label='a'), _Guard(label='b').prefix_tools('b')])
