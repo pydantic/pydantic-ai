@@ -4,6 +4,7 @@ import asyncio
 import dataclasses
 import inspect
 import time
+import warnings
 from asyncio import Task
 from collections import deque
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Iterable, Sequence
@@ -308,6 +309,7 @@ class GraphAgentState:
     usage: _usage.RunUsage = dataclasses.field(default_factory=_usage.RunUsage)
     output_retries_used: int = 0
     run_step: int = 0
+    usage_limit_warning_emitted: bool = False
     run_id: str = dataclasses.field(default_factory=lambda: str(uuid7()))
     """The unique identifier of this agent run.
 
@@ -1854,6 +1856,27 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # response sums usage across segments (see `_check_continuation_usage`), so this caps the
             # chain's combined input rather than any single segment's — conservative, not lenient.
             ctx.deps.usage_limits.check_per_request_input_tokens(response.usage.input_tokens)
+            if (
+                not ctx.state.usage_limit_warning_emitted
+                and response.usage._usage_extraction_failed  # pyright: ignore[reportPrivateUsage]
+                and (
+                    ctx.deps.usage_limits.input_tokens_limit is not None
+                    or ctx.deps.usage_limits.output_tokens_limit is not None
+                    or ctx.deps.usage_limits.total_tokens_limit is not None
+                    or ctx.deps.usage_limits.cost_limit is not None
+                    or (
+                        ctx.deps.usage_limits.per_request_input_tokens_limit is not None
+                        and not ctx.deps.usage_limits.count_tokens_before_request
+                    )
+                )
+            ):
+                warnings.warn(
+                    'One or more usage limits could not be enforced because provider usage extraction failed. '
+                    'The recorded usage may be incomplete.',
+                    exceptions.UsageLimitUnavailableWarning,
+                    stacklevel=2,
+                )
+                ctx.state.usage_limit_warning_emitted = True
         ctx.state.message_history.append(response)
 
     async def _build_retry_node(
