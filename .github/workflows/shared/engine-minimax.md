@@ -36,7 +36,7 @@ models:
             input: 0.6
             output: 2.4
             cache_read: 0.12
-# `MiniMax-M3` is absent from AWF's built-in pricing catalog. AWF v0.27.42
+# `MiniMax-M3` is absent from AWF's built-in pricing catalog. AWF v0.27.44
 # supports `models.default-ai-credits-pricing`, but gh-aw v0.83.4 does not
 # propagate that field from imported shared workflows into the AWF config.
 # Keep the budget disabled here rather than duplicate pricing in every importer.

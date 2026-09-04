@@ -91,7 +91,7 @@ env:
   # fails the build if the two ever diverge.
   PYDANTIC_AI_JOB_TIMEOUT_MINUTES: "60"
 # MiniMax pricing for AI-credit enforcement and run-cost reporting, in dollars
-# per 1M tokens. AWF v0.27.42 uses the default for models absent from its
+# per 1M tokens. AWF v0.27.44 uses the default for models absent from its
 # catalog; the provider entry retains exact model and cache pricing.
 models:
   default-ai-credits-pricing:
@@ -116,7 +116,7 @@ pre-steps:
   # which also drops the bundled AWF firewall binary install. Re-run gh-aw's
   # own installer (the same call it makes for non-custom-command jobs).
   - name: Install AWF firewall binary (skipped by custom engine.command)
-    run: bash "${RUNNER_TEMP}/gh-aw/actions/install_awf_binary.sh" v0.27.42
+    run: bash "${RUNNER_TEMP}/gh-aw/actions/install_awf_binary.sh" v0.27.44
 
 pre-agent-steps:
   # Stage the committed launcher script at gh-aw's exec-able
