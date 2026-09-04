@@ -6,7 +6,16 @@ import dataclasses
 import functools
 import inspect
 import warnings
-from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Awaitable, Callable, Generator, Sequence
+from collections.abc import (
+    AsyncGenerator,
+    AsyncIterable,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Collection,
+    Generator,
+    Sequence,
+)
 from contextlib import (
     AbstractAsyncContextManager,
     AsyncExitStack,
@@ -18,6 +27,7 @@ from copy import copy
 from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, cast, overload
+from uuid import uuid4
 
 import anyio
 from opentelemetry.trace import NoOpTracer
@@ -4354,16 +4364,37 @@ def _build_run_capabilities(capability: AbstractCapability[AgentDepsT]) -> dict[
     for cap in capabilities:
         capability_id = cap.id
         if capability_id is None:
-            base_id = to_snake(type(cap).__name__)
-            capability_id = base_id
-            suffix = 2
-            while capability_id in by_id or capability_id in explicit_ids:
-                capability_id = f'{base_id}_{suffix}'
-                suffix += 1
-
+            capability_id = _synthetic_capability_id(type(cap), taken=by_id.keys() | explicit_ids)
         by_id[capability_id] = cap
 
     return by_id
+
+
+def _synthetic_capability_id(cls: type[AbstractCapability[Any]], *, taken: Collection[str]) -> str:
+    """A key for a capability the user never named, shaped so nobody mistakes it for a name.
+
+    Every capability in a run needs a key, including the ones with no `id`, or `ctx.capabilities`
+    could not list them. Nothing carries such a key out of the run: the paths that persist one --
+    the load records progressive disclosure reads back out of message history -- all require
+    `defer_loading=True`, which in turn requires an explicit `id`. So this is a run-local handle,
+    and the only thing wrong with the `thinking` / `thinking_2` it used to be was that it looked
+    exactly like an `id` somebody chose.
+
+    It looked stable, too, and wasn't: the ordinal counted from attachment order, so listing two
+    anonymous capabilities of one class the other way round swapped which of them owned
+    `thinking_2`. Nothing depended on that, because nothing may -- but a reader who copied the key
+    out of `ctx.capabilities` had no way to tell.
+
+    Angle brackets say "the framework named this", the way `'<agent>'` and `'<output>'` already do
+    for toolsets. The class name keeps the registry and a traceback readable. The random suffix is
+    the part that matters: it differs every run, so relying on it fails immediately and visibly
+    rather than the next time someone reorders a list.
+    """
+    base_id = to_snake(cls.__name__)
+    while True:
+        candidate = f'<{base_id}:{uuid4().hex[:6]}>'
+        if candidate not in taken:
+            return candidate
 
 
 def _validate_spec(
