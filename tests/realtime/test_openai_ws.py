@@ -406,7 +406,9 @@ async def test_tool_can_close_session(openai_ws_cassette: tuple[Provider[Any], R
     model = OpenAIRealtimeModel(
         'gpt-realtime', provider=provider, settings=OpenAIRealtimeModelSettings(output_modality='text')
     )
-    agent = Agent(instructions='Always call the hang_up tool immediately when asked to end the call.')
+    agent = Agent[None, str](
+        deps_type=type(None), instructions='Always call the hang_up tool immediately when asked to end the call.'
+    )
 
     @agent.tool
     async def hang_up(ctx: RunContext[None]) -> None:

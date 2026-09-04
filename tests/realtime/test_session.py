@@ -6143,7 +6143,7 @@ async def loop_errors() -> AsyncIterator[list[dict[str, Any]]]:
 
 
 def _hang_up_agent() -> tuple[Agent[None, str], dict[str, asyncio.Task[None] | None]]:
-    agent: Agent[None, str] = Agent()
+    agent = Agent[None, str](deps_type=type(None))
     state: dict[str, asyncio.Task[None] | None] = {'task': None}
 
     @agent.tool
@@ -6210,7 +6210,7 @@ async def test_tool_can_close_realtime_session_without_iterating(loop_errors: li
 
 
 async def test_tool_closing_realtime_session_drains_sibling_tools(loop_errors: list[dict[str, Any]]) -> None:
-    agent: Agent[None, str] = Agent()
+    agent = Agent[None, str](deps_type=type(None))
     sibling_started = asyncio.Event()
     sibling_cancelled = asyncio.Event()
     closing_task: asyncio.Task[None] | None = None
@@ -6236,7 +6236,8 @@ async def test_tool_closing_realtime_session_drains_sibling_tools(loop_errors: l
         async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
             yield ToolCall(tool_call_id='c1', tool_name='slow', args='{}')
             yield ToolCall(tool_call_id='c2', tool_name='hang_up', args='{}')
-            yield ResponseDone()
+            # `hang_up` closes the session before the response would complete, so idle like the
+            # provider does while a tool is still running.
             await asyncio.Event().wait()
 
     conn = TwoCallsConnection([])
