@@ -361,6 +361,18 @@ async def test_a_result_built_outside_a_run_explains_that_no_sandbox_is_attached
         await result.sandbox.run(['true'])
 
 
+async def test_two_capabilities_supplying_a_sandbox_name_both() -> None:
+    """One run, one sandbox: a second supplier is a configuration mistake, not a silent winner."""
+
+    class SecondSandboxCapability(SandboxCapability):
+        id = 'second-sandbox'
+
+    agent = Agent(TestModel(), capabilities=[SandboxCapability(), SecondSandboxCapability()])
+
+    with pytest.raises(UserError, match='SandboxCapability and SecondSandboxCapability both did'):
+        await agent.run('go')
+
+
 async def test_deferred_capability_never_contributes_a_backend() -> None:
     capability = SandboxCapability()
     capability.defer_loading = True
