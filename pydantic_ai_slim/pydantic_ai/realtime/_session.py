@@ -2421,6 +2421,11 @@ class RealtimeSession:
             call_part,
             response_usage_follows=event.response_usage_follows,
         ):
+            # Published as well as queued: folding the call in first ends the in-flight assistant part,
+            # so a turn that speaks *and* calls a tool ("let me look that up") emits its
+            # `PartEndEvent(SpeechPart)` here rather than on the translation path, and the transcript
+            # views would otherwise miss exactly the turns where the assistant speaks and acts.
+            self._publish_taps(out)
             await self._queue.put(out)
         mode = self._tool_manager.get_parallel_execution_mode()
         is_barrier = mode == 'sequential' or self._tool_manager.is_sequential(call_part)

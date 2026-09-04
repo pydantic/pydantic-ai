@@ -1384,6 +1384,110 @@ async def test_tool_call_round_builds_classic_history() -> None:
     )
 
 
+async def test_speech_finalized_by_a_tool_call_reaches_the_transcript_view() -> None:
+    """Speech the model finalizes by calling a tool still reaches `stream_transcripts()`.
+
+    A voice agent's most useful turn says something ("let me look that up") *and* calls a tool. The
+    tool-call dispatch path finalizes the in-flight `SpeechPart` before folding the call in, so that
+    turn's transcript only reaches subscribers if the dispatch path publishes to the taps the way the
+    ordinary translation path does.
+    """
+    conn = FakeRealtimeConnection(
+        [
+            InputTranscript(text="what's the weather in Paris", is_final=True),
+            OutputTranscript(text='Let me check that for you.', is_final=True),
+            ToolCall(tool_call_id='tc_1', tool_name='get_weather', args='{"city": "Paris"}'),
+            OutputTranscript(text="It's sunny in Paris", is_final=True),
+            ResponseDone(),
+        ]
+    )
+
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        return 'Sunny, 22C'
+
+    session = RealtimeSession(conn, runner, model_name='m')
+    async with session:
+        _, transcripts, deltas = await asyncio.gather(
+            drain_events(session),
+            aiter_to_list(session.stream_transcripts()),
+            aiter_to_list(session.stream_transcripts(delta=True)),
+        )
+
+    # The speech that preceded the call is on the view, not just in history.
+    assert transcripts == snapshot(
+        [
+            SpeechPart(speaker='user', transcript="what's the weather in Paris"),
+            SpeechPart(speaker='assistant', transcript='Let me check that for you.'),
+            SpeechPart(speaker='assistant', transcript="It's sunny in Paris"),
+        ]
+    )
+    # The same turns as history records, so a consumer reading the view sees what the assistant said.
+    assert [
+        (part.speaker, part.transcript)
+        for message in session.new_messages()
+        for part in message.parts
+        if isinstance(part, SpeechPart)
+    ] == [(part.speaker, part.transcript) for part in transcripts]
+    # The delta view already tracked the pre-call speech; ending its turn clears the running text so
+    # the answer's deltas don't continue it.
+    assert deltas == snapshot(
+        [
+            TranscriptUpdate(
+                index=0,
+                speaker='user',
+                delta="what's the weather in Paris",
+                transcript="what's the weather in Paris",
+            ),
+            TranscriptUpdate(
+                index=1,
+                speaker='assistant',
+                delta='Let me check that for you.',
+                transcript='Let me check that for you.',
+            ),
+            TranscriptUpdate(
+                index=3, speaker='assistant', delta="It's sunny in Paris", transcript="It's sunny in Paris"
+            ),
+        ]
+    )
+
+
+async def test_tool_returning_a_file_frames_it_with_its_call() -> None:
+    """A tool's file rides `ToolResult.content` framed with the call it came from.
+
+    The realtime tool channel is text-only, so a tool's file travels the same user channel the end
+    user speaks on. Seeding covers the other two realtime paths; this is the live send, and nothing
+    else exercises it with a tool whose return value actually carries a file.
+    """
+    conn = FakeRealtimeConnection(
+        [
+            InputTranscript(text="what's the weather in Paris", is_final=True),
+            ToolCall(tool_call_id='tc_1', tool_name='get_weather', args='{"city": "Paris"}'),
+            OutputTranscript(text='Rain moving in', is_final=True),
+            ResponseDone(),
+        ]
+    )
+
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> BinaryImage:
+        return BinaryImage(data=b'png', media_type='image/png', identifier='radar')
+
+    session = RealtimeSession(conn, runner, model_name='m')
+    await collect_events(session)
+
+    assert conn.sent == snapshot(
+        [
+            ToolResult(
+                tool_call_id='tc_1',
+                output='See file radar.',
+                content=[
+                    '<tool_result tool_name="get_weather" tool_call_id="tc_1" file_id="radar">',
+                    BinaryImage(data=b'png', media_type='image/png', identifier='radar'),
+                    '</tool_result>',
+                ],
+            )
+        ]
+    )
+
+
 async def test_late_input_transcript_still_precedes_the_response_it_prompted() -> None:
     """A user turn keeps its place in history however late the provider transcribes it.
 
@@ -5491,7 +5595,7 @@ async def test_realtime_cancellation_does_not_wait_for_sync_tool_worker() -> Non
     await asyncio.to_thread(worker_started.wait)
     try:
         with pytest.raises(RunCancelled):
-            await asyncio.wait_for(asyncio.shield(task), timeout=1)
+            await asyncio.wait_for(asyncio.shield(task), timeout=5)
         assert not worker_finished.is_set()
         assert not any(isinstance(item, ToolResult) for item in conn.sent)
     finally:

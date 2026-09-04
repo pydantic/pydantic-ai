@@ -2162,7 +2162,7 @@ async def test_temporal_agent_with_unserializable_deps_type(allow_model_requests
         with workflow_raises(
             UserError,
             snapshot(
-                "A value passed to a Temporal activity failed to be serialized (Unable to serialize unknown type: <class 'pydantic_ai.providers.openai.OpenAIProvider'>). Temporal requires all values that are passed to activities to be serializable using Pydantic's `TypeAdapter`. Besides `deps`, this includes `model_settings`, the `RunContext` `metadata` and `tool_call_metadata`, and tool `metadata`."
+                "A value passed to a Temporal activity failed to be serialized (Unable to serialize unknown type: <class 'pydantic_ai.providers.openai.OpenAIProvider'>). Temporal requires all values that are passed to activities to be serializable using Pydantic's `TypeAdapter`. Besides `deps`, this includes `model_settings`, the `RunContext` `metadata` and `tool_call_metadata`, tool `metadata`, and the payload fields of any emitted `CustomEvent` or `CapabilityEvent`, which ride the event stream handler activity."
             ),
         ):
             await client.execute_workflow(
@@ -2654,7 +2654,8 @@ async def test_unserializable_model_settings(client: Client):
             f'(Unable to serialize unknown type: {httpx.Timeout!r}). '
             "Temporal requires all values that are passed to activities to be serializable using Pydantic's "
             '`TypeAdapter`. Besides `deps`, this includes `model_settings`, the `RunContext` `metadata` and '
-            '`tool_call_metadata`, and tool `metadata`.',
+            '`tool_call_metadata`, tool `metadata`, and the payload fields of any emitted `CustomEvent` or '
+            '`CapabilityEvent`, which ride the event stream handler activity.',
         ):
             await client.execute_workflow(
                 UnserializableModelSettingsWorkflow.run,
@@ -2676,6 +2677,23 @@ def test_temporal_run_context_preserves_run_id():
 
     reconstructed = TemporalRunContext.deserialize_run_context(serialized, deps=None)
     assert reconstructed.run_id == 'run-123'
+
+
+def test_temporal_run_context_context_window_used_is_none_without_messages():
+    reconstructed = TemporalRunContext.deserialize_run_context(
+        TemporalRunContext.serialize_run_context(RunContext(deps=None, model=TestModel(), usage=RunUsage())), deps=None
+    )
+    assert reconstructed.context_window_used is None
+
+    # Even if a custom activity context carries a model, the ratio stays unknown when it omits the
+    # full message history, as the default Temporal context does to keep activity payloads small.
+    reconstructed_with_model = TemporalRunContext(
+        deps=None,
+        model=TestModel(profile={'context_window': 100}),
+        usage=RunUsage(),
+        run_id='run-123',
+    )
+    assert reconstructed_with_model.context_window_used is None
 
 
 run_id_test_agent = Agent(TestModel(custom_output_text='ok'), name='run_id_test_agent')
