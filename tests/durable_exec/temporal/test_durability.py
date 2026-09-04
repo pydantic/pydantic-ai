@@ -4519,7 +4519,10 @@ class RetryFeedbackAnswer:
 
 
 _retry_feedback_shown: list[list[SystemPromptPart | UserPromptPart]] = []
-"""The parts carrying the harness's own voice the model was shown, one entry per model request."""
+"""The retry feedback the model was shown, one entry per model request."""
+
+_RETRY_FEEDBACK_TAGS = ('<system>', '<validation_errors>')
+"""The two tags a translated `RetryFeedbackPart` can arrive under; a `SystemPromptPart` needs none."""
 
 
 def _retry_feedback_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -4531,7 +4534,11 @@ def _retry_feedback_model(messages: list[ModelMessage], info: AgentInfo) -> Mode
         if isinstance(message, ModelRequest)
         for part in message.parts
         if isinstance(part, SystemPromptPart)
-        or (isinstance(part, UserPromptPart) and isinstance(part.content, str) and part.content.startswith('<system>'))
+        or (
+            isinstance(part, UserPromptPart)
+            and isinstance(part.content, str)
+            and part.content.startswith(_RETRY_FEEDBACK_TAGS)
+        )
     ]
     _retry_feedback_shown.append(shown)
     return ModelResponse(parts=[TextPart('{"count": 3}' if shown else '{"count": "lots"}')])
@@ -4591,9 +4598,9 @@ async def test_durability_output_retry_feedback_survives_the_activity_and_a_resu
 
     The resuming model is reached by an alias only the `ResolveModelId` capability can build, so the
     workflow leaves the history untouched and the raw part is what crosses the activity boundary
-    there. Keeping the presentation out of the history is what lets that one stored part land as a
-    real `SystemPromptPart` for a model that takes a mid-conversation system message, and as
-    `<system>`-tagged user text for the one that wrote it.
+    there. Keeping the presentation out of the history is what lets each execution build the sendable
+    part for the model it is actually using — here the same `<validation_errors>` fence both times,
+    because a `'validation_error'`'s voice comes from its `cause` rather than from the profile.
     """
     _retry_feedback_shown.clear()
     async with Worker(
@@ -4640,48 +4647,27 @@ async def test_durability_output_retry_feedback_survives_the_activity_and_a_resu
             )
         ]
     )
-    # ...and the two executions rendered that one part differently, each under the profile of the
-    # model that was actually being used: `<system>`-tagged user text for the model that wrote it,
-    # a real system message for the one that resumed it.
+    # ...and each execution translated that one part for itself, on the far side of the activity
+    # boundary, rather than replaying a presentation the first execution had baked in.
     assert _retry_feedback_shown == snapshot(
         [
             [],
             [
                 UserPromptPart(
                     content="""\
-<system>The response failed validation:
-1 validation error:
-```json
-[
-  {
-    "type": "int_parsing",
-    "loc": [
-      "count"
-    ],
-    "msg": "Input should be a valid integer, unable to parse string as an integer"
-  }
-]
-```</system>\
+<validation_errors>
+[{"type":"int_parsing","loc":["count"],"msg":"Input should be a valid integer, unable to parse string as an integer","input":"lots"}]
+</validation_errors>\
 """,
                     timestamp=IsDatetime(),
                 )
             ],
             [
-                SystemPromptPart(
+                UserPromptPart(
                     content="""\
-The response failed validation:
-1 validation error:
-```json
-[
-  {
-    "type": "int_parsing",
-    "loc": [
-      "count"
-    ],
-    "msg": "Input should be a valid integer, unable to parse string as an integer"
-  }
-]
-```\
+<validation_errors>
+[{"type":"int_parsing","loc":["count"],"msg":"Input should be a valid integer, unable to parse string as an integer","input":"lots"}]
+</validation_errors>\
 """,
                     timestamp=IsDatetime(),
                 )

@@ -16009,10 +16009,11 @@ async def _replay_input(
         provider=OpenAIProvider(api_key='not-used'),
         profile=OpenAIModelProfile(openai_responses_supports_interleaved_function_calls=not group_function_calls),
     )
+    parameters = model_request_parameters or ModelRequestParameters()
     _, items = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
-        history,
+        model.prepare_messages(history, parameters),
         model_settings or OpenAIResponsesModelSettings(),
-        model_request_parameters or ModelRequestParameters(),
+        parameters,
     )
     return [dict(item) for item in items]
 
@@ -16048,7 +16049,7 @@ async def test_openai_responses_function_call_grouping_profile_on_off() -> None:
             {
                 'type': 'function_call_output',
                 'call_id': 'call-a',
-                'output': 'read failed\n\nFix the errors and try again.',
+                'output': '{"error":"read failed"}',
             },
             {'type': 'function_call_output', 'call_id': 'call-b', 'output': 'contents'},
         ]
@@ -16062,7 +16063,7 @@ async def test_openai_responses_function_call_grouping_profile_on_off() -> None:
             {
                 'type': 'function_call_output',
                 'call_id': 'call-a',
-                'output': 'read failed\n\nFix the errors and try again.',
+                'output': '{"error":"read failed"}',
             },
             {'type': 'function_call_output', 'call_id': 'call-b', 'output': 'contents'},
         ]

@@ -13217,11 +13217,7 @@ async def test_anthropic_malformed_tool_args_no_crash(allow_model_requests: None
                     {
                         'tool_use_id': 'toolu_123',
                         'type': 'tool_result',
-                        'content': """\
-Invalid JSON: expected `,` or `}` at line 1 column 99
-
-Fix the errors and try again.\
-""",
+                        'content': [{'text': 'Invalid JSON: expected `,` or `}` at line 1 column 99', 'type': 'text'}],
                         'is_error': True,
                     },
                     {'text': 'Please fix the tool call and try again.', 'type': 'text'},

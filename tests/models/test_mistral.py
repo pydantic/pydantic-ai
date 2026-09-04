@@ -3473,7 +3473,7 @@ async def test_mistral_empty_response_skipped_in_history(allow_model_requests: N
     second_call_messages = get_mock_chat_completion_kwargs(mock_client)[1]['messages']
     assert not any(message.role == 'assistant' for message in second_call_messages)
     assert [message.role for message in second_call_messages] == ['user', 'system']
-    assert second_call_messages[-1].content == snapshot('The response contained no usable output. Please return text.')
+    assert second_call_messages[-1].content == snapshot('Please return text.')
 
 
 #####################

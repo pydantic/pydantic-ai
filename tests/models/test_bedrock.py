@@ -6462,7 +6462,7 @@ async def test_bedrock_writer_omits_tool_result_status(bedrock_provider: Bedrock
             {'toolUseId': 'okcall1', 'content': [{'text': 'done'}]},
             {
                 'toolUseId': 'badcall1',
-                'content': [{'text': 'boom\n\nFix the errors and try again.'}],
+                'content': [{'text': '{"error":"boom"}'}],
             },
         ]
     )

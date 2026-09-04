@@ -854,10 +854,7 @@ async def test_retry_feedback_without_inline_system_prompts(allow_model_requests
     assert {k: v for k, v in asdict(messages[-1]).items() if v is not None} == snapshot(
         {
             'role': 'user',
-            'content': """\
-<system>The response was not accepted:
-Response is invalid</system>\
-""",
+            'content': '<system>Response is invalid</system>',
         }
     )
 

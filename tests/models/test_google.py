@@ -6345,7 +6345,9 @@ async def test_google_splits_tool_return_from_user_prompt(google_provider: Googl
         )
     ]
 
-    _, contents = await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+    _, contents = await m._map_messages(  # pyright: ignore[reportPrivateUsage]
+        m.prepare_messages(messages, ModelRequestParameters()), ModelRequestParameters()
+    )
 
     assert contents == snapshot(
         [
@@ -6384,7 +6386,9 @@ async def test_google_splits_tool_return_from_user_prompt(google_provider: Googl
         )
     ]
 
-    _, contents = await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+    _, contents = await m._map_messages(  # pyright: ignore[reportPrivateUsage]
+        m.prepare_messages(messages, ModelRequestParameters()), ModelRequestParameters()
+    )
 
     assert contents == snapshot(
         [
@@ -6401,7 +6405,7 @@ async def test_google_splits_tool_return_from_user_prompt(google_provider: Googl
                     {
                         'function_response': {
                             'name': 'another_tool',
-                            'response': {'error': 'Tool error occurred\n\nFix the errors and try again.'},
+                            'response': {'error': 'Tool error occurred'},
                             'id': 'test_id_2',
                         }
                     },
@@ -6430,7 +6434,9 @@ async def test_google_splits_tool_return_from_user_prompt(google_provider: Googl
         )
     ]
 
-    _, contents = await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+    _, contents = await m._map_messages(  # pyright: ignore[reportPrivateUsage]
+        m.prepare_messages(messages, ModelRequestParameters()), ModelRequestParameters()
+    )
 
     assert contents == snapshot(
         [

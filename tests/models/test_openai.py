@@ -4837,7 +4837,7 @@ async def test_empty_response_skipped_in_history(allow_model_requests: None):
     assert second_call_messages == snapshot(
         [
             {'role': 'user', 'content': 'hello'},
-            {'role': 'system', 'content': 'The response contained no usable output. Please return text.'},
+            {'role': 'system', 'content': 'Please return text.'},
         ]
     )
 

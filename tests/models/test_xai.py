@@ -768,7 +768,11 @@ async def test_xai_reorders_retry_prompt_tool_results_by_tool_call_id(allow_mode
         ),
     ]
 
-    await m.request(messages, model_settings=None, model_request_parameters=ModelRequestParameters())
+    await m.request(
+        m.prepare_messages(messages, ModelRequestParameters()),
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+    )
 
     assert get_mock_chat_create_kwargs(mock_client) == snapshot(
         [
@@ -801,17 +805,17 @@ async def test_xai_reorders_retry_prompt_tool_results_by_tool_call_id(allow_mode
                         ],
                     },
                     {
-                        'content': [{'text': 'retry tool_a\n\nFix the errors and try again.'}],
+                        'content': [{'text': '{"error":"retry tool_a"}'}],
                         'role': 'ROLE_TOOL',
                         'tool_call_id': 'tool_a',
                     },
                     {
-                        'content': [{'text': 'retry tool_c\n\nFix the errors and try again.'}],
+                        'content': [{'text': '{"error":"retry tool_c"}'}],
                         'role': 'ROLE_TOOL',
                         'tool_call_id': 'tool_c',
                     },
                     {
-                        'content': [{'text': 'retry tool_b\n\nFix the errors and try again.'}],
+                        'content': [{'text': '{"error":"retry tool_b"}'}],
                         'role': 'ROLE_TOOL',
                         'tool_call_id': 'tool_b',
                     },
@@ -4206,14 +4210,7 @@ async def test_xai_retry_feedback_as_tagged_user_message(allow_model_requests: N
                     {'content': [{'text': 'Hello'}], 'role': 'ROLE_USER'},
                     {'content': [{'text': 'Invalid'}], 'role': 'ROLE_ASSISTANT'},
                     {
-                        'content': [
-                            {
-                                'text': """\
-<system>The response was not accepted:
-Please provide a valid response</system>\
-"""
-                            }
-                        ],
+                        'content': [{'text': '<system>Please provide a valid response</system>'}],
                         'role': 'ROLE_USER',
                     },
                 ],

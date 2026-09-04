@@ -1033,7 +1033,7 @@ async def test_deepseek_responses_replay_interleaved_settled_function_calls(
                     {
                         'type': 'function_call_output',
                         'call_id': 'call-a',
-                        'output': 'read failed\n\nFix the errors and try again.',
+                        'output': '{"error":"read failed"}',
                     },
                     {'type': 'function_call_output', 'call_id': 'call-b', 'output': 'contents'},
                     {'role': 'user', 'content': 'Reply exactly: done'},
