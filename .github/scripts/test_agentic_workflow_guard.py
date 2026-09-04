@@ -19,6 +19,7 @@ import agentic_workflow_guard
 from agentic_workflow_guard import (
     Violation,
     changed_files,
+    check_ai_credits_accounting,
     check_awf_binary_version,
     check_compiled_runner_contract,
     check_compiler_version_compatibility,
@@ -797,6 +798,64 @@ jobs:
 
     assert [v.check for v in violations] == ['awf-binary-version']
     assert 'GH_AW_INFO_AWF_VERSION' in violations[0].message
+
+
+# --- AI-credits accounting (the overlay that 403'd every agent job) -----------
+
+
+def test_ai_credits_accounting_rejects_a_priced_model_in_the_awf_config(tmp_path: Path):
+    """The shape that shipped: `models.providers` compiled into `apiProxy.providers`.
+
+    AWF then charged `MiniMax-M3` against a 10,000-credit cap no frontmatter field can
+    raise, and every agent job 403'd with `ai_credits_limit_exceeded` on its first call.
+    """
+    lock = _write(
+        tmp_path / 'w.lock.yml',
+        """
+jobs:
+  agent:
+    steps:
+      - run: printf '%s' '{"apiProxy":{"enabled":true,"maxRuns":500,"providers":{"anthropic":{"models":{"MiniMax-M3":{"cost":{"input":0.6}}}}}}}'
+""",
+    )
+
+    violations = check_ai_credits_accounting(lock)
+
+    assert [v.check for v in violations] == ['ai-credits-accounting']
+    assert '`models.providers`' in violations[0].message
+
+
+def test_ai_credits_accounting_reads_the_escaped_nested_config(tmp_path: Path):
+    """The detection job's config is escaped one level deeper than the agent's."""
+    lock = _write(
+        tmp_path / 'w.lock.yml',
+        """
+jobs:
+  detection:
+    steps:
+      - run: printf '%s' '{\\"apiProxy\\":{\\"maxRuns\\":500,\\"providers\\":{\\"anthropic\\":{}}}}'
+""",
+    )
+
+    assert [v.check for v in check_ai_credits_accounting(lock)] == ['ai-credits-accounting']
+
+
+def test_ai_credits_accounting_ignores_the_informational_model_costs_env(tmp_path: Path):
+    """`GH_AW_INFO_MODEL_COSTS` carries the same overlay but configures nothing."""
+    lock = _write(
+        tmp_path / 'w.lock.yml',
+        """
+jobs:
+  agent:
+    steps:
+      - name: Setup Scripts
+        env:
+          GH_AW_INFO_MODEL_COSTS: '{"providers":{"anthropic":{"models":{"MiniMax-M3":{"cost":{"input":0.6}}}}}}'
+      - run: printf '%s' '{"apiProxy":{"enabled":true,"maxRuns":500}}'
+""",
+    )
+
+    assert check_ai_credits_accounting(lock) == []
 
 
 def test_compiler_version_compatibility_rejects_a_blocked_version(tmp_path: Path):

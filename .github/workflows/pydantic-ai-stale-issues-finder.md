@@ -90,21 +90,13 @@ env:
   # never reaches the agent container, hence this duplicate; `agentic_workflow_guard.py`
   # fails the build if the two ever diverge.
   PYDANTIC_AI_JOB_TIMEOUT_MINUTES: "60"
-# MiniMax pricing for AI-credit enforcement and run-cost reporting, in dollars
-# per 1M tokens. AWF v0.27.44 uses the default for models absent from its
-# catalog; the provider entry retains exact model and cache pricing.
+# Fallback pricing in dollars per 1M tokens, read only if an AI-credits budget is ever
+# active — it is not, and no `models.providers` entry accompanies it. See
+# `shared/engine-minimax.md` for why pricing `MiniMax-M3` there is what stops the agent.
 models:
   default-ai-credits-pricing:
     input: 0.6
     output: 2.4
-  providers:
-    anthropic:
-      models:
-        MiniMax-M3:
-          cost:
-            input: 0.6
-            output: 2.4
-            cache_read: 0.12
 imports:
   - shared/network-vendor-domains.md
   - shared/otel-logfire.md
