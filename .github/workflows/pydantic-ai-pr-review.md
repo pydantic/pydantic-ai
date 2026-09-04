@@ -106,13 +106,6 @@ imports:
   - shared/engine-minimax.md
   - shared/pre-steps.md
   - shared/pre-agent-steps.md
-pre-steps:
-  # Setting engine.command makes gh-aw skip ALL engine installation steps,
-  # which also drops the bundled AWF firewall binary install. Re-run gh-aw's
-  # own installer (the same call it makes for non-custom-command jobs).
-  - name: Install AWF firewall binary (skipped by custom engine.command)
-    run: bash "${RUNNER_TEMP}/gh-aw/actions/install_awf_binary.sh" v0.27.42
-
 pre-agent-steps:
   # Check out the PR head. `workflow_run` starts the job on the default branch, and
   # gh-aw's own "Checkout PR branch" step is gated on `github.event.pull_request` /

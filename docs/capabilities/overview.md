@@ -12,11 +12,11 @@ Capabilities can provide any combination of:
 
 This makes them the primary extension point for Pydantic AI. Whether you're building a memory system, a guardrail, a cost tracker, or an approval workflow, a capability is the right abstraction.
 
-Capabilities can be always-on or [loaded by the model on demand](on-demand.md). The [capability index below](#available-capabilities) spans Pydantic AI itself and [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/), [third-party packages](third-party.md) provide many more, and you can define your own, [declaratively](#bundling-behavior-with-capability) or by [subclassing](custom.md). To run agents durably across failures, restarts, and long waits, see [Durable Execution](../durable_execution/overview.md).
+Capabilities can be always-on or [loaded by the model on demand](on-demand.md). The [capability index below](#available-capabilities) covers Pydantic AI and [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/). [Third-party packages](third-party.md) provide many more capabilities, and you can define your own [declaratively](#bundling-behavior-with-capability) or by [subclassing](custom.md). To run agents durably across failures, restarts, and long waits, see [Durable Execution](../durable_execution/overview.md).
 
 ## Available capabilities
 
-Capabilities come from two packages, and they all compose, with each other and with your own. Core (`pydantic-ai`) ships the capabilities that require model or framework support: provider-native tools, provider APIs, and deep loop integration. **[Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/)**, the official capability library and harness for Pydantic AI, ships everything else, from single capabilities to [complete agents](https://pydantic.dev/docs/ai/harness/coder/). The **Package** column says which; every entry links to its documentation.
+Capabilities come from two packages, and they compose with each other and with capabilities you define. Core (`pydantic-ai`) ships the capabilities that require model or framework support: provider-native tools, provider APIs, and deep loop integration. **[Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/)**, the official capability library and harness for Pydantic AI, ships everything else, from single capabilities to [complete agents](https://pydantic.dev/docs/ai/harness/coder/). The **Package** column says which; every entry links to its documentation.
 
 ### Harnesses
 
@@ -192,6 +192,185 @@ agent = Agent('openai:gpt-5.6-sol', capabilities=[refunds])
 
 Add `defer_loading=True` and the bundle becomes an [on-demand capability](on-demand.md) that stays collapsed to a one-line catalog entry until the model loads it — like [Agent Skills](on-demand.md#loading-skills-from-markdown-files), which you can wrap in a `Capability` directly. See [The `Capability` convenience class](on-demand.md#the-capability-convenience-class) for the full API. For behavior beyond instructions, tools, and toolsets — lifecycle hooks, model settings, native tools — subclass [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability] as covered in [Building Custom Capabilities](custom.md).
 
+## Capability events
+
+Reusable capabilities can publish typed [`CapabilityEvent`][pydantic_ai.messages.CapabilityEvent]s for coordination and observability. Give an event family a stable namespace, define each payload as a dataclass, and emit it from an async capability hook or capability-contributed tool by awaiting [`ctx.emit()`][pydantic_ai.tools.RunContext.emit]:
+
+```python {title="capability_events.py"}
+from dataclasses import dataclass
+from typing import Any
+
+from pydantic_ai import CapabilityEvent, RunContext
+from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.toolsets import AgentToolset, FunctionToolset
+
+WORKSPACE = 'workspace'
+
+
+@dataclass(kw_only=True)
+class FileWriteEvent(CapabilityEvent, namespace=WORKSPACE):
+    path: str
+    bytes_written: int
+
+
+workspace = FunctionToolset()
+
+
+@workspace.tool
+async def write_file(ctx: RunContext[Any], path: str, content: str) -> str:
+    await ctx.emit(FileWriteEvent(path=path, bytes_written=len(content)))
+    return f'Wrote {path}'
+
+
+@dataclass
+class Workspace(AbstractCapability[Any]):
+    def get_toolset(self) -> AgentToolset[Any] | None:
+        return workspace
+```
+
+_(This example is complete, it can be run "as is")_
+
+Keep the namespace in a module-level constant and give it the capability's name or [`id`][pydantic_ai.capabilities.AbstractCapability.id]: every event in the family repeats it, and it's the prefix subscribers match on.
+
+A capability publishes capability events specifically, and emitting an application [`CustomEvent`][pydantic_ai.messages.CustomEvent] from one raises a [`UserError`][pydantic_ai.exceptions.UserError]; see [Which event type do I use?](../agent.md#which-event-type) for the split. The payload cannot use the field names the envelope needs for itself: `data`, `capability_id`, `tool_call_id`, `tool_name`, and `event_kind` are rejected when the class is defined.
+
+Pydantic AI stamps the emitting capability's run id as `capability_id`. Events emitted by its tools also receive `tool_call_id` and `tool_name`. They surface on the [agent run event stream](../agent.md#streaming-all-events) but are internal coordination signals, so UI adapters do not forward them by default. A protocol adapter can override [`handle_capability_event()`][pydantic_ai.ui.UIEventStream.handle_capability_event] to map one onto its own protocol, building the payload itself as `CapabilityEvent` has no `to_payload()`. An application that wants to expose one to a frontend can instead consume it from an [event hook](../hooks.md#event-stream-hooks) and emit an application `CustomEvent` carrying the public payload:
+
+```python {title="republish_capability_event.py"}
+from dataclasses import dataclass
+
+from pydantic_ai import Agent, CapabilityEvent, CustomEvent, RunContext
+from pydantic_ai.capabilities import Hooks
+
+SEARCH_INDEX = 'search_index'
+
+
+@dataclass(kw_only=True)
+class IndexRebuiltEvent(CapabilityEvent, namespace=SEARCH_INDEX):
+    documents: int
+
+
+@dataclass(kw_only=True)
+class SearchReadyEvent(CustomEvent):
+    documents: int
+
+
+hooks = Hooks()
+
+
+@hooks.on.event(IndexRebuiltEvent)
+async def republish(ctx: RunContext, event: IndexRebuiltEvent) -> None:
+    await ctx.emit(SearchReadyEvent(documents=event.documents))
+
+
+agent = Agent('test', capabilities=[hooks])
+```
+
+_(This example is complete, it can be run "as is")_
+
+An event hook belongs to the application rather than to a capability, so it is one of the places application `CustomEvent`s can be emitted.
+
+The namespace and event name form the serialized `kind` (for example, `workspace.file_read`), and the event name is derived from the class name unless you pass an explicit `name=`. A namespace is required: defining a `CapabilityEvent` subclass without one raises `TypeError` there and then, rather than letting an unnamespaced event reach the stream. You only give it once per family, though — an event subclassing another capability event inherits its namespace and contributes just its own name, so a shared base is the tidiest way to define a family — and a subclass can pass its own `namespace=` to move out of the one it inherited. Mark a base that only carries the namespace and fields common to the family `abstract=True`, and it stays out of the registry and can't be emitted itself, while its subclasses register as usual. Decorate it with `@dataclass` like any other event: an undecorated base contributes no fields at all, which is rejected rather than left to surface as a payload quietly missing them. The `kind` is the event's wire identifier, so renaming the class renames the tag with it, breaking compatibility wherever events outlive the emitting process — [durable execution](../durable_execution/overview.md) histories and caches, persisted event logs, subscribers matching on the kind. A capability published as a library should pin `name=` on each of its events. Kinds are registered when the class is defined and must be unique within the process; re-executing the same class definition (as when re-running a notebook cell) replaces the registration. Import the module defining an event before creating the adapter that deserializes it, as each pydantic `TypeAdapter` captures the kinds registered when it is created. Otherwise the event becomes an [`UnknownCapabilityEvent`][pydantic_ai.messages.UnknownCapabilityEvent] and a `UserWarning` is emitted, without losing payload fields; serializing it again preserves the wire representation so a later consumer can recover the typed event.
+
+### Reacting to events
+
+Use [`@on_event`][pydantic_ai.capabilities.on_event] on an async capability method to react to selected event classes. For example, a repository-context capability can enqueue instructions immediately after a file-system capability reports reading a repository guidance file:
+
+```python {title="react_to_capability_events.py"}
+from dataclasses import dataclass
+from typing import Any
+
+from pydantic_ai import CapabilityEvent, RunContext
+from pydantic_ai.capabilities import AbstractCapability, on_event
+
+REPO_CONTEXT = 'repo_context'
+
+
+@dataclass(kw_only=True)
+class FileReadEvent(CapabilityEvent, namespace=REPO_CONTEXT):
+    path: str
+
+
+@dataclass(kw_only=True)
+class DirectoryListedEvent(CapabilityEvent, namespace=REPO_CONTEXT):
+    path: str
+
+
+class RepoContext(AbstractCapability[Any]):
+    @on_event(FileReadEvent, DirectoryListedEvent)
+    async def _follow_discovered_instructions(
+        self,
+        ctx: RunContext[Any],
+        event: FileReadEvent | DirectoryListedEvent,
+    ) -> None:
+        if event.path.endswith('AGENTS.md'):
+            ctx.enqueue(f'Follow the instructions in {event.path}.')
+```
+
+Filtering is explicit: the decorator uses `isinstance` against the classes passed to it. A bare `@on_event` receives the full [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent] union, including model response deltas, tool call and result events, deferred and [enqueued-message](../message-history.md#injecting-messages-mid-run) events, [custom events](../agent.md#custom-events), and capability events.
+
+Name the classes when you can. Beyond narrowing the `event` argument for the type checker, the classes are what let dispatch skip a capability without descending into it: a capability is only woken for events one of its listeners accepts. A bare `@on_event` — or an overridden [`on_event()`][pydantic_ai.capabilities.AbstractCapability.on_event], whose dispatch isn't knowable in advance — opts that capability into every event, and a capability that combines others reports the union of its children's. If you override `on_event()` and can describe what it dispatches, override [`listens_to()`][pydantic_ai.capabilities.AbstractCapability.listens_to] alongside it to say so.
+
+Listeners run sequentially in capability order, and marked methods within one capability run in definition order. The emitting capability also receives its own events. By default, listeners run when the event reaches its position in the stream, so listener ordering always matches stream ordering and listener work does not add to the emitter's latency. For events emitted during tool execution, listeners run before the next model request. An event emitted during `before_model_request` may only reach listeners after that request begins, with the same as-soon-as-possible timing as [`ctx.enqueue()`][pydantic_ai.tools.RunContext.enqueue].
+
+Decision events that need listener mutations before the emitter continues declare `dispatch='immediate'` on the event class:
+
+Building on the workspace capability above, a write can announce itself before it happens and let a listener veto it:
+
+```python {title="cancellable_capability_event.py"}
+from dataclasses import dataclass
+from typing import Any
+
+from pydantic_ai import CapabilityEvent, RunContext
+from pydantic_ai.capabilities import AbstractCapability, on_event
+from pydantic_ai.toolsets import FunctionToolset
+
+WORKSPACE = 'workspace'
+
+
+@dataclass(kw_only=True)
+class FileWriteStartEvent(
+    CapabilityEvent, namespace=WORKSPACE, dispatch='immediate'
+):
+    path: str
+    cancelled: bool = False
+    cancel_reason: str | None = None
+
+    def cancel(self, reason: str | None = None) -> None:
+        self.cancelled = True
+        self.cancel_reason = reason
+
+
+workspace = FunctionToolset()
+
+
+@workspace.tool
+async def write_file(ctx: RunContext[Any], path: str, content: str) -> str:
+    event = await ctx.emit(FileWriteStartEvent(path=path))  # (1)!
+    if event.cancelled:  # (2)!
+        return f'Refused to write {path}: {event.cancel_reason}'
+    return f'Wrote {path}'
+
+
+class ProtectGitDirectory(AbstractCapability[Any]):
+    @on_event(FileWriteStartEvent)
+    async def _veto_writes_to_git(
+        self, ctx: RunContext[Any], event: FileWriteStartEvent
+    ) -> None:
+        if event.path.startswith('.git/'):
+            event.cancel('.git/ is managed by the repository, not the agent')
+```
+
+1. `emit` returns only once every listener has run, and returns the same instance it was given.
+2. So the decision is readable immediately after, on either the returned event or the emitter's own reference.
+
+_(This example is complete, it can be run "as is")_
+
+For immediate dispatch, Pydantic AI buffers the event before invoking listeners, but stream consumers only receive it once all listeners have run, so they never observe a decision half-made. Attribution is stamped on the event in place, so after `await ctx.emit(event)` the emitter can read `event.cancelled` off its own reference (the same instance `emit` returns), and an event emitted by a listener appears after the decision event in the stream. Inline events are still delivered exactly once, including when the same event instance is re-emitted. Stream-dispatch listeners run inside user-defined [`wrap_run_event_stream()`][pydantic_ai.capabilities.AbstractCapability.wrap_run_event_stream] wrappers.
+
+!!! note
+    Any `on_event` listener automatically enables streaming for an otherwise non-streaming `agent.run()`: model requests are made with the provider's streaming API so events exist to listen to. Providers treat streaming and non-streaming requests the same in almost all respects, but if you need to guarantee non-streamed requests, don't attach listeners.
+
 ## Provider-adaptive tools
 
 [`WebSearch`][pydantic_ai.capabilities.WebSearch], [`WebFetch`][pydantic_ai.capabilities.WebFetch], [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration], [`XSearch`][pydantic_ai.capabilities.XSearch], and [`MCP`][pydantic_ai.capabilities.MCP] each cover a single capability (web search, URL fetch, image generation, X search, MCP) across two implementations:
@@ -207,9 +386,14 @@ Add `defer_loading=True` and the bundle becomes an [on-demand capability](on-dem
 | [`XSearch`][pydantic_ai.capabilities.XSearch] | Subagent via `fallback_model=` | No default non-xAI fallback; set `fallback_model` to an xAI model that supports [`XSearchTool`][pydantic_ai.native_tools.XSearchTool] |
 | [`MCP`][pydantic_ai.capabilities.MCP] | Direct connection to the MCP server (the default) | Accepts any [`MCPToolset`][pydantic_ai.mcp.MCPToolset] input; transport is auto-detected from a URL |
 
-Because these capabilities contribute model-facing tools, their `id`, `description`, and `defer_loading` fields are meaningful: set them when that tool should stay hidden until the model loads the matching workflow with the `load_capability` tool. This includes [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] when image generation should only be available for an image-specific workflow, whether it resolves to a native image tool or a fallback subagent tool.
+Because these capabilities contribute model-facing tools, their `id`, `description`, and `defer_loading` fields are meaningful: set `description` and `defer_loading` when that tool should stay hidden until the model loads the matching workflow with the `load_capability` tool. Each of these covers a single fixed concern, so `id` already defaults to a stable value (`'web_search'`, `'web_fetch'`, `'image_generation'`, `'x_search'`; `MCP` derives one from the server URL) — which is what [durable execution](../durable_execution/overview.md) identifies the toolset they contribute by, so it works unconfigured. Set `id` only to rename it, and see [building custom capabilities](custom.md) for what happens when two share one. This includes [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] when image generation should only be available for an image-specific workflow, whether it resolves to a native image tool or a fallback subagent tool.
 
-Configure each side via the `native=` and `local=` kwargs. `native=` accepts `True` (use the capability's default [native tool](../native-tools.md) instance), `False` (disable native), or an explicit instance like `WebSearchTool(...)` for fine-grained config. `local=` accepts `True` (the bundled local fallback, on capabilities that have one — `WebSearch` and `WebFetch`), `False` (disable local), a named strategy string where supported, or any callable, [`Tool`][pydantic_ai.tools.Tool], or [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset]. Optional installs needed for the local fallback are opt-in — the capability raises a [`UserError`][pydantic_ai.exceptions.UserError] at construction (with an install hint) when you ask for a local strategy whose extra isn't installed.
+A [`Capability`][pydantic_ai.capabilities.Capability] contributing several [toolsets](../toolsets.md) names each one `'{capability_id}_{index}'` — those are the ids [durable execution](../durable_execution/overview.md) registers them under.
+
+Configure each side via the `native=` and `local=` kwargs. `native=` accepts `True` (use the capability's default [native tool](../native-tools.md) instance), `False` (disable native), an explicit instance like `WebSearchTool(...)` for fine-grained config, or a callable taking [`RunContext`][pydantic_ai.tools.RunContext] that returns a native tool or `None` (see [Dynamic Configuration](../native-tools.md#dynamic-configuration)). A factory that returns `None` omits the native tool for that request. `local=` accepts `True` (the bundled local fallback, on capabilities that have one — `WebSearch` and `WebFetch`), `False` (disable local), a named strategy string where supported, or any callable, [`Tool`][pydantic_ai.tools.Tool], or [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset]. Optional installs needed for the local fallback are opt-in — the capability raises a [`UserError`][pydantic_ai.exceptions.UserError] at construction (with an install hint) when you ask for a local strategy whose extra isn't installed.
+
+!!! note "`None` on a capability with a `fallback_model`"
+    [`XSearch`][pydantic_ai.capabilities.XSearch] and [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] route unsupported models to a subagent instead of a local tool. Once a `fallback_model` is set, a factory returning `None` no longer omits anything: the subagent tool stays offered to the model, even one that supports the native tool, and calling it raises [`UserError`][pydantic_ai.exceptions.UserError] — see [X Search](x-search.md) and [Image Generation](image-generation.md).
 
 ```python {title="provider_adaptive_tools.py" test="skip" lint="skip"}
 from pydantic_ai import Agent

@@ -11,6 +11,7 @@ from pydantic_ai.native_tools._tool_search import (
 from pydantic_ai.output import OutputContext
 
 from ._dynamic import CapabilityFunc, DynamicCapability
+from ._on_event import on_event
 from ._tool_search import ToolSearch
 from .abstract import (
     AbstractCapability,
@@ -123,6 +124,7 @@ __all__ = [
     'WrapOutputValidateHandler',
     'WrapOutputProcessHandler',
     'NativeTool',
+    'on_event',
     'NativeOrLocalTool',
     'RaiseContentFilterError',
     'Capability',

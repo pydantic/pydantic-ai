@@ -5,6 +5,7 @@ import json
 import uuid
 import warnings
 from collections.abc import AsyncIterator, MutableMapping
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Literal, cast
 
@@ -24,7 +25,9 @@ from pydantic_ai.messages import (
     AudioUrl,
     BinaryContent,
     BinaryImage,
+    CapabilityEvent,
     CompactionPart,
+    CustomEvent,
     DocumentUrl,
     FilePart,
     FunctionToolCallEvent,
@@ -58,6 +61,7 @@ from pydantic_ai.messages import (
     ToolReturn,
     ToolReturnContent,
     ToolReturnPart,
+    UnknownCustomEvent,
     UploadedFile,
     UserPromptPart,
     VideoUrl,
@@ -1739,6 +1743,181 @@ async def test_tool_call_delta_dict_args_are_serialized_compactly():
     assert [chunk['inputTextDelta'] for chunk in chunks if chunk['type'] == 'tool-input-delta'] == [
         '{"type":"search","query":"weather","when":"2025-01-01T00:00:00Z"}'
     ]
+
+
+@dataclass(kw_only=True)
+class VercelProgressEvent(CustomEvent, name='vercel_progress'):
+    payload: Any = None
+
+
+@dataclass(kw_only=True)
+class VercelPassthroughEvent(CustomEvent, name='vercel_passthrough'):
+    """Overrides `to_payload` so a `DataChunk` payload is passed through to the frontend verbatim."""
+
+    chunk: Any = None
+
+    def to_payload(self) -> Any:
+        return self.chunk
+
+
+async def test_custom_event_maps_to_data_chunk():
+    """A `CustomEvent` maps to a `data-{name}` chunk carrying the bare payload, tool-scoped or not.
+
+    A frontend written against one shape must not break when the same event class is later emitted
+    from inside a tool, so attribution is omitted unless the event's `to_payload` includes it.
+    """
+
+    async def event_generator():
+        yield VercelProgressEvent(payload={'pct': 50})
+        yield VercelProgressEvent(payload={'pct': 100}, tool_call_id='call_1')
+
+    request = SubmitMessage(id='foo', messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='go')])])
+    event_stream = VercelAIEventStream(run_input=request)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'data-vercel_progress', 'data': {'payload': {'pct': 50}}},
+            {'type': 'data-vercel_progress', 'data': {'payload': {'pct': 100}}},
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+            '[DONE]',
+        ]
+    )
+
+
+async def test_capability_event_is_not_forwarded():
+    """Capability coordination events are dropped by the Vercel AI adapter by default."""
+
+    @dataclass(kw_only=True)
+    class VercelCapabilityEvent(CapabilityEvent, namespace='vercel_test'):
+        value: int
+
+    async def event_generator():
+        yield VercelCapabilityEvent(value=1, capability_id='test')
+
+    request = SubmitMessage(id='foo', messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='go')])])
+    event_stream = VercelAIEventStream(run_input=request)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+    assert events == snapshot([{'type': 'start'}, {'type': 'finish-step'}, {'type': 'finish'}, '[DONE]'])
+
+
+async def test_typed_custom_event_maps_to_data_chunk():
+    """A typed `CustomEvent` subclass maps its own fields as the `data-{name}` chunk data."""
+
+    @dataclass(kw_only=True)
+    class VercelSyncEvent(CustomEvent, name='vercel_sync'):
+        done: int
+        total: int
+
+    async def event_generator():
+        yield VercelSyncEvent(done=3, total=9)
+
+    request = SubmitMessage(id='foo', messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='go')])])
+    event_stream = VercelAIEventStream(run_input=request)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'data-vercel_sync', 'data': {'done': 3, 'total': 9}},
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+            '[DONE]',
+        ]
+    )
+
+
+async def test_custom_event_with_ui_false_is_not_forwarded():
+    """A `CustomEvent` subclass declared `ui=False` never reaches the frontend."""
+
+    @dataclass(kw_only=True)
+    class VercelInternalEvent(CustomEvent, name='vercel_internal', ui=False):
+        done: int
+
+    @dataclass(kw_only=True)
+    class VercelShownEvent(CustomEvent, name='vercel_shown'):
+        done: int
+
+    async def event_generator():
+        yield VercelInternalEvent(done=1)
+        yield VercelShownEvent(done=2)
+
+    request = SubmitMessage(id='foo', messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='go')])])
+    event_stream = VercelAIEventStream(run_input=request)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'data-vercel_shown', 'data': {'done': 2}},
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+            '[DONE]',
+        ]
+    )
+
+
+async def test_unknown_custom_event_is_not_forwarded():
+    """An event whose class this process never imported can't be known to be frontend-safe."""
+    unknown = UnknownCustomEvent(name='never_imported', data={'token': 's3cr3t'})
+
+    async def event_generator():
+        yield unknown
+
+    request = SubmitMessage(id='foo', messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='go')])])
+    event_stream = VercelAIEventStream(run_input=request)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    # The payload would otherwise ride out as `data-never_imported`.
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+            '[DONE]',
+        ]
+    )
+
+
+async def test_custom_event_passes_through_data_chunk():
+    """A `CustomEvent` whose payload is already a data-carrying chunk is passed through verbatim."""
+
+    async def event_generator():
+        yield VercelPassthroughEvent(chunk=DataChunk(type='data-custom', data={'key': 'value'}))
+
+    request = SubmitMessage(id='foo', messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='go')])])
+    event_stream = VercelAIEventStream(run_input=request)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'data-custom', 'data': {'key': 'value'}},
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+            '[DONE]',
+        ]
+    )
 
 
 async def test_event_stream_thinking_end_with_full_metadata():

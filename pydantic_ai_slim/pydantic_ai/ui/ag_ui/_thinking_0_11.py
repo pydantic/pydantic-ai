@@ -1,5 +1,5 @@
 # pyright: reportPrivateUsage=false
-"""Reasoning event handlers for AG-UI protocol >= 0.1.13 (REASONING_* events).
+"""Reasoning event handlers for AG-UI protocol >= 0.1.11 (REASONING_* events).
 
 These are extracted class methods of `AGUIEventStream` — the `self` parameter
 is the event stream instance, and access to its private fields is intentional.

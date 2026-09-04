@@ -726,7 +726,7 @@ def test_duplicate_capability_ids_raise() -> None:
         )
 
     assert str(exc_info.value) == snapshot(
-        "Capability id 'dup' is used by multiple capabilities. Capability ids must be unique within a run."
+        "Capability id 'dup' is used by multiple capabilities. Ids identify one capability within a run, so give each a distinct `id`."
     )
 
 

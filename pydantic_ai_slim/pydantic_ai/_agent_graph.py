@@ -44,13 +44,13 @@ from pydantic_graph.basenode import NodeRunEndT
 
 from . import _enqueue, _output, _system_prompt, exceptions, messages as _messages, models, result, usage as _usage
 from ._cancel import RunCancellation
-from ._cost import best_effort_price, fill_response_cost
 from ._deferred_capabilities import (
     _parse_loaded_capabilities,  # pyright: ignore[reportPrivateUsage]
     parse_loaded_capabilities,
     registered_loaded_capability_ids,
 )
-from ._run_context import AnchoredEvidence, set_current_run_context
+from ._genai_prices import best_effort_price, fill_response_cost
+from ._run_context import AnchoredEvidence, EventStreamBuffer, dispatch_event_stream, set_current_run_context
 from .exceptions import ToolRetryError
 
 # `_ContinuationStreamedResponse` is an intentionally-exported member of the private
@@ -186,12 +186,15 @@ async def _with_event_stream_buffer(
     stream: AsyncIterator[_messages.AgentStreamEvent],
     event_stream_buffer: list[_messages.AgentStreamEvent],
 ) -> AsyncIterator[_messages.AgentStreamEvent]:
-    """Drain buffered run events around each event from a node stream, preserving order."""
+    """Drain buffered run events at the start and end of a node stream.
+
+    Events buffered while the node stream is live are yielded by the stream itself, as soon as they
+    are emitted (see `_iter_completed_or_buffered`); draining them here as well could yield them
+    ahead of an earlier event the stream is about to deliver, inverting emission order.
+    """
     while event_stream_buffer:
         yield event_stream_buffer.pop(0)
     async for event in stream:
-        while event_stream_buffer:
-            yield event_stream_buffer.pop(0)
         yield event
     while event_stream_buffer:
         yield event_stream_buffer.pop(0)
@@ -326,9 +329,7 @@ class GraphAgentState:
     pending_messages: list[_enqueue.PendingMessage] = dataclasses.field(default_factory=list[_enqueue.PendingMessage])
     """Internal: queue used by [`PendingMessageDrainCapability`][pydantic_ai.capabilities._pending_messages.PendingMessageDrainCapability]
     for messages enqueued via [`enqueue`][pydantic_ai.tools.RunContext.enqueue] or [`AgentRun.enqueue`][pydantic_ai.run.AgentRun.enqueue]."""
-    event_stream_buffer: list[_messages.AgentStreamEvent] = dataclasses.field(
-        default_factory=list[_messages.AgentStreamEvent]
-    )
+    event_stream_buffer: list[_messages.AgentStreamEvent] = dataclasses.field(default_factory=EventStreamBuffer)
     """Internal: run event buffer, shared by reference into every `RunContext` this run (see `build_run_context`)
     as the private `_event_stream_buffer` field. Framework code appends events to it (e.g.
     [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent]s from
@@ -432,6 +433,23 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
 
     cancellation: RunCancellation = dataclasses.field(default_factory=RunCancellation, repr=False)
     """The run's first-party cancellation controller. Runtime-only: holds a live task reference."""
+
+    pending_immediate_dispatches: dict[int, list[asyncio.Event]] = dataclasses.field(
+        default_factory=dict[int, list[asyncio.Event]], repr=False
+    )
+    """Settlement signals for buffered events dispatched immediately, keyed by `id(event)`.
+
+    Runtime-only, deliberately not on `GraphAgentState`: raw object ids are meaningless in a revived
+    process (a stale persisted id could even collide with a new event's address), so a revived run
+    starts empty and buffered events degrade to dispatching at stream position."""
+
+    event_stream_replacements: dict[int, _messages.AgentStreamEvent] = dataclasses.field(
+        default_factory=dict[int, _messages.AgentStreamEvent], repr=False
+    )
+    """Legacy `hooks.on.event` replacements to apply at the consumer-facing stream position.
+
+    Runtime-only and id-keyed like `pending_immediate_dispatches`, and excluded from persistence for
+    the same reason."""
 
     model_id: str | None = None
     """The model-id string `model` was resolved from, if the run's model came from a string.
@@ -1926,19 +1944,22 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         stream, duplicating whatever setup or teardown it does outside its own iteration.
         """
         if self._wrapped_events_iterator is None:
-            inner = _with_event_stream_buffer(self._run_stream(ctx), ctx.state.event_stream_buffer)
+            run_context = build_run_context(ctx)
+            inner = dispatch_event_stream(
+                run_context, _with_event_stream_buffer(self._run_stream(ctx), ctx.state.event_stream_buffer)
+            )
             self._wrapped_events_iterator = aiter(
-                ctx.deps.root_capability.wrap_run_event_stream(build_run_context(ctx), stream=inner)
+                ctx.deps.root_capability.wrap_run_event_stream(run_context, stream=inner)
             )
         return self._wrapped_events_iterator
 
     async def _run_stream(  # noqa: C901
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
-    ) -> AsyncIterator[_messages.HandleResponseEvent]:
+    ) -> AsyncIterator[_messages.AgentStreamEvent]:
         # `_wrapped_stream` builds this generator once per node, so there is no caching to do here.
         output_schema = ctx.deps.output_schema
 
-        async def _run_stream() -> AsyncIterator[_messages.HandleResponseEvent]:  # noqa: C901
+        async def _run_stream() -> AsyncIterator[_messages.AgentStreamEvent]:  # noqa: C901
             if self.model_response.state == 'suspended':
                 # A suspended turn is not a completed response to handle: its partial parts could
                 # match an output schema and end the run on mid-turn output while the provider's
@@ -2122,7 +2143,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         tool_calls: list[_messages.ToolCallPart],
         *,
         response_output: tuple[str, list[_messages.BinaryContent]] | None = None,
-    ) -> AsyncIterator[_messages.HandleResponseEvent]:
+    ) -> AsyncIterator[_messages.AgentStreamEvent]:
         # Re-derive reveals now that the response is in history: a provider-side tool search
         # reveals a tool *inside* the response that goes on to call it, and the model saw that
         # schema before emitting the call. The step-start refresh ran before the response existed.
@@ -2203,16 +2224,21 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
             # Capture the partial tool returns collected so far. State is 'interrupted'
             # so `capture_run_messages` consumers can detect partial state. The user prompt
             # is intentionally omitted: this request was never sent to the model.
-            if output_parts:
-                ctx.state.message_history.append(
-                    _messages.ModelRequest(
-                        parts=list(output_parts),
-                        run_id=ctx.state.run_id,
-                        conversation_id=ctx.state.conversation_id,
-                        timestamp=now_utc(),
-                        state='interrupted',
-                    )
+            #
+            # It's appended even when no tool finished and it's therefore empty: this node only runs
+            # for a response that made tool calls, so the marker is what tells the resume path that
+            # those calls will never be answered and need synthesized `'interrupted'` returns.
+            # Without it, a run cancelled during its first (or only) tool call would leave a history
+            # that can't take a new prompt.
+            ctx.state.message_history.append(
+                _messages.ModelRequest(
+                    parts=list(output_parts),
+                    run_id=ctx.state.run_id,
+                    conversation_id=ctx.state.conversation_id,
+                    timestamp=now_utc(),
+                    state='interrupted',
                 )
+            )
             raise
 
         if output_final_result:
@@ -2409,6 +2435,8 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         pending_messages=ctx.state.pending_messages,
         _cancellation=ctx.deps.cancellation,
         _event_stream_buffer=ctx.state.event_stream_buffer,
+        _pending_immediate_dispatches=ctx.deps.pending_immediate_dispatches,
+        _event_stream_replacements=ctx.deps.event_stream_replacements,
         _mcp_tool_defs_cache=ctx.state.mcp_tool_defs_cache,
     )
     validation_context = build_validation_context(ctx.deps.validation_context, run_context)

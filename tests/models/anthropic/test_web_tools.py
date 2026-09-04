@@ -24,9 +24,9 @@ from ...cassette_utils import single_request_body
 from ...conftest import IsStr, TestEnv, try_import
 from ..test_anthropic import (
     MockAnthropic,
-    _mock_anthropic_client,  # pyright: ignore[reportPrivateUsage]
     completion_message,
     get_mock_chat_completion_kwargs,
+    mock_anthropic_client,
 )
 
 if TYPE_CHECKING:
@@ -158,7 +158,7 @@ def test_anthropic_web_tools_client_support(case: ClientSupportCase):
     """
     m = AnthropicModel(
         'claude-sonnet-4-6',
-        provider=AnthropicProvider(anthropic_client=_mock_anthropic_client(case.client_cls, case.base_url)),
+        provider=AnthropicProvider(anthropic_client=mock_anthropic_client(case.client_cls, case.base_url)),
     )
     params = ModelRequestParameters(native_tools=case.native_tools)
 
@@ -178,9 +178,7 @@ def test_anthropic_web_tools_client_support(case: ClientSupportCase):
 def test_anthropic_explicit_profile_instance_narrows_web_tools():
     """A non-callable `profile` instance is still narrowed by the client when resolved."""
     provider = AnthropicProvider(
-        anthropic_client=_mock_anthropic_client(
-            AsyncAnthropicBedrock, 'https://bedrock-runtime.us-east-1.amazonaws.com'
-        )
+        anthropic_client=mock_anthropic_client(AsyncAnthropicBedrock, 'https://bedrock-runtime.us-east-1.amazonaws.com')
     )
     profile = provider.model_profile('claude-sonnet-4-6')
     m = AnthropicModel('claude-sonnet-4-6', provider=provider, profile=profile)

@@ -1,6 +1,6 @@
 # Native Tools
 
-Native tools are native tools provided by LLM providers that can be used to enhance your agent's capabilities. Unlike [common tools](common-tools.md), which are custom implementations that Pydantic AI executes, native tools are executed directly by the model provider.
+Native tools are provided and executed by LLM providers, while [common tools](common-tools.md) are custom implementations executed by Pydantic AI.
 
 ## Overview
 
@@ -71,6 +71,9 @@ result = agent.run_sync(
 print(result.output)
 #> The capital of France is Paris.
 ```
+
+!!! note "Returning `None` under a `fallback_model`"
+    Omission is what `None` means everywhere the native tool is the only path. [`XSearch`][pydantic_ai.capabilities.XSearch] and [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] are the exception: once `fallback_model` is set, their subagent tool is offered to the model whenever the factory returns `None`, and calling it raises [`UserError`][pydantic_ai.exceptions.UserError] instead of running with default settings. See [X Search](capabilities/x-search.md) and [Image Generation](capabilities/image-generation.md).
 
 ## Web Search Tool
 

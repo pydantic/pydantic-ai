@@ -104,7 +104,7 @@ from ..profiles.openai import (
     validate_openai_profile,
 )
 from ..providers import Provider, infer_provider
-from ..settings import ModelSettings, ThinkingLevel, merge_model_settings
+from ..settings import ModelSettings, ThinkingLevel, ToolOrOutput, merge_model_settings
 from ..tools import AgentDepsT, ToolDefinition
 from . import (
     Model,
@@ -130,6 +130,7 @@ try:
         NOT_GIVEN,
         APIConnectionError,
         APIStatusError,
+        AsyncAzureOpenAI,
         AsyncOpenAI,
         AsyncStream,
         NotGiven,
@@ -311,7 +312,9 @@ _CHAT_FINISH_REASON_MAP: dict[
     'function_call': 'tool_call',
 }
 
-_RESPONSES_FINISH_REASON_MAP: dict[Literal['max_output_tokens', 'content_filter'] | ResponseStatus, FinishReason] = {
+_RESPONSES_FINISH_REASON_MAP: dict[
+    Literal['max_output_tokens', 'max_messages', 'content_filter', 'steered'] | ResponseStatus, FinishReason
+] = {
     'max_output_tokens': 'length',
     'content_filter': 'content_filter',
     'completed': 'stop',
@@ -394,10 +397,6 @@ class _AzureError(BaseModel):
     innererror: _AzureInnerError | None = None
 
 
-class _AzureErrorResponse(BaseModel):
-    error: _AzureError
-
-
 def _resolve_openai_image_generation_size(
     tool: ImageGenerationTool,
 ) -> _OPENAI_IMAGE_SIZE:
@@ -449,21 +448,27 @@ def _map_openai_image_generation_tool(tool: ImageGenerationTool) -> responses.to
     return image_generation_tool
 
 
-def _check_azure_content_filter(e: APIStatusError, system: str, model_name: str) -> ModelResponse | None:
+def _is_azure(client: AsyncOpenAI, system: str) -> bool:
+    return system == 'azure' or isinstance(client, AsyncAzureOpenAI)
+
+
+def _check_azure_content_filter(
+    e: APIStatusError, client: AsyncOpenAI, system: str, model_name: str
+) -> ModelResponse | None:
     """Check if the error is an Azure content filter error."""
     # Assign to Any to avoid 'dict[Unknown, Unknown]' inference in strict mode
     body_any: Any = e.body
 
-    if system == 'azure' and e.status_code == 400 and isinstance(body_any, dict):
+    if _is_azure(client, system) and e.status_code == 400 and _is_str_dict(body_any):
         try:
-            error_data = _AzureErrorResponse.model_validate(body_any)
+            error_data = _AzureError.model_validate(body_any.get('error', body_any))
 
-            if error_data.error.code == 'content_filter':
+            if error_data.code == 'content_filter':
                 provider_details: dict[str, Any] = {'finish_reason': 'content_filter'}
 
-                if error_data.error.innererror:
-                    provider_details['content_filter_result'] = (
-                        error_data.error.innererror.content_filter_result.model_dump(exclude_none=True)
+                if error_data.innererror:
+                    provider_details['content_filter_result'] = error_data.innererror.content_filter_result.model_dump(
+                        exclude_none=True
                     )
 
                 return ModelResponse(
@@ -514,6 +519,24 @@ def _resolve_openai_thinking_effort(thinking: ThinkingLevel, profile: OpenAIMode
     return OPENAI_REASONING_EFFORT_MAP[thinking]  # type: ignore[return-value]
 
 
+def _reasoning_active(
+    profile: OpenAIModelProfile,
+    model_settings: OpenAIChatModelSettings | OpenAIResponsesModelSettings,
+    model_request_parameters: ModelRequestParameters,
+) -> bool:
+    """Whether reasoning is effectively on for this request.
+
+    Explicit effort wins; then the unified `thinking` setting; otherwise the model's default.
+    """
+    reasoning_effort = model_settings.get('openai_reasoning_effort')
+    if reasoning_effort is not None:
+        return reasoning_effort != 'none'
+    thinking = model_request_parameters.thinking
+    if thinking is not None:
+        return thinking is not False
+    return profile.get('openai_reasoning_enabled_by_default', False)
+
+
 def _drop_sampling_params_for_reasoning(
     profile: OpenAIModelProfile,
     model_settings: OpenAIChatModelSettings,
@@ -532,18 +555,10 @@ def _drop_sampling_params_for_reasoning(
     if not profile.get('openai_supports_reasoning', False):
         return
 
-    reasoning_effort = model_settings.get('openai_reasoning_effort')
-    thinking = model_request_parameters.thinking
-    # Determine if reasoning is effectively active. Explicit effort wins; then the unified `thinking`
-    # setting; otherwise fall back to the model's default.
-    if reasoning_effort is not None:
-        reasoning_active = reasoning_effort != 'none'
-    elif thinking is not None:
-        reasoning_active = thinking is not False
-    else:
-        reasoning_active = profile.get('openai_reasoning_enabled_by_default', False)
     # When the model can turn reasoning off, sampling params are allowed while reasoning is inactive.
-    if profile.get('openai_supports_reasoning_effort_none', False) and not reasoning_active:
+    if profile.get('openai_supports_reasoning_effort_none', False) and not _reasoning_active(
+        profile, model_settings, model_request_parameters
+    ):
         return
 
     if dropped := [k for k in SAMPLING_PARAMS if k in model_settings]:
@@ -1006,6 +1021,10 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         WebSearchTool is only supported if openai_chat_supports_web_search is True.
         """
         _profile = super().profile
+        if (provider := self.provider) is not None and _is_azure(provider.client, provider.name):
+            user = self._profile
+            if user is None or (not callable(user) and 'openai_chat_supports_document_input' not in user):
+                _profile = merge_profile(_profile, OpenAIModelProfile(openai_chat_supports_document_input=False))
         if not _profile.get('openai_chat_supports_web_search', False):
             new_tools = _profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) - {WebSearchTool}
             _profile = merge_profile(_profile, ModelProfile(supported_native_tools=new_tools))
@@ -1176,7 +1195,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     extra_body=model_settings.get('extra_body'),
                 )
             except APIStatusError as e:
-                if model_response := _check_azure_content_filter(e, self.system, self.model_name):
+                if model_response := _check_azure_content_filter(e, self.client, self.system, self.model_name):
                     return model_response
                 raise
 
@@ -1424,7 +1443,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
 
         Overrides should raise `UserError` when the user explicitly requested forcing.
         """
-        return _support_tool_forcing(self.model_name, self.profile, model_settings)
+        return _support_tool_forcing(self.model_name, self.profile, model_settings, model_request_parameters)
 
     def _get_stream_options(self, model_settings: OpenAIChatModelSettings) -> chat.ChatCompletionStreamOptionsParam:
         """Build stream_options for the API request.
@@ -1916,7 +1935,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         return chat.ChatCompletionUserMessageParam(role='user', content=content)
 
     def _raise_document_input_not_supported_error(self) -> Never:
-        if self._provider.name == 'azure':
+        if _is_azure(self.client, self.system):
             raise UserError(
                 "Azure's Chat Completions API does not support document input. "
                 'Use `OpenAIResponsesModel` with `AzureProvider` instead.'
@@ -2043,7 +2062,13 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
     @cached_property
     def profile(self) -> OpenAIModelProfile:
-        return cast(OpenAIModelProfile, super().profile)
+        profile = cast(OpenAIModelProfile, super().profile)
+        # A model can be more capable on the Responses API than on Chat Completions, and the two
+        # share one profile: DeepSeek honors `text.format` of type `json_schema` here while its
+        # Chat Completions endpoint rejects it, so the generic flag can only be raised per model class.
+        if profile.get('openai_responses_supports_json_schema_output', False):
+            return cast(OpenAIModelProfile, merge_profile(profile, ModelProfile(supports_json_schema_output=True)))
+        return profile
 
     @classmethod
     def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
@@ -2137,6 +2162,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             messages,
             model_settings,
             model_request_parameters,
+            previous_response_id=previous_response_id,
             standing_prompt_retained=False,
         )
         if instructions_override is not None:
@@ -2150,7 +2176,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 previous_response_id=previous_response_id or OMIT,
             )
         except APIStatusError as e:  # pragma: no cover
-            if model_response := _check_azure_content_filter(e, self.system, self.model_name):
+            if model_response := _check_azure_content_filter(e, self.client, self.system, self.model_name):
                 return model_response
             if (status_code := e.status_code) >= 400:
                 raise ModelHTTPError(
@@ -2614,7 +2640,12 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
         previous_response_id, conversation_id, messages = self._resolve_server_side_state(model_settings, messages)
 
-        instructions, openai_messages = await self._map_messages(messages, model_settings, wire_request_parameters)
+        instructions, openai_messages = await self._map_messages(
+            messages,
+            model_settings,
+            wire_request_parameters,
+            previous_response_id=previous_response_id,
+        )
         reasoning = self._translate_thinking(model_settings, model_request_parameters)
 
         text: responses.ResponseTextConfigParam | Omit = OMIT
@@ -2759,7 +2790,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     extra_body=model_settings.get('extra_body'),
                 )
             except APIStatusError as e:
-                if model_response := _check_azure_content_filter(e, self.system, self.model_name):
+                if model_response := _check_azure_content_filter(e, self.client, self.system, self.model_name):
                     return model_response
                 raise
 
@@ -2920,11 +2951,11 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         if resolved_tool_choice in ('auto', 'none'):
             tool_choice = resolved_tool_choice
         elif resolved_tool_choice == 'required':
-            supports = _support_tool_forcing(self.model_name, openai_profile, model_settings)
+            supports = _support_tool_forcing(self.model_name, openai_profile, model_settings, model_request_parameters)
             tool_choice = 'required' if supports else 'auto'
         elif isinstance(resolved_tool_choice, tuple):
             tool_choice_mode, tool_names = resolved_tool_choice
-            supports = _support_tool_forcing(self.model_name, openai_profile, model_settings)
+            supports = _support_tool_forcing(self.model_name, openai_profile, model_settings, model_request_parameters)
             if tool_choice_mode == 'required' and len(tool_names) == 1 and supports:
                 tool_choice = ToolChoiceFunctionParam(type='function', name=next(iter(tool_names)))
             else:
@@ -3215,6 +3246,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         model_request_parameters: ModelRequestParameters,
         *,
         standing_prompt_retained: bool = True,
+        previous_response_id: str | None = None,
     ) -> tuple[str | Omit, list[responses.ResponseInputItemParam]]:
         """Maps a `pydantic_ai.Message` to a `openai.types.responses.ResponseInputParam` i.e. the OpenAI Responses API input format.
 
@@ -3232,6 +3264,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # across a second compaction in probing, so each freshly built window plants it explicitly.
         messages = self._trim_before_compaction(messages, standing_prompt_retained=standing_prompt_retained)
         profile = self.profile
+        response_scoped_tool_call_ids = profile.get('openai_responses_tool_call_ids_are_response_scoped', False)
+        response_id = previous_response_id if response_scoped_tool_call_ids else None
         send_item_ids = model_settings.get(
             'openai_send_reasoning_ids', profile.get('openai_supports_encrypted_reasoning_content', False)
         )
@@ -3280,6 +3314,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     elif isinstance(part, ToolReturnPart):
                         call_id = _guard_tool_call_id(t=part)
                         call_id, _ = _split_combined_tool_call_id(call_id)
+                        call_id = _provider_response_tool_call_id(call_id, response_id)
                         if call_id in client_replay_call_ids and isinstance(part, ToolSearchReturnPart):
                             # Replay the local `search_tools` result as a
                             # `tool_search_output` so the provider rehydrates the
@@ -3322,6 +3357,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                         else:
                             call_id = _guard_tool_call_id(t=part)
                             call_id, _ = _split_combined_tool_call_id(call_id)
+                            call_id = _provider_response_tool_call_id(call_id, response_id)
                             item = FunctionCallOutput(
                                 type='function_call_output',
                                 call_id=call_id,
@@ -3334,6 +3370,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     else:
                         assert_never(part)
             elif isinstance(message, ModelResponse):
+                response_from_same_provider = message.provider_name == self.system
                 message_item: responses.ResponseOutputMessageParam | None = None
                 reasoning_item: responses.ResponseReasoningItemParam | None = None
                 web_search_item: responses.ResponseFunctionWebSearchParam | None = None
@@ -3351,6 +3388,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     from_same_provider = item.provider_name == self.system or (
                         item.provider_name is None and message.provider_name == self.system
                     )
+                    response_id_from_same_provider = message.provider_name == self.system or (
+                        message.provider_name is None and item.provider_name == self.system
+                    )
+                    response_from_same_provider |= response_id_from_same_provider
                     # Two distinct gates. For native tool items whose state lives server-side
                     # (web search, code interpreter, image generation, MCP), the item ID *is*
                     # the replay payload, so `should_send_item_id` decides whether those items
@@ -3393,6 +3434,12 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     elif isinstance(item, ToolCallPart):
                         call_id = _guard_tool_call_id(t=item)
                         call_id, id = _split_combined_tool_call_id(call_id)
+                        call_id = _provider_response_tool_call_id(
+                            call_id,
+                            message.provider_response_id
+                            if response_scoped_tool_call_ids and response_id_from_same_provider
+                            else None,
+                        )
                         id = id or item.id
 
                         if client_tool_search_active and item.tool_name == TOOL_SEARCH_FUNCTION_TOOL_NAME:
@@ -3586,7 +3633,12 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                         if item.provider_name == self.system:
                             raw_content = (item.provider_details or {}).get('raw_content')
 
-                        if item.id and (should_send_item_id or raw_content):
+                        # Chat Completions stores its content/reasoning field name as a synthetic
+                        # part ID. Preserve opaque IDs from compatible Responses APIs unless they
+                        # collide with one of those sentinels without carrying native wire data.
+                        synthetic_chat_reasoning = item.id in ('content', 'reasoning', 'reasoning_content')
+                        native_reasoning = not synthetic_chat_reasoning or bool(item.signature or raw_content)
+                        if item.id and native_reasoning and (should_send_item_id or raw_content):
                             signature: str | None = None
                             if (
                                 item.signature
@@ -3645,6 +3697,11 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                         raise _unconverted_speech_part_error()
                     else:
                         assert_never(item)
+                response_id = (
+                    message.provider_response_id
+                    if response_scoped_tool_call_ids and response_from_same_provider
+                    else None
+                )
             else:
                 assert_never(message)
         instructions = get_instructions(messages, model_request_parameters) or OMIT
@@ -3838,11 +3895,12 @@ class OpenAIStreamedResponse(StreamedResponse):
     _model_settings: OpenAIChatModelSettings | None = None
     _has_refusal: bool = field(default=False, init=False)
     _refusal_text: str = field(default='', init=False)
+    _has_finish_reason: bool = field(default=False, init=False)
 
     async def close_stream(self) -> None:
         await self._response.source.close()
 
-    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         with _map_api_errors(self._model_name, self._model_id_namespace):
             async for chunk in self._validate_response():
                 if self._provider_timestamp is None and chunk.created:
@@ -3878,6 +3936,8 @@ class OpenAIStreamedResponse(StreamedResponse):
                 if not chunk.choices:
                     continue
                 choice = chunk.choices[0]
+                raw_finish_reason = choice.finish_reason
+                self._has_finish_reason = self._has_finish_reason or bool(raw_finish_reason)
 
                 # When using Azure OpenAI and an async content filter is enabled, the openai SDK can return None deltas.
                 if choice.delta is None:  # pyright: ignore[reportUnnecessaryComparison]
@@ -3892,7 +3952,7 @@ class OpenAIStreamedResponse(StreamedResponse):
                     self._refusal_text += choice.delta.refusal
                     continue
 
-                if (raw_finish_reason := choice.finish_reason) and not self._has_refusal:
+                if raw_finish_reason and not self._has_refusal:
                     self.finish_reason = self._map_finish_reason(raw_finish_reason)
 
                 if provider_details := self._map_provider_details(chunk):  # pragma: no branch
@@ -3905,6 +3965,15 @@ class OpenAIStreamedResponse(StreamedResponse):
 
             if self._refusal_text:
                 self.provider_details = {**(self.provider_details or {}), 'refusal': self._refusal_text}
+            if (
+                self._model_profile.get('openai_chat_streaming_requires_finish_reason', False)
+                and not self._has_finish_reason
+                and not self.cancelled
+            ):
+                raise ModelAPIError(
+                    model_name=self.model_name,
+                    message='Streamed response ended without a `finish_reason`',
+                )
 
     def _validate_response(self) -> AsyncIterable[ChatCompletionChunk]:
         """Hook that validates incoming chunks.
@@ -4955,20 +5024,52 @@ def _map_logprobs(
 def _support_tool_forcing(
     model_name: str,
     openai_profile: OpenAIModelProfile,
-    model_settings: ModelSettings | None,
+    model_settings: OpenAIChatModelSettings | OpenAIResponsesModelSettings,
+    model_request_parameters: ModelRequestParameters,
 ) -> bool:
     """Check if the model supports forced tool use, raising UserError if explicitly requested but unsupported."""
     if not openai_profile.get('openai_supports_tool_choice_required', True):
-        explicit_choice = (model_settings or {}).get('tool_choice')
-        if explicit_choice == 'required' or isinstance(explicit_choice, list):
-            raise UserError(
-                f'tool_choice={explicit_choice!r} is not supported by model {model_name!r}. '
-                f'This model does not support forcing tool use.'
-            )
-        else:
-            return False
-    else:
-        return True
+        return _reject_tool_forcing(
+            model_name,
+            model_settings,
+            model_request_parameters,
+            'This model does not support forcing tool use.',
+        )
+    if not openai_profile.get('openai_supports_forced_tool_choice_with_thinking', True) and _reasoning_active(
+        openai_profile, model_settings, model_request_parameters
+    ):
+        return _reject_tool_forcing(
+            model_name,
+            model_settings,
+            model_request_parameters,
+            'This model does not support forcing tool use while thinking is enabled. '
+            "Disable thinking with `thinking=False` or `openai_reasoning_effort='none'`, "
+            "or use `tool_choice='auto'`.",
+        )
+    return True
+
+
+def _reject_tool_forcing(
+    model_name: str,
+    model_settings: OpenAIChatModelSettings | OpenAIResponsesModelSettings,
+    model_request_parameters: ModelRequestParameters,
+    reason: str,
+) -> bool:
+    """Fall back to unforced tool choice, unless the user asked for forcing explicitly."""
+    explicit_choice = model_settings.get('tool_choice')
+    # `resolve_tool_choice` maps `ToolOrOutput` to required mode when direct output isn't allowed,
+    # so that shape requests forcing just as explicitly as `'required'` or a tool list.
+    explicit_forcing = (
+        explicit_choice == 'required'
+        or isinstance(explicit_choice, list)
+        or (
+            isinstance(explicit_choice, ToolOrOutput)
+            and not (model_request_parameters.allow_text_output or model_request_parameters.allow_image_output)
+        )
+    )
+    if explicit_forcing:
+        raise UserError(f'tool_choice={explicit_choice!r} is not supported by model {model_name!r}. {reason}')
+    return False
 
 
 def _map_compaction_item(
@@ -5159,6 +5260,13 @@ def _response_tool_call_id(tool_call_id: str, response_id: str | None) -> str:
     ID must be made history-wide unique), or `None` to leave the call ID as-is.
     """
     return f'{response_id}:{tool_call_id}' if response_id is not None else tool_call_id
+
+
+def _provider_response_tool_call_id(tool_call_id: str, response_id: str | None) -> str:
+    """Restore a response-scoped provider tool-call ID from its normalized form."""
+    if response_id is None:
+        return tool_call_id
+    return tool_call_id.removeprefix(f'{response_id}:')
 
 
 def _map_code_interpreter_tool_call(
