@@ -20,7 +20,7 @@ from opentelemetry.context import Context
 from typing_extensions import TypeAliasType, assert_never
 
 from .. import _agent_graph
-from .._enqueue import PendingMessage, PendingMessagePriority
+from .._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority
 from .._tool_execution import (
     _reject_unloaded_capability_reveals,  # pyright: ignore[reportPrivateUsage]
     build_tool_return_part,
@@ -468,7 +468,7 @@ def _pending_message_text(pending: PendingMessage) -> str:
     standard run's non-leading system prompts. Anything else can't cross the live input channel.
     """
     error = UserError(
-        '`RunContext.enqueue()` in a realtime session supports plain-text prompts and system-prompt '
+        '`RealtimeSession.enqueue()` and `RunContext.enqueue()` in a realtime session support plain-text prompts and system-prompt '
         'parts only. Multimodal content and model responses cannot be delivered over the live input '
         'channel.'
     )
@@ -505,6 +505,10 @@ class _RealtimePendingMessages(list[PendingMessage]):
             super().append(pending)
         if self._on_append is not None:
             self._on_append(pending.priority)
+
+    def has_priority(self, priority: PendingMessagePriority) -> bool:
+        with self._lock:
+            return any(pending.priority == priority for pending in self)
 
     def pop_priority(self, priority: PendingMessagePriority) -> list[PendingMessage]:
         """Atomically remove and return all messages with `priority`."""
@@ -1208,6 +1212,53 @@ class RealtimeSession:
                     await self.send(item, respond=respond if index == len(content) - 1 else False)
         else:
             assert_never(content)
+
+    def enqueue(
+        self,
+        *content: EnqueueContent,
+        priority: PendingMessagePriority = 'asap',
+    ) -> str | None:
+        """Enqueue content to be delivered to the model when the session is ready for it.
+
+        Use this from code driving the session. For tools, use
+        [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue]. Unlike
+        [`send()`][pydantic_ai.realtime.RealtimeSession.send], which is delivered immediately even
+        while the model is speaking, enqueued content waits for the appropriate turn boundary and
+        triggers a model response when delivered.
+
+        Args:
+            *content: One or more [`EnqueueContent`][pydantic_ai.run.EnqueueContent] items. Realtime
+                delivery supports text parts and
+                [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s, which are joined into
+                one user turn. System parts use the `<system>…</system>` convention to indicate that
+                the text is not the person speaking; that marks where it came from, not that it should
+                be handled silently. The model still gets a turn and decides whether to reply, call a
+                tool, or move on. To add context without prompting a turn at all, use
+                [`send(..., respond=False)`][pydantic_ai.realtime.RealtimeSession.send]. The delivered
+                turn is recorded in history as a
+                [`UserPromptPart`][pydantic_ai.messages.UserPromptPart]. Calling with no positional
+                arguments is a no-op.
+            priority: When to deliver:
+                `'asap'` (default) — as soon as no reply is being generated; a reply already in
+                    progress is allowed to finish first.
+                `'when_idle'` — only once the model is idle: no response is in flight and all
+                    `'asap'` items have been delivered.
+
+        Returns:
+            The `enqueue_id` of the queued message, or `None` when there was nothing to enqueue.
+
+        Raises:
+            UserError: If the session has not been entered or is closed, or the content cannot be
+                delivered over the live input channel.
+        """
+        if not self._entered:
+            raise UserError('Enter the realtime session with `async with` before enqueuing content.')
+        self._ensure_not_closed()
+        pending = PendingMessage.from_content(*content, priority=priority)
+        if pending is None:
+            return None
+        self._pending_messages.append(pending)
+        return pending.enqueue_id
 
     async def _send_audio_content(self, content: BinaryContent) -> None:
         if content.media_type == _WAV_MEDIA_TYPE:
@@ -2542,6 +2593,10 @@ class RealtimeSession:
             if response_active:
                 if priority == 'asap':
                     self._asap_drain_deferred = True
+                return
+            if priority == 'when_idle' and self._pending_messages.has_priority('asap'):
+                # `when_idle` follows every queued `asap` item: the `asap` drain delivers those and
+                # starts a reply, and this priority is retried once that reply completes.
                 return
             selected = self._pending_messages.pop_priority(priority)
             for pending in selected:

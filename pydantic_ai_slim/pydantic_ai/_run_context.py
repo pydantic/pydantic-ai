@@ -746,7 +746,9 @@ class RunContext(Generic[RunContextAgentDepsT]):
                     assistant response is allowed to finish before the content is sent; otherwise it
                     is sent immediately.
                 `'when_idle'` — only when the agent would otherwise end, after `'asap'` messages.
-                    In a realtime session, this means after the next response completes.
+                    In a realtime session, this means after the next response completes. Either way
+                    the model gets a turn on the delivered content, a `SystemPromptPart` included: it
+                    marks provenance, not silence.
 
         Returns:
             The `enqueue_id` of the queued message, echoed on the
