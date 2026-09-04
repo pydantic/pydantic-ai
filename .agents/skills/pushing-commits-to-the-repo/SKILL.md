@@ -257,8 +257,12 @@ if the head changes, capture the new SHA and restart the loop.
    is the source of truth for eligibility and accepted verdicts or no-ops.
    - **Same-repository PR:** require the `CI Review` terminal outcome to identify the captured SHA.
      A `CI Review skipped` check is not that outcome; read its summary for the reason. When the
-     reason is a standing `REQUEST_CHANGES`, the gate stays unsatisfied until that review is
-     dismissed — escalate rather than pushing again, because another push cannot clear it.
+     reason is a standing `REQUEST_CHANGES`, escalate rather than pushing again: only someone with
+     the permission can dismiss it, and no push clears it. Dismissal restores eligibility but
+     produces no verdict — the check on the current head keeps its stale `skipped` summary, and
+     re-running the `CI` workflow does not help, because a re-run emits no fresh `workflow_run`
+     event for the review to fire on. The gate stays unsatisfied until a new commit runs `CI`
+     again. Fold the dismissal into the next push rather than treating it as its own step.
    - **Fork PR:** `CI Review` deliberately skips without leaving a head check. First apply the
      agent-config guard from `.github/workflows/bots.yml` to the captured base-to-head diff. If the
      PR changes an `AGENTS.md` or `CLAUDE.md` at any depth, `CLAUDE.local.md`, `.mcp.json`,
@@ -289,8 +293,9 @@ if the head changes, capture the new SHA and restart the loop.
      Refuting a `CI Review` finding does not clear its `REQUEST_CHANGES`, and no push clears it
      either: the workflow's eligibility gate skips whenever the PR's `reviewDecision` is
      `CHANGES_REQUESTED`, which its own standing verdict satisfies. Resolving the threads is not
-     enough — the review itself has to be dismissed by someone with that permission before a later
-     CI run can produce a fresh verdict. Say so when you hand the PR back, and name the review.
+     enough — the review itself has to be dismissed by someone with that permission, and even then
+     the verdict arrives only with the next commit's `CI` run, never from the dismissal itself. Say
+     so when you hand the PR back, and name the review.
    - Minimize issue-level review dumps when handled. Never silently ignore feedback or close it
      without a reply.
 
