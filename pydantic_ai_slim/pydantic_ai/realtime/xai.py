@@ -65,6 +65,7 @@ from ..tools import ToolDefinition
 from ..usage import RequestUsage
 from ._openai_protocol import (
     RealtimeHandshakeError,
+    config_interrupts_response_on_speech,
     connect_openai_protocol,
     expect_event,
     map_event as _map_openai_event,
@@ -255,6 +256,7 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
         dial: Callable[[], Awaitable[ClientConnection]] | None = None,
         reconnect: ReconnectPolicy | None = None,
         input_transcription_enabled: bool = True,
+        interrupts_response_on_speech: bool = False,
         model_name: str | None = None,
         model_name_getter: Callable[[], str | None] | None = None,
         conversation_id: str | None = None,
@@ -265,6 +267,7 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
             dial=dial,
             reconnect=reconnect,
             input_transcription_enabled=input_transcription_enabled,
+            interrupts_response_on_speech=interrupts_response_on_speech,
             model_name=model_name,
             model_name_getter=model_name_getter,
         )
@@ -526,6 +529,7 @@ class XaiRealtimeModel(RealtimeModel):
                 dial=dial,
                 reconnect=reconnect,
                 input_transcription_enabled=transcription_enabled,
+                interrupts_response_on_speech=config_interrupts_response_on_speech(session_config),
                 model_name=server_model,
                 model_name_getter=model_name_getter,
                 conversation_id=conversation_id,
