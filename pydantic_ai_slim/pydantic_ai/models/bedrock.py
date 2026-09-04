@@ -1933,7 +1933,7 @@ def _effective_thinking_type(
     Explicit `bedrock_additional_model_requests_fields` take precedence over unified thinking,
     matching `_build_additional_model_request_fields`.
     """
-    if model_settings:
+    if model_settings and profile.get('bedrock_thinking_variant') == 'anthropic':
         additional_fields = model_settings.get('bedrock_additional_model_requests_fields')
         if additional_fields is not None and 'thinking' in additional_fields:
             thinking_config = additional_fields['thinking']

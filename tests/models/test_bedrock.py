@@ -6970,7 +6970,7 @@ def test_bedrock_agent_output_tool_with_unsupported_thinking_raises(
     assert client.requests == []
 
 
-def test_bedrock_unified_thinking_setting_takes_precedence_over_params() -> None:
+def test_bedrock_disabled_unified_thinking_takes_precedence_over_params() -> None:
     """The guard uses the same unified-thinking precedence as the base request preparation."""
     client = _AdaptiveThinkingStubClient(_tool_use_response())
     model = BedrockConverseModel(
@@ -6980,11 +6980,32 @@ def test_bedrock_unified_thinking_setting_takes_precedence_over_params() -> None
         output_tools=[ToolDefinition(name='final_result', parameters_json_schema={'type': 'object'})],
         output_mode='tool',
         allow_text_output=False,
-        thinking=False,
+        thinking=True,
     )
 
-    with pytest.raises(UserError, match='thinking and output tools'):
-        model.prepare_request(BedrockModelSettings(thinking=True), params)
+    _, prepared_params = model.prepare_request(BedrockModelSettings(thinking=False), params)
+
+    assert prepared_params.output_mode == 'tool'
+
+
+def test_bedrock_non_anthropic_raw_thinking_does_not_override_unified_thinking() -> None:
+    """An Anthropic-shaped raw field does not hide Qwen's unified thinking setting from the guard."""
+    client = _AdaptiveThinkingStubClient(_tool_use_response())
+    model = BedrockConverseModel(
+        'qwen.qwen3-32b-v1:0', provider=BedrockProvider(bedrock_client=cast(BaseClient, client))
+    )
+    params = ModelRequestParameters(
+        output_tools=[ToolDefinition(name='final_result', parameters_json_schema={'type': 'object'})],
+        output_mode='tool',
+        allow_text_output=False,
+    )
+    settings = BedrockModelSettings(
+        thinking=True,
+        bedrock_additional_model_requests_fields={'thinking': {'type': 'disabled'}},
+    )
+
+    with pytest.raises(UserError, match='extended thinking and output tools'):
+        model.prepare_request(settings, params)
 
 
 @pytest.mark.parametrize('thinking_config', [{'type': 'disabled'}, 'invalid'])
