@@ -22,7 +22,7 @@ instead of ending the call.
 
 Barge-in costs the example no code at all: because playback is a single device-paced
 [`stream_audio()`][pydantic_ai.realtime.RealtimeSession.stream_audio] loop, the session can track
-the playback position itself, so [`handle_barge_in=True`][pydantic_ai.realtime.AgentRealtime.session]
+the playback position itself, so [`handle_barge_in=True`][pydantic_ai.agent.AgentRealtime.session]
 does the local half of it — dropping the buffered audio the user will never hear, truncating the
 provider's transcript to what was really heard, and staying out of the way on an ordinary turn
 where the previous reply was heard in full. The one thing it can't reach is the block already
