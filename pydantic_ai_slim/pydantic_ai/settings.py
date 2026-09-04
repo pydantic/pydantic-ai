@@ -130,6 +130,7 @@ class ModelSettings(TypedDict, total=False):
     * HuggingFace
     * Cerebras
     * Crusoe
+    * GitHub Copilot
     * Ollama
     * OpenRouter
     * Snowflake
@@ -159,6 +160,7 @@ class ModelSettings(TypedDict, total=False):
     * HuggingFace
     * Cerebras
     * Crusoe
+    * GitHub Copilot
     * Ollama
     * OpenRouter
     * Snowflake
@@ -186,6 +188,7 @@ class ModelSettings(TypedDict, total=False):
     * HuggingFace
     * Cerebras
     * Crusoe
+    * GitHub Copilot
     * Ollama
     * OpenRouter
     * Snowflake
@@ -222,6 +225,7 @@ class ModelSettings(TypedDict, total=False):
     * Mistral (numeric seconds only, not `httpx.Timeout`)
     * Cerebras
     * Crusoe
+    * GitHub Copilot
     * Ollama
     * OpenRouter
     * Snowflake
@@ -241,6 +245,7 @@ class ModelSettings(TypedDict, total=False):
     * xAI
     * Cerebras
     * Crusoe
+    * GitHub Copilot
     * Ollama
     * OpenRouter
     * Snowflake
@@ -283,6 +288,7 @@ class ModelSettings(TypedDict, total=False):
     * HuggingFace
     * Cerebras
     * Crusoe
+    * GitHub Copilot
     * Ollama (sent, but Ollama documents `tool_choice` as unsupported)
     * OpenRouter
     * Snowflake
@@ -304,6 +310,7 @@ class ModelSettings(TypedDict, total=False):
     * HuggingFace
     * Cerebras
     * Crusoe
+    * GitHub Copilot
     * Ollama
     * OpenRouter
     * Snowflake
@@ -325,6 +332,7 @@ class ModelSettings(TypedDict, total=False):
     * HuggingFace
     * Cerebras
     * Crusoe
+    * GitHub Copilot
     * Ollama
     * OpenRouter
     * Snowflake
@@ -346,6 +354,7 @@ class ModelSettings(TypedDict, total=False):
     * HuggingFace
     * Cerebras
     * Crusoe
+    * GitHub Copilot
     * Ollama
     * OpenRouter
     * Snowflake
@@ -362,6 +371,7 @@ class ModelSettings(TypedDict, total=False):
     * Groq
     * HuggingFace
     * Crusoe
+    * GitHub Copilot
     * Ollama (sent, but Ollama documents `logit_bias` as unsupported)
     * OpenRouter
     * Snowflake
@@ -386,6 +396,7 @@ class ModelSettings(TypedDict, total=False):
     * HuggingFace
     * Cerebras
     * Crusoe
+    * GitHub Copilot
     * Ollama
     * OpenRouter
     * Snowflake
@@ -405,6 +416,7 @@ class ModelSettings(TypedDict, total=False):
     * Bedrock
     * Cerebras
     * Crusoe
+    * GitHub Copilot
     * Ollama
     * OpenRouter
     * Snowflake
@@ -442,6 +454,8 @@ class ModelSettings(TypedDict, total=False):
     * Cerebras (only `False` is forwarded, as `reasoning_effort='none'`; the enable levels are not
       sent because Cerebras models reason by default, and `gpt-oss` ignores the disable too)
     * Crusoe
+    * GitHub Copilot (Anthropic models raise a `UserError` instead: Copilot's Chat Completions API
+      rejects `reasoning_effort` for them, including the disabling value)
     * Ollama
     * OpenRouter (as `extra_body['reasoning']`)
     * Snowflake (as `extra_body['reasoning']` on Claude models, otherwise as `reasoning_effort`)
@@ -467,6 +481,7 @@ class ModelSettings(TypedDict, total=False):
     * Cerebras (sent and enum-validated — HTTP 200 on an ordinary key; the tiers are in private
       preview, so no effect is observable without access)
     * Crusoe
+    * GitHub Copilot
     * Ollama
     * OpenRouter
     * Snowflake (sent, but Snowflake Cortex rejects `service_tier` with an error)
@@ -488,6 +503,7 @@ class ModelSettings(TypedDict, total=False):
     * HuggingFace
     * Cerebras
     * Crusoe
+    * GitHub Copilot
     * Ollama
     * OpenRouter
     * Snowflake

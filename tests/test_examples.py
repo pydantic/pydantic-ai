@@ -301,6 +301,7 @@ def test_docs_examples(
     env.set('OPENAI_API_VERSION', '2024-05-01')
     env.set('OPENROUTER_API_KEY', 'testing')
     env.set('GITHUB_API_KEY', 'testing')
+    env.set('GITHUB_COPILOT_API_KEY', 'testing')
     env.set('GROK_API_KEY', 'testing')
     env.set('MOONSHOTAI_API_KEY', 'testing')
     env.set('DEEPSEEK_API_KEY', 'testing')

@@ -42,6 +42,8 @@
 
 ::: pydantic_ai.providers.github.GitHubProvider
 
+::: pydantic_ai.providers.github_copilot.GitHubCopilotProvider
+
 ::: pydantic_ai.providers.openrouter.OpenRouterProvider
 
 ::: pydantic_ai.providers.vercel.VercelProvider

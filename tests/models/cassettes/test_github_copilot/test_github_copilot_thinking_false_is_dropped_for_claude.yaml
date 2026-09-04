@@ -1,0 +1,85 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '169'
+      content-type:
+      - application/json
+      copilot-integration-id:
+      - vscode-chat
+      editor-plugin-version:
+      - copilot-chat/0.26.7
+      editor-version:
+      - vscode/1.95.0
+      host:
+      - api.githubcopilot.com
+      openai-intent:
+      - conversation-panel
+    method: POST
+    parsed_body:
+      messages:
+      - content: Be concise.
+        role: system
+      - content: What is the capital of France?
+        role: user
+      model: claude-haiku-4.5
+      stream: false
+    uri: https://api.githubcopilot.com/chat/completions
+  response:
+    headers:
+      content-length:
+      - '920'
+      content-security-policy:
+      - default-src 'none'; sandbox
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        message:
+          content: The capital of France is Paris.
+          role: assistant
+      copilot_usage:
+        token_details:
+        - batch_size: 1000000
+          cost_per_batch: 100000000000
+          model: claude-haiku-4.5
+          token_count: 18
+          token_type: input
+        - batch_size: 1000000
+          cost_per_batch: 10000000000
+          model: claude-haiku-4.5
+          token_count: 0
+          token_type: cache_read
+        - batch_size: 1000000
+          cost_per_batch: 125000000000
+          model: claude-haiku-4.5
+          token_count: 0
+          token_type: cache_write
+        - batch_size: 1000000
+          cost_per_batch: 500000000000
+          model: claude-haiku-4.5
+          token_count: 10
+          token_type: output
+        total_nano_aiu: 6800000
+      created: 1788482756
+      id: msg_011CehUYactQ4uYhKMcsHoqw
+      model: claude-haiku-4.5
+      usage:
+        completion_tokens: 10
+        prompt_tokens: 18
+        prompt_tokens_details:
+          cached_tokens: 0
+        total_tokens: 28
+    status:
+      code: 200
+      message: OK
+version: 1
