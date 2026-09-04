@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
-from dataclasses import dataclass
+from collections.abc import AsyncIterable, AsyncIterator
+from dataclasses import dataclass, replace as dataclasses_replace
 from typing import Any
 
 import pytest
@@ -1108,3 +1108,36 @@ async def test_agent_on_event_registers_bare_with_a_timeout() -> None:
     await agent.run('hello')
 
     assert 'capability' in kinds
+
+
+async def test_agent_on_event_sees_events_before_a_stream_wrapper_rewrites_them() -> None:
+    """Dispatch is upstream of `wrap_run_event_stream`, so a listener sees what was emitted."""
+
+    @dataclass
+    class Rewriter(AbstractCapability[Any]):
+        async def wrap_run_event_stream(
+            self, ctx: RunContext[Any], *, stream: AsyncIterable[AgentStreamEvent]
+        ) -> AsyncIterator[AgentStreamEvent]:
+            async for event in stream:
+                if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
+                    yield dataclasses_replace(event, part=TextPart(content='REWRITTEN'))
+                else:
+                    yield event
+
+    agent = Agent(FunctionModel(stream_function=simple_stream_function), capabilities=[Rewriter()])
+    listener_saw: list[str] = []
+
+    @agent.on_event(PartStartEvent)
+    async def watch(ctx: RunContext[None], event: PartStartEvent) -> None:
+        if isinstance(event.part, TextPart):
+            listener_saw.append(event.part.content)
+
+    consumer_saw: list[str] = []
+    async with agent.run_stream_events('hello') as stream:
+        async for event in stream:
+            if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
+                consumer_saw.append(event.part.content)
+
+    # The listener ran before the wrapper, so it never sees the rewrite the consumer receives.
+    assert 'REWRITTEN' in consumer_saw
+    assert 'REWRITTEN' not in listener_saw

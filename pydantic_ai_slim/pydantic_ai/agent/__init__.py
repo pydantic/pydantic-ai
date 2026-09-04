@@ -2436,9 +2436,19 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent].
 
         This is the application-level counterpart to
-        [`@on_event`][pydantic_ai.capabilities.on_event] on a capability. Listeners registered here
-        run after those contributed by the agent's capabilities, so they observe what the
-        capabilities did, and they survive an overridden root capability.
+        [`@on_event`][pydantic_ai.capabilities.on_event] on a capability, and it dispatches at the
+        same point: among listeners, these run after every listener the agent's capabilities
+        contribute, so they see the events those emitted; and they survive an overridden root
+        capability.
+
+        Dispatch happens *upstream* of
+        [`wrap_run_event_stream()`][pydantic_ai.capabilities.AbstractCapability.wrap_run_event_stream],
+        so a listener sees each event as it was emitted, not as it is finally delivered. A
+        capability that rewrites, replaces or drops events in its stream wrapper does so after
+        every listener has already run, which means a listener can see an event that no stream
+        consumer ever receives. To act on the delivered stream instead, wrap it yourself with
+        `wrap_run_event_stream` on a [`Hooks`][pydantic_ai.capabilities.Hooks] capability, or
+        consume [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events].
 
         Being application code, a listener may emit a `CustomEvent` of its own. That is how a
         capability's internal event reaches a frontend: capability events are deliberately not
