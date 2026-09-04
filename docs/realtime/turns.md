@@ -150,6 +150,45 @@ History records a known cutoff on
 response state as interrupted. When this history is sent to a text model, Pydantic AI adds a readable
 interruption note to the prepared request without modifying stored history.
 
+## Speaking first
+
+Send a text turn to have the agent open the conversation. Wait for the first assistant
+[`SpeechPart`][pydantic_ai.messages.SpeechPart] before opening the microphone; sleeping for a fixed
+delay does not tell you whether speech has started.
+
+```python
+import asyncio
+
+from pydantic_ai import Agent
+
+agent = Agent(instructions='You are a welcoming museum guide.')
+
+
+async def wait_for_assistant_speech(session):
+    async for part in session.stream_transcripts():
+        if part.speaker == 'assistant':
+            return
+
+
+async def main():
+    async with agent.realtime('openai:gpt-realtime').session() as session:
+        speech_started = asyncio.create_task(wait_for_assistant_speech(session))
+        await session.send('Greet the visitor.')
+        await speech_started
+        ...  # open the microphone and start sending audio
+```
+
+With manual turn control, [`create_response()`][pydantic_ai.realtime.RealtimeSession.create_response]
+can request the greeting without adding a text turn. If a response is already active, the request is
+held until that response completes and is dropped if the user barges in. Returning from
+`create_response()` means the request was accepted, not that speech has started. You can also wait
+for a [`RealtimeTurnCompleteEvent`][pydantic_ai.realtime.RealtimeTurnCompleteEvent] when the whole
+greeting must finish before the microphone opens.
+
+Server VAD enables `interrupt_response`, so any detected speech cancels a greeting in flight. This
+includes speaker echo and microphone transients while the audio path opens; keeping the microphone
+closed until assistant speech starts avoids that race.
+
 ## Push-to-talk
 
 Disable automatic detection with `turn_detection=False` on models whose profile declares
