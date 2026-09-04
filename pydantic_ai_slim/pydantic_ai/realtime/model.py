@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, Literal, NoReturn, Protocol
 
 from typing_extensions import TypeAliasType
 
+from .._genai_prices import lookup_context_window, preload_pricing_data
 from ..exceptions import ModelAPIError, UserError
 from ..messages import ModelMessage
 from ..models import ModelRequestParameters
@@ -158,9 +159,24 @@ class RealtimeModel(AbstractModel):
     _profile: RealtimeModelProfileSpec | None = None
     """The user's `profile=` override, applied as the last layer of [`profile`][pydantic_ai.realtime.RealtimeModel.profile].
 
-    Concrete models take it as a keyword-only `profile` init argument and assign it here, mirroring how
-    [`Model`][pydantic_ai.models.Model] stores its own `profile=`.
+    Concrete models take it as a keyword-only `profile` init argument and pass it to the base
+    constructor, mirroring how [`Model`][pydantic_ai.models.Model] stores its own `profile=`.
     """
+
+    def __init__(
+        self,
+        *,
+        settings: RealtimeModelSettings | None = None,
+        profile: RealtimeModelProfileSpec | None = None,
+    ) -> None:
+        """Store the model-level `settings` and `profile=` layers, as [`Model`][pydantic_ai.models.Model]'s constructor does.
+
+        Also loads genai-prices' data snapshot, which [`profile`][pydantic_ai.realtime.RealtimeModel.profile]
+        consults for `context_window`, so that one-time cost stays off the event loop.
+        """
+        self.settings = settings
+        self._profile = profile
+        preload_pricing_data()
 
     @classmethod
     def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
@@ -283,7 +299,10 @@ class RealtimeModel(AbstractModel):
           1. [`DEFAULT_REALTIME_PROFILE`][pydantic_ai.realtime.codec.DEFAULT_REALTIME_PROFILE] — base
              values for every key.
           2. The provider's `realtime_model_profile(model_name)` result — provider-specific defaults.
-          3. The user's `profile=` argument — a partial dict merged on top, OR a callable
+          3. A best-effort `context_window` value from
+             [genai-prices](https://github.com/pydantic/genai-prices), unless the provider or a
+             partial user profile explicitly set the field (including to `None`).
+          4. The user's `profile=` argument — a partial dict merged on top, OR a callable
              `(resolved) -> profile` for full control.
 
         Then `supported_native_tools` is intersected with what this model class actually implements, so
@@ -292,7 +311,15 @@ class RealtimeModel(AbstractModel):
         provider: Provider[object] | None = getattr(self, '_provider', None)
         provider_profile = provider.realtime_model_profile(self.model_name) if provider is not None else None
         resolved = merge_realtime_profile(DEFAULT_REALTIME_PROFILE, provider_profile)
-        if (user := self._profile) is not None:
+        user = self._profile
+        context_window_set = 'context_window' in (provider_profile or {}) or (
+            user is not None and not callable(user) and 'context_window' in user
+        )
+        if not context_window_set:
+            context_window = lookup_context_window(self)
+            if context_window is not None:
+                resolved = merge_realtime_profile(resolved, RealtimeModelProfile(context_window=context_window))
+        if user is not None:
             # The callable form replaces the resolved profile wholesale rather than merging, so a caller
             # can drop a claim the provider made and not just add to it.
             resolved = user(resolved) if callable(user) else merge_realtime_profile(resolved, user)
@@ -301,6 +328,11 @@ class RealtimeModel(AbstractModel):
         if effective_tools != profile_supported:
             resolved = merge_realtime_profile(resolved, RealtimeModelProfile(supported_native_tools=effective_tools))
         return resolved
+
+    @property
+    def context_window(self) -> int | None:
+        """The resolved profile's [`context_window`][pydantic_ai.realtime.RealtimeModelProfile.context_window]."""
+        return self.profile.get('context_window')
 
     @property
     def audio_input_sample_rate(self) -> int:

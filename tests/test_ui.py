@@ -1595,6 +1595,78 @@ async def test_reinject_system_prompt_capability_preserves_existing():
     assert [p.content for p in sys_parts] == ['First agent']
 
 
+async def test_adapter_server_mode_accepts_per_run_reinject_system_prompt():
+    """A caller may supply their own reinjector for the run without tripping over the adapter's.
+
+    Both land in the same run-supplied layer, where ids must be unique, so the adapter's own
+    instance has to stay out of the `reinject_system_prompt` slot the caller's default `id` takes.
+    """
+    agent = Agent(model=TestModel(), system_prompt='Server prompt')
+    adapter = DummyUIAdapter(agent, DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')]))
+
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[SystemPromptPart(content='Stale prompt'), UserPromptPart(content='Earlier')]),
+        ModelResponse(parts=[TextPart(content='Earlier reply')]),
+    ]
+
+    events = [
+        event
+        async for event in adapter.run_stream_native(
+            message_history=history, capabilities=[ReinjectSystemPrompt(replace_existing=True)]
+        )
+    ]
+    run_result_event = next(event for event in events if isinstance(event, AgentRunResultEvent))
+
+    # The caller's reinjector does the work; the adapter must not add a colliding second one.
+    first_request = message(run_result_event.result.all_messages(), ModelRequest)
+    sys_parts = [p for p in first_request.parts if isinstance(p, SystemPromptPart)]
+    assert [p.content for p in sys_parts] == ['Server prompt']
+
+
+async def test_adapter_server_mode_with_non_replacing_agent_reinjector():
+    """Server mode stays authoritative when the agent carries a non-replacing reinjector.
+
+    A bare `ReinjectSystemPrompt()` leaves an existing `SystemPromptPart` alone, so if the adapter
+    let it stand in for its own, a stale prompt in the server-side history would win.
+    """
+    agent = Agent(model=TestModel(), system_prompt='Server prompt', capabilities=[ReinjectSystemPrompt()])
+    adapter = DummyUIAdapter(agent, DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')]))
+
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[SystemPromptPart(content='Stale prompt'), UserPromptPart(content='Earlier')]),
+        ModelResponse(parts=[TextPart(content='Earlier reply')]),
+    ]
+
+    events = [event async for event in adapter.run_stream_native(message_history=history)]
+    run_result_event = next(event for event in events if isinstance(event, AgentRunResultEvent))
+
+    first_request = message(run_result_event.result.all_messages(), ModelRequest)
+    sys_parts = [p for p in first_request.parts if isinstance(p, SystemPromptPart)]
+    assert [p.content for p in sys_parts] == ['Server prompt']
+
+
+async def test_adapter_server_mode_with_deferred_agent_reinjector():
+    """Server mode stays authoritative when the agent's reinjector is deferred.
+
+    A deferred capability's `before_model_request` hook doesn't run until the model calls
+    `load_capability`, so it can never stand in for the adapter's own reinjector.
+    """
+    agent = Agent(
+        # `call_tools=[]` so the model doesn't call `load_capability`, leaving the reinjector deferred.
+        TestModel(call_tools=[]),
+        system_prompt='Server prompt',
+        capabilities=[ReinjectSystemPrompt(replace_existing=True, defer_loading=True, id='deferred_reinject')],
+    )
+    adapter = DummyUIAdapter(agent, DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')]))
+
+    events = [event async for event in adapter.run_stream_native()]
+    run_result_event = next(event for event in events if isinstance(event, AgentRunResultEvent))
+
+    first_request = message(run_result_event.result.all_messages(), ModelRequest)
+    sys_parts = [p for p in first_request.parts if isinstance(p, SystemPromptPart)]
+    assert [p.content for p in sys_parts] == ['Server prompt']
+
+
 def test_allowed_file_url_schemes_visible_in_base_adapter_signatures():
     from_request_parameters = inspect.signature(DummyUIAdapter.from_request).parameters
     dispatch_request_parameters = inspect.signature(DummyUIAdapter.dispatch_request).parameters
@@ -2136,9 +2208,13 @@ def test_sanitize_messages_keeps_dangling_native_tool_calls():
         ]
     )
 
-    with warnings.catch_warnings():
-        warnings.simplefilter('error')  # no dangling-tool-call warning should fire for native calls
+    with warnings.catch_warnings(record=True) as caught_warnings:
+        # Scoped to the warning these tests own rather than `simplefilter('error')`: that form
+        # overrode the suite's intentional `ResourceWarning` ignores, so delayed event-loop GC
+        # failed whichever test happened to collect it.
+        warnings.filterwarnings('always', message=r'Client-submitted history ended with unresolved tool call')
         sanitized = adapter.sanitize_messages(adapter.messages)
+    assert not caught_warnings
 
     response = message(sanitized, ModelResponse, index=1)
     assert [type(p).__name__ for p in response.parts] == ['TextPart', 'NativeToolCallPart']

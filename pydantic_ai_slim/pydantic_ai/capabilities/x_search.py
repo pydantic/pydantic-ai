@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -14,7 +14,7 @@ from pydantic_ai.toolsets import AbstractToolset
 from .native_or_local import NativeOrLocalTool
 
 if TYPE_CHECKING:
-    from pydantic_ai.common_tools.x_search import XSearchFallbackModel
+    from pydantic_ai.common_tools.x_search import XSearchFallbackModel, XSearchNativeTool
 
 
 @dataclass(init=False)
@@ -72,6 +72,13 @@ class XSearch(NativeOrLocalTool[AgentDepsT]):
     When unset, inherits the native tool's default (`False`).
     """
 
+    id: str | None = 'x_search'
+    """One-off: an agent searches, fetches or generates one way, so the id is fixed.
+
+    Declared here rather than only as an `__init__` default so the class states it where
+    `_declares_default_id` -- and a reader -- can see it.
+    """
+
     def __init__(
         self,
         *,
@@ -91,15 +98,10 @@ class XSearch(NativeOrLocalTool[AgentDepsT]):
         enable_image_understanding: bool | None = None,
         enable_video_understanding: bool | None = None,
         include_output: bool | None = None,
-        id: str | None = None,
+        id: str | None = 'x_search',
         description: str | None = None,
         defer_loading: bool = False,
     ) -> None:
-        if fallback_model is not None and local is not None:
-            raise UserError(
-                'XSearch: cannot specify both `fallback_model` and `local` — '
-                'use `fallback_model` for the default subagent fallback, or `local` for a custom tool'
-            )
         self.id = id
         self.description = description
         self.defer_loading = defer_loading
@@ -114,6 +116,19 @@ class XSearch(NativeOrLocalTool[AgentDepsT]):
         self.enable_video_understanding = enable_video_understanding
         self.include_output = include_output
         self.__post_init__()
+
+    def __post_init__(self) -> None:
+        # Checked here rather than in `__init__` so a merge is held to it too: `combine` can pair
+        # one instance's `fallback_model` with another's `local`, which no constructor accepts, and
+        # the local tool would then take effect with `fallback_model` silently ignored. Runs before
+        # the base resolves `local`, so it reads what was declared rather than what was
+        # materialized.
+        if self.fallback_model is not None and self.local is not None:
+            raise UserError(
+                'XSearch: cannot specify both `fallback_model` and `local` — '
+                'use `fallback_model` for the default subagent fallback, or `local` for a custom tool'
+            )
+        super().__post_init__()
 
     def _xsearch_kwargs(self) -> dict[str, Any]:
         """Collect non-None XSearchTool config fields."""
@@ -155,10 +170,6 @@ class XSearch(NativeOrLocalTool[AgentDepsT]):
             return False
         return self.allowed_x_handles is not None or self.excluded_x_handles is not None
 
-    def _resolved_native(self) -> XSearchTool:
+    def _resolved_native(self) -> XSearchNativeTool[AgentDepsT]:
         """Get the XSearchTool for the fallback, with capability-level overrides applied."""
-        base = self.native if isinstance(self.native, XSearchTool) else XSearchTool()
-        overrides = self._xsearch_kwargs()
-        if not overrides:
-            return base
-        return replace(base, **overrides)
+        return self._resolve_native_with_overrides(XSearchTool, self._xsearch_kwargs())

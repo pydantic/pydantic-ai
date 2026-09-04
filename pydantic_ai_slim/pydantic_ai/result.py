@@ -14,7 +14,7 @@ from pydantic import ValidationError
 from typing_extensions import Self
 
 from . import _utils, exceptions, messages as _messages, models
-from ._cost import best_effort_price
+from ._genai_prices import best_effort_price
 from ._output import (
     OutputDataT_inv,
     OutputSchema,
@@ -24,7 +24,7 @@ from ._output import (
     run_image_process_hooks,
     run_output_with_hooks,
 )
-from ._run_context import AgentDepsT, RunContext
+from ._run_context import AgentDepsT, RunContext, dispatch_event_stream
 from ._sync_stream import SyncStreamBridge
 from .messages import AgentStreamEvent, ModelResponseStreamEvent
 from .output import (
@@ -395,7 +395,9 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
             # Wrap once, so a capability's `wrap_run_event_stream` sees each event exactly once no
             # matter how many times this stream is iterated (e.g. `stream_text()` then a drain).
             self._events_iterator = aiter(
-                self._root_capability.wrap_run_event_stream(self._run_ctx, stream=self._events_iter(base_iter))
+                self._root_capability.wrap_run_event_stream(
+                    self._run_ctx, stream=dispatch_event_stream(self._run_ctx, self._events_iter(base_iter))
+                )
             )
 
         return self._pull_shared(self._events_iterator)
