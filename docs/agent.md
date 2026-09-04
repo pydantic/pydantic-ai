@@ -1005,43 +1005,22 @@ Cancellation is **run-scoped**: `cancel()` cancels the run its `RunContext` belo
 
 #### Keeping model prices up to date
 
-Pydantic AI ships with a list of model prices. That list is only refreshed with each release, so a model that came out after you installed Pydantic AI has no price and its cost is `None` until you upgrade.
+Pydantic AI bundles model prices at release time. To estimate costs for models released after you installed it, download updated prices when your app starts:
 
-To pick up new prices as they're published, call [`update_in_background()`][pydantic_ai.prices.update_in_background] once when your app starts:
-
-```python {test="skip"}
-from pydantic_ai import prices
-
-prices.update_in_background()
-```
-
-This downloads the latest price list right away and again every hour, in the background, so your code never waits for it. If a download fails, the last good list stays in use.
-
-The call returns an updater you can hold on to. Use it to wait for the first download before your first run, or to stop updating when your app shuts down:
-
-```python {test="skip"}
+```python
 from pydantic_ai import prices
 
 updater = prices.update_in_background()
-updater.wait()  # block until the first download has finished
 
-# ... run your agents ...
-
-updater.stop()  # stop updating, e.g. when your app shuts down
+try:
+    ...  # run your app
+finally:
+    updater.stop()
 ```
 
-It also works as a context manager, which is handy in a web framework's startup hook:
+The price list updates immediately and then hourly in a background thread. Failed downloads leave the most recent prices in use.
 
-```python {test="skip"}
-from pydantic_ai import prices
-
-with prices.update_in_background():
-    ...  # your app runs here; updating stops on exit
-```
-
-If your app runs several worker processes, call it in each worker after it starts, not before the workers are forked.
-
-To download from your own URL or on a different schedule, use [`genai_prices.UpdatePrices`](https://github.com/pydantic/genai-prices/blob/main/packages/python/README.md#updateprices) directly; it shares one background download with `update_in_background()`.
+For a custom URL or update interval, use [`genai_prices.UpdatePrices`](https://github.com/pydantic/genai-prices/blob/main/packages/python/README.md#updateprices), which shares the same background task.
 
 #### Usage Limits
 
