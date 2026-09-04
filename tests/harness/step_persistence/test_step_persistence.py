@@ -368,6 +368,20 @@ class TestFileStepStore:
 
         assert await store.list_snapshots(run_id='r1') == [snapshot]
 
+    async def test_snapshot_scan_skips_a_partially_written_snapshot_file(self, tmp_path: Path) -> None:
+        # The corrupt file is the only one in the directory on purpose: the key scan returns as soon as
+        # it reads a snapshot carrying the same key, so a directory that also held a good one would only
+        # reach the corrupt file when `glob` happened to yield it first, which is filesystem order.
+        store = FileStepStore(tmp_path)
+        snapshot = ContinuableSnapshot(run_id='r1', step_index=1, messages=[], idempotency_key='0:1:complete')
+        snap_dir = tmp_path / 'r1' / 'snapshots'
+        snap_dir.mkdir(parents=True)
+        (snap_dir / 'broken.json').write_text('{', encoding='utf-8')
+
+        await store.save_snapshot(snapshot)
+
+        assert await store.list_snapshots(run_id='r1') == [snapshot]
+
     async def test_snapshot_key_line_separator_does_not_suppress_distinct_key(self, tmp_path: Path) -> None:
         store = FileStepStore(tmp_path)
         first = ContinuableSnapshot(run_id='r1', step_index=1, messages=[], idempotency_key='first\nsecond')
