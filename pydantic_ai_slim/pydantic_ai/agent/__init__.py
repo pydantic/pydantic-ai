@@ -31,7 +31,6 @@ from pydantic_ai.capabilities._deferred_capability_loader import DeferredCapabil
 
 from .. import (
     _agent_graph,
-    _enqueue,
     _instructions,
     _output,
     _system_prompt,
@@ -1643,8 +1642,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             tracer = NoOpTracer()
             instrumentation_cap = None
 
-        pending_message_queue = _enqueue.PendingMessageQueue(state.pending_messages)
-
         # Build initial RunContext for for_run lifecycle hooks. Includes every
         # field that's already known here — `tool_manager` and `validation_context`
         # are populated later by `build_run_context` once the run is iterating.
@@ -1664,7 +1661,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             else DEFAULT_INSTRUMENTATION_VERSION,
             run_step=0,
             pending_messages=state.pending_messages,
-            _pending_message_queue=pending_message_queue,
             run_id=state.run_id,
             conversation_id=state.conversation_id,
             _cancellation=cancellation,
@@ -1843,7 +1839,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             get_instructions=get_instructions,
             instrumentation_settings=instrumentation_settings,
             cancellation=cancellation,
-            pending_message_queue=pending_message_queue,
         )
 
         user_prompt_node = _agent_graph.UserPromptNode[AgentDepsT](

@@ -587,7 +587,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         pending = PendingMessage.from_content(*content, priority=priority)
         if pending is None:
             return None
-        self._graph_run.deps.pending_message_queue.append(pending)
+        self._graph_run.state.pending_messages.append(pending)
         return pending.enqueue_id
 
     def cancel(self) -> None:

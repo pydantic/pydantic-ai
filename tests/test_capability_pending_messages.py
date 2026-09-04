@@ -5,6 +5,8 @@ Split out of `test_capabilities.py` per #7304.
 
 from __future__ import annotations
 
+import copy
+import pickle
 import threading
 from collections.abc import AsyncIterable, AsyncIterator
 from concurrent.futures import ThreadPoolExecutor
@@ -69,6 +71,14 @@ pytestmark = [
 # ===== Pending Message Queue Tests =====
 
 
+def test_pending_message_queue_copy_round_trip():
+    queue = PendingMessageQueue([PendingMessage(messages=[ModelRequest(parts=[UserPromptPart(content='queued')])])])
+
+    copies = [copy.deepcopy(queue), pickle.loads(pickle.dumps(queue))]
+
+    assert all(isinstance(item, PendingMessageQueue) and item == queue for item in copies)
+
+
 @pytest.mark.parametrize('drain_all', [False, True], ids=['one-priority', 'all-priorities'])
 def test_sync_enqueue_does_not_race_pending_message_drain(drain_all: bool):
     """A worker-thread enqueue is not overwritten by either drain operation."""
@@ -84,14 +94,12 @@ def test_sync_enqueue_does_not_race_pending_message_drain(drain_all: bool):
                 drain_and_enqueue_ready.wait(timeout=5)
             return super()._pop_priority(priority)
 
-    pending_messages: list[PendingMessage] = []
-    queue = BlockingQueue(pending_messages)
+    queue = BlockingQueue()
     ctx = RunContext(
         deps=None,
         model=TestModel(),
         usage=RunUsage(),
-        pending_messages=pending_messages,
-        _pending_message_queue=queue,
+        pending_messages=queue,
     )
 
     drain = queue.pop_all_by_priority if drain_all else lambda: queue.pop_priority('asap')
@@ -101,7 +109,7 @@ def test_sync_enqueue_does_not_race_pending_message_drain(drain_all: bool):
         drain_future.result(timeout=5)
         enqueue_future.result(timeout=5)
 
-    assert len(pending_messages) == 1
+    assert len(queue) == 1
 
 
 async def test_enqueue_asap_message_from_tool():

@@ -7,9 +7,9 @@ state for the pending message queue, not part of the wire-serializable message h
 from __future__ import annotations
 
 import threading
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Literal, TypeAlias
+from typing import TYPE_CHECKING, Literal, SupportsIndex, TypeAlias
 
 from ._uuid import uuid7
 from .exceptions import UserError
@@ -167,16 +167,21 @@ class PendingMessage:
         return cls(messages=messages, priority=priority)
 
 
-class PendingMessageQueue:
-    """Thread-safe access to a run's pending-message list."""
+class PendingMessageQueue(list[PendingMessage]):
+    """A run's pending messages with thread-safe append and drain operations."""
 
-    def __init__(self, messages: list[PendingMessage]) -> None:
-        self.messages = messages
+    __slots__ = ('_lock',)
+
+    def __init__(self, messages: Iterable[PendingMessage] = ()) -> None:
+        super().__init__(messages)
         self._lock = threading.Lock()
+
+    def __reduce_ex__(self, protocol: SupportsIndex) -> tuple[type[PendingMessageQueue], tuple[list[PendingMessage]]]:
+        return PendingMessageQueue, (list(self),)
 
     def append(self, pending: PendingMessage) -> None:
         with self._lock:
-            self.messages.append(pending)
+            super().append(pending)
 
     def pop_priority(self, priority: PendingMessagePriority) -> list[PendingMessage]:
         with self._lock:
@@ -188,6 +193,6 @@ class PendingMessageQueue:
             return self._pop_priority('asap'), self._pop_priority('when_idle')
 
     def _pop_priority(self, priority: PendingMessagePriority) -> list[PendingMessage]:
-        selected = [pending for pending in self.messages if pending.priority == priority]
-        self.messages[:] = [pending for pending in self.messages if pending.priority != priority]
+        selected = [pending for pending in self if pending.priority == priority]
+        self[:] = [pending for pending in self if pending.priority != priority]
         return selected

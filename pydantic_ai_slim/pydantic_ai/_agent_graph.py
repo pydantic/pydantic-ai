@@ -345,6 +345,11 @@ class GraphAgentState:
     identically on durable replay/recovery, which is what keeps the Temporal/DBOS MCP wrappers'
     `get_tools` scheduling replay-deterministic."""
 
+    def __post_init__(self) -> None:
+        # Keep the persisted shape a plain list while ensuring every live graph state uses the
+        # thread-safe list subclass. Pydantic deserialization also runs this hook.
+        self.pending_messages = _enqueue.PendingMessageQueue(self.pending_messages)
+
     def check_incomplete_tool_call(self) -> None:
         """Raise `IncompleteToolCall` if the last model response was truncated mid-tool-call."""
         if (
@@ -428,9 +433,6 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
 
     tracer: Tracer
     instrumentation_settings: InstrumentationSettings | None
-
-    pending_message_queue: _enqueue.PendingMessageQueue = dataclasses.field(repr=False)
-    """Runtime-only synchronization for `GraphAgentState.pending_messages`."""
 
     agent: Agent[DepsT, Any] | None = None
 
@@ -2436,7 +2438,6 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         loaded_capability_ids=ctx.deps.loaded_capability_ids,
         discovered_tool_names=ctx.deps.discovered_tool_names,
         pending_messages=ctx.state.pending_messages,
-        _pending_message_queue=ctx.deps.pending_message_queue,
         _cancellation=ctx.deps.cancellation,
         _event_stream_buffer=ctx.state.event_stream_buffer,
         _pending_immediate_dispatches=ctx.deps.pending_immediate_dispatches,
@@ -2446,7 +2447,7 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
     validation_context = build_validation_context(ctx.deps.validation_context, run_context)
     # Only `validation_context` may be passed to `replace`: it shallow-copies, preserving the shared
     # identity of the mutable members passed by reference above — `loaded_capability_ids`,
-    # `discovered_tool_names`, `pending_messages`, `_pending_message_queue`, `_cancellation`, `_event_stream_buffer`,
+    # `discovered_tool_names`, `pending_messages`, `_cancellation`, `_event_stream_buffer`,
     # `_mcp_tool_defs_cache` (see the invariant on `GraphAgentDeps.loaded_capability_ids`). Never
     # add any of them as a `replace` kwarg — forking the object would silently break in-step
     # capability loads / tool reveals / message enqueues / cancellation / event delivery /

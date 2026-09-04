@@ -437,7 +437,7 @@ def _pending_message_text(pending: PendingMessage) -> str:
     return '\n\n'.join(texts)
 
 
-class _RealtimePendingMessages(list[PendingMessage]):
+class _RealtimePendingMessages(PendingMessageQueue):
     """A `RunContext.enqueue` queue that validates content and wakes the live session for delivery."""
 
     def __init__(self) -> None:
@@ -697,7 +697,6 @@ class RealtimeSession:
         self._transcript_so_far: dict[int, str] = {}
         self._background_tasks: set[asyncio.Task[None]] = set()
         self._pending_messages = _RealtimePendingMessages()
-        self._pending_message_queue = PendingMessageQueue(self._pending_messages)
         self._pending_messages_lock = Lock()
         # Serializes everything we send. Tool results go out from background tasks while the caller may
         # be streaming audio or driving turn control, and a single operation can span several frames:
@@ -707,7 +706,6 @@ class RealtimeSession:
         self._send_lock = Lock()
         if (ctx := self._tool_manager.ctx) is not None:
             ctx.pending_messages = self._pending_messages
-            ctx._pending_message_queue = self._pending_message_queue  # pyright: ignore[reportPrivateUsage]
         # In-flight tool tasks keyed by tool call id, so a `ToolCallCancelled` can cancel the specific
         # calls the model abandoned (e.g. on barge-in) without touching the others.
         self._pending_tool_calls: dict[str, tuple[asyncio.Task[None], ToolCallPart]] = {}
@@ -2222,7 +2220,7 @@ class RealtimeSession:
                 if priority == 'asap':
                     self._asap_drain_deferred = True
                 return
-            selected = self._pending_message_queue.pop_priority(priority)
+            selected = self._pending_messages.pop_priority(priority)
             for pending in selected:
                 await self.send(_pending_message_text(pending))
             if priority == 'asap':

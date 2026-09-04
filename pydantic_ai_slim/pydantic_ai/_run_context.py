@@ -17,7 +17,7 @@ from typing_extensions import TypeVar, deprecated
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 
 from . import _utils, messages as _messages
-from ._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority, PendingMessageQueue
+from ._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority
 from ._warnings import PydanticAIDeprecationWarning
 from .exceptions import UserError
 
@@ -221,9 +221,6 @@ class RunContext(Generic[RunContextAgentDepsT]):
     Managed by the framework: read it if useful, but use [`enqueue`][pydantic_ai.tools.RunContext.enqueue]
     to add messages rather than mutating it directly.
     """
-
-    _pending_message_queue: PendingMessageQueue | None = field(default=None, repr=False)
-    """Private runtime-only synchronization for `pending_messages`."""
 
     _cancellation: RunCancellation | None = field(default=None, repr=False)
     """Private implementation detail — not part of the public API; do not read or write.
@@ -758,10 +755,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
         pending = PendingMessage.from_content(*content, priority=priority)
         if pending is None:
             return None
-        if self._pending_message_queue is None:
-            self.pending_messages.append(pending)
-        else:
-            self._pending_message_queue.append(pending)
+        self.pending_messages.append(pending)
         return pending.enqueue_id
 
     def cancel(self) -> None:

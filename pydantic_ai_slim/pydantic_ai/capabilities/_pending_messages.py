@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from pydantic_ai._agent_graph import ModelRequestNode
-from pydantic_ai._enqueue import PendingMessage
+from pydantic_ai._enqueue import PendingMessage, PendingMessageQueue
 from pydantic_ai._utils import fill_run_metadata
 from pydantic_ai.capabilities.abstract import AbstractCapability, CapabilityOrdering
 from pydantic_ai.exceptions import UserError
@@ -83,9 +83,10 @@ class PendingMessageDrainCapability(AbstractCapability[Any]):
         [`enqueue`][pydantic_ai.tools.RunContext.enqueue] call, in enqueue order, describing the
         messages exactly as delivered here.
         """
-        # This capability only runs in standard graph runs, which always install the shared queue.
-        queue = ctx._pending_message_queue  # pyright: ignore[reportPrivateUsage]
-        assert queue is not None
+        # Standard graph runs always use the thread-safe list subclass; other `RunContext` producers
+        # may supply a plain list, but they never invoke this internal drain capability.
+        queue = ctx.pending_messages
+        assert isinstance(queue, PendingMessageQueue)
         drained = queue.pop_priority('asap')
         for pending in drained:
             messages = _stamped_messages(
@@ -122,9 +123,10 @@ class PendingMessageDrainCapability(AbstractCapability[Any]):
         if not isinstance(result, End):
             return result
 
-        # This capability only runs in standard graph runs, which always install the shared queue.
-        queue = ctx._pending_message_queue  # pyright: ignore[reportPrivateUsage]
-        assert queue is not None
+        # Standard graph runs always use the thread-safe list subclass; other `RunContext` producers
+        # may supply a plain list, but they never invoke this internal drain capability.
+        queue = ctx.pending_messages
+        assert isinstance(queue, PendingMessageQueue)
         # Pi-mono parity: drain `'asap'` first so anything that arrived during the
         # final step (e.g. a background task completing while the model produced
         # its final response) gets delivered before `'when_idle'` messages, and the

@@ -18,7 +18,7 @@ from pydantic_core import SchemaValidator, core_schema
 
 from pydantic_ai import Agent, ModelRetry, RunContext
 from pydantic_ai._agent_graph import resolve_conversation_id
-from pydantic_ai._enqueue import PendingMessage, PendingMessageQueue
+from pydantic_ai._enqueue import PendingMessage
 from pydantic_ai._instrumentation import get_instructions
 from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls, NativeTool, WebFetch
 from pydantic_ai.exceptions import (
@@ -4680,31 +4680,6 @@ async def test_agent_realtime_session_delivers_enqueued_text(priority: Literal['
         conversation_id=IsStr(),
         run_id=IsStr(),
     )
-
-
-async def test_realtime_session_replaces_existing_pending_message_queue() -> None:
-    pending_messages: list[PendingMessage] = []
-    ctx = RunContext(
-        deps=None,
-        model=TestModel(),
-        usage=RunUsage(),
-        run_step=0,
-        pending_messages=pending_messages,
-        _pending_message_queue=PendingMessageQueue(pending_messages),
-    )
-    toolset: FunctionToolset[None] = FunctionToolset()
-
-    @toolset.tool
-    def queue_followup(ctx: RunContext[None]) -> str:
-        ctx.enqueue('follow-up context')
-        return 'queued'
-
-    manager = await ToolManager(toolset).for_run_step(ctx)
-    conn = _EnqueueConnection([])
-    async with _RealtimeSession(conn, tool_manager=manager) as session:
-        _ = [event async for event in session]
-
-    assert [item for item in conn.sent if isinstance(item, str)] == ['follow-up context']
 
 
 class _ConcurrentEnqueueConnection(FakeRealtimeConnection):
