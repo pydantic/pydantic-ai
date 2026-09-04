@@ -27,29 +27,9 @@ pytestmark = [
 ]
 
 
-@pytest.mark.parametrize(
-    ('stream', 'expected_part_types'),
-    [
-        pytest.param(
-            False,
-            snapshot([[UserPromptPart], [NativeToolCallPart, NativeToolReturnPart, TextPart]]),
-            id='non-streaming',
-        ),
-        pytest.param(
-            True,
-            snapshot(
-                [
-                    [UserPromptPart],
-                    [NativeToolCallPart, NativeToolReturnPart, NativeToolCallPart, NativeToolReturnPart, TextPart],
-                ]
-            ),
-            id='streaming',
-        ),
-    ],
-)
+@pytest.mark.parametrize('stream', [False, True], ids=['non-streaming', 'streaming'])
 async def test_agentic_video_processing(
     stream: bool,
-    expected_part_types: list[object],
     allow_model_requests: None,
     gemini_api_key: str,
     request_capture: RequestCapture,
@@ -91,7 +71,17 @@ async def test_agentic_video_processing(
             }
         ]
     )
-    assert part_types_from_messages(messages) == expected_part_types
+    assert part_types_from_messages(messages)[0] == [UserPromptPart]
+    response_parts = messages[-1].parts
+    assert isinstance(response_parts[-1], TextPart)
+    processing_parts = response_parts[:-1]
+    assert processing_parts
+    assert len(processing_parts) % 2 == 0
+    for tool_call, tool_return in zip(processing_parts[::2], processing_parts[1::2]):
+        assert isinstance(tool_call, NativeToolCallPart)
+        assert isinstance(tool_return, NativeToolReturnPart)
+        assert tool_call.tool_name == tool_return.tool_name == 'media_processing'
+        assert tool_call.tool_call_id == tool_return.tool_call_id
 
     follow_up = await agent.run('Which animal appears first?', message_history=messages)
     assert isinstance(follow_up.output, str)

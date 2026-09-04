@@ -263,7 +263,7 @@ class FileUrl(ABC):
     """Vendor-specific metadata for the file.
 
     Supported by:
-    - `GoogleModel`: `VideoUrl.vendor_metadata` is used as `video_metadata`: https://ai.google.dev/gemini-api/docs/video-understanding#customize-video-processing, `vendor_metadata['media_processing']` enables agentic processing for video inputs: https://ai.google.dev/gemini-api/docs/video-understanding#agentic-video-understanding, and `vendor_metadata['media_resolution']` is forwarded as the per-Part `media_resolution` field for supported file types: https://ai.google.dev/gemini-api/docs/media-resolution
+    - `GoogleModel`: `VideoUrl.vendor_metadata` is used as `video_metadata`: https://ai.google.dev/gemini-api/docs/video-understanding#customize-video-processing, `vendor_metadata['media_processing']` enables agentic processing for video inputs: https://ai.google.dev/gemini-api/docs/video-understanding#agentic-video-understanding, and `vendor_metadata['media_resolution']` is forwarded as the per-Part `media_resolution` field for any file type: https://ai.google.dev/gemini-api/docs/media-resolution
     - `OpenAIChatModel`, `OpenAIResponsesModel`: `ImageUrl.vendor_metadata['detail']` is used as `detail` setting for images
     - `XaiModel`: `ImageUrl.vendor_metadata['detail']` is used as `detail` setting for images
     - `GroqModel`: `ImageUrl.vendor_metadata['detail']` is used as `detail` setting for images

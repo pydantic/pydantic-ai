@@ -283,9 +283,42 @@ async def test_media_processing_requires_supported_sdk(mapping_model: GoogleMode
         await mapping_model._map_user_prompt(UserPromptPart(content=[video]))  # pyright: ignore[reportPrivateUsage]
 
 
+async def test_media_processing_composes_with_video_metadata(mapping_model: GoogleModel, mocker: MockerFixture) -> None:
+    mocker.patch('pydantic_ai.models.google._SDK_SUPPORTS_MEDIA_PROCESSING', True)
+    video = VideoUrl(
+        url='https://www.youtube.com/watch?v=lCdaVNyHtjU',
+        vendor_metadata={
+            'media_processing': 'AGENTIC',
+            'media_resolution': 'MEDIA_RESOLUTION_LOW',
+            'start_offset': '10s',
+        },
+    )
+
+    content = await mapping_model._map_user_prompt(UserPromptPart(content=[video]))  # pyright: ignore[reportPrivateUsage]
+
+    assert content == snapshot(
+        [
+            {
+                'file_data': {
+                    'file_uri': 'https://www.youtube.com/watch?v=lCdaVNyHtjU',
+                    'mime_type': 'video/mp4',
+                },
+                'media_processing': 'AGENTIC',
+                'media_resolution': 'MEDIA_RESOLUTION_LOW',
+                'video_metadata': {'start_offset': '10s'},
+            }
+        ]
+    )
+
+
 def test_missing_native_tool_type_with_payload_is_rejected() -> None:
     with pytest.raises(UnexpectedModelBehavior, match='Missing tool_type on native tool part'):
         _map_tool_call(ToolCall(id='call-1', args={'query': 'test'}), 'google')
+
+
+def test_missing_native_tool_type_without_agentic_video_is_rejected() -> None:
+    with pytest.raises(UnexpectedModelBehavior, match='Missing tool_type on native tool part'):
+        _map_tool_call(ToolCall(id='call-1'), 'google')
 
 
 # =============================================================================

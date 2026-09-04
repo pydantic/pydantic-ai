@@ -358,7 +358,7 @@ result = agent.run_sync(
 print(result.output)
 ```
 
-This requires `google-genai>=2.20.0` and works with video URLs, video [`BinaryContent`][pydantic_ai.BinaryContent], and video [`UploadedFile`][pydantic_ai.UploadedFile] values. Pydantic AI ignores `media_processing` for standalone audio, images, and documents. `media_resolution` can be set on the same video, but Google documents custom clipping and frame-rate settings only for static processing.
+This requires `google-genai>=2.20.0`. Pydantic AI forwards the setting for video URLs, video [`BinaryContent`][pydantic_ai.BinaryContent], and video [`UploadedFile`][pydantic_ai.UploadedFile] values; support for a particular video source still depends on the Gemini model and API. Pydantic AI ignores `media_processing` for standalone audio, images, and documents. `media_resolution` can be set on the same video, but Google documents custom clipping and frame-rate settings only for static processing.
 
 Files can be uploaded via the [Files API](https://ai.google.dev/gemini-api/docs/files) and passed as URLs:
 

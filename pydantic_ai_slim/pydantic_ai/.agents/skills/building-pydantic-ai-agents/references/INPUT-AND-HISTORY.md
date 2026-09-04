@@ -23,7 +23,7 @@ Use `BinaryContent(...)` when the asset is already in memory instead of at a URL
 
 Not every model supports every input type. Keep provider expectations in mind when the user chooses a specific model.
 
-For Gemini agentic video processing, set `vendor_metadata={'media_processing': 'AGENTIC'}` on a `VideoUrl`, video `BinaryContent`, or video `UploadedFile`. This setting is video-only, requires `google-genai>=2.20.0`, and is ignored for standalone audio, images, and documents. Pydantic AI keeps Gemini's internal media-processing call and return parts in message history for observability, but omits them when sending that history back because Gemini rejects them without its provider-only tool context.
+For Gemini agentic video processing, set `vendor_metadata={'media_processing': 'AGENTIC'}` on a `VideoUrl`, video `BinaryContent`, or video `UploadedFile`. Pydantic AI forwards the setting for these video inputs, while support for a particular source still depends on the Gemini model and API. This setting requires `google-genai>=2.20.0` and is ignored for standalone audio, images, and documents. Pydantic AI keeps Gemini's internal media-processing call and return parts in message history for observability, but omits them when sending that history back because Gemini rejects them without its provider-only tool context.
 
 ## Work with Message History
 
