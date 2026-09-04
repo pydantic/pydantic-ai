@@ -26,8 +26,11 @@ class Retries(AbstractCapability[Any]):
 When two instances are two *identities* rather than two statements of one configuration — two accounts, two credentials — a fixed default `id` is the wrong shape, because merging them would silently drop one. Derive the `id` from whatever distinguishes them instead: two identities then carry two ids and stay two capabilities, and two under one id are a genuine mistake that is reported. [`MCP`][pydantic_ai.capabilities.MCP] derives one from its server's host and last path segment, so servers that differ only in their port or in an earlier path segment still need distinct explicit `id`s.
 
 Override [`combine`][pydantic_ai.capabilities.AbstractCapability.combine] only when composing takes more than merging fields — a budget that should take the *smaller* of two values, say.
+The default merge sees dataclass fields only, so a plain class with a fixed default `id` and instance configuration must override `combine`; otherwise repeated instances raise rather than silently dropping that configuration.
+This includes private attributes. Compute derived values with properties, or declare them as fields and recompute them in `combine`: merging does not re-run `__post_init__`.
 
 **A capability supplied for a run** overrides its agent-level namesake outright — `agent.run(capabilities=[Thinking(effort='high')])` replaces the agent's `Thinking` rather than merging with it. A run states what *this* run does, so merging would let an agent-level setting the run meant to replace survive, and let an agent-level allow-list widen a restriction the run was passed to impose. `combine` is not consulted across layers.
+Unrelated capability classes cannot share an `id` across layers. A transparent wrapper that retains its wrapped capability's `id`, such as `prefix_tools()`, can replace that capability across layers; this does not allow different wrapper classes to merge within one layer.
 
 To keep two rather than resolving them, pass a distinct `id` to each, or `id=None` to opt back into the derived-and-disambiguated ids. An `id` you pass to a capability that declares no default is a name you chose, so passing the same one twice is reported as a collision rather than merged.
 

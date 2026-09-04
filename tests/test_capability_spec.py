@@ -111,6 +111,49 @@ def test_instrumentation_default_settings() -> None:
     assert isinstance(instr.settings, InstrumentationSettings)
 
 
+def test_instrumentation_spec_covers_every_serializable_setting() -> None:
+    """A spec can set every `InstrumentationSettings` option that survives YAML.
+
+    `from_spec` names its parameters rather than forwarding `**kwargs`, which is worth keeping --
+    it types the surface and generates the JSON schema. The cost is that an option left out of the
+    signature stops being expressible, so this asserts the signature against the settings class
+    instead of against a hand-written list that can drift from it.
+    """
+    import inspect
+
+    from pydantic_ai.models.instrumented import InstrumentationSettings
+
+    # `tracer_provider` and `meter_provider` are live OTel objects, so they cannot come from YAML.
+    serializable = {
+        name
+        for name in inspect.signature(InstrumentationSettings.__init__).parameters
+        if name not in {'self', 'tracer_provider', 'meter_provider'}
+    }
+    accepted = set(inspect.signature(Instrumentation.from_spec).parameters)
+
+    assert not (serializable - accepted), (
+        f'`Instrumentation.from_spec` cannot express {sorted(serializable - accepted)}, '
+        'so a spec that sets it now raises `TypeError`.'
+    )
+    assert (
+        Instrumentation.from_spec(include_model_request_parameters=False).settings.include_model_request_parameters
+        is False
+    )
+
+
+def test_instrumentation_spec_will_not_name_the_capability() -> None:
+    """An agent has one instrumentation configuration, so a spec has nothing to name.
+
+    `id` is a constructor argument, but exposing it through a spec would invite two
+    `Instrumentation` capabilities that no longer share an id -- and so no longer resolve to one,
+    which is the whole point of the class declaring a default.
+    """
+    with pytest.raises(TypeError, match='id'):
+        Instrumentation.from_spec(id='monitoring')  # pyright: ignore[reportCallIssue]
+
+    assert Instrumentation.from_spec().id == 'instrumentation'
+
+
 def test_agent_from_spec_basic():
     """Test Agent.from_spec with basic capabilities."""
     agent = Agent.from_spec(
@@ -973,6 +1016,7 @@ def test_model_json_schema_with_capabilities():
                         'gateway/openai:gpt-5.6-luna',
                         'gateway/openai:gpt-5.6-sol',
                         'gateway/openai:gpt-5.6-terra',
+                        'gateway/openai:gpt-6-astra',
                         'gateway/openai:gpt-daybreak-blue-latest',
                         'gateway/openai:gpt-daybreak-red-latest',
                         'gateway/openai:o1',
@@ -1161,6 +1205,7 @@ def test_model_json_schema_with_capabilities():
                         'openai-chat:gpt-5.6-luna',
                         'openai-chat:gpt-5.6-sol',
                         'openai-chat:gpt-5.6-terra',
+                        'openai-chat:gpt-6-astra',
                         'openai-chat:gpt-daybreak-blue-latest',
                         'openai-chat:gpt-daybreak-red-latest',
                         'openai-chat:o1',
@@ -1241,6 +1286,7 @@ def test_model_json_schema_with_capabilities():
                         'openai:gpt-5.6-luna',
                         'openai:gpt-5.6-sol',
                         'openai:gpt-5.6-terra',
+                        'openai:gpt-6-astra',
                         'openai:gpt-daybreak-blue-latest',
                         'openai:gpt-daybreak-red-latest',
                         'openai:o1',
@@ -1793,8 +1839,11 @@ def test_model_json_schema_with_capabilities():
                 'spec_params_Instrumentation': {
                     'additionalProperties': False,
                     'properties': {
-                        'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
                         'include_binary_content': {'title': 'Include Binary Content', 'type': 'boolean'},
+                        'include_model_request_parameters': {
+                            'title': 'Include Model Request Parameters',
+                            'type': 'boolean',
+                        },
                         'include_content': {'title': 'Include Content', 'type': 'boolean'},
                         'version': {'enum': [2, 3, 4, 5, 6], 'title': 'Version', 'type': 'integer'},
                         'use_aggregated_usage_attribute_names': {

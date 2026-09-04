@@ -100,8 +100,14 @@ _ALWAYS_ON_REASONING = _ReasoningSupport(
 """The model always reasons; it doesn't accept `reasoning_effort='none'`."""
 
 _REASONING_SUPPORT_BY_PREFIX: dict[str, _ReasoningSupport] = {
-    # GPT-5.6 (sol/terra/luna) reasons by default (at 'medium'), accepts `effort='none'` to turn
-    # reasoning off, and is the only family that supports `reasoning.mode`. The GPT-5.4, -5.5 and
+    # GPT-6 Astra reasons by default and does not accept `effort='none'` (its guide migrates
+    # `none`/`minimal` users to `low`); it carries over GPT-5.6's `reasoning.mode` and
+    # `reasoning.context='all_turns'` per https://developers.openai.com/api/docs/models/gpt-6-astra.
+    'gpt-6-astra': _ReasoningSupport(
+        enabled_by_default=True, can_be_disabled=False, supports_mode=True, supports_context=True
+    ),
+    # GPT-5.6 (sol/terra/luna) reasons by default (at 'medium') and accepts `effort='none'` to turn
+    # reasoning off (GPT-6 Astra shares `reasoning.mode`). The GPT-5.4, -5.5 and
     # -5.6 families all accept `reasoning.context='all_turns'` (live-verified 2026-07).
     'gpt-5.6': _ReasoningSupport(
         enabled_by_default=True, can_be_disabled=True, supports_mode=True, supports_context=True
@@ -144,11 +150,10 @@ _REASONING_SUPPORT_BY_PREFIX: dict[str, _ReasoningSupport] = {
 }
 """Reasoning support per model-name prefix; the first matching prefix wins, so a more specific
 prefix (e.g. `'gpt-5.3-chat'`) must be listed before the broader one it would otherwise match
-(e.g. `'gpt-5.3'`), and every newer `gpt-5.x` family before the plain `'gpt-5'` catch-all.
+(e.g. `'gpt-5.3'`), and every newer family before the plain `'gpt-5'` catch-all.
 Models that don't match any prefix don't reason. Every cell was verified against the live
-Responses API (2026-07): a model reasons by default exactly when it rejects sampling parameters
-with no `reasoning.effort` set, and can be disabled exactly when it accepts `effort='none'`.
-The full resolved matrix is pinned in `tests/profiles/test_openai.py`."""
+Responses API (2026-07) except `gpt-6-astra`, which is pinned from its published model guide
+pending API access. The full resolved matrix is pinned in `tests/profiles/test_openai.py`."""
 
 
 def _reasoning_support(model_name: str) -> _ReasoningSupport:
@@ -384,9 +389,10 @@ def openai_model_profile(model_name: str) -> ModelProfile:
     reasoning = _reasoning_support(model_name)
 
     # `phase` is supported by gpt-5.3-codex, gpt-5.4 and later mainline models, including gpt-5.6
-    # (its responses label messages with `phase`, as recorded in the reasoning-mode cassette).
+    # (its responses label messages with `phase`, as recorded in the reasoning-mode cassette) and
+    # gpt-6-astra (mainline continuation; not yet live-verified).
     # See https://developers.openai.com/api/docs/guides/prompt-guidance.
-    supports_phase = model_name.startswith(('gpt-5.3-codex', 'gpt-5.4', 'gpt-5.5', 'gpt-5.6'))
+    supports_phase = model_name.startswith(('gpt-5.3-codex', 'gpt-5.4', 'gpt-5.5', 'gpt-5.6', 'gpt-6-astra'))
 
     # The o1-mini model doesn't support the `system` role, so we default to `user`.
     # See https://github.com/pydantic/pydantic-ai/issues/974 for more details.
@@ -400,17 +406,17 @@ def openai_model_profile(model_name: str) -> ModelProfile:
 
     # OpenAI's native `tool_search` tool with `defer_loading` is available on gpt-5.4 and later
     # mainline families (https://developers.openai.com/api/docs/guides/tools-tool-search; GPT-5.6
-    # verified live). Like the other gates in this function, this enumerates known versions rather
-    # than matching open-endedly, so a new family must be added here explicitly once confirmed;
-    # until then it falls back to local search.
-    supports_tool_search = model_name.startswith(('gpt-5.4', 'gpt-5.5', 'gpt-5.6'))
+    # verified live; GPT-6 Astra per its model guide's supported tools). Like the other gates in
+    # this function, this enumerates known versions rather than matching open-endedly, so a new
+    # family must be added here explicitly once confirmed; until then it falls back to local search.
+    supports_tool_search = model_name.startswith(('gpt-5.4', 'gpt-5.5', 'gpt-5.6', 'gpt-6-astra'))
     supported_native_tools = _OPENAI_BASE_BUILTINS | {ToolSearchTool} if supports_tool_search else _OPENAI_BASE_BUILTINS
 
     # Explicit prompt cache breakpoints are supported on gpt-5.6 and later models, on both the
     # Chat Completions and Responses APIs. Like the other gates in this function, this enumerates
     # known versions rather than matching open-endedly.
     # See https://developers.openai.com/api/docs/guides/prompt-caching#prompt-cache-breakpoints.
-    supports_prompt_cache_breakpoints = model_name.startswith('gpt-5.6')
+    supports_prompt_cache_breakpoints = model_name.startswith(('gpt-5.6', 'gpt-6-astra'))
     # Structured Outputs (output mode 'native') is only supported with the gpt-4o-mini, gpt-4o-mini-2024-07-18,
     # and gpt-4o-2024-08-06 model snapshots and later. We leave it in here for all models because the
     # `default_structured_output_mode` is `'tool'`, so `native` is only used when the user specifically uses
@@ -433,7 +439,7 @@ def openai_model_profile(model_name: str) -> ModelProfile:
         openai_responses_supports_reasoning_context=reasoning.supports_context,
         openai_supports_phase=supports_phase,
         openai_supports_prompt_cache_breakpoints=supports_prompt_cache_breakpoints,
-        openai_supports_minimal_reasoning_effort=not model_name.startswith('gpt-5.6'),
+        openai_supports_minimal_reasoning_effort=not model_name.startswith(('gpt-5.6', 'gpt-6-astra')),
         supported_native_tools=supported_native_tools,
     )
 

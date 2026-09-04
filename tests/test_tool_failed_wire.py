@@ -346,8 +346,12 @@ async def test_openai_chat_failed_tool_return_keeps_files_out_of_error() -> None
         {
             'role': 'user',
             'content': [
-                {'text': 'This is file report:', 'type': 'text'},
+                {
+                    'text': '<tool_result tool_name="tool" tool_call_id="call_1" file_id="report">',
+                    'type': 'text',
+                },
                 {'image_url': {'url': 'https://example.com/image.png'}, 'type': 'image_url'},
+                {'text': '</tool_result>', 'type': 'text'},
             ],
         },
     ]
@@ -688,8 +692,9 @@ async def test_bedrock_framed_failure_defers_unsupported_media(bedrock_provider:
         {
             'role': 'user',
             'content': [
-                {'text': 'This is file report:'},
+                {'text': '<tool_result tool_name="tool" tool_call_id="call_1" file_id="report">'},
                 {'document': {'name': 'Document 1', 'format': 'pdf', 'source': {'bytes': b'%PDF-1.4'}}},
+                {'text': '</tool_result>'},
             ],
         },
     ]

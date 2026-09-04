@@ -13,7 +13,7 @@ import pkgutil
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import KW_ONLY, dataclass, field
-from typing import Any, NamedTuple, TypeGuard, cast
+from typing import Any, ClassVar, NamedTuple, TypeGuard, cast
 
 import pytest
 from inline_snapshot import snapshot
@@ -24,6 +24,7 @@ from pydantic_ai.capabilities import (
     MCP,
     Capability,
     CapabilityOrdering,
+    Hooks,
     ImageGeneration,
     Instrumentation,
     RaiseContentFilterError,
@@ -47,10 +48,12 @@ from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.capabilities.wrapper import WrapperCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart
+from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.native_tools import WebFetchTool, WebSearchTool, XSearchTool
+from pydantic_ai.native_tools import MCPServerTool, WebFetchTool, WebSearchTool, XSearchTool
+from pydantic_ai.run import AgentRunResult
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
@@ -530,11 +533,12 @@ class _CarriesUncomparable(AbstractCapability[Any]):
 
 
 def test_a_plain_class_capability_cannot_silently_lose_its_configuration() -> None:
-    """A merge can only reconcile what dataclass fields declare, so invisible configuration is refused.
+    """A merge keeps a value only one side states, and cannot do that for an undeclared attribute.
 
-    A plain class keeps its configuration in plain attributes: `merge_capability_fields` would see
-    no fields to reconcile, keep the last instance whole, and silently drop the rest. Raising turns
-    the silent loss into a decision: declare the configuration as fields, or override `combine`.
+    A plain class keeps its configuration in plain attributes. `replace_no_init` copies the last
+    instance, so such an attribute does get *a* value -- the last one -- but not the one the table
+    promises, where a value only an earlier instance stated survives. Raising turns that silent
+    difference into a decision.
     """
 
     class Retries(AbstractCapability[Any]):
@@ -543,8 +547,103 @@ def test_a_plain_class_capability_cannot_silently_lose_its_configuration() -> No
         def __init__(self, limit: int) -> None:
             self.limit = limit
 
-    with pytest.raises(UserError, match='outside dataclass fields'):
+    with pytest.raises(UserError, match='sets limit outside its dataclass fields'):
         Retries.combine([Retries(1), Retries(9)])
+
+
+def test_a_plain_class_capability_cannot_silently_lose_private_configuration() -> None:
+    """Private attributes are still configuration the default merge cannot reconcile."""
+
+    class Retries(AbstractCapability[Any]):
+        id: str | None = 'retries'
+
+        def __init__(self, limit: int) -> None:
+            self._limit = limit
+
+    with pytest.raises(UserError, match='outside its dataclass fields'):
+        Retries.combine([Retries(1), Retries(9)])
+
+
+def test_generic_alias_metadata_is_not_capability_configuration() -> None:
+    """`__orig_class__` is typing metadata attached after initialization, not hidden user state."""
+
+    merged = ReinjectSystemPrompt[Any].combine(
+        [ReinjectSystemPrompt[Any](replace_existing=False), ReinjectSystemPrompt[Any](replace_existing=True)]
+    )
+
+    assert isinstance(merged, ReinjectSystemPrompt)
+    assert merged.replace_existing is True
+
+
+def test_durable_operation_bindings_are_not_capability_configuration() -> None:
+    """Bindings added when a capability is reused by durable agents are runtime bookkeeping."""
+
+    first = ReinjectSystemPrompt(replace_existing=False)
+    first._get_durable_operation_bindings()  # pyright: ignore[reportPrivateUsage]
+
+    merged = ReinjectSystemPrompt.combine([first, ReinjectSystemPrompt(replace_existing=True)])
+
+    assert isinstance(merged, ReinjectSystemPrompt)
+    assert merged.replace_existing is True
+
+
+def test_the_undeclared_attribute_error_explains_derived_state() -> None:
+    """Derived state must follow the merged fields rather than the last instance's inputs."""
+
+    @dataclass
+    class Derived(AbstractCapability[Any]):
+        limit: int = 3
+        _: KW_ONLY
+        id: str | None = 'derived'
+
+        def __post_init__(self) -> None:
+            self.doubled = self.limit * 2
+
+    with pytest.raises(UserError) as exc_info:
+        Derived.combine([Derived(limit=1), Derived(limit=2)])
+
+    message = str(exc_info.value)
+    assert 'dataclass fields' in message, 'declaring it is the fix for real configuration'
+    assert '`combine`' in message, 'recomputing it is the fix for state derived from merged fields'
+    assert 'property' in message, 'computing on access avoids stale derived state'
+
+
+def test_private_derived_state_must_be_declared_and_recomputed() -> None:
+    """A leading underscore cannot make derived state safe to copy after a union."""
+
+    @dataclass
+    class Underscored(AbstractCapability[Any]):
+        domains: list[str] = field(default_factory=list[str])
+        _: KW_ONLY
+        id: str | None = 'underscored'
+
+        def __post_init__(self) -> None:
+            self._count = len(self.domains)
+
+        @property
+        def count(self) -> int:
+            """How the capability itself would read the derived value."""
+            return self._count
+
+    with pytest.raises(UserError, match='sets _count outside its dataclass fields'):
+        Underscored.combine([Underscored(domains=['a']), Underscored(domains=['b'])])
+
+    # Recomputing in `combine` is what actually fixes it, which is what the message says.
+    @dataclass
+    class Recomputes(Underscored):
+        id: str | None = 'recomputes'
+        _count: int = field(init=False, compare=False)
+
+        @classmethod
+        def combine(cls, capabilities: Sequence[AbstractCapability[Any]]) -> AbstractCapability[Any]:
+            merged = merge_capability_fields(capabilities)
+            assert isinstance(merged, Recomputes)
+            merged.__post_init__()
+            return merged
+
+    recomputed = Recomputes.combine([Recomputes(domains=['a']), Recomputes(domains=['b'])])
+    assert isinstance(recomputed, Recomputes)
+    assert recomputed.count == 2
 
 
 def test_a_field_whose_equality_raises_takes_the_later_value() -> None:
@@ -728,11 +827,11 @@ def test_a_merged_collection_keeps_the_type_the_field_declared() -> None:
     assert type(merged.unique) is frozenset
 
 
-def test_a_collection_that_cannot_be_rebuilt_keeps_the_plain_merge() -> None:
+def test_a_collection_that_cannot_be_rebuilt_keeps_the_later_declared_value() -> None:
     """A `NamedTuple` takes its fields positionally, so rebuilding it from a list raises.
 
-    Merging keeps the plain value rather than turning a type mismatch into a `TypeError`. Two of
-    these are not really a union anyway -- a `NamedTuple` is a record, not a collection.
+    Merging keeps the later declared value rather than turning a type mismatch into a `TypeError`
+    or corrupting the field to a plain `list`. A `NamedTuple` is a record, not a collection.
     """
 
     class Pair(NamedTuple):
@@ -747,7 +846,8 @@ def test_a_collection_that_cannot_be_rebuilt_keeps_the_plain_merge() -> None:
 
     merged = Record.combine([Record(pair=Pair('a', 'b')), Record(pair=Pair('c', 'd'))])
     assert isinstance(merged, Record)
-    assert merged.pair == ['a', 'b', 'c', 'd']
+    assert merged.pair == Pair('c', 'd')
+    assert type(merged.pair) is Pair
 
 
 async def test_a_second_local_search_tool_replaces_the_first() -> None:
@@ -814,6 +914,158 @@ async def test_a_run_level_capability_replaces_the_agent_level_one_whole() -> No
     await agent.run('hi', capabilities=[WebSearch(allowed_domains=['run.example'])])
 
     assert seen == snapshot([[WebSearchTool(allowed_domains=['run.example'])]])
+
+
+@pytest.mark.parametrize('wrapper_depth', [0, 1, 2])
+async def test_different_capability_classes_cannot_share_an_id_across_layers(wrapper_depth: int) -> None:
+    """An id always names one capability type, even when the later layer would replace the first."""
+
+    agent = Agent(TestModel(call_tools=[]), capabilities=[Thinking(id='shared')])
+
+    run_capability: AbstractCapability[object] = ReinjectSystemPrompt(id='shared')
+    for _ in range(wrapper_depth):
+        run_capability = run_capability.prefix_tools('p')
+    with pytest.raises(UserError, match=r"Capability id 'shared'.*different types"):
+        await agent.run('hi', capabilities=[run_capability])
+
+
+@pytest.mark.parametrize(('agent_depth', 'run_depth'), [(0, 1), (1, 0), (1, 2), (2, 1)])
+async def test_run_wrapper_overrides_preserve_identity_and_tool_prefixes(agent_depth: int, run_depth: int) -> None:
+    """Transparent wrappers retain the leaf identity across layers, including nested wrappers."""
+
+    def lookup() -> str:
+        return 'found'  # pragma: no cover
+
+    agent_capability: AbstractCapability[object] = Capability(id='lookup', tools=[lookup])
+    run_capability: AbstractCapability[object] = Capability(id='lookup', tools=[lookup])
+    for _ in range(agent_depth):
+        agent_capability = agent_capability.prefix_tools('agent')
+    for _ in range(run_depth):
+        run_capability = run_capability.prefix_tools('run')
+    seen: list[list[str]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append([tool.name for tool in info.function_tools])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[agent_capability])
+    await agent.run('hi', capabilities=[run_capability])
+    assert seen == [['run_' * run_depth + 'lookup']]
+
+
+async def test_explicitly_renamed_wrapper_does_not_adopt_an_unrelated_identity() -> None:
+    agent = Agent(TestModel(call_tools=[]), capabilities=[Thinking(id='shared')])
+    wrapper = WrapperCapability(wrapped=Thinking(id='other'), id='shared')
+    with pytest.raises(UserError, match=r"Capability id 'shared'.*different types"):
+        await agent.run('hi', capabilities=[wrapper])
+
+
+def test_bare_and_wrapped_capabilities_still_cannot_merge_within_one_layer() -> None:
+    with pytest.raises(UserError, match='different types'):
+        Agent(TestModel(), capabilities=[WebSearch(), WebSearch().prefix_tools('p')])
+
+
+async def test_hooks_combine_preserves_ordering_and_rebinds_registration() -> None:
+    """The merge and decorator view are local operations; no provider interaction is involved."""
+    events: list[str] = []
+    first: Hooks[object] = Hooks(id='hooks', ordering=CapabilityOrdering(position='outermost'))
+    second: Hooks[object] = Hooks(id='hooks', ordering=CapabilityOrdering(position='innermost'))
+
+    @first.on.before_run
+    def before_run(ctx: RunContext[object]) -> None:
+        events.append('before')
+
+    @second.on.after_run
+    def after_run(ctx: RunContext[object], result: AgentRunResult[object]) -> AgentRunResult[object]:
+        events.append('after')
+        return result
+
+    merged = Hooks.combine([first, second])
+    assert isinstance(merged, Hooks)
+    assert merged.get_ordering() == snapshot(CapabilityOrdering(position='innermost'))
+
+    @merged.on.before_model_request
+    def before_request(ctx: RunContext[object], request_context: ModelRequestContext) -> ModelRequestContext:
+        events.append('request')
+        return request_context
+
+    await Agent(TestModel(call_tools=[]), capabilities=[merged]).run('hi')
+    assert events == snapshot(['before', 'request', 'after'])
+    events.clear()
+    await Agent(TestModel(call_tools=[]), capabilities=[first, Hooks()]).run('hi')
+    await Agent(TestModel(call_tools=[]), capabilities=[second]).run('hi')
+    assert events == snapshot(['before', 'after'])
+
+
+async def test_native_mcp_combine_rebuilds_the_provider_tool() -> None:
+    """Inspect the merged native request without contacting an MCP server or model provider."""
+    first = MCP(url='https://example.com/mcp', native=True, local=False, headers={'X-First': '1'})
+    second = MCP(url='https://example.com/mcp', native=True, local=False, allowed_tools=['search'])
+    merged = MCP.combine([first, second])
+    seen: list[Sequence[object]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append(info.model_request_parameters.native_tools)
+        return ModelResponse(parts=[TextPart('done')])
+
+    await Agent(FunctionModel(model_fn), capabilities=[merged]).run('hi')
+    assert seen == snapshot(
+        [
+            [
+                MCPServerTool(
+                    id='example.com-mcp',
+                    url='https://example.com/mcp',
+                    headers={'X-First': '1'},
+                    allowed_tools=['search'],
+                )
+            ]
+        ]
+    )
+
+
+async def test_reusing_one_capability_object_across_layers_does_not_combine() -> None:
+    """Layer identity belongs to each occurrence, not to the shared object's identity."""
+
+    @dataclass
+    class Counting(AbstractCapability[Any]):
+        combine_calls: ClassVar[int] = 0
+
+        _: KW_ONLY
+
+        id: str | None = 'counting'
+
+        @classmethod
+        def combine(  # pragma: no cover
+            cls, capabilities: Sequence[AbstractCapability[Any]]
+        ) -> AbstractCapability[Any]:
+            cls.combine_calls += 1
+            return capabilities[-1]
+
+    shared = Counting()
+    agent = Agent(TestModel(call_tools=[]), capabilities=[shared])
+
+    await agent.run('hi', capabilities=[shared])
+
+    assert Counting.combine_calls == 0
+
+
+def test_a_sorted_run_wrapper_keeps_its_reused_capability_occurrence() -> None:
+    """Layer provenance follows a retained wrapper branch when ordering moves it in the tree."""
+
+    shared = Thinking(effort='low')
+    run_wrapper = WrapperCapability(
+        wrapped=CombinedCapability([shared, _Positioned(outermost=True)]),
+    )
+    tree = CombinedCapability([shared, run_wrapper])
+
+    combined = _combine_duplicate_capabilities(tree, [[shared], [run_wrapper]])
+
+    assert isinstance(combined, CombinedCapability)
+    assert not any(capability is shared for capability in combined.capabilities)
+    surviving_wrapper = next(
+        capability for capability in combined.capabilities if isinstance(capability, WrapperCapability)
+    )
+    assert shared in leaf_capabilities(surviving_wrapper)
 
 
 async def test_a_session_level_instrumentation_supersedes_the_agent_level_one() -> None:

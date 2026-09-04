@@ -4,6 +4,7 @@ from abc import ABC
 from collections import Counter
 from collections.abc import AsyncIterable, Awaitable, Callable, Collection, Sequence
 from dataclasses import KW_ONLY, dataclass
+from itertools import chain
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypeAlias
 from weakref import WeakValueDictionary
 
@@ -1375,6 +1376,21 @@ def leaf_capabilities(capability: AbstractCapability[AgentDepsT]) -> list[Abstra
     return leaves
 
 
+def _combination_roots(capability: AbstractCapability[AgentDepsT]) -> Sequence[AbstractCapability[AgentDepsT]]:
+    """Return the branches a surrounding combined capability retains after flattening."""
+    from .combined import CombinedCapability
+
+    return capability.capabilities if isinstance(capability, CombinedCapability) else [capability]
+
+
+@dataclass(frozen=True)
+class _CapabilityOccurrence(Generic[AgentDepsT]):
+    capability: AbstractCapability[AgentDepsT]
+    occurrence_index: int
+    layer_index: int
+    position: int
+
+
 def _combine_duplicate_capabilities(  # pyright: ignore[reportUnusedFunction]
     capability: AbstractCapability[AgentDepsT],
     layers: Sequence[Sequence[AbstractCapability[AgentDepsT]]],
@@ -1415,23 +1431,39 @@ def _combine_duplicate_capabilities(  # pyright: ignore[reportUnusedFunction]
     earlier, and reading "last" off the tree would turn a run-level override into the agent-level
     capability winning.
     """
-    order: dict[int, int] = {}
-    layer_of: dict[int, int] = {}
+    from .wrapper import WrapperCapability
+
+    # `CombinedCapability` may sort top-level branches, but it retains each non-combined branch as
+    # the object supplied by its source layer. Associate provenance with that branch before walking
+    # its leaves: a wrapper can move ahead of an earlier layer while the same leaf object appears
+    # both inside that wrapper and on its own.
+    root_locations: dict[int, list[tuple[int, dict[int, list[int]]]]] = {}
     position = 0
     for layer_index, layer in enumerate(layers):
-        for member in layer:
-            for leaf in leaf_capabilities(member):
-                order.setdefault(id(leaf), position)
-                layer_of.setdefault(id(leaf), layer_index)
+        for root in chain.from_iterable(map(_combination_roots, layer)):
+            leaf_positions: dict[int, list[int]] = {}
+            for leaf in leaf_capabilities(root):
+                leaf_positions.setdefault(id(leaf), []).append(position)
                 position += 1
+            root_locations.setdefault(id(root), []).append((layer_index, leaf_positions))
 
-    by_id: dict[str, list[AbstractCapability[AgentDepsT]]] = {}
-    for leaf in leaf_capabilities(capability):
-        if leaf.id is not None:
-            by_id.setdefault(leaf.id, []).append(leaf)
-    for duplicates in by_id.values():
-        # Stable, so duplicates the application order does not distinguish keep their tree order.
-        duplicates.sort(key=lambda leaf: order.get(id(leaf), 0))
+    occurrence_counts: dict[int, int] = {}
+    by_id: dict[str, list[_CapabilityOccurrence[AgentDepsT]]] = {}
+    for root in _combination_roots(capability):
+        layer_index, leaf_positions = root_locations[id(root)].pop(0)
+        for leaf in leaf_capabilities(root):
+            if leaf.id is not None:
+                occurrence_index = occurrence_counts.get(id(leaf), 0)
+                occurrence_counts[id(leaf)] = occurrence_index + 1
+                position = leaf_positions[id(leaf)].pop(0)
+                occurrence = _CapabilityOccurrence(leaf, occurrence_index, layer_index, position)
+                by_id.setdefault(leaf.id, []).append(occurrence)
+    # Stable, so duplicates the application order does not distinguish keep their tree order.
+    duplicate_groups = {
+        capability_id: sorted(duplicates, key=lambda occurrence: occurrence.position)
+        for capability_id, duplicates in by_id.items()
+        if len(duplicates) > 1
+    }
 
     # The combined capability takes the last occurrence's place, so what survives keeps the position
     # the run's last word on that id had; the earlier occurrences are removed.
@@ -1442,24 +1474,37 @@ def _combine_duplicate_capabilities(  # pyright: ignore[reportUnusedFunction]
     # `visit_and_replace` walks the nodes `apply` yields, in that order, so consuming one decision
     # per visit lines the decisions up with the occurrences they were made for.
     replacements: dict[int, list[AbstractCapability[AgentDepsT] | None]] = {}
-    for capability_id, duplicates in by_id.items():
-        if len(duplicates) == 1:
-            continue
+    for capability_id, duplicates in duplicate_groups.items():
         # Only the last layer to state this id has a say; everything an earlier layer said under it
         # is overridden, not merged in. `combine` then settles what the survivors within that one
         # layer mean -- and with a single survivor there is nothing to settle, so it isn't called.
-        last_layer = max(layer_of.get(id(duplicate), 0) for duplicate in duplicates)
-        surviving = [duplicate for duplicate in duplicates if layer_of.get(id(duplicate), 0) == last_layer]
+        last_layer = max(duplicate.layer_index for duplicate in duplicates)
+        surviving = [duplicate.capability for duplicate in duplicates if duplicate.layer_index == last_layer]
+        # Transparent wrappers name the same capability across layers, not the same mergeable
+        # class within a layer. Explicitly renamed wrappers keep their own identity.
+        identity_types: set[type[AbstractCapability[AgentDepsT]]] = set()
+        for duplicate in duplicates:
+            identity = duplicate.capability
+            while (
+                last_layer != duplicates[0].layer_index
+                and isinstance(identity, WrapperCapability)
+                and identity.id == identity.wrapped.id
+            ):
+                identity = identity.wrapped
+            identity_types.add(type(identity))
+        _reject_class_crossing_id(capability_id, identity_types)
         # With a single survivor there is nothing to settle, so `combine` isn't called.
         combined_duplicate = surviving[-1]
         if len(surviving) > 1:
-            _reject_class_crossing_id(capability_id, {type(duplicate) for duplicate in duplicates})
+            _reject_class_crossing_id(capability_id, {type(survivor) for survivor in surviving})
             if not _declares_default_id(type(combined_duplicate)):
                 raise UserError(_repeated_id_message(capability_id))
             combined_duplicate = combined_duplicate.combine(surviving)
-        for index, duplicate in enumerate(duplicates):
-            is_last = index == len(duplicates) - 1
-            replacements.setdefault(id(duplicate), []).append(combined_duplicate if is_last else None)
+        replacements.update(
+            {id(duplicate.capability): [None] * occurrence_counts[id(duplicate.capability)] for duplicate in duplicates}
+        )
+        last_duplicate = duplicates[-1]
+        replacements[id(last_duplicate.capability)][last_duplicate.occurrence_index] = combined_duplicate
 
     if not replacements:
         return capability
