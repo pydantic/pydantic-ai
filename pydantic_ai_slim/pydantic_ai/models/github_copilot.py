@@ -102,6 +102,11 @@ class GitHubCopilotModel(OpenAIChatModel):
         # as `None` and only fail here. Each is filled with the value the omitted field would have
         # carried, rather than widening the model and passing a hole downstream; `created` needs
         # nothing, as `OpenAIChatModel._process_response` has already filled it by this point.
+        # The streamed path needs no counterpart, but not because chunks are complete: they omit
+        # `object` too. It reads attributes directly instead of validating, and the two it reads —
+        # a choice's `index` and each tool-call delta's `index`, which `_map_tool_call_delta` uses as
+        # the part id — are present on both families, tool calls included. A missing delta index
+        # would not raise here; it would silently merge parallel tool calls' argument fragments.
         payload = response.model_dump()
         # Unconditional: `object`'s type admits exactly one value, so there is nothing to overwrite.
         payload['object'] = 'chat.completion'

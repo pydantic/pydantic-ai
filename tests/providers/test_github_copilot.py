@@ -14,7 +14,7 @@ import pytest
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer, google_model_profile
-from pydantic_ai.profiles.openai import SAMPLING_PARAMS, OpenAIJsonSchemaTransformer
+from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
 
 from .._inline_snapshot import snapshot
 from ..conftest import TestEnv, try_import
@@ -188,10 +188,15 @@ def test_github_copilot_provider_sampling_restriction_follows_the_family():
 
     Copilot accepts `temperature` on ids that public catalogs list as sampling-restricted, so the
     only trustworthy source is the model family's own `anthropic_disallows_sampling_settings`.
+
+    The dropped names are spelled out rather than imported: the flag means what `models/anthropic.py`
+    drops for it, so widening this to the whole of `profiles.openai.SAMPLING_PARAMS` — which also
+    reaches `openai_logprobs` and `openai_top_logprobs`, and which Copilot answers 200 to — has to
+    fail here.
     """
     restricted = GitHubCopilotProvider.model_profile('claude-opus-4.8')
     assert restricted is not None
-    assert restricted.get('openai_unsupported_model_settings') == SAMPLING_PARAMS
+    assert restricted.get('openai_unsupported_model_settings') == snapshot(('temperature', 'top_p'))
 
     unrestricted = GitHubCopilotProvider.model_profile('claude-haiku-4.5')
     assert unrestricted is not None

@@ -12,7 +12,6 @@ from pydantic_ai.profiles.google import google_model_profile
 from pydantic_ai.profiles.grok import grok_model_profile
 from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
 from pydantic_ai.profiles.openai import (
-    SAMPLING_PARAMS,
     OpenAIJsonSchemaTransformer,
     OpenAIModelProfile,
     openai_model_profile,
@@ -31,6 +30,17 @@ else:
         AsyncHTTPClient as _OpenAIHTTPClient,
         OpenAICompatibleProvider as _OpenAICompatibleProvider,
     )
+
+_ANTHROPIC_DISALLOWED_SAMPLING_SETTINGS = ('temperature', 'top_p')
+"""What `anthropic_disallows_sampling_settings` means, expressed in OpenAI-shaped setting names.
+
+The flag marks the models that reject sampling settings, and `models/anthropic.py` drops
+`temperature`, `top_p` and `top_k` for them — `top_k` has no OpenAI-shaped equivalent, so two names
+remain. Deliberately not `profiles.openai.SAMPLING_PARAMS`, which is a wider tuple carrying a
+different rationale (incompatible with OpenAI reasoning) and which reaches `openai_logprobs` and
+`openai_top_logprobs`: dropping a provider-namespaced setting the user opted into is what
+`models/AGENTS.md` forbids, and Copilot in fact answers 200 to all seven on a Claude id.
+"""
 
 _COPILOT_PLUGIN_VERSION = '0.26.7'
 """Version reported to Copilot as the editor plugin build; see `_COPILOT_CLIENT_HEADERS`."""
@@ -86,8 +96,7 @@ def _github_copilot_overlay(model_name: str, family_profile: ModelProfile | None
     )
 
     if family_profile and family_profile.get('anthropic_disallows_sampling_settings'):
-        # Anthropic's own transport drops these; the OpenAI-shaped one has to be told to.
-        overlay['openai_unsupported_model_settings'] = SAMPLING_PARAMS
+        overlay['openai_unsupported_model_settings'] = _ANTHROPIC_DISALLOWED_SAMPLING_SETTINGS
 
     if model_name.startswith('gemini-'):
         # Copilot speaks OpenAI tools and `response_format`, not Gemini `generateContent`, so the

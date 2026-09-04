@@ -149,6 +149,51 @@ async def test_github_copilot_claude_model(allow_model_requests: None, github_co
     )
 
 
+async def test_github_copilot_tool_call_round_trip(
+    allow_model_requests: None, github_copilot_api_key: str, request_capture: RequestCapture
+):
+    """Copilot accepts `strict` tool definitions, which is why the profile leaves the default alone.
+
+    Every sibling gateway answers this question explicitly — `SnowflakeProvider` and `OllamaProvider`
+    both set `openai_supports_strict_tool_definition=False` with a cited reason — so the Copilot
+    overlay leaving it at `True` is a claim about the API, and this is the recording that backs it.
+    A Claude id runs it because those omit each choice's `index`: the envelope repair has to hold on
+    a `tool_calls` choice too, not only on the plain text one above.
+    """
+    model = GitHubCopilotModel(
+        'claude-haiku-4.5',
+        provider=GitHubCopilotProvider(api_key=github_copilot_api_key, http_client=request_capture.client),
+    )
+    agent = Agent(model, instructions='Be concise.')
+
+    @agent.tool_plain
+    def get_weather(city: str) -> str:
+        """Get the weather in a city."""
+        return 'sunny'
+
+    result = await agent.run('What is the weather in Paris?')
+
+    assert request_capture.body('/chat/completions')['tools'] == snapshot(
+        [
+            {
+                'type': 'function',
+                'function': {
+                    'name': 'get_weather',
+                    'description': 'Get the weather in a city.',
+                    'parameters': {
+                        'additionalProperties': False,
+                        'properties': {'city': {'type': 'string'}},
+                        'required': ['city'],
+                        'type': 'object',
+                    },
+                    'strict': True,
+                },
+            }
+        ]
+    )
+    assert result.output == snapshot('The weather in Paris is currently **sunny**.')
+
+
 async def test_github_copilot_model_stream(allow_model_requests: None, github_copilot_api_key: str):
     """Streamed chunks carry `created` and the standard `delta` shape, so streaming needs no repair.
 
@@ -162,6 +207,30 @@ async def test_github_copilot_model_stream(allow_model_requests: None, github_co
         output = await result.get_output()
 
     assert output == snapshot('Paris.')
+
+
+async def test_github_copilot_claude_stream_tool_call(allow_model_requests: None, github_copilot_api_key: str):
+    """The streamed twin of the repair, on the family that omits the most.
+
+    `test_github_copilot_model_stream` records a GPT id, and the non-streamed path proves the two
+    families drop different fields — so "streaming needs no repair" cannot be generalized from the
+    GPT recording alone. This is the Claude recording that closes that gap, and it streams a tool
+    call because `_map_tool_call_delta` keys parts on each delta's `index`: were Copilot to omit it
+    the way it omits a choice's `index` off-stream, nothing would raise and parallel tool calls
+    would merge their argument fragments instead.
+    """
+    model = GitHubCopilotModel('claude-haiku-4.5', provider=GitHubCopilotProvider(api_key=github_copilot_api_key))
+    agent = Agent(model, instructions='Be concise.')
+
+    @agent.tool_plain
+    def get_weather(city: str) -> str:
+        """Get the weather in a city."""
+        return 'sunny'
+
+    async with agent.run_stream('What is the weather in Paris?') as result:
+        output = await result.get_output()
+
+    assert output == snapshot('The weather in Paris is currently **sunny**.')
 
 
 async def test_github_copilot_sends_model_id_verbatim(
