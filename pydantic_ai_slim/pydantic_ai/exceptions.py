@@ -625,9 +625,10 @@ class ToolRetryError(Exception):
         # `part_kind` rather than `isinstance`: the parts are imported under `TYPE_CHECKING` only,
         # because `messages` imports this module.
         if tool_retry.part_kind == 'tool-return':
-            # Rendered the way `ToolFailedError` below renders its own part, so both read as what the
-            # model was shown; the call it answers is on `tool_retry.tool_name` for anything that
-            # needs it.
+            # Rendered the way `ToolFailedError` below renders its own part: the content without the
+            # `{"error": ...}` wrapper a provider with no native error channel adds, because this is
+            # a human-readable message rather than the wire. The call it answers is on
+            # `tool_retry.tool_name` for anything that needs it.
             message = tool_retry.model_response_str(wrap_if_error=False)
         elif isinstance(tool_retry.content, str):
             message = tool_retry.content

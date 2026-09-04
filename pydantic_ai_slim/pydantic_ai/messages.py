@@ -1722,9 +1722,10 @@ def _dump_error_details(errors: list[pydantic_core.ErrorDetails]) -> list[dict[s
 
     `ctx` is never included: it holds whatever a validator was handed as context, which is the agent
     author's data rather than anything the model has to correct. A framework-built part never has it
-    (`errors(include_context=False)`), so dropping it here is what makes that true of a hand-built or
-    legacy-translated one too. The copy the UI adapters carry in their metadata channel is stripped
-    separately, by `retry_feedback_payload`, which dumps the part rather than rendering it.
+    (`errors(include_context=False)`), so dropping it here is what makes that true of a hand-built
+    [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart] or a legacy-translated one too. The
+    copy the UI adapters carry in their metadata channel is stripped separately, by
+    `retry_feedback_payload`, which dumps the part rather than rendering it.
 
     The result is plain JSON data rather than `ErrorDetails`: dropping a key the `TypedDict` requires
     leaves a shape that is not one any more.
