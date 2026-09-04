@@ -264,11 +264,9 @@ def bedrock_anthropic_model_profile(model_name: str) -> ModelProfile | None:
     # support for non-adaptive models (e.g. Opus 4.5) even when the direct Anthropic API supports it.
     supports_effort = supports_adaptive and bool((downstream or {}).get('anthropic_supports_effort', False))
 
-    supports_forced_tool_choice = bool((downstream or {}).get('anthropic_supports_forced_tool_choice', False))
-
     profile = merge_profile(
         BedrockModelProfile(
-            bedrock_supports_tool_choice=supports_forced_tool_choice,
+            bedrock_supports_tool_choice=True,
             bedrock_send_back_thinking_parts=True,
             bedrock_supports_prompt_caching=True,
             bedrock_supports_tool_caching=True,

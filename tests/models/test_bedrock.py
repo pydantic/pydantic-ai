@@ -280,6 +280,23 @@ def _capture_bedrock_request_headers(
         model.client.meta.events.unregister(event, capture)
 
 
+@contextmanager
+def _capture_bedrock_request_bodies(model: BedrockConverseModel) -> Generator[list[dict[str, Any]]]:
+    """Record final Converse request bodies, unregistering after the request."""
+    captured: list[dict[str, Any]] = []
+
+    def capture(request: Any, **_: Any) -> None:
+        body = request.body.decode() if isinstance(request.body, bytes) else request.body
+        captured.append(json.loads(body))
+
+    event = 'before-send.bedrock-runtime.Converse'
+    model.client.meta.events.register_last(event, capture)
+    try:
+        yield captured
+    finally:
+        model.client.meta.events.unregister(event, capture)
+
+
 def _decode_header(value: str | bytes) -> str:
     return value.decode() if isinstance(value, bytes) else value
 
@@ -2425,18 +2442,9 @@ async def test_bedrock_sonnet_5_adaptive_thinking_accepts_tool_output(
     """Bedrock accepts adaptive thinking with the forced tool use required by `ToolOutput`."""
     model = BedrockConverseModel('us.anthropic.claude-sonnet-5', provider=bedrock_provider)
     agent = Agent(model, output_type=ToolOutput(int))
-    sent_requests: list[dict[str, Any]] = []
 
-    def capture(request: Any, **_: Any) -> None:
-        body = request.body.decode() if isinstance(request.body, bytes) else request.body
-        sent_requests.append(json.loads(body))
-
-    event = 'before-send.bedrock-runtime.Converse'
-    model.client.meta.events.register_last(event, capture)
-    try:
+    with _capture_bedrock_request_bodies(model) as sent_requests:
         result = await agent.run('Return the number 42.', model_settings=ModelSettings(thinking=True))
-    finally:
-        model.client.meta.events.unregister(event, capture)
 
     assert len(sent_requests) == 1
     sent = sent_requests[0]
@@ -2451,18 +2459,9 @@ async def test_bedrock_opus_5_adaptive_thinking_uses_default_tool_output(
     """Bedrock Opus 5 matches direct Anthropic when normal structured output enables thinking."""
     model = BedrockConverseModel('us.anthropic.claude-opus-5', provider=bedrock_provider)
     agent = Agent(model, output_type=int)
-    sent_requests: list[dict[str, Any]] = []
 
-    def capture(request: Any, **_: Any) -> None:
-        body = request.body.decode() if isinstance(request.body, bytes) else request.body
-        sent_requests.append(json.loads(body))
-
-    event = 'before-send.bedrock-runtime.Converse'
-    model.client.meta.events.register_last(event, capture)
-    try:
+    with _capture_bedrock_request_bodies(model) as sent_requests:
         result = await agent.run('Return the number 42.', model_settings=ModelSettings(thinking=True))
-    finally:
-        model.client.meta.events.unregister(event, capture)
 
     assert len(sent_requests) == 1
     sent = sent_requests[0]
@@ -6973,7 +6972,7 @@ def test_bedrock_agent_auto_output_with_adaptive_thinking_uses_tool_output(allow
     assert client.requests[0]['toolConfig']['toolChoice'] == {'any': {}}
 
 
-def test_bedrock_anthropic_model_without_tool_forcing_does_not_force(allow_model_requests: None) -> None:
+def test_bedrock_anthropic_model_without_tool_forcing_uses_auto(allow_model_requests: None) -> None:
     """Bedrock preserves Anthropic's no-forcing rule for Fable and Mythos 5.1."""
     client = _AdaptiveThinkingStubClient(_tool_use_response())
     model = BedrockConverseModel(
@@ -6984,7 +6983,7 @@ def test_bedrock_anthropic_model_without_tool_forcing_does_not_force(allow_model
     result = agent.run_sync('What is 6 * 7?')
 
     assert result.output == 42
-    assert 'toolChoice' not in client.requests[0]['toolConfig']
+    assert client.requests[0]['toolConfig']['toolChoice'] == {'auto': {}}
 
 
 @pytest.mark.parametrize(

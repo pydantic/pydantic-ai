@@ -8,7 +8,7 @@ and blocks 'required' and list[str] values before they reach the model-specific 
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import Any, cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -545,6 +545,22 @@ def test_bedrock_explicit_tool_forcing_non_anthropic_thinking_errors():
     settings = BedrockModelSettings(thinking=True, tool_choice='required')
 
     with pytest.raises(UserError, match='with thinking enabled'):
+        bedrock_support_tool_forcing('test-model', profile, settings, ModelRequestParameters(), 'required')
+
+
+@skip_if_no_bedrock
+def test_bedrock_anthropic_tool_choice_profile_override_disables_forcing():
+    profile = cast(
+        BedrockModelProfile,
+        {
+            'bedrock_supports_tool_choice': False,
+            'bedrock_thinking_variant': 'anthropic',
+            'anthropic_supports_forced_tool_choice': True,
+        },
+    )
+    settings = BedrockModelSettings(tool_choice='required')
+
+    with pytest.raises(UserError, match='does not support forcing tool use'):
         bedrock_support_tool_forcing('test-model', profile, settings, ModelRequestParameters(), 'required')
 
 

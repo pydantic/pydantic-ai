@@ -679,7 +679,8 @@ def test_bedrock_anthropic_adaptive_thinking_tool_choice_support(model_name: str
     """Bedrock preserves the underlying Anthropic model's adaptive-thinking tool-choice support."""
     profile = BedrockProvider.model_profile(model_name)
     assert profile is not None
-    assert profile.get('bedrock_supports_tool_choice', False) is expected
+    assert profile.get('bedrock_supports_tool_choice', False) is True
+    assert profile.get('anthropic_supports_forced_tool_choice', False) is expected
 
 
 @pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')

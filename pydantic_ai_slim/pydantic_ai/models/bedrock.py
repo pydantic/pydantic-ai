@@ -1963,9 +1963,15 @@ def _effective_thinking_type(
 def _thinking_blocks_tool_forcing(
     thinking_type: Literal['adaptive', 'enabled'] | None, profile: BedrockModelProfile
 ) -> bool:
-    return thinking_type == 'enabled' or (
-        thinking_type == 'adaptive' and not profile.get('bedrock_supports_tool_choice', False)
-    )
+    return thinking_type == 'enabled' or (thinking_type == 'adaptive' and not _supports_tool_forcing(profile))
+
+
+def _supports_tool_forcing(profile: BedrockModelProfile) -> bool:
+    """Keep Anthropic's forcing capability distinct from Bedrock's general tool-choice support."""
+    supports_tool_choice = profile.get('bedrock_supports_tool_choice', False)
+    if profile.get('bedrock_thinking_variant') == 'anthropic' and 'anthropic_supports_forced_tool_choice' in profile:
+        return supports_tool_choice and bool(profile['anthropic_supports_forced_tool_choice'])
+    return supports_tool_choice
 
 
 def _support_tool_forcing(
@@ -1980,7 +1986,7 @@ def _support_tool_forcing(
     Also checks thinking compatibility: extended thinking blocks forced tool choice, while
     adaptive thinking allows it on profiles that advertise support.
     """
-    if not profile.get('bedrock_supports_tool_choice', False):
+    if not _supports_tool_forcing(profile):
         explicit_choice = (model_settings or {}).get('tool_choice')
         if explicit_choice == 'required' or isinstance(explicit_choice, list):
             raise UserError(
