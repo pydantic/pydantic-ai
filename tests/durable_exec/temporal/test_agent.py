@@ -106,6 +106,7 @@ try:
     from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
     from temporalio.workflow import ActivityCancellationType, ActivityConfig
 
+    from pydantic_ai.durable_exec._sandbox import SandboxOperationParams
     from pydantic_ai.durable_exec._toolset import unwrap_tool_call_result
     from pydantic_ai.durable_exec._utils import StreamedActivityResult
     from pydantic_ai.durable_exec.temporal import (
@@ -132,6 +133,7 @@ try:
         deserialize_run_context,
     )
     from pydantic_ai.durable_exec.temporal._toolset import CallToolParams
+    from pydantic_ai.durable_exec.temporal._transports import _SandboxOperationTransport
 
 except ImportError:  # pragma: lax no cover
     pytest.skip('temporal not installed', allow_module_level=True)
@@ -2793,6 +2795,75 @@ async def test_temporal_run_context_reconnects_sandbox_ref_through_agent():
 
     assert (await reconstructed.sandbox.run(['true'])).stdout == 'connected'
     assert connector.sandbox_ids == ['temporal-ref']
+
+
+def test_temporal_sandbox_operation_transport_round_trips_context_and_arguments():
+    supplier = SandboxCapability(FakeSandbox('transport'))
+    agent = Agent(TestModel(), name='sandbox_transport', capabilities=[supplier, TemporalDurability()])
+    durability = TemporalDurability.from_agent(agent)
+    assert durability is not None
+    ctx = _sandbox_context(Sandbox(supplier.backend, _supplier_id=supplier.id, _supplier=supplier))
+    params = SandboxOperationParams(
+        run_context=ctx,
+        supplier_id='sandbox',
+        ref=SandboxRef(sandbox_id='transport-ref'),
+        arguments={'path': 'file.txt'},
+    )
+
+    transport = _SandboxOperationTransport(durability)
+    loaded = transport.load(transport.dump(params), runtime=object())
+
+    assert loaded.supplier_id == 'sandbox'
+    assert loaded.ref == SandboxRef(sandbox_id='transport-ref')
+    assert loaded.arguments == {'path': 'file.txt'}
+    assert loaded.run_context.deps is None
+
+
+async def test_temporal_run_context_reports_when_matching_supplier_declines_serialized_ref():
+    class DecliningConnector(Capability[Any]):
+        id = 'connect_only_sandbox'
+
+        def get_sandbox(self, ctx: RunContext[Any], *, ref: SandboxRef | None) -> None:
+            return None
+
+    connector = ConnectOnlySandboxCapability()
+    serialized = TemporalRunContext.serialize_run_context(
+        _sandbox_context(ref_sandbox(SandboxRef(sandbox_id='declined'), connector))
+    )
+    reconstructed = deserialize_run_context(
+        TemporalRunContext,
+        serialized,
+        deps=None,
+        agent=Agent(TestModel(), capabilities=[DecliningConnector(id='connect_only_sandbox')]),
+    )
+
+    with pytest.raises(UserError, match='declined the serialized sandbox reference'):
+        await reconstructed.sandbox.run(['true'])
+
+
+@pytest.mark.parametrize('agent', [None, Agent(TestModel())], ids=['without-agent', 'without-provider'])
+async def test_temporal_run_context_explains_legacy_ref_rebuild_failure(agent: Agent[None, str] | None):
+    serialized = TemporalRunContext.serialize_run_context(_sandbox_context(Sandbox(UnavailableSandbox('ignored'))))
+    serialized['_sandbox_state'] = {'sandbox_id': 'legacy-ref'}
+
+    reconstructed = deserialize_run_context(TemporalRunContext, serialized, deps=None, agent=agent)
+
+    message = 'no agent is attached' if agent is None else 'No capability can supply sandbox'
+    with pytest.raises(UserError, match=message):
+        await reconstructed.sandbox.run(['true'])
+
+
+async def test_temporal_run_context_rebuilds_a_legacy_ref_through_the_capability_chain():
+    connector = ConnectOnlySandboxCapability()
+    serialized = TemporalRunContext.serialize_run_context(_sandbox_context(Sandbox(UnavailableSandbox('ignored'))))
+    serialized['_sandbox_state'] = {'sandbox_id': 'legacy-ref'}
+
+    reconstructed = deserialize_run_context(
+        TemporalRunContext, serialized, deps=None, agent=Agent(TestModel(), capabilities=[connector])
+    )
+
+    assert (await reconstructed.sandbox.run(['true'])).stdout == 'connected'
+    assert connector.sandbox_ids == ['legacy-ref']
 
 
 async def test_temporal_run_context_ref_no_capability_recognizes_cannot_connect():

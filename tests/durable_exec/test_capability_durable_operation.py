@@ -5,7 +5,7 @@ import gc
 import re
 import uuid
 import weakref
-from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Callable, Generator, Mapping
+from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Callable, Generator, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from decimal import Decimal
@@ -15,6 +15,7 @@ import anyio
 import pytest
 
 from pydantic_ai import Agent, AgentStreamEvent, ModelMessage, ModelSettings
+from pydantic_ai._run_context import set_current_run_context
 from pydantic_ai.capabilities import (
     AbstractCapability,
     ProcessEventStream,
@@ -37,6 +38,14 @@ from pydantic_ai.durable_exec._codec import JSON_CODEC
 from pydantic_ai.durable_exec._operation import CapabilityOperationId, DurableOperationId, OperationConfigRole
 from pydantic_ai.durable_exec._operation_backend import CallableOperationBackend
 from pydantic_ai.durable_exec._operation_names import JournalOperationNamer
+from pydantic_ai.durable_exec._sandbox import (
+    DurableSandboxDispatcher,
+    SandboxOperationError,
+    SandboxOperationParams,
+    SandboxOperationResult,
+    normalize_sandbox_value,
+    sandbox_operation_error,
+)
 from pydantic_ai.durable_exec._toolset import ToolConfig
 from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import CapabilityEvent, ModelRequest, ModelResponse, TextPart, UserPromptPart
@@ -47,11 +56,21 @@ from pydantic_ai.models import (
     StreamedResponse,
 )
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.sandboxes import SandboxRef
+from pydantic_ai.sandboxes import (
+    CommandResult,
+    FileEntry,
+    Sandbox,
+    SandboxBackend,
+    SandboxError,
+    SandboxRef,
+    SandboxTimeoutError,
+    SandboxUnavailableError,
+)
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
 
 from ..model_lifecycle_utils import LifecycleTrackingModel
+from ..sandbox_fakes import SandboxCapability
 
 if TYPE_CHECKING:
     from dbos import DBOS, DBOSConfig, SetWorkflowID
@@ -314,6 +333,264 @@ async def test_durability_allows_live_sandbox_outside_durable_context() -> None:
     )
 
     assert result.output == 'success (no tool calls)'
+
+
+async def test_durable_sandbox_dispatcher_requires_a_stable_supplier_id() -> None:
+    class UnnamedSupplier(AbstractCapability[Any]):
+        def get_sandbox(self, ctx: RunContext[Any], *, ref: SandboxRef | None) -> SandboxBackend:
+            from ..sandbox_fakes import FakeSandbox
+
+            return FakeSandbox('unnamed', ref=ref)
+
+    from ..sandbox_fakes import FakeSandbox
+
+    with pytest.raises(UserError, match='needs an explicit `id`'):
+        DurableSandboxDispatcher(
+            Sandbox(FakeSandbox('raw')),
+            supplier=UnnamedSupplier(),
+            operations={},
+            in_durable_context=lambda: True,
+        )
+
+
+async def test_durable_sandbox_dispatcher_guards_backend_and_context() -> None:
+    from ..sandbox_fakes import FakeSandbox
+
+    raw = FakeSandbox('raw')
+    supplier = SandboxCapability(raw)
+    durable = True
+    dispatcher = DurableSandboxDispatcher(
+        Sandbox(raw), supplier=supplier, operations={}, in_durable_context=lambda: durable
+    )
+
+    with pytest.raises(UserError, match='not available in durable workflow code'):
+        _ = dispatcher.backend
+    with pytest.raises(RuntimeError, match='requires the current agent run context'):
+        await dispatcher('run', {'command': ['true']})
+
+    durable = False
+    assert dispatcher.backend is raw
+    assert await dispatcher('working_dir', {}) == '/workspace'
+
+
+async def test_durable_sandbox_dispatcher_rejects_an_unregistered_method() -> None:
+    from ..sandbox_fakes import FakeSandbox
+
+    raw = FakeSandbox('raw')
+    dispatcher = DurableSandboxDispatcher(
+        Sandbox(raw), supplier=SandboxCapability(raw), operations={}, in_durable_context=lambda: True
+    )
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+
+    with set_current_run_context(ctx), pytest.raises(UserError, match="method 'run' was not registered"):
+        await dispatcher('run', {'command': ['true']})
+
+
+@pytest.mark.parametrize(
+    ('error', 'error_type'),
+    [
+        (SandboxOperationError(kind='timeout', message='timed out', timeout=1), SandboxTimeoutError),
+        (SandboxOperationError(kind='unavailable', message='gone'), SandboxUnavailableError),
+        (SandboxOperationError(kind='sandbox', message='failed'), SandboxError),
+        (SandboxOperationError(kind='not_found', message='missing'), FileNotFoundError),
+        (SandboxOperationError(kind='not_a_directory', message='not dir'), NotADirectoryError),
+        (SandboxOperationError(kind='is_a_directory', message='is dir'), IsADirectoryError),
+        (SandboxOperationError(kind='not_implemented', message='unsupported'), NotImplementedError),
+    ],
+)
+async def test_durable_sandbox_dispatcher_reconstructs_operation_errors(
+    error: SandboxOperationError, error_type: type[Exception]
+) -> None:
+    from ..sandbox_fakes import FakeSandbox
+
+    async def operation(params: SandboxOperationParams, *, config: object | None = None) -> SandboxOperationResult:
+        return SandboxOperationResult(error=error, ref=SandboxRef(sandbox_id='raw'))
+
+    raw = FakeSandbox('raw', ref=SandboxRef(sandbox_id='raw'))
+    dispatcher = DurableSandboxDispatcher(
+        Sandbox(raw),
+        supplier=SandboxCapability(raw),
+        operations=cast(Any, {'run': operation}),
+        in_durable_context=lambda: True,
+    )
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+
+    with set_current_run_context(ctx), pytest.raises(error_type, match=error.message):
+        await dispatcher('run', {'command': ['true']})
+
+
+async def test_durable_sandbox_dispatcher_validates_and_reconnects_returned_refs() -> None:
+    from ..sandbox_fakes import FakeSandbox
+
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+
+    async def without_ref(params: SandboxOperationParams, *, config: object | None = None) -> SandboxOperationResult:
+        return SandboxOperationResult(value='value')
+
+    raw = FakeSandbox('raw')
+    supplier = SandboxCapability(raw)
+    missing_ref = DurableSandboxDispatcher(
+        Sandbox(raw),
+        supplier=supplier,
+        operations=cast(Any, {'working_dir': without_ref}),
+        in_durable_context=lambda: True,
+    )
+    with set_current_run_context(ctx), pytest.raises(RuntimeError, match='without assigning a `SandboxRef`'):
+        await missing_ref('working_dir', {})
+
+    async def with_ref(params: SandboxOperationParams, *, config: object | None = None) -> SandboxOperationResult:
+        return SandboxOperationResult(value='/workspace', ref=SandboxRef(sandbox_id='created'))
+
+    class DecliningSupplier(AbstractCapability[Any]):
+        id = 'declining'
+
+        def get_sandbox(self, ctx: RunContext[Any], *, ref: SandboxRef | None) -> None:
+            return None
+
+    declined = DurableSandboxDispatcher(
+        Sandbox(FakeSandbox('fresh')),
+        supplier=DecliningSupplier(),
+        operations=cast(Any, {'working_dir': with_ref}),
+        in_durable_context=lambda: True,
+    )
+    with set_current_run_context(ctx), pytest.raises(RuntimeError, match='declined the environment it just created'):
+        await declined('working_dir', {})
+
+
+def test_durable_sandbox_value_and_error_normalization() -> None:
+    entry = FileEntry(name='file.txt', path='/file.txt', is_dir=False, size=4)
+
+    assert normalize_sandbox_value('run', CommandResult(exit_code=1, stdout='out', stderr='err')) == CommandResult(
+        exit_code=1, stdout='out', stderr='err'
+    )
+    assert normalize_sandbox_value('stat', entry) == entry
+    assert normalize_sandbox_value('list_dir', [entry]) == [entry]
+    assert normalize_sandbox_value('working_dir', '/workspace') == '/workspace'
+
+    errors: list[BaseException] = [
+        SandboxTimeoutError('timed out', stdout='out', stderr='err', timeout=1),
+        SandboxUnavailableError('gone'),
+        SandboxError('failed'),
+        FileNotFoundError('missing'),
+        NotADirectoryError('not dir'),
+        IsADirectoryError('is dir'),
+        NotImplementedError('unsupported'),
+    ]
+    outcomes = [sandbox_operation_error(error) for error in errors]
+    assert all(outcome is not None for outcome in outcomes)
+    assert [cast(SandboxOperationError, outcome).kind for outcome in outcomes] == [
+        'timeout',
+        'unavailable',
+        'sandbox',
+        'not_found',
+        'not_a_directory',
+        'is_a_directory',
+        'not_implemented',
+    ]
+    assert sandbox_operation_error(ValueError('unexpected')) is None
+
+
+async def test_bound_sandbox_operation_validates_supplier_and_backend_contracts() -> None:
+    from ..sandbox_fakes import FakeSandbox, FakeSandboxResult
+
+    class DecliningSupplier(AbstractCapability[Any]):
+        id = 'declining'
+
+        def get_sandbox(self, ctx: RunContext[Any], *, ref: SandboxRef | None) -> None:
+            return None
+
+    declining = DecliningSupplier()
+    declining_agent = Agent(TestModel(), name='declining_sandbox', capabilities=[declining, RecordingDurability()])
+    declining_durability = RecordingDurability.from_agent(declining_agent)
+    assert declining_durability is not None
+    declining_ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), agent=declining_agent)
+    declining_operation = declining_durability._bound_sandbox_operations['declining']['run']  # pyright: ignore[reportPrivateUsage]
+    with pytest.raises(UserError, match='declined a reference it previously supplied'):
+        await declining_operation(
+            SandboxOperationParams(
+                run_context=declining_ctx,
+                supplier_id='declining',
+                ref=SandboxRef(sandbox_id='existing'),
+                arguments={'command': ['true']},
+            )
+        )
+
+    class UnexpectedBackend(FakeSandbox):
+        async def run(
+            self,
+            command: str | Sequence[str],
+            *,
+            shell: bool = False,
+            cwd: str | None = None,
+            env: Mapping[str, str] | None = None,
+            timeout: float | None = None,
+        ) -> FakeSandboxResult:
+            raise ValueError('unexpected')
+
+    unexpected_supplier = SandboxCapability(UnexpectedBackend('unexpected'))
+    unexpected_agent = Agent(
+        TestModel(), name='unexpected_sandbox', capabilities=[unexpected_supplier, RecordingDurability()]
+    )
+    unexpected_durability = RecordingDurability.from_agent(unexpected_agent)
+    assert unexpected_durability is not None
+    unexpected_ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), agent=unexpected_agent)
+    unexpected_operation = unexpected_durability._bound_sandbox_operations['sandbox']['run']  # pyright: ignore[reportPrivateUsage]
+    with pytest.raises(ValueError, match='unexpected'):
+        await unexpected_operation(
+            SandboxOperationParams(
+                run_context=unexpected_ctx,
+                supplier_id='sandbox',
+                ref=None,
+                arguments={'command': ['true']},
+            )
+        )
+
+    class RefusingBackend(FakeSandbox):
+        @property
+        def ref(self) -> None:
+            return None
+
+    refusing_supplier = SandboxCapability(RefusingBackend('refusing'))
+    refusing_agent = Agent(
+        TestModel(), name='refusing_sandbox', capabilities=[refusing_supplier, RecordingDurability()]
+    )
+    refusing_durability = RecordingDurability.from_agent(refusing_agent)
+    assert refusing_durability is not None
+    refusing_ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), agent=refusing_agent)
+    refusing_operation = refusing_durability._bound_sandbox_operations['sandbox']['run']  # pyright: ignore[reportPrivateUsage]
+    with pytest.raises(RuntimeError, match='without assigning a `SandboxRef`'):
+        await refusing_operation(
+            SandboxOperationParams(
+                run_context=refusing_ctx,
+                supplier_id='sandbox',
+                ref=None,
+                arguments={'command': ['true']},
+            )
+        )
+
+
+def test_wrap_sandbox_rejects_unstable_or_runtime_only_suppliers() -> None:
+    from ..sandbox_fakes import FakeSandbox
+
+    class UnnamedSupplier(AbstractCapability[Any]):
+        def get_sandbox(self, ctx: RunContext[Any], *, ref: SandboxRef | None) -> SandboxBackend:
+            return FakeSandbox('unnamed', ref=ref)
+
+    class LateSupplier(AbstractCapability[Any]):
+        id = 'late'
+
+        def get_sandbox(self, ctx: RunContext[Any], *, ref: SandboxRef | None) -> SandboxBackend:
+            return FakeSandbox('late', ref=ref)
+
+    agent = Agent(TestModel(), name='runtime_supplier', capabilities=[RecordingDurability()])
+    durability = RecordingDurability.from_agent(agent)
+    assert durability is not None
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), agent=agent)
+
+    with pytest.raises(UserError, match='needs an explicit `id`'):
+        durability._wrap_sandbox(ctx, Sandbox(FakeSandbox('unnamed')), supplier=UnnamedSupplier())  # pyright: ignore[reportPrivateUsage]
+    with pytest.raises(UserError, match='added at run time'):
+        durability._wrap_sandbox(ctx, Sandbox(FakeSandbox('late')), supplier=LateSupplier())  # pyright: ignore[reportPrivateUsage]
 
 
 class TransparentDurability(RecordingDurability):

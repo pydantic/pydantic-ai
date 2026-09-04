@@ -118,6 +118,7 @@ async def test_run_only_backend_supports_bounded_reads_through_shell() -> None:
             return await inner.working_dir()
 
     sandbox = Sandbox(RunOnlyBackend())
+    assert sandbox.ref is None
     window = await sandbox.read_file('data.txt', limit=2)
 
     assert window.lines == ('one', 'two')
@@ -186,6 +187,15 @@ async def test_bounded_read_falls_back_to_the_shell_filesystem_when_sed_is_missi
     window = await Sandbox(NoSedBackend(LocalSandbox(tmp_path))).read_file('data.txt', offset=2, limit=1)
 
     assert (window.lines, window.has_more, window.total_lines) == (('two',), True, 3)
+
+
+async def test_native_filesystem_fallback_is_used_when_fake_sed_is_unavailable() -> None:
+    backend = FakeSandbox('no-sed', {'/workspace/data.txt': b'one\ntwo\n'}, sed=False)
+
+    window = await Sandbox(backend).read_file('data.txt', limit=1)
+
+    assert window.lines == ('one',)
+    assert backend.reads == ['/workspace/data.txt']
 
 
 async def test_run_only_backend_has_a_complete_binary_safe_shell_filesystem(tmp_path: Path) -> None:
@@ -259,8 +269,10 @@ async def test_shell_stat_rejects_an_invalid_size(tmp_path: Path) -> None:
             result = await super().run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
             return FakeSandboxResult(exit_code=result.exit_code, stdout=result.stdout, stderr=result.stderr)
 
+    sandbox = Sandbox(InvalidStatBackend(LocalSandbox(tmp_path)))
+    await sandbox.write_bytes('data.bin', b'data')
     with pytest.raises(SandboxError, match='invalid size'):
-        await Sandbox(InvalidStatBackend(LocalSandbox(tmp_path))).stat('data.bin')
+        await sandbox.stat('data.bin')
 
 
 async def test_shell_list_dir_rejects_invalid_encoded_output(tmp_path: Path) -> None:
@@ -279,8 +291,10 @@ async def test_shell_list_dir_rejects_invalid_encoded_output(tmp_path: Path) -> 
             result = await super().run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
             return FakeSandboxResult(exit_code=result.exit_code, stdout=result.stdout, stderr=result.stderr)
 
+    sandbox = Sandbox(InvalidListingBackend(LocalSandbox(tmp_path)))
+    await sandbox.make_dir('directory')
     with pytest.raises(SandboxError, match='invalid directory listing'):
-        await Sandbox(InvalidListingBackend(LocalSandbox(tmp_path))).list_dir('.')
+        await sandbox.list_dir('.')
 
 
 async def test_empty_shell_window_tolerates_a_backend_without_stat() -> None:
