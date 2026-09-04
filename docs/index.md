@@ -1,5 +1,6 @@
 ---
 title: Pydantic AI
+hideTitle: true
 description: "How Python does AI: agents, realtime voice, image generation, embeddings. Every model, every interface, typed end to end."
 ---
 

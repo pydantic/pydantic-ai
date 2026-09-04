@@ -3851,6 +3851,23 @@ def test_profile() -> None:
     assert profile.get('audio_output_sample_rate') == 24000
 
 
+@pytest.mark.parametrize(
+    ('model_name', 'supports_thinking'),
+    [
+        ('gpt-realtime-2', True),
+        ('gpt-realtime-2.1', True),
+        ('gpt-realtime-2.1-2026-01-01', True),
+        ('gpt-realtime-2-mini', True),
+        ('gpt-realtime', False),
+        ('gpt-realtime-mini', False),
+        ('gpt-realtime-2025-08-28', False),
+        ('gpt-realtime-mini-2025-10-06', False),
+    ],
+)
+def test_profile_supports_thinking_at_model_family_boundary(model_name: str, supports_thinking: bool) -> None:
+    assert OpenAIRealtimeModel(model_name).profile.get('supports_thinking') is supports_thinking
+
+
 def test_provider_driven_profile_merges_defaults_varies_by_model_and_intersects_native_tools() -> None:
     class ProfileProvider(OpenAIProvider):
         @staticmethod

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from functools import cached_property
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
@@ -142,7 +143,7 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
         host = parsed.hostname or ''
         return f'{host}-{slug}' if slug else host or url
 
-    @property
+    @cached_property
     def _resolved_id(self) -> str:
         # Read by `_default_native()` (only when `native is True`, which requires `url=`) and by
         # `_native_unique_id()` (whenever `native is not False`, including a `native=<callable>`
