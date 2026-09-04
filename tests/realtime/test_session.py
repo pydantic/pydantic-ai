@@ -82,7 +82,7 @@ from pydantic_ai.realtime import (
     RealtimeTurnCompleteEvent,
     TranscriptUpdate,
 )
-from pydantic_ai.realtime._session import _pending_message_text  # pyright: ignore[reportPrivateUsage]
+from pydantic_ai.realtime._session import _pending_message_text, _TapView  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.realtime._utils import resolve_advertised_tools, seed_pcm_audio, seed_speech_content
 from pydantic_ai.realtime.codec import (
     AudioDelta,
@@ -710,6 +710,24 @@ async def test_view_consumer_can_await_before_iterating() -> None:
 
     await task
     assert got == [b'audio']
+
+
+async def test_closing_an_unstarted_view_releases_its_tap() -> None:
+    session = RealtimeSession(FakeRealtimeConnection([AudioDelta(b'audio')]))
+
+    async with session:
+        audio = session.stream_audio()
+        transcripts = session.stream_transcripts()
+        assert isinstance(audio, _TapView) and isinstance(transcripts, _TapView)
+        assert len(session._audio_taps) == 1  # pyright: ignore[reportPrivateUsage]
+        assert len(session._transcript_taps) == 1  # pyright: ignore[reportPrivateUsage]
+        # `aclose()` on a never-started async generator runs no `finally`; the view releases the tap itself.
+        await audio.aclose()
+        await transcripts.aclose()
+        assert len(session._audio_taps) == 0  # pyright: ignore[reportPrivateUsage]
+        assert len(session._transcript_taps) == 0  # pyright: ignore[reportPrivateUsage]
+        await drain_events(session)
+        assert session._audio_tap_drops == 0  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_abandoned_unstarted_view_releases_its_tap() -> None:
@@ -1473,7 +1491,7 @@ async def test_interrupt_played_bytes_anchors_at_the_subscription_point() -> Non
     async with session:
         stream = session.stream_audio()
         assert await anext(stream) == b'a' * _CHUNK
-        assert isinstance(stream, AsyncGenerator)
+        assert isinstance(stream, _TapView)
         await stream.aclose()  # unsubscribe, so the second stream is the session's only one
 
         conn.release.set()

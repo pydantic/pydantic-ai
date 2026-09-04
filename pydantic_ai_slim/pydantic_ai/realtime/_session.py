@@ -7,7 +7,7 @@ import dataclasses
 import io
 import wave
 import weakref
-from collections.abc import AsyncIterable, AsyncIterator, Callable, Sequence
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Sequence
 from dataclasses import dataclass, replace
 from threading import Lock as ThreadLock
 from time import time_ns
@@ -239,6 +239,30 @@ def _put_tap(queue: asyncio.Queue[_TapItem], item: _TapItem) -> _TapItem | None:
         dropped = queue.get_nowait()
     queue.put_nowait(item)
     return dropped
+
+
+class _TapView(AsyncIterator[_TapItem]):
+    """A `stream_audio()` / `stream_transcripts()` view whose subscription is registered before iteration.
+
+    The generator discards its tap in `finally`, but an async generator that was never started has no
+    frame to unwind, so `aclose()` would leave the tap registered for as long as the caller held the
+    view. Wrapping it gives `aclose()` a hook, and a view that is simply abandoned is released when
+    collected.
+    """
+
+    def __init__(self, iterator: AsyncGenerator[_TapItem, None], taps: set[_Tap], tap: _Tap) -> None:
+        self._iterator = iterator
+        self._discard = weakref.finalize(self, taps.discard, tap)
+
+    def __aiter__(self) -> AsyncIterator[_TapItem]:
+        return self
+
+    async def __anext__(self) -> _TapItem:
+        return await self._iterator.__anext__()
+
+    async def aclose(self) -> None:
+        self._discard()
+        await self._iterator.aclose()
 
 
 @dataclass(eq=False)
@@ -1003,7 +1027,7 @@ class RealtimeSession:
         else:
             self._start_pump()
 
-        async def iterate() -> AsyncIterator[bytes]:
+        async def iterate() -> AsyncGenerator[bytes, None]:
             try:
                 while (item := await queue.get()) is not self._tap_finished:
                     assert isinstance(item, bytes)
@@ -1020,7 +1044,7 @@ class RealtimeSession:
             finally:
                 self._audio_taps.discard(tap)
 
-        return self._tap_iterator(iterate(), self._audio_taps, tap)
+        return _TapView(iterate(), self._audio_taps, tap)
 
     @property
     def played_audio_bytes(self) -> int:
@@ -1082,21 +1106,14 @@ class RealtimeSession:
         else:
             self._start_pump()
 
-        async def iterate() -> AsyncIterator[SpeechPart | TranscriptUpdate]:
+        async def iterate() -> AsyncGenerator[SpeechPart | TranscriptUpdate, None]:
             try:
                 while (item := await queue.get()) is not self._tap_finished:
                     yield item
             finally:
                 taps.discard(queue)
 
-        return self._tap_iterator(iterate(), taps, queue)
-
-    @staticmethod
-    def _tap_iterator(iterator: AsyncIterator[_TapItem], taps: set[_Tap], tap: _Tap) -> AsyncIterator[_TapItem]:
-        # A started generator discards its tap in `finally`. One created but never iterated has no
-        # frame to unwind, so discard its tap when the abandoned iterator is collected.
-        weakref.finalize(iterator, taps.discard, tap)
-        return iterator
+        return _TapView(iterate(), taps, queue)
 
     def all_messages(self) -> list[ModelMessage]:
         """A snapshot of the seeded history plus messages recorded during this session.
