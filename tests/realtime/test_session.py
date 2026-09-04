@@ -1451,6 +1451,43 @@ async def test_speech_finalized_by_a_tool_call_reaches_the_transcript_view() -> 
     )
 
 
+async def test_tool_returning_a_file_frames_it_with_its_call() -> None:
+    """A tool's file rides `ToolResult.content` framed with the call it came from.
+
+    The realtime tool channel is text-only, so a tool's file travels the same user channel the end
+    user speaks on. Seeding covers the other two realtime paths; this is the live send, and nothing
+    else exercises it with a tool whose return value actually carries a file.
+    """
+    conn = FakeRealtimeConnection(
+        [
+            InputTranscript(text="what's the weather in Paris", is_final=True),
+            ToolCall(tool_call_id='tc_1', tool_name='get_weather', args='{"city": "Paris"}'),
+            OutputTranscript(text='Rain moving in', is_final=True),
+            ResponseDone(),
+        ]
+    )
+
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> BinaryImage:
+        return BinaryImage(data=b'png', media_type='image/png', identifier='radar')
+
+    session = RealtimeSession(conn, runner, model_name='m')
+    await collect_events(session)
+
+    assert conn.sent == snapshot(
+        [
+            ToolResult(
+                tool_call_id='tc_1',
+                output='See file radar.',
+                content=[
+                    '<tool_result tool_name="get_weather" tool_call_id="tc_1" file_id="radar">',
+                    BinaryImage(data=b'png', media_type='image/png', identifier='radar'),
+                    '</tool_result>',
+                ],
+            )
+        ]
+    )
+
+
 async def test_late_input_transcript_still_precedes_the_response_it_prompted() -> None:
     """A user turn keeps its place in history however late the provider transcribes it.
 
