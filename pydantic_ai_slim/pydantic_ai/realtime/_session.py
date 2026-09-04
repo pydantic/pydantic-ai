@@ -865,6 +865,10 @@ class RealtimeSession:
         finish cleanly, with any buffered items discarded. The surrounding model context owns the
         underlying connection, so it remains open until that context exits.
 
+        A tool can call this method through
+        [`ctx.realtime_session`][pydantic_ai.tools.RunContext.realtime_session] to hang up. The calling
+        tool does not resume, and its call is recorded as interrupted.
+
         Raises whatever ended the session — a provider hangup, an exceeded `usage_limits`, or a failed
         tool — if the event stream was never iterated, since there was nowhere else for it to surface.
         """
@@ -897,7 +901,16 @@ class RealtimeSession:
         # recorded as interrupted, and every still-running tool call gets a cancelled return. The
         # returned events are discarded — the stream is closing and has no consumer left.
         self._finalize_lost_state()
-        tasks = [*self._background_tasks]
+        # A tool hanging up — `await ctx.realtime_session.close()` from its own tool task — must not
+        # cancel-and-gather itself: the task would become a child of the `gather` it is awaiting, and
+        # CPython's cancel delegation (`Task.cancel` -> `_GatheringFuture.cancel` -> `Task.cancel` ...)
+        # recurses without bound, leaving the tool orphaned and permanently uncancellable. Its call was
+        # settled with a cancelled return above like every other running call (without cancelling the
+        # task, which would interrupt this very method); the task itself is cancelled at the end
+        # instead, once the session is fully closed.
+        current_task = asyncio.current_task()
+        closing_from_own_task = current_task is not None and current_task in self._background_tasks
+        tasks = [task for task in self._background_tasks if task is not current_task]
         if self._pump_task is not None:
             tasks.append(self._pump_task)
         if tasks:
@@ -923,6 +936,17 @@ class RealtimeSession:
             transcript_items_dropped=self._transcript_tap_drops,
         )
         self._loop = None
+
+        if closing_from_own_task:
+            # The tool that closed the session doesn't resume — there is no provider left to send its
+            # result to, and its cancelled return is already in history — mirroring the cancellation
+            # every other running call received from the drain, and what `ctx.cancel()` documents.
+            # `cancel()` on the running task is delivered at its next suspension point, which this
+            # `sleep(0)` is, so it raises `CancelledError` here rather than in the tool body. This also
+            # skips the pump-error re-raise below because there is no caller to receive it.
+            assert current_task is not None
+            current_task.cancel(msg='Realtime session exited')
+            await asyncio.sleep(0)
 
         # A session that was never iterated has nowhere else to learn that it failed: the pump's error is
         # normally raised out of `__aiter__`, so a caller using only `send()` and the
@@ -2325,7 +2349,11 @@ class RealtimeSession:
             self._finalize_response(interrupted=True)
         for tool_call_id, (task, call_part) in list(self._pending_tool_calls.items()):
             self._pending_tool_calls.pop(tool_call_id, None)
-            task.cancel()
+            if task is not asyncio.current_task():
+                # A tool closing the session from its own task is cancelled by `close()` once the
+                # session is fully settled; cancelling it here would land at `close()`'s next await
+                # and cut the teardown short. Its call still gets the cancelled return below.
+                task.cancel()
             cancelled_part = ToolReturnPart(
                 tool_name=call_part.tool_name,
                 content=INTERRUPTED_TOOL_RETURN_CONTENT,
@@ -2540,8 +2568,17 @@ class RealtimeSession:
             wire_content.append(user_content)
         elif user_content:
             wire_content.extend(user_content)
+        if self._closed:
+            # The session closed while the tool ran: it hung up with `close()` and then swallowed the
+            # `CancelledError`. Its call already has an interrupted return in history and there is no
+            # provider left to send to, so the result goes nowhere (`_run_tool` drops it too).
+            return result_part, user_content
         if not response_usage_follows:
             await self._drain_pending_messages('asap')
+        await self._send_tool_result(call_part, output, wire_content)
+        return result_part, user_content
+
+    async def _send_tool_result(self, call_part: ToolCallPart, output: str, wire_content: list[UserContent]) -> None:
         self._reserve_response_request()
         try:
             await self._send_frame(
@@ -2554,7 +2591,6 @@ class RealtimeSession:
         except BaseException:
             self._pending_response_requests -= 1
             raise
-        return result_part, user_content
 
     # --- streaming --------------------------------------------------------------------------------
 
@@ -2721,6 +2757,11 @@ class RealtimeSession:
             self._tool_completion_events.discard(completion)
             # Settled (completed, failed, or cancelled): no longer cancellable by `ToolCallCancelled`.
             self._pending_tool_calls.pop(call_part.tool_call_id, None)
+        if self._closed:
+            # The session closed while this tool ran, so its call already has an interrupted return
+            # in history. Reached by a tool that hung up with `close()` and then swallowed the
+            # `CancelledError`: recording its result too would leave two returns for one call.
+            return
         events = self._complete_tool_call(call_part, result_part, content)
         if ordered_events:
             # Held until nothing is still running, then released in call order — the graph waits for a

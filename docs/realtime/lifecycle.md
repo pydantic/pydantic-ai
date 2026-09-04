@@ -31,7 +31,7 @@ turn into a model response, which may loop through [tool calls](tools.md) before
 enters the reconnect loop below — emitting
 [`RealtimeSessionReconnectEvent`][pydantic_ai.realtime.RealtimeSessionReconnectEvent] on recovery —
 until [`close()`][pydantic_ai.realtime.RealtimeSession.close] (or leaving the `async with` block)
-ends the session.
+ends the session, including from [a tool that hangs up](tools.md#ending-the-session-from-a-tool).
 
 ## Connection and handshake
 

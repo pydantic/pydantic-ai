@@ -6485,6 +6485,157 @@ async def test_tool_can_cancel_realtime_session() -> None:
     assert not any(isinstance(item, ToolResult) for item in conn.sent)
 
 
+@pytest.fixture
+async def loop_errors() -> AsyncIterator[list[dict[str, Any]]]:
+    loop = asyncio.get_running_loop()
+    previous_handler = loop.get_exception_handler()
+    errors: list[dict[str, Any]] = []
+    loop.set_exception_handler(lambda _loop, context: errors.append(context))
+    try:
+        yield errors
+    finally:
+        loop.set_exception_handler(previous_handler)
+
+
+def _hang_up_agent() -> tuple[Agent[None, str], dict[str, asyncio.Task[None] | None]]:
+    agent = Agent[None, str](deps_type=type(None))
+    state: dict[str, asyncio.Task[None] | None] = {'task': None}
+
+    @agent.tool
+    async def hang_up(ctx: RunContext[None]) -> None:
+        assert ctx.realtime_session is not None
+        state['task'] = asyncio.current_task()
+        await ctx.realtime_session.close()
+
+    return agent, state
+
+
+def _tool_returns(session: _RealtimeSession) -> list[tuple[str, str, str | None]]:
+    return [
+        (part.tool_call_id, str(part.content), part.outcome)
+        for message in session.all_messages()
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, ToolReturnPart)
+    ]
+
+
+async def test_tool_can_close_realtime_session(loop_errors: list[dict[str, Any]]) -> None:
+    agent, state = _hang_up_agent()
+    conn = IdleAfterToolConnection(ToolCall(tool_call_id='tc', tool_name='hang_up', args='{}'))
+
+    with anyio.fail_after(5):
+        async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
+            _ = [event async for event in session]
+
+    task = state['task']
+    assert session.closed
+    assert session.result is not None
+    # `close()` ran to completion on the tool's task before that task was cancelled.
+    assert session._loop is None  # pyright: ignore[reportPrivateUsage]
+    assert task is not None and task.done() and task.cancelled()
+    assert conn.iteration_task is not None and conn.iteration_task.done()
+    assert not any(isinstance(item, ToolResult) for item in conn.sent)
+    assert _tool_returns(session) == [
+        ('tc', 'The tool call was interrupted before a result was produced.', 'interrupted')
+    ]
+    assert loop_errors == []
+
+
+async def test_tool_can_close_realtime_session_without_iterating(loop_errors: list[dict[str, Any]]) -> None:
+    agent, state = _hang_up_agent()
+    conn = IdleAfterToolConnection(ToolCall(tool_call_id='tc', tool_name='hang_up', args='{}'))
+
+    with anyio.fail_after(5):
+        async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
+            async for _chunk in session.stream_audio():
+                pass
+        for _ in range(5):
+            await asyncio.sleep(0)
+
+    task = state['task']
+    assert session.closed
+    assert session._loop is None  # pyright: ignore[reportPrivateUsage]
+    assert task is not None and task.done() and task.cancelled()
+    assert not any(isinstance(item, ToolResult) for item in conn.sent)
+    assert _tool_returns(session) == [
+        ('tc', 'The tool call was interrupted before a result was produced.', 'interrupted')
+    ]
+    assert loop_errors == []
+
+
+async def test_tool_that_swallows_the_cancel_after_closing_records_one_return(
+    loop_errors: list[dict[str, Any]],
+) -> None:
+    agent = Agent[None, str](deps_type=type(None))
+
+    @agent.tool
+    async def hang_up(ctx: RunContext[None]) -> str:
+        assert ctx.realtime_session is not None
+        try:
+            await ctx.realtime_session.close()
+        except asyncio.CancelledError:
+            pass
+        return 'must not be recorded'
+
+    conn = IdleAfterToolConnection(ToolCall(tool_call_id='tc', tool_name='hang_up', args='{}'))
+    with anyio.fail_after(5):
+        async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
+            _ = [event async for event in session]
+
+    assert session.closed
+    assert not any(isinstance(item, ToolResult) for item in conn.sent)
+    assert _tool_returns(session) == [
+        ('tc', 'The tool call was interrupted before a result was produced.', 'interrupted')
+    ]
+    assert loop_errors == []
+
+
+async def test_tool_closing_realtime_session_drains_sibling_tools(loop_errors: list[dict[str, Any]]) -> None:
+    agent = Agent[None, str](deps_type=type(None))
+    sibling_started = asyncio.Event()
+    sibling_cancelled = asyncio.Event()
+    closing_task: asyncio.Task[None] | None = None
+
+    @agent.tool_plain
+    async def slow() -> str:
+        sibling_started.set()
+        try:
+            return await asyncio.get_running_loop().create_future()
+        except asyncio.CancelledError:
+            sibling_cancelled.set()
+            raise
+
+    @agent.tool
+    async def hang_up(ctx: RunContext[None]) -> None:
+        nonlocal closing_task
+        assert ctx.realtime_session is not None
+        closing_task = asyncio.current_task()
+        await sibling_started.wait()
+        await ctx.realtime_session.close()
+
+    conn = FakeRealtimeConnection(
+        [
+            ToolCall(tool_call_id='c1', tool_name='slow', args='{}'),
+            ToolCall(tool_call_id='c2', tool_name='hang_up', args='{}'),
+        ]
+    )
+    with anyio.fail_after(5):
+        async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
+            _ = [event async for event in session]
+
+    assert session.closed
+    assert session._loop is None  # pyright: ignore[reportPrivateUsage]
+    assert sibling_cancelled.is_set()
+    assert closing_task is not None and closing_task.done() and closing_task.cancelled()
+    assert not any(isinstance(item, ToolResult) for item in conn.sent)
+    assert _tool_returns(session) == [
+        ('c1', 'The tool call was interrupted before a result was produced.', 'interrupted'),
+        ('c2', 'The tool call was interrupted before a result was produced.', 'interrupted'),
+    ]
+    assert loop_errors == []
+
+
 async def test_realtime_cancellation_does_not_wait_for_sync_tool_worker() -> None:
     """A unit test because a recording cannot observe whether the local worker thread outlives the session."""
     worker_started = ThreadEvent()

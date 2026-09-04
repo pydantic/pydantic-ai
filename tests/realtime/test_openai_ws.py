@@ -20,7 +20,7 @@ import anyio
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
@@ -49,7 +49,7 @@ from pydantic_ai.realtime import (
 )
 from pydantic_ai.usage import RequestUsage, RunUsage
 
-from ..conftest import IsDatetime, IsStr, try_import
+from ..conftest import IsDatetime, IsSameStr, IsStr, try_import
 from .conftest import REAL_SDP_OFFER
 from .ws_cassettes import RealtimeCassette, ReplayWebSocket
 from .ws_helpers import collapse_event_types, sent_frames_containing
@@ -663,6 +663,64 @@ async def test_tool_call_round(openai_ws_cassette: tuple[Provider[Any], Realtime
     # tool-calling turn reports two usage updates, not just the final text response's.
     assert session.usage.requests == 2
     assert session.usage.input_tokens > 0 and session.usage.output_tokens > 0
+
+
+async def test_tool_can_close_session(openai_ws_cassette: tuple[Provider[Any], RealtimeCassette]) -> None:
+    """A provider-requested tool can hang up without wedging its own task or the session iterator."""
+    provider, _ = openai_ws_cassette
+    model = OpenAIRealtimeModel(
+        'gpt-realtime', provider=provider, settings=OpenAIRealtimeModelSettings(output_modality='text')
+    )
+    agent = Agent[None, str](
+        deps_type=type(None), instructions='Always call the hang_up tool immediately when asked to end the call.'
+    )
+
+    @agent.tool
+    async def hang_up(ctx: RunContext[None]) -> None:
+        """End the call now."""
+        assert ctx.realtime_session is not None
+        await ctx.realtime_session.close()
+
+    async with agent.realtime(model).session() as session:
+        await session.send('End the call now by calling hang_up.')
+        with anyio.fail_after(30):
+            _ = [event async for event in session]
+
+    assert session.closed
+    assert session.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='End the call now by calling hang_up.', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=(run_id := IsSameStr()),
+                conversation_id=(conversation_id := IsSameStr()),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='hang_up', args='{}', tool_call_id=(tool_call_id := IsSameStr()))],
+                model_name='gpt-realtime',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
+                run_id=run_id,
+                conversation_id=conversation_id,
+                state='interrupted',
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='hang_up',
+                        content='The tool call was interrupted before a result was produced.',
+                        tool_call_id=tool_call_id,
+                        timestamp=IsDatetime(),
+                        outcome='interrupted',
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=run_id,
+                conversation_id=conversation_id,
+            ),
+        ]
+    )
 
 
 async def test_tool_error_ends_transcript_only_session(

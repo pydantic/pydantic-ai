@@ -206,6 +206,32 @@ and may reply, call a tool, or move on. To add context without prompting a turn,
 Multimodal content and model responses are rejected because the realtime live-input channel cannot
 preserve their standard-run semantics.
 
+## Ending the session from a tool
+
+To hang up from a tool, call [`close()`][pydantic_ai.realtime.RealtimeSession.close] through
+[`ctx.realtime_session`][pydantic_ai.tools.RunContext.realtime_session]:
+
+```python
+from pydantic_ai import Agent, RunContext
+
+agent = Agent(instructions='When the caller says goodbye, call `hang_up`.')
+
+
+@agent.tool
+async def hang_up(ctx: RunContext[None]) -> None:
+    assert ctx.realtime_session is not None
+    await ctx.realtime_session.close()
+```
+
+The session closes cleanly, and `session.result` and its history are settled before the context
+exits. The tool does not resume after `close()`: there is no provider left to receive its result, so
+the call is recorded locally with an interrupted result. The code that owns the `session()` context
+does not receive an exception.
+
+To abort the run instead, [`ctx.cancel()`](../tools-advanced.md#cancelling-the-run-from-a-tool)
+works as in a standard run: the call is likewise recorded as interrupted, and the `session()`
+context raises [`RunCancelled`][pydantic_ai.exceptions.RunCancelled] carrying the completed history.
+
 ## Delegating work during a call
 
 Realtime models do not provide structured output and can be weaker at complex reasoning than a
