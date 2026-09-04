@@ -101,17 +101,6 @@ _DOC_INDENT = '    '
 # and quotes could terminate the delimiter.
 _DESCRIPTION_ESCAPES = str.maketrans({'\\': '\\\\', '\0': '\\x00', '"': '\\"'})
 
-_SCALAR_CONSTRAINT_KEYS = (
-    'minimum',
-    'maximum',
-    'exclusiveMinimum',
-    'exclusiveMaximum',
-    'multipleOf',
-    'minLength',
-    'maxLength',
-    'pattern',
-)
-
 
 def _render_description(text: str, indent: str = '') -> list[str]:
     """Render a description as a list of indented docstring lines."""
@@ -486,13 +475,11 @@ _JSON_TYPE_TO_PYTHON: dict[str, str] = {
 }
 
 
-def _is_terminal_scalar_schema(schema: dict[str, Any]) -> bool:
-    schema_type = schema.get('type')
-    return (
-        isinstance(schema_type, str)
-        and schema_type in _JSON_SIMPLE_TYPE_TO_PYTHON
-        and schema.keys().isdisjoint(('$ref', 'allOf', 'anyOf', 'oneOf'))
-    )
+# Names of the non-object defs currently being resolved inline. A non-object def has no
+# TypedDict to point at, so a self-referential one (`type Json = str | list[Json]`) would
+# recurse forever; `_build_and_register_type` solves the same problem for object defs by
+# registering a placeholder before it walks the fields.
+_resolving_refs: ContextVar[frozenset[str]] = ContextVar('_resolving_refs', default=frozenset())
 
 
 def _json_type_to_python(json_type: str) -> SimpleTypeExpr:
@@ -572,16 +559,6 @@ def _build_params_from_schema(
         prop_schema = _normalize_schema_node(prop_schema_raw)
         type_expr = _schema_to_type_expr(prop_schema, defs, referenced_types, tool_name, prop_name)
         description = prop_schema.get('description', '') or None
-        if '$ref' in prop_schema:
-            ref_name = prop_schema['$ref'].split('/')[-1]
-            ref_schema = _normalize_schema_node(defs.get(ref_name, {}))
-            if _is_terminal_scalar_schema(ref_schema):
-                constraints = ', '.join(
-                    f'{key}={ref_schema[key]!r}' for key in _SCALAR_CONSTRAINT_KEYS if key in ref_schema
-                )
-                if constraints:
-                    constraint_description = f'Constraints: {constraints}.'
-                    description = f'{description}\n{constraint_description}' if description else constraint_description
 
         if 'default' in prop_schema:
             default_str = repr(prop_schema['default'])
@@ -638,15 +615,21 @@ def _schema_to_type_expr(
             ref_schema = _normalize_schema_node(defs[ref_name])
             if ref_schema.get('type') == 'object' and 'properties' in ref_schema:
                 _build_and_register_type(ref_name, ref_schema, defs, referenced_types, tool_name, path)
-            elif 'enum' in ref_schema and ref_schema.keys().isdisjoint(('$ref', 'allOf', 'anyOf', 'oneOf')):
-                # Pydantic emits enum classes as non-object defs. Resolve terminal enum defs
-                # inline as `Literal[...]`; a bare class name would never be defined.
-                return _schema_to_type_expr(ref_schema, defs, referenced_types, tool_name, path)
-            elif _is_terminal_scalar_schema(ref_schema):
-                # Same rationale as the enum case above: resolve terminal scalar defs
-                # (constrained aliases included) inline as `int`/`str`/...; a bare class
-                # name would never be defined.
-                return _schema_to_type_expr(ref_schema, defs, referenced_types, tool_name, path)
+            elif '$ref' not in ref_schema:
+                # Only object defs become TypedDicts. Pydantic emits enums, constrained
+                # aliases, list aliases and unions as non-object defs, which would render as
+                # a bare class name that is never defined, so resolve them inline instead:
+                # `Literal[...]`, `int`, `list[str]`, `int | None`.
+                resolving = _resolving_refs.get()
+                if ref_name in resolving:
+                    # A self-referential non-object def has no finite inline expression and no
+                    # TypedDict to name, so `Any` keeps the rendered signature self-contained.
+                    return _ANY
+                token = _resolving_refs.set(resolving | {ref_name})
+                try:
+                    return _schema_to_type_expr(ref_schema, defs, referenced_types, tool_name, path)
+                finally:
+                    _resolving_refs.reset(token)
         # Return the TypeSignature object if available, otherwise the name
         if ref_name in referenced_types:
             return referenced_types[ref_name]
