@@ -654,7 +654,9 @@ async def test_view_subscribes_at_call_time_and_does_not_replay_earlier_events()
         audio = session.stream_audio()
         assert [event async for event in session]
         assert [chunk async for chunk in audio] == [b'audio']
+        # Views created after the pump has finished get nothing: no replay, and they end at once.
         assert [chunk async for chunk in session.stream_audio()] == []
+        assert [part async for part in session.stream_transcripts()] == []
 
 
 async def test_view_requires_entered_session() -> None:
@@ -677,7 +679,7 @@ async def test_views_created_before_response_are_consumed_after_it() -> None:
         audio_task = asyncio.create_task(aiter_to_list(audio))
         transcript_task = asyncio.create_task(aiter_to_list(transcripts))
         events: list[RealtimeEvent] = []
-        async for event in session:
+        async for event in session:  # pragma: no branch
             events.append(event)
             if isinstance(event, RealtimeTurnCompleteEvent):
                 break
@@ -700,7 +702,7 @@ async def test_view_consumer_can_await_before_iterating() -> None:
 
     async with session:
         task = asyncio.create_task(play_audio(session.stream_audio()))
-        async for event in session:
+        async for event in session:  # pragma: no branch
             if isinstance(event, RealtimeTurnCompleteEvent):
                 break
         for _ in range(5):
