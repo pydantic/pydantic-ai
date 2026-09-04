@@ -300,38 +300,48 @@ if the head changes, capture the new SHA and restart the loop.
    state an earlier step already established. When the HEAD changes, capture the new SHA and repeat
    the loop.
 
-## When the loop completes — consider a deep `douwebot` review
+## When the loop completes — choose a review surface
 
-The repo has two standards reviewers, and they are independent:
+Once the loop above has terminated — CI green, every comment triaged — the PR gets one more review
+before it is handed back. Which one is the author's call, not yours.
 
-- **`CI Review`** runs automatically once the `CI` workflow succeeds on the PR's current head. It
-  owns the `APPROVE`/`REQUEST_CHANGES` verdict and has the more rigorous process — severity scale,
-  sub-agent fan-out, per-finding verification.
-- **`douwebot`** runs only when the `douwebot` label is applied, on a stronger model. It posts
-  inline comments and no verdict, and it deletes the label when it finishes, so each application
-  buys exactly one review of the diff as it stands at that moment.
+Report the diff first: its size label, how many files it changes, and which of those carry risk.
+Recommend one surface from those facts, then ask. Never pick for the author. Lean toward `none` on
+a typo fix, a dependency bump, or a mechanical chore. Lean deep on a new feature, a behavior
+change, public API surface, a non-trivial bug fix, or user-facing docs — where a reviewer catches
+things like an example built on an outdated model. Smaller diffs are cheaper to review, so lean
+deeper when the call is close.
 
-Applying the label adds a second opinion; it does not suppress or replace `CI Review`.
+| Surface | What it is |
+|---|---|
+| `pydanty:review-branch` | Hosted. Fixed reviewer roster, waves, gating lanes. It remediates and pushes commits to the branch. |
+| `pydanty:review-lite` | Hosted, same sandbox and same comment marker. Reads the diff, writes 2 to 8 ad-hoc charters for this PR, dispatches one sub-agent per charter, and adjudicates with a skeptic pass before anything posts. Reports only — it never remediates. |
+| `douwebot` | One shot on a stronger model. Inline comments, no verdict. It deletes its own label when it finishes, so one application buys one review of the diff as it stood at that moment. |
+| local | `pre-push-review`, `/review-branch`, or an ad-hoc review a fresh sub-agent leads with sub-agents of its own. Bound by the fresh reviewer context contract above: the agent that wrote the diff never reviews it. Where the harness cannot give you a fresh no-history sub-agent, offer to clear the session and review instead. |
+| none | No extra surface. The required `CI Review` has already run on the current head; the author does the last pass by hand. |
 
-Once the loop above has terminated — CI green, every comment triaged — decide whether to apply it
-before handing the PR back or requesting merge:
+`CI Review` is not on this menu. It runs automatically once `CI` succeeds on the PR's current head
+and owns the `APPROVE` / `REQUEST_CHANGES` verdict. Every surface above adds an opinion beside it.
+None of them suppresses or replaces it.
 
-- **Apply it last, not early.** It won't re-run on later pushes, so a deep review of a
-  still-moving PR is wasted money.
-- **Use judgment on whether it's warranted.** Skip it when you're highly confident there's nothing
-  left to catch (typo fixes, dependency bumps, mechanical chores). Apply it for substantive
-  changes: new features, behavior changes, public API surface, non-trivial bug fixes — and
-  user-facing docs, where it catches things like examples using outdated models. In between, weigh
-  cost against risk; smaller PRs are cheaper to review, so lean toward applying when unsure.
-- **How:** `gh pr edit <number> --add-label douwebot`. This requires triage permission on the repo
-  (Pydantic team members and their agents). If it fails, quote the actual error — don't skip it
-  based on an assumed lack of permission.
-- **Known refusal:** the job fails without reviewing if the PR touches an `AGENTS.md` or `CLAUDE.md`
-  at any depth, `CLAUDE.local.md`, `.mcp.json`, or anything under `.claude/`, `.agents/` or
-  `agent_docs/` — a security guard against a PR editing the reviewer's own instructions. The guard
-  is skipped for an author with write or admin access on the repo. Don't apply the label to a PR the
-  guard covers; the red check is the guard working.
-- **Afterwards, re-enter the loop.** The review posts comments that need the same triage as any
+### Triggering a hosted surface
+
+- **Apply the label last, not early.** None of them re-runs on a later push, so a deep review of a
+  still-moving PR buys a report on a diff that no longer exists.
+- **How:** `gh pr edit <number> --add-label <douwebot|pydanty:review-branch|pydanty:review-lite>`.
+  This needs triage permission on the repo. If it fails, quote the actual error rather than
+  skipping the step on an assumed lack of permission.
+- **Then wait — waiting is the work.** A pydanty label starts a run off this machine with a defined
+  end: pydanty removes the trigger label on pickup, adds `pydanty:is-working`, and removes that
+  when the review posts. Poll every 15 minutes for up to 2 hours 30 minutes. Never push to the
+  branch or touch a thread while `pydanty:is-working` is set. Pydanty also pushes remediation
+  commits, so fast-forward before acting on the verdict or you will read a head behind the PR.
+- **Known `douwebot` refusal:** the job fails without reviewing if the PR touches an `AGENTS.md` or
+  `CLAUDE.md` at any depth, `CLAUDE.local.md`, `.mcp.json`, or anything under `.claude/`,
+  `.agents/` or `agent_docs/` — a security guard against a PR editing the reviewer's own
+  instructions. The guard is skipped for an author with write or admin access on the repo. Don't
+  apply the label to a PR the guard covers; the red check is the guard working.
+- **Afterwards, re-enter the loop.** Every surface posts comments that need the same triage as any
   other.
 
 ## Before handing the PR back
