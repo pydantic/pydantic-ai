@@ -1079,8 +1079,11 @@ async def test_agent_without_listeners_registers_no_capability() -> None:
     assert before is agent._effective_root_capability()  # pyright: ignore[reportPrivateUsage]
     assert hooks not in before.capabilities
 
+    seen: list[str] = []
+
     @agent.on_event(AgentLevelEvent)
-    async def typed(ctx: RunContext[None], event: AgentLevelEvent) -> None: ...
+    async def typed(ctx: RunContext[None], event: AgentLevelEvent) -> None:
+        seen.append(event.value)
 
     after, _ = agent._base_run_capability()  # pyright: ignore[reportPrivateUsage]
 
@@ -1088,3 +1091,20 @@ async def test_agent_without_listeners_registers_no_capability() -> None:
     # keep their order ahead of it) and nothing else about the tree changes.
     assert after.capabilities[-1] is hooks
     assert list(after.capabilities[:-1]) == list(before.capabilities)
+
+    await agent.run('hello')
+    assert seen == ['x']
+
+
+async def test_agent_on_event_registers_bare_with_a_timeout() -> None:
+    """`@agent.on_event(timeout=...)` names no classes, so it sees everything, with a deadline."""
+    kinds: list[str] = []
+    agent = Agent(FunctionModel(stream_function=simple_stream_function), capabilities=[AgentLevelEmitter()])
+
+    @agent.on_event(timeout=5)
+    async def every(ctx: RunContext[None], event: AgentStreamEvent) -> None:
+        kinds.append(event.event_kind)
+
+    await agent.run('hello')
+
+    assert 'capability' in kinds
