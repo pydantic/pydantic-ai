@@ -40,6 +40,10 @@ agent = Agent(
 )
 ```
 
+Pass the same factory to [`infer_realtime_model()`][pydantic_ai.realtime.infer_realtime_model]
+when a realtime session uses per-user credentials:
+`agent.realtime(infer_realtime_model(model_id, provider_factory=provider_factory))`.
+
 The resolver may be synchronous or asynchronous. Its full callable signature is
 `(ModelResolutionContext[Deps], str) -> Model | None | Awaitable[Model | None]`.
 The convenience capability adapts both forms to the asynchronous
