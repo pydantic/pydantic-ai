@@ -1110,26 +1110,36 @@ async def test_agent_on_event_registers_bare_with_a_timeout() -> None:
     assert 'capability' in kinds
 
 
-async def test_agent_on_event_sees_events_before_a_stream_wrapper_rewrites_them() -> None:
-    """Dispatch is upstream of `wrap_run_event_stream`, so a listener sees what was emitted."""
+@dataclass
+class _StreamRewriter(AbstractCapability[Any]):
+    """Rewrites text parts and drops thinking parts in the stream-wrapper stage."""
+
+    async def wrap_run_event_stream(
+        self, ctx: RunContext[Any], *, stream: AsyncIterable[AgentStreamEvent]
+    ) -> AsyncIterator[AgentStreamEvent]:
+        async for event in stream:
+            if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
+                yield dataclasses_replace(event, part=TextPart(content='REWRITTEN'))
+            else:
+                yield event
+
+
+async def test_listeners_see_events_a_stream_wrapper_already_rewrote() -> None:
+    """Dispatch is downstream of `wrap_run_event_stream`, for capability and agent listeners alike."""
+    capability_saw: list[str] = []
 
     @dataclass
-    class Rewriter(AbstractCapability[Any]):
-        async def wrap_run_event_stream(
-            self, ctx: RunContext[Any], *, stream: AsyncIterable[AgentStreamEvent]
-        ) -> AsyncIterator[AgentStreamEvent]:
-            async for event in stream:
-                if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
-                    yield dataclasses_replace(event, part=TextPart(content='REWRITTEN'))
-                else:
-                    yield event
+    class Watcher(AbstractCapability[Any]):
+        @on_event(PartStartEvent)
+        async def watch(self, ctx: RunContext[Any], event: PartStartEvent) -> None:
+            capability_saw.append(repr(event.part))
 
-    agent = Agent(FunctionModel(stream_function=simple_stream_function), capabilities=[Rewriter()])
-    listener_saw: list[str] = []
+    agent = Agent(FunctionModel(stream_function=simple_stream_function), capabilities=[_StreamRewriter(), Watcher()])
+    agent_saw: list[str] = []
 
     @agent.on_event(PartStartEvent)
     async def watch(ctx: RunContext[None], event: PartStartEvent) -> None:
-        listener_saw.append(repr(event.part))
+        agent_saw.append(repr(event.part))
 
     consumer_saw: list[str] = []
     async with agent.run_stream_events('hello') as stream:
@@ -1137,6 +1147,8 @@ async def test_agent_on_event_sees_events_before_a_stream_wrapper_rewrites_them(
             if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
                 consumer_saw.append(event.part.content)
 
-    # The listener ran before the wrapper, so it never sees the rewrite the consumer receives.
+    # `on_event` is terminal, so every transform runs ahead of it: both listeners see exactly what
+    # the consumer receives, rather than the event as it was emitted.
     assert 'REWRITTEN' in consumer_saw
-    assert listener_saw and not any('REWRITTEN' in part for part in listener_saw)
+    assert any('REWRITTEN' in part for part in agent_saw)
+    assert any('REWRITTEN' in part for part in capability_saw)

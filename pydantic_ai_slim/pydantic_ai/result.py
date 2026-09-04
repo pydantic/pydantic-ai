@@ -394,9 +394,11 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
             )
             # Wrap once, so a capability's `wrap_run_event_stream` sees each event exactly once no
             # matter how many times this stream is iterated (e.g. `stream_text()` then a drain).
+            # Wrappers first, listeners last -- see `_agent_graph._wrapped_stream`.
             self._events_iterator = aiter(
-                self._root_capability.wrap_run_event_stream(
-                    self._run_ctx, stream=dispatch_event_stream(self._run_ctx, self._events_iter(base_iter))
+                dispatch_event_stream(
+                    self._run_ctx,
+                    self._root_capability.wrap_run_event_stream(self._run_ctx, stream=self._events_iter(base_iter)),
                 )
             )
 
