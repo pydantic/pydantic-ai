@@ -874,8 +874,9 @@ class RealtimeSession:
         # cancel-and-gather itself: the task would become a child of the `gather` it is awaiting, and
         # CPython's cancel delegation (`Task.cancel` -> `_GatheringFuture.cancel` -> `Task.cancel` ...)
         # recurses without bound, leaving the tool orphaned and permanently uncancellable. Its call was
-        # settled with a cancelled return above like every other running call; the task itself is
-        # cancelled at the end instead, once the session is fully closed.
+        # settled with a cancelled return above like every other running call (without cancelling the
+        # task, which would interrupt this very method); the task itself is cancelled at the end
+        # instead, once the session is fully closed.
         current_task = asyncio.current_task()
         closing_from_own_task = current_task is not None and current_task in self._background_tasks
         tasks = [task for task in self._background_tasks if task is not current_task]
@@ -2210,7 +2211,11 @@ class RealtimeSession:
             self._finalize_response(interrupted=True)
         for tool_call_id, (task, call_part) in list(self._pending_tool_calls.items()):
             self._pending_tool_calls.pop(tool_call_id, None)
-            task.cancel()
+            if task is not asyncio.current_task():
+                # A tool closing the session from its own task is cancelled by `close()` once the
+                # session is fully settled; cancelling it here would land at `close()`'s next await
+                # and cut the teardown short. Its call still gets the cancelled return below.
+                task.cancel()
             cancelled_part = ToolReturnPart(
                 tool_name=call_part.tool_name,
                 content=INTERRUPTED_TOOL_RETURN_CONTENT,

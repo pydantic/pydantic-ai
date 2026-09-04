@@ -6176,6 +6176,8 @@ async def test_tool_can_close_realtime_session(loop_errors: list[dict[str, Any]]
     task = state['task']
     assert session.closed
     assert session.result is not None
+    # `close()` ran to completion on the tool's task before that task was cancelled.
+    assert session._loop is None  # pyright: ignore[reportPrivateUsage]
     assert task is not None and task.done() and task.cancelled()
     assert conn.iteration_task is not None and conn.iteration_task.done()
     assert not any(isinstance(item, ToolResult) for item in conn.sent)
@@ -6198,6 +6200,7 @@ async def test_tool_can_close_realtime_session_without_iterating(loop_errors: li
 
     task = state['task']
     assert session.closed
+    assert session._loop is None  # pyright: ignore[reportPrivateUsage]
     assert task is not None and task.done() and task.cancelled()
     assert not any(isinstance(item, ToolResult) for item in conn.sent)
     assert _tool_returns(session) == [
@@ -6242,6 +6245,7 @@ async def test_tool_closing_realtime_session_drains_sibling_tools(loop_errors: l
             _ = [event async for event in session]
 
     assert session.closed
+    assert session._loop is None  # pyright: ignore[reportPrivateUsage]
     assert sibling_cancelled.is_set()
     assert closing_task is not None and closing_task.done() and closing_task.cancelled()
     assert not any(isinstance(item, ToolResult) for item in conn.sent)
