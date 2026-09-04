@@ -60,6 +60,7 @@ from ._transports import (
     _MCPCallTransport,
     _ModelRequestTransport,
     _RequestParams as _RequestParams,
+    _SandboxOperationTransport,
     _StreamedActivityPayload,
 )
 
@@ -492,6 +493,9 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
 
     def _event_stream_handler_parameter_transport(self) -> _EventStreamHandlerTransport:
         return _EventStreamHandlerTransport(self)
+
+    def _sandbox_operation_parameter_transport(self) -> _SandboxOperationTransport:
+        return _SandboxOperationTransport(self)
 
     async def _load_streamed_activity_result(
         self, result: object, model_request_parameters: ModelRequestParameters

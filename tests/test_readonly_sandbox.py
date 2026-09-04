@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from pydantic_ai import UserError
-from pydantic_ai.sandboxes import ReadOnlySandbox, Sandbox, SandboxRef
+from pydantic_ai.sandboxes import LocalSandbox, ReadOnlySandbox, Sandbox, SandboxRef
 
-from .sandbox_fakes import FakeSandbox, RecordingSandboxBackend
+from .sandbox_fakes import FakeSandbox, RunOnlySandboxBackend
 
 pytestmark = pytest.mark.anyio
 
@@ -25,7 +27,7 @@ async def test_read_only_sandbox_forwards_reads_and_refuses_run_and_writes() -> 
     with pytest.raises(UserError, match='read-only'):
         await sandbox.write_text('data.txt', 'changed')
 
-    assert backend.fs.files['/workspace/data.txt'] == b'original'
+    assert backend.files['/workspace/data.txt'] == b'original'
 
 
 async def test_read_only_sandbox_forwards_every_read_and_refuses_every_write() -> None:
@@ -42,14 +44,18 @@ async def test_read_only_sandbox_forwards_every_read_and_refuses_every_write() -
     with pytest.raises(UserError, match='read-only'):
         await sandbox.remove('data.txt')
 
-    assert backend.fs.files == {'/workspace/data.txt': b'original'}
+    assert backend.files == {'/workspace/data.txt': b'original'}
 
 
-async def test_read_only_sandbox_over_a_backend_without_a_filesystem() -> None:
-    """Wrapping a run-only backend still yields a valid backend; file reads report the missing `fs`."""
-    sandbox = Sandbox(ReadOnlySandbox(RecordingSandboxBackend('run-only')))
+async def test_read_only_sandbox_over_a_run_only_backend_uses_the_shell_fallback(tmp_path: Path) -> None:
+    """The wrapper can read through the inner shell fallback without exposing command execution."""
+    (tmp_path / 'data.txt').write_text('hello')
+    backend = RunOnlySandboxBackend(LocalSandbox(tmp_path))
+    sandbox = Sandbox(ReadOnlySandbox(backend))
 
-    with pytest.raises(NotImplementedError, match='does not implement `SupportsFilesystem`'):
-        await sandbox.read_text('data.txt')
+    assert await sandbox.read_text('data.txt') == 'hello'
+    assert any(isinstance(command, str) and command.startswith('base64 <') for command in backend.commands)
     with pytest.raises(UserError, match='read-only'):
         await sandbox.run(['ls'])
+    with pytest.raises(UserError, match='read-only'):
+        await sandbox.write_text('data.txt', 'changed')

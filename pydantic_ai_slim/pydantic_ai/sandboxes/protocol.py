@@ -3,14 +3,15 @@
 A *sandbox* is an environment — a subprocess jail, a container, a microVM, a remote worker —
 that an agent run can execute commands in and read/write files of. Backends implement the
 small [`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] protocol (command execution and
-working-directory reporting); filesystem access is the optional `SupportsFilesystem` protocol,
-so a backend implements exactly the parts its platform supports. Tools and capabilities use the
+working-directory reporting); native filesystem access is the optional, flat
+`SupportsFilesystem` protocol, so a backend implements exactly the parts its platform supports.
+Tools and capabilities use the
 read-only [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox] object; identity and
 lifecycle are covered in the [sandbox documentation](../sandbox.md).
 
 Contracts every implementation must honor (the rest are on the relevant members):
 
-- **One environment.** `run` executes against the same filesystem that `fs` exposes: a file
+- **One environment.** `run` and native filesystem methods operate on the same filesystem: a file
   written through either is visible to the other. Consumers (including
   [`Sandbox`][pydantic_ai.sandboxes.Sandbox]) rely on this to serve file operations
   through whichever of the two paths is cheaper.
@@ -36,7 +37,6 @@ __all__ = (
     'SandboxCommand',
     'SandboxError',
     'SandboxFileEntry',
-    'SandboxFilesystem',
     'SandboxRef',
     'SandboxResult',
     'SandboxTimeoutError',
@@ -179,16 +179,22 @@ class FileEntry:
     size: int | None
 
 
-class SandboxFilesystem(Protocol):
-    """File access inside a sandbox.
+@runtime_checkable
+class SupportsFilesystem(Protocol):
+    """Optional native file access implemented directly by a sandbox backend.
+
+    The methods are flat on the backend rather than hidden behind a separate `.fs` object.
+    [`Sandbox`][pydantic_ai.sandboxes.Sandbox] prefers these native methods and derives the same
+    operations from [`SandboxBackend.run`][pydantic_ai.sandboxes.SandboxBackend.run] when they
+    are absent.
 
     All paths are absolute POSIX paths; use
-    [`Sandbox.resolve`][pydantic_ai.sandboxes.Sandbox.resolve] to turn model-supplied
-    relative paths into absolute ones first. The filesystem API is bytes-only: decoding policy
-    lives in the [`Sandbox`][pydantic_ai.sandboxes.Sandbox] text helpers.
+    [`Sandbox.resolve`][pydantic_ai.sandboxes.Sandbox.resolve] to turn model-supplied relative
+    paths into absolute ones first. The filesystem API is bytes-only: decoding policy lives in
+    the [`Sandbox`][pydantic_ai.sandboxes.Sandbox] text helpers.
 
-    Operations on a path that does not exist raise the builtin `FileNotFoundError`: backends
-    translate their SDK's own missing-file exception.
+    Operations that require an existing path raise the builtin `FileNotFoundError` when it is
+    missing; `exists` returns `False`. Backends translate their SDK's own missing-file exception.
     """
 
     async def read_bytes(self, path: str) -> bytes:
@@ -217,21 +223,6 @@ class SandboxFilesystem(Protocol):
 
     async def exists(self, path: str) -> bool:
         """Whether a file or directory exists at the path."""
-        ...
-
-
-@runtime_checkable
-class SupportsFilesystem(Protocol):
-    """Optional native filesystem access for a sandbox backend.
-
-    Checked via `isinstance` by [`Sandbox`][pydantic_ai.sandboxes.Sandbox]: its file methods
-    (`read_bytes`, `write_bytes`, `stat`, `list_dir`, `make_dir`, `remove`, `exists`) raise
-    `NotImplementedError` when the backend does not implement this.
-    """
-
-    @property
-    def fs(self) -> SandboxFilesystem:
-        """Native file access inside the sandbox."""
         ...
 
 
@@ -295,6 +286,6 @@ class SandboxBackend(Protocol):
         Only the backend can resolve paths inside its own environment, and consumers join
         model-supplied relative paths onto this value textually — a non-canonical spelling
         (e.g. one containing `symlink/..`) makes `run` (which resolves paths like the kernel)
-        and `fs` (which operates on the spelling) disagree about the same relative path.
+        and filesystem operations (which use the spelling) disagree about the same relative path.
         """
         ...

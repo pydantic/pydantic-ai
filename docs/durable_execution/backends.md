@@ -140,7 +140,10 @@ when config differs by model, toolset, or operation. The role is a coarse config
 `'event'`, `'tool'`, or `'capability'`. The operation ID carries the fine-grained identity. A
 capability operation ID includes the explicit name from `@durable_operation(name='...')`. That name
 is required because it becomes persisted compatibility data and must remain stable if the Python
-method is renamed. The ID union represents the IDs available in the installed Pydantic AI version.
+method is renamed. A [`SandboxOperationId`][pydantic_ai.durable_exec.SandboxOperationId] includes
+the stable ID of the capability that supplied the sandbox and the flat
+[`SandboxMethod`][pydantic_ai.durable_exec.SandboxMethod] being called. The ID union represents the
+IDs available in the installed Pydantic AI version.
 Per-tool config can return
 `False` to opt a function or dynamic tool out of a durable unit.
 MCP tools perform I/O and always run in their durable unit, so returning `False` for one raises a
@@ -149,15 +152,16 @@ MCP tools perform I/O and always run in their durable unit, so returning `False`
 The built-in IDs are `ModelRequestId`, `ModelCompactMessagesId`,
 `ModelCancelSuspendedResponseId`, `EventStreamHandlerId`, `ToolsetGetToolsId`,
 `ToolsetGetInstructionsId`, `ToolsetValidateToolArgumentsId`, `ToolsetCallToolId`, and
-`CapabilityOperationId`. Their Python class names do not determine persisted operation names.
+`CapabilityOperationId`, and `SandboxOperationId`. Their Python class names do not determine
+persisted operation names.
 
 ### API evolution
 
 [`DurableOperationId`][pydantic_ai.durable_exec.DurableOperationId] grows in minor releases as
-Pydantic AI adds durable units. Sandbox operations are one planned example. Engine configuration
-must therefore include a default branch when matching IDs. Use that branch to apply a safe base
-configuration or raise an actionable unsupported-operation error. Do not rely on an exhaustive
-match that assumes the current union will never gain another arm.
+Pydantic AI adds durable units. Engine configuration must therefore include a default branch when
+matching IDs. Use that branch to apply a safe base configuration or raise an actionable
+unsupported-operation error. Do not rely on an exhaustive match that assumes the current union
+will never gain another arm.
 
 ## Persisted names and recovery
 

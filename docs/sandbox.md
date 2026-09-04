@@ -95,7 +95,8 @@ Pydantic AI chooses one sandbox for the run, in this order:
 2. The environment supplied by one active capability.
 3. The unavailable default, which explains how to attach one when a tool tries to use it.
 
-If more than one capability returns a reference, the run releases them all and raises. Deferred
+If more than one capability returns a backend, the run raises when the second answer is found.
+Backends are lazy, so this selection does not create an environment that needs cleanup. Deferred
 capabilities are not asked, because they load after the sandbox is chosen.
 
 ### Directly, per run
@@ -109,13 +110,17 @@ same backend to several runs when they should share one workspace.
 A capability can supply the run's sandbox, which is useful for applications that create containers
 or remote environments on demand. There is one hook:
 
-[`get_sandbox`][pydantic_ai.capabilities.AbstractCapability.get_sandbox] runs once per run, before
-any other hook, and returns a backend or `None` to decline. It is synchronous and must not touch
-the network: it hands back a backend built from your own settings, and that backend creates or
-attaches the first time somebody runs a command.
+[`get_sandbox`][pydantic_ai.capabilities.AbstractCapability.get_sandbox] runs once per run after
+[`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run] has selected the per-run
+capability instances, but before the run lifecycle hooks. It returns a backend or `None` to
+decline. It is synchronous and must not touch the network: it hands back a backend built from your
+own settings, and that backend creates or attaches the first time somebody runs a command.
 
-`ref` is the identity of an environment the run should continue in, either from an explicit
-`sandbox=` argument or from a previous run in the same conversation. `None` means make a fresh one.
+`ref` is the identity of an environment the run should continue in when the caller passed a
+[`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] through `sandbox=`. `None` means make a fresh one.
+Pydantic AI does not infer sandbox identity from message history; pass `result.sandbox` to another
+run to reuse its live backend, or pass its `ref` when the next run should reconnect through a
+capability.
 
 The backend holds your settings and, if the run is continuing an environment, its identity. Keep
 the environment behind a property so no method can use it without connecting first:
@@ -182,7 +187,7 @@ class MySandboxCapability(AbstractCapability[Any]):
 
 agent = Agent(
     'anthropic:claude-sonnet-5',
-    capabilities=[MySandboxCapability(SandboxClient.from_environment())],
+    capabilities=[MySandboxCapability(client=SandboxClient.from_environment(), id='my_sandbox')],
 )
 ```
 
@@ -265,7 +270,7 @@ async def read_workspace_file(ctx: RunContext[None], path: str) -> str:
 async def main() -> None:
     async with LocalSandbox() as sandbox:
         root = await sandbox.working_dir()
-        await sandbox.fs.write_bytes(f'{root}/data.csv', b'a,b\n1,2\n')
+        await sandbox.write_bytes(f'{root}/data.csv', b'a,b\n1,2\n')
         await agent.run(
             'Summarize data.csv in the working directory.',
             sandbox=ReadOnlySandbox(sandbox),
@@ -281,20 +286,22 @@ data, enforce read-only access in the environment itself, for example with a rea
 A backend is required to implement only three members: its `ref`, command execution, and its
 working directory. Pydantic AI exposes it to tools through a
 [`Sandbox`][pydantic_ai.sandboxes.Sandbox] object, which adds text decoding, path resolution,
-and line-window reads. Filesystem operations use the backend's
-[`SupportsFilesystem`][pydantic_ai.sandboxes.SupportsFilesystem] implementation.
+and line-window reads. Filesystem methods are always available: `Sandbox` prefers a backend's
+flat, native [`SupportsFilesystem`][pydantic_ai.sandboxes.SupportsFilesystem] implementation and
+otherwise derives the same operations from `run()` using standard shell utilities.
 
 | Need | [`Sandbox`][pydantic_ai.sandboxes.Sandbox] API | Backend support |
 |---|---|---|
 | Execute a command | [`run()`][pydantic_ai.sandboxes.Sandbox.run] | — |
-| Read/write files | [`read_bytes()`][pydantic_ai.sandboxes.Sandbox.read_bytes] / [`read_text()`][pydantic_ai.sandboxes.Sandbox.read_text] / [`write_text()`][pydantic_ai.sandboxes.Sandbox.write_text] | [`SupportsFilesystem`][pydantic_ai.sandboxes.SupportsFilesystem] (else `NotImplementedError`) |
-| Windowed read | [`read_file()`][pydantic_ai.sandboxes.Sandbox.read_file] | `sed` over `run()`, with [`SupportsFilesystem`][pydantic_ai.sandboxes.SupportsFilesystem] fallback (else `NotImplementedError`) |
+| Read/write files | [`read_bytes()`][pydantic_ai.sandboxes.Sandbox.read_bytes] / [`read_text()`][pydantic_ai.sandboxes.Sandbox.read_text] / [`write_text()`][pydantic_ai.sandboxes.Sandbox.write_text] | Native [`SupportsFilesystem`][pydantic_ai.sandboxes.SupportsFilesystem], or shell fallback over `run()` |
+| Windowed read | [`read_file()`][pydantic_ai.sandboxes.Sandbox.read_file] | Bounded `sed` over `run()`, then the ordinary native-or-shell filesystem path |
 | Working directory | [`working_dir()`][pydantic_ai.sandboxes.Sandbox.working_dir] | — |
 | Path resolution | [`resolve()`][pydantic_ai.sandboxes.Sandbox.resolve] | Handled by `Sandbox` |
 
 The protocol contracts that matter to callers:
 
-- Optional operations raise `NotImplementedError`; use the documented fallback.
+- `SandboxBackend` stays small; implement flat `SupportsFilesystem` methods when the provider has
+  a better native file API. `Sandbox` supplies a complete shell fallback when it does not.
 - `timeout=` guarantees the command is terminated before
   [`SandboxTimeoutError`][pydantic_ai.sandboxes.SandboxTimeoutError] is raised; its `stdout` and
   `stderr` attributes contain output produced before termination when the backend can recover it.
@@ -326,13 +333,20 @@ backend works without registration when it implements the relevant protocols.
 
 ## Durable execution
 
-Tools still use `ctx.sandbox` unchanged under [Temporal](durable_execution/temporal.md),
-[DBOS](durable_execution/dbos.md), and [Prefect](durable_execution/prefect.md). Only the
-[`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] crosses the durable boundary; the worker reconnects
-through `get_sandbox` when a durable activity, step, or task uses the sandbox.
+Tools and capability hooks still use `ctx.sandbox` unchanged under
+[Temporal](durable_execution/temporal.md), [DBOS](durable_execution/dbos.md), and
+[Prefect](durable_execution/prefect.md). A `Sandbox` method called directly from replayed workflow
+code is routed through one durable activity, step, or task. Code already executing inside a
+durable tool or capability unit uses the backend reconnected for that unit. The live backend never
+crosses the boundary; its
+[`SandboxRef`][pydantic_ai.sandboxes.SandboxRef], the method arguments, and the serializable run
+context do. The worker reconnects through the exact capability that supplied the sandbox.
+Accessing `sandbox.backend` in workflow code is rejected because calling a provider-specific
+method directly would bypass durable execution.
 
-Use the capability [shown above](#supply-a-sandbox-from-a-capability) to have the agent pick the
-sandbox. If the environment is made elsewhere, pass its reference instead:
+The supplying capability needs an explicit stable `id`, because it becomes part of the persisted
+operation name. Use the capability [shown above](#supply-a-sandbox-from-a-capability) to have the
+agent pick the sandbox. If the environment is made elsewhere, pass its reference instead:
 
 ```python
 from pydantic_ai import SandboxRef

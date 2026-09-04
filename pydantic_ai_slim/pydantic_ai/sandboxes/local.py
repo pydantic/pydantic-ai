@@ -54,75 +54,6 @@ _OUTPUT_DRAIN_GRACE = 2.0
 """How long to keep reading a command's pipes after the direct child has exited."""
 
 
-class _LocalFilesystem:
-    @staticmethod
-    def _path(path: str) -> Path:
-        target = Path(path)
-        if not target.is_absolute():
-            raise ValueError(f'path must be absolute, got {path!r}')
-        return target
-
-    # Every method here wraps a blocking syscall, so the work goes to a thread through the
-    # framework's `run_in_executor`. The syscalls themselves have no async form; `anyio.Path`
-    # would only move the same offload behind a different helper.
-    async def read_bytes(self, path: str) -> bytes:
-        return await run_in_executor(self._path(path).read_bytes)
-
-    async def write_bytes(self, path: str, data: bytes) -> None:
-        def write() -> None:
-            target = self._path(path)
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(data)
-
-        await run_in_executor(write)
-
-    async def stat(self, path: str) -> FileEntry:
-        def stat() -> FileEntry:
-            target = self._path(path)
-            size = target.stat().st_size
-            is_dir = target.is_dir()
-            return FileEntry(name=target.name, path=path, is_dir=is_dir, size=None if is_dir else size)
-
-        return await run_in_executor(stat)
-
-    async def list_dir(self, path: str) -> Sequence[FileEntry]:
-        def list_entries() -> list[FileEntry]:
-            entries: list[FileEntry] = []
-            # `os.scandir`, not `Path.iterdir`: each `DirEntry` carries the type and stat data the
-            # directory read already returned, so an ordinary entry costs one syscall instead of
-            # the three that `iterdir` plus `is_dir` plus `stat` make.
-            with os.scandir(self._path(path)) as scan:
-                children = sorted(scan, key=lambda child: child.path)
-            for child in children:
-                is_dir = child.is_dir()
-                try:
-                    # stat, not lstat: a symlinked file reports its target's size, matching `stat()`.
-                    size = None if is_dir else child.stat().st_size
-                except OSError:
-                    # A broken symlink in the directory must not fail the whole listing.
-                    size = None
-                entries.append(FileEntry(name=child.name, path=child.path, is_dir=is_dir, size=size))
-            return entries
-
-        return await run_in_executor(list_entries)
-
-    async def make_dir(self, path: str) -> None:
-        await run_in_executor(lambda: self._path(path).mkdir(parents=True, exist_ok=True))
-
-    async def remove(self, path: str) -> None:
-        def remove() -> None:
-            target = self._path(path)
-            if target.is_dir() and not target.is_symlink():
-                shutil.rmtree(target)
-            else:
-                target.unlink()  # files and symlinks (even to directories) unlink
-
-        await run_in_executor(remove)
-
-    async def exists(self, path: str) -> bool:
-        return await run_in_executor(self._path(path).exists)
-
-
 class LocalSandbox:
     """[`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] over host subprocesses and the host filesystem.
 
@@ -174,12 +105,11 @@ class LocalSandbox:
         # directories, breaking the protocol's one-environment contract.
         self._resolved_root: Path | None = None
         self._root_lock = anyio.Lock()
-        self._id = f'local-{uuid.uuid4().hex}'
-        self.fs = _LocalFilesystem()
+        self._ref: SandboxRef | None = None
 
     @property
-    def ref(self) -> SandboxRef:
-        return SandboxRef(sandbox_id=self._id)
+    def ref(self) -> SandboxRef | None:
+        return self._ref
 
     @property
     def root(self) -> Awaitable[Path]:
@@ -205,6 +135,7 @@ class LocalSandbox:
                     )
                 else:
                     self._resolved_root = await run_in_executor(self._given_root.resolve)
+                self._ref = SandboxRef(sandbox_id=f'local-{uuid.uuid4().hex}')
             return self._resolved_root
 
     async def __aenter__(self) -> Self:
@@ -220,7 +151,7 @@ class LocalSandbox:
             if self._owns_root and self._resolved_root is not None:
                 # Reset first so a reused sandbox lazily creates a fresh root instead of
                 # resurrecting the deleted path.
-                root, self._resolved_root = self._resolved_root, None
+                root, self._resolved_root, self._ref = self._resolved_root, None, None
                 try:
                     await run_in_executor(shutil.rmtree, root)
                 except FileNotFoundError:
@@ -230,6 +161,83 @@ class LocalSandbox:
 
     async def working_dir(self) -> str:
         return str(await self.root)
+
+    @staticmethod
+    def _path(path: str) -> Path:
+        target = Path(path)
+        if not target.is_absolute():
+            raise ValueError(f'path must be absolute, got {path!r}')
+        return target
+
+    # These methods wrap blocking syscalls, so the work goes to a thread through the framework's
+    # `run_in_executor`. The syscalls have no async form; `anyio.Path` performs the same offload.
+    async def read_bytes(self, path: str) -> bytes:
+        await self.root
+        return await run_in_executor(self._path(path).read_bytes)
+
+    async def write_bytes(self, path: str, data: bytes) -> None:
+        await self.root
+
+        def write() -> None:
+            target = self._path(path)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+
+        await run_in_executor(write)
+
+    async def stat(self, path: str) -> FileEntry:
+        await self.root
+
+        def stat() -> FileEntry:
+            target = self._path(path)
+            size = target.stat().st_size
+            is_dir = target.is_dir()
+            return FileEntry(name=target.name, path=path, is_dir=is_dir, size=None if is_dir else size)
+
+        return await run_in_executor(stat)
+
+    async def list_dir(self, path: str) -> Sequence[FileEntry]:
+        await self.root
+
+        def list_entries() -> list[FileEntry]:
+            entries: list[FileEntry] = []
+            # `os.scandir`, not `Path.iterdir`: each `DirEntry` carries the type and stat data the
+            # directory read already returned, so an ordinary entry costs one syscall instead of
+            # the three that `iterdir` plus `is_dir` plus `stat` make.
+            with os.scandir(self._path(path)) as scan:
+                children = sorted(scan, key=lambda child: child.path)
+            for child in children:
+                is_dir = child.is_dir()
+                try:
+                    # stat, not lstat: a symlinked file reports its target's size, matching `stat()`.
+                    size = None if is_dir else child.stat().st_size
+                except OSError:
+                    # A broken symlink in the directory must not fail the whole listing.
+                    size = None
+                entries.append(FileEntry(name=child.name, path=child.path, is_dir=is_dir, size=size))
+            return entries
+
+        return await run_in_executor(list_entries)
+
+    async def make_dir(self, path: str) -> None:
+        await self.root
+        await run_in_executor(lambda: self._path(path).mkdir(parents=True, exist_ok=True))
+
+    async def remove(self, path: str) -> None:
+        await self.root
+
+        def remove() -> None:
+            target = self._path(path)
+            if target.is_dir() and not target.is_symlink():
+                shutil.rmtree(target)
+            else:
+                target.unlink()  # files and symlinks (even to directories) unlink
+
+        await run_in_executor(remove)
+
+    async def exists(self, path: str) -> bool:
+        await self.root
+        return await run_in_executor(self._path(path).exists)
 
     async def _spawn(
         self, command: SandboxCommand, cwd: str | None, env: Mapping[str, str]
@@ -242,7 +250,8 @@ class LocalSandbox:
         handler. Cancellation is deliberately *not* caught — it must keep propagating.
         """
         try:
-            process_cwd = cwd or await self.root
+            root = await self.root
+            process_cwd = cwd or root
             # `asyncio.create_subprocess_*`, not `anyio.open_process`: this backend closes the
             # private transport to release pipe descriptors that descendants keep open, and reaps
             # the direct child itself. Neither is reachable through anyio's process wrapper.

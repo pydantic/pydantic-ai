@@ -10,7 +10,7 @@ from pydantic_ai._instructions import AgentInstructions, SourcedInstruction, nor
 from pydantic_ai._utils import aclose_all, replace_no_init
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
-from pydantic_ai.sandboxes import SandboxBackend, SandboxRef
+from pydantic_ai.sandboxes import Sandbox, SandboxBackend, SandboxRef
 from pydantic_ai.tools import (
     AgentDepsT,
     AgentNativeTool,
@@ -211,6 +211,15 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
 
     def _validate_runtime_capabilities(self, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> None:
         self.wrapped._validate_runtime_capabilities(capabilities)
+
+    def _wrap_sandbox(
+        self,
+        ctx: RunContext[AgentDepsT],
+        sandbox: Sandbox,
+        *,
+        supplier: AbstractCapability[AgentDepsT] | None,
+    ) -> Sandbox:
+        return self.wrapped._wrap_sandbox(ctx, sandbox, supplier=supplier)
 
     # --- Get methods ---
 

@@ -90,7 +90,21 @@ async def test_local_sandbox_conforms_to_the_protocol(tmp_path: Path):
     assert isinstance(sandbox, SandboxBackend)
     assert isinstance(sandbox, SupportsFilesystem)
     typed: SandboxBackend = sandbox  # static conformance, checked because tests are type-checked
+    assert typed.ref is None
+    await typed.working_dir()
     assert typed.ref is not None and typed.ref.sandbox_id.startswith('local-')
+
+
+@pytest.mark.parametrize('operation', ['native', 'explicit-cwd'])
+async def test_every_successful_operation_assigns_a_ref(tmp_path: Path, operation: str) -> None:
+    sandbox = LocalSandbox(tmp_path)
+
+    if operation == 'native':
+        assert await sandbox.exists(str(tmp_path))
+    else:
+        assert (await sandbox.run(['pwd'], cwd=str(tmp_path))).exit_code == 0
+
+    assert sandbox.ref is not None
 
 
 @pytest.mark.parametrize('operation', ['root', 'cwd', 'fs'])
@@ -103,7 +117,7 @@ async def test_relative_paths_are_rejected(tmp_path: Path, operation: str):
         elif operation == 'cwd':
             await LocalSandbox(tmp_path).run(['pwd'], cwd='subdir')
         else:
-            await LocalSandbox(tmp_path).fs.write_bytes('outside.txt', b'escape')
+            await LocalSandbox(tmp_path).write_bytes('outside.txt', b'escape')
 
 
 async def test_run_argv_and_shell(tmp_path: Path):
@@ -328,28 +342,31 @@ async def test_owned_root_context_manager_reuse_creates_a_fresh_root():
     sandbox = LocalSandbox()
     async with sandbox:
         first = Path(await sandbox.working_dir())
+        first_ref = sandbox.ref
         assert first.exists()
     assert not first.exists()
+    assert sandbox.ref is None
     async with sandbox:
         second = Path(await sandbox.working_dir())
         assert second.exists()
         assert second != first
+        assert sandbox.ref is not None and sandbox.ref != first_ref
     assert not second.exists()
 
 
-async def test_facade_follows_backend_across_root_recreation():
-    """A `Sandbox` facade held across exit and re-entry must follow the backend to its fresh
+async def test_sandbox_follows_backend_across_root_recreation():
+    """A `Sandbox` wrapper held across exit and re-entry must follow the backend to its fresh
     root instead of resurrecting the deleted one (which would also leak it on disk)."""
     backend = LocalSandbox()
-    facade = Sandbox(backend)
+    sandbox = Sandbox(backend)
     async with backend:
-        first = Path(await facade.working_dir())
+        first = Path(await sandbox.working_dir())
     async with backend:
-        await facade.write_text('probe.txt', 'hi')
-        second = Path(await facade.working_dir())
+        await sandbox.write_text('probe.txt', 'hi')
+        second = Path(await sandbox.working_dir())
         assert second != first
         assert not first.exists()
-        assert (await facade.run(['cat', 'probe.txt'])).stdout == 'hi'
+        assert (await sandbox.run(['cat', 'probe.txt'])).stdout == 'hi'
     assert not second.exists()
 
 
@@ -447,35 +464,35 @@ async def test_filesystem_round_trip_with_parent_creation(tmp_path: Path):
     nested = await sandbox.resolve('a/b/notes.txt')
     await sandbox.write_text('a/b/notes.txt', 'hello')  # the write contract creates parents
     assert await sandbox.read_text('a/b/notes.txt') == 'hello'
-    entry = await backend.fs.stat(nested)
+    entry = await backend.stat(nested)
     assert (entry.name, entry.is_dir, entry.size) == ('notes.txt', False, 5)
 
     payload = bytes(range(256))
     blob = await sandbox.resolve('blob.bin')
-    await backend.fs.write_bytes(blob, payload)
-    assert await backend.fs.read_bytes(blob) == payload
+    await backend.write_bytes(blob, payload)
+    assert await backend.read_bytes(blob) == payload
 
     directory = await sandbox.resolve('a')
-    assert (await backend.fs.stat(directory)).is_dir
-    names = [entry.name for entry in await backend.fs.list_dir(str(tmp_path))]
+    assert (await backend.stat(directory)).is_dir
+    names = [entry.name for entry in await backend.list_dir(str(tmp_path))]
     assert names == ['a', 'blob.bin']
 
     made = await sandbox.resolve('made/deep')
-    await backend.fs.make_dir(made)
-    await backend.fs.make_dir(made)  # mkdir -p semantics
-    assert await backend.fs.exists(made)
+    await backend.make_dir(made)
+    await backend.make_dir(made)  # mkdir -p semantics
+    assert await backend.exists(made)
 
-    await backend.fs.remove(directory)  # removes the tree
-    assert not await backend.fs.exists(nested)
-    await backend.fs.remove(blob)
-    assert not await backend.fs.exists(blob)
+    await backend.remove(directory)  # removes the tree
+    assert not await backend.exists(nested)
+    await backend.remove(blob)
+    assert not await backend.exists(blob)
     with pytest.raises(FileNotFoundError):
-        await backend.fs.read_bytes(blob)
+        await backend.read_bytes(blob)
 
 
 @pytest.mark.parametrize('operation', ['read_bytes', 'stat', 'list_dir', 'remove'])
 async def test_filesystem_reports_missing_paths(tmp_path: Path, operation: str):
-    fs = LocalSandbox(tmp_path).fs
+    fs = LocalSandbox(tmp_path)
     with pytest.raises(FileNotFoundError):
         await getattr(fs, operation)(str(tmp_path / 'missing'))
 
@@ -511,9 +528,9 @@ async def test_list_dir_symlink_sizes_match_stat(tmp_path: Path):
     (tmp_path / 'link.txt').symlink_to(tmp_path / 'target.txt')
     (tmp_path / 'broken.txt').symlink_to(tmp_path / 'missing.txt')
 
-    entries = {entry.name: entry for entry in await sandbox.fs.list_dir(str(tmp_path))}
+    entries = {entry.name: entry for entry in await sandbox.list_dir(str(tmp_path))}
     assert entries['link.txt'].size == 5
-    assert entries['link.txt'].size == (await sandbox.fs.stat(str(tmp_path / 'link.txt'))).size
+    assert entries['link.txt'].size == (await sandbox.stat(str(tmp_path / 'link.txt'))).size
     assert entries['broken.txt'].size is None
 
 
@@ -531,7 +548,7 @@ async def test_unused_default_sandbox_creates_no_directory(monkeypatch: pytest.M
 async def test_temp_root_already_deleted_on_exit_does_not_raise():
     async with LocalSandbox() as sandbox:
         root = Path(await sandbox.working_dir())
-        await sandbox.fs.remove(str(root))  # a command or tool may delete the root itself
+        await sandbox.remove(str(root))  # a command or tool may delete the root itself
     assert not root.exists()
 
 

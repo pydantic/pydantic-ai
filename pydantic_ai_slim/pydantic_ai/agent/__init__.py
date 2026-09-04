@@ -1685,31 +1685,18 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             sandbox=Sandbox.wrap(UnavailableSandbox(_NO_SANDBOX_REASON)),
         )
 
-        # Resolve the sandbox before `for_run` so every hook sees the final `ctx.sandbox`.
-        # Nothing here does I/O: the backend creates or attaches on its first operation, and
-        # the run never tears it down — one conversation can span many runs.
-        run_sandbox: Sandbox
-        if sandbox is None:
-            # Nothing was passed to the run: a capability may still supply one, and if none does
-            # the run keeps the `UnavailableSandbox` above, whose reason explains how to attach one.
-            backend = get_run_sandbox(bootstrap_capability, initial_ctx, None)
-            run_sandbox = Sandbox(backend) if backend is not None else initial_ctx.sandbox
-        elif isinstance(sandbox, SandboxRef):
-            # An identity the caller passed, or one recovered from the message history: ask the
-            # capabilities for a backend bound to it.
-            backend = get_run_sandbox(bootstrap_capability, initial_ctx, sandbox)
-            if backend is None:
-                raise exceptions.UserError(
-                    f'No capability can supply sandbox {sandbox.sandbox_id!r}: every `get_sandbox` returned `None`. '
-                    'Attach a capability whose `get_sandbox` recognizes it.'
-                )
-            run_sandbox = Sandbox(backend)
-        else:
+        # A caller-provided live sandbox is already known and is visible to `for_run`. A sandbox
+        # supplied by a capability is selected from the final per-run capability tree below, so a
+        # capability that replaces itself in `for_run` cannot leave behind the bootstrap backend.
+        run_sandbox = initial_ctx.sandbox
+        sandbox_supplier: AbstractCapability[AgentDepsT] | None = None
+        if sandbox is not None and not isinstance(sandbox, SandboxRef):
             # An explicit backend, or an existing `Sandbox` passed straight through from a
-            # parent run or a previous result. Mark it: a durable engine cannot rebuild this one
-            # inside a durable unit the way it can rebuild a capability's backend from a ref.
-            run_sandbox = sandbox if isinstance(sandbox, Sandbox) else Sandbox(sandbox, caller_owned=True)
-        initial_ctx.sandbox = run_sandbox
+            # parent run or a previous result.
+            run_sandbox = sandbox if isinstance(sandbox, Sandbox) else Sandbox(sandbox)
+            if isinstance(sandbox, Sandbox):
+                _, sandbox_supplier = sandbox._supplier_details()  # pyright: ignore[reportPrivateUsage]
+            initial_ctx.sandbox = run_sandbox
 
         # Resolve run metadata up front so capability and toolset `for_run` hooks
         # can see it on `RunContext.metadata`. Metadata factories receive the
@@ -1741,6 +1728,36 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         cap_native_tools = resolved_caps.native_tools
         cap_model_settings = resolved_caps.model_settings
         cap_toolsets = resolved_caps.toolsets
+
+        # Nothing here does I/O: the backend creates or attaches on its first operation. Resolve
+        # capability-provided sandboxes only now, after `for_run()` has chosen the instances whose
+        # hooks and durable operations this run will actually use.
+        if sandbox is None or isinstance(sandbox, SandboxRef):
+            selection = get_run_sandbox(run_capability, initial_ctx, sandbox)
+            if selection is None:
+                if isinstance(sandbox, SandboxRef):
+                    raise exceptions.UserError(
+                        f'No capability can supply sandbox {sandbox.sandbox_id!r}: every `get_sandbox` returned '
+                        '`None`. Attach a capability whose `get_sandbox` recognizes it.'
+                    )
+            else:
+                sandbox_supplier = selection.supplier
+                run_sandbox = Sandbox(
+                    selection.backend, _supplier_id=selection.supplier.id, _supplier=selection.supplier
+                )
+        elif isinstance(sandbox, Sandbox):
+            # A sandbox returned by an earlier run carries the old per-run supplier instance.
+            # Keep the environment handle, but dispatch through this run's replacement instance.
+            supplier_id, _ = sandbox._supplier_details()  # pyright: ignore[reportPrivateUsage]
+            if supplier_id is not None:
+                sandbox_supplier = next(
+                    (capability for capability in leaf_capabilities(run_capability) if capability.id == supplier_id),
+                    sandbox_supplier,
+                )
+        run_sandbox = run_capability._wrap_sandbox(  # pyright: ignore[reportPrivateUsage]
+            initial_ctx, run_sandbox, supplier=sandbox_supplier
+        )
+        initial_ctx.sandbox = run_sandbox
 
         # Whether any capability's `for_run` swapped a model-layer contribution during resolution; the
         # per-step model-selection block below keys off this. The model layers are the tail of the
@@ -2820,9 +2837,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         skipping it uses a capability that overrides `for_agent` (e.g. the durability capabilities)
         unbound, a silent divergence. KEEP the two call sites in sync.
 
-        The base capability vets the bound layer here, before any hook fires on it (bootstrap model
-        selection and `get_sandbox` run ahead of `for_run`), so a durability capability can
-        reject per-run capabilities it has no registered durable units for.
+        The base capability vets the bound layer here, before any hook fires on it. This lets a
+        durability capability reject per-run capabilities it has no registered durable units for.
         """
         bound = [capability.for_agent(self) for capability in extra_capabilities]
         base_capability._validate_runtime_capabilities(  # pyright: ignore[reportPrivateUsage]

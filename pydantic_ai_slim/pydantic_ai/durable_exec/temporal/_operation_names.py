@@ -7,6 +7,7 @@ from .._operation import (
     ModelCancelSuspendedResponseId,
     ModelCompactMessagesId,
     ModelRequestId,
+    SandboxOperationId,
     ToolsetCallToolId,
     ToolsetGetInstructionsId,
     ToolsetGetToolsId,
@@ -31,6 +32,8 @@ class TemporalOperationNamer(DurableOperationNamer):
 
     def operation_name(self, operation_id: DurableOperationId) -> str:
         match operation_id:
+            case SandboxOperationId(capability_id=capability_id, method=method):
+                return f'{self._prefix}__sandbox__{capability_id}__{method}'
             case CapabilityOperationId(capability_id=capability_id, operation=operation):
                 return f'{self._prefix}__capability__{capability_id}__{operation}'
             case ModelRequestId(streaming=True):

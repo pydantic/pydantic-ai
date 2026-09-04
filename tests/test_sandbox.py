@@ -1,8 +1,9 @@
-"""Tests for the sandbox facade and its lazy backend contract."""
+"""Tests for the sandbox interface and its lazy backend contract."""
 
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from pathlib import Path
 from typing import Any
 
 import anyio
@@ -17,9 +18,11 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.sandboxes import (
+    LocalSandbox,
     ReadOnlySandbox,
     Sandbox,
     SandboxBackend,
+    SandboxError,
     SandboxRef,
     SandboxTimeoutError,
     UnavailableSandbox,
@@ -31,6 +34,7 @@ from .sandbox_fakes import (
     DecliningSandboxCapability,
     FakeSandbox,
     FakeSandboxResult,
+    RunOnlySandboxBackend,
     SandboxCapability,
 )
 
@@ -72,7 +76,7 @@ async def test_flat_file_operations_use_the_backend_filesystem() -> None:
     await sandbox.write_text('data.txt', 'updated')
     await sandbox.remove('new.txt')
 
-    assert backend.fs.files['/workspace/data.txt'] == b'updated'
+    assert backend.files['/workspace/data.txt'] == b'updated'
     assert not await sandbox.exists('new.txt')
 
 
@@ -83,7 +87,7 @@ async def test_text_helpers_resolve_relative_paths() -> None:
     await sandbox.write_text('data.txt', 'updated')
 
     assert await sandbox.read_text('data.txt') == 'updated'
-    assert backend.fs.files['/workspace/data.txt'] == b'updated'
+    assert backend.files['/workspace/data.txt'] == b'updated'
 
 
 async def test_run_only_backend_supports_bounded_reads_through_shell() -> None:
@@ -111,13 +115,12 @@ async def test_run_only_backend_supports_bounded_reads_through_shell() -> None:
             return await inner.working_dir()
 
     sandbox = Sandbox(RunOnlyBackend())
-    assert sandbox.ref == inner.ref
     window = await sandbox.read_file('data.txt', limit=2)
 
     assert window.lines == ('one', 'two')
     assert commands == [['sed', '-n', '1,3p;3q', '/workspace/data.txt']]
-    assert inner.fs.reads == []
-    with pytest.raises(NotImplementedError, match='SupportsFilesystem'):
+    assert inner.reads == []
+    with pytest.raises(SandboxError, match='invalid base64'):
         await sandbox.read_file('data.txt')
 
 
@@ -155,17 +158,14 @@ async def test_bounded_read_shell_failures_fall_back_to_filesystem(result: FakeS
     assert window.lines == ('two',)
     assert window.has_more is True
     assert window.total_lines == 3
-    assert backend.fs.reads == ['/workspace/data.txt']
+    assert backend.reads == ['/workspace/data.txt']
 
 
-async def test_bounded_read_without_shell_or_filesystem_names_both_options() -> None:
-    inner = FakeSandbox('no-shell-or-filesystem', sed=False)
+async def test_bounded_read_falls_back_to_the_shell_filesystem_when_sed_is_missing(tmp_path: Path) -> None:
+    path = tmp_path / 'data.txt'
+    path.write_text('one\ntwo\nthree\n')
 
-    class RunOnlyBackend:
-        @property
-        def ref(self) -> SandboxRef | None:
-            return inner.ref
-
+    class NoSedBackend(RunOnlySandboxBackend):
         async def run(
             self,
             command: str | Sequence[str],
@@ -175,15 +175,58 @@ async def test_bounded_read_without_shell_or_filesystem_names_both_options() -> 
             env: Mapping[str, str] | None = None,
             timeout: float | None = None,
         ) -> FakeSandboxResult:
-            return await inner.run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
+            if not isinstance(command, str) and list(command[:2]) == ['sed', '-n']:
+                return FakeSandboxResult(exit_code=127, stderr='sed: not found')
+            result = await super().run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
+            return FakeSandboxResult(exit_code=result.exit_code, stdout=result.stdout, stderr=result.stderr)
 
-        async def working_dir(self) -> str:
-            return await inner.working_dir()
+    window = await Sandbox(NoSedBackend(LocalSandbox(tmp_path))).read_file('data.txt', offset=2, limit=1)
 
-    with pytest.raises(NotImplementedError, match=r'working `sed`.*SupportsFilesystem'):
-        sandbox = Sandbox(RunOnlyBackend())
-        assert sandbox.ref == inner.ref
-        await sandbox.read_file('data.txt', limit=1)
+    assert (window.lines, window.has_more, window.total_lines) == (('two',), True, 3)
+
+
+async def test_run_only_backend_has_a_complete_binary_safe_shell_filesystem(tmp_path: Path) -> None:
+    backend = RunOnlySandboxBackend(LocalSandbox(tmp_path))
+    sandbox = Sandbox(backend)
+    payload = bytes(range(256)) * 800
+    filename = "nested/weird '\n blob.bin"
+
+    await sandbox.write_bytes(filename, payload)
+
+    assert await sandbox.read_bytes(filename) == payload
+    assert (await sandbox.stat(filename)).size == len(payload)
+    assert await sandbox.exists(filename)
+    entries = await sandbox.list_dir('nested')
+    assert [(entry.name, entry.is_dir) for entry in entries] == [("weird '\n blob.bin", False)]
+    # The encoded write is chunked below Linux's independent per-argument limit.
+    assert max(len(command.encode()) for command in backend.commands if isinstance(command, str)) < 128 * 1024
+
+    await sandbox.make_dir('nested/directory')
+    assert await sandbox.exists('nested/directory')
+    await sandbox.remove('nested')
+    assert not await sandbox.exists(filename)
+    with pytest.raises(FileNotFoundError):
+        await sandbox.read_bytes(filename)
+
+
+async def test_shell_list_dir_does_not_hide_find_failure(tmp_path: Path) -> None:
+    class FailedFindBackend(RunOnlySandboxBackend):
+        async def run(
+            self,
+            command: str | Sequence[str],
+            *,
+            shell: bool = False,
+            cwd: str | None = None,
+            env: Mapping[str, str] | None = None,
+            timeout: float | None = None,
+        ) -> FakeSandboxResult:
+            if isinstance(command, str) and 'find ' in command:
+                command = command.replace('find ', 'false ', 1)
+            result = await super().run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
+            return FakeSandboxResult(exit_code=result.exit_code, stdout=result.stdout, stderr=result.stderr)
+
+    with pytest.raises(SandboxError):
+        await Sandbox(FailedFindBackend(LocalSandbox(tmp_path))).list_dir('.')
 
 
 async def test_slice_timeout_falls_back_to_filesystem() -> None:
@@ -201,12 +244,10 @@ async def test_slice_timeout_falls_back_to_filesystem() -> None:
 
     backend = TimedOutSed('timed-out-sed', {'/workspace/data.txt': b'one\ntwo\nthree\n'})
 
-    sandbox = Sandbox(backend)
-    assert sandbox.ref == backend.ref
-    window = await sandbox.read_file('data.txt', offset=2, limit=1)
+    window = await Sandbox(backend).read_file('data.txt', offset=2, limit=1)
 
     assert window.lines == ('two',)
-    assert backend.fs.reads == ['/workspace/data.txt']
+    assert backend.reads == ['/workspace/data.txt']
 
 
 async def test_a_file_without_a_trailing_newline_reads_to_its_last_line() -> None:
@@ -254,9 +295,9 @@ async def test_full_read_uses_filesystem_and_preserves_decoding_contracts() -> N
 
     assert (window.lines, window.has_more, window.total_lines) == (('two', 'three'), False, 3)
     assert window.text == 'two\nthree'
-    assert backend.fs.reads == ['/workspace/data.txt']
+    assert backend.reads == ['/workspace/data.txt']
 
-    backend.fs.files['/workspace/bad.txt'] = b'one\xfftwo\n'
+    backend.files['/workspace/bad.txt'] = b'one\xfftwo\n'
     assert (await sandbox.read_file('bad.txt')).lines == ('one�two',)
     with pytest.raises(UnicodeDecodeError):
         await sandbox.read_text('bad.txt')
@@ -269,7 +310,7 @@ async def test_bounded_read_through_read_only_sandbox_uses_filesystem() -> None:
     window = await sandbox.read_file('data.txt', offset=2, limit=1)
 
     assert window.lines == ('two',)
-    assert backend.fs.reads == ['/workspace/data.txt']
+    assert backend.reads == ['/workspace/data.txt']
 
 
 async def test_unavailable_sandbox_uses_the_configured_reason_for_every_operation() -> None:
@@ -280,13 +321,13 @@ async def test_unavailable_sandbox_uses_the_configured_reason_for_every_operatio
     operations = [
         backend.run(['true']),
         backend.working_dir(),
-        backend.fs.read_bytes('/file'),
-        backend.fs.write_bytes('/file', b'data'),
-        backend.fs.stat('/file'),
-        backend.fs.list_dir('/'),
-        backend.fs.make_dir('/dir'),
-        backend.fs.remove('/file'),
-        backend.fs.exists('/file'),
+        backend.read_bytes('/file'),
+        backend.write_bytes('/file', b'data'),
+        backend.stat('/file'),
+        backend.list_dir('/'),
+        backend.make_dir('/dir'),
+        backend.remove('/file'),
+        backend.exists('/file'),
     ]
 
     for operation in operations:
@@ -299,22 +340,6 @@ async def test_bare_run_context_sandbox_explains_how_to_attach_one() -> None:
 
     with pytest.raises(UserError, match=r'pass `sandbox=`.*capability'):
         await ctx.sandbox.run(['true'])
-
-
-async def test_caller_owned_only_marks_an_explicit_backend() -> None:
-    capability = SandboxCapability()
-    observed: list[bool] = []
-    agent = Agent(_tool_call_model(), capabilities=[capability])
-
-    @agent.tool
-    async def probe(ctx: RunContext[Any]) -> str:
-        observed.append(ctx.sandbox.caller_owned)
-        return 'ok'
-
-    await agent.run('capability')
-    await agent.run('explicit', sandbox=FakeSandbox('explicit'))
-
-    assert observed == [False, True]
 
 
 async def test_explicit_backend_wins_over_a_capability_backend() -> None:
@@ -334,8 +359,8 @@ async def test_explicit_backend_wins_over_a_capability_backend() -> None:
     assert capability.refs == []
 
 
-async def test_missing_paths_raise_the_builtin_error_through_the_facade() -> None:
-    """The protocol promises `FileNotFoundError` for a path that is not there, for every operation."""
+async def test_missing_paths_raise_the_builtin_error_through_the_sandbox() -> None:
+    """The protocol promises `FileNotFoundError` for every operation that needs an existing path."""
     sandbox = Sandbox(FakeSandbox('missing-paths'))
 
     for operation in (
@@ -346,10 +371,34 @@ async def test_missing_paths_raise_the_builtin_error_through_the_facade() -> Non
         with pytest.raises(FileNotFoundError):
             await operation
 
-    # The `sed` fast path sees the same missing file and reports it the way `sed` does, so the
-    # windowed read falls through to the filesystem and raises there instead of returning empty.
+    # The `sed` fast path falls through to the filesystem so a missing file is not an empty window.
     with pytest.raises(FileNotFoundError):
         await sandbox.read_file('gone.txt', limit=1)
+
+
+async def test_sandbox_is_selected_from_the_per_run_capability() -> None:
+    bootstrap_backend = FakeSandbox('bootstrap')
+    run_backend = FakeSandbox('per-run')
+
+    class PerRunSandbox(AbstractCapability[Any]):
+        id = 'per_run_sandbox'
+
+        def __init__(self, backend: FakeSandbox, replacement: PerRunSandbox | None = None) -> None:
+            self.backend = backend
+            self.replacement = replacement
+
+        async def for_run(self, ctx: RunContext[Any]) -> AbstractCapability[Any]:
+            return self.replacement or self
+
+        def get_sandbox(self, ctx: RunContext[Any], *, ref: SandboxRef | None) -> SandboxBackend:
+            return self.backend
+
+    run_capability = PerRunSandbox(run_backend)
+    bootstrap_capability = PerRunSandbox(bootstrap_backend, run_capability)
+    result = await Agent(TestModel(), capabilities=[bootstrap_capability]).run('go')
+
+    assert result.sandbox.backend is run_backend
+    assert bootstrap_backend.ref is None
 
 
 async def test_the_result_carries_the_sandbox_the_run_used() -> None:
@@ -491,31 +540,6 @@ async def test_run_rejects_relative_cwd() -> None:
         await Sandbox(FakeSandbox('cwd')).run(['true'], cwd='relative')
 
 
-async def test_make_unavailable_updates_existing_references() -> None:
-    sandbox = Sandbox(FakeSandbox('unavailable'))
-    existing_reference = sandbox
-    reason = 'sandbox is no longer available'
-
-    sandbox._make_unavailable(reason)  # pyright: ignore[reportPrivateUsage]
-
-    assert existing_reference.backend is sandbox.backend
-    operations = [
-        existing_reference.run(['true']),
-        existing_reference.working_dir(),
-        existing_reference.read_bytes('file.txt'),
-        existing_reference.write_bytes('file.txt', b'data'),
-        existing_reference.stat('file.txt'),
-        existing_reference.list_dir('.'),
-        existing_reference.make_dir('dir'),
-        existing_reference.remove('file.txt'),
-        existing_reference.exists('file.txt'),
-        existing_reference.read_file('file.txt', limit=1),
-    ]
-    for operation in operations:
-        with pytest.raises(UserError, match='no longer available'):
-            await operation
-
-
 async def test_two_capabilities_cannot_supply_the_sandbox() -> None:
     class FirstSandboxCapability(AbstractCapability[Any]):
         def get_sandbox(self, ctx: RunContext[Any], *, ref: SandboxRef | None) -> SandboxBackend:
@@ -629,6 +653,8 @@ async def test_guard_workflow_sandbox_only_rejects_a_live_handle() -> None:
     assert guard_workflow_sandbox(None, live_error='live sandbox') is None
     with pytest.raises(UserError, match='live sandbox'):
         guard_workflow_sandbox(FakeSandbox('live'), live_error='live sandbox')
+    with pytest.raises(UserError, match='deprecated wrapper'):
+        guard_workflow_sandbox(ref, live_error='live sandbox', ref_error='deprecated wrapper')
 
 
 async def test_capability_can_supply_a_backend_for_an_explicit_ref() -> None:
@@ -646,8 +672,7 @@ async def test_capability_can_supply_a_backend_for_an_explicit_ref() -> None:
     assert result.sandbox.ref == SandboxRef(sandbox_id='existing')
     assert await result.sandbox.working_dir() == '/workspace'
 
-    # The same capability only attaches: with no ref to attach to it declines, and the run gets
-    # the placeholder that explains how to attach one.
+    # This capability only attaches: with no ref it declines and the run gets the unavailable default.
     without_ref: AgentRunResult[Any] = await Agent(TestModel(), capabilities=[capability]).run('go')
 
     assert isinstance(without_ref.sandbox.backend, UnavailableSandbox)

@@ -8,6 +8,7 @@ from typing_extensions import TypeVar
 from pydantic_ai._run_context import AnchoredEvidence, CapabilityEventT, CustomEventT
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.capabilities._sandbox import get_run_sandbox
+from pydantic_ai.capabilities.abstract import leaf_capabilities
 from pydantic_ai.durable_exec._toolset import EnqueueGuard, enqueue_not_supported_message
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import CapabilityEvent, CustomEvent
@@ -260,15 +261,18 @@ class TemporalRunContext(RunContext[AgentDepsT]):
             'capability_active': ctx.capability_active,
         }
         sandbox = ctx.sandbox
-        backend = sandbox.backend
+        backend = sandbox._raw_backend()  # pyright: ignore[reportPrivateUsage]
         if isinstance(backend, UnavailableSandbox):
             serialized['_sandbox_state'] = {'unavailable_reason': backend.reason}
-        elif not sandbox.caller_owned and (ref := backend.ref) is not None:
-            # Only the identity crosses the boundary; the activity rebuilds a backend for it
-            # through the worker's own capability tree, credentials included. A backend the
-            # caller passed in is skipped: there is no capability on the worker that could
-            # rebuild it, so its identity would name an environment nothing here can reach.
-            serialized['_sandbox_state'] = {'sandbox_id': ref.sandbox_id}
+        else:
+            supplier_id, _ = sandbox._supplier_details()  # pyright: ignore[reportPrivateUsage]
+            if supplier_id is not None:
+                # Carry the supplier even before the lazy backend has an environment id, so the
+                # first sandbox call can create it inside an activity.
+                serialized['_sandbox_state'] = {
+                    'supplier_id': supplier_id,
+                    'sandbox_id': sandbox.ref.sandbox_id if sandbox.ref is not None else None,
+                }
         return serialized
 
     @classmethod
@@ -314,8 +318,33 @@ def _restore_sandbox(
 ) -> None:
     """Rebuild the run's sandbox inside an activity from its serialized identity."""
     sandbox_id = sandbox_state.get('sandbox_id')
+    supplier_id = sandbox_state.get('supplier_id')
     unavailable_reason = sandbox_state.get('unavailable_reason')
-    if isinstance(sandbox_id, str):
+    if isinstance(supplier_id, str):
+        if agent is None:
+            ctx.__dict__['_sandbox_unavailable_reason'] = (
+                f'Cannot rebuild sandbox from capability {supplier_id!r}: no agent is attached to this '
+                'Temporal activity.'
+            )
+            return
+        suppliers = [
+            capability for capability in leaf_capabilities(agent.root_capability) if capability.id == supplier_id
+        ]
+        if len(suppliers) != 1:
+            ctx.__dict__['_sandbox_unavailable_reason'] = (
+                f'Cannot rebuild sandbox from capability {supplier_id!r}: expected one matching capability, '
+                f'found {len(suppliers)}.'
+            )
+            return
+        ref = SandboxRef(sandbox_id=sandbox_id) if isinstance(sandbox_id, str) else None
+        backend = suppliers[0].get_sandbox(ctx, ref=ref)
+        if backend is None:
+            ctx.__dict__['_sandbox_unavailable_reason'] = (
+                f'Sandbox capability {supplier_id!r} declined the serialized sandbox reference.'
+            )
+            return
+        ctx.__dict__['_sandbox'] = Sandbox(backend)
+    elif isinstance(sandbox_id, str):
         # The worker's capability tree is the registry: the capability that recognizes this ref
         # exists on the agent this worker constructed, credentials included. Building the backend
         # does no I/O, so it is safe here; it reaches the provider on its first operation.
@@ -329,13 +358,13 @@ def _restore_sandbox(
                 'so there is no capability chain to resolve the reference through.'
             )
             return
-        backend = get_run_sandbox(agent.root_capability, ctx, SandboxRef(sandbox_id=sandbox_id))
-        if backend is None:
+        selection = get_run_sandbox(agent.root_capability, ctx, SandboxRef(sandbox_id=sandbox_id))
+        if selection is None:
             ctx.__dict__['_sandbox_unavailable_reason'] = (
                 f'No capability can supply sandbox {sandbox_id!r}: every `get_sandbox` returned `None`. '
                 'Attach a capability whose `get_sandbox` recognizes it.'
             )
             return
-        ctx.__dict__['_sandbox'] = Sandbox(backend)
+        ctx.__dict__['_sandbox'] = Sandbox(selection.backend)
     elif isinstance(unavailable_reason, str):
         ctx.__dict__['_sandbox_unavailable_reason'] = unavailable_reason

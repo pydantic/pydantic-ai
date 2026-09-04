@@ -14,7 +14,7 @@ from collections.abc import (
 )
 from contextlib import asynccontextmanager, contextmanager
 from functools import partial
-from typing import Any, ClassVar, Literal, NamedTuple, Protocol, TypeVar, cast, runtime_checkable
+from typing import Any, ClassVar, Literal, NamedTuple, Protocol, TypeVar, cast, get_args, runtime_checkable
 from weakref import ReferenceType, ref
 
 from pydantic_core import PydanticSerializationError
@@ -84,6 +84,8 @@ from ._operation import (
     ModelRequestParams,
     ParameterTransport,
     ResultCodec,
+    SandboxMethod,
+    SandboxOperationId,
     ToolsetCallToolId,
     ToolsetCallToolParams,
     ToolsetGetInstructionsId,
@@ -97,6 +99,14 @@ from ._operation_backend import BoundDurableOperation, DurableOperationBackend, 
 from ._runtime_toolsets import (
     cancellation_token_unsupported_error,
     reject_unsupported_runtime_toolsets,
+)
+from ._sandbox import (
+    DurableSandboxDispatcher,
+    SandboxOperationCacheIdentity,
+    SandboxOperationParams,
+    SandboxOperationResult,
+    normalize_sandbox_value,
+    sandbox_operation_error,
 )
 from ._spec import DurabilityEngineSpec
 from ._toolset import (
@@ -296,6 +306,9 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         self._bound_event_operation: BoundDurableOperation[EventStreamHandlerParams, Any, None] | None = None
         self._bound_capability_operations: dict[tuple[str, str], CapabilityBoundOperation] = {}
         self._capability_declarations: dict[tuple[str, str], CapabilityMethodDeclaration] = {}
+        self._bound_sandbox_operations: dict[
+            str, dict[SandboxMethod, BoundDurableOperation[SandboxOperationParams, Any, SandboxOperationResult]]
+        ] = {}
         self._resolved_request_models: dict[int, _ResolvedRequestModel] = {}
 
     def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> Self:
@@ -321,7 +334,66 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         if isinstance(backend, RegisteredOperationBackend) and bound._bound_model_operations is None:
             bound._bound_model_operations = bound._bind_model_operations(backend, model_id=None, model_name='default')
         bound._bind_capability_operations(agent)
+        bound._bind_sandbox_operations(agent)
         return bound
+
+    def _bind_sandbox_operations(self, agent: AbstractAgent[AgentDepsT, Any]) -> None:
+        """Register every user-facing sandbox method for construction-time suppliers."""
+        self._bound_sandbox_operations = {}
+        backend = self.get_durable_operation_backend()
+        supplier_ids: set[str] = set()
+        for capability in leaf_capabilities(agent.root_capability):
+            if (
+                capability.id is not None
+                and type(capability).get_sandbox is not AbstractCapability.get_sandbox
+                and capability is not self
+            ):
+                supplier_ids.add(capability.id)
+        for supplier_id in supplier_ids:
+            operations: dict[
+                SandboxMethod, BoundDurableOperation[SandboxOperationParams, Any, SandboxOperationResult]
+            ] = {}
+            for method in cast(tuple[SandboxMethod, ...], get_args(SandboxMethod)):
+
+                async def handler(
+                    params: SandboxOperationParams,
+                    *,
+                    method: SandboxMethod = method,
+                    supplier_id: str = supplier_id,
+                ) -> SandboxOperationResult:
+                    supplier = await recover_capability(params.run_context, capability_id=supplier_id)
+                    raw_backend = supplier.get_sandbox(params.run_context, ref=params.ref)
+                    if raw_backend is None:
+                        raise UserError(
+                            f'Sandbox capability {supplier_id!r} declined a reference it previously supplied.'
+                        )
+                    sandbox = Sandbox(raw_backend)
+                    try:
+                        value = await cast(Callable[..., Any], getattr(sandbox, method))(**params.arguments)
+                    except BaseException as error:
+                        if outcome := sandbox_operation_error(error):
+                            # A failed first operation may still have created the environment. Carry
+                            # that identity back so the next call reconnects instead of creating and
+                            # leaking a second environment.
+                            return SandboxOperationResult(error=outcome, ref=raw_backend.ref)
+                        raise
+                    ref = raw_backend.ref
+                    if ref is None:
+                        raise RuntimeError(
+                            f'Sandbox capability {supplier_id!r} completed {method!r} without assigning a `SandboxRef`.'
+                        )
+                    return SandboxOperationResult(value=normalize_sandbox_value(method, value), ref=ref)
+
+                operation = DurableOperation(
+                    operation_id=SandboxOperationId(supplier_id, method=method),
+                    handler=handler,
+                    parameter_transport=self._sandbox_operation_parameter_transport(),
+                    cache_identity=SandboxOperationCacheIdentity(),
+                    result_codec=self._typed_result_codec(SandboxOperationResult),
+                    config_role='capability',
+                )
+                operations[method] = backend.bind(operation)
+            self._bound_sandbox_operations[supplier_id] = operations
 
     def _bind_capability_operations(self, agent: AbstractAgent[AgentDepsT, Any]) -> None:
         self._bound_capability_operations = {}
@@ -511,6 +583,48 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
     ) -> ParameterTransport[CapabilityOperationParams, Any]:
         return IdentityParameterTransport[CapabilityOperationParams]()
 
+    def _sandbox_operation_parameter_transport(self) -> ParameterTransport[SandboxOperationParams, Any]:
+        return IdentityParameterTransport[SandboxOperationParams]()
+
+    def _wrap_sandbox(
+        self,
+        ctx: RunContext[AgentDepsT],
+        sandbox: Sandbox,
+        *,
+        supplier: AbstractCapability[AgentDepsT] | None,
+    ) -> Sandbox:
+        if not self.in_durable_context or isinstance(sandbox._raw_backend(), UnavailableSandbox):  # pyright: ignore[reportPrivateUsage]
+            return sandbox
+        if supplier is None:
+            raise UserError(
+                f'A live sandbox backend cannot be passed to an agent run inside {self.engine_name} durable '
+                f'{self.durable_container_noun}, because it cannot be rebuilt inside a durable '
+                f'{self.durable_unit_noun}. Pass a `SandboxRef` instead, and attach a capability whose '
+                '`get_sandbox` recognizes it.'
+            )
+        if supplier.id is None:
+            name = type(supplier).__name__
+            raise UserError(
+                f'Sandbox capability {name!r} needs an explicit `id` when used with {self.engine_name} durable '
+                'execution so its method calls have stable persisted identities.'
+            )
+        operations = self._bound_sandbox_operations.get(supplier.id)
+        if operations is None:
+            raise UserError(
+                f'Sandbox capability {supplier.id!r} was added at run time inside {self.engine_name} durable '
+                f'{self.durable_container_noun}. Attach it when constructing the agent so its durable '
+                f'{self.durable_unit_plural} can be registered.'
+            )
+        sandbox._install_operation_dispatcher(  # pyright: ignore[reportPrivateUsage]
+            DurableSandboxDispatcher(
+                sandbox,
+                supplier=supplier,
+                operations=operations,
+                in_durable_context=lambda: self.in_durable_context,
+            )
+        )
+        return sandbox
+
     def _check_bindable(self) -> None:
         """Validate that the capability can be bound in the current context."""
 
@@ -614,28 +728,6 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         cancellation = ctx.__dict__.get('_cancellation')
         if cancellation is not None and cancellation.has_token:
             raise cancellation_token_unsupported_error(self.engine_name)
-        # A sandbox backend reaches its provider on first use, which is I/O, so it cannot be used
-        # from {container} code. A live handle was already rejected when the run was entered, so
-        # anything here came from a capability: make it inert with an explanation rather than let
-        # it connect. Durable units build their own context and get a working sandbox there.
-        # Read via `__dict__` so a restricted run-context subclass doesn't raise instead.
-        sandbox = ctx.__dict__.get('sandbox')
-        # A deserialized context can arrive without one; every run in-process has one.
-        if isinstance(sandbox, Sandbox) and not isinstance(sandbox.backend, UnavailableSandbox):  # pragma: no branch
-            if sandbox.caller_owned:
-                # A backend the caller passed cannot be rebuilt inside a durable unit, so tools
-                # running there would have no sandbox at all. A ref can be rebuilt, so ask for one.
-                raise UserError(
-                    f'A live sandbox backend cannot be passed to an agent run inside {self.engine_name} durable '
-                    f'{self.durable_container_noun}, because it cannot be rebuilt inside a durable '
-                    f'{self.durable_unit_noun}. Pass a `SandboxRef` instead, and attach a capability whose '
-                    '`get_sandbox` recognizes it.'
-                )
-            sandbox._make_unavailable(  # pyright: ignore[reportPrivateUsage]
-                f'`ctx.sandbox` cannot be used inside {self.engine_name} {self.durable_container_noun} code, '
-                'because reaching the sandbox is I/O. Use it from tools or other durable units, which build '
-                'their own sandbox through `get_sandbox`.'
-            )
 
     def _effective_event_stream_handler(self) -> EventStreamHandler[AgentDepsT] | None:
         """The handler in-boundary event delivery targets for the current run.

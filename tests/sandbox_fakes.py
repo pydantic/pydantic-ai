@@ -9,7 +9,7 @@ import anyio
 
 from pydantic_ai import RunContext
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.sandboxes import Sandbox, SandboxBackend, SandboxRef
+from pydantic_ai.sandboxes import Sandbox, SandboxBackend, SandboxCommand, SandboxRef, SandboxResult
 
 
 @dataclass(frozen=True)
@@ -30,51 +30,6 @@ class FakeEntry:
 _SED_WINDOW = re.compile(r'^(\d+),(\d+)p;\2q$')
 
 
-class FakeFilesystem:
-    def __init__(self, backend: FakeSandbox, files: dict[str, bytes] | None = None) -> None:
-        self._backend = backend
-        self.files = files or {}
-        self.reads: list[str] = []
-
-    async def read_bytes(self, path: str) -> bytes:
-        await self._backend.ensure_ready()
-        self.reads.append(path)
-        try:
-            return self.files[path]
-        except KeyError:
-            raise FileNotFoundError(path) from None
-
-    async def write_bytes(self, path: str, data: bytes) -> None:
-        await self._backend.ensure_ready()
-        self.files[path] = data
-
-    async def stat(self, path: str) -> FakeEntry:
-        await self._backend.ensure_ready()
-        try:
-            data = self.files[path]
-        except KeyError:
-            raise FileNotFoundError(path) from None
-        return FakeEntry(name=path.rsplit('/', 1)[-1], path=path, size=len(data))
-
-    async def list_dir(self, path: str) -> Sequence[FakeEntry]:
-        await self._backend.ensure_ready()
-        return [FakeEntry(name=p.rsplit('/', 1)[-1], path=p, size=len(data)) for p, data in self.files.items()]
-
-    async def make_dir(self, path: str) -> None:
-        await self._backend.ensure_ready()
-
-    async def remove(self, path: str) -> None:
-        await self._backend.ensure_ready()
-        try:
-            del self.files[path]
-        except KeyError:
-            raise FileNotFoundError(path) from None
-
-    async def exists(self, path: str) -> bool:
-        await self._backend.ensure_ready()
-        return path in self.files
-
-
 class FakeSandbox:
     """A lazy in-memory backend with the optional native filesystem."""
 
@@ -87,13 +42,11 @@ class FakeSandbox:
         self._lock = anyio.Lock()
         self.create_calls = 0
         self.attach_calls = 0
-        self.commands: list[str | Sequence[str]] = []
-        # Teardown that must never happen. Nothing in Pydantic AI closes or releases a sandbox,
-        # and these record it if anything ever does; `pragma: no cover` because staying uncalled
-        # is the assertion.
         self.cleanup_calls: list[str] = []
+        self.commands: list[str | Sequence[str]] = []
         self._sed = sed
-        self.fs = FakeFilesystem(self, files)
+        self.files = files or {}
+        self.reads: list[str] = []
 
     @property
     def ref(self) -> SandboxRef | None:
@@ -127,9 +80,9 @@ class FakeSandbox:
             expression, path = command[2], command[3]
             match = _SED_WINDOW.match(expression)
             assert match is not None
-            if path not in self.fs.files:
+            if path not in self.files:
                 return FakeSandboxResult(exit_code=2, stderr=f'sed: {path}: No such file or directory')
-            text = self.fs.files[path].decode('utf-8', errors='replace')
+            text = self.files[path].decode('utf-8', errors='replace')
             lines = text.split('\n')
             if lines[-1] == '':
                 lines.pop()
@@ -146,6 +99,44 @@ class FakeSandbox:
         await self.ensure_ready()
         return '/workspace'
 
+    async def read_bytes(self, path: str) -> bytes:
+        await self.ensure_ready()
+        self.reads.append(path)
+        try:
+            return self.files[path]
+        except KeyError:
+            raise FileNotFoundError(path) from None
+
+    async def write_bytes(self, path: str, data: bytes) -> None:
+        await self.ensure_ready()
+        self.files[path] = data
+
+    async def stat(self, path: str) -> FakeEntry:
+        await self.ensure_ready()
+        try:
+            data = self.files[path]
+        except KeyError:
+            raise FileNotFoundError(path) from None
+        return FakeEntry(name=path.rsplit('/', 1)[-1], path=path, size=len(data))
+
+    async def list_dir(self, path: str) -> Sequence[FakeEntry]:
+        await self.ensure_ready()
+        return [FakeEntry(name=p.rsplit('/', 1)[-1], path=p, size=len(data)) for p, data in self.files.items()]
+
+    async def make_dir(self, path: str) -> None:
+        await self.ensure_ready()
+
+    async def remove(self, path: str) -> None:
+        await self.ensure_ready()
+        try:
+            del self.files[path]
+        except KeyError:
+            raise FileNotFoundError(path) from None
+
+    async def exists(self, path: str) -> bool:
+        await self.ensure_ready()
+        return path in self.files
+
     async def close(self, *, terminate: bool = False) -> None:  # pragma: no cover
         self.cleanup_calls.append(f'close:{terminate}')
 
@@ -159,6 +150,7 @@ class RecordingSandboxBackend:
     def __init__(self, sandbox_id: str, *, ref: SandboxRef | None = None) -> None:
         self._ref = ref or SandboxRef(sandbox_id=sandbox_id)
         self.commands: list[str | Sequence[str]] = []
+        self.cleanup_calls: list[str] = []
 
     @property
     def ref(self) -> SandboxRef | None:
@@ -179,13 +171,49 @@ class RecordingSandboxBackend:
     async def working_dir(self) -> str:
         return '/workspace'
 
+    async def close(self, *, terminate: bool = False) -> None:  # pragma: no cover
+        self.cleanup_calls.append(f'close:{terminate}')
 
-def ref_sandbox(ref: SandboxRef) -> Sandbox:
-    return Sandbox(RecordingSandboxBackend(ref.sandbox_id, ref=ref))
+
+class RunOnlySandboxBackend:
+    """Hide an inner backend's optional methods to exercise the shell portability path."""
+
+    def __init__(self, inner: SandboxBackend) -> None:
+        self.inner = inner
+        self.commands: list[SandboxCommand] = []
+
+    @property
+    def ref(self) -> SandboxRef | None:
+        return self.inner.ref
+
+    async def run(
+        self,
+        command: SandboxCommand,
+        *,
+        shell: bool = False,
+        cwd: str | None = None,
+        env: Mapping[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> SandboxResult:
+        self.commands.append(command)
+        return await self.inner.run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
+
+    async def working_dir(self) -> str:
+        return await self.inner.working_dir()
+
+
+def ref_sandbox(ref: SandboxRef, supplier: AbstractCapability[Any] | None = None) -> Sandbox:
+    return Sandbox(
+        RecordingSandboxBackend(ref.sandbox_id, ref=ref),
+        _supplier_id=supplier.id if supplier is not None else None,
+        _supplier=supplier,
+    )
 
 
 class ConnectOnlySandboxCapability(AbstractCapability[Any]):
     """Supplies a run-only backend for the requested ref."""
+
+    id = 'connect_only_sandbox'
 
     def __init__(self) -> None:
         self.sandbox_ids: list[str] = []

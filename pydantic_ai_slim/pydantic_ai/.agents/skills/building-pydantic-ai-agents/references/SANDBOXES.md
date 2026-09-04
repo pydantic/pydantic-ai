@@ -47,8 +47,9 @@ restrictions, output limits, and path rules in the tool layer.
 - Pass `UnavailableSandbox(reason=...)` to disable execution with an application-specific
   explanation.
 
-Tools always call the same `ctx.sandbox` methods. `fs` needs a backend with
-`SupportsFilesystem`; unsupported filesystem operations raise `NotImplementedError`.
+Tools always call the same flat `ctx.sandbox` methods. Native `SupportsFilesystem` methods are
+preferred when the backend provides them; otherwise `Sandbox` derives complete filesystem access
+from `run()` with standard shell utilities.
 
 Backends raise `SandboxError` for deliberate recoverable operation failures,
 `SandboxTimeoutError` when a command exceeds its deadline, and
@@ -60,8 +61,9 @@ A capability supplies the run's sandbox through one hook, `get_sandbox`. It is s
 must do no I/O: it returns a backend built from the capability's own settings, and that backend
 creates or attaches the first time an operation runs.
 
-`ref` is the identity of an environment the run should continue in, from an explicit `sandbox=`
-argument or an earlier run in the conversation. `None` means make a fresh one.
+`ref` is the identity of an environment the run should continue in when the caller passes a
+`SandboxRef` through `sandbox=`. `None` means make a fresh one. Pydantic AI does not infer sandbox
+identity from message history; pass `result.sandbox` or its `ref` explicitly to continue.
 
 ```python
 from collections.abc import Awaitable
@@ -137,8 +139,13 @@ blocking commands and file changes. When a capability manages the backend, apply
 
 ## Durable execution
 
-Only the `SandboxRef` crosses a durable boundary. Tools still call `ctx.sandbox` normally, and the
-worker reconnects on first use.
+The live backend never crosses a durable boundary; its `SandboxRef`, method arguments, and the
+serializable run context do. Tools and capability hooks still call `ctx.sandbox` normally; each
+method called from replayed workflow code becomes one durable unit, while code already inside a
+durable tool or capability unit uses that unit's reconnected backend. Reconnection goes through
+the exact supplying capability. Construct the supplier with an explicit stable `id`, for example
+`MySandboxCapability(client=client, id='my_sandbox')`. Do not access `sandbox.backend` from workflow
+code, because that would bypass durable routing.
 
 Pass `SandboxRef(sandbox_id=...)` through `sandbox=` when the environment is provisioned elsewhere
 and outlives the run. The agent must have a capability whose `get_sandbox` connects it. Do not pass

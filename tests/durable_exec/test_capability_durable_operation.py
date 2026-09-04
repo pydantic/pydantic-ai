@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, cast
 
+import anyio
 import pytest
 
 from pydantic_ai import Agent, AgentStreamEvent, ModelMessage, ModelSettings
@@ -179,18 +180,125 @@ async def test_durability_rejects_live_sandbox_in_durable_context() -> None:
         await agent.run('go', sandbox=RecordingSandboxBackend('live'))
 
 
-async def test_durability_forbids_connecting_sandbox_ref_in_durable_context() -> None:
-    """Inside the durable container only the ref crosses; connecting there is workflow-side I/O."""
+async def test_durability_routes_sandbox_calls_from_durable_context() -> None:
+    """Contextual sandbox calls become durable units without changing tool code."""
     from ..sandbox_fakes import ConnectOnlySandboxCapability
 
-    agent = Agent(TestModel(), name='ref_sandbox', capabilities=[ConnectOnlySandboxCapability(), RecordingDurability()])
+    durability = RecordingDurability()
+    agent = Agent(TestModel(), name='ref_sandbox', capabilities=[ConnectOnlySandboxCapability(), durability])
 
     @agent.tool
     async def probe(ctx: RunContext[Any]) -> str:
         return (await ctx.sandbox.run(['true'])).stdout
 
-    with pytest.raises(UserError, match=r'`ctx\.sandbox` cannot be used inside recording journal code'):
-        await agent.run('go', sandbox=SandboxRef(sandbox_id='outside'))
+    result = await agent.run('go', sandbox=SandboxRef(sandbox_id='outside'))
+
+    assert result.output == '{"probe":"connected"}'
+    bound = RecordingDurability.from_agent(agent)
+    assert bound is not None
+    assert [name for name, _ in bound.calls if '__sandbox__' in name] == [
+        'ref_sandbox__sandbox__connect_only_sandbox.run'
+    ]
+
+
+async def test_failed_first_durable_sandbox_call_preserves_created_environment() -> None:
+    """A semantic error after lazy creation must not make the next call create another sandbox."""
+    from ..sandbox_fakes import FakeSandbox
+
+    backends: list[FakeSandbox] = []
+
+    class FreshSandbox(AbstractCapability[Any]):
+        id = 'fresh_sandbox'
+
+        def get_sandbox(self, ctx: RunContext[Any], *, ref: SandboxRef | None) -> FakeSandbox:
+            backend = FakeSandbox('failed-first-call', ref=ref)
+            backends.append(backend)
+            return backend
+
+        async def before_run(self, ctx: RunContext[Any]) -> None:
+            with pytest.raises(FileNotFoundError):
+                await ctx.sandbox.read_text('missing.txt')
+            await ctx.sandbox.write_text('created.txt', 'same environment')
+
+    result = await Agent(
+        TestModel(), name='failed_first_sandbox_call', capabilities=[FreshSandbox(), RecordingDurability()]
+    ).run('go')
+
+    assert result.sandbox.ref == SandboxRef(sandbox_id='fake-failed-first-call')
+    assert sum(backend.create_calls for backend in backends) == 1
+    assert {backend.ref for backend in backends if backend.ref is not None} == {result.sandbox.ref}
+
+
+async def test_durable_sandbox_is_available_in_hooks_and_after_the_run() -> None:
+    """One high-level method is one durable unit, and the returned sandbox remains usable."""
+    from ..sandbox_fakes import FakeSandbox
+
+    state = [True]
+    backend = FakeSandbox('hooks')
+
+    class HookSandbox(AbstractCapability[Any]):
+        id = 'hook_sandbox'
+
+        def get_sandbox(self, ctx: RunContext[Any], *, ref: SandboxRef | None) -> FakeSandbox:
+            return backend
+
+        async def before_run(self, ctx: RunContext[Any]) -> None:
+            await ctx.sandbox.write_text('note.txt', 'from hook')
+
+        async def after_run(self, ctx: RunContext[Any], *, result: Any) -> Any:
+            assert await ctx.sandbox.read_text('note.txt') == 'from hook'
+            return result
+
+    class ToggleDurability(RecordingDurability):
+        @property
+        def in_durable_context(self) -> bool:
+            return state[0]
+
+    agent = Agent(TestModel(), name='hook_sandbox_agent', capabilities=[HookSandbox(), ToggleDurability()])
+    result = await agent.run('go')
+
+    durability = ToggleDurability.from_agent(agent)
+    assert durability is not None
+    assert [name for name, _ in durability.calls if '__sandbox__' in name] == [
+        'hook_sandbox_agent__sandbox__hook_sandbox.write_text',
+        'hook_sandbox_agent__sandbox__hook_sandbox.read_text',
+    ]
+
+    second = await agent.run('again', sandbox=result.sandbox)
+    assert second.sandbox is result.sandbox
+    assert [name for name, _ in durability.calls if '__sandbox__' in name] == [
+        'hook_sandbox_agent__sandbox__hook_sandbox.write_text',
+        'hook_sandbox_agent__sandbox__hook_sandbox.read_text',
+        'hook_sandbox_agent__sandbox__hook_sandbox.write_text',
+        'hook_sandbox_agent__sandbox__hook_sandbox.read_text',
+    ]
+
+    state[0] = False
+    assert await second.sandbox.read_text('note.txt') == 'from hook'
+
+
+async def test_concurrent_first_durable_sandbox_calls_create_one_environment() -> None:
+    from ..sandbox_fakes import FakeSandbox
+
+    backends: list[FakeSandbox] = []
+
+    class FreshSandbox(AbstractCapability[Any]):
+        id = 'fresh_sandbox'
+
+        def get_sandbox(self, ctx: RunContext[Any], *, ref: SandboxRef | None) -> FakeSandbox:
+            backend = FakeSandbox('concurrent', ref=ref)
+            backends.append(backend)
+            return backend
+
+        async def before_run(self, ctx: RunContext[Any]) -> None:
+            async with anyio.create_task_group() as task_group:
+                task_group.start_soon(ctx.sandbox.working_dir)
+                task_group.start_soon(ctx.sandbox.exists, '/workspace/missing')
+
+    agent = Agent(TestModel(), name='concurrent_sandbox', capabilities=[FreshSandbox(), RecordingDurability()])
+    await agent.run('go')
+
+    assert sum(backend.create_calls for backend in backends) == 1
 
 
 async def test_durability_allows_live_sandbox_outside_durable_context() -> None:

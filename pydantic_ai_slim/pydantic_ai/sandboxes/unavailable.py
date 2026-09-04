@@ -5,7 +5,7 @@ the same explicit failure mode. Pydantic AI uses it where a live execution
 environment cannot safely exist, and applications can pass one deliberately to disable
 execution with a policy-specific explanation.
 
-It implements the filesystem opt-in natively so every operation surfaces the configured reason.
+It implements the flat filesystem opt-in so every operation surfaces the configured reason.
 """
 
 from __future__ import annotations
@@ -28,38 +28,11 @@ if TYPE_CHECKING:
 __all__ = ('UnavailableSandbox',)
 
 
-class _UnavailableFilesystem:
-    def __init__(self, reason: str):
-        self._reason = reason
-
-    async def read_bytes(self, path: str) -> Never:
-        raise UserError(self._reason)
-
-    async def write_bytes(self, path: str, data: bytes) -> Never:
-        raise UserError(self._reason)
-
-    async def stat(self, path: str) -> Never:
-        raise UserError(self._reason)
-
-    async def list_dir(self, path: str) -> Never:
-        raise UserError(self._reason)
-
-    async def make_dir(self, path: str) -> Never:
-        raise UserError(self._reason)
-
-    async def remove(self, path: str) -> Never:
-        raise UserError(self._reason)
-
-    async def exists(self, path: str) -> Never:
-        raise UserError(self._reason)
-
-
 class UnavailableSandbox:
     """A `SandboxBackend` whose every operation raises `UserError` with a configured reason."""
 
     def __init__(self, reason: str):
         self.reason = reason
-        self.fs = _UnavailableFilesystem(reason)
 
     @property
     def ref(self) -> None:
@@ -80,7 +53,28 @@ class UnavailableSandbox:
     async def working_dir(self) -> Never:
         raise UserError(self.reason)
 
+    async def read_bytes(self, path: str) -> Never:
+        raise UserError(self.reason)
+
+    async def write_bytes(self, path: str, data: bytes) -> Never:
+        raise UserError(self.reason)
+
+    async def stat(self, path: str) -> Never:
+        raise UserError(self.reason)
+
+    async def list_dir(self, path: str) -> Never:
+        raise UserError(self.reason)
+
+    async def make_dir(self, path: str) -> Never:
+        raise UserError(self.reason)
+
+    async def remove(self, path: str) -> Never:
+        raise UserError(self.reason)
+
+    async def exists(self, path: str) -> Never:
+        raise UserError(self.reason)
+
 
 if TYPE_CHECKING:
     _backend_conforms: SandboxBackend = UnavailableSandbox('')
-    _fs_conforms: SupportsFilesystem = UnavailableSandbox('')
+    _filesystem_conforms: SupportsFilesystem = UnavailableSandbox('')

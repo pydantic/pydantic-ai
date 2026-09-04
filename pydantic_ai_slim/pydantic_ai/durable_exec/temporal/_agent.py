@@ -98,6 +98,11 @@ _LIVE_SANDBOX_ERROR = live_sandbox_error(
     run_location='to an agent run inside a Temporal workflow',
     sandbox_constraint='it would exist in workflow code where I/O is forbidden and cannot cross into activities',
 )
+_SANDBOX_REF_UNSUPPORTED_ERROR = (
+    '`TemporalAgent` cannot use a sandbox inside a workflow. Migrate to a regular `Agent` with '
+    '`TemporalDurability` and a construction-time sandbox capability; that path routes every sandbox method '
+    'through a Temporal activity.'
+)
 
 
 @dataclass(kw_only=True)
@@ -121,6 +126,7 @@ class _EventStreamHandlerParams:
 - `tool_activity_config=` → use per-tool `metadata={'temporal': ...}` or a `SetToolMetadata` capability.
 - `run_context_type=` → set `run_context_type=` on `TemporalDurability`.
 - `temporalize_toolset_func=` → not supported on the capability path; open an issue if you need it.
+- `sandbox=` → use a construction-time sandbox capability with an explicit stable `id`; sandbox methods then run as Temporal activities.
 Workflows started under `TemporalAgent` replay correctly after migrating when agent name, toolset IDs, and model registry keys are kept and `event_stream_handler=` stays on `TemporalDurability`; no draining is needed.""",
     category=PydanticAIDeprecationWarning,
 )
@@ -504,7 +510,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             event_stream_handler: Optional event stream handler to use for this run.
             capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
             sandbox: Optional sandbox backend or [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] for this run; overrides capability contributions. See the [sandbox docs](../sandbox.md).
-               Inside a Temporal workflow, only [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] and [`UnavailableSandbox`][pydantic_ai.sandboxes.UnavailableSandbox] are accepted as serializable forms.
+               The deprecated `TemporalAgent` does not support sandbox access inside a workflow; migrate to `TemporalDurability` with a construction-time sandbox capability.
             spec: Optional agent spec to apply for this run.
 
         Returns:
@@ -519,6 +525,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             sandbox = guard_workflow_sandbox(
                 sandbox,
                 live_error=_LIVE_SANDBOX_ERROR,
+                ref_error=_SANDBOX_REF_UNSUPPORTED_ERROR,
             )
             if sandbox is None:
                 sandbox = UnavailableSandbox(reason=TEMPORAL_SANDBOX_UNAVAILABLE_REASON)
@@ -671,7 +678,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             event_stream_handler: Optional event stream handler to use for this run.
             capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
             sandbox: Optional sandbox backend or [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] for this run; overrides capability contributions. See the [sandbox docs](../sandbox.md).
-               Inside a Temporal workflow, only [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] and [`UnavailableSandbox`][pydantic_ai.sandboxes.UnavailableSandbox] are accepted as serializable forms.
+               The deprecated `TemporalAgent` does not support sandbox access inside a workflow; migrate to `TemporalDurability` with a construction-time sandbox capability.
             spec: Optional agent spec to apply for this run.
 
         Returns:
@@ -826,7 +833,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             event_stream_handler: Optional event stream handler to use for this run. It will receive all the events up until the final result is found, which you can then read or stream from inside the context manager.
             capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
             sandbox: Optional sandbox backend or [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] for this run; overrides capability contributions. See the [sandbox docs](../sandbox.md).
-               Inside a Temporal workflow, only [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] and [`UnavailableSandbox`][pydantic_ai.sandboxes.UnavailableSandbox] are accepted as serializable forms.
+               The deprecated `TemporalAgent` does not support sandbox access inside a workflow; migrate to `TemporalDurability` with a construction-time sandbox capability.
             spec: Optional agent spec to apply for this run.
 
         Returns:
@@ -999,7 +1006,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             toolsets: Optional additional toolsets for this run.
             capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
             sandbox: Optional sandbox backend or [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] for this run; overrides capability contributions. See the [sandbox docs](../sandbox.md).
-               Inside a Temporal workflow, only [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] and [`UnavailableSandbox`][pydantic_ai.sandboxes.UnavailableSandbox] are accepted as serializable forms.
+               The deprecated `TemporalAgent` does not support sandbox access inside a workflow; migrate to `TemporalDurability` with a construction-time sandbox capability.
             spec: Optional agent spec to apply for this run.
 
         Returns:
@@ -1209,7 +1216,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             toolsets: Optional additional toolsets for this run.
             capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
             sandbox: Optional sandbox backend or [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] for this run; overrides capability contributions. See the [sandbox docs](../sandbox.md).
-               Inside a Temporal workflow, only [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] and [`UnavailableSandbox`][pydantic_ai.sandboxes.UnavailableSandbox] are accepted as serializable forms.
+               The deprecated `TemporalAgent` does not support sandbox access inside a workflow; migrate to `TemporalDurability` with a construction-time sandbox capability.
             spec: Optional agent spec to apply for this run.
 
         Returns:

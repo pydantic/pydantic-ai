@@ -26,7 +26,7 @@ from pydantic_ai.messages import (
     ModelResponse,
     ToolCallPart,
 )
-from pydantic_ai.sandboxes import SandboxBackend, SandboxRef
+from pydantic_ai.sandboxes import Sandbox, SandboxBackend, SandboxRef
 from pydantic_ai.tools import (
     AgentDepsT,
     AgentNativeTool,
@@ -469,6 +469,16 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         capability surface decisions tracked in #5477.
         """
 
+    def _wrap_sandbox(
+        self,
+        ctx: RunContext[AgentDepsT],
+        sandbox: Sandbox,
+        *,
+        supplier: AbstractCapability[AgentDepsT] | None,
+    ) -> Sandbox:
+        """Apply private cross-cutting behavior to the selected run sandbox."""
+        return sandbox
+
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
         """Return the capability instance to use for this agent run.
 
@@ -629,9 +639,10 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         this capability's own settings, carrying `ref` when one was recovered or passed in. The
         backend creates or attaches on its first operation, so nothing here reaches the network.
 
-        `ref` is the identity of an environment the run should continue in: an explicit
-        `sandbox=` argument, or the last one recorded in the message history. `None` means the
-        backend should create a fresh environment. At most one attached capability may answer.
+        `ref` is the identity of an environment the run should continue in when the caller passed
+        a [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] through `sandbox=`. `None` means the
+        backend should create a fresh environment. Sandbox identity is not inferred from message
+        history. At most one attached capability may answer.
         """
         return None
 

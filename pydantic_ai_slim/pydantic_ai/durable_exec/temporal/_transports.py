@@ -20,11 +20,13 @@ from pydantic_ai.durable_exec._operation import (
     ToolsetCallToolParams,
     ToolsetGetToolsParams,
 )
+from pydantic_ai.durable_exec._sandbox import SandboxOperationParams, SandboxOperationResult
 from pydantic_ai.durable_exec._toolset import CallToolResult, DynamicToolsResult
 from pydantic_ai.durable_exec._utils import StreamedActivityResult
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import AgentStreamEvent, ModelMessage, ModelResponse
 from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
+from pydantic_ai.sandboxes import SandboxRef
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
@@ -51,6 +53,7 @@ __all__ = (
     '_MCPCallTransport',
     '_ModelRequestTransport',
     '_RequestParams',
+    '_SandboxOperationTransport',
     '_StreamedActivityPayload',
 )
 
@@ -217,6 +220,43 @@ class _CapabilityOperationTransport(
         params, deps = payload
         ctx = self._durability.deserialize_operation_run_context(params.serialized_run_context, deps)
         return CapabilityOperationParams(ctx, arguments=params.arguments, model_id=params.model_id)
+
+
+@dataclass(kw_only=True)
+class _SandboxOperationWire:
+    arguments: dict[str, Any]
+    supplier_id: str
+    ref: SandboxRef | None
+    serialized_run_context: Any
+
+
+class _SandboxOperationTransport(TemporalParameterTransport[SandboxOperationParams, tuple[_SandboxOperationWire, Any]]):
+    wire_type = _SandboxOperationWire
+    result_type = SandboxOperationResult
+
+    def __init__(self, durability: TemporalDurability[Any]) -> None:
+        self._durability = durability
+
+    def dump(self, params: SandboxOperationParams) -> tuple[_SandboxOperationWire, Any]:
+        return (
+            _SandboxOperationWire(
+                arguments=params.arguments,
+                supplier_id=params.supplier_id,
+                ref=params.ref,
+                serialized_run_context=self._durability.run_context_type.serialize_run_context(params.run_context),
+            ),
+            params.run_context.deps,
+        )
+
+    def load(self, payload: tuple[_SandboxOperationWire, Any], *, runtime: object) -> SandboxOperationParams:
+        params, deps = payload
+        ctx = self._durability.deserialize_operation_run_context(params.serialized_run_context, deps)
+        return SandboxOperationParams(
+            run_context=ctx,
+            supplier_id=params.supplier_id,
+            ref=params.ref,
+            arguments=params.arguments,
+        )
 
 
 @dataclass(kw_only=True)

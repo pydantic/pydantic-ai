@@ -12,6 +12,7 @@ from ._operation import (
     ModelCancelSuspendedResponseId,
     ModelCompactMessagesId,
     ModelRequestId,
+    SandboxOperationId,
     ToolsetCallToolId,
     ToolsetGetInstructionsId,
     ToolsetGetToolsId,
@@ -65,6 +66,8 @@ class JournalOperationNamer(DurableOperationNamer):
 
     def operation_name(self, operation_id: DurableOperationId) -> str:
         match operation_id:
+            case SandboxOperationId(capability_id=capability_id, method=method):
+                return f'{self._agent_name}__sandbox__{capability_id}.{method}'
             case CapabilityOperationId(capability_id=capability_id, operation=operation):
                 return f'{self._agent_name}__capability__{capability_id}.{operation}'
             case ModelRequestId(model_id=model_id, streaming=streaming):

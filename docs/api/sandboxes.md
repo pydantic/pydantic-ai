@@ -16,6 +16,5 @@
             - ReadOnlySandbox
             - UnavailableSandbox
             - SandboxCommand
-            - SandboxFilesystem
             - SandboxFileEntry
             - SandboxResult

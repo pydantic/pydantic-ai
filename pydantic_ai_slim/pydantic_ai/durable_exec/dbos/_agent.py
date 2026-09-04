@@ -79,6 +79,10 @@ _LIVE_SANDBOX_ERROR = live_sandbox_error(
         'pickling or recovery'
     ),
 )
+_SANDBOX_REF_UNSUPPORTED_ERROR = (
+    '`DBOSAgent` cannot use a sandbox inside a workflow. Migrate to a regular `Agent` with `DBOSDurability` '
+    'and a construction-time sandbox capability; that path routes every sandbox method through a DBOS step.'
+)
 
 
 # TODO(v3): remove `DBOSAgent` in favor of the `DBOSDurability` capability, along with `DBOSDurability(register_legacy_workflows=...)` which exists solely to migrate off it
@@ -91,6 +95,7 @@ _LIVE_SANDBOX_ERROR = live_sandbox_error(
 - `mcp_step_config=` → set `mcp_step_config=` on `DBOSDurability`.
 - `model_step_config=` → set `model_step_config=` on `DBOSDurability`.
 - `parallel_execution_mode=` → set `parallel_execution_mode=` on `DBOSDurability`.
+- `sandbox=` → use a construction-time sandbox capability with an explicit stable `id`; sandbox methods then run as DBOS steps.
 Pass `register_legacy_workflows=True` to `DBOSDurability` and pin the DBOS application version so in-flight `DBOSAgent` workflows recover across the migration.""",
     category=PydanticAIDeprecationWarning,
 )
@@ -509,7 +514,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             event_stream_handler: Optional event stream handler to use for this run.
             capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
             sandbox: Optional sandbox backend or [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] for this run; overrides capability contributions. See the [sandbox docs](../sandbox.md).
-               Inside a DBOS workflow, only [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] and [`UnavailableSandbox`][pydantic_ai.sandboxes.UnavailableSandbox] are accepted as serializable forms.
+               The deprecated `DBOSAgent` does not support sandbox access inside a workflow; migrate to `DBOSDurability` with a construction-time sandbox capability.
             spec: Optional agent spec to apply for this run.
 
         Returns:
@@ -524,6 +529,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         sandbox = guard_workflow_sandbox(
             sandbox,
             live_error=_LIVE_SANDBOX_ERROR,
+            ref_error=_SANDBOX_REF_UNSUPPORTED_ERROR,
         )
         return await self.dbos_wrapped_run_workflow(
             user_prompt,
@@ -672,7 +678,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             event_stream_handler: Optional event stream handler to use for this run.
             capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
             sandbox: Optional sandbox backend or [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] for this run; overrides capability contributions. See the [sandbox docs](../sandbox.md).
-               Inside a DBOS workflow, only [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] and [`UnavailableSandbox`][pydantic_ai.sandboxes.UnavailableSandbox] are accepted as serializable forms.
+               The deprecated `DBOSAgent` does not support sandbox access inside a workflow; migrate to `DBOSDurability` with a construction-time sandbox capability.
             spec: Optional agent spec to apply for this run.
 
         Returns:
@@ -689,6 +695,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         sandbox = guard_workflow_sandbox(
             sandbox,
             live_error=_LIVE_SANDBOX_ERROR,
+            ref_error=_SANDBOX_REF_UNSUPPORTED_ERROR,
         )
         return self.dbos_wrapped_run_sync_workflow(
             user_prompt,
@@ -833,7 +840,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             event_stream_handler: Optional event stream handler to use for this run. It will receive all the events up until the final result is found, which you can then read or stream from inside the context manager.
             capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
             sandbox: Optional sandbox backend or [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] for this run; overrides capability contributions. See the [sandbox docs](../sandbox.md).
-               Inside a DBOS workflow, only [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] and [`UnavailableSandbox`][pydantic_ai.sandboxes.UnavailableSandbox] are accepted as serializable forms.
+               The deprecated `DBOSAgent` does not support sandbox access inside a workflow; migrate to `DBOSDurability` with a construction-time sandbox capability.
             spec: Optional agent spec to apply for this run.
 
         Returns:
@@ -1006,7 +1013,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             toolsets: Optional additional toolsets for this run.
             capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
             sandbox: Optional sandbox backend or [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] for this run; overrides capability contributions. See the [sandbox docs](../sandbox.md).
-               Inside a DBOS workflow, only [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] and [`UnavailableSandbox`][pydantic_ai.sandboxes.UnavailableSandbox] are accepted as serializable forms.
+               The deprecated `DBOSAgent` does not support sandbox access inside a workflow; migrate to `DBOSDurability` with a construction-time sandbox capability.
             spec: Optional agent spec to apply for this run.
 
         Returns:
@@ -1192,7 +1199,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             toolsets: Optional additional toolsets for this run.
             capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
             sandbox: Optional sandbox backend or [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] for this run; overrides capability contributions. See the [sandbox docs](../sandbox.md).
-               Inside a DBOS workflow, only [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] and [`UnavailableSandbox`][pydantic_ai.sandboxes.UnavailableSandbox] are accepted as serializable forms.
+               The deprecated `DBOSAgent` does not support sandbox access inside a workflow; migrate to `DBOSDurability` with a construction-time sandbox capability.
             spec: Optional agent spec to apply for this run.
 
         Returns:
