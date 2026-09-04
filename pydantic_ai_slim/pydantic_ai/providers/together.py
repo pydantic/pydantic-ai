@@ -60,6 +60,12 @@ class TogetherProvider(_OpenAICompatibleProvider):
             if provider in provider_to_profile:
                 profile = provider_to_profile[provider](model_name)
 
+            if provider == 'deepseek-ai' and model_name.startswith('deepseek-v4-'):
+                # DeepSeek's V4 models reject a forced tool choice while thinking is on, and thinking is
+                # their default. Whether Together honors DeepSeek's thinking toggle is unverified, so the
+                # restriction is unconditional here rather than per request as it is on `DeepSeekProvider`.
+                profile = merge_profile(profile, OpenAIModelProfile(openai_supports_tool_choice_required=False))
+
         # As the Together API is OpenAI-compatible, let's assume we also need OpenAIJsonSchemaTransformer,
         # unless json_schema_transformer is set explicitly
         return merge_profile(OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer), profile)

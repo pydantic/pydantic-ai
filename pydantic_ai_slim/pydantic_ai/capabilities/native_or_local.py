@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
-from dataclasses import dataclass, replace
-from typing import Any, cast
+from collections.abc import Awaitable, Callable, Sequence
+from dataclasses import dataclass, field, replace
+from typing import Any, TypeVar, cast
 
+from pydantic_ai._utils import replace_no_init
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.native_tools import AbstractNativeTool
 from pydantic_ai.tools import AgentDepsT, AgentNativeTool, RunContext, Tool, ToolDefinition
@@ -11,7 +12,13 @@ from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.toolsets.prepared import PreparedToolset
 
-from .abstract import AbstractCapability
+from ._merge import merge_capability_fields, merge_field_values
+from ._native_resolution import resolve_native_tool
+from .abstract import (
+    AbstractCapability,
+)
+
+_NativeToolT = TypeVar('_NativeToolT', bound=AbstractNativeTool)
 
 
 @dataclass(init=False)
@@ -44,6 +51,7 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
     - `False`: disable the native tool; always use the local tool.
     - An `AbstractNativeTool` instance: use this specific configuration.
     - A callable (`NativeToolFunc`): dynamically create the native tool per-run via `RunContext`.
+      Returning `None` omits the native tool.
     """
 
     local: str | Tool[AgentDepsT] | Callable[..., Any] | AbstractToolset[AgentDepsT] | bool | None = None
@@ -73,7 +81,30 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
         self.local = local
         self.__post_init__()
 
+    _declared_native: AgentNativeTool[AgentDepsT] | bool | None = field(
+        init=False, repr=False, compare=False, default=None
+    )
+    """What the caller passed as `native`, before `__post_init__` resolved it.
+
+    Resolution is destructive: `native=True` becomes a tool instance, so afterwards there is no way
+    to tell configuration the caller stated from configuration this class derived. `combine` needs
+    that distinction to rebuild the derived half from merged configuration. Excluded from `compare`
+    because it restates a field that is already compared.
+    """
+
+    _declared_local: str | Tool[AgentDepsT] | Callable[..., Any] | AbstractToolset[AgentDepsT] | bool | None = field(
+        init=False, repr=False, compare=False, default=None
+    )
+    """What the caller passed as `local`, before `__post_init__` resolved it. See `_declared_native`."""
+
     def __post_init__(self) -> None:
+        # Assigned through `object.__setattr__` rather than relying on the field defaults: the
+        # subclasses declare their own `__init__`, which never runs the dataclass field
+        # initializers. Every caller reaches here with `native`/`local` as stated rather than
+        # resolved -- a fresh `__init__`, or `combine` having just put the merged declarations
+        # back -- so capturing unconditionally records declarations, never resolved values.
+        object.__setattr__(self, '_declared_native', self.native)
+        object.__setattr__(self, '_declared_local', self.local)
         if self.native is False and self.local is False:
             raise UserError(f'{type(self).__name__}: both `native` and `local` cannot be False')
 
@@ -193,3 +224,74 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
 
             return PreparedToolset(wrapped=toolset, prepare_func=_add_unless_native)
         return toolset
+
+    @classmethod
+    def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
+        """Merge the declared configuration, then rebuild the native tool from the result.
+
+        `__post_init__` copies this capability's configuration into the native tool it builds, and
+        that tool -- not the capability -- is what reaches the provider. Merging the capability's
+        fields alone would leave a merged `allowed_domains` beside a native tool still carrying one
+        instance's, so a composed restriction would read as applied while the request went out
+        without it. Anything `_default_native` produced is therefore produced again from the merged
+        configuration.
+
+        A native tool the user passed in is left alone: it states its own configuration, and
+        rebuilding would discard it. Two of those take the later, like any other value the merge
+        cannot reconcile.
+
+        The merged instance is validated the way a constructed one is. `replace_no_init` skips
+        `__post_init__`, and a merge can reach a combination no constructor would accept -- a
+        `native=False` instance beside one carrying native-only constraints leaves a capability that
+        contributes neither the native tool nor a local fallback. Re-running the check turns that
+        into the same `UserError` writing it by hand would raise.
+        """
+        nol_capabilities = [capability for capability in capabilities if isinstance(capability, NativeOrLocalTool)]
+        assert len(nol_capabilities) == len(capabilities)
+        merged = merge_capability_fields(capabilities)
+        assert isinstance(merged, cls)
+        # `native`/`local` are set to the *declarations* rather than the resolved values, so the
+        # `__post_init__` below re-records them as such and then resolves them once, exactly as a
+        # constructor would.
+        merged = replace_no_init(
+            merged,
+            native=merge_field_values([capability._declared_native for capability in nol_capabilities]),
+            local=merge_field_values([capability._declared_local for capability in nol_capabilities]),
+        )
+        merged.__post_init__()
+        return merged
+
+    def _resolve_native_with_overrides(
+        self, tool_cls: type[_NativeToolT], overrides: dict[str, Any]
+    ) -> _NativeToolT | Callable[[RunContext[AgentDepsT]], Awaitable[_NativeToolT] | _NativeToolT]:
+        """Resolve the native tool for the fallback subagent, with capability-level overrides applied.
+
+        Handles every `native` shape reaching here: an instance (overridden via
+        `dataclasses.replace`), `False` (a default instance with overrides), or a factory (wrapped
+        so its resolved result is overridden the same way). `True` never arrives — `__post_init__`
+        has already resolved it to an instance. A factory that returns `None` raises `UserError`
+        rather than substituting a default instance, and anything else raises too.
+
+        Only the `fallback_model` path reaches here: `__post_init__` calls `_default_local()`, which
+        returns early when `fallback_model` is unset, so a capability configured without one never
+        runs this check. Validating in `__post_init__` instead would reject configurations that
+        construct fine today for users who never opted into a fallback subagent.
+        """
+        if isinstance(self.native, tool_cls):
+            return replace(self.native, **overrides) if overrides else self.native
+
+        if self.native is False:
+            return tool_cls(**overrides)
+
+        native_factory = self.native
+        if not callable(native_factory):
+            raise UserError(
+                f'{type(self).__name__}: `native` must be `True`, `False`, a callable, or an instance of '
+                f'`{tool_cls.__name__}`, not {native_factory!r}'
+            )
+
+        async def resolve_native(ctx: RunContext[AgentDepsT]) -> _NativeToolT:
+            native_tool = await resolve_native_tool(tool_cls, native_factory, ctx)
+            return replace(native_tool, **overrides) if overrides else native_tool
+
+        return resolve_native

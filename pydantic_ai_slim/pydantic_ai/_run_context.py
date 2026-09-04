@@ -1,14 +1,15 @@
 from __future__ import annotations as _annotations
 
+import asyncio
 import dataclasses
 import sys
 import warnings
-from collections.abc import Awaitable, Callable, Generator, Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Generator, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import field
 from functools import wraps
-from typing import TYPE_CHECKING, Any, Generic
+from typing import TYPE_CHECKING, Any, Generic, overload
 
 from opentelemetry.trace import NoOpTracer, Tracer
 from typing_extensions import TypeVar, deprecated
@@ -36,6 +37,67 @@ AgentDepsT = TypeVar('AgentDepsT', default=object, contravariant=True)
 
 RunContextAgentDepsT = TypeVar('RunContextAgentDepsT', default=object, covariant=True)
 """Type variable for the agent dependencies in `RunContext`."""
+
+CustomEventT = TypeVar('CustomEventT', bound=_messages.CustomEvent)
+CapabilityEventT = TypeVar('CapabilityEventT', bound=_messages.CapabilityEvent)
+
+
+class EventStreamBuffer(list[_messages.AgentStreamEvent]):
+    """The run's event buffer, notifying waiting stream mergers as soon as an event lands.
+
+    Extends `list` so graph-state persistence serializes it transparently; a buffer revived as a
+    plain list degrades to draining at stream position instead of waking a blocked stream merger.
+    """
+
+    __slots__ = ('waiters',)
+
+    def __init__(self, iterable: Sequence[_messages.AgentStreamEvent] = ()):
+        super().__init__(iterable)
+        self.waiters: list[asyncio.Event] = []
+
+    def append(self, event: _messages.AgentStreamEvent) -> None:
+        super().append(event)
+        for waiter in self.waiters:
+            waiter.set()
+
+
+async def dispatch_event_immediate(ctx: RunContext[Any], event: _messages.AgentStreamEvent) -> None:
+    """Dispatch an immediately dispatched capability event and mark it for stream deduplication."""
+    if not isinstance(event, _messages.CapabilityEvent) or event.event_dispatch != 'immediate':
+        return
+    # Mark before awaiting listeners: awaiting yields the event loop, and a concurrent stream
+    # consumer (e.g. the `run_stream_events` reader task) could drain the buffered event in that
+    # window and dispatch it a second time if it weren't already marked. Each marker carries a
+    # settlement signal the stream consumer awaits before yielding the event, so consumers never
+    # observe a decision event whose listeners are still mutating it. A list per id keeps repeated
+    # emissions of one object (a capability re-emitting on behalf of another) exactly-once each.
+    settled = asyncio.Event()
+    ctx._pending_immediate_dispatches.setdefault(id(event), []).append(settled)  # pyright: ignore[reportPrivateUsage]
+    try:
+        capability = ctx.root_capability
+        if capability is not None and capability.listens_to(event):
+            await capability.on_event(ctx, event=event)
+    finally:
+        # Settle even when a listener raises (the exception propagates to the emitter): the
+        # buffered event must not wedge the stream of a run that is already failing.
+        settled.set()
+
+
+async def dispatch_event_stream(
+    ctx: RunContext[Any], stream: AsyncIterable[_messages.AgentStreamEvent]
+) -> AsyncIterator[_messages.AgentStreamEvent]:
+    """Dispatch events at their stream positions and deduplicate immediately dispatched events."""
+    capability = ctx.root_capability
+    async for event in stream:
+        event_id = id(event)
+        if pending := ctx._pending_immediate_dispatches.get(event_id):  # pyright: ignore[reportPrivateUsage]
+            settled = pending.pop(0)
+            if not pending:
+                del ctx._pending_immediate_dispatches[event_id]  # pyright: ignore[reportPrivateUsage]
+            await settled.wait()
+        elif capability is not None and capability.listens_to(event):
+            await capability.on_event(ctx, event=event)
+        yield ctx._event_stream_replacements.pop(event_id, event)  # pyright: ignore[reportPrivateUsage]
 
 
 @dataclasses.dataclass(frozen=True)
@@ -175,9 +237,23 @@ class RunContext(Generic[RunContextAgentDepsT]):
     The run's shared event buffer (the same list held by `GraphAgentState`). Framework code appends
     events to it via [`_emit_event`][pydantic_ai._run_context.RunContext._emit_event]; the agent graph
     drains it into the agent event stream so consumers (`event_stream_handler`, `agent.run_stream_events`,
-    `agent.iter` streaming) observe them. `None` in synthetic contexts not backed by a running agent.
-    A public API for emitting custom events is intentionally not exposed yet.
+    `agent.iter` streaming) observe them. `None` in synthetic contexts not backed by a running agent,
+    where [`emit`][pydantic_ai.tools.RunContext.emit] raises.
     """
+
+    _pending_immediate_dispatches: dict[int, list[asyncio.Event]] = field(
+        default_factory=dict[int, list[asyncio.Event]], repr=False
+    )
+    """Per-event-id settlement signals for buffered events dispatched immediately, shared across the run.
+
+    Keyed by `id(event)` and held only while the event sits in the buffer, so ids can't collide with
+    later objects. Kept out of persisted graph state: raw ids are meaningless in a revived process
+    (a revived buffer degrades to dispatching at stream position, like a plain-list buffer)."""
+
+    _event_stream_replacements: dict[int, _messages.AgentStreamEvent] = field(
+        default_factory=dict[int, _messages.AgentStreamEvent], repr=False
+    )
+    """Legacy `hooks.on.event` replacements, shared across the run."""
 
     _durable_operations: dict[tuple[str, str], Callable[..., Awaitable[Any]]] | None = field(default=None, repr=False)
     """Per-run durable capability operation dispatchers, for internal use only."""
@@ -281,6 +357,9 @@ class RunContext(Generic[RunContextAgentDepsT]):
     this one is the answer for a call the model has already made, where it is. See `AnchoredEvidence`.
     """
 
+    _capability: AbstractCapability[RunContextAgentDepsT] | None = field(default=None, repr=False)
+    """The capability whose hook is currently being dispatched, if any."""
+
     @property
     def model_id(self) -> str | None:
         """The identifier from which the run's active `model` was resolved.
@@ -332,6 +411,38 @@ class RunContext(Generic[RunContextAgentDepsT]):
     def last_attempt(self) -> bool:
         """Whether this is the last attempt at running this tool before an error is raised."""
         return self.retry == self.max_retries
+
+    @property
+    def context_window_used(self) -> float | None:
+        """Fraction of the model's context window occupied as of the most recent model response.
+
+        Computed as the latest response's reported
+        [`total_tokens`][pydantic_ai.usage.RequestUsage.total_tokens] (input, including cached tokens,
+        plus output) over the active model's
+        [`context_window`][pydantic_ai.models.AbstractModel.context_window]. This estimates how full
+        the next request may be; history processing and newly added content can change its actual
+        size, and the value can exceed `1.0` when the last response came from a model with a larger
+        window. Useful to trigger history compaction, e.g. in a
+        [history processor](https://pydantic.dev/docs/ai/message-history#processing-message-history).
+
+        Returns `None` — never a misleading `0.0` — when the ratio cannot be calculated: when the
+        context window, usage, or message history is unavailable, or before the first model response.
+        A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] measures against the smallest
+        of its candidates' windows.
+        """
+        try:
+            model, messages = self.model, self.messages
+        except UserError:
+            # A durable run context can omit live model state and message history at an activity boundary.
+            return None
+        context_window = model.context_window
+        if context_window is None or context_window <= 0:
+            return None
+        for message in reversed(messages):
+            if isinstance(message, _messages.ModelResponse):
+                tokens = message.usage.total_tokens
+                return tokens / context_window if tokens else None
+        return None
 
     def _emit_event(self, event: _messages.AgentStreamEvent) -> None:
         """Append an event to the run's event buffer for the agent graph to drain into the event stream.
@@ -488,6 +599,114 @@ class RunContext(Generic[RunContextAgentDepsT]):
         if self.tool_manager is None or self.tool_manager.tools is None:
             return {}
         return {name: tool.tool_def for name, tool in self.tool_manager.tools.items()}
+
+    @overload
+    async def emit(self, event: CustomEventT, /) -> CustomEventT: ...
+
+    @overload
+    async def emit(self, event: CapabilityEventT, /) -> CapabilityEventT: ...
+
+    async def emit(
+        self, event: _messages.CustomEvent | _messages.CapabilityEvent, /
+    ) -> _messages.CustomEvent | _messages.CapabilityEvent:
+        """Emit a custom or capability event into the current run's event stream.
+
+        Application code emits an instance of an application-defined
+        [`CustomEvent` subclass](../agent.md#custom-events) with typed payload fields.
+        Capability hooks and capability-contributed tools instead emit a typed
+        [`CapabilityEvent`][pydantic_ai.messages.CapabilityEvent].
+
+        This method must be awaited, so it's available from async tools, capability hooks, history
+        processors, and async output validators. Sync tools cannot emit events; write async tools instead.
+        It's async rather than sync like [`enqueue`][pydantic_ai.tools.RunContext.enqueue] because
+        immediate dispatch (below) awaits listeners before returning, and because widening a sync
+        signature to async later would break every caller.
+        The event reaches the run's `event_stream_handler`,
+        [`Agent.run_stream_events`][pydantic_ai.agent.AbstractAgent.run_stream_events],
+        [`Agent.iter`][pydantic_ai.agent.AbstractAgent.iter] streaming, and the UI adapters.
+
+        When emitted from within a tool call and the event doesn't already set a
+        [`tool_call_id`][pydantic_ai.messages.CustomEvent.tool_call_id], the current
+        [`tool_call_id`][pydantic_ai.tools.RunContext.tool_call_id] and
+        [`tool_name`][pydantic_ai.tools.RunContext.tool_name] are stamped on the event in place so
+        consumers can attribute it to the originating tool call.
+
+        By default, capability and application listeners run when the event's stream position is
+        consumed, and this method returns without awaiting them. For tool-execution emissions this
+        happens before the next model request. An event emitted during `before_model_request` may
+        reach listeners only after that request begins, with the same as-soon-as-possible timing as
+        [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue]. That is a statement about *when*
+        listeners run, not about order: every consumer sees events in emission order either way.
+
+        A [`CapabilityEvent`][pydantic_ai.messages.CapabilityEvent] class declared with
+        `dispatch='immediate'` changes one thing — listeners are awaited before this method returns,
+        so the emitter can read decision fields they set (this is what makes a cancelable event
+        possible). Everything else is the same: the event still takes the stream position it would
+        have taken, the same listeners run in the same order, and it is delivered exactly once. What
+        stream consumers gain is that they never observe such an event mid-decision — the stream waits
+        for its listeners to settle before yielding it, so the values they read are final.
+
+        Args:
+            event: The [`CustomEvent`][pydantic_ai.messages.CustomEvent] or
+                [`CapabilityEvent`][pydantic_ai.messages.CapabilityEvent] to emit.
+
+        Returns:
+            The same event instance, with any attribution fields stamped. For an immediately dispatched
+            decision event, both the return value and the passed reference reflect listener decisions.
+
+        Raises:
+            UserError: If this `RunContext` isn't backed by a running agent's event stream, or the event
+                family doesn't belong to the current emitter.
+        """
+        if self._event_stream_buffer is None:
+            raise UserError(
+                '`emit` is only available during an agent run (from tools, capability hooks, or '
+                '`AgentRun.emit`). This `RunContext` has no event stream to emit into.'
+            )
+        capability_id: str | None = None
+        capability = self._capability
+        if capability is not None:
+            capability_id = next(
+                (run_id for run_id, cap in self.capabilities.items() if cap is capability), capability.id
+            )
+        elif self.tool_name is not None and self.tool_manager is not None and self.tool_manager.tools is not None:
+            if (tool := self.tool_manager.tools.get(self.tool_name)) is not None:
+                # `CapabilityOwnedToolset` stamps the owning capability's run id on the tool definition,
+                # covering capabilities that rely on an implicit (derived) id as well as explicit ones.
+                tool_capability_id = tool.tool_def.capability_id
+                capability_id = tool_capability_id if tool_capability_id in self.capabilities else None
+
+        if isinstance(event, _messages.CapabilityEvent):
+            if capability_id is None:
+                raise UserError(
+                    'Capability events belong to capabilities and can only be emitted from a capability hook or '
+                    'capability-contributed tool. Application code should emit a `CustomEvent`; it can re-emit a '
+                    'received capability event as one.'
+                )
+            if event.capability_id is None:
+                event.capability_id = capability_id
+        # This private property is the intentional in-tree opt-out for app-facing callback capabilities.
+        # It gates hooks and capability-contributed tools alike, resolved through the owning capability.
+        elif (
+            owner := capability if capability is not None else self.capabilities.get(capability_id or '')
+        ) is not None and not owner._emits_app_events:  # pyright: ignore[reportPrivateUsage]
+            raise UserError(
+                'Capabilities should define and emit `CapabilityEvent` subclasses instead of application '
+                '`CustomEvent`s.'
+            )
+        if event.tool_call_id is None and self.tool_call_id is not None:
+            event.tool_call_id = self.tool_call_id
+            event.tool_name = self.tool_name
+        # Attribution is stamped on the event in place (never on a copy): listeners of an immediately dispatched
+        # decision event mutate the dispatched object, and the emitter must be able to read those
+        # decisions off its own reference as well as off the returned one.
+        self._emit_event(event)
+        # `dispatch_event_immediate` installs its stream-deduplication marker before its first
+        # `await`, so no event-loop yield separates the buffer append above from the marker.
+        # An `await` inserted between the two would open a window for a concurrent stream
+        # consumer to drain the buffered event and dispatch it a second time.
+        await dispatch_event_immediate(self, event)
+        return event
 
     def enqueue(
         self,

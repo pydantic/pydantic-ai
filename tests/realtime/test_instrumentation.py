@@ -1586,3 +1586,27 @@ def test_provider_attributes_degrade_on_malformed_port() -> None:
     assert attributes['gen_ai.provider.name'] == 'openai'
     assert 'server.address' not in attributes
     assert 'server.port' not in attributes
+
+
+async def test_second_agent_level_instrumentation_wins_for_session_spans() -> None:
+    """Two `Instrumentation` capabilities on the agent resolve the same way for a session as for a run.
+
+    `combine` keeps the later of two capabilities sharing an id, so the session has to read the
+    later one too. Selecting the first match instead exported prompts and responses under settings
+    the effective configuration had already turned off.
+    """
+    first_settings, first_exporter = _settings(include_content=True)
+    second_settings, second_exporter = _settings(include_content=False)
+    agent = _weather_agent(
+        name='assistant',
+        capabilities=[
+            Instrumentation(settings=first_settings),
+            Instrumentation(settings=second_settings),
+        ],
+    )
+    conn = _Connection([SessionUsage(usage=RequestUsage(input_tokens=10, output_tokens=4)), ResponseDone()])
+    async with agent.realtime(_Model(conn)).session() as session:
+        _ = [e async for e in session]
+
+    assert not first_exporter.get_finished_spans(), 'the superseded capability must not export'
+    assert second_exporter.get_finished_spans(), 'the capability the run keeps is the one that exports'

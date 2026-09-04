@@ -67,6 +67,12 @@ def test_together_provider_model_profile(mocker: MockerFixture):
     deepseek_model_profile_mock.assert_called_with('deepseek-r1')
     assert deepseek_profile is not None
     assert deepseek_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
+    assert deepseek_profile.get('openai_supports_tool_choice_required', True) is True
+
+    deepseek_v4_profile = provider.model_profile('deepseek-ai/DeepSeek-V4-Flash-0731')
+    deepseek_model_profile_mock.assert_called_with('deepseek-v4-flash-0731')
+    assert deepseek_v4_profile is not None
+    assert deepseek_v4_profile.get('openai_supports_tool_choice_required', True) is False
 
     meta_profile = provider.model_profile('meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8')
     meta_model_profile_mock.assert_called_with('llama-4-maverick-17b-128e-instruct-fp8')

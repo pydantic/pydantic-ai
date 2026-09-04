@@ -111,6 +111,49 @@ def test_instrumentation_default_settings() -> None:
     assert isinstance(instr.settings, InstrumentationSettings)
 
 
+def test_instrumentation_spec_covers_every_serializable_setting() -> None:
+    """A spec can set every `InstrumentationSettings` option that survives YAML.
+
+    `from_spec` names its parameters rather than forwarding `**kwargs`, which is worth keeping --
+    it types the surface and generates the JSON schema. The cost is that an option left out of the
+    signature stops being expressible, so this asserts the signature against the settings class
+    instead of against a hand-written list that can drift from it.
+    """
+    import inspect
+
+    from pydantic_ai.models.instrumented import InstrumentationSettings
+
+    # `tracer_provider` and `meter_provider` are live OTel objects, so they cannot come from YAML.
+    serializable = {
+        name
+        for name in inspect.signature(InstrumentationSettings.__init__).parameters
+        if name not in {'self', 'tracer_provider', 'meter_provider'}
+    }
+    accepted = set(inspect.signature(Instrumentation.from_spec).parameters)
+
+    assert not (serializable - accepted), (
+        f'`Instrumentation.from_spec` cannot express {sorted(serializable - accepted)}, '
+        'so a spec that sets it now raises `TypeError`.'
+    )
+    assert (
+        Instrumentation.from_spec(include_model_request_parameters=False).settings.include_model_request_parameters
+        is False
+    )
+
+
+def test_instrumentation_spec_will_not_name_the_capability() -> None:
+    """An agent has one instrumentation configuration, so a spec has nothing to name.
+
+    `id` is a constructor argument, but exposing it through a spec would invite two
+    `Instrumentation` capabilities that no longer share an id -- and so no longer resolve to one,
+    which is the whole point of the class declaring a default.
+    """
+    with pytest.raises(TypeError, match='id'):
+        Instrumentation.from_spec(id='monitoring')  # pyright: ignore[reportCallIssue]
+
+    assert Instrumentation.from_spec().id == 'instrumentation'
+
+
 def test_agent_from_spec_basic():
     """Test Agent.from_spec with basic capabilities."""
     agent = Agent.from_spec(
@@ -484,7 +527,9 @@ def test_model_json_schema_with_capabilities():
                             'anyOf': [
                                 {
                                     'enum': [
+                                        'claude-fable-5-1',
                                         'claude-fable-5',
+                                        'claude-mythos-5-1',
                                         'claude-mythos-5',
                                         'claude-opus-5',
                                         'claude-opus-4-8',
@@ -650,9 +695,11 @@ def test_model_json_schema_with_capabilities():
                 'KnownModelName': {
                     'enum': [
                         'anthropic:claude-fable-5',
+                        'anthropic:claude-fable-5-1',
                         'anthropic:claude-haiku-4-5',
                         'anthropic:claude-haiku-4-5-20251001',
                         'anthropic:claude-mythos-5',
+                        'anthropic:claude-mythos-5-1',
                         'anthropic:claude-mythos-preview',
                         'anthropic:claude-opus-4-5',
                         'anthropic:claude-opus-4-5-20251101',
@@ -705,6 +752,7 @@ def test_model_json_schema_with_capabilities():
                         'bedrock:eu.anthropic.claude-sonnet-4-6',
                         'bedrock:global.amazon.nova-2-lite-v1:0',
                         'bedrock:global.anthropic.claude-fable-5',
+                        'bedrock:global.anthropic.claude-fable-5-1',
                         'bedrock:global.anthropic.claude-opus-4-5-20251101-v1:0',
                         'bedrock:global.anthropic.claude-opus-4-6-v1',
                         'bedrock:global.anthropic.claude-opus-4-7',
@@ -758,6 +806,7 @@ def test_model_json_schema_with_capabilities():
                         'bedrock:us.anthropic.claude-3-opus-20240229-v1:0',
                         'bedrock:us.anthropic.claude-3-sonnet-20240229-v1:0',
                         'bedrock:us.anthropic.claude-fable-5',
+                        'bedrock:us.anthropic.claude-fable-5-1',
                         'bedrock:us.anthropic.claude-haiku-4-5-20251001-v1:0',
                         'bedrock:us.anthropic.claude-opus-4-1-20250805-v1:0',
                         'bedrock:us.anthropic.claude-opus-4-20250514-v1:0',
@@ -814,6 +863,7 @@ def test_model_json_schema_with_capabilities():
                         'deepseek:deepseek-v4-flash',
                         'deepseek:deepseek-v4-pro',
                         'gateway/anthropic:claude-fable-5',
+                        'gateway/anthropic:claude-fable-5-1',
                         'gateway/anthropic:claude-haiku-4-5',
                         'gateway/anthropic:claude-haiku-4-5-20251001',
                         'gateway/anthropic:claude-opus-4-5',
@@ -835,6 +885,7 @@ def test_model_json_schema_with_capabilities():
                         'gateway/bedrock:eu.anthropic.claude-sonnet-4-6',
                         'gateway/bedrock:global.amazon.nova-2-lite-v1:0',
                         'gateway/bedrock:global.anthropic.claude-fable-5',
+                        'gateway/bedrock:global.anthropic.claude-fable-5-1',
                         'gateway/bedrock:global.anthropic.claude-opus-4-5-20251101-v1:0',
                         'gateway/bedrock:global.anthropic.claude-opus-4-6-v1',
                         'gateway/bedrock:global.anthropic.claude-opus-4-7',
@@ -868,6 +919,7 @@ def test_model_json_schema_with_capabilities():
                         'gateway/bedrock:qwen.qwen3-vl-235b-a22b',
                         'gateway/bedrock:us.amazon.nova-premier-v1:0',
                         'gateway/bedrock:us.anthropic.claude-fable-5',
+                        'gateway/bedrock:us.anthropic.claude-fable-5-1',
                         'gateway/bedrock:us.anthropic.claude-opus-4-1-20250805-v1:0',
                         'gateway/bedrock:us.anthropic.claude-opus-4-5-20251101-v1:0',
                         'gateway/bedrock:us.anthropic.claude-opus-4-6-v1',
@@ -896,6 +948,7 @@ def test_model_json_schema_with_capabilities():
                         'gateway/google-cloud:gemini-3.5-flash-lite',
                         'gateway/google-cloud:gemini-3.6-flash',
                         'gateway/google-cloud:gemini-3.7-flash',
+                        'gateway/google-cloud:gemini-3.8-flash',
                         'gateway/google:gemini-2.5-flash',
                         'gateway/google:gemini-2.5-flash-image',
                         'gateway/google:gemini-2.5-flash-lite',
@@ -909,6 +962,7 @@ def test_model_json_schema_with_capabilities():
                         'gateway/google:gemini-3.5-flash-lite',
                         'gateway/google:gemini-3.6-flash',
                         'gateway/google:gemini-3.7-flash',
+                        'gateway/google:gemini-3.8-flash',
                         'gateway/groq:llama-3.1-8b-instant',
                         'gateway/groq:llama-3.3-70b-versatile',
                         'gateway/groq:openai/gpt-oss-120b',
@@ -962,6 +1016,7 @@ def test_model_json_schema_with_capabilities():
                         'gateway/openai:gpt-5.6-luna',
                         'gateway/openai:gpt-5.6-sol',
                         'gateway/openai:gpt-5.6-terra',
+                        'gateway/openai:gpt-6-astra',
                         'gateway/openai:gpt-daybreak-blue-latest',
                         'gateway/openai:gpt-daybreak-red-latest',
                         'gateway/openai:o1',
@@ -995,6 +1050,7 @@ def test_model_json_schema_with_capabilities():
                         'google-cloud:gemini-3.5-flash-lite',
                         'google-cloud:gemini-3.6-flash',
                         'google-cloud:gemini-3.7-flash',
+                        'google-cloud:gemini-3.8-flash',
                         'google-cloud:gemini-flash-latest',
                         'google-cloud:gemini-flash-lite-latest',
                         'google:gemini-2.0-flash',
@@ -1016,6 +1072,7 @@ def test_model_json_schema_with_capabilities():
                         'google:gemini-3.5-flash-lite',
                         'google:gemini-3.6-flash',
                         'google:gemini-3.7-flash',
+                        'google:gemini-3.8-flash',
                         'google:gemini-flash-latest',
                         'google:gemini-flash-lite-latest',
                         'groq:llama-3.1-8b-instant',
@@ -1148,6 +1205,7 @@ def test_model_json_schema_with_capabilities():
                         'openai-chat:gpt-5.6-luna',
                         'openai-chat:gpt-5.6-sol',
                         'openai-chat:gpt-5.6-terra',
+                        'openai-chat:gpt-6-astra',
                         'openai-chat:gpt-daybreak-blue-latest',
                         'openai-chat:gpt-daybreak-red-latest',
                         'openai-chat:o1',
@@ -1228,6 +1286,7 @@ def test_model_json_schema_with_capabilities():
                         'openai:gpt-5.6-luna',
                         'openai:gpt-5.6-sol',
                         'openai:gpt-5.6-terra',
+                        'openai:gpt-6-astra',
                         'openai:gpt-daybreak-blue-latest',
                         'openai:gpt-daybreak-red-latest',
                         'openai:o1',
@@ -1336,6 +1395,7 @@ def test_model_json_schema_with_capabilities():
                         'zai:glm-5.1',
                         'zai:glm-5.2',
                         'zai:glm-5.3',
+                        'zai:glm-5.3-flash',
                         'zai:glm-5v-turbo',
                     ],
                     'type': 'string',
@@ -1677,6 +1737,13 @@ def test_model_json_schema_with_capabilities():
                     'title': 'spec_ReinjectSystemPrompt',
                     'type': 'object',
                 },
+                'spec_Instrumentation': {
+                    'additionalProperties': False,
+                    'properties': {'Instrumentation': {'$ref': '#/$defs/spec_params_Instrumentation'}},
+                    'required': ['Instrumentation'],
+                    'title': 'spec_Instrumentation',
+                    'type': 'object',
+                },
                 'spec_Thinking': {
                     'additionalProperties': False,
                     'properties': {'Thinking': {'$ref': '#/$defs/spec_params_Thinking'}},
@@ -1767,6 +1834,24 @@ def test_model_json_schema_with_capabilities():
                         'replace_existing': {'title': 'Replace Existing', 'type': 'boolean'},
                     },
                     'title': 'spec_params_ReinjectSystemPrompt',
+                    'type': 'object',
+                },
+                'spec_params_Instrumentation': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'include_binary_content': {'title': 'Include Binary Content', 'type': 'boolean'},
+                        'include_model_request_parameters': {
+                            'title': 'Include Model Request Parameters',
+                            'type': 'boolean',
+                        },
+                        'include_content': {'title': 'Include Content', 'type': 'boolean'},
+                        'version': {'enum': [2, 3, 4, 5, 6], 'title': 'Version', 'type': 'integer'},
+                        'use_aggregated_usage_attribute_names': {
+                            'title': 'Use Aggregated Usage Attribute Names',
+                            'type': 'boolean',
+                        },
+                    },
+                    'title': 'spec_params_Instrumentation',
                     'type': 'object',
                 },
                 'spec_params_Thinking': {
@@ -1921,6 +2006,7 @@ def test_model_json_schema_with_capabilities():
                                 {'const': 'IncludeToolReturnSchemas', 'type': 'string'},
                                 {'$ref': '#/$defs/spec_IncludeToolReturnSchemas'},
                                 {'const': 'Instrumentation', 'type': 'string'},
+                                {'$ref': '#/$defs/spec_Instrumentation'},
                                 {'$ref': '#/$defs/short_spec_MCP'},
                                 {'$ref': '#/$defs/spec_MCP'},
                                 {'$ref': '#/$defs/spec_PrefixTools'},
@@ -2141,6 +2227,7 @@ def test_model_json_schema_with_capabilities():
                             {'const': 'IncludeToolReturnSchemas', 'type': 'string'},
                             {'$ref': '#/$defs/spec_IncludeToolReturnSchemas'},
                             {'const': 'Instrumentation', 'type': 'string'},
+                            {'$ref': '#/$defs/spec_Instrumentation'},
                             {'$ref': '#/$defs/short_spec_MCP'},
                             {'$ref': '#/$defs/spec_MCP'},
                             {'$ref': '#/$defs/spec_PrefixTools'},
@@ -3223,7 +3310,11 @@ async def test_custom_init_capability_can_initialize_metadata_without_post_init(
 
 
 async def test_duplicate_explicit_capability_ids_set_after_construction_raise_at_run() -> None:
-    """Ids that only collide after construction escape the eager check, so run registration still rejects them."""
+    """Ids that only collide after construction escape the eager check, so run registration still rejects them.
+
+    Two *different* classes under one id can never be combined: no one class can say how they
+    compose, so this is rejected outright rather than offered to `combine`.
+    """
 
     @dataclass
     class FirstCap(AbstractCapability):
@@ -3238,7 +3329,7 @@ async def test_duplicate_explicit_capability_ids_set_after_construction_raise_at
     agent = Agent(TestModel(), capabilities=[first, second])
     second.id = 'same'  # collision introduced after construction
 
-    with pytest.raises(UserError, match="Capability id 'same' is used by multiple capabilities"):
+    with pytest.raises(UserError, match="Capability id 'same' is used by capabilities of different types"):
         await agent.run('hi')
 
 
@@ -3257,3 +3348,94 @@ async def test_anonymous_non_deferred_capabilities_get_run_local_ids() -> None:
     assert first.id is None
     assert second.id is None
     assert {'plain_cap', 'plain_cap_2'} <= available_ids
+
+
+def _bare_local(query: str) -> str:
+    """Local search fallback."""
+    return 'result'  # pragma: no cover
+
+
+async def test_one_off_capabilities_carry_a_stable_default_id() -> None:
+    """Capabilities covering a single fixed concern name themselves, so durable execution can key on
+    them without the user naming something they never constructed."""
+    assert WebSearch(local=_bare_local).id == 'web_search'
+    assert WebFetch(local=_bare_local).id == 'web_fetch'
+    assert ImageGeneration(fallback_model='openai-responses:gpt-5.4').id == 'image_generation'
+    assert XSearch(fallback_model='xai:grok-4.3').id == 'x_search'
+    assert Thinking().id == 'thinking'
+    assert Instrumentation().id == 'instrumentation'
+    assert ReinjectSystemPrompt().id == 'reinject_system_prompt'
+    assert RaiseContentFilterError().id == 'raise_content_filter_error'
+    # The user's own id always wins, and `id=None` opts back into the derived, disambiguated ids.
+    assert Thinking(id='mine').id == 'mine'
+    assert Thinking(id=None).id is None
+
+
+async def test_two_one_off_capabilities_in_one_layer_combine() -> None:
+    """A fixed id means two of them are one configuration stated twice, so `combine` keeps the last."""
+    capability_map, _ = await _registered_capability_context(Thinking(effort='low'), Thinking(effort='high'))
+    thinking = capability_map['thinking']
+    assert isinstance(thinking, Thinking)
+    assert thinking.effort == 'high'
+
+
+async def test_one_off_capability_with_id_none_is_still_disambiguated() -> None:
+    """`id=None` is the documented escape hatch back to per-occurrence ids."""
+    first = Thinking(effort='low', id=None)
+    second = Thinking(effort='high', id=None)
+    capability_map, _ = await _registered_capability_context(first, second)
+    assert list(capability_map) == ['thinking', 'thinking_2']
+
+
+async def test_run_level_one_off_capability_supersedes_the_agent_level_one() -> None:
+    """A shared id across layers is `combine` choosing the last, not a separate override mechanism:
+    the registry and the composed tree agree on a single owner."""
+    offered: list[list[str]] = []
+
+    def capture(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        offered.append(sorted(tool.name for tool in (info.function_tools or [])))
+        return make_text_response('done')
+
+    def agent_level(query: str) -> str:
+        """Agent-level search."""
+        return 'agent'  # pragma: no cover
+
+    def run_level(topic: str) -> str:
+        """Run-level search."""
+        return 'run'  # pragma: no cover
+
+    agent = Agent(FunctionModel(capture), capabilities=[WebSearch(native=False, local=agent_level)])
+    await agent.run('hi', capabilities=[WebSearch(native=False, local=run_level)])
+
+    assert offered == [['run_level']]
+
+
+async def test_capability_reused_across_layers_keeps_one_occurrence() -> None:
+    """The same instance may appear on the agent and be passed again for the run. Combining leaves
+    exactly one occurrence rather than dropping every one of them."""
+    shared = Thinking(effort='low')
+    agent = Agent(FunctionModel(lambda _messages, _info: make_text_response('done')), capabilities=[shared])
+    result = await agent.run('hi', capabilities=[shared])
+    assert result.output == 'done'
+
+
+async def test_distinct_ids_keep_both_one_off_capabilities() -> None:
+    """Naming them apart is the documented way to run two, and `combine` is never consulted."""
+    offered: list[list[str]] = []
+
+    def capture(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        offered.append(sorted(tool.name for tool in (info.function_tools or [])))
+        return make_text_response('done')
+
+    def agent_level(query: str) -> str:
+        """Agent-level search."""
+        return 'agent'  # pragma: no cover
+
+    def run_level(topic: str) -> str:
+        """Run-level search."""
+        return 'run'  # pragma: no cover
+
+    agent = Agent(FunctionModel(capture), capabilities=[WebSearch(native=False, local=agent_level, id='agent')])
+    await agent.run('hi', capabilities=[WebSearch(native=False, local=run_level, id='run')])
+
+    assert offered == [['agent_level', 'run_level']]
