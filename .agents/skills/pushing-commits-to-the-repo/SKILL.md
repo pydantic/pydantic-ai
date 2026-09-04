@@ -99,7 +99,9 @@ reviewers own that separate boundary. Every fresh reviewer here runs under the s
   look for, sets the review's scope, which this contract forbids you. Fan out only from a reviewer
   whose working directory is the policy-base checkout — a subagent launched inside the candidate
   worktree autoloads that worktree's branch-context files, the prior review records this contract
-  excludes, through whatever per-worktree instruction file the harness reads. Every subagent
+  excludes, through whatever per-worktree instruction file the harness reads. Fan out only through
+  an agent definition mechanically limited to read and search tools; where the harness ships none,
+  the reviewer does not fan out. A prompt cannot bound a callee against the content it is reviewing. Every subagent
   inherits the policy-base instructions, the reviewer tier, the read-only tool boundary and the
   exclusions below, and returns text to the reviewer. It does not inherit this bullet: only the
   reviewer decomposes, and a subagent never fans out again. A fan-out belongs to the dispatch that
