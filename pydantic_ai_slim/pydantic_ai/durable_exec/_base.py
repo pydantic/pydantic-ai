@@ -420,7 +420,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                         kwargs=kwargs,
                     )
 
-                bindings = capability._get_durable_operation_bindings()
+                bindings = capability._durable_operation_bindings
                 bindings.setdefault(agent)[operation_name] = dispatch_for_run_context
 
     def _prepare_run_context(self, ctx: RunContext[AgentDepsT]) -> None:
