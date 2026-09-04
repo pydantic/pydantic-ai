@@ -136,6 +136,21 @@ To run code formatting, linting, static type checks, and tests with coverage rep
 make
 ```
 
+### Type checking
+
+`make typecheck` runs Pyright over every file in the project, and is what CI runs.
+
+The pre-commit hook runs `make typecheck-changed` instead, which checks only the files whose content
+changed since Pyright last passed plus everything that transitively imports them. It records what
+passed under your git directory, so the record is per-worktree and never committed.
+
+It falls back to the full run whenever the narrower one is not provably the same answer: a first run;
+a new Pyright or Python version, including one asked for through `PYRIGHT_PYTHON`; a change to
+`pyproject.toml`, `uv.lock` or the `Makefile`; an import that would now resolve to a different file
+or a new top-level module that could shadow an installed one; or a change reaching more than half the
+project. Untracked files are not checked at all, so run `make typecheck` yourself before relying on a
+green hook for a file you have not added.
+
 ## Documentation Changes
 
 [`docs/navigation.yml`](https://github.com/pydantic/pydantic-ai/blob/main/docs/navigation.yml)

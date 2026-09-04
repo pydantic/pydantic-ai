@@ -245,6 +245,10 @@ lint = [
     "mypy>=1.11.2",
     "pyright>=1.1.408",
     "ruff>=0.14.14",
+    # `scripts/typecheck_changed.py` reads this file to learn which files Pyright checks.
+    # `tomllib` only exists from 3.11, and Pyright analyses the repository as 3.10, so the
+    # 3.10 fallback has to be installed on every interpreter for that import to resolve.
+    "tomli>=2",
 ]
 [tool.hatch.build.targets.wheel]
 bypass-selection = true
@@ -267,6 +271,8 @@ include = [
     "clai/**/*.py",
     "tests/**/*.py",
     "docs/**/*.py",
+    "scripts/typecheck_changed.py",
+    "scripts/test_typecheck_changed.py",
     ".github/scripts/ci_duration.py",
     ".github/scripts/check_api_compatibility.py",
     ".github/scripts/test_ci_duration.py",
@@ -353,6 +359,7 @@ quote-style = "single"
 ".github/scripts/test_agent_spend_report.py" = ["D"]
 ".github/scripts/test_docs_navigation_workflow.py" = ["D"]
 ".github/scripts/test_protect_github_dir.py" = ["D"]
+"scripts/test_typecheck_changed.py" = ["D"]
 
 [tool.pyright]
 pythonVersion = "3.10"
@@ -368,6 +375,8 @@ include = [
     "tests",
     "examples",
     "clai",
+    "scripts/typecheck_changed.py",
+    "scripts/test_typecheck_changed.py",
     ".github/scripts/ci_duration.py",
     ".github/scripts/check_api_compatibility.py",
     ".github/scripts/test_ci_duration.py",
@@ -395,6 +404,7 @@ executionEnvironments = [
     { root = ".github/scripts/test_ci_duration.py", extraPaths = [".github/scripts"], reportUnusedFunction = false, reportPrivateImportUsage = false },
     { root = ".github/scripts/test_check_api_compatibility.py", extraPaths = [".github/scripts"], reportUnusedFunction = false, reportPrivateImportUsage = false },
     { root = ".github/scripts/test_pydantic_ai_runner.py", extraPaths = [".github/scripts"], reportUnusedFunction = false, reportPrivateImportUsage = false },
+    { root = "scripts/test_typecheck_changed.py", extraPaths = ["scripts"], reportUnusedFunction = false, reportPrivateImportUsage = false },
 ]
 exclude = [
     "examples/pydantic_ai_examples/weather_agent_gradio.py",
