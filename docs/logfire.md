@@ -354,10 +354,10 @@ This applies to tool returns and to retries that answer a tool call. A request w
 
 Pydantic AI's own [retry feedback](retries.md#feedback-that-belongs-to-no-tool-call) — a [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart], the retry that answers no tool call — moves on the same version, for the same reason:
 
-- Old (v2-5): a text part inside a `{"role": "user"}` message
-- New (v6): it moves to a `{"role": "system"}` message, the voice the part reaches the model in
+- Old (v2-5): a text part inside a `{"role": "user"}` message, whatever its `cause`
+- New (v6): it takes the voice the part reaches the model in — a `{"role": "system"}` message for a `'no_output'` or `'model_retry'` cause, and the `{"role": "user"}` message it was already on for a `'validation_error'`
 
-That move shows up on `pydantic_ai.all_messages`, which records the stored message history. A model request span's `gen_ai.input.messages` records the history as sent, and by then the part has been rendered into a mid-conversation system prompt — or into `<system>`-tagged user text on a provider that takes no mid-conversation system message — so that attribute reads the same at every version. A tool-less [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] loaded from a history recorded before this part existed stays on `user`.
+That move shows up on `pydantic_ai.all_messages`, which records the stored message history. A model request span's `gen_ai.input.messages` records the history as sent, and by then the part has been translated into the prompt part its `cause` calls for, so that attribute reads the same at every version. A tool-less [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] loaded from a history recorded before this part existed stays on `user`.
 
 ---
 
