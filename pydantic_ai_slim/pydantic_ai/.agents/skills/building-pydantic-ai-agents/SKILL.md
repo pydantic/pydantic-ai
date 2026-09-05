@@ -277,6 +277,9 @@ async def main(microphone_chunk: bytes):
 
 Key facts for building realtime agents:
 
+- **A string sent with `session.send()` solicits a response**: use `respond=False` to add passive
+  text context. Images are context-only by default; use `respond=True` to ask for a response to an
+  image. Never pair `session.send('...')` with `session.create_response()`, because that asks twice.
 - **History handoff is the marquee integration**: `session.all_messages()` / `session.new_messages()`
   return real `ModelMessage`s; seed with `realtime(model, message_history=...).session()`. Transcripts
   are what carry over; OpenAI and Azure can also replay retained transcript-less *user* audio, Gemini
@@ -296,9 +299,23 @@ Key facts for building realtime agents:
   `google_vad` only for finer provider-specific control; when present, they fully override the shared
   setting. Automatic detection is on by default (`True`); set `turn_detection=False` for push-to-talk
   (OpenAI/Azure/xAI only — Gemini has no manual turn controls and raises).
+- **Barge-in** (the user speaking over the model): pass `handle_barge_in=True` to `.session()` and
+  the session owns the local half — flushing the audio the user will never hear, truncating the
+  provider's transcript to what was played, and adding a client cancel only on providers whose own
+  turn detection isn't already cancelling. Off by default, and it needs playback to drain a single
+  device-paced `stream_audio()` iterator (the position it tracks); with none or several it stands
+  down. To keep the trigger yourself, `session.interrupt(played_bytes=session.played_audio_bytes)`
+  gets the same treatment on your own signal. A playback layer that buffers ahead of the device
+  makes `played_audio_bytes` read too far: count real device consumption and pass `played_ms`.
 - **Tools**: every tool runs in the background, so a slow tool never blocks the session. Whether
   the model keeps speaking meanwhile is provider-specific (OpenAI/Azure do; Gemini needs
-  `google_async_tool_calls=True` on a native-audio model).
+  `google_async_tool_calls=True` on a native-audio model). An unhandled tool exception is raised
+  from session iteration; when only `stream_audio()` or `stream_transcripts()` is consumed, it ends
+  those views and is raised when the session context closes. An `on_tool_execute_error` capability
+  can return a replacement result or raise `ModelRetry` to keep the session running. To end the call
+  from a tool, await `ctx.realtime_session.close()` for a clean hang-up (the tool does not resume and
+  its call is recorded as interrupted), or call `ctx.cancel()` to make the session context raise
+  `RunCancelled`.
 - **Browser WebRTC (OpenAI and Azure OpenAI)**: for browser voice agents, relay the browser's SDP
   offer server-side with `agent.realtime(model).answer_webrtc_offer(sdp_offer)` — the agent's
   resolved instructions and tools are baked in and the API key stays on the server — then attach a

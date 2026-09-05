@@ -169,6 +169,15 @@ jobs:
           .github/scripts/test_docs_navigation_workflow.py
           .github/scripts/test_protect_github_dir.py
 
+      # The pre-commit `typecheck` hook narrows Pyright to the files a change reaches, so
+      # a wrong answer here silently stops type errors reaching a developer's terminal.
+      # It lives outside `testpaths`, in the job that installs Pyright, because one of its
+      # tests runs Pyright for real.
+      - name: Test the incremental typecheck script
+        env:
+          UV_NO_SYNC: "1"
+        run: uv run pytest scripts/test_typecheck_changed.py
+
       # The tests above import the shim inside this job's workspace venv, which is not
       # the environment it runs in: gh-aw executes it via `uv run --script` against the
       # runner's own locked dependency set. Run it there, with no argv, so it reaches
@@ -190,10 +199,18 @@ jobs:
       # classic case being one that bumps the gh-aw compiler while another adds a lock
       # at the old version — and without this the drift first surfaces as a red `quality checks`
       # on whichever contributor next opens a PR, about workflows they never touched.
+      - name: Fetch gh-aw compatibility policy
+        run: >-
+          curl --fail --silent --show-error --location --retry 3 --retry-all-errors
+          https://raw.githubusercontent.com/github/gh-aw/main/.github/aw/compat.json
+          --output /tmp/gh-aw-compat.json
+
       - name: Check agentic workflow policy
         env:
           UV_NO_SYNC: "1"
-        run: uv run python .github/scripts/agentic_workflow_guard.py check
+        run: >-
+          uv run python .github/scripts/agentic_workflow_guard.py check
+          --compatibility-file /tmp/gh-aw-compat.json
 
       # Actions runs the `*.lock.yml`, never the `*.md`, so a source edited without
       # its recompiled lock is a silent no-op. The checkout is shallow, so feed the

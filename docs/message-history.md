@@ -430,6 +430,7 @@ Possession of the endpoint is therefore the authorization boundary, so design ar
 - **Authenticate and authorize at the transport layer.** Run the agent inside your own authenticated route handler, and treat every caller that gets through as able to submit any history it likes.
 - **Scope the toolset to the caller.** Expose only the tools the authenticated caller is entitled to use, by [building the toolset per run](toolsets.md#dynamically-building-a-toolset) or [filtering](toolsets.md#filtering-tools) it against the user carried in your [dependencies](dependencies.md).
 - **Re-validate high-stakes effects server-side.** [Approval](deferred-tools.md#human-in-the-loop-tool-approval) guards against the *model* acting without human sign-off, not against the client. Where the stakes demand it, check the caller's authority against server-side state inside the tool function itself, or persist paused runs server-side and resume them with your own `deferred_tool_results` instead of the client's.
+- **Don't read prompt-level framing as proof.** Where a model API can't carry a tool's file in its tool result, Pydantic AI frames it as coming from that call ([Where a returned file is sent](tools-advanced.md#tool-return-file-provenance)), and a mid-conversation system prompt a provider can't send natively is framed as `<system>...</system>`. Both are ordinary prompt text: a tool can emit a closing tag and a client can type an opening one. They tell the model where content came from; they don't attest it.
 
 !!! note "This is a documented design boundary, not a vulnerability"
     A report that a client can forge an approval, submit a tool call the model never made, or otherwise rewrite the conversation describes this boundary behaving as designed, and is not a vulnerability in Pydantic AI. What *would* be one is a bypass of a check Pydantic AI actually performs — for instance a sanitization default that fails to strip what it documents as stripped.
@@ -590,11 +591,13 @@ To change the conversation mid-run, build *new* message objects rather than modi
 
 ## Injecting messages mid-run
 
-Tools, capability hooks, and external code driving an agent run can inject extra content
+Tools, capability hooks, external code driving an agent run, and code driving a realtime session can inject extra content
 into the conversation mid-run with [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue]
 (when a `RunContext` is in scope, e.g. inside a tool or capability hook) or
 [`AgentRun.enqueue`][pydantic_ai.run.AgentRun.enqueue] (from external code driving
-[`agent.iter()`][pydantic_ai.agent.AbstractAgent.iter]). Use this when something happens during a
+[`agent.iter()`][pydantic_ai.agent.AbstractAgent.iter]), or
+[`RealtimeSession.enqueue`][pydantic_ai.realtime.RealtimeSession.enqueue] (from external code driving
+a realtime session). Use this when something happens during a
 run that the agent should know about — a tool wants to add follow-up context, an external event
 needs to *steer* the agent's plan, or background work needs to reach the agent when it completes.
 
@@ -611,7 +614,7 @@ A `priority` controls when the enqueued content is delivered:
 
 Adjacent part-style items (user content and [`ModelRequestPart`][pydantic_ai.messages.ModelRequestPart]s) are coalesced into one [`ModelRequest`][pydantic_ai.messages.ModelRequest]; complete messages stay separate. This lets a single call inject an interleaved exchange — for example a synthetic tool call (a [`ModelResponse`][pydantic_ai.messages.ModelResponse]) followed by its result (a [`ModelRequest`][pydantic_ai.messages.ModelRequest]). The content must end in a request, so the agent has something to respond to.
 
-Both `enqueue` methods return an `enqueue_id` (`str`) for a non-empty call, or `None` when called with no content. When the queued content is actually delivered into run history, the [event stream](agent.md#streaming-all-events) yields an [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] carrying that `enqueue_id` and the delivered messages (exactly as they landed in history), so a client can observe when its steering message took effect. The event carries the delivered message objects themselves — the same objects held in the run's message history. A history processor that replaces history with new message objects does not affect the event, but [in-place mutation](#editing-existing-messages) of a delivered message will be visible through it.
+The standard-run `enqueue` methods return an `enqueue_id` (`str`) for a non-empty call, or `None` when called with no content. When the queued content is actually delivered into run history, the [event stream](agent.md#streaming-all-events) yields an [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] carrying that `enqueue_id` and the delivered messages (exactly as they landed in history), so a client can observe when its steering message took effect. The event carries the delivered message objects themselves — the same objects held in the run's message history. A history processor that replaces history with new message objects does not affect the event, but [in-place mutation](#editing-existing-messages) of a delivered message will be visible through it. `RealtimeSession.enqueue` also returns an `enqueue_id` or `None`; realtime delivery is documented under [enqueuing prompts](realtime/tools.md#enqueuing-prompts).
 
 ### From inside a tool or hook
 

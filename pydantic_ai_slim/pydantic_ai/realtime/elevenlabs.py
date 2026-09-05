@@ -72,7 +72,7 @@ from ..messages import (
     VideoUrl,
 )
 from ..models import ModelRequestParameters
-from ..providers import infer_provider
+from ..providers import Provider, infer_provider
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
 from ._utils import inject_trace_context, require_pcm_audio, resolve_advertised_tools
@@ -796,15 +796,19 @@ class ElevenLabsRealtimeModel(RealtimeModel):
         self,
         agent_id: str,
         *,
-        provider: ElevenLabsProvider | Literal['elevenlabs'] = 'elevenlabs',
+        provider: Provider[AsyncHTTPClient] | str = 'elevenlabs',
         settings: RealtimeModelSettings | None = None,
         profile: RealtimeModelProfileSpec | None = None,
     ) -> None:
         super().__init__(settings=settings, profile=profile)
         self.agent_id = agent_id
+        from ..providers.elevenlabs import ElevenLabsProvider
+
         if isinstance(provider, str):
-            provider = cast('ElevenLabsProvider', infer_provider(provider))
-        if provider.name != 'elevenlabs':
+            provider = infer_provider(provider)
+        if not isinstance(provider, ElevenLabsProvider):
+            # The REST preflight and signed-URL auth below read the ElevenLabs-specific `api_key` off
+            # the provider; a foreign one would fail with an `AttributeError` instead of the real mistake.
             raise UserError(
                 f"`ElevenLabsRealtimeModel` requires an `ElevenLabsProvider` or `provider='elevenlabs'`; "
                 f'got {provider.name!r}.'

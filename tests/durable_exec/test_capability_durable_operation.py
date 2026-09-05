@@ -992,7 +992,7 @@ def test_durable_operation_bindings_do_not_retain_agents() -> None:
         Agent(TestModel(), name=f'weak_binding_{index}', capabilities=[capability, RecordingDurability()])
         for index in range(3)
     ]
-    bindings = capability._get_durable_operation_bindings()  # pyright: ignore[reportPrivateUsage]
+    bindings = capability._durable_operation_bindings  # pyright: ignore[reportPrivateUsage]
     references = [weakref.ref(agent) for agent in agents]
     assert len(bindings) == 3
 

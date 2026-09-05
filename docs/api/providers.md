@@ -2,6 +2,10 @@
 
 ::: pydantic_ai.providers.Provider
 
+::: pydantic_ai.providers.infer_provider
+
+::: pydantic_ai.providers.infer_provider_class
+
 ::: pydantic_ai.providers.gateway.gateway_provider
 
 ::: pydantic_ai.providers.anthropic.AnthropicProvider
