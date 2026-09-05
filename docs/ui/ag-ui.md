@@ -326,11 +326,18 @@ The mapping the adapter applies (matching the AG-UI Python SDK field names):
 | `Interrupt.tool_call_id`| The `ToolCallPart.tool_call_id` of the proposed call                                                            |
 | `Interrupt.id`          | `f"int-{tool_call_id}"` (round-trips back to `tool_call_id` on resume)                                          |
 | `Interrupt.metadata`    | `DeferredToolRequests.metadata.get(tool_call_id)`                                                               |
-| `ResumeEntry.payload`   | `{ "approved": bool, "editedArgs"?: object, "reason"?: string }`, validated against `Interrupt.response_schema`; a payload that fails validation denies, including when the offending field is not `approved` itself — a wrongly-typed `editedArgs` or `reason` denies even alongside `approved=True`, while omitting either optional field or sending it as `null` is accepted |
+| `ResumeEntry.payload`   | `{ "approved": bool, "editedArgs"?: object, "reason"?: string }`, validated against `Interrupt.response_schema`; omitting either optional field or sending it as `null` is accepted |
 | `payload.approved=True` | [`ToolApproved`][pydantic_ai.tools.ToolApproved]                                                                |
 | `payload.editedArgs`    | [`ToolApproved.override_args`][pydantic_ai.tools.ToolApproved.override_args] (fully replaces the proposed args) |
-| `payload.approved=False`| [`ToolDenied`][pydantic_ai.tools.ToolDenied] with `message=payload.reason`. `approved` is required, so a payload that omits it denies on validation and its `reason` is not used — send `approved: false` explicitly to have your `reason` reach the model |
+| `payload.approved=False`| [`ToolDenied`][pydantic_ai.tools.ToolDenied] with `message=payload.reason`                                      |
 | `status="cancelled"`    | [`ToolDenied`][pydantic_ai.tools.ToolDenied] with `message="Cancelled by user."` regardless of payload          |
+| A payload that fails validation, or an unrecognized `interruptId` | A `RUN_ERROR` event that ends the run — see below                                     |
+
+A payload that doesn't validate against the advertised `Interrupt.response_schema` is a protocol error, not an outcome the user chose, so the run ends with a `RUN_ERROR` event naming the offending interrupt. This is the spec's prescribed outcome once an agent validates against `responseSchema` ("Agents should handle missing or invalid resume payloads via `RunError`, not silent failures"), and it means a client-side serialization bug — a double-encoded `editedArgs`, a stringly-typed `approved` — is reported rather than looking to the user like the tool was denied. `approved` is required, so a payload that omits it is invalid too: send `approved: false` explicitly to deny, and to have your `reason` reach the model. One invalid entry fails the whole run, so no sibling approval in the same `resume[]` is applied. The spec lists a `ResumeEntry.interruptId` the agent cannot correlate back to a tool call under the same heading, and it ends the run the same way.
+
+A validation failure stops the run before the agent resumes, so it never results in the tool running. Note that this is a guard against a *malformed* response, not an authorization boundary against the client — see [Trust model for client-submitted messages](overview.md#trust-model-for-client-submitted-messages).
+
+This whole mapping applies to the `resume[]` the client sends. If you follow the trust-model advice and pass your own `deferred_tool_results` to the run method instead, the client's `resume[]` is ignored entirely — including a malformed one, which is then neither validated nor reported.
 
 The agent must include [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] in its `output_type` so the run can pause cleanly instead of erroring on the proposed call:
 
