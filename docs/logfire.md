@@ -438,4 +438,4 @@ See the [usage and metadata example in the agents guide](agent.md#run-metadata) 
 
 ### The first-run banner
 
-Until instrumentation is configured, the first agent run in a process prints a short banner to `stderr` describing the agent and pointing here. It's only shown interactively: never when instrumentation is configured, when `stderr` isn't a terminal, or when `CI` is set. Set `PYDANTIC_AI_NO_BANNER=1` to turn it off entirely.
+Until instrumentation is configured, the first agent run in a process prints a short banner to `stderr` describing the run and pointing here. It's only shown interactively: never when instrumentation is configured, when `stderr` isn't a terminal, or when `CI` is set to any value. Set `PYDANTIC_AI_NO_BANNER` to any value to turn it off entirely.
