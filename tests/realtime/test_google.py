@@ -808,6 +808,12 @@ def test_profile() -> None:
     # and URL context is accepted but never actually grounds, so neither is advertised and a
     # `local=` fallback is used instead.
     assert profile.get('supported_native_tools') == frozenset({WebSearchTool})
+    # The Vertex half-cascade `gemini-live-2.5-flash` closes the session with `1007 thinking_level is
+    # not supported by this model`, so the shared `thinking` setting is skipped there; its native-audio
+    # sibling and the 3.x models take it.
+    assert GoogleRealtimeModel('gemini-live-2.5-flash').profile.get('supports_thinking') is False
+    assert GoogleRealtimeModel('gemini-live-2.5-flash-native-audio').profile.get('supports_thinking') is True
+    assert GoogleRealtimeModel('gemini-3.1-flash-live-preview').profile.get('supports_thinking') is True
     assert GoogleRealtimeModel('gemini-3.1-flash-live-preview').profile.get('supported_native_tools') == frozenset(
         {WebSearchTool}
     )

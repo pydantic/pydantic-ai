@@ -480,7 +480,7 @@ def test_profile_allow_seeding() -> None:
         supports_webrtc=False,
         supports_seeding_images=True,
         supports_seeding_audio=False,
-        supports_thinking=True,  # every current Gemini Live model takes a thinking config
+        supports_thinking=True,  # native-audio and 3.x Live models take a thinking config
         # Supported, not enabled: gates the opt-in `google_async_tool_calls` setting.
         supports_async_tool_calls=True,
         # Gemini Live renders an opted-in return schema natively (the declaration's `response`).
