@@ -1106,12 +1106,10 @@ class RealtimeSession:
         """
         tap = self._single_audio_tap('`wait_for_playback()`', 'wait for playback from')
         while not self._closed and not tap.ended:
-            playhead = tap.subscribed_at_bytes + tap.played_bytes + tap.dropped_bytes
-            buffer_empty = tap.queue.empty() or (self._pump_finished and tap.queue.qsize() == 1)
-            if buffer_empty and playhead >= self._emitted_audio_bytes:
-                return
+            # Clear before checking so that progress made between the check and the wait still wakes us.
             tap.progress.clear()
             playhead = tap.subscribed_at_bytes + tap.played_bytes + tap.dropped_bytes
+            # Once the pump has finished, the only item left in the queue is the completion sentinel.
             buffer_empty = tap.queue.empty() or (self._pump_finished and tap.queue.qsize() == 1)
             if buffer_empty and playhead >= self._emitted_audio_bytes:
                 return

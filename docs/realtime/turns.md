@@ -67,7 +67,6 @@ import asyncio
 from collections.abc import AsyncIterator
 
 from pydantic_ai import Agent
-from pydantic_ai.realtime import RealtimeTurnCompleteEvent
 
 agent = Agent(instructions='You are a helpful voice assistant.')
 
@@ -81,11 +80,7 @@ async def main():
     realtime = agent.realtime('openai:gpt-realtime')
     async with realtime.session(handle_barge_in=True) as session:
         playback = asyncio.create_task(play_audio(session.stream_audio()))
-        await session.send('Say hello.')
-        async for event in session:
-            if isinstance(event, RealtimeTurnCompleteEvent):
-                break  # keep listening in a real call; we stop after one reply
-        await session.wait_for_playback()
+        ...  # stream the microphone and handle events; barge-in is handled for you
     await playback  # the audio view ends once the session has closed
 ```
 

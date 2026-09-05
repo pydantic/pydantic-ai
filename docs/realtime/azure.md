@@ -20,21 +20,19 @@ by your Azure deployment name:
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai.messages import PartEndEvent, SpeechPart
-from pydantic_ai.realtime import RealtimeTurnCompleteEvent
 
 agent = Agent(instructions='You are a helpful voice assistant.')
 
 
 async def main():
     async with agent.realtime('azure:my-realtime-deployment').session() as session:
+        transcripts = session.stream_transcripts()  # subscribe before prompting
         await session.send('Say hello.')
 
-        async for event in session:
-            if isinstance(event, PartEndEvent) and isinstance(event.part, SpeechPart):
-                print(f'{event.part.speaker}: {event.part.transcript}')
-                #> assistant: Hello from the realtime assistant.
-            if isinstance(event, RealtimeTurnCompleteEvent):
+        async for part in transcripts:
+            print(f'{part.speaker}: {part.transcript}')
+            #> assistant: Hello from the realtime assistant.
+            if part.speaker == 'assistant':
                 break  # keep listening in a real call; we stop after one reply
 ```
 
