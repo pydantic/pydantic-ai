@@ -14,6 +14,7 @@ from time import time_ns
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypeVar, cast, overload
 
+import anyio
 from anyio import Lock
 from opentelemetry import context as otel_context
 from opentelemetry.context import Context
@@ -913,7 +914,11 @@ class RealtimeSession:
             # for a teardown that is waiting for it, so there is nothing to wait for from this side.
             return
 
-        await asyncio.shield(self._teardown)
+        # `asyncio.shield` lets a cancelled caller stop waiting while the teardown continues; the
+        # shielded scope makes an outer *anyio* cancellation — level-triggered, re-raised at every
+        # checkpoint — wait for the teardown instead of abandoning it (see `agent_docs/concurrency.md`).
+        with anyio.CancelScope(shield=True):
+            await asyncio.shield(self._teardown)
         if (error := self._close_error) is not None:
             self._close_error = None
             raise error

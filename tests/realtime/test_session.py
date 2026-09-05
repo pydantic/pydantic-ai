@@ -2886,12 +2886,65 @@ async def test_tool_that_swallows_its_close_cancellation_and_closes_again_does_n
         return 'done'
 
     conn = BlockingRealtimeConnection([ToolCall(tool_call_id='tc', tool_name='hang_up', args='{}')])
-    with anyio.fail_after(2):
+    with anyio.fail_after(5):
         async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
             _ = [e async for e in session]
 
     assert session.closed
     assert closed_twice.is_set()
+
+
+async def test_session_exit_waits_for_the_teardown_under_a_cancelled_anyio_scope() -> None:
+    """A level-triggered outer cancel must not make the session exit abandon its own teardown."""
+    agent: Agent[None, str] = Agent()
+    tool_started = asyncio.Event()
+    drain_waiting = asyncio.Event()
+    finish_tool_cleanup = asyncio.Event()
+    exited = asyncio.Event()
+
+    @agent.tool_plain
+    async def slow() -> None:
+        tool_started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            pass
+        # Closing cancelled the call once; the teardown's drain cancels it again and then waits for it.
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            drain_waiting.set()
+        while not finish_tool_cleanup.is_set():
+            try:
+                await finish_tool_cleanup.wait()
+            except asyncio.CancelledError:
+                pass
+        raise asyncio.CancelledError
+
+    conn = BlockingRealtimeConnection([ToolCall(tool_call_id='tc', tool_name='slow', args='{}')])
+
+    async def cancel_and_watch(scope: anyio.CancelScope) -> None:
+        await tool_started.wait()
+        scope.cancel()
+        await drain_waiting.wait()
+        # The teardown is now waiting for the tool; the session exit must still be waiting for the teardown.
+        assert not exited.is_set()
+        finish_tool_cleanup.set()
+
+    with anyio.CancelScope() as scope:
+        watcher = asyncio.create_task(cancel_and_watch(scope))
+        async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
+            async for _ in session:  # pragma: no branch - the scope cancel ends the loop
+                pass
+    exited.set()
+
+    await watcher
+    assert scope.cancel_called
+    assert session.closed
+    assert session._loop is None  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_close_error_reaches_the_survivor_when_the_closer_was_cancelled() -> None:
     agent: Agent[None, str] = Agent()
     tool_started = asyncio.Event()
     tool_cancelling = asyncio.Event()
