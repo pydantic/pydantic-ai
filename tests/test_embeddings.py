@@ -2314,3 +2314,12 @@ async def test_limited_instrumentation(capfire: CaptureLogfire):
             }
         ]
     )
+
+
+def test_embedder_identity_equality():
+    embedder1 = Embedder('openai:text-embedding-3-small')
+    embedder2 = Embedder('openai:text-embedding-3-small')
+
+    assert embedder1 != embedder2
+    assert embedder1 == embedder1
+    assert hash(embedder1) != hash(embedder2)

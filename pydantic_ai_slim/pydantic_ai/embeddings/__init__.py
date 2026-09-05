@@ -139,7 +139,7 @@ def infer_embedding_model(
         raise UserError(f'Unknown embeddings model: {model}')  # pragma: no cover
 
 
-@dataclass(init=False)
+@dataclass(init=False, eq=False)
 class Embedder:
     """High-level interface for generating text embeddings.
 
