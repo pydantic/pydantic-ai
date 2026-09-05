@@ -2244,55 +2244,20 @@ class RealtimeSession:
 
     def _finalize_failed_user_item(self, item_id: str | None) -> list[RealtimeEvent]:
         """Finalize a user item whose transcription failed without retaining unreliable partial text."""
-        start_emitted = False
         if item_id is not None:
             # Same guard as `_handle_input_transcript`: once an item is closed, a stray duplicate or
             # late error event must not re-open it and record a second (blank) user turn.
             if item_id in self._finalized_user_item_ids:
                 return []
-            turn = self._user_turns.get(item_id)
-            start_emitted = turn is not None
-            part = replace(turn.part, transcript=None) if turn is not None else SpeechPart(speaker='user')
-            index = turn.index if turn is not None else self._take_part_index()
-            if turn is None:
-                turn = self._user_turns[item_id] = _UserTurn(part, '', index)
-            if item_id not in self._user_turn_anchors:
-                # The failure is the first we hear of this item, so its turn is only placed now.
-                self._claim_user_turn_anchor(item_id)
-            self._finalized_user_item_ids.add(item_id)
+        turn = self._user_turns.get(item_id)
+        if turn is None:
+            part = SpeechPart(speaker='user')
+            turn = self._user_turns[item_id] = _UserTurn(part, '', self._take_part_index(), start_emitted=False)
+            self._claim_user_turn_anchor(item_id)
         else:
-            turn = self._user_turns.get(None)
-            start_emitted = turn is not None
-            part = replace(turn.part, transcript=None) if turn is not None else SpeechPart(speaker='user')
-            index = turn.index if turn is not None else self._take_part_index()
-
-        if self._retain_input:
-            segment = self._input_audio_by_id.pop(item_id, None) if item_id is not None else None
-            if segment is None:
-                segment = bytes(self._input_audio) if self._input_audio else None
-                self._input_audio.clear()
-            if segment:
-                part = replace(
-                    part,
-                    audio=BinaryContent(
-                        data=_pcm_to_wav(segment, self.audio_input_sample_rate),
-                        media_type=_WAV_MEDIA_TYPE,
-                    ),
-                )
-
-        # Recompute like `_finalize_user`: with overlapping user items, one item's failure must not mark
-        # the whole user side idle while another item is still active.
-        self._user_turn_active = any(not current.finalized for current in self._user_turns.values())
-        if item_id is None:
-            self._record_user_request(None, self._new_request([part]))
-            self._user_turns.pop(None, None)
-        else:
-            assert turn is not None
-            turn.part = part
-            turn.finalized = True
-            self._flush_finalized_user_prefix()
-        end = PartEndEvent(index=index, part=part)
-        return [end] if start_emitted else [PartStartEvent(index=index, part=part), end]
+            turn.part = replace(turn.part, transcript=None)
+            turn.transcript = ''
+        return self._finalize_user(item_id=item_id)
 
     def _flush_pending_users(self) -> None:
         """Preserve transcript-bearing user items that never received an explicit final event."""
