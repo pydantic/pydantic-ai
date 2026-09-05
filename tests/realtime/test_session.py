@@ -2788,7 +2788,6 @@ async def test_close_completes_when_the_closing_task_is_cancelled() -> None:
             await asyncio.Event().wait()
         except asyncio.CancelledError:
             tool_cancelled.set()
-            await asyncio.sleep(0.05)
             raise
 
     conn = BlockingRealtimeConnection([ToolCall(tool_call_id='tc', tool_name='slow', args='{}')])
@@ -2904,7 +2903,6 @@ async def test_tool_that_swallows_its_close_cancellation_and_closes_again_does_n
             await asyncio.Event().wait()
         except asyncio.CancelledError:
             tool_cancelling.set()
-            await asyncio.sleep(0.05)
             raise
 
     class _ExplodesWithRunningTool(FakeRealtimeConnection):
