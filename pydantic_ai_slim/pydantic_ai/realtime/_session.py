@@ -21,6 +21,7 @@ from typing_extensions import TypeAliasType, assert_never
 
 from .. import _agent_graph
 from .._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority
+from .._genai_prices import fill_response_cost
 from .._tool_execution import (
     _reject_unloaded_capability_reveals,  # pyright: ignore[reportPrivateUsage]
     build_tool_return_part,
@@ -1848,6 +1849,12 @@ class RealtimeSession:
                 state='interrupted' if interrupted else 'complete',
             )
             fill_run_metadata(response, run_id=self._run_id, conversation_id=self._conversation_id)
+            provider_reported_cost = response.usage.cost
+            fill_response_cost(response)
+            if provider_reported_cost is None:
+                # Tokens were added as `SessionUsage` events arrived; only add the price calculated
+                # at this response boundary. A provider-reported cost arrived in those events too.
+                self.usage.incr(RequestUsage(cost=response.usage.cost))
             self._history.append(response)
             self.usage.requests += 1
             self._tool_run_step += 1
@@ -1870,6 +1877,8 @@ class RealtimeSession:
         self._pending_provider_response_id = None
         self._pending_finish_reason = None
         self._response_limit_checked = False
+        if response is not None and not self._closed:
+            self._check_usage_limits()
 
     def _ensure_chat_span(self) -> None:
         """Begin assembling a response and open its `chat {model}` span if not already open.
@@ -2648,11 +2657,11 @@ class RealtimeSession:
         projected = dataclasses.replace(self.usage, tool_calls=self.usage.tool_calls + self._tool_calls_in_flight + 1)
         self._usage_limits.check_before_tool_call(projected)
 
-    def _check_usage_limits(self) -> None:
+    def _check_usage_limits(self, *, warn_if_cost_unavailable: bool = True) -> None:
         if self._usage_limits is None:
             return
         self._usage_limits.check_tokens(self.usage)
-        self._usage_limits.check_cost(self.usage)
+        self._usage_limits.check_cost(self.usage, warn_if_cost_unavailable=warn_if_cost_unavailable)
 
     def _reserve_response_request(self) -> None:
         """Claim the request budget for a response this session is about to solicit.
@@ -2701,13 +2710,12 @@ class RealtimeSession:
         if event.response_scoped:
             self._begin_response()
         self.usage.incr(event.usage)
-        self._check_usage_limits()
         if event.response_scoped:
-            if self._usage_limits is not None:
-                self._usage_limits.check_per_request_input_tokens(
-                    (self._pending_response_usage + event.usage).input_tokens
-                )
             self._accumulate_response_usage(event)
+            if self._usage_limits is not None:
+                self._usage_limits.check_per_request_input_tokens(self._pending_response_usage.input_tokens)
+        # Response pricing happens at finalization, so cost is provisionally unavailable here.
+        self._check_usage_limits(warn_if_cost_unavailable=False)
         if self._asap_drain_ready:
             self._asap_drain_ready = False
             await self._drain_pending_messages('asap')

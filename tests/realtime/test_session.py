@@ -4849,6 +4849,7 @@ async def test_handoff_to_standard_agent_run() -> None:
             ModelRequest(parts=[SpeechPart(speaker='user', transcript='hello')], timestamp=IsDatetime()),
             ModelResponse(
                 parts=[SpeechPart(speaker='assistant', transcript='hi there')],
+                usage=RequestUsage(cost=Decimal('0.0')),
                 model_name='gpt-realtime',
                 timestamp=IsDatetime(),
                 finish_reason='stop',
@@ -4980,6 +4981,7 @@ async def test_grounding_streams_and_folds_native_tool_parts() -> None:
     assert session.new_messages() == [
         ModelResponse(
             parts=[*grounding, SpeechPart(speaker='assistant', transcript='It is sunny in Rome')],
+            usage=RequestUsage(cost=Decimal('0.0')),
             model_name='gemini-live-2.5-flash',
             timestamp=IsDatetime(),
             finish_reason='stop',
@@ -5033,6 +5035,7 @@ async def test_grounded_history_hands_off_with_native_parts_intact() -> None:
                     ),
                     TextPart(content='It is sunny in Rome'),
                 ],
+                usage=RequestUsage(cost=Decimal('0.0')),
                 model_name='gemini-live-2.5-flash',
                 timestamp=IsDatetime(),
                 finish_reason='stop',
@@ -5111,6 +5114,7 @@ async def test_code_execution_history_hands_off_with_native_parts_intact() -> No
                     ),
                     TextPart(content='The answer is 2.'),
                 ],
+                usage=RequestUsage(cost=Decimal('0.0')),
                 model_name='gemini-live-2.5-flash',
                 timestamp=IsDatetime(),
                 finish_reason='stop',
@@ -6949,6 +6953,47 @@ async def test_agent_realtime_session_external_usage_accumulates() -> None:
     assert usage.output_tokens == 3
 
 
+async def test_agent_realtime_session_prices_response_usage() -> None:
+    usage = RequestUsage(
+        input_tokens=1000,
+        output_tokens=500,
+        input_audio_tokens=800,
+        output_audio_tokens=400,
+    )
+    conn = FakeRealtimeConnection(
+        [OutputTranscript(text='priced response', is_final=True), SessionUsage(usage=usage), ResponseDone()]
+    )
+    agent: Agent[None, str] = Agent()
+    async with agent.realtime(FakeRealtimeModel(conn, model_name='gpt-realtime', system='openai')).session() as session:
+        _ = [event async for event in session]
+
+    response = next(message for message in session.new_messages() if isinstance(message, ModelResponse))
+    assert isinstance(response.usage.cost, Decimal) and response.usage.cost > 0
+    assert session.usage.cost == response.usage.cost
+    # The response tokens were already accumulated from `SessionUsage`; pricing must not add them again.
+    assert session.usage.input_tokens == 1000
+    assert session.usage.output_tokens == 500
+    assert session.usage.input_audio_tokens == 800
+    assert session.usage.output_audio_tokens == 400
+
+
+async def test_agent_realtime_session_unpriced_response_keeps_cost_unknown() -> None:
+    conn = FakeRealtimeConnection(
+        [
+            OutputTranscript(text='unpriced response', is_final=True),
+            SessionUsage(usage=RequestUsage(input_tokens=10, output_tokens=5)),
+            ResponseDone(),
+        ]
+    )
+    agent: Agent[None, str] = Agent()
+    async with agent.realtime(FakeRealtimeModel(conn, model_name='unpriced-realtime-model')).session() as session:
+        _ = [event async for event in session]
+
+    response = next(message for message in session.new_messages() if isinstance(message, ModelResponse))
+    assert response.usage.cost is None
+    assert session.usage.cost is None
+
+
 async def test_run_level_usage_is_not_attributed_to_or_finalize_response() -> None:
     async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
         return 'done'
@@ -6981,6 +7026,9 @@ async def test_agent_realtime_session_token_limit_raises() -> None:
     async with agent.realtime(model, usage_limits=UsageLimits(total_tokens_limit=50)).session() as session:
         with pytest.raises(UsageLimitExceeded, match='Exceeded the total_tokens_limit of 50'):
             _ = [e async for e in session]
+    response = next(message for message in session.new_messages() if isinstance(message, ModelResponse))
+    assert response.state == 'complete'
+    assert response.usage == RequestUsage(input_tokens=100, output_tokens=100)
 
 
 async def test_agent_realtime_session_cost_limit_raises_on_usage() -> None:
@@ -6991,6 +7039,50 @@ async def test_agent_realtime_session_cost_limit_raises_on_usage() -> None:
     ).session() as session:
         with pytest.raises(UsageLimitExceeded, match=r'Exceeded the `cost_limit` of 0.50'):
             _ = [e async for e in session]
+
+
+async def test_agent_realtime_session_priced_cost_limit_raises_at_response_boundary() -> None:
+    conn = FakeRealtimeConnection(
+        [
+            OutputTranscript(text='over budget', is_final=True),
+            SessionUsage(usage=RequestUsage(input_tokens=1000, output_tokens=500)),
+            ResponseDone(),
+        ]
+    )
+    agent: Agent[None, str] = Agent()
+    async with agent.realtime(
+        FakeRealtimeModel(conn, model_name='gpt-realtime', system='openai'),
+        usage_limits=UsageLimits(cost_limit=Decimal('0.0001')),
+    ).session() as session:
+        with pytest.raises(UsageLimitExceeded, match=r'Exceeded the `cost_limit` of 0.0001'):
+            _ = [event async for event in session]
+
+    response = next(message for message in session.new_messages() if isinstance(message, ModelResponse))
+    assert response.state == 'complete'
+    assert response.usage.input_tokens == 1000
+    assert response.usage.output_tokens == 500
+    assert response.usage.cost == session.usage.cost
+
+
+async def test_agent_realtime_session_priced_cost_limit_raises_with_only_transcript_view() -> None:
+    conn = FakeRealtimeConnection(
+        [
+            OutputTranscript(text='over budget', is_final=True),
+            SessionUsage(usage=RequestUsage(input_tokens=1000, output_tokens=500)),
+            ResponseDone(),
+        ]
+    )
+    agent: Agent[None, str] = Agent()
+    with pytest.raises(UsageLimitExceeded, match=r'Exceeded the `cost_limit` of 0.0001'):
+        async with agent.realtime(
+            FakeRealtimeModel(conn, model_name='gpt-realtime', system='openai'),
+            usage_limits=UsageLimits(cost_limit=Decimal('0.0001')),
+        ).session() as session:
+            _ = [part async for part in session.stream_transcripts()]
+
+    response = next(message for message in session.new_messages() if isinstance(message, ModelResponse))
+    assert response.state == 'complete'
+    assert response.usage.cost == session.usage.cost
 
 
 async def test_when_idle_enqueue_after_pump_finishes_is_delivered() -> None:
