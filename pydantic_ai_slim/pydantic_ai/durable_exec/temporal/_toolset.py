@@ -57,7 +57,8 @@ async def heartbeating() -> AsyncGenerator[None]:
 
     Every activity we register beats, so that a long-but-healthy activity isn't mistaken for a
     crashed worker, and so workflow cancellation stays deliverable (cancellation reaches an
-    activity as a response to a heartbeat).
+    activity as a response to a heartbeat). The body's deferred sandbox connections are closed
+    on the way out, still under heartbeat.
 
     The beat interval is derived from the activity's configured `heartbeat_timeout` so a
     custom (shorter or longer) timeout keeps working; the SDK additionally throttles

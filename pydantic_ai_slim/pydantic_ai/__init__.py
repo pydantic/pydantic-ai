@@ -155,6 +155,10 @@ from .profiles import (
     ModelProfileSpec,
 )
 from .run import AgentRun, AgentRunResult, AgentRunResultEvent
+from .sandboxes import (
+    Sandbox,
+    SandboxRef,
+)
 from .settings import ModelSettings, ToolChoice, ToolOrOutput
 from .template import TemplateStr
 from .tools import (
@@ -362,6 +366,9 @@ __all__ = (
     'AgentCapability',
     'Capability',
     'CapabilityFunc',
+    # sandboxes
+    'Sandbox',
+    'SandboxRef',
     # output
     'ToolOutput',
     'NativeOutput',

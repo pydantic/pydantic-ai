@@ -27,6 +27,23 @@ Engine authors use this type for declarative lifecycle settings and per-tool con
 [Building a durable execution backend](https://pydantic.dev/docs/ai/capabilities/durable_execution/backends/).
 """
 
+SandboxMethod: TypeAlias = Literal[
+    'run',
+    'working_dir',
+    'resolve',
+    'read_bytes',
+    'write_bytes',
+    'stat',
+    'list_dir',
+    'make_dir',
+    'remove',
+    'exists',
+    'read_text',
+    'write_text',
+    'read_file',
+]
+"""A user-facing sandbox method routed through durable execution."""
+
 
 @dataclass(frozen=True)
 class ModelRequestId:
@@ -124,6 +141,15 @@ class CapabilityOperationId:
 
 
 @dataclass(frozen=True)
+class SandboxOperationId:
+    """Identifies one sandbox method call supplied by a capability."""
+
+    capability_id: str
+    _: KW_ONLY
+    method: SandboxMethod
+
+
+@dataclass(frozen=True)
 class ToolsetGetToolsId:
     """Identifies durable tool discovery for a particular toolset.
 
@@ -199,6 +225,7 @@ DurableOperationId: TypeAlias = (
     | ModelCompactMessagesId
     | ModelCancelSuspendedResponseId
     | CapabilityOperationId
+    | SandboxOperationId
     | EventStreamHandlerId
     | ToolsetGetToolsId
     | ToolsetGetInstructionsId

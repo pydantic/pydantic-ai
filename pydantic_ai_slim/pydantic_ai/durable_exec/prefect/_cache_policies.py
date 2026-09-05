@@ -87,7 +87,7 @@ def _replace_run_context(
         if _is_container(value):
             inputs[key] = _map_container(value, lambda item: _replace_run_context({'_': item})['_'])
         elif _is_run_context(value):
-            inputs[key] = {
+            projected: dict[str, Any] = {
                 'deps': _cacheable_value(value.deps),
                 'agent': value.agent.name if value.agent is not None else None,
                 'model': value.model.model_id,
@@ -139,6 +139,11 @@ def _replace_run_context(
                 # hash it by value; `None` (bare/synthetic context) hashes distinctly.
                 'usage_limits': value.usage_limits,
             }
+            # Sandbox identity forks the key because tools can produce environment-specific
+            # results. Reading `ref` does no I/O: it is `None` until the backend has created or
+            # attached an environment, and `None` is itself a distinct key.
+            projected['sandbox'] = value.sandbox.ref
+            inputs[key] = projected
 
     return inputs
 

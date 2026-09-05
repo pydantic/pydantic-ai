@@ -182,8 +182,8 @@ class TemporalOperationBackend(RegisteredOperationBackend[ActivityConfig]):
         transport = cast(TemporalParameterTransport[ParamsT, WireT], operation.parameter_transport)
 
         async def activity_handler(params: Any, deps: Any = None) -> ResultT:
-            semantic_params = transport.load(cast(WireT, (params, deps)), runtime=self._runtime)
             async with heartbeating():
+                semantic_params = transport.load(cast(WireT, (params, deps)), runtime=self._runtime)
                 return await operation.handler(semantic_params)
 
         # Existing operation transports retain their shipped wire dataclasses and activity

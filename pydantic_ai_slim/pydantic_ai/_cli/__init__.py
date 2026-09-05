@@ -21,6 +21,7 @@ from ..messages import FunctionToolCallEvent, FunctionToolResultEvent, ModelMess
 from ..models import infer_model, known_model_names
 from ..native_tools import NATIVE_TOOLS_REQUIRING_CONFIG, SUPPORTED_NATIVE_TOOLS
 from ..output import OutputDataT
+from ..sandboxes import SandboxBackend, SandboxRef
 from ..settings import ModelSettings
 from ..toolsets import AbstractToolset
 
@@ -381,6 +382,8 @@ async def run_chat(
     model_settings: ModelSettings | None = None,
     usage_limits: _usage.UsageLimits | None = None,
     toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+    *,
+    sandbox: SandboxBackend | SandboxRef | None = None,
 ) -> int:
     prompt_history_path = (config_dir or PYDANTIC_AI_HOME) / PROMPT_HISTORY_FILENAME
     prompt_history_path.parent.mkdir(parents=True, exist_ok=True)
@@ -432,6 +435,7 @@ async def run_chat(
                         usage_limits=usage_limits,
                         toolsets=toolsets,
                         usage=session_usage,
+                        sandbox=sandbox,
                     )
                     session_turns += 1
                 except anyio.get_cancelled_exc_class():
@@ -457,6 +461,7 @@ async def ask_agent(
     toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
     *,
     usage: _usage.RunUsage | None = None,
+    sandbox: SandboxBackend | SandboxRef | None = None,
 ) -> list[ModelMessage]:
     status = Status('[dim]Working on it…[/dim]', console=console)
 
@@ -475,6 +480,7 @@ async def ask_agent(
                     usage_limits=usage_limits,
                     toolsets=toolsets,
                     usage=turn_usage,
+                    sandbox=sandbox,
                 )
             content = str(result.output)
             console.print(Markdown(content, code_theme=code_theme))
@@ -490,6 +496,7 @@ async def ask_agent(
                 usage_limits=usage_limits,
                 toolsets=toolsets,
                 usage=turn_usage,
+                sandbox=sandbox,
             ) as agent_run:
                 live = Live('', refresh_per_second=15, console=console, vertical_overflow='ellipsis')
                 content_pieces: list[str] = []

@@ -27,6 +27,7 @@ if TYPE_CHECKING:
     from .capabilities.abstract import AbstractCapability
     from .models import AbstractModel
     from .realtime import RealtimeModelSettings, RealtimeSession
+    from .sandboxes import Sandbox
     from .settings import ModelSettings
     from .tool_manager import ToolManager
     from .tools import ToolDefinition
@@ -98,6 +99,20 @@ async def dispatch_event_stream(
         elif capability is not None and capability.listens_to(event):
             await capability.on_event(ctx, event=event)
         yield ctx._event_stream_replacements.pop(event_id, event)  # pyright: ignore[reportPrivateUsage]
+
+
+def unattached_sandbox() -> Sandbox:
+    # Imported lazily to keep the run-context module independent of the sandbox facade during
+    # package initialization. This factory runs only when a `RunContext` is constructed.
+    from .sandboxes import Sandbox, UnavailableSandbox
+
+    return Sandbox.wrap(
+        UnavailableSandbox(
+            'No sandbox is attached: this `RunContext` was created outside an agent run. '
+            'Sandboxes are attached when a run starts — pass `sandbox=` to the run method or supply one '
+            "from a capability's `get_sandbox`."
+        )
+    )
 
 
 @dataclasses.dataclass(frozen=True)
@@ -211,6 +226,16 @@ class RunContext(Generic[RunContextAgentDepsT]):
     During a realtime session this holds the merged
     [`RealtimeModelSettings`][pydantic_ai.realtime.RealtimeModelSettings] the session was opened
     with, for the whole session (realtime settings are fixed at connect time).
+    """
+    sandbox: Sandbox = field(default_factory=unattached_sandbox)
+    """The [`Sandbox`][pydantic_ai.sandboxes.Sandbox] attached to this run.
+
+    Chosen once, before `for_run`: the `sandbox=` run argument, else the one capability whose
+    [`get_sandbox`][pydantic_ai.capabilities.AbstractCapability.get_sandbox] returned a backend,
+    else a placeholder whose operations explain how to attach one. Never the host by default.
+
+    Choosing it does no I/O: the backend creates or attaches on its first operation, and the run
+    never tears it down. See the [sandbox docs](../sandbox.md).
     """
     pending_messages: list[PendingMessage] | None = field(default=None, repr=False)
     """Queue read and mutated by the internal `PendingMessageDrainCapability`.

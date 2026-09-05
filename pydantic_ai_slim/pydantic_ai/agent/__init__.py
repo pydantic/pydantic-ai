@@ -76,8 +76,11 @@ from ..capabilities import (
     ToolSearch as ToolSearchCap,
 )
 from ..capabilities._dynamic import wrap_capability_funcs
-from ..capabilities._ordering import has_capability_type
+from ..capabilities._ordering import find_capability, has_capability_type
 from ..capabilities._pending_messages import PendingMessageDrainCapability
+from ..capabilities._sandbox import (
+    get_run_sandbox,
+)
 from ..capabilities.abstract import (
     _combine_duplicate_capabilities,  # pyright: ignore[reportPrivateUsage]
     _declares_default_id,  # pyright: ignore[reportPrivateUsage]
@@ -93,6 +96,7 @@ from ..native_tools import AbstractNativeTool
 from ..native_tools._tool_search import ToolSearchTool
 from ..output import OutputDataT, OutputSpec, StructuredDict
 from ..run import AgentRun, AgentRunResult
+from ..sandboxes import Sandbox, SandboxBackend, SandboxRef, UnavailableSandbox
 from ..settings import ModelSettings, merge_model_settings
 from ..template import TemplateStr
 from ..tool_manager import ParallelExecutionMode, ToolManager
@@ -184,6 +188,7 @@ __all__ = (
     'ToolsPrepareFunc',
     'ToolDenied',
     'RealtimeEvent',
+    'find_capability',
 )
 
 
@@ -412,6 +417,13 @@ S = TypeVar('S')
 _PreparedDepsT = TypeVar('_PreparedDepsT')
 _PreparedOutputT = TypeVar('_PreparedOutputT')
 NoneType = type(None)
+
+_NO_SANDBOX_REASON = (
+    'No sandbox is attached to this run. Pass `sandbox=LocalSandbox()` to the run method to use the '
+    'local machine (unsafe: commands and file operations run with the full permissions of this process), '
+    'attach a capability that supplies a sandbox through its `get_sandbox` hook, or pass a `SandboxRef` '
+    'to connect to an existing environment. See https://ai.pydantic.dev/sandbox/ for details.'
+)
 
 
 @dataclasses.dataclass
@@ -1232,6 +1244,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        sandbox: SandboxBackend | SandboxRef | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, OutputDataT]]: ...
 
@@ -1257,6 +1270,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        sandbox: SandboxBackend | SandboxRef | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, RunOutputDataT]]: ...
 
@@ -1282,6 +1296,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        sandbox: SandboxBackend | SandboxRef | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AsyncGenerator[AgentRun[AgentDepsT, Any]]:
         """A contextmanager which can be used to iterate over the agent graph's nodes as they are executed.
@@ -1376,6 +1391,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
+            sandbox: Optional sandbox backend or [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] for this run; overrides capability contributions. See the [sandbox docs](../sandbox.md).
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
@@ -1402,6 +1418,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             retries=retries,
             toolsets=toolsets,
             capabilities=capabilities,
+            sandbox=sandbox,
             spec=spec,
         )
         async with prepared.open() as agent_run:
@@ -1427,6 +1444,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         retries: int | AgentRetries | None = None,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        sandbox: SandboxBackend | SandboxRef | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> _PreparedAgentRun[AgentDepsT, Any]:
         # Consume the pending `AgentRunEvents` binding before ANY user-supplied code (capability /
@@ -1512,7 +1530,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if resolved is not None and resolved.capability is not None:
             extra_capabilities.append(resolved.capability)
         extra_capabilities.extend(wrap_capability_funcs(capabilities))
-        extra_capabilities = self._bind_run_capabilities(extra_capabilities)
+        extra_capabilities = self._bind_run_capabilities(base_capability, extra_capabilities)
         model_layers: list[AbstractCapability[AgentDepsT]] = [base_capability, *extra_capabilities]
         bootstrap_capability: AbstractCapability[AgentDepsT]
         if len(model_layers) > 1:
@@ -1682,7 +1700,21 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             run_id=state.run_id,
             conversation_id=state.conversation_id,
             _cancellation=cancellation,
+            sandbox=Sandbox.wrap(UnavailableSandbox(_NO_SANDBOX_REASON)),
         )
+
+        # A caller-provided live sandbox is already known and is visible to `for_run`. A sandbox
+        # supplied by a capability is selected from the final per-run capability tree below, so a
+        # capability that replaces itself in `for_run` cannot leave behind the bootstrap backend.
+        run_sandbox = initial_ctx.sandbox
+        sandbox_supplier: AbstractCapability[AgentDepsT] | None = None
+        if sandbox is not None and not isinstance(sandbox, SandboxRef):
+            # An explicit backend, or an existing `Sandbox` passed straight through from a
+            # parent run or a previous result.
+            run_sandbox = sandbox if isinstance(sandbox, Sandbox) else Sandbox(sandbox)
+            if isinstance(sandbox, Sandbox):
+                _, sandbox_supplier = sandbox._supplier_details()  # pyright: ignore[reportPrivateUsage]
+            initial_ctx.sandbox = run_sandbox
 
         # Resolve run metadata up front so capability and toolset `for_run` hooks
         # can see it on `RunContext.metadata`. Metadata factories receive the
@@ -1714,6 +1746,36 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         cap_native_tools = resolved_caps.native_tools
         cap_model_settings = resolved_caps.model_settings
         cap_toolsets = resolved_caps.toolsets
+
+        # Nothing here does I/O: the backend creates or attaches on its first operation. Resolve
+        # capability-provided sandboxes only now, after `for_run()` has chosen the instances whose
+        # hooks and durable operations this run will actually use.
+        if sandbox is None or isinstance(sandbox, SandboxRef):
+            selection = get_run_sandbox(run_capability, initial_ctx, sandbox)
+            if selection is None:
+                if isinstance(sandbox, SandboxRef):
+                    raise exceptions.UserError(
+                        f'No capability can supply sandbox {sandbox.sandbox_id!r}: every `get_sandbox` returned '
+                        '`None`. Attach a capability whose `get_sandbox` recognizes it.'
+                    )
+            else:
+                sandbox_supplier = selection.supplier
+                run_sandbox = Sandbox(
+                    selection.backend, _supplier_id=selection.supplier.id, _supplier=selection.supplier
+                )
+        elif isinstance(sandbox, Sandbox):
+            # A sandbox returned by an earlier run carries the old per-run supplier instance.
+            # Keep the environment handle, but dispatch through this run's replacement instance.
+            supplier_id, _ = sandbox._supplier_details()  # pyright: ignore[reportPrivateUsage]
+            if supplier_id is not None:
+                sandbox_supplier = next(
+                    (capability for capability in leaf_capabilities(run_capability) if capability.id == supplier_id),
+                    sandbox_supplier,
+                )
+        run_sandbox = run_capability._wrap_sandbox(  # pyright: ignore[reportPrivateUsage]
+            initial_ctx, run_sandbox, supplier=sandbox_supplier
+        )
+        initial_ctx.sandbox = run_sandbox
 
         # Whether any capability's `for_run` swapped a model-layer contribution during resolution; the
         # per-step model-selection block below keys off this. The model layers are the tail of the
@@ -1851,6 +1913,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             capabilities=capabilities_dict,
             loaded_capability_ids=loaded_capability_ids,
             discovered_tool_names=discovered_tool_names,
+            sandbox=run_sandbox,
             native_tools=cap_native_tools,
             tool_manager=tool_manager,
             tracer=tracer,
@@ -2870,7 +2933,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         return base, override_cap is not None
 
     def _bind_run_capabilities(
-        self, extra_capabilities: list[AbstractCapability[AgentDepsT]]
+        self,
+        base_capability: AbstractCapability[AgentDepsT],
+        extra_capabilities: list[AbstractCapability[AgentDepsT]],
     ) -> list[AbstractCapability[AgentDepsT]]:
         """Bind per-run capabilities to this agent via `for_agent` before capability resolution.
 
@@ -2878,8 +2943,15 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         `for_agent` is the caller's responsibility. `iter` and `realtime_session` both MUST call this —
         skipping it uses a capability that overrides `for_agent` (e.g. the durability capabilities)
         unbound, a silent divergence. KEEP the two call sites in sync.
+
+        The base capability vets the bound layer here, before any hook fires on it. This lets a
+        durability capability reject per-run capabilities it has no registered durable units for.
         """
-        return [capability.for_agent(self) for capability in extra_capabilities]
+        bound = [capability.for_agent(self) for capability in extra_capabilities]
+        base_capability._validate_runtime_capabilities(  # pyright: ignore[reportPrivateUsage]
+            [capability for extra in bound for capability in leaf_capabilities(extra)]
+        )
+        return bound
 
     async def _resolve_model_selection(
         self,
@@ -3026,10 +3098,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # The extras are the tail of `run_layers` (instrumentation, if added, is at the front). Slicing
         # from the front avoids the `[-0:]` full-list pitfall when there are no extras.
         resolved_extras = resolved_layers[len(resolved_layers) - len(extra_capabilities) :]
-        base_capability._validate_runtime_capabilities(  # pyright: ignore[reportPrivateUsage]
-            ctx,
-            [capability for extra in resolved_extras for capability in leaf_capabilities(extra)],
-        )
         # Two capabilities under one `id` name the same thing, so the tree is resolved down to one
         # each before anything reads it. Duplicates *within* a layer are one configuration stated
         # twice and `combine` settles them; they are combined here, exactly once, and the merged
@@ -3386,7 +3454,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # a `RealtimeModel`, never an `InstrumentedModel`, so there's no wrapped model to unwrap; the
         # settings come straight from `_resolve_instrumentation_settings()`. The helper skips injection if
         # the user already supplied an `Instrumentation` capability (agent- or call-level).
-        extra_capabilities = self._bind_run_capabilities(wrap_capability_funcs(capabilities))
+        base_capability, base_is_override = self._base_run_capability()
+        extra_capabilities = self._bind_run_capabilities(base_capability, wrap_capability_funcs(capabilities))
         instrumentation_settings = self._resolve_instrumentation_settings()
         instrumentation_cap = (
             InstrumentationCap(settings=instrumentation_settings) if instrumentation_settings is not None else None
@@ -3435,7 +3504,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # Realtime keeps its own surroundings: no `InstrumentedModel` unwrap, once-only model settings
         # (below), and the `_keep_native` drop plus the shared native ↔ local-tool swap (below). Keep
         # this in sync with the `iter` call site.
-        base_capability, base_is_override = self._base_run_capability()
         resolved_caps = await self._resolve_run_capabilities(
             run_context,
             base_capability=base_capability,
@@ -4013,6 +4081,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         *,
         models: ModelsParam = None,
         deps: AgentDepsT = None,
+        sandbox: SandboxBackend | SandboxRef | None = None,
         model_settings: ModelSettings | None = None,
         instructions: str | None = None,
         html_source: str | Path | None = None,
@@ -4027,7 +4096,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         The returned Starlette application can be mounted into a FastAPI app or run directly
         with any ASGI server (uvicorn, hypercorn, etc.).
 
-        Note that the `deps` and `model_settings` will be the same for each request.
+        Note that the `deps`, `sandbox`, and `model_settings` will be the same for each request.
         To provide different `deps` for each request use the lower-level adapters directly.
 
         The agent's configured native tools (registered via `capabilities=[NativeTool(...)]`
@@ -4042,6 +4111,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 The agent's model is always included. Native tool support is automatically
                 determined from each model's profile.
             deps: Optional dependencies to use for all requests.
+            sandbox: Optional sandbox backend or [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] for all requests; overrides capability contributions. See the [sandbox docs](../sandbox.md).
             model_settings: Optional settings to use for all model requests.
             instructions: Optional extra instructions to pass to each agent run.
             html_source: Path or URL for the chat UI HTML. Can be:
@@ -4082,6 +4152,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             self,
             models=models,
             deps=deps,
+            sandbox=sandbox,
             model_settings=model_settings,
             instructions=instructions,
             html_source=html_source,

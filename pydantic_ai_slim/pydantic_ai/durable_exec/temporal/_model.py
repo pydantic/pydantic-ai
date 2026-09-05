@@ -101,7 +101,10 @@ class TemporalModel(WrapperModel):
 
         async def request_activity(params: _RequestParams, deps: Any | None = None) -> ModelResponse:
             run_context = deserialize_run_context(
-                self.run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
+                self.run_context_type,
+                params.serialized_run_context,
+                deps=deps,
+                agent=self._agent,
             )
             model_for_request = self._resolve_model_id(params.model_id, run_context)
             async with managed_model_scope(
@@ -124,7 +127,10 @@ class TemporalModel(WrapperModel):
             # An error is raised in `request_stream` if no `event_stream_handler` is set.
             assert self.event_stream_handler is not None
             run_context = deserialize_run_context(
-                self.run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
+                self.run_context_type,
+                params.serialized_run_context,
+                deps=deps,
+                agent=self._agent,
             )
             model_for_request = self._resolve_model_id(params.model_id, run_context)
             async with managed_model_scope(

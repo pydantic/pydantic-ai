@@ -10,6 +10,7 @@ from pydantic_ai._instructions import AgentInstructions, SourcedInstruction, nor
 from pydantic_ai._utils import aclose_all, replace_no_init
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
+from pydantic_ai.sandboxes import Sandbox, SandboxBackend, SandboxRef
 from pydantic_ai.tools import (
     AgentDepsT,
     AgentNativeTool,
@@ -208,10 +209,17 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
     def _prepare_run_context(self, ctx: RunContext[AgentDepsT]) -> None:
         self.wrapped._prepare_run_context(ctx)
 
-    def _validate_runtime_capabilities(
-        self, ctx: RunContext[AgentDepsT], capabilities: Sequence[AbstractCapability[AgentDepsT]]
-    ) -> None:
-        self.wrapped._validate_runtime_capabilities(ctx, capabilities)
+    def _validate_runtime_capabilities(self, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> None:
+        self.wrapped._validate_runtime_capabilities(capabilities)
+
+    def _wrap_sandbox(
+        self,
+        ctx: RunContext[AgentDepsT],
+        sandbox: Sandbox,
+        *,
+        supplier: AbstractCapability[AgentDepsT] | None,
+    ) -> Sandbox:
+        return self.wrapped._wrap_sandbox(ctx, sandbox, supplier=supplier)
 
     # --- Get methods ---
 
@@ -255,6 +263,9 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
 
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
         return self.wrapped.get_wrapper_toolset(toolset)
+
+    def get_sandbox(self, ctx: RunContext[AgentDepsT], *, ref: SandboxRef | None) -> SandboxBackend | None:
+        return self.wrapped.get_sandbox(ctx, ref=ref)
 
     async def prepare_tools(
         self,

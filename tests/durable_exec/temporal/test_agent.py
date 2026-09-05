@@ -12,6 +12,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import timedelta
 from decimal import Decimal
+from types import SimpleNamespace
 from typing import Any, Literal, cast
 from unittest.mock import patch
 
@@ -80,12 +81,20 @@ from pydantic_ai.realtime import (
 )
 from pydantic_ai.realtime.codec import RealtimeConnection
 from pydantic_ai.run import AgentRunResult
+from pydantic_ai.sandboxes import Sandbox, SandboxBackend, SandboxRef, UnavailableSandbox
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
 from pydantic_ai.usage import UsageLimits
 
 from ..._inline_snapshot import snapshot
 from ...continuation_utils import ScriptedContinuationModel, scripted_response
 from ...model_lifecycle_utils import LifecycleTrackingModel
+from ...sandbox_fakes import (
+    ConnectOnlySandboxCapability,
+    FakeSandbox,
+    RecordingSandboxBackend,
+    SandboxCapability,
+    ref_sandbox,
+)
 
 try:
     from temporalio import activity, workflow
@@ -97,6 +106,8 @@ try:
     from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
     from temporalio.workflow import ActivityCancellationType, ActivityConfig
 
+    from pydantic_ai.durable_exec._sandbox import SandboxOperationParams
+    from pydantic_ai.durable_exec._toolset import unwrap_tool_call_result
     from pydantic_ai.durable_exec._utils import StreamedActivityResult
     from pydantic_ai.durable_exec.temporal import (
         AgentPlugin,
@@ -111,11 +122,18 @@ try:
         _CancelParams,  # pyright: ignore[reportPrivateUsage]
         _StreamedActivityPayload,  # pyright: ignore[reportPrivateUsage]
     )
-    from pydantic_ai.durable_exec.temporal._function_toolset import TemporalFunctionToolset
+    from pydantic_ai.durable_exec.temporal._function_toolset import (
+        TemporalFunctionToolset,
+        temporalize_function_toolset,
+    )
     from pydantic_ai.durable_exec.temporal._mcp_toolset import TemporalMCPToolset
     from pydantic_ai.durable_exec.temporal._model import TemporalModel
-    from pydantic_ai.durable_exec.temporal._run_context import TemporalRunContext, deserialize_run_context
+    from pydantic_ai.durable_exec.temporal._run_context import (
+        TemporalRunContext,
+        deserialize_run_context,
+    )
     from pydantic_ai.durable_exec.temporal._toolset import CallToolParams
+    from pydantic_ai.durable_exec.temporal._transports import _SandboxOperationTransport
 
 except ImportError:  # pragma: lax no cover
     pytest.skip('temporal not installed', allow_module_level=True)
@@ -2677,6 +2695,271 @@ def test_temporal_run_context_preserves_run_id():
 
     reconstructed = TemporalRunContext.deserialize_run_context(serialized, deps=None)
     assert reconstructed.run_id == 'run-123'
+
+
+def _sandbox_context(sandbox: Sandbox) -> RunContext[None]:
+    return RunContext(deps=None, model=TestModel(), usage=RunUsage(), sandbox=sandbox)
+
+
+def test_temporal_run_context_preserves_unavailable_sandbox_reason():
+    ctx = _sandbox_context(Sandbox(UnavailableSandbox('disabled by policy')))
+
+    reconstructed = deserialize_run_context(
+        TemporalRunContext,
+        TemporalRunContext.serialize_run_context(ctx),
+        deps=None,
+        agent=None,
+    )
+
+    with pytest.raises(UserError, match='disabled by policy'):
+        _ = reconstructed.sandbox
+
+
+def test_temporal_run_context_does_not_serialize_a_live_backend():
+    """An explicit live backend has no capability on the worker that could rebuild it.
+
+    Its identity would name an environment nothing in the activity can reach, so it does not
+    cross the boundary at all.
+    """
+    live_sandbox = Sandbox(RecordingSandboxBackend('live'))
+
+    serialized = TemporalRunContext.serialize_run_context(_sandbox_context(live_sandbox))
+
+    assert '_sandbox_state' not in serialized
+
+
+def test_temporal_run_context_serializes_a_fresh_sandbox_supplier():
+    """A supplier id crosses before the lazy backend has an environment ref."""
+    supplier = SandboxCapability(FakeSandbox('fresh'))
+    sandbox = Sandbox(supplier.backend, _supplier_id=supplier.id, _supplier=supplier)
+
+    serialized = TemporalRunContext.serialize_run_context(_sandbox_context(sandbox))
+
+    assert serialized['_sandbox_state'] == {'supplier_id': 'sandbox', 'sandbox_id': None}
+
+
+def test_temporal_registers_every_user_facing_sandbox_method():
+    supplier = SandboxCapability(FakeSandbox('registered'))
+    agent = Agent(TestModel(), name='sandbox_methods', capabilities=[supplier, TemporalDurability()])
+    durability = TemporalDurability.from_agent(agent)
+    assert durability is not None
+
+    names = {
+        ActivityDefinition.must_from_callable(activity).name  # pyright: ignore[reportUnknownMemberType]
+        for activity in durability.temporal_activities
+    }
+    sandbox_names = {name for name in names if name is not None and '__sandbox__sandbox__' in name}
+    assert sandbox_names == {
+        f'agent__sandbox_methods__sandbox__sandbox__{method}'
+        for method in (
+            'run',
+            'working_dir',
+            'resolve',
+            'read_bytes',
+            'write_bytes',
+            'stat',
+            'list_dir',
+            'make_dir',
+            'remove',
+            'exists',
+            'read_text',
+            'write_text',
+            'read_file',
+        )
+    }
+
+
+@pytest.mark.parametrize('state', [None, {}], ids=['legacy-payload', 'empty'])
+def test_temporal_run_context_without_sandbox_state_has_no_sandbox(state: dict[str, Any] | None):
+    serialized = TemporalRunContext.serialize_run_context(_sandbox_context(Sandbox(UnavailableSandbox('ignored'))))
+    if state is None:
+        serialized.pop('_sandbox_state')
+    else:
+        serialized['_sandbox_state'] = state
+
+    reconstructed = deserialize_run_context(TemporalRunContext, serialized, deps=None, agent=None)
+
+    with pytest.raises(UserError, match='not available inside a Temporal activity'):
+        _ = reconstructed.sandbox
+
+
+async def test_temporal_run_context_reconnects_sandbox_ref_through_agent():
+    connector = ConnectOnlySandboxCapability()
+    agent = Agent(TestModel(), capabilities=[connector])
+    ref = SandboxRef(sandbox_id='temporal-ref')
+
+    sandbox = ref_sandbox(ref, connector)
+    serialized = TemporalRunContext.serialize_run_context(_sandbox_context(sandbox))
+
+    reconstructed = deserialize_run_context(TemporalRunContext, serialized, deps=None, agent=agent)
+
+    assert (await reconstructed.sandbox.run(['true'])).stdout == 'connected'
+    assert connector.sandbox_ids == ['temporal-ref']
+
+
+def test_temporal_sandbox_operation_transport_round_trips_context_and_arguments():
+    supplier = SandboxCapability(FakeSandbox('transport'))
+    agent = Agent(TestModel(), name='sandbox_transport', capabilities=[supplier, TemporalDurability()])
+    durability = TemporalDurability.from_agent(agent)
+    assert durability is not None
+    ctx = _sandbox_context(Sandbox(supplier.backend, _supplier_id=supplier.id, _supplier=supplier))
+    params = SandboxOperationParams(
+        run_context=ctx,
+        supplier_id='sandbox',
+        ref=SandboxRef(sandbox_id='transport-ref'),
+        arguments={'path': 'file.txt'},
+    )
+
+    transport = _SandboxOperationTransport(durability)
+    loaded = transport.load(transport.dump(params), runtime=object())
+
+    assert loaded.supplier_id == 'sandbox'
+    assert loaded.ref == SandboxRef(sandbox_id='transport-ref')
+    assert loaded.arguments == {'path': 'file.txt'}
+    assert loaded.run_context.deps is None
+
+
+async def test_temporal_run_context_reports_when_matching_supplier_declines_serialized_ref():
+    class DecliningConnector(Capability[Any]):
+        id = 'connect_only_sandbox'
+
+        def get_sandbox(self, ctx: RunContext[Any], *, ref: SandboxRef | None) -> None:
+            return None
+
+    connector = ConnectOnlySandboxCapability()
+    serialized = TemporalRunContext.serialize_run_context(
+        _sandbox_context(ref_sandbox(SandboxRef(sandbox_id='declined'), connector))
+    )
+    reconstructed = deserialize_run_context(
+        TemporalRunContext,
+        serialized,
+        deps=None,
+        agent=Agent(TestModel(), capabilities=[DecliningConnector(id='connect_only_sandbox')]),
+    )
+
+    with pytest.raises(UserError, match='declined the serialized sandbox reference'):
+        await reconstructed.sandbox.run(['true'])
+
+
+@pytest.mark.parametrize('agent', [None, Agent(TestModel())], ids=['without-agent', 'without-provider'])
+async def test_temporal_run_context_explains_legacy_ref_rebuild_failure(agent: Agent[None, str] | None):
+    serialized = TemporalRunContext.serialize_run_context(_sandbox_context(Sandbox(UnavailableSandbox('ignored'))))
+    serialized['_sandbox_state'] = {'sandbox_id': 'legacy-ref'}
+
+    reconstructed = deserialize_run_context(TemporalRunContext, serialized, deps=None, agent=agent)
+
+    message = 'no agent is attached' if agent is None else 'No capability can supply sandbox'
+    with pytest.raises(UserError, match=message):
+        await reconstructed.sandbox.run(['true'])
+
+
+async def test_temporal_run_context_rebuilds_a_legacy_ref_through_the_capability_chain():
+    connector = ConnectOnlySandboxCapability()
+    serialized = TemporalRunContext.serialize_run_context(_sandbox_context(Sandbox(UnavailableSandbox('ignored'))))
+    serialized['_sandbox_state'] = {'sandbox_id': 'legacy-ref'}
+
+    reconstructed = deserialize_run_context(
+        TemporalRunContext, serialized, deps=None, agent=Agent(TestModel(), capabilities=[connector])
+    )
+
+    assert (await reconstructed.sandbox.run(['true'])).stdout == 'connected'
+    assert connector.sandbox_ids == ['legacy-ref']
+
+
+async def test_temporal_run_context_ref_no_capability_recognizes_cannot_connect():
+    """An agent whose capabilities all decline the ref cannot rebuild it either.
+
+    Recorded rather than raised at the boundary: an activity that never touches the sandbox
+    must not fail because of one.
+    """
+    missing = ConnectOnlySandboxCapability()
+    agent = Agent(TestModel())
+
+    reconstructed = deserialize_run_context(
+        TemporalRunContext,
+        TemporalRunContext.serialize_run_context(
+            _sandbox_context(ref_sandbox(SandboxRef(sandbox_id='stranger'), missing))
+        ),
+        deps=None,
+        agent=agent,
+    )
+
+    with pytest.raises(UserError, match=r"Cannot rebuild sandbox from capability 'connect_only_sandbox'"):
+        await reconstructed.sandbox.run(['true'])
+
+
+async def test_temporal_run_context_ref_without_agent_cannot_connect():
+    ref = SandboxRef(sandbox_id='orphan')
+
+    sandbox = ref_sandbox(ref, ConnectOnlySandboxCapability())
+    reconstructed = deserialize_run_context(
+        TemporalRunContext,
+        TemporalRunContext.serialize_run_context(_sandbox_context(sandbox)),
+        deps=None,
+        agent=None,
+    )
+
+    with pytest.raises(UserError, match='no agent is attached'):
+        await reconstructed.sandbox.run(['true'])
+
+
+async def test_temporal_activity_rebuilds_the_sandbox_and_leaves_it_running():
+    """A tool activity reaches its sandbox through the capability, and nothing tears it down after.
+
+    The end of an activity is not the end of the environment: one conversation spans many runs,
+    and many activities, so Pydantic AI never closes what a capability supplied.
+    """
+
+    class ClosableBackend(RecordingSandboxBackend):
+        def __init__(self) -> None:
+            super().__init__('provider-only')
+            self.close_calls: list[bool] = []
+
+        async def close(self, *, terminate: bool = False) -> None:  # pragma: no cover
+            # Staying uncalled is the assertion: nothing tears an environment down.
+            self.close_calls.append(terminate)
+
+    backend = ClosableBackend()
+
+    class Provider(Capability[Any]):
+        def get_sandbox(self, ctx: RunContext[Any], *, ref: SandboxRef | None) -> SandboxBackend | None:
+            return backend
+
+    async def use_sandbox(ctx: RunContext[None]) -> str:
+        return (await ctx.sandbox.run(['true'])).stdout
+
+    provider = Provider(id='provider')
+    agent = Agent(TestModel(), capabilities=[provider])
+    toolset = FunctionToolset[None](tools=[use_sandbox], id='sandbox-toolset')
+    temporal_toolset = temporalize_function_toolset(
+        toolset,
+        activity_name_prefix='test__sandbox_rebuild',
+        activity_config=BASE_ACTIVITY_CONFIG,
+        tool_activity_config={},
+        deps_type=type(None),
+        agent=agent,
+    )
+    (call_tool_activity,) = temporal_toolset.durable_registrations
+
+    sandbox = ref_sandbox(SandboxRef(sandbox_id='provider-only'), provider)
+
+    # The activity runs outside a Temporal worker here, so stub what heartbeating asks of the SDK.
+    with (
+        patch('temporalio.activity.info', return_value=SimpleNamespace(heartbeat_timeout=None)),
+        patch('temporalio.activity.heartbeat'),
+    ):
+        result = await call_tool_activity(
+            CallToolParams(
+                name='use_sandbox',
+                tool_args={},
+                serialized_run_context=TemporalRunContext.serialize_run_context(_sandbox_context(sandbox)),
+                tool_def=toolset.tools['use_sandbox'].tool_def,
+            ),
+            None,
+        )
+
+    assert unwrap_tool_call_result(result) == 'connected'
+    assert backend.close_calls == []
 
 
 def test_temporal_run_context_context_window_used_is_none_without_messages():

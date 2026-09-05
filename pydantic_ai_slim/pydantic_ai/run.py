@@ -19,13 +19,17 @@ from . import (
 )
 from ._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority
 from ._instrumentation import current_otel_traceparent
-from ._run_context import CustomEventT
+from ._run_context import (
+    CustomEventT,
+    unattached_sandbox,
+)
 from .output import OutputDataT
 from .tools import AgentDepsT
 
 if TYPE_CHECKING:
     from ._run_context import RunContext
     from .result import FinalResult
+    from .sandboxes import Sandbox
 
 
 @dataclasses.dataclass(repr=False)
@@ -153,13 +157,17 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         graph_run_output = self._graph_run.output
         if graph_run_output is None:
             return None
-        return AgentRunResult(
+        result = AgentRunResult(
             graph_run_output.output,
             graph_run_output.tool_name,
             self._graph_run.state,
             self._graph_run.deps.new_message_index,
             self._traceparent(required=False),
         )
+        # Set outside the constructor because `sandbox` is not a dataclass field: see the
+        # property on `AgentRunResult`.
+        result.__dict__['_sandbox'] = self._graph_run.deps.sandbox
+        return result
 
     def all_messages(self) -> list[_messages.ModelMessage]:
         """Return all messages for the run so far.
@@ -644,6 +652,26 @@ class AgentRunResult(Generic[OutputDataT]):
     )
     _new_message_index: int = dataclasses.field(repr=False, compare=False, default=0)
     _traceparent_value: str | None = dataclasses.field(repr=False, compare=False, default=None)
+
+    @property
+    def sandbox(self) -> Sandbox:
+        """The [`Sandbox`][pydantic_ai.sandboxes.Sandbox] the run used.
+
+        Pass it to a later run or a subagent as `sandbox=result.sandbox` to keep working in the same
+        environment. Nothing tears it down when the run ends, so it is still usable here: copy files
+        out, or destroy it yourself through
+        [`backend`][pydantic_ai.sandboxes.Sandbox.backend] if your provider supports that.
+
+        A result that did not come from a run — one deserialized from JSON, or built by hand — has
+        a placeholder whose operations explain that no sandbox is attached.
+        """
+        # Deliberately not a dataclass field. A result is serializable and a sandbox is not: it
+        # holds a live handle to an environment, and Temporal and Prefect both put whole results
+        # on the wire. Keeping it off `__dataclass_fields__` keeps it out of every serializer.
+        sandbox = self.__dict__.get('_sandbox')
+        if sandbox is None:
+            sandbox = self.__dict__['_sandbox'] = unattached_sandbox()
+        return sandbox
 
     @overload
     def _traceparent(self, *, required: Literal[False]) -> str | None: ...

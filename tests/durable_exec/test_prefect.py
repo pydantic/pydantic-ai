@@ -108,6 +108,7 @@ from pydantic_ai.realtime import (
     RealtimeSession,
 )
 from pydantic_ai.realtime.codec import RealtimeConnection
+from pydantic_ai.sandboxes import SandboxRef
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, ToolsetTool
@@ -164,6 +165,7 @@ from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsSameStr, IsStr
 from ..continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
 from ..model_lifecycle_utils import LifecycleTrackingModel
+from ..sandbox_fakes import ref_sandbox
 
 
 def test_durability_codecs() -> None:
@@ -2211,6 +2213,18 @@ def test_cache_policy_keys_the_run_context_tool_call_id_verbatim():
     assert key_for_history('model-first') != key_for_history('model-second')
 
 
+def test_cache_policy_keys_deferred_sandbox_identity():
+    cache_policy = PrefectAgentInputs()
+    mock_task_ctx = MagicMock()
+
+    def key_for(sandbox_id: str) -> str | None:
+        sandbox = ref_sandbox(SandboxRef(sandbox_id=sandbox_id))
+        ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), sandbox=sandbox)
+        return cache_policy.compute_key(task_ctx=mock_task_ctx, inputs={'ctx': ctx}, flow_parameters={})
+
+    assert key_for('alpha') != key_for('beta')
+
+
 def test_cache_policy_excludes_non_serializable_metadata_and_validation_context():
     """`metadata` and `validation_context` hold arbitrary user values, like `deps`.
 
@@ -2441,6 +2455,9 @@ def test_cache_key_run_context_projection_is_exhaustive():
         '_durable_operations',  # runtime callables are derived from the static agent and do not vary cache identity
         '_run_capabilities_by_id',  # live instances are represented by their projected capability state instead
     }
+    projected_via_derived_key = {
+        'sandbox',  # projected as `sandbox_id`, known without connecting a deferred sandbox
+    }
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
     projected = set(_replace_run_context({'ctx': ctx})['ctx'])
     all_fields = set(RunContext.__dataclass_fields__)
@@ -2448,7 +2465,7 @@ def test_cache_key_run_context_projection_is_exhaustive():
     overlap = projected & cache_irrelevant
     assert not overlap, f'Fields both projected and marked irrelevant: {overlap}'
 
-    uncategorized = all_fields - (projected | cache_irrelevant)
+    uncategorized = all_fields - (projected | cache_irrelevant | projected_via_derived_key)
     assert not uncategorized, (
         f'Uncategorized `RunContext` fields: {uncategorized}. Add each to the `_replace_run_context` '
         'projection (if it should fork the cache key) or to `cache_irrelevant` (with a reason).'
