@@ -13,6 +13,7 @@ import asyncio
 import importlib
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -20,7 +21,7 @@ import anyio
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent, RequestUsage, RunContext
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
@@ -47,7 +48,7 @@ from pydantic_ai.realtime import (
     RealtimeSession,
     RealtimeTurnCompleteEvent,
 )
-from pydantic_ai.usage import RequestUsage, RunUsage
+from pydantic_ai.usage import RunUsage
 
 from ..conftest import IsDatetime, IsSameStr, IsStr, try_import
 from .conftest import REAL_SDP_OFFER
@@ -127,6 +128,7 @@ async def test_session_when_idle_enqueue_waits_for_response_boundary(
                     },
                     output_tokens=5,
                     input_tokens=24,
+                    cost=Decimal('0.000176'),
                 ),
                 model_name='gpt-realtime',
                 timestamp=IsDatetime(),
@@ -159,6 +161,7 @@ async def test_session_when_idle_enqueue_waits_for_response_boundary(
                     },
                     output_tokens=9,
                     input_tokens=52,
+                    cost=Decimal('0.000352'),
                 ),
                 model_name='gpt-realtime',
                 timestamp=IsDatetime(),
@@ -354,6 +357,7 @@ async def test_provider_factory_text_turn(
                         'output_text_tokens': 5,
                         'audio_tokens': 0,
                     },
+                    cost=Decimal('0.000128'),
                 ),
                 model_name='gpt-realtime',
                 timestamp=IsDatetime(),
@@ -493,6 +497,7 @@ async def test_audio_in_server_vad_turn(
                 'output_text_tokens': 28,
                 'audio_tokens': 136,
             },
+            cost=Decimal('0.010072'),
             requests=1,
         )
     )
@@ -697,6 +702,7 @@ async def test_tool_can_close_session(openai_ws_cassette: tuple[Provider[Any], R
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='hang_up', args='{}', tool_call_id=(tool_call_id := IsSameStr()))],
+                usage=RequestUsage(cost=Decimal('0.0')),
                 model_name='gpt-realtime',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -772,6 +778,7 @@ async def test_tool_error_ends_transcript_only_session(
                         tool_call_id=IsStr(),
                     )
                 ],
+                usage=RequestUsage(cost=Decimal('0.0')),
                 model_name='gpt-realtime',
                 timestamp=IsDatetime(),
                 provider_name='openai',

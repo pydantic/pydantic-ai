@@ -12,7 +12,9 @@ and follow-up text runs share one usage budget and trace.
 Read cumulative usage from
 [`RealtimeSession.usage`][pydantic_ai.realtime.RealtimeSession.usage]. It includes input/output
 tokens, provider audio and cache breakdowns where available, and tool-call counts. Usage updates are
-not emitted as session events. As with a standard run's
+not emitted as session events. When [genai-prices](https://github.com/pydantic/genai-prices) has
+pricing for the model, `session.usage.cost` contains the accumulated USD cost and `cost_limit`
+applies. As with a standard run's
 [usage limits](../agent.md#usage-limits), pass `usage=` to accumulate into a shared object — for
 example one carried across a voice call and its follow-up text runs — and `usage_limits=` to cap a
 session:
@@ -44,10 +46,14 @@ Input-transcription usage is reported separately in `RunUsage.details` under
 `input_transcription_*` keys. It is not included in response token totals or attributed to a
 `ModelResponse`, because transcription can use a separate model and billing meter.
 
-Token and tool-call limits are checked as usage accrues. Request limits are checked before sending
-text, explicitly creating a response, or returning a tool result. With server-side VAD, the provider
-can begin a response without a client request; that limit is checked at the first response event.
-Breaches raise [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded] from iteration.
+Each recorded `ModelResponse` in `session.new_messages()` carries that response's usage. One
+tool-calling turn can span several responses, so use `session.usage` for the cumulative total.
+
+Token, cost, and tool-call limits are checked as usage accrues. Request limits are checked before
+sending text, explicitly creating a response, or returning a tool result. With server-side VAD, the
+provider can begin a response without a client request; that limit is checked at the first response
+event. Breaches raise [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded] from
+iteration, or when the session context exits if only an audio or transcript view is consumed.
 
 Provider-specific usage fields belong on the
 [OpenAI](openai.md#feature-support-and-limitations),
