@@ -117,7 +117,10 @@ def infer_image_generation_model(
         raise UserError(f'Provider {provider_name!r} does not support direct image generation.')
 
 
-@dataclass(init=False)
+# `eq=False`: a facade over a live model and the provider client behind it compares by identity.
+# `instrument` is its only dataclass field, so generated field equality would compare two generators
+# over different models as equal, and would leave the class unhashable.
+@dataclass(init=False, eq=False)
 class ImageGenerator:
     """High-level interface for generating images.
 

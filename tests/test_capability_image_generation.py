@@ -663,6 +663,33 @@ class TestImageGenerationCapability:
         assert first.last_settings is None
         assert later.last_settings == snapshot({'dimensions': (1536, 1024)})
 
+    async def test_image_generation_merged_local_generator_takes_the_later_one(
+        self, allow_model_requests: None, direct_generation_model: FunctionModel
+    ):
+        """Two capabilities naming different generators leave one unused, so the later one wins.
+
+        `ImageGenerator` compares by identity, and that is what makes these two different values:
+        generated field equality would have compared only `instrument`, called them equal, and
+        merged them to the first, disagreeing with
+        `test_image_generation_merged_fallback_image_model_takes_the_later_one`.
+        """
+        first_model = TestImageGenerationModel('first')
+        later_model = TestImageGenerationModel('later')
+        later = ImageGenerator(later_model)
+        merged = ImageGeneration.combine(
+            [
+                ImageGeneration(native=False, local=ImageGenerator(first_model)),
+                ImageGeneration(native=False, local=later, dimensions=(1536, 1024)),
+            ]
+        )
+        assert isinstance(merged, ImageGeneration)
+        assert merged.local is later
+
+        await Agent(direct_generation_model, capabilities=[merged]).run('Generate an image')
+
+        assert first_model.last_settings is None
+        assert later_model.last_settings == snapshot({'dimensions': (1536, 1024)})
+
     async def test_image_generation_merged_dimensions_take_the_later_pair(
         self, allow_model_requests: None, direct_generation_model: FunctionModel
     ):
