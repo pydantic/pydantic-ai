@@ -1213,6 +1213,19 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         """
         return _map_provider_details(response.choices[0])
 
+    def _require_choice(self, response: chat.ChatCompletion) -> chat_completion.Choice:
+        """Return the single choice of a validated completion.
+
+        The SDK type has no min-length constraint on `choices`, and OpenAI-compatible gateways
+        do return empty arrays (the streaming twin of this is already skipped per #5165) —
+        surface a typed error instead of a bare IndexError.
+        """
+        if not response.choices:
+            raise UnexpectedModelBehavior(
+                f'Invalid response from {self.system} chat completions endpoint: response contains no choices'
+            )
+        return response.choices[0]
+
     def _process_response(self, response: chat.ChatCompletion | str) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
         # Although the OpenAI SDK claims to return a Pydantic model (`ChatCompletion`) from the chat completions function:
@@ -1237,7 +1250,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         except ValidationError as e:
             raise UnexpectedModelBehavior(f'Invalid response from {self.system} chat completions endpoint: {e}') from e
 
-        choice = response.choices[0]
+        choice = self._require_choice(response)
 
         # Moderation is a top-level field, so it's read here rather than in the choice-scoped
         # `_process_provider_details` hook that subclasses may override.
