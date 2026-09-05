@@ -102,8 +102,15 @@ vocabulary yielded by a connection:
 [`ResponseDone`][pydantic_ai.realtime.codec.ResponseDone],
 [`RealtimeInputSpeechStartEvent`][pydantic_ai.realtime.RealtimeInputSpeechStartEvent],
 [`RealtimeInputSpeechEndEvent`][pydantic_ai.realtime.RealtimeInputSpeechEndEvent],
+[`RealtimeOutputSpeechStartEvent`][pydantic_ai.realtime.RealtimeOutputSpeechStartEvent],
+[`RealtimeOutputSpeechEndEvent`][pydantic_ai.realtime.RealtimeOutputSpeechEndEvent],
+[`RealtimeInputTranscriptionErrorEvent`][pydantic_ai.realtime.RealtimeInputTranscriptionErrorEvent],
 [`RealtimeResponseInterruptedEvent`][pydantic_ai.realtime.RealtimeResponseInterruptedEvent],
 [`RealtimeSessionReconnectEvent`][pydantic_ai.realtime.RealtimeSessionReconnectEvent],
+[`ConversationCreated`][pydantic_ai.realtime.codec.ConversationCreated],
+[`ConversationItemCreated`][pydantic_ai.realtime.codec.ConversationItemCreated],
+[`PartStartEvent`][pydantic_ai.messages.PartStartEvent],
+[`PartEndEvent`][pydantic_ai.messages.PartEndEvent],
 [`SessionUsage`][pydantic_ai.realtime.codec.SessionUsage],
 and [`RealtimeSessionErrorEvent`][pydantic_ai.realtime.RealtimeSessionErrorEvent].
 
@@ -112,14 +119,16 @@ session. The session translates codec events into the shared vocabulary from
 [`pydantic_ai.messages`][pydantic_ai.messages]: content streams as
 [`PartStartEvent`][pydantic_ai.messages.PartStartEvent] /
 [`PartDeltaEvent`][pydantic_ai.messages.PartDeltaEvent] /
-[`PartEndEvent`][pydantic_ai.messages.PartEndEvent] (carrying
-[`SpeechPart`][pydantic_ai.messages.SpeechPart]s and
-[`ToolCallPart`][pydantic_ai.messages.ToolCallPart]s), tool execution as
+[`PartEndEvent`][pydantic_ai.messages.PartEndEvent] (carrying shared message parts including
+[`SpeechPart`][pydantic_ai.messages.SpeechPart], [`TextPart`][pydantic_ai.messages.TextPart],
+[`ToolCallPart`][pydantic_ai.messages.ToolCallPart], and
+[`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart]), tool execution as
 [`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent] /
 [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent], inline deferred handling as
 [`DeferredToolRequestsEvent`][pydantic_ai.messages.DeferredToolRequestsEvent] /
 [`DeferredToolResultsEvent`][pydantic_ai.messages.DeferredToolResultsEvent], and the rest as the
 control-plane events above (`RealtimeInputSpeechStartEvent`, `RealtimeInputSpeechEndEvent`,
+`RealtimeOutputSpeechStartEvent`, `RealtimeOutputSpeechEndEvent`, `RealtimeInputTranscriptionErrorEvent`,
 `RealtimeResponseInterruptedEvent`, `RealtimeSessionReconnectEvent`, and `RealtimeSessionErrorEvent`), plus
 [`RealtimeTurnCompleteEvent`][pydantic_ai.realtime.RealtimeTurnCompleteEvent], which the
 session synthesizes rather than reading off the wire. Usage updates are accumulated on the session and are not yielded.

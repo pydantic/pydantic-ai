@@ -121,6 +121,12 @@ async def voice_socket(websocket: WebSocket):
             input_task.cancel()
 ```
 
+`handle_barge_in=True` is a no-op for this relay: `played_audio_bytes` counts a chunk as played when
+the relay forwards it, before the browser has actually played it, so the session sees no unplayed
+audio to flush. The relay must obtain the browser's real playback position and call
+[`interrupt(played_bytes=...)`][pydantic_ai.realtime.RealtimeSession.interrupt] with that count.
+Passing `played_ms=` records the provider-side cutoff but never flushes audio queued by the session.
+
 ## SIP/telephony bridge
 
 Terminate the phone call with a telephony provider such as Twilio, then build the service that

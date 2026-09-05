@@ -142,7 +142,9 @@ This is a strict subset of [`AgentStreamEvent`][pydantic_ai.messages.AgentStream
 Content is streamed as the shared [`PartStartEvent`][pydantic_ai.messages.PartStartEvent] /
 [`PartDeltaEvent`][pydantic_ai.messages.PartDeltaEvent] / [`PartEndEvent`][pydantic_ai.messages.PartEndEvent]
 events (carrying [`SpeechPart`][pydantic_ai.messages.SpeechPart]s and
-[`ToolCallPart`][pydantic_ai.messages.ToolCallPart]s), tool execution as
+other shared message parts, including [`TextPart`][pydantic_ai.messages.TextPart],
+[`ToolCallPart`][pydantic_ai.messages.ToolCallPart], and
+[`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart]), tool execution as
 [`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent] /
 [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent], inline deferred resolution
 as [`DeferredToolRequestsEvent`][pydantic_ai.messages.DeferredToolRequestsEvent] /

@@ -51,6 +51,21 @@ manual turn control.
 Do not call `create_response()` after `send('...')`: the text turn already asks for a response, so
 the pair asks twice and can make the model say the same thing twice.
 
+When a reply is already in flight, OpenAI-protocol providers queue the text turn and answer it next,
+as does Gemini 2.5. Gemini 3.1 instead interrupts the reply in flight, emits a
+[`RealtimeResponseInterruptedEvent`][pydantic_ai.realtime.RealtimeResponseInterruptedEvent], records
+the partial reply as interrupted, and answers the new text turn.
+
+## Muting the microphone
+
+With server VAD, muting must preserve the audio stream. Simply stopping audio frames can leave the
+provider's current speech segment open indefinitely, so keep sending zero-valued PCM16 frames at the
+normal cadence while muted. If you use [manual turn control](#push-to-talk), stop sending instead and
+call [`clear_audio()`][pydantic_ai.realtime.RealtimeSession.clear_audio] to discard the partial input.
+
+Server VAD recognizes speech, not arbitrary signal energy. A pure tone may never start a speech
+segment, so use recorded speech rather than tones when testing turn detection.
+
 ## Barge-in
 
 With server-side turn detection, providers interrupt the model when they detect new user speech.
@@ -219,8 +234,9 @@ held until that response completes and is dropped if the user barges in, so retu
 `create_response()` does not mean speech has started.
 
 Server VAD enables `interrupt_response` by default, so any detected speech cancels a greeting in flight. This
-includes speaker echo and microphone transients while the audio path opens; keeping the microphone
-closed until the greeting has played avoids that race.
+includes speaker echo and microphone transients while the audio path opens. Until the greeting has
+played, mute microphone capture while continuing to send digital-silence frames as described in
+[Muting the microphone](#muting-the-microphone).
 
 ## Push-to-talk
 

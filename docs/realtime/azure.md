@@ -182,6 +182,13 @@ async def main():
 
 Voice-Live-only knobs use the `azure_voice_live_*` prefix (e.g.
 [`azure_voice_live_turn_detection`][pydantic_ai.realtime.azure.AzureRealtimeModelSettings.azure_voice_live_turn_detection]).
+Voice Live defaults input transcription to `whisper-1` when the deployment name starts with
+`gpt-realtime`, and to `azure-speech` otherwise. This is a name match, so a custom-named
+`gpt-realtime` deployment routed through `profile=` receives the `azure-speech` default; set
+`input_transcription_model` explicitly when that is not the intended deployment.
+
+Voice Live silently ignores the inherited `openai_*` settings plus `thinking` and
+`parallel_tool_calls`. Use Voice-Live-specific settings where available.
 
 ### Which models use which API
 
