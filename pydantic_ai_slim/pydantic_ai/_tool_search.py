@@ -86,6 +86,8 @@ class ToolSearchArgs(TypedDict):
     wire format from this shape on emit.
     """
 
+    __pydantic_config__ = pydantic.ConfigDict(extra='allow')
+
     queries: list[str]
     """Normalized search inputs.
 
@@ -105,6 +107,8 @@ class ToolSearchReturnContent(TypedDict):
     [`ToolSearchReturnPart.content`][pydantic_ai.messages.ToolSearchReturnPart.content]
     (local-fallback path) as the canonical cross-provider shape.
     """
+
+    __pydantic_config__ = pydantic.ConfigDict(extra='allow')
 
     discovered_tools: list[ToolSearchMatch]
     """Matches ordered by relevance. An empty list means "search ran, nothing matched"."""
