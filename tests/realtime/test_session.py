@@ -2871,7 +2871,7 @@ async def test_concurrent_close_calls_wait_for_the_teardown() -> None:
 
 
 async def test_tool_that_swallows_its_close_cancellation_and_closes_again_does_not_deadlock() -> None:
-    agent: Agent[None, str] = Agent()
+    agent = Agent[None, str](deps_type=type(None))
     closed_twice = asyncio.Event()
 
     @agent.tool
