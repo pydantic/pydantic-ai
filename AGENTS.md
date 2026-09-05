@@ -112,7 +112,7 @@ The project uses:
 - `pytest` in `tests/`, via `make test`, with:
     - `inline-snapshot` for inline assertions
     - `pytest-recording` and `vcrpy` for recording and playing back requests to model APIs
-- Documentation is published by [pydantic/unified-docs](https://github.com/pydantic/unified-docs).
+- Documentation is published by [pydantic/pydantic-docs](https://github.com/pydantic/pydantic-docs).
   `docs/navigation.yml` owns the Pydantic AI sidebar, routes, and redirects; `tests/test_examples.py`
   tests all code examples in the docs (including docstrings).
 - [`logfire`](docs/logfire.md) for OTel instrumentation of Pydantic AI and `httpx`
