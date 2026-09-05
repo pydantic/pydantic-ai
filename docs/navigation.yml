@@ -399,6 +399,10 @@ navigation:
             path: "system-reminders.md"
             source: "harness"
             slug: "harness/system-reminders"
+          - page: "Trajectory Judge"
+            path: "trajectory-judge.md"
+            source: "harness"
+            slug: "harness/trajectory-judge"
       - section: "Self-Extension"
         slug: ""
         contents:
