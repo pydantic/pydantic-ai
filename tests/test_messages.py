@@ -804,6 +804,20 @@ def test_builtin_tool_call_part_has_content_empty(args: dict[str, object] | str 
     assert not part.has_content()
 
 
+def test_instruction_part_serialization_roundtrip():
+    # `InstructionPart` advertises itself as deserializable via `part_kind`; the
+    # `ModelRequestPart` union must include it so stored message history containing
+    # instruction parts round-trips instead of raising a ValidationError (#8143).
+    messages: list[ModelMessage] = [ModelRequest(parts=[InstructionPart(content='be brief', dynamic=False)])]
+    serialized = ModelMessagesTypeAdapter.dump_python(messages, mode='json')
+    reloaded = ModelMessagesTypeAdapter.validate_python(serialized)
+    assert reloaded == messages
+    part = cast(InstructionPart, reloaded[0].parts[0])
+    assert isinstance(part, InstructionPart)
+    assert part.content == 'be brief'
+    assert part.dynamic is False
+
+
 def test_file_part_serialization_roundtrip():
     # Verify that a serialized BinaryImage doesn't come back as a BinaryContent.
     messages: list[ModelMessage] = [
