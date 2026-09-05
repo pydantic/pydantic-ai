@@ -1882,6 +1882,9 @@ class RealtimeSession:
         self._pending_provider_response_id = None
         self._pending_finish_reason = None
         self._response_limit_checked = False
+        # Not while closing: a response settled by `close()` is the last thing this session will ever
+        # spend, and raising from teardown would mask the reason the session is closing. Its cost is
+        # still accumulated above, so a shared `usage` object carries it into whatever runs next.
         if response is not None and not self._closed:
             self._check_usage_limits()
 
