@@ -34,8 +34,8 @@ the Gemini Developer API:
 
 | API | Model ID | Location |
 | --- | --- | --- |
-| Gemini Developer API | `gemini-2.5-flash-native-audio-latest` | Developer API configuration |
-| Gemini Developer API | `gemini-3.1-flash-live-preview` | Developer API configuration |
+| Gemini Developer API | `gemini-2.5-flash-native-audio-latest` | n/a (no location) |
+| Gemini Developer API | `gemini-3.1-flash-live-preview` | n/a (no location) |
 | Vertex AI / gateway | `gemini-live-2.5-flash` | `global` |
 | Vertex AI / gateway | `gemini-live-2.5-flash-native-audio` | `us-central1` |
 
