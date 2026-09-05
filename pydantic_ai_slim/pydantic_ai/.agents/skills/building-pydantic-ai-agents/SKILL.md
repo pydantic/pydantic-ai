@@ -317,7 +317,7 @@ Key facts for building realtime agents:
   its call is recorded as interrupted), or call `ctx.cancel()` to make the session context raise
   `RunCancelled`.
 - **Late event consumption is bounded**: while nothing is iterating the session, it retains every
-  structural event but only the most recent 512 audio and transcript `PartDeltaEvent`s. An active
+  structural event but only the most recent 512 `PartDeltaEvent`s. An active
   `async for event in session` remains lossless.
 - **Browser WebRTC (OpenAI and Azure OpenAI)**: for browser voice agents, relay the browser's SDP
   offer server-side with `agent.realtime(model).answer_webrtc_offer(sdp_offer)` — the agent's

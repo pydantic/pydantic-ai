@@ -981,7 +981,9 @@ class RealtimeSession:
 
     def _trim_queue_deltas(self) -> None:
         while self._queue_delta_count > _SESSION_DELTA_QUEUE_SIZE:
-            # Deltas make up the bulk of a backed-up queue, so the oldest one is normally at the head.
+            # Deltas make up the bulk of a backed-up queue, so the oldest one is normally near the head.
+            # The scan only crosses the structural events retained ahead of it — a handful per turn, so
+            # negligible next to the audio frame that triggered it even after hundreds of turns.
             oldest = next(index for index, queued in enumerate(self._queue) if isinstance(queued, PartDeltaEvent))
             del self._queue[oldest]
             self._queue_delta_count -= 1
@@ -3091,8 +3093,8 @@ class RealtimeSession:
             async for event in stream_iterator:  # pragma: no branch
                 yield event
         finally:
-            try:
-                await aclose_all((stream_iterator, stream, source))
-            finally:
-                self._iterator_active = False
-                self._trim_queue_deltas()
+            # Nobody reads the queue past this point, so the bound applies again before the wrapper's
+            # cleanup runs, however long that takes.
+            self._iterator_active = False
+            self._trim_queue_deltas()
+            await aclose_all((stream_iterator, stream, source))
