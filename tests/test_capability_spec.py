@@ -44,13 +44,16 @@ from pydantic_ai.exceptions import (
     UserError,
 )
 from pydantic_ai.messages import (
+    BinaryImage,
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    TextPart,
     ToolCallPart,
     ToolReturnPart,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import (
     CodeExecutionTool,
@@ -69,13 +72,16 @@ from .capability_models import (
     noop_greet as _noop_greet,
     registered_capability_context as _registered_capability_context,
 )
-from .conftest import iter_message_parts, remove_schema_descriptions
+from .conftest import IsStr, iter_message_parts, remove_schema_descriptions, try_import
 
 _SEARCH_TOOLS_NAME = ToolSearch.function_tool_name
 
 pytestmark = [
     pytest.mark.anyio,
 ]
+
+with try_import() as logfire_imports_successful:
+    from logfire.testing import CaptureLogfire
 
 
 def test_capability_top_level_export() -> None:
@@ -105,10 +111,34 @@ def test_capability_types() -> None:
 
 def test_instrumentation_default_settings() -> None:
     """`Instrumentation()` lazy-imports `InstrumentationSettings` and constructs default settings."""
-    from pydantic_ai.models.instrumented import InstrumentationSettings
-
     instr = Instrumentation()
     assert isinstance(instr.settings, InstrumentationSettings)
+
+
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+async def test_instrumentation_removes_binary_content_from_nested_lists(
+    allow_model_requests: None, capfire: CaptureLogfire
+):
+    def image_list() -> list[BinaryImage]:
+        return [BinaryImage(data=b'secret', media_type='image/png')]
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+            return ModelResponse(parts=[TextPart(content='done')])
+        return ModelResponse(parts=[ToolCallPart(tool_name='image_list', args={})])
+
+    agent = Agent(
+        FunctionModel(model_fn),
+        tools=[image_list],
+        capabilities=[Instrumentation(settings=InstrumentationSettings(include_binary_content=False))],
+    )
+    await agent.run('Generate images')
+
+    spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+    tool_span = next(span for span in spans if span['name'] == 'execute_tool image_list')
+    assert tool_span['attributes']['gen_ai.tool.call.result'] == snapshot(
+        [{'media_type': 'image/png', 'vendor_metadata': None, 'kind': 'binary', 'identifier': IsStr()}]
+    )
 
 
 def test_instrumentation_spec_covers_every_serializable_setting() -> None:
@@ -185,6 +215,38 @@ def test_agent_from_spec_image_generation():
     children = agent._root_capability.capabilities  # pyright: ignore[reportPrivateUsage]
     cap = next(c for c in children if isinstance(c, ImageGeneration))
     assert cap.local is False
+
+
+def test_agent_from_spec_direct_image_generation():
+    agent = Agent.from_spec(
+        {
+            'model': 'test',
+            'capabilities': [
+                {
+                    'ImageGeneration': {
+                        'native': False,
+                        'fallback_image_model': 'openai:gpt-image-1.5',
+                        'dimensions': [1280, 720],
+                    }
+                }
+            ],
+        }
+    )
+    children = agent._root_capability.capabilities  # pyright: ignore[reportPrivateUsage]
+    cap = next(c for c in children if isinstance(c, ImageGeneration))
+    assert cap.dimensions == (1280, 720)
+    assert isinstance(cap.dimensions, tuple)
+    assert cap.get_toolset() is not None
+
+
+def test_agent_from_spec_rejects_invalid_image_dimensions_length():
+    with pytest.raises(ValueError, match='`dimensions` must contain exactly two integers'):
+        Agent.from_spec(
+            {
+                'model': 'test',
+                'capabilities': [{'ImageGeneration': {'local': False, 'dimensions': [1280]}}],
+            }
+        )
 
 
 def test_agent_from_spec_web_fetch():
@@ -1878,10 +1940,17 @@ def test_model_json_schema_with_capabilities():
                             'anyOf': [{'$ref': '#/$defs/ImageGenerationTool'}, {'type': 'boolean'}],
                             'title': 'Native',
                         },
-                        'local': {'anyOf': [{'const': False, 'type': 'boolean'}, {'type': 'null'}], 'title': 'Local'},
+                        'local': {
+                            'anyOf': [{'const': False, 'type': 'boolean'}, {'type': 'null'}],
+                            'title': 'Local',
+                        },
                         'fallback_model': {
                             'anyOf': [{'$ref': '#/$defs/KnownModelName'}, {'type': 'string'}, {'type': 'null'}],
                             'title': 'Fallback Model',
+                        },
+                        'fallback_image_model': {
+                            'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                            'title': 'Fallback Image Model',
                         },
                         'action': {
                             'anyOf': [{'enum': ['generate', 'edit', 'auto'], 'type': 'string'}, {'type': 'null'}],
@@ -1932,10 +2001,43 @@ def test_model_json_schema_with_capabilities():
                             ],
                             'title': 'Size',
                         },
+                        'dimensions': {
+                            'anyOf': [
+                                {
+                                    'maxItems': 2,
+                                    'minItems': 2,
+                                    'prefixItems': [{'type': 'integer'}, {'type': 'integer'}],
+                                    'type': 'array',
+                                },
+                                {'type': 'null'},
+                            ],
+                            'title': 'Dimensions',
+                        },
                         'aspect_ratio': {
                             'anyOf': [
                                 {
-                                    'enum': ['21:9', '16:9', '4:3', '3:2', '1:1', '9:16', '3:4', '2:3', '5:4', '4:5'],
+                                    'enum': [
+                                        '1:1',
+                                        '1:2',
+                                        '1:4',
+                                        '1:8',
+                                        '2:1',
+                                        '2:3',
+                                        '3:2',
+                                        '3:4',
+                                        '4:1',
+                                        '4:3',
+                                        '4:5',
+                                        '5:4',
+                                        '8:1',
+                                        '9:16',
+                                        '9:19.5',
+                                        '9:20',
+                                        '16:9',
+                                        '19.5:9',
+                                        '20:9',
+                                        '21:9',
+                                    ],
                                     'type': 'string',
                                 },
                                 {'type': 'null'},

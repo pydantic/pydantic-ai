@@ -1,27 +1,21 @@
-import re
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+from pydantic_ai._utils import estimate_string_tokens
 from pydantic_ai.usage import RequestUsage
 
 from .base import EmbeddingModel
 from .result import EmbeddingResult, EmbedInputType
 from .settings import EmbeddingSettings
 
-# Regex for splitting text into approximate tokens (matches FunctionModel approach)
-_TOKEN_SPLIT_RE = re.compile(r'[\s",.:]+')
-
 
 def _estimate_tokens(text: str) -> int:
-    """Estimate the number of tokens in a text string.
+    """Estimate the tokens in `text`, reporting zero for blank input.
 
-    This is a rough approximation that splits on whitespace and punctuation,
-    matching the approach used by FunctionModel.
+    The shared estimator counts blank text as one token; this model reports none.
     """
-    if not text:
-        return 0  # pragma: no cover
-    return len(_TOKEN_SPLIT_RE.split(text.strip()))
+    return estimate_string_tokens(text) if text else 0
 
 
 @dataclass(init=False)

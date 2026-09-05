@@ -1,6 +1,6 @@
 # Orchestration and Integrations
 
-Read this file when the user wants multi-agent coordination, graphs, direct model calls, A2A, durable execution, embeddings, evals, or third-party integrations.
+Read this file when the user wants multi-agent coordination, graphs, direct model calls, A2A, durable execution, embeddings, image generation, evals, or third-party integrations.
 
 ## Coordinate Multiple Agents
 
@@ -113,6 +113,26 @@ from pydantic_ai import Embedder
 
 embedder = Embedder('openai:text-embedding-3-small')
 ```
+
+## Generate Images
+
+Use `ImageGenerator(...)` when the application, rather than an agent, decides that an image should be created or edited.
+
+```python
+from pydantic_ai import ImageGenerator
+
+generator = ImageGenerator('openai:gpt-image-2')
+result = generator.generate_sync('A watercolor map of a floating city.')
+image_bytes = result.image.data
+```
+
+Use `await generator.generate(...)` from async code. `result.image` is the first generated image as a `BinaryImage`; use `result.images` when you asked for several or need per-image metadata such as `revised_prompt`.
+
+`ImageGenerationSettings` carries only the portable settings — `dimensions`, `aspect_ratio`, `extra_headers`, `extra_body`. Everything else, including image count, quality, output format, and background, is provider-prefixed on `OpenAIImageGenerationSettings`, `GoogleImageGenerationSettings`, or `XaiImageGenerationSettings`.
+
+Pass reference images through `images=[...]` to edit or transform them. A provider content block raises `ContentFilterError` instead of returning an empty result, so a rejected prompt can be retried explicitly.
+
+When the agent rather than the application should decide, use the `ImageGeneration` capability with `fallback_image_model='openai:gpt-image-2'` (or an `ImageGenerationModel`; an `ImageGenerator` goes on `local`), which calls the direct image model as a tool when the conversational model has no native image generation.
 
 ## Use LangChain Tools
 

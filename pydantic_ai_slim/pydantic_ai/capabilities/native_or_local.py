@@ -37,7 +37,7 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
     ```
 
     Or subclassed to set defaults by overriding `_default_native`, `_default_local`,
-    and `_requires_native`.
+    `_has_local_fallback`, and `_requires_native`.
     The built-in [`WebSearch`][pydantic_ai.capabilities.WebSearch],
     [`WebFetch`][pydantic_ai.capabilities.WebFetch], and
     [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] capabilities
@@ -135,7 +135,7 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
             raise UserError(f'{type(self).__name__}: constraint fields require the native tool, but native=False')
 
         # Disallow `native=False` without an explicit local — would produce a silent no-op capability.
-        if self.native is False and self.local is None:  # pyright: ignore[reportUnknownMemberType]
+        if self.native is False and not self._has_local_fallback():
             raise UserError(
                 f'{type(self).__name__}(native=False) requires an explicit local tool — '
                 'pass `local=...` (e.g. a strategy string, `True`, a callable, or a `Tool`/`AbstractToolset`).'
@@ -167,6 +167,21 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
     def _default_local(self) -> Tool[AgentDepsT] | AbstractToolset[AgentDepsT] | None:
         """Auto-detect a local fallback. Override in subclasses that have one."""
         return None
+
+    def _has_local_fallback(self) -> bool:
+        """Whether a local fallback is configured, once `local` has been resolved.
+
+        `local` is where one lives here, so the default reads that field. Override in a subclass
+        that builds its local tool from a field of its own —
+        [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] derives `generate_image` from
+        `fallback_image_model` — so `native=False` beside it reads as configured rather than as the
+        silent no-op capability `__post_init__` rejects.
+
+        An override owes the other half of that: `get_toolset` still yields nothing while `local` is
+        unset, so it has to produce the tool too. `ImageGeneration` resolves the generator onto
+        `local` on a copy there.
+        """
+        return self.local is not None
 
     def _resolve_local_strategy(self, name: str | bool) -> Tool[AgentDepsT] | AbstractToolset[AgentDepsT]:
         """Resolve a named local strategy (e.g. `'duckduckgo'`) or `local=True` to a concrete tool.

@@ -360,6 +360,42 @@ print(result.output)
 
 See the [input documentation](../input.md) for more details and examples.
 
+## Image generation
+
+Use [`ImageGenerator`][pydantic_ai.images.ImageGenerator] with a `google:` image model for direct generation and
+reference-image editing through the Gemini API, or with a `google-cloud:` model to run the same models on Vertex AI:
+
+```python {title="google_image_generation.py"}
+from pydantic_ai import ImageGenerator
+from pydantic_ai.images.google import GoogleImageGenerationSettings
+
+settings = GoogleImageGenerationSettings(
+    google_image_config={'aspect_ratio': '1:1', 'image_size': '1K'}
+)
+
+gemini_api_generator = ImageGenerator('google:gemini-3.1-flash-lite-image', settings=settings)
+vertex_generator = ImageGenerator('google-cloud:gemini-3.1-flash-image', settings=settings)
+```
+
+Construct [`GoogleImageGenerationModel`][pydantic_ai.images.google.GoogleImageGenerationModel] with a
+[`GoogleCloudProvider`][pydantic_ai.providers.google_cloud.GoogleCloudProvider] to set the Vertex project and location
+explicitly.
+
+The direct adapter accepts inline images and downloadable image URLs on both APIs. Google Files API URIs represented as
+[`UploadedFile`][pydantic_ai.messages.UploadedFile] are accepted only on the Gemini Developer API: the Files API is not
+available on Vertex AI, and the adapter does not accept the `gs://` URIs Vertex uses instead, so a Vertex client raises
+[`UserError`][pydantic_ai.exceptions.UserError] and reference images must be passed as `BinaryImage` or `ImageUrl`.
+Which API a model talks to is read off the client, not the provider name, so a Vertex-backed client passed to
+[`GoogleProvider`][pydantic_ai.providers.google.GoogleProvider] is treated as Vertex, and a Gemini Developer API client
+passed to [`GoogleCloudProvider`][pydantic_ai.providers.google_cloud.GoogleCloudProvider] keeps Files API support. See the
+[image-generation guide](../image-generation.md) for the common API and geometry behavior. The adapter requests an
+image-only response because [`ImageGenerator`][pydantic_ai.images.ImageGenerator] returns generated images rather than
+Gemini's optional conversational text.
+
+Every generated image carries an unconditional
+[SynthID watermark](https://ai.google.dev/responsible/docs/safeguards/synthid). The Gemini 3 image models are thinking
+models: thinking is always on and billed, and its tokens are included in the result's `usage`.
+
 ## Model settings
 
 You can customize model behavior using [`GoogleModelSettings`][pydantic_ai.models.google.GoogleModelSettings]:

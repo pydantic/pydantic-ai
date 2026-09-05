@@ -1,0 +1,440 @@
+from __future__ import annotations
+
+from collections.abc import Sequence
+from dataclasses import dataclass, field
+from typing import Literal, cast
+
+from typing_extensions import assert_never
+
+from pydantic_ai._utils import is_str_dict
+from pydantic_ai.exceptions import (
+    ContentFilterError,
+    ModelAPIError,
+    ModelHTTPError,
+    UnexpectedModelBehavior,
+    UserError,
+)
+from pydantic_ai.messages import BinaryImage, ImageUrl, UploadedFile
+from pydantic_ai.models import check_allow_model_requests, download_item
+from pydantic_ai.providers import Provider, infer_provider
+
+from ._google_geometry import resolve_google_geometry
+from ._media_type import image_media_type_from_bytes, output_format_from_media_type
+from ._validation import warn_image_generation_settings
+from .base import ImageGenerationInput, ImageGenerationModel
+from .result import GeneratedImage, ImageGenerationResult
+from .settings import ImageGenerationSettings
+
+try:
+    from google.genai import Client, errors
+    from google.genai.types import (
+        BlobDict,
+        ContentDict,
+        ContentUnionDict,
+        FileDataDict,
+        GenerateContentConfigDict,
+        GenerateContentResponse,
+        HttpOptionsDict,
+        ImageConfigDict,
+        PartDict,
+    )
+
+    from pydantic_ai.models.google import (
+        _GEMINI_API_PROVIDER_NAMES,  # pyright: ignore[reportPrivateUsage]
+        _metadata_as_usage,  # pyright: ignore[reportPrivateUsage]
+    )
+except ImportError as _import_error:
+    raise ImportError(
+        'Please install `google-genai` to use the Google image generation model, '
+        'you can use the `google` optional group — `pip install "pydantic-ai-slim[google]"`'
+    ) from _import_error
+
+
+LatestGoogleImageGenerationModelNames = Literal[
+    'gemini-2.5-flash-image',
+    'gemini-3-pro-image',
+    'gemini-3.1-flash-image',
+    'gemini-3.1-flash-lite-image',
+]
+"""Latest Gemini image generation models, served identically by the Gemini API and Google Cloud (Vertex AI).
+
+See the [Gemini image generation documentation](https://ai.google.dev/gemini-api/docs/image-generation)
+for available models and their capabilities.
+"""
+
+GoogleImageGenerationModelName = str | LatestGoogleImageGenerationModelNames
+"""Possible Google image generation model names."""
+
+_CONTENT_FILTER_FINISH_REASONS = frozenset(
+    {
+        'SAFETY',
+        'RECITATION',
+        'BLOCKLIST',
+        'PROHIBITED_CONTENT',
+        'SPII',
+        'IMAGE_SAFETY',
+        'IMAGE_PROHIBITED_CONTENT',
+        'IMAGE_RECITATION',
+        # Model Armor is a Google Cloud screening layer; the SDK's `FinishReason` enum has no member
+        # for it, so `models/google.py::_FINISH_REASON_MAP` keys it by string here too.
+        'MODEL_ARMOR',
+    }
+)
+"""`FinishReason` values that indicate the model refused for content-policy reasons rather than a benign no-output.
+
+`NO_IMAGE` and `IMAGE_OTHER` are deliberately absent: neither names a content-policy refusal, so both take the
+generic empty-response error instead of the moderation block that the capability converts into a prompt-rephrasing
+retry — `models/google.py` likewise leaves `IMAGE_OTHER` unmapped.
+"""
+
+
+class GoogleImageGenerationSettings(ImageGenerationSettings, total=False):
+    """Settings used for a Google image generation request.
+
+    All fields from [`ImageGenerationSettings`][pydantic_ai.images.ImageGenerationSettings]
+    are supported, plus Google-specific settings prefixed with `google_`.
+    """
+
+    # ALL FIELDS MUST BE `google_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
+
+    google_image_config: ImageConfigDict
+    """Google image generation configuration, including aspect ratio and image size."""
+
+
+@dataclass(init=False)
+class GoogleImageGenerationModel(ImageGenerationModel):
+    """Google Gemini image generation model implementation.
+
+    This model works with the Gemini image models, such as `gemini-3.1-flash-image` and
+    `gemini-3-pro-image`, through the Gemini Developer API (Google AI Studio) or Google Cloud
+    (Vertex AI). It asks Gemini for an image-only response, as
+    [`ImageGenerator`][pydantic_ai.images.ImageGenerator] returns generated images rather than
+    Gemini's optional conversational text.
+
+    Example:
+    ```python
+    from pydantic_ai.images.google import GoogleImageGenerationModel
+    from pydantic_ai.providers.google import GoogleProvider
+    from pydantic_ai.providers.google_cloud import GoogleCloudProvider
+
+    # Using the Gemini API (requires GOOGLE_API_KEY env var)
+    model = GoogleImageGenerationModel('gemini-3.1-flash-image')
+
+    # Or with explicit provider configuration
+    model = GoogleImageGenerationModel(
+        'gemini-3.1-flash-image',
+        provider=GoogleProvider(api_key='your-api-key'),
+    )
+
+    # Using Google Cloud (Vertex AI)
+    model = GoogleImageGenerationModel(
+        'gemini-3.1-flash-image',
+        provider=GoogleCloudProvider(project='my-project', location='global'),
+    )
+    ```
+    """
+
+    _model_name: GoogleImageGenerationModelName = field(repr=False)
+    _provider: Provider[Client] = field(repr=False)
+
+    def __init__(
+        self,
+        model_name: GoogleImageGenerationModelName,
+        *,
+        provider: Literal['google', 'google-cloud'] | Provider[Client] = 'google',
+        settings: ImageGenerationSettings | None = None,
+    ):
+        """Initialize a Google image generation model.
+
+        Args:
+            model_name: The name of the Gemini image model to use.
+                See [Google's image generation documentation](https://ai.google.dev/gemini-api/docs/image-generation)
+                for available models.
+            provider: The provider to use for authentication and API access. Can be:
+
+                - `'google'` (default): Uses the Gemini Developer API (Google AI Studio)
+                - `'google-cloud'`: Uses Google Cloud (formerly known as Vertex AI)
+                - A [`GoogleProvider`][pydantic_ai.providers.google.GoogleProvider] or
+                  [`GoogleCloudProvider`][pydantic_ai.providers.google_cloud.GoogleCloudProvider] instance
+                  for custom configuration
+            settings: Model-specific
+                [`ImageGenerationSettings`][pydantic_ai.images.ImageGenerationSettings]
+                to use as defaults for this model.
+        """
+        self._model_name = model_name
+
+        if isinstance(provider, str):
+            provider = infer_provider(provider)
+        self._provider = provider
+
+        super().__init__(settings=settings)
+
+    @property
+    def _client(self) -> Client:
+        return self._provider.client
+
+    @property
+    def base_url(self) -> str:
+        return self._provider.base_url
+
+    @property
+    def model_name(self) -> GoogleImageGenerationModelName:
+        """The image generation model name."""
+        return self._model_name
+
+    @property
+    def system(self) -> str:
+        """The image generation model provider."""
+        return self._provider.name
+
+    @property
+    def _is_google_cloud(self) -> bool:
+        """Whether requests go to Google Cloud (Vertex) rather than the Gemini Developer API.
+
+        Restated from `GoogleModel._is_google_cloud` rather than imported: it is an instance property
+        there whose body is a single attribute read. Derived from the client's transport rather than the
+        provider name, because either provider accepts a pre-built `client=` and stores it as-is, so the
+        two can disagree in both directions: a Vertex-backed client in `GoogleProvider` keeps `name`
+        `'google'`, and a Gemini-API client in `GoogleCloudProvider` keeps `name` `'google-cloud'`.
+        """
+        return bool(self._client.vertexai)
+
+    async def generate(
+        self,
+        prompt: str,
+        *,
+        images: Sequence[ImageGenerationInput] | None = None,
+        settings: ImageGenerationSettings | None = None,
+    ) -> ImageGenerationResult:
+        check_allow_model_requests()
+        prompt, images, settings = self.prepare_generate(prompt, images=images, settings=settings)
+        google_settings = cast(GoogleImageGenerationSettings, settings)
+        resolved = _resolve_google_settings(google_settings, model_name=self.model_name)
+        warn_image_generation_settings(self.system, ignored=resolved.ignored, conflicts=resolved.conflicts)
+        contents = await self._map_contents(prompt, images)
+
+        try:
+            response = await self._client.aio.models.generate_content(
+                model=self.model_name,
+                contents=contents,
+                config=resolved.config,
+            )
+        except errors.APIError as e:
+            if (status_code := e.code) >= 400:
+                body = cast(object, e.details)  # pyright: ignore[reportUnknownMemberType]
+                raise ModelHTTPError(
+                    status_code=status_code,
+                    model_name=self.model_name,
+                    body=body,
+                    headers=dict(e.response.headers) if e.response is not None else None,  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+                ) from e
+            raise ModelAPIError(model_name=self.model_name, message=str(e)) from e
+
+        return self._map_response(prompt, settings, response)
+
+    async def _map_contents(self, prompt: str, images: Sequence[ImageGenerationInput]) -> list[ContentUnionDict]:
+        parts: list[PartDict] = [{'text': prompt}]
+        for image in images:
+            parts.append(await self._map_input_image(image))
+        return [ContentDict(role='user', parts=parts)]
+
+    async def _map_input_image(self, image: ImageGenerationInput) -> PartDict:
+        if isinstance(image, BinaryImage):
+            part = PartDict(inline_data=BlobDict(data=image.data, mime_type=image.media_type))
+        elif isinstance(image, UploadedFile):
+            # Checked before the provider name: a file uploaded through the Gemini Files API carries
+            # `provider_name='google'`, which passes the name check on a Vertex-backed `GoogleProvider`
+            # and would otherwise be sent as a `fileData` part Vertex cannot resolve.
+            if self._is_google_cloud:
+                raise UserError(
+                    'The Gemini Files API is not available on Google Cloud (Vertex AI), and Google image generation '
+                    'does not accept the `gs://` URIs Vertex uses instead, so `UploadedFile` cannot be used on this '
+                    'transport. Pass reference images as `BinaryImage` or `ImageUrl` instead.'
+                )
+            self._validate_uploaded_file_provider(image)
+            if not image.file_id.startswith('https://'):
+                raise UserError(
+                    'Google image generation requires `UploadedFile.file_id` to be a Google Files API URI '
+                    'starting with `https://`'
+                )
+            part = PartDict(file_data=FileDataDict(file_uri=image.file_id, mime_type=image.media_type))
+        elif isinstance(image, ImageUrl):
+            # Only the Gemini Developer API can resolve a Files API URI, so on the Vertex transport the
+            # URL is downloaded and inlined rather than forwarded as a `fileData` part.
+            if (
+                not image.force_download
+                and not self._is_google_cloud
+                and image.url.startswith('https://generativelanguage.googleapis.com/v1beta/files')
+            ):
+                # Files API URIs carry no extension, so `media_type` can't be inferred from the URL.
+                try:
+                    media_type = image.media_type
+                except ValueError as e:
+                    raise UserError(
+                        'Google Files API image URLs carry no file extension, so `ImageUrl.media_type` '
+                        'cannot be inferred. Pass it explicitly, e.g. '
+                        "`ImageUrl(url, media_type='image/png')`."
+                    ) from e
+                part = PartDict(file_data=FileDataDict(file_uri=image.url, mime_type=media_type))
+            else:
+                downloaded_image = await download_item(image, data_format='bytes')
+                part = PartDict(
+                    inline_data=BlobDict(
+                        data=downloaded_image['data'],
+                        mime_type=downloaded_image['data_type'],
+                    )
+                )
+        else:
+            assert_never(image)
+
+        if image.vendor_metadata and (media_resolution := image.vendor_metadata.get('media_resolution')) is not None:
+            part['media_resolution'] = media_resolution
+        return part
+
+    def _validate_uploaded_file_provider(self, item: UploadedFile) -> None:
+        """Raise `UserError` unless the file carries a Gemini Developer API provider name.
+
+        Only reachable on that transport, as `_map_input_image` rejects every `UploadedFile` on Vertex
+        before this runs, so the accepted set is that transport's name family rather than `self.system`
+        alone. `google-gla` is the pre-v2 name for the transport and is still stamped on files in
+        persisted message history, and `self.system` covers the construction where `GoogleCloudProvider`
+        stores a Gemini API client as-is and keeps `name` `'google-cloud'`.
+
+        Wider than `GoogleModel._matching_provider_names`, which accepts a name family only when
+        `self.system` belongs to one and otherwise matches `self.system` alone: here the family is
+        accepted whatever `self.system` is, so a custom `BaseGoogleProvider` wrapping a Gemini API
+        client can still reference files uploaded through the Files API.
+        """
+        accepted = _GEMINI_API_PROVIDER_NAMES | {self.system}
+        if item.provider_name not in accepted:
+            raise UserError(
+                f'UploadedFile with `provider_name={item.provider_name!r}` cannot be used with {type(self).__name__}. '
+                f'Expected `provider_name` to be one of {sorted(accepted)!r}.'
+            )
+
+    def _map_response(
+        self,
+        prompt: str,
+        settings: ImageGenerationSettings,
+        response: GenerateContentResponse,
+    ) -> ImageGenerationResult:
+        images: list[GeneratedImage] = []
+        for candidate in response.candidates or []:
+            if candidate.content is None:
+                continue
+            for part in candidate.content.parts or []:
+                if part.thought or part.inline_data is None or part.inline_data.data is None:
+                    continue
+                # `mime_type` is optional on `Blob`, and the family is not PNG-only — `gemini-3-pro-image`
+                # returns JPEG — so sniff the bytes before falling back rather than labelling them PNG.
+                # Unlike OpenAI this trusts the provider's own claim first: Google's is accurate, and
+                # overriding it would mislabel formats the sniffer doesn't know.
+                media_type = (
+                    part.inline_data.mime_type or image_media_type_from_bytes(part.inline_data.data) or 'image/png'
+                )
+                image_provider_details: dict[str, object] | None = (
+                    {'has_thought_signature': True} if part.thought_signature else None
+                )
+                images.append(
+                    GeneratedImage(
+                        content=BinaryImage(data=part.inline_data.data, media_type=media_type),
+                        output_format=output_format_from_media_type(media_type),
+                        provider_details=image_provider_details,
+                    )
+                )
+
+        provider_details = _response_provider_details(response)
+        if not images:
+            body = str(provider_details) if provider_details else None
+            finish_reason = provider_details.get('finish_reason')
+            block_reason = provider_details.get('block_reason')
+            if block_reason is not None or finish_reason in _CONTENT_FILTER_FINISH_REASONS:
+                raise ContentFilterError(
+                    f'Google image generation was blocked for content moderation '
+                    f'(reason: {block_reason or finish_reason})',
+                    body,
+                )
+            message = 'Google image generation response did not contain any images'
+            if finish_reason is not None:
+                message = f'{message} (finish_reason: {finish_reason})'
+            raise UnexpectedModelBehavior(message, body)
+
+        return ImageGenerationResult(
+            images=images,
+            prompt=prompt,
+            usage=_metadata_as_usage(response, self.system, self.base_url),
+            model_name=response.model_version or self.model_name,
+            provider_name=self.system,
+            provider_url=self.base_url,
+            settings=settings,
+            provider_details=provider_details,
+            provider_response_id=response.response_id,
+        )
+
+
+@dataclass
+class _GoogleResolvedSettings:
+    config: GenerateContentConfigDict
+    ignored: list[str]
+    conflicts: list[str]
+
+
+def _resolve_google_settings(settings: GoogleImageGenerationSettings, *, model_name: str) -> _GoogleResolvedSettings:
+    image_config = ImageConfigDict(**(settings.get('google_image_config') or {}))
+
+    geometry = resolve_google_geometry(
+        model_name,
+        settings,
+        provider_aspect_ratio=image_config.get('aspect_ratio'),
+        provider_size=image_config.get('image_size'),
+        provider_size_is_set='image_size' in image_config,
+    )
+    if geometry.aspect_ratio is not None:
+        image_config['aspect_ratio'] = geometry.aspect_ratio
+    if geometry.image_size is not None:
+        image_config['image_size'] = geometry.image_size
+
+    ignored: list[str] = []
+    http_options: HttpOptionsDict = {}
+    if extra_headers := settings.get('extra_headers'):
+        http_options['headers'] = dict(extra_headers)
+    # `extra_body` is typed `object`, and only a string-keyed mapping can be merged into a JSON body.
+    if extra_body := settings.get('extra_body'):
+        if is_str_dict(extra_body):
+            http_options['extra_body'] = extra_body
+        else:
+            ignored.append('extra_body')
+
+    return _GoogleResolvedSettings(
+        config=GenerateContentConfigDict(
+            response_modalities=['IMAGE'],
+            image_config=image_config or None,
+            http_options=http_options or None,
+        ),
+        ignored=ignored,
+        conflicts=geometry.conflicts,
+    )
+
+
+def _response_provider_details(response: GenerateContentResponse) -> dict[str, object]:
+    provider_details: dict[str, object] = {}
+    candidate = response.candidates[0] if response.candidates else None
+
+    if candidate and candidate.finish_reason:
+        provider_details['finish_reason'] = candidate.finish_reason.value
+    if candidate and candidate.safety_ratings:
+        provider_details['safety_ratings'] = [rating.model_dump(by_alias=True) for rating in candidate.safety_ratings]
+    if response.prompt_feedback and response.prompt_feedback.block_reason:
+        provider_details['block_reason'] = response.prompt_feedback.block_reason.value
+        if response.prompt_feedback.block_reason_message:
+            provider_details['block_reason_message'] = response.prompt_feedback.block_reason_message
+        if response.prompt_feedback.safety_ratings:
+            provider_details['safety_ratings'] = [
+                rating.model_dump(by_alias=True) for rating in response.prompt_feedback.safety_ratings
+            ]
+    if response.create_time is not None:
+        provider_details['timestamp'] = response.create_time
+    if response.usage_metadata and response.usage_metadata.traffic_type:
+        provider_details['traffic_type'] = response.usage_metadata.traffic_type.value
+
+    return provider_details

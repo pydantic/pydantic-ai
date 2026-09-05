@@ -603,6 +603,11 @@ navigation:
         slug: "integrations/logfire"
         aliases:
           - "logfire"
+      - page: "Image Generation"
+        path: "image-generation.md"
+        slug: "guides/image-generation"
+        aliases:
+          - "image-generation"
       - page: "Embeddings"
         path: "embeddings.md"
         slug: "guides/embeddings"
@@ -922,6 +927,11 @@ navigation:
           - page: "function_signature"
             path: "api/function_signature.md"
             slug: "api/pydantic-ai/function_signature"
+          - page: "images"
+            path: "api/images.md"
+            slug: "api/pydantic-ai/images"
+            aliases:
+              - "api/images"
           - page: "mcp"
             path: "api/mcp.md"
             slug: "api/pydantic-ai/mcp"

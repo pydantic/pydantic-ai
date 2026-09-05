@@ -5698,8 +5698,8 @@ requires-dist = [
     { name = "websockets", marker = "extra == 'openai-realtime'", specifier = ">=14.0" },
     { name = "websockets", marker = "extra == 'realtime'", specifier = ">=14.0" },
     { name = "websockets", marker = "extra == 'xai-realtime'", specifier = ">=14.0" },
-    { name = "xai-sdk", marker = "extra == 'xai'", specifier = ">=1.14.0" },
-    { name = "xai-sdk", marker = "extra == 'xai-realtime'", specifier = ">=1.14.0" },
+    { name = "xai-sdk", marker = "extra == 'xai'", specifier = ">=1.16.0" },
+    { name = "xai-sdk", marker = "extra == 'xai-realtime'", specifier = ">=1.16.0" },
 ]
 provides-extras = ["ag-ui", "anthropic", "bedrock", "bedrock-mantle", "cerebras", "cli", "cohere", "crusoe", "dbos", "duckduckgo", "evals", "exa", "google", "google-realtime", "groq", "huggingface", "logfire", "mcp", "mcp-tasks", "mistral", "openai", "openai-realtime", "openrouter", "prefect", "realtime", "retries", "sentence-transformers", "snowflake", "spec", "tavily", "temporal", "ui", "voyageai", "web", "web-fetch", "xai", "xai-realtime", "zai"]
 

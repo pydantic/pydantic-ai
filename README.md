@@ -23,7 +23,7 @@
 
 ---
 
-**Pydantic AI** is the Python AI SDK: a typed, [extensible](https://pydantic.dev/docs/ai/guides/extensibility/) agent loop with [every model](https://pydantic.dev/docs/ai/models/overview/) a string swap away. The same agent [runs everywhere you need it](https://pydantic.dev/docs/ai/overview/interfaces/): behind a [web frontend](https://pydantic.dev/docs/ai/integrations/ui/overview/), in the [terminal](https://pydantic.dev/docs/ai/integrations/cli/), on a [voice call](https://pydantic.dev/docs/ai/realtime/overview/), on a [durable background queue](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/), or as a plain object you call [`run()`](https://pydantic.dev/docs/ai/core-concepts/agent/#running-agents) on. [Image generation](https://pydantic.dev/docs/ai/capabilities/image-generation/) and [embeddings](https://pydantic.dev/docs/ai/guides/embeddings/) come in the same box.
+**Pydantic AI** is the Python AI SDK: a typed, [extensible](https://pydantic.dev/docs/ai/guides/extensibility/) agent loop with [every model](https://pydantic.dev/docs/ai/models/overview/) a string swap away. The same agent [runs everywhere you need it](https://pydantic.dev/docs/ai/overview/interfaces/): behind a [web frontend](https://pydantic.dev/docs/ai/integrations/ui/overview/), in the [terminal](https://pydantic.dev/docs/ai/integrations/cli/), on a [voice call](https://pydantic.dev/docs/ai/realtime/overview/), on a [durable background queue](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/), or as a plain object you call [`run()`](https://pydantic.dev/docs/ai/core-concepts/agent/#running-agents) on. [Image generation](https://pydantic.dev/docs/ai/guides/image-generation/) and [embeddings](https://pydantic.dev/docs/ai/guides/embeddings/) come in the same box.
 
 **[Pydantic AI Harness](https://github.com/pydantic/pydantic-ai-harness)** has everything an agent needs for complex, long-running work, snapped on as [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/), from [memory](https://pydantic.dev/docs/ai/harness/memory/), [sub-agents](https://pydantic.dev/docs/ai/harness/subagents/), and [context management](https://pydantic.dev/docs/ai/harness/compaction/) to a complete [coding agent](https://pydantic.dev/docs/ai/harness/coder/).
 
@@ -187,7 +187,7 @@ The model calls your tools mid-conversation while it keeps talking, and every se
 
 ### Image generation
 
-Ask for an image and make it the run's typed [output](https://pydantic.dev/docs/ai/core-concepts/output/):
+Generate an image with a dedicated image model, no agent run required:
 
 ```bash
 uv add pydantic-ai
@@ -196,16 +196,16 @@ uv add pydantic-ai
 ```python
 from pathlib import Path
 
-from pydantic_ai import Agent, BinaryImage
+from pydantic_ai import ImageGenerator
 
-agent = Agent('openai:gpt-5.6-sol', output_type=BinaryImage)
-result = agent.run_sync('Generate a minimalist logo for a coffee shop called Extract.')
-Path('logo.png').write_bytes(result.output.data)
+generator = ImageGenerator('openai:gpt-image-2')
+result = generator.generate_sync('A minimalist logo for a coffee shop called Extract.')
+Path('logo.png').write_bytes(result.image.data)
 ```
 
-[Provider-native generation](https://pydantic.dev/docs/ai/tools-toolsets/native-tools/#image-generation-tool) on models that support it (like this one), a [subagent fallback](https://pydantic.dev/docs/ai/capabilities/image-generation/) you can configure for the rest, and a [standalone image API](https://github.com/pydantic/pydantic-ai/pull/5357) on the way.
+That [standalone image API](https://pydantic.dev/docs/ai/guides/image-generation/) is for when your application decides; when an agent run decides, there is [provider-native generation](https://pydantic.dev/docs/ai/tools-toolsets/native-tools/#image-generation-tool) with `output_type=BinaryImage` for a typed image [output](https://pydantic.dev/docs/ai/core-concepts/output/#image-output), and the [`ImageGeneration` capability](https://pydantic.dev/docs/ai/capabilities/image-generation/) with its fallbacks for models that generate no images of their own.
 
-**Build this →** [Image Generation](https://pydantic.dev/docs/ai/capabilities/image-generation/)
+**Build this →** [Image Generation](https://pydantic.dev/docs/ai/guides/image-generation/)
 
 ## Why Pydantic AI
 

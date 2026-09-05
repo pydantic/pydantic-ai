@@ -1,0 +1,425 @@
+from __future__ import annotations
+
+import base64
+import binascii
+import json
+from collections.abc import Sequence
+from dataclasses import dataclass, field
+from typing import Literal, cast
+
+from typing_extensions import assert_never
+
+from pydantic_ai.exceptions import ContentFilterError, ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
+from pydantic_ai.messages import BinaryImage, ImageUrl, UploadedFile
+from pydantic_ai.models import check_allow_model_requests, download_item
+from pydantic_ai.providers import Provider, infer_provider
+from pydantic_ai.usage import RequestUsage
+
+from ._media_type import image_media_type_from_bytes, output_format_from_media_type
+from ._openai_geometry import resolve_openai_geometry
+from ._validation import validate_image_count, warn_image_generation_settings
+from .base import ImageGenerationInput, ImageGenerationModel
+from .result import GeneratedImage, ImageGenerationResult
+from .settings import ImageGenerationSettings
+
+try:
+    from openai import APIConnectionError, APIStatusError, AsyncOpenAI
+    from openai.types.image_model import ImageModel as LatestOpenAIImageModelNames
+    from openai.types.images_response import ImagesResponse, Usage
+
+    from pydantic_ai.models.openai import OMIT
+except ImportError as _import_error:
+    raise ImportError(
+        'Please install `openai` to use the OpenAI image generation model, '
+        'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
+    ) from _import_error
+
+OpenAIImageGenerationModelName = str | LatestOpenAIImageModelNames
+"""Possible OpenAI image generation model names."""
+
+_UNSUPPORTED_MODEL_NAMES = frozenset(('dall-e-2', 'dall-e-3'))
+"""DALL·E models the OpenAI SDK's `ImageModel` literal admits but this adapter does not implement.
+
+They diverge from the GPT Image contract in every dimension this adapter encodes: they default to
+`response_format='url'` (this adapter requires base64 bytes), have their own size sets, cap `n` at 1
+for `dall-e-3`, and use a `standard`/`hd` quality vocabulary. Rejecting them by name keeps the error
+actionable while leaving unrecognized future models to fall through to the provider.
+"""
+
+_INPUT_EXTENSIONS = {'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp'}
+"""Filename extension per media type the image-edit endpoint accepts, which reads the format off the name."""
+
+
+OpenAIImageOutputFormat = Literal['png', 'webp', 'jpeg']
+"""The image formats OpenAI's image endpoints accept as a requested output format.
+
+This types the `openai_output_format` request setting. It does not describe
+[`GeneratedImage.output_format`][pydantic_ai.images.GeneratedImage], which is a plain `str | None`
+derived from the media type each adapter resolves for the bytes the provider returned.
+"""
+
+
+class OpenAIImageGenerationSettings(ImageGenerationSettings, total=False):
+    """Settings used for an OpenAI image generation request.
+
+    All fields from [`ImageGenerationSettings`][pydantic_ai.images.ImageGenerationSettings]
+    are supported, plus OpenAI-specific settings prefixed with `openai_`.
+    """
+
+    # ALL FIELDS MUST BE `openai_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
+
+    openai_n: int
+    """The number of images to generate."""
+
+    openai_output_format: OpenAIImageOutputFormat
+    """The generated image format."""
+
+    openai_size: str
+    """OpenAI image size setting.
+
+    This is provider-specific because OpenAI, Gemini, xAI, and other image APIs use
+    different concepts for pixel sizes, aspect ratios, and resolution tiers.
+    """
+
+    openai_quality: Literal['low', 'medium', 'high', 'auto']
+    """GPT Image quality setting."""
+
+    openai_background: Literal['transparent', 'opaque', 'auto']
+    """OpenAI image background setting."""
+
+    openai_input_fidelity: Literal['high', 'low']
+    """OpenAI input fidelity setting for image editing."""
+
+    openai_moderation: Literal['auto', 'low']
+    """OpenAI moderation strictness for image generation."""
+
+    openai_output_compression: int
+    """OpenAI output compression setting."""
+
+    openai_user: str
+    """OpenAI end-user identifier."""
+
+
+@dataclass(init=False)
+class OpenAIImageGenerationModel(ImageGenerationModel):
+    """OpenAI image generation model implementation.
+
+    This model works with OpenAI's Images API and the GPT Image model family, such as `gpt-image-2`,
+    `gpt-image-1.5`, `gpt-image-1`, and `gpt-image-1-mini`.
+
+    The `dall-e-2` and `dall-e-3` models are not supported and raise a
+    [`UserError`][pydantic_ai.exceptions.UserError] on construction, even though they are part of the
+    OpenAI SDK's `ImageModel` type: they diverge from the GPT Image request and response contract in
+    size, quality, image count, and response format. Unrecognized model names are passed through to
+    OpenAI, so newly released GPT Image models work without a Pydantic AI release.
+
+    Example:
+    ```python
+    from pydantic_ai.images.openai import OpenAIImageGenerationModel
+    from pydantic_ai.providers.openai import OpenAIProvider
+
+    # Using OpenAI directly
+    model = OpenAIImageGenerationModel('gpt-image-2')
+
+    # Using a custom base URL or client configuration
+    model = OpenAIImageGenerationModel(
+        'gpt-image-2',
+        provider=OpenAIProvider(base_url='https://my-provider.com/v1'),
+    )
+    ```
+    """
+
+    _model_name: OpenAIImageGenerationModelName = field(repr=False)
+    _provider: Provider[AsyncOpenAI] = field(repr=False)
+
+    def __init__(
+        self,
+        model_name: OpenAIImageGenerationModelName,
+        *,
+        provider: Literal['openai'] | Provider[AsyncOpenAI] = 'openai',
+        settings: ImageGenerationSettings | None = None,
+    ):
+        """Initialize an OpenAI image generation model.
+
+        Args:
+            model_name: The name of the GPT Image model to use.
+                See [OpenAI's image generation guide](https://developers.openai.com/api/docs/guides/image-generation)
+                for available models.
+            provider: The provider to use for authentication and API access. Can be:
+
+                - `'openai'` (default): Uses the standard OpenAI API
+                - A [`Provider`][pydantic_ai.providers.Provider] instance for custom configuration,
+                  such as an [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] with a
+                  custom `base_url` or `openai_client`
+            settings: Model-specific
+                [`ImageGenerationSettings`][pydantic_ai.images.ImageGenerationSettings]
+                to use as defaults for this model.
+
+        Raises:
+            UserError: If `model_name` is a DALL·E model, which this adapter does not support.
+        """
+        if model_name in _UNSUPPORTED_MODEL_NAMES:
+            raise UserError(
+                f'OpenAI image generation model {model_name!r} is not supported. '
+                'Use a GPT Image model such as `gpt-image-2` or `gpt-image-1`.'
+            )
+        self._model_name = model_name
+
+        if isinstance(provider, str):
+            provider = infer_provider(provider)
+        self._provider = provider
+
+        super().__init__(settings=settings)
+
+    @property
+    def _client(self) -> AsyncOpenAI:
+        return self._provider.client
+
+    @property
+    def base_url(self) -> str:
+        return str(self._client.base_url)
+
+    @property
+    def model_name(self) -> OpenAIImageGenerationModelName:
+        """The image generation model name."""
+        return self._model_name
+
+    @property
+    def system(self) -> str:
+        """The image generation model provider."""
+        return self._provider.name
+
+    async def generate(
+        self,
+        prompt: str,
+        *,
+        images: Sequence[ImageGenerationInput] | None = None,
+        settings: ImageGenerationSettings | None = None,
+    ) -> ImageGenerationResult:
+        check_allow_model_requests()
+        prompt, images, settings = self.prepare_generate(prompt, images=images, settings=settings)
+        openai_settings = cast(OpenAIImageGenerationSettings, settings)
+        resolved = _resolve_openai_settings(openai_settings, is_edit=bool(images), model_name=self.model_name)
+        warn_image_generation_settings(self.system, ignored=resolved.ignored, conflicts=resolved.conflicts)
+        output_compression = openai_settings.get('openai_output_compression')
+
+        try:
+            if images:
+                response = await self._client.images.edit(
+                    image=await self._map_input_images(images),
+                    prompt=prompt,
+                    model=self.model_name,
+                    n=openai_settings.get('openai_n') or OMIT,
+                    size=resolved.size or OMIT,
+                    output_format=openai_settings.get('openai_output_format') or OMIT,
+                    quality=openai_settings.get('openai_quality') or OMIT,
+                    background=openai_settings.get('openai_background') or OMIT,
+                    input_fidelity=openai_settings.get('openai_input_fidelity') or OMIT,
+                    output_compression=output_compression if output_compression is not None else OMIT,
+                    user=openai_settings.get('openai_user') or OMIT,
+                    extra_headers=openai_settings.get('extra_headers'),
+                    extra_body=openai_settings.get('extra_body'),
+                )
+            else:
+                response = await self._client.images.generate(
+                    prompt=prompt,
+                    model=self.model_name,
+                    n=openai_settings.get('openai_n') or OMIT,
+                    size=resolved.size or OMIT,
+                    output_format=openai_settings.get('openai_output_format') or OMIT,
+                    quality=openai_settings.get('openai_quality') or OMIT,
+                    background=openai_settings.get('openai_background') or OMIT,
+                    moderation=openai_settings.get('openai_moderation') or OMIT,
+                    output_compression=output_compression if output_compression is not None else OMIT,
+                    user=openai_settings.get('openai_user') or OMIT,
+                    extra_headers=openai_settings.get('extra_headers'),
+                    extra_body=openai_settings.get('extra_body'),
+                )
+        except APIStatusError as e:
+            if (status_code := e.status_code) >= 400:
+                match e.body:
+                    case {'code': 'moderation_blocked'}:
+                        raise ContentFilterError(
+                            'OpenAI image generation was blocked for content moderation',
+                            json.dumps(e.body),
+                        ) from e
+                    case _:
+                        pass
+                raise ModelHTTPError(
+                    status_code=status_code,
+                    model_name=self.model_name,
+                    body=e.body,
+                    headers=dict(e.response.headers),
+                ) from e
+            raise  # pragma: lax no cover
+        except APIConnectionError as e:
+            raise ModelAPIError(model_name=self.model_name, message=e.message) from e
+
+        return self._map_response(prompt, settings, response)
+
+    async def _map_input_images(self, images: Sequence[ImageGenerationInput]) -> list[tuple[str, bytes, str]]:
+        mapped_images: list[tuple[str, bytes, str]] = []
+        for index, image in enumerate(images):
+            if isinstance(image, UploadedFile):
+                # Every `UploadedFile` is rejected, but a file uploaded to another provider is rejected
+                # for that reason first: the mismatch is the actionable error, and the endpoint's lack of
+                # file-id support is only what is left once the file does belong to OpenAI.
+                self._validate_uploaded_file_provider(image)
+                raise UserError(
+                    'OpenAI image editing requires file content and does not accept `UploadedFile.file_id`; '
+                    'use `BinaryImage` or `ImageUrl` instead'
+                )
+            elif isinstance(image, ImageUrl):
+                downloaded_image = await download_item(image, data_format='bytes')
+                data = downloaded_image['data']
+                media_type = downloaded_image['data_type']
+            elif isinstance(image, BinaryImage):
+                data = image.data
+                media_type = image.media_type
+            else:
+                assert_never(image)
+
+            extension = _INPUT_EXTENSIONS.get(media_type)
+            if extension is None:
+                raise UserError(
+                    f'OpenAI image editing only supports PNG, JPEG, or WebP input images, got media type {media_type!r}'
+                )
+            mapped_images.append((f'image-{index}.{extension}', data, media_type))
+
+        return mapped_images
+
+    def _map_response(
+        self, prompt: str, settings: ImageGenerationSettings, response: ImagesResponse
+    ) -> ImageGenerationResult:
+        response_data = response.data
+        if not response_data:
+            raise UnexpectedModelBehavior('OpenAI image generation response did not contain any images')
+
+        images: list[GeneratedImage] = []
+        for image in response_data:
+            if not image.b64_json:
+                raise UnexpectedModelBehavior(
+                    'OpenAI image generation response did not contain base64 image data',
+                    _response_body(response),
+                )
+            try:
+                image_data = base64.b64decode(image.b64_json, validate=True)
+            except binascii.Error as e:
+                raise UnexpectedModelBehavior(
+                    'OpenAI image generation response did not contain valid base64 image data',
+                    _response_body(response),
+                ) from e
+
+            # OpenAI echoes the requested `output_format` even when it returns bytes in a different
+            # format (openai-node#1850), so trust the actual bytes rather than attach an unverified
+            # media type to arbitrary data.
+            if (sniffed_media_type := image_media_type_from_bytes(image_data)) is None:
+                raise UnexpectedModelBehavior(
+                    'OpenAI image generation response did not contain a recognized image format',
+                    _response_body(response),
+                )
+            images.append(
+                GeneratedImage(
+                    content=BinaryImage(data=image_data, media_type=sniffed_media_type),
+                    revised_prompt=image.revised_prompt,
+                    output_format=output_format_from_media_type(sniffed_media_type),
+                )
+            )
+
+        return ImageGenerationResult(
+            images=images,
+            prompt=prompt,
+            usage=_map_usage(response.usage, self.system, self.base_url, self.model_name),
+            model_name=self.model_name,
+            provider_name=self.system,
+            provider_url=self.base_url,
+            settings=settings,
+            provider_details=_response_provider_details(response),
+        )
+
+
+@dataclass
+class _OpenAIResolvedSettings:
+    size: str | None
+    ignored: list[str]
+    conflicts: list[str]
+
+
+def _resolve_openai_settings(
+    settings: OpenAIImageGenerationSettings, *, is_edit: bool, model_name: str
+) -> _OpenAIResolvedSettings:
+    ignored: list[str] = []
+
+    validate_image_count('OpenAI', settings.get('openai_n'))
+
+    if is_edit:
+        if settings.get('openai_moderation') is not None:
+            ignored.append('moderation')
+    elif settings.get('openai_input_fidelity') is not None:
+        ignored.append('input_fidelity')
+
+    geometry = resolve_openai_geometry(model_name, settings, provider_size=settings.get('openai_size'))
+
+    return _OpenAIResolvedSettings(size=geometry.size, ignored=ignored, conflicts=geometry.conflicts)
+
+
+def _response_body(response: ImagesResponse) -> str:
+    """Serialize a response for an error body, without the base64 image payloads.
+
+    `data` can hold up to ten multi-megabyte base64 strings, and none of it is diagnostic beyond what
+    the surrounding message already says.
+    """
+    return response.model_dump_json(exclude_none=True, exclude={'data'})
+
+
+def _response_provider_details(response: ImagesResponse) -> dict[str, object]:
+    provider_details: dict[str, object] = {}
+    if response.created:
+        provider_details['created'] = response.created
+    # `size`, `quality` and `background` are the request parameters echoed back, not measurements of
+    # the returned bytes — the same echo that made `output_format` unreliable (openai-node#1850) — so
+    # they stay provider detail rather than normalized fields on `GeneratedImage`.
+    if response.size:
+        provider_details['size'] = response.size
+    if response.quality:
+        provider_details['quality'] = response.quality
+    if response.background:
+        provider_details['background'] = response.background
+    return provider_details
+
+
+def _map_usage(
+    usage: Usage | None,
+    provider: str,
+    provider_url: str,
+    model: str,
+) -> RequestUsage:
+    if usage is None:
+        return RequestUsage()
+
+    details: dict[str, int] = {}
+    usage_data = usage.model_dump(exclude_none=True)
+    input_tokens_details = usage.input_tokens_details
+    output_tokens_details = usage.output_tokens_details
+    details['input_text_tokens'] = input_tokens_details.text_tokens
+    details['input_image_tokens'] = input_tokens_details.image_tokens
+    if output_tokens_details is not None:
+        details['output_text_tokens'] = output_tokens_details.text_tokens
+        details['output_image_tokens'] = output_tokens_details.image_tokens
+
+    extracted_usage = RequestUsage.extract(
+        {'model': model, 'usage': usage_data},
+        provider=provider,
+        provider_url=provider_url,
+        provider_fallback='openai',
+        api_flavor='images',
+        details=details,
+    )
+    # Backfill only the counts genai-prices failed to derive, so the typed fields it did populate
+    # survive.
+    if extracted_usage.input_tokens == 0 and usage.input_tokens:
+        extracted_usage.input_tokens = usage.input_tokens
+    if extracted_usage.output_tokens == 0 and usage.output_tokens:
+        extracted_usage.output_tokens = usage.output_tokens
+
+    return extracted_usage
