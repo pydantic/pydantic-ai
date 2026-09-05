@@ -36,7 +36,6 @@ from pydantic_ai import (
     ModelSettings,
     PartDeltaEvent,
     PartStartEvent,
-    RetryPromptPart,
     RunContext,
     RunUsage,
     TextPart,
@@ -2005,11 +2004,12 @@ async def test_dbos_agent_with_model_retry(allow_model_requests: None, dbos: DBO
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='Did you mean Mexico City?',
                         tool_name='get_weather_in_city',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        outcome='retried',
                     )
                 ],
                 timestamp=IsNow(tz=timezone.utc),

@@ -34,7 +34,6 @@ from pydantic_ai.messages import (
     ModelResponse,
     NativeToolCallPart,
     NativeToolReturnPart,
-    RetryPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -44,7 +43,7 @@ from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls
 from pydantic_ai.tools import DeferredToolRequests
 from pydantic_ai.usage import RequestUsage
 
-from .conftest import IsDatetime, IsSameStr, IsStr, iter_message_parts
+from .conftest import IsDatetime, IsSameStr, IsStr, iter_message_parts, legacy_retry_prompt_part
 
 pytestmark = pytest.mark.anyio
 
@@ -374,11 +373,11 @@ async def test_trailing_incomplete_tool_call_resumed_with_retry():
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content=[
                             {
                                 'type': 'json_invalid',
-                                'loc': (),
+                                'loc': [],
                                 'msg': 'Invalid JSON: EOF while parsing a string at line 1 column 13',
                                 'input': '{"city": "Mex',
                             }
@@ -386,6 +385,7 @@ async def test_trailing_incomplete_tool_call_resumed_with_retry():
                         tool_name='get_weather',
                         tool_call_id='call_1',
                         timestamp=IsDatetime(),
+                        outcome='retried',
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -736,7 +736,11 @@ async def test_duplicate_result_ignored():
 
 
 async def test_retry_prompt_answers_tool_call():
-    """A tool-bound `RetryPromptPart` answers its call, so the call is not repaired."""
+    """A tool-bound `RetryPromptPart` answers its call, so the call is not repaired.
+
+    The model is handed the retried tool return the part is translated into rather than the part
+    itself, so the assertion is on what repair did (nothing) and not on byte identity.
+    """
     agent, received = capture_agent()
 
     message_history: list[ModelMessage] = [
@@ -744,7 +748,7 @@ async def test_retry_prompt_answers_tool_call():
         ModelResponse(parts=[ToolCallPart('get_weather', {'city': 'Atlantis'}, tool_call_id='call_1')], timestamp=TS),
         ModelRequest(
             parts=[
-                RetryPromptPart(
+                legacy_retry_prompt_part(
                     'Unknown city, try again.', tool_name='get_weather', tool_call_id='call_1', timestamp=TS
                 )
             ],
@@ -755,7 +759,28 @@ async def test_retry_prompt_answers_tool_call():
 
     await agent.run('Thanks.', message_history=message_history)
 
-    assert received[0][: len(message_history)] == message_history
+    assert received[0][: len(message_history)] == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='What is the weather?', timestamp=TS)], timestamp=TS),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='get_weather', args={'city': 'Atlantis'}, tool_call_id='call_1')],
+                timestamp=TS,
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_weather',
+                        content='Unknown city, try again.',
+                        tool_call_id='call_1',
+                        timestamp=TS,
+                        outcome='retried',
+                    )
+                ],
+                timestamp=TS,
+            ),
+            ModelResponse(parts=[TextPart(content='I could not find that city.')], timestamp=TS),
+        ]
+    )
 
 
 async def test_plain_retry_prompt_does_not_answer_tool_call():
@@ -770,7 +795,7 @@ async def test_plain_retry_prompt_does_not_answer_tool_call():
         ModelRequest(parts=[UserPromptPart('What is the weather?', timestamp=TS)], timestamp=TS),
         ModelResponse(parts=[ToolCallPart('get_weather', {'city': 'Atlantis'}, tool_call_id='call_1')], timestamp=TS),
         ModelRequest(
-            parts=[RetryPromptPart('Response was not valid, try again.', tool_call_id='call_1', timestamp=TS)],
+            parts=[legacy_retry_prompt_part('Response was not valid, try again.', tool_call_id='call_1', timestamp=TS)],
             timestamp=TS,
         ),
         ModelResponse(parts=[TextPart('Let me try again.')], timestamp=TS),
@@ -790,7 +815,7 @@ async def test_plain_retry_prompt_does_not_answer_tool_call():
                 timestamp=TS,
                 outcome='interrupted',
             ),
-            RetryPromptPart(content='Response was not valid, try again.', tool_call_id='call_1', timestamp=TS),
+            UserPromptPart(content='<system>Response was not valid, try again.</system>', timestamp=TS),
         ]
     )
 

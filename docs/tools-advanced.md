@@ -552,7 +552,7 @@ If preserving cache hits matters, prefer providers/cases marked "Never", or use 
 
 ## Tool Execution, Retries, and Failures {#tool-retries}
 
-When a tool is executed, its arguments (provided by the LLM) are first validated against the function's signature using Pydantic (with optional [validation context](output.md#validation-context)). If validation fails (e.g., due to incorrect types or missing required arguments), a `ValidationError` is raised, and the framework automatically generates a [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] containing the validation details. This prompt is sent back to the LLM, informing it of the error and allowing it to correct the parameters and retry the tool call.
+When a tool is executed, its arguments (provided by the LLM) are first validated against the function's signature using Pydantic (with optional [validation context](output.md#validation-context)). If validation fails (e.g., due to incorrect types or missing required arguments), a `ValidationError` is raised, and the framework automatically answers the call with a [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] carrying the validation details and `outcome='retried'`. That result is sent back to the LLM on the provider's error channel, informing it of the error and allowing it to correct the parameters and retry the tool call.
 
 If a tool's own logic cannot produce a normal result, choose the exception based on what you want the model to do next:
 
@@ -563,7 +563,7 @@ Any other exception propagates out of the agent run and is not sent back to the 
 
 ### Requesting a Tool Retry
 
-Raising `ModelRetry` generates a [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] containing the exception message. That prompt is sent back to the LLM so it can correct the tool call, choose another tool, or try a different approach.
+Raising `ModelRetry` answers the call with a [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] carrying the exception message and `outcome='retried'`. That result is sent back to the LLM so it can correct the tool call, choose another tool, or try a different approach.
 
 ```python
 from pydantic_ai import ModelRetry
@@ -626,7 +626,7 @@ You can also raise `ModelRetry` or `ToolFailed` from tool validation and executi
 
 ### Tool Timeout
 
-You can set a timeout for tool execution to prevent tools from running indefinitely. If a tool exceeds its timeout, it is treated as a retryable failure and a retry prompt is sent to the model (counting towards the retry limit).
+You can set a timeout for tool execution to prevent tools from running indefinitely. If a tool exceeds its timeout, it is treated as a retryable failure and the call is answered with a retried tool result (counting towards the retry limit).
 
 ```python
 import asyncio
@@ -654,7 +654,7 @@ async def fast_tool() -> str:
 - **Agent-level timeout**: Set `tool_timeout` on the [`Agent`][pydantic_ai.agent.Agent] to apply a default timeout to the tools registered on it.
 - **Per-tool timeout**: Set `timeout` on individual tools via [`@agent.tool`][pydantic_ai.agent.Agent.tool], [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain], or the [`Tool`][pydantic_ai.tools.Tool] dataclass. This overrides the agent-level default.
 
-When a timeout occurs, the tool is treated as a retryable failure and the model receives a retry prompt with the message `"Timed out after {timeout} seconds."`. This counts towards the tool's retry limit just like validation errors or explicit [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] exceptions.
+When a timeout occurs, the tool is treated as a retryable failure and the model receives a retried tool result with the message `"Timed out after {timeout} seconds."`. This counts towards the tool's retry limit just like validation errors or explicit [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] exceptions.
 
 Both settings are enforced by [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset], which is what backs the agent's own tools. Tools served by an [MCP server](mcp/client.md), an [external toolset](deferred-tools.md), or a custom [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset] do not read them — bind those deadlines at the server or transport level instead. See [Timeouts](timeouts.md#bounding-how-long-a-step-takes) for how tool timeouts relate to the other deadlines in a run.
 
@@ -699,7 +699,7 @@ print(result.output.approvals[0].args)
 
 _(This example is complete, it can be run "as is")_
 
-When schema validation fails, or an `args_validator` raises `ModelRetry`, the error message is sent back to the LLM as a retry prompt (with instructions to try again) and respects the tool's `retries` setting. When an `args_validator` raises `ToolFailed`, the model instead receives a failed tool result it should adapt to rather than retry, and the retry budget is left untouched. For [deferred tools](deferred-tools.md), validation runs at deferral time — only tool calls with valid arguments are deferred.
+When schema validation fails, or an `args_validator` raises `ModelRetry`, the error message is sent back to the LLM as a retried tool result and respects the tool's `retries` setting. When an `args_validator` raises `ToolFailed`, the model instead receives a failed tool result it should adapt to rather than retry, and the retry budget is left untouched. For [deferred tools](deferred-tools.md), validation runs at deferral time — only tool calls with valid arguments are deferred.
 
 A validator can defer the call itself, just like the tool function can — and it's the better place to make that decision, since bad arguments are rejected before a human is asked to approve them. A validator that raises `ApprovalRequired` or `CallDeferred` doesn't consume the retry budget either: the arguments were valid, so the deferral is a deliberate decision rather than a failure. The tool function is not executed, and the call joins the run's other [deferred tool calls](deferred-tools.md): it's resolved inline by a [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] handler if you have one, or surfaced in the run's `DeferredToolRequests` output. Once the call is [approved](deferred-tools.md#human-in-the-loop-tool-approval), the validator runs again — this time with [`RunContext.tool_call_approved`][pydantic_ai.tools.RunContext.tool_call_approved] set to `True` — and the tool executes.
 

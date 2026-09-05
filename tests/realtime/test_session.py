@@ -51,7 +51,6 @@ from pydantic_ai.messages import (
     PartEndEvent,
     PartStartEvent,
     RealtimeSessionErrorEvent,
-    RetryPromptPart,
     SpeechPart,
     SpeechPartDelta,
     SystemPromptPart,
@@ -112,7 +111,7 @@ from pydantic_ai.toolsets import AbstractToolset, ExternalToolset, FunctionTools
 from pydantic_ai.toolsets.abstract import ToolsetTool
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
-from ..conftest import IsDatetime, IsStr
+from ..conftest import IsDatetime, IsStr, legacy_retry_prompt_part
 
 pytestmark = pytest.mark.anyio
 T = TypeVar('T')
@@ -2343,10 +2342,10 @@ async def test_invalid_json_args_reported_without_calling_tool() -> None:
     call = next(e for e in events if isinstance(e, FunctionToolCallEvent))
     assert call.args_valid is False
     result = next(e for e in events if isinstance(e, FunctionToolResultEvent))
-    assert isinstance(result.part, RetryPromptPart)
+    assert isinstance(result.part, ToolReturnPart) and result.part.outcome == 'retried'
     assert 'Invalid JSON' in str(result.part.content)
     assert isinstance(conn.sent[0], ToolResult)
-    assert conn.sent[0].output == result.part.model_response()
+    assert conn.sent[0].output == result.part.model_response_str()
 
 
 async def test_non_object_json_args_reported() -> None:
@@ -2354,7 +2353,7 @@ async def test_non_object_json_args_reported() -> None:
     session = RealtimeSession(conn, _noop_runner)
     events = await collect_events(session)
     result = next(e for e in events if isinstance(e, FunctionToolResultEvent))
-    assert isinstance(result.part, RetryPromptPart)
+    assert isinstance(result.part, ToolReturnPart) and result.part.outcome == 'retried'
     assert 'Input should be an object' in str(result.part.content)
 
 
@@ -5386,10 +5385,11 @@ async def test_agent_realtime_session_invalid_args_return_retry_message() -> Non
     call = next(e for e in events if isinstance(e, FunctionToolCallEvent))
     assert call.args_valid is False
     result = next(e for e in events if isinstance(e, FunctionToolResultEvent))
-    assert isinstance(result.part, RetryPromptPart)
-    assert 'validation error' in result.part.model_response()
+    assert isinstance(result.part, ToolReturnPart) and result.part.outcome == 'retried'
+    assert 'int_parsing' in result.part.model_response_str()
     assert isinstance(session.new_messages()[1], ModelRequest)
-    assert isinstance(session.new_messages()[1].parts[0], RetryPromptPart)
+    settled = session.new_messages()[1].parts[0]
+    assert isinstance(settled, ToolReturnPart) and settled.outcome == 'retried'
 
 
 class _ToolRoundConnection(FakeRealtimeConnection):
@@ -6111,9 +6111,11 @@ async def test_agent_realtime_session_retry_limit_advances_across_tool_rounds() 
                 events.append(event)
 
     results = [e.part for e in events if isinstance(e, FunctionToolResultEvent)]
-    assert len(results) == 1 and isinstance(results[0], RetryPromptPart)
-    assert str(results[0].content).startswith('1 is not allowed')
-    assert conn.sent == [ToolResult(tool_call_id='tc1', output=results[0].model_response())]
+    assert len(results) == 1
+    retried = results[0]
+    assert isinstance(retried, ToolReturnPart) and retried.outcome == 'retried'
+    assert str(retried.content).startswith('1 is not allowed')
+    assert conn.sent == [ToolResult(tool_call_id='tc1', output=retried.model_response_str())]
 
 
 async def test_agent_realtime_session_runs_args_validator() -> None:
@@ -6211,6 +6213,38 @@ async def test_agent_realtime_session_denied_tool_returns_denial_message() -> No
     assert isinstance(result.part, ToolReturnPart)
     assert result.part.outcome == 'denied'
     assert 'denied' in str(result.part.content).lower()
+
+
+async def test_agent_realtime_session_deferred_call_answered_with_a_legacy_retry_prompt() -> None:
+    """A handler can still answer a deferred call with a `RetryPromptPart` of its own.
+
+    It settles the way the `ModelRetry` beside it in `DeferredToolResults` does: the retry answers
+    this call, so the session records and sends the call's own retried result — the feedback alone,
+    without the `'Fix the errors and try again.'` tail the old rendering appended.
+    """
+    agent: Agent[None, str] = Agent()
+
+    @agent.tool_plain
+    def buy(fruit: str) -> str:
+        raise CallDeferred
+
+    def out_of_stock(ctx: RunContext[Any], requests: DeferredToolRequests) -> DeferredToolResults:
+        return DeferredToolResults(
+            calls={
+                call.tool_call_id: legacy_retry_prompt_part(content='pears are out of stock') for call in requests.calls
+            }
+        )
+
+    conn = FakeRealtimeConnection(
+        [ToolCall(tool_call_id='tc', tool_name='buy', args='{"fruit": "pear"}'), ResponseDone()]
+    )
+    model = FakeRealtimeModel(conn)
+    async with agent.realtime(model, capabilities=[HandleDeferredToolCalls(handler=out_of_stock)]).session() as session:
+        events = [e async for e in session]
+
+    result = next(e for e in events if isinstance(e, FunctionToolResultEvent))
+    assert (result.part.tool_name, result.part.outcome) == ('buy', 'retried')
+    assert conn.sent == snapshot([ToolResult(tool_call_id='tc', output='{"error":"pears are out of stock"}')])
 
 
 # --- declarative `requires_approval=True` gating ------------------------------------------------

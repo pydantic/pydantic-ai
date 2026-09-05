@@ -52,9 +52,8 @@ class ToolResult:
 
     Built and sent by [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] after it settles a
     call: the string-only realtime tool channel and the retry/failure error-key wrapping mean the
-    session renders the [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] or
-    [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] it records in history down to this flat
-    shape, so every provider sends exactly the same rendering.
+    session renders the [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] it records in history
+    down to this flat shape, so every provider sends exactly the same rendering.
     """
 
     tool_call_id: str

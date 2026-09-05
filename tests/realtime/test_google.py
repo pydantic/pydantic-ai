@@ -37,7 +37,7 @@ from pydantic_ai.messages import (
     PartEndEvent,
     PartStartEvent,
     RealtimeSessionErrorEvent,
-    RetryPromptPart,
+    RetryFeedbackPart,
     SpeechPart,
     SystemPromptPart,
     TextContent,
@@ -71,7 +71,7 @@ from pydantic_ai.realtime.codec import (
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
-from ..conftest import IsDatetime, IsSameStr, IsStr, try_import
+from ..conftest import IsDatetime, IsSameStr, IsStr, legacy_retry_prompt_part, try_import
 from .test_session import FakeRealtimeModel, make_tool_manager
 
 with try_import() as imports_successful:
@@ -1694,8 +1694,16 @@ async def test_connect_seeds_message_history(monkeypatch: pytest.MonkeyPatch) ->
                     tool_call_id='call-1',
                 ),
                 ToolReturnPart(tool_name='plain', content='ok', tool_call_id='plain-call'),
-                RetryPromptPart(tool_name='weather', content='invalid city', tool_call_id='call-1'),
-                RetryPromptPart(content='answer in prose'),
+                legacy_retry_prompt_part(tool_name='weather', content='invalid city', tool_call_id='call-1'),
+                # The shape the framework emits for that same failure, seeded beside the legacy one
+                # so the two are held to the same text.
+                ToolReturnPart(tool_name='weather', content='invalid city', tool_call_id='call-1', outcome='retried'),
+                legacy_retry_prompt_part(content='answer in prose'),
+                RetryFeedbackPart(content='answer in prose', cause='model_retry'),
+                RetryFeedbackPart(
+                    content=[{'type': 'int_parsing', 'loc': ('count',), 'msg': 'not an integer', 'input': 'lots'}],
+                    cause='validation_error',
+                ),
                 UserPromptPart(
                     content=[
                         ImageUrl(url='https://example.com/a.png'),
@@ -1736,8 +1744,17 @@ async def test_connect_seeds_message_history(monkeypatch: pytest.MonkeyPatch) ->
                     {'inline_data': {'data': b'tool-image', 'mime_type': 'image/png'}},
                     {'text': '</tool_result>'},
                     {'text': '[Tool plain-call: plain returned: ok]'},
-                    {'text': '[Tool call-1: weather error: invalid city\n\nFix the errors and try again.]'},
-                    {'text': 'Validation feedback:\nanswer in prose\n\nFix the errors and try again.'},
+                    {'text': '[Tool call-1: weather returned: {"error":"invalid city"}]'},
+                    {'text': '[Tool call-1: weather returned: {"error":"invalid city"}]'},
+                    {'text': '<system>answer in prose</system>'},
+                    {'text': '<system>answer in prose</system>'},
+                    {
+                        'text': """\
+<validation_errors>
+[{"type":"int_parsing","loc":["count"],"msg":"not an integer","input":"lots"}]
+</validation_errors>\
+"""
+                    },
                     {'inline_data': {'data': b'url-image', 'mime_type': 'image/png'}},
                     {'inline_data': {'data': b'inline-image', 'mime_type': 'image/png'}},
                     {'text': 'spoken question'},

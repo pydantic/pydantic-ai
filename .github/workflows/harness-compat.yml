@@ -14,10 +14,33 @@ name: Harness Compat
 # workflow — same exposure as the regular test jobs in `ci.yml`. If the called
 # workflow ever grows steps that need elevated permissions or secrets, add a
 # fork gate (e.g. require a `safe-for-ci` label) before merging that change.
+#
+# ## Testing against a companion harness branch
+#
+# The harness closes over pydantic-ai's request-part union with `assert_never`
+# under `TYPE_CHECKING`, deliberately, so that a part added here fails the
+# harness typecheck and becomes a decision rather than a silent omission. That
+# tripwire has no green path on its own: this job reads harness `main`, which
+# cannot know a part until its own PR merges, and that PR cannot go green until
+# the part is released. Neither side can go first, so a PR adding a part would
+# otherwise have to merge red.
+#
+# Label such a PR `harness-ref:<branch>` and this job runs that harness branch
+# instead of `main` — the pairing that will exist once both merge, which is the
+# state actually worth verifying. Everything else keeps testing `main`.
+#
+# The label is the carrier on purpose: applying one needs triage or write access
+# (creating a new `harness-ref:*` label needs write), so a fork PR cannot redirect
+# the harness ref, and the value never reaches a shell or a template unquoted
+# (read from `env` and parsed with `jq`).
+#
+# Drop the label once the harness branch has merged.
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened]
+    # `labeled`/`unlabeled` are here so applying or removing `harness-ref:<branch>`
+    # re-runs the check; without them the label would only take effect on the next push.
+    types: [opened, synchronize, reopened, labeled, unlabeled]
     paths:
       - 'pydantic_ai_slim/**'
       - '.github/workflows/harness-compat.yml'
@@ -28,12 +51,42 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  # PRs: one group per ref, so applying then removing the label cancels the superseded
+  # run instead of letting it land as the required check for a label state that is gone.
+  # push/tag: one group per run_id, matching `ci.yml`, so main and tag runs never share one.
+  group: harness-compat-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
+  resolve-harness-ref:
+    name: resolve harness ref
+    runs-on: ubuntu-latest
+    # The label comes off the event payload, so this job needs no token at all. Dropping the
+    # inherited `contents: read` also makes any later edit that starts needing one fail loudly.
+    permissions: {}
+    outputs:
+      ref: ${{ steps.resolve.outputs.ref }}
+    steps:
+      - name: Read the companion harness branch off the PR's labels
+        id: resolve
+        env:
+          # `toJSON` keeps a label containing quotes or shell metacharacters as JSON data
+          # rather than interpolating it into the script. Empty for push and tag events.
+          LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+        run: |
+          set -euo pipefail
+          ref=$(jq -r 'if . == null then empty else .[] end | select(startswith("harness-ref:")) | ltrimstr("harness-ref:")' <<<"${LABELS:-null}" | head -1)
+          echo "ref=${ref:-main}" >> "$GITHUB_OUTPUT"
+          echo "Testing against harness ref: ${ref:-main}"
+
   harness-compat:
     name: harness compat
+    needs: resolve-harness-ref
     # Same-org reusable workflow under shared maintenance; SHA pinning would force a coordination bump
     # on every harness change without security benefit. Ignore configured in `.github/zizmor.yml`.
     uses: pydantic/pydantic-ai-harness/.github/workflows/compat-test.yml@main
     with:
       pydantic-ai-ref: ${{ github.event.pull_request.head.sha || github.sha }}
       pydantic-ai-repo: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+      harness-ref: ${{ needs.resolve-harness-ref.outputs.ref }}

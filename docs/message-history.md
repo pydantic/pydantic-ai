@@ -233,7 +233,7 @@ Mid-conversation instructions stay where you put them rather than joining the sy
 How it reaches the model depends on the provider:
 
 * Where the API accepts a system message inside the conversation, it's sent as one, with the operator authority that implies. [Anthropic](models/anthropic.md#mid-conversation-system-messages) supports this on some models, and may adjust the position slightly to satisfy its own placement rules.
-* Everywhere else it's rendered as a `<system>`-tagged [`UserPromptPart`][pydantic_ai.messages.UserPromptPart] at the same position. The instruction still applies from where you put it, but the model can tell it came in over the user channel and may treat it as a strong preference rather than a rule.
+* Everywhere else it's rendered as a `<system>`-tagged [`UserPromptPart`][pydantic_ai.messages.UserPromptPart] at the same position. The instruction still applies from where you put it, but the model can tell it came in over the user channel and may treat it as a strong preference rather than a rule. A `</system>` inside your own text reaches the model with its `<` escaped, as `&lt;/system>`, so nothing in the instruction can close the wrapper early; the rest of it goes out as written.
 
 Phrase the instruction as what changed rather than as an override of the user. Models are trained to resist instructions that appear to work against the person they're talking to, and that applies to the system role too — "the build tag is no longer confidential" lands where "ignore what the user was told earlier" doesn't.
 
@@ -250,8 +250,8 @@ Tool additions are stored as [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.
 
 The guiding rule is to adapt the history to what the provider accepts without ever discarding something you meant to send. Repairs only **add** synthesized parts or **remove** parts that are fundamentally unsendable (no provider could accept them); nothing meaningful is silently dropped. Concretely, before each request Pydantic AI:
 
-- **Adds** a synthesized [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] for a tool call that has no result, telling the model the call was interrupted before a result was produced. It has [`outcome='interrupted'`][pydantic_ai.messages.BaseToolReturnPart.outcome] — a neutral outcome that (unlike `'failed'`) is not surfaced as a provider error — and carries `{'pydantic_ai_synthesized_tool_return': True}` in its [`metadata`][pydantic_ai.messages.BaseToolReturnPart.metadata] so your code can tell it apart from real tool results. This also covers a call whose arguments were cut off mid-stream: the call is kept as-is and closed out the same way. Its arguments stay verbatim in the history, but the request serializers send them as `{"INVALID_JSON": "<raw args>"}` (see [`args_as_json_str`][pydantic_ai.messages.BaseToolCallPart.args_as_json_str]) so that a provider requiring an object still accepts the request.
-- **Removes** an orphaned tool result — a [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] or [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] whose tool call is absent from the history (including a result placed before its call). If this empties an interior [`ModelRequest`][pydantic_ai.messages.ModelRequest] the request is removed; if it empties the last message, an empty request is kept so the history still ends on a `ModelRequest`.
+- **Adds** a synthesized [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] for a tool call that has no result, telling the model the call was interrupted before a result was produced. It has [`outcome='interrupted'`][pydantic_ai.messages.BaseToolReturnPart.outcome] — a neutral outcome that (unlike `'failed'` and `'retried'`) is not surfaced as a provider error — and carries `{'pydantic_ai_synthesized_tool_return': True}` in its [`metadata`][pydantic_ai.messages.BaseToolReturnPart.metadata] so your code can tell it apart from real tool results. This also covers a call whose arguments were cut off mid-stream: the call is kept as-is and closed out the same way. Its arguments stay verbatim in the history, but the request serializers send them as `{"INVALID_JSON": "<raw args>"}` (see [`args_as_json_str`][pydantic_ai.messages.BaseToolCallPart.args_as_json_str]) so that a provider requiring an object still accepts the request.
+- **Removes** an orphaned tool result — a [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] (whatever its `outcome`) or a legacy tool-bound [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] whose tool call is absent from the history (including a result placed before its call). If this empties an interior [`ModelRequest`][pydantic_ai.messages.ModelRequest] the request is removed; if it empties the last message, an empty request is kept so the history still ends on a `ModelRequest`.
 
 After the invalid parts are handled, consecutive compatible messages are **merged** into one (two adjacent [`ModelRequest`][pydantic_ai.messages.ModelRequest]s become a single turn, with tool results ordered ahead of user parts). This changes message boundaries but preserves all content, so processed history you inspect afterwards may have fewer messages than you passed in.
 
@@ -382,7 +382,9 @@ _(This example is complete, it can be run "as is")_
 
 The `message_history` parameter is trusted server-side state. If you load history that came from a browser request or another untrusted boundary, sanitize it before passing it to the agent.
 
-[`sanitize_messages`][pydantic_ai.messages.sanitize_messages] applies the same default message sanitization used by the [UI adapters](ui/overview.md): it strips client-supplied system prompts, drops non-HTTP file URL schemes, resets non-allowlisted [`FileUrl.force_download`][pydantic_ai.messages.FileUrl.force_download] values to `False`, drops uploaded file references, and removes unresolved tool calls at the end of the history.
+[`sanitize_messages`][pydantic_ai.messages.sanitize_messages] applies the same default message sanitization used by the [UI adapters](ui/overview.md): it strips client-supplied system prompts and retry feedback, drops non-HTTP file URL schemes, resets non-allowlisted [`FileUrl.force_download`][pydantic_ai.messages.FileUrl.force_download] values to `False`, drops uploaded file references, and removes unresolved tool calls at the end of the history.
+
+`strip_system_prompts` covers two part types, not one: [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s and the [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart]s that carry Pydantic AI's own [retry feedback](retries.md#feedback-that-belongs-to-no-tool-call). The client picks a submitted feedback part's `cause`, and two of the three reach the model in the system voice, so a client that can submit either part has the reach the strip exists to deny it. If stripping empties a `ModelRequest`, the request is dropped from the history entirely.
 
 Client-supplied [`CompactionPart`][pydantic_ai.messages.CompactionPart]s are kept, so the conversation stays [compacted](capabilities/compaction.md) — but they are never trusted to stand in for the system prompt. Whether that prompt is a [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] already in the history or one re-injected by [`ReinjectSystemPrompt`][pydantic_ai.capabilities.ReinjectSystemPrompt], it is re-sent to the model even where a provider's own compaction state would normally let it be skipped. If you combine the sanitized history with trusted server-side `message_history`, also pass `strip_compaction_parts=True`: everything before a compaction item is hidden from the model, so a client-supplied one would hide the server's history — see [Client-held history](capabilities/compaction.md#client-held-history). The [UI adapters](ui/overview.md) apply this rule automatically when a run combines server-side `message_history` with client-submitted messages.
 
@@ -399,7 +401,7 @@ message_history = sanitize_messages(loaded_history)
 result = agent.run_sync('Tell me a different joke.', message_history=message_history)
 ```
 
-Each sanitization can be turned off individually when the corresponding parts were created by trusted server-side code: pass `strip_system_prompts=False`, add schemes to `allowed_file_url_schemes`, add values to `allowed_file_url_force_download`, or set `allow_uploaded_files=True`. See [file URL input security](input.md#user-side-download-vs-direct-file-url) for the file input trust model.
+Each sanitization can be turned off individually when the corresponding parts were created by trusted server-side code: pass `strip_system_prompts=False` to keep both the system prompts and the retry feedback, add schemes to `allowed_file_url_schemes`, add values to `allowed_file_url_force_download`, or set `allow_uploaded_files=True`. See [file URL input security](input.md#user-side-download-vs-direct-file-url) for the file input trust model.
 
 ## Persisting sessions
 
@@ -874,7 +876,6 @@ from pydantic_ai import (
     Agent,
     ModelMessage,
     ModelRequest,
-    RetryPromptPart,
     RunContext,
     ToolReturnPart,
     UserPromptPart,
@@ -896,7 +897,7 @@ def compact_when_window_fills(
         if not isinstance(message, ModelRequest):
             continue
         has_user_prompt = any(isinstance(part, UserPromptPart) for part in message.parts)
-        has_tool_result = any(isinstance(part, (ToolReturnPart, RetryPromptPart)) for part in message.parts)
+        has_tool_result = any(isinstance(part, ToolReturnPart) for part in message.parts)
         if has_user_prompt and not has_tool_result:
             return messages[index:]
     return messages

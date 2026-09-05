@@ -24,7 +24,6 @@ from ..messages import (
     ModelResponseStreamEvent,
     NativeToolCallPart,
     NativeToolReturnPart,
-    RetryPromptPart,
     SpeechPart,
     SystemPromptPart,
     TextContent,
@@ -44,7 +43,8 @@ from . import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
-    _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
+    _unprepared_part_error,  # pyright: ignore[reportPrivateUsage]
+    _UnpreparedPart,  # pyright: ignore[reportPrivateUsage]
 )
 
 
@@ -437,12 +437,10 @@ def _estimate_usage(  # noqa: C901
                     request_tokens += _estimate_string_tokens(part.content)
                 elif isinstance(part, ToolReturnPart):
                     request_tokens += _estimate_string_tokens(part.model_response_str())
-                elif isinstance(part, RetryPromptPart):
-                    request_tokens += _estimate_string_tokens(part.model_response())
-                elif isinstance(part, ToolAvailabilityDeltaPart):
-                    if not allow_tool_availability_deltas:
-                        raise _unsynthesized_tool_availability_delta_error()
+                elif isinstance(part, ToolAvailabilityDeltaPart) and allow_tool_availability_deltas:
                     request_tokens += _estimate_string_tokens(' '.join(part.tools_added))
+                elif isinstance(part, _UnpreparedPart):
+                    raise _unprepared_part_error(part)
                 elif isinstance(part, SpeechPart):
                     # A direct `FunctionModel.request()` doesn't run `Model.prepare_messages`, so
                     # user speech can arrive unconverted; estimate from the transcript like the

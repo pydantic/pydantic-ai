@@ -1563,20 +1563,20 @@ def test_stream_events_truncates_long_tool_results():
     assert '…[+' in emitted and 'chars]' in emitted
 
 
-def test_stream_events_tags_retry_prompt_as_error():
-    """`ToolResultEvent.part` is `ToolReturnPart | RetryPromptPart`. A retry
-    means tool-call validation failed — gh-aw must see `is_error=True` so it
-    doesn't read it as a successful result."""
+def test_stream_events_tags_retried_result_as_error():
+    """A `ToolResultEvent` carrying `outcome='retried'` means the call has to be
+    made again — gh-aw must see `is_error=True` so it doesn't read it as a
+    successful result."""
     import asyncio
 
-    from pydantic_ai.messages import FunctionToolResultEvent, RetryPromptPart, ToolReturnPart
+    from pydantic_ai.messages import FunctionToolResultEvent, ToolReturnPart
 
     async def _events():
         yield FunctionToolResultEvent(
             part=ToolReturnPart(tool_name='Bash', content='ok', tool_call_id='c1'),
         )
         yield FunctionToolResultEvent(
-            part=RetryPromptPart(content='Validation failed', tool_name='Bash', tool_call_id='c2'),
+            part=ToolReturnPart(tool_name='Bash', content='Validation failed', tool_call_id='c2', outcome='retried'),
         )
 
     buf = io.StringIO()

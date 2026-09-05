@@ -64,7 +64,6 @@ from pydantic_ai.messages import (
     ModelResponsePart,
     NativeToolCallPart,
     NativeToolSearchCallPart,
-    RetryPromptPart,
     ToolAvailabilityDeltaPart,
     ToolCallEvent,
     ToolCallPart,
@@ -814,11 +813,9 @@ async def _stream_events(_ctx: RunContext[object], events: AsyncIterable[AgentSt
             )
             logger.info('tool_use: %s', event.part.tool_name)
         elif isinstance(event, ToolResultEvent):
-            # `event.part` is `ToolReturnPart | RetryPromptPart`; the latter
-            # means the tool result failed validation and pydantic-ai is
-            # asking the model to retry. Tag it so gh-aw doesn't read it as
-            # success.
-            is_retry = isinstance(event.part, RetryPromptPart)
+            # `outcome='retried'` means the call didn't work and pydantic-ai is asking the model to
+            # make it again. Tag it so gh-aw doesn't read it as success.
+            is_retry = event.part.outcome == 'retried'
             content = str(event.part.content)
             if len(content) > MAX_LIVE_TOOL_RESULT_CHARS:
                 content = (

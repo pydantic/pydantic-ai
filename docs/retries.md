@@ -10,9 +10,9 @@
 | [Provider SDK](#provider-sdk-retries) | The same HTTP request, re-issued by the provider SDK's own client | The SDK client itself; defaults and configuration are provider-specific | Nothing — the agent never sees the attempts |
 | [Durable execution](durable_execution/overview.md) | The whole model request, re-executed by the workflow engine — re-entering every layer nearer the wire; unbounded by default on Temporal (`maximum_attempts=0`) | `retry_policy` in Temporal's `ActivityConfig`, `max_attempts` in DBOS's `StepConfig`, `retries` in Prefect's `TaskConfig` | Nothing — the engine replays the step |
 | [Model fallback](#model-fallback-is-not-a-retry) | The same request against a *different* model | [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] | Only the winning response |
-| [Tool](#tool-retries) | One tool call, by asking the model to correct it | `retries={'tools': N}` and per-tool limits | A [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] in place of the tool's result |
-| [Output](#output-retries) | The model's final answer, by asking it to correct it | `retries={'output': N}` and [`ToolOutput(max_retries=N)`][pydantic_ai.output.ToolOutput.max_retries] | A `RetryPromptPart` — see [below](#output-retries) for where it lands |
-| [Model-request hooks](hooks.md) | The model request, from `after_model_request`, `wrap_model_request`, or `on_model_request_error` raising `ModelRetry` | The hook itself; it draws on the **output** budget | A new request carrying a `RetryPromptPart` |
+| [Tool](#tool-retries) | One tool call, by asking the model to correct it | `retries={'tools': N}` and per-tool limits | A [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] with `outcome='retried'` as that call's result |
+| [Output](#output-retries) | The model's final answer, by asking it to correct it | `retries={'output': N}` and [`ToolOutput(max_retries=N)`][pydantic_ai.output.ToolOutput.max_retries] | A [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart], or a retried `ToolReturnPart` — see [below](#output-retries) |
+| [Model-request hooks](hooks.md) | The model request, from `after_model_request`, `wrap_model_request`, or `on_model_request_error` raising `ModelRetry` | The hook itself; it draws on the **output** budget | A new request carrying a `RetryFeedbackPart` |
 
 Only the last three are "agent retries" — they cost a model round trip each, because a retry *is* another request. The other four are invisible to the model: it never sees an attempt fail.
 
@@ -20,7 +20,7 @@ Only the last three are "agent retries" — they cost a model round trip each, b
 
 The layers don't share budgets, but they stack: a retry at one layer wraps the attempts of every layer nearer the wire. If a logical call can issue up to `N` model requests — the initial attempt plus one follow-up per tool call and whatever the [tool](#tool-retries) and [output](#output-retries) retry budgets add — each model request is sent by a provider SDK client allowed up to `M` attempts, and each attempt travels on a transport allowed up to `K` attempts, so one logical call can put up to `N`×`M`×`K` wire requests on the network. Under [durable execution](durable_execution/overview.md) the step that runs the model request retries too, re-entering `M` and `K` each time — and on Temporal that retry count is unbounded unless you set `maximum_attempts` yourself.
 
-- `N` — model requests per logical call: the initial attempt, one follow-up per tool call (even a successful tool call queues another request), and any retry prompts the [tool](#tool-retries) and [output](#output-retries) budgets add
+- `N` — model requests per logical call: the initial attempt, one follow-up per tool call (even a successful tool call queues another request), and any retries the [tool](#tool-retries) and [output](#output-retries) budgets add
 - `M` — attempts per model request inside the provider SDK client. The SDK determines this budget; for example, an OpenAI client configured with `max_retries=N` allows `1 + N` attempts. See [provider SDK retries](#provider-sdk-retries) for the provider-specific settings.
 - `K` — attempts per request on the wire: the transport's stop strategy, so `stop_after_attempt(N)` allows `N` total attempts (`K = N`), not one plus retries — see [transport retries](#transport-retries)
 
@@ -426,16 +426,16 @@ A tool retry is a message to the model: the call didn't work, here is why, try a
 [Tool Execution, Retries, and Failures](tools-advanced.md#tool-retries) documents the configuration: the default budget of `1`, the per-tool / per-toolset / per-run / agent-wide precedence ladder, and the choice between `ModelRetry` and [`ToolFailed`][pydantic_ai.exceptions.ToolFailed]. Three properties of the *counter* matter when you're reasoning about a run:
 
 - **The counter is keyed by tool name, and it resets on success.** Each tool has its own count; there is no run-wide tool-retry budget. When a tool succeeds, its count is cleared — so a tool that alternates failure and success can fail many times in one run without ever exhausting a budget of `1`.
-- **`max_retries=N` allows N retries, so N+1 attempts.** `max_retries=0` raises on the first failure without ever sending a retry prompt.
-- **A tool name the model invented gets its own budget.** An unknown tool name produces a retry prompt listing the available tools, and consumes a budget keyed under the invented name, bounded by the agent-wide `tools` budget. So a model that hallucinates a *different* name each time keeps getting a fresh budget.
+- **`max_retries=N` allows N retries, so N+1 attempts.** `max_retries=0` raises on the first failure without ever asking the model to correct it.
+- **A tool name the model invented gets its own budget.** An unknown tool name is answered with a retried tool result listing the available tools, and consumes a budget keyed under the invented name, bounded by the agent-wide `tools` budget. So a model that hallucinates a *different* name each time keeps getting a fresh budget.
 
 Exhausting a tool's budget raises [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior].
 
 ### What a retry looks like in message history
 
-A retried tool call has no [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] — the [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] takes its place, carrying the same `tool_call_id`. There is never both:
+A retry that belongs to a tool call *is* that call's result: a [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] carrying the call's `tool_call_id`, marked `outcome='retried'`. So a retried call and a successful one look the same in history apart from the outcome, and there is never a second part standing in for the result:
 
-```python {title="retry_prompt_history.py"}
+```python {title="retry_history.py"}
 from pydantic_ai import (
     Agent,
     ModelMessage,
@@ -475,7 +475,7 @@ print([type(p).__name__ for m in result.all_messages() for p in m.parts])
 [
     'UserPromptPart',
     'ToolCallPart',
-    'RetryPromptPart',
+    'ToolReturnPart',
     'ToolCallPart',
     'ToolReturnPart',
     'TextPart',
@@ -485,18 +485,18 @@ print([type(p).__name__ for m in result.all_messages() for p in m.parts])
 
 _(This example is complete, it can be run "as is")_
 
-A [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] carries the failure as either a string (from `ModelRetry`) or a list of Pydantic error details (from a `ValidationError`), and renders for the model with `'Fix the errors and try again.'` appended. Its `tool_name` is set when the retry belongs to a specific tool call, and `None` when it belongs to the run's output.
+The part's `content` is the feedback itself — the `ModelRetry` message, or a `ValidationError`'s error details serialized as plain JSON data — and it reaches the model on the provider's native error channel, the same one a failed result uses: Anthropic's `is_error`, Bedrock's `status='error'`, Gemini's `error` key, or an `{"error": ...}` wrapper where the provider has none. A retry that answers no call is a [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart] instead — see [Feedback that belongs to no tool call](#feedback-that-belongs-to-no-tool-call).
 
-Because the retry prompts stay in the history, [reusing that history](message-history.md) in a later run replays the failures to the model. If you don't want the model to see its earlier mistakes, filter them out with a [`ProcessHistory`](capabilities/process-history.md) capability.
+Because retries stay in the history, [reusing that history](message-history.md) in a later run replays the failures to the model. If you don't want the model to see its earlier mistakes, filter them out with a [`ProcessHistory`](capabilities/process-history.md) capability.
 
-[`ToolFailed`][pydantic_ai.exceptions.ToolFailed] is the deliberate opposite: it records a `ToolReturnPart` with `outcome='failed'` and does **not** consume the retry budget, so repeated failures are bounded by [`UsageLimits`][pydantic_ai.usage.UsageLimits] rather than by a retry count. See [Reporting a Failed Tool Result](tools-advanced.md#tool-failed).
+[`ToolFailed`][pydantic_ai.exceptions.ToolFailed] records the same kind of part with `outcome='failed'` instead, and does **not** consume the retry budget, so repeated failures are bounded by [`UsageLimits`][pydantic_ai.usage.UsageLimits] rather than by a retry count. The outcome is the whole difference: `'retried'` asks the model to correct the call, `'failed'` tells it to adapt. See [Reporting a Failed Tool Result](tools-advanced.md#tool-failed).
 
 ## Output retries
 
 The output budget is separate from the tool budget, and how it's enforced depends on how the model returns its final answer. [How output retries are enforced](agent.md#how-output-retries-are-enforced) covers both paths; the difference that matters for message history is:
 
-- **Text path** (`output_type=str`, [`TextOutput`](output.md#text-output), [`NativeOutput`](output.md#native-output), [`PromptedOutput`](output.md#prompted-output), and responses with no usable output): one budget shared across the whole run. The retry becomes a new [`ModelRequest`][pydantic_ai.messages.ModelRequest] whose only part is a `RetryPromptPart` with `tool_name=None`.
-- **Tool path** ([`ToolOutput`](output.md#tool-output)): the output budget acts as the default limit *per output tool*, overridable with [`ToolOutput(max_retries=N)`][pydantic_ai.output.ToolOutput.max_retries]. The retry prompt is bound to the output tool's `tool_call_id`, exactly like a function tool's.
+- **Text path** (`output_type=str`, [`TextOutput`](output.md#text-output), [`NativeOutput`](output.md#native-output), [`PromptedOutput`](output.md#prompted-output), and responses with no usable output): one budget shared across the whole run. There is no tool call to answer, so the retry becomes a new [`ModelRequest`][pydantic_ai.messages.ModelRequest] whose only part is a [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart] — see [Feedback that belongs to no tool call](#feedback-that-belongs-to-no-tool-call).
+- **Tool path** ([`ToolOutput`](output.md#tool-output)): the output budget acts as the default limit *per output tool*, overridable with [`ToolOutput(max_retries=N)`][pydantic_ai.output.ToolOutput.max_retries]. The retry is bound to the output tool's `tool_call_id` and looks exactly like a function tool's.
 
 Both are triggered by validation failures, by an [output function](output.md#output-functions) or [output validator](output.md#output-validator-functions) raising `ModelRetry`, and by a model response with nothing actionable in it. Both raise [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior] when the budget runs out.
 
@@ -517,9 +517,75 @@ strict_output = Agent('openai:gpt-5.2', retries={'tools': 5, 'output': 1})  # (2
 
 The same argument is accepted per run — `agent.run(..., retries=...)` and friends — and for a block of runs via [`agent.override()`][pydantic_ai.agent.Agent.override]. [Which retry limit wins](tools-advanced.md#which-retry-limit-wins) has the full precedence table.
 
+### Feedback that belongs to no tool call
+
+A text-path retry, and a `ModelRetry` from a [model-request hook](hooks.md#triggering-retries-with-modelretry), have no tool call to answer. They become a [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart], which records *why* the response couldn't be used and nothing about how to say it:
+
+```python {title="retry_feedback_history.py"}
+from pydantic_ai import (
+    Agent,
+    ModelMessage,
+    ModelResponse,
+    ModelRetry,
+    RetryFeedbackPart,
+    TextPart,
+)
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+
+def answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[TextPart('7' if len(messages) == 1 else 'seven')])
+
+
+agent = Agent(FunctionModel(answer))
+
+
+@agent.output_validator
+def spell_it_out(output: str) -> str:
+    if output.isdigit():
+        raise ModelRetry('answer with the number spelled out as a word')
+    return output
+
+
+result = agent.run_sync('How many continents are there?')
+print([p for m in result.all_messages() for p in m.parts if isinstance(p, RetryFeedbackPart)])
+"""
+[
+    RetryFeedbackPart(
+        content='answer with the number spelled out as a word',
+        cause='model_retry',
+        timestamp=datetime.datetime(...),
+    )
+]
+"""
+```
+
+_(This example is complete, it can be run "as is")_
+
+The stored part carries no wording at all; each model turns it into a sendable part when the request is built, and its [`cause`][pydantic_ai.messages.RetryFeedbackPart.cause] decides which one. That is why the same history can be replayed against any model.
+
+| `cause` | What the model is sent | Why |
+|---|---|---|
+| `'validation_error'` | a user turn whose text is wrapped in `<validation_errors>…</validation_errors>` | The feedback quotes back the output the model itself wrote, which may in turn quote untrusted user input. The tag is what marks those words off from a person's turn. |
+| `'no_output'`, `'model_retry'` | a mid-conversation system prompt, degraded to `<system>`-tagged user text where the provider takes no system message mid-conversation | The text is a message your own code wrote knowing it would be shown — the same trust you already give [`instructions`][pydantic_ai.Agent]. |
+
+A closing tag inside either wrapper is escaped, so text the model had a hand in cannot end the statement that carries it.
+
+!!! warning "What goes in the system voice"
+    The system channel is the highest-privilege text a model reads, and a [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] message goes there verbatim. Interpolating model output into that message hands the model's words the system voice; pass a fixed message and let the validation errors carry the specifics — those go out in the user voice, inside the fence, precisely because they quote the model.
+
+    A `RetryFeedbackPart` that opens a history — through a hand-built `message_history`, an adapter load, [compaction](capabilities/compaction.md), or [`ProcessHistory`](capabilities/process-history.md) filtering — is treated exactly like a [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] written in that position, so a `'model_retry'` one there joins the run's standing prompt and reaches the provider's own system field, ahead of the agent's own [`instructions`][pydantic_ai.Agent]. Put a `SystemPromptPart` of your own first if that matters; feedback recorded by a run of its own never lands there, because the request that carries it follows the response it is about.
+
+!!! note "`RetryPromptPart` is deprecated"
+    Both retries used to be a single [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart], which meant a tool-less retry arrived at the model as ordinary user text it couldn't tell from something a person wrote. That class is deprecated and will be removed in v3: constructing one raises a `PydanticAIDeprecationWarning` naming the part to build instead, and Pydantic AI never emits one.
+
+    Nothing you already stored has to change. A `'retry-prompt'` part in a serialized history loads as whichever of the two parts above it always meant — a tool-bound one as a `ToolReturnPart` with `outcome='retried'`, a tool-less one as a `RetryFeedbackPart` — so loading costs no warning and re-dumping writes the new part kind. An instance your own code still holds is translated the same way before the request goes out, including one handed back through [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] to answer a [deferred tool call](deferred-tools.md). Building the request yourself — [`Model.request()`][pydantic_ai.models.Model.request] or [`Model.count_tokens()`][pydantic_ai.models.Model.count_tokens] rather than an agent run or [`direct`](direct.md) — skips that step, and raises a `UserError` naming it, the same as for any other part that only becomes sendable there.
+
+    Code that reads history is what has to change: `isinstance(part, RetryPromptPart)` stops matching, and finds nothing in a history recorded from now on. Match [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] with `outcome='retried'` for a retry that answers a tool call, and `RetryFeedbackPart` for one that answers none.
+
 ## What is never retried
 
-- **`prepare` callbacks.** An exception raised by a per-tool `prepare=`, by [`PrepareTools`](capabilities/prepare-tools.md), or by a [dynamic toolset](toolsets.md) propagates out of the run unchanged — including `ModelRetry`, which is *not* turned into a retry prompt there. To hide a tool for a turn, return `None` from the callback rather than raising.
-- **The `before_model_request` hook.** It runs while the request is still being assembled, before the model is called, so a `ModelRetry` raised there propagates out of the run instead of becoming a retry prompt — there is no response to retry yet. Raise it from one of the [other model-request hooks](hooks.md#model-request-hooks) instead: `hooks.on.after_model_request` to reject a response the model *did* produce (the rejected response stays in the message history, so the model can see what it said), `hooks.on.model_request` (`wrap_model_request`), or `hooks.on.model_request_error` (`on_model_request_error`).
+- **`prepare` callbacks.** An exception raised by a per-tool `prepare=`, by [`PrepareTools`](capabilities/prepare-tools.md), or by a [dynamic toolset](toolsets.md) propagates out of the run unchanged — including `ModelRetry`, which is *not* turned into a retry there. To hide a tool for a turn, return `None` from the callback rather than raising.
+- **The `before_model_request` hook.** It runs while the request is still being assembled, before the model is called, so a `ModelRetry` raised there propagates out of the run instead of becoming a retry — there is no response to retry yet. Raise it from one of the [other model-request hooks](hooks.md#model-request-hooks) instead: `hooks.on.after_model_request` to reject a response the model *did* produce (the rejected response stays in the message history, so the model can see what it said), `hooks.on.model_request` (`wrap_model_request`), or `hooks.on.model_request_error` (`on_model_request_error`).
 - **Exceptions other than `ModelRetry` and `ToolFailed`.** Anything else a tool raises propagates out of the run rather than becoming a retry — *unless* a [capability](capabilities/overview.md) implements `on_tool_execute_error`, which sees the exception first and can return a replacement tool result or raise `ModelRetry` to keep the run going. [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] and [`CallDeferred`][pydantic_ai.exceptions.CallDeferred] are the exceptions that are neither: they're control flow, not errors, and end the run with a [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] output instead of propagating — except in a [realtime session](realtime/overview.md), which can't pause and instead answers the model with an explanation that the tool can't complete during the session. [Ending a run from inside a tool](timeouts.md#ending-a-run-from-inside-a-tool) has the full table.
 - **Whole agent runs.** Nothing re-runs an agent for you. [Pydantic Evals](evals.md) has its own `retry_task` and `retry_evaluators` options for retrying a whole task or evaluator during an evaluation — see [Retry Strategies](evals/how-to/retry-strategies.md). Those sit outside the agent, so a retried task starts with fresh tool and output budgets.

@@ -19,7 +19,7 @@ from datetime import datetime, timedelta
 from difflib import get_close_matches
 from functools import cache, cached_property
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypeVar, cast, get_args, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypeAlias, TypeVar, cast, get_args, overload
 
 import httpx2
 from typing_extensions import Self, TypeAliasType, TypedDict, deprecated
@@ -55,7 +55,8 @@ from ..messages import (
     NativeToolSearchReturnPart as NativeToolSearchReturnPart,
     PartEndEvent,
     PartStartEvent,
-    RetryPromptPart,
+    RetryFeedbackPart,
+    RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
     SpeechPart,
     SystemPromptPart,
     TextPart,
@@ -69,7 +70,10 @@ from ..messages import (
     UserPromptPart,
     VideoUrl,
     _compaction_part_is_wire_boundary,  # pyright: ignore[reportPrivateUsage]
+    _retry_feedback_speaks_for_the_harness,  # pyright: ignore[reportPrivateUsage]
     _tool_results_first_sort_key,  # pyright: ignore[reportPrivateUsage]
+    _translate_legacy_retry_part,  # pyright: ignore[reportPrivateUsage]
+    _wrap_in_tag,  # pyright: ignore[reportPrivateUsage]
 )
 from ..native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
 from ..native_tools._tool_search import TOOL_SEARCH_FUNCTION_TOOL_NAME, ToolSearchTool
@@ -723,6 +727,12 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         `ModelResponse(call) + ModelRequest(return)` so the adapter can render the
         provider-agnostic exchange.
 
+        Translates each retry part into the part that carries it on the wire: a `RetryFeedbackPart`
+        becomes a `<validation_errors>`-fenced `UserPromptPart` where the feedback quotes the model's
+        own output, and a mid-conversation `SystemPromptPart` where it carries a message the agent's
+        author wrote. A legacy `RetryPromptPart` becomes a `ToolReturnPart` with `outcome='retried'`
+        when it names a tool, and the `RetryFeedbackPart` it always meant when it doesn't.
+
         Also wraps non-leading `SystemPromptPart`s as `<system>`-tagged `UserPromptPart`s when
         the profile's `supports_inline_system_prompts` is `False`, and converts
         `SpeechPart`s from realtime session history into `UserPromptPart`s /
@@ -742,6 +752,9 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 which differs only for a corpus mixing capability-gated and standalone deferred tools.
                 Framework callers pass it.
         """
+        # First, so every later step — the tool-availability announcement and the `<system>` wrap
+        # below it — sees the plain parts a retry translates into rather than the retry itself.
+        messages = _translate_retry_parts(messages)
         messages = _convert_speech_parts(messages, include_audio=self.profile.get('supports_audio_input', False))
 
         supports_tool_addition = self.tool_addition_mode is not None
@@ -963,8 +976,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
 
         # Fallback: synthesize from message history for direct model.request() callers.
         # Mirrors the last-two-requests logic from `pydantic_ai._instrumentation.get_instructions`:
-        # if the most recent request only has tool-return/retry-prompt parts (a "mock" request
-        # for result tools), use the instructions from the second-to-most-recent request.
+        # if the most recent request only has tool-return/retry-prompt/retry-feedback parts (a "mock"
+        # request for result tools), use the instructions from the second-to-most-recent request.
         last_two_requests: list[ModelRequest] = []
         for message in reversed(messages):
             if isinstance(message, ModelRequest):
@@ -978,7 +991,10 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             most_recent = last_two_requests[0]
             second = last_two_requests[1]
             if (
-                all(p.part_kind == 'tool-return' or p.part_kind == 'retry-prompt' for p in most_recent.parts)
+                all(
+                    p.part_kind == 'tool-return' or p.part_kind == 'retry-prompt' or p.part_kind == 'retry-feedback'
+                    for p in most_recent.parts
+                )
                 and second.instructions is not None
             ):
                 return [InstructionPart(content=second.instructions)]
@@ -2211,6 +2227,16 @@ def _standing_prompt_request(prefix: list[ModelMessage], *, include_system_parts
     return [ModelRequest(parts=list(opening), instructions=instructions)]
 
 
+def _wrap_in_system_tags(content: str) -> str:
+    """Tag text as the harness speaking, for a channel with no system role of its own.
+
+    A closing `</system>` inside `content` is neutralized as it is wrapped, so the statement can't be
+    ended early by text that reached here from a model — through a validation error's `loc` or `msg`,
+    or through an MCP-chosen tool name in a tool-availability announcement.
+    """
+    return _wrap_in_tag(content, tag='system')
+
+
 def _wrap_non_leading_system_prompts(messages: list[ModelMessage]) -> list[ModelMessage]:
     """Wrap mid-conversation `SystemPromptPart`s as `<system>`-tagged `UserPromptPart`s.
 
@@ -2234,7 +2260,7 @@ def _wrap_non_leading_system_prompts(messages: list[ModelMessage]) -> list[Model
         start = _standing_system_prompt_count(msg) if offset == 0 and isinstance(msg, ModelRequest) else 0
         if isinstance(msg, ModelRequest) and any(isinstance(p, SystemPromptPart) for p in msg.parts[start:]):
             new_parts = [
-                UserPromptPart(content=f'<system>{part.content}</system>', timestamp=part.timestamp)
+                UserPromptPart(content=_wrap_in_system_tags(part.content), timestamp=part.timestamp)
                 if index >= start and isinstance(part, SystemPromptPart)
                 else part
                 for index, part in enumerate(msg.parts)
@@ -2247,24 +2273,38 @@ def _wrap_non_leading_system_prompts(messages: list[ModelMessage]) -> list[Model
     return new_messages if changed else messages
 
 
-def _unsynthesized_tool_availability_delta_error() -> UserError:  # pyright: ignore[reportUnusedFunction]
-    """The error for a `ToolAvailabilityDeltaPart` that reached an adapter with no way to render it.
+# TODO(v3): remove `RetryPromptPart`
+_UnpreparedPart: TypeAlias = (
+    ToolAvailabilityDeltaPart | RetryFeedbackPart | RetryPromptPart  # pyright: ignore[reportDeprecated]
+)
+"""The request parts `prepare_messages` translates away before any adapter sees them.
 
-    `prepare_messages` projects every delta to the local tool-search exchange unless the profile
-    advertises native support, so an adapter that doesn't support the part natively only sees one
-    when that projection didn't run. Running a model through an agent always runs it, but
+Each of these carries something no provider API has a field for — a mid-conversation change to the
+tool list, or a retry that isn't a plain turn — and `prepare_messages` turns it into the parts every
+adapter already knows how to map. So an adapter meeting one has been handed a history that step never
+ran on, which is one branch to check rather than one per part.
+"""
+
+
+def _unprepared_part_error(part: _UnpreparedPart) -> UserError:  # pyright: ignore[reportUnusedFunction]
+    """The error for a request part that reached an adapter with no way to render it.
+
+    Running a model through an agent always runs `prepare_messages`, but
     [`Model.request`][pydantic_ai.models.Model.request] and
     [`Model.count_tokens`][pydantic_ai.models.Model.count_tokens] are public and don't, so a caller
-    driving a model directly can reach this with a history that is otherwise perfectly valid. Hence
-    a `UserError` naming the missing step, rather than an assertion about an internal invariant.
+    driving a model directly can reach this with a history that is otherwise perfectly valid. Hence a
+    `UserError` naming the missing step, rather than an assertion about an internal invariant.
 
-    Raising beats dropping the part: silently discarding it would tell the model nothing about the
-    tools that appeared, and it would then fail to call a tool it was supposed to have gained.
+    Raising beats rendering something: a silently dropped availability delta tells the model nothing
+    about the tools that appeared, so it then fails to call one it was supposed to have gained, and a
+    retry the model reads as something a person wrote is the exact confusion
+    [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart] was introduced to end
+    (https://github.com/pydantic/pydantic-ai/issues/6404).
     """
     return UserError(
-        '`ToolAvailabilityDeltaPart` cannot be rendered by this model. '
-        'Call `model.prepare_messages(messages)` first and pass the result — that projects the part '
-        'into the tool-search exchange every model understands. `Agent` does this for you; a direct '
+        f'`{type(part).__name__}` cannot be rendered by this model. '
+        'Call `model.prepare_messages(messages)` first and pass the result — that translates the part '
+        'into the shape every model understands. `Agent` does this for you; a direct '
         '`Model.request()` or `Model.count_tokens()` call has to do it itself.'
     )
 
@@ -2300,6 +2340,52 @@ leaves it unable to explain a list that grew mid-conversation. Naming them is en
 more — urging the model to use them, explaining why they arrived — is an instruction nobody asked
 for, on a turn the user didn't write.
 """
+
+
+def _translate_retry_parts(messages: list[ModelMessage]) -> list[ModelMessage]:
+    """Replace every retry part with the part that carries it on the wire.
+
+    Runs first in [`prepare_messages`][pydantic_ai.models.Model.prepare_messages], so the tool-search
+    synthesis, the tool-availability announcement and the `<system>` wrap below it all see plain
+    parts: feedback bound for the system voice is degraded by the same
+    `_wrap_non_leading_system_prompts` that degrades an operator's own mid-conversation prompt, rather
+    than by a rule of its own.
+
+    Replaced in place, so a request that also holds a user prompt keeps the order it was authored in,
+    and the original list comes back when nothing changed, so the identity check in `_make_request`
+    can skip the redundant `_clean_message_history` pass.
+
+    A translated `SystemPromptPart` opening the first request joins that request's standing prompt,
+    exactly as an authored one there would — `_standing_system_prompt_count` reads the parts as
+    translated. That position is only reachable through a hand-built history, an adapter load, or
+    compaction, and it is the position the agent's author put the part in.
+    """
+
+    def translate(part: ModelRequestPart) -> ModelRequestPart:
+        # TODO(v3): remove `RetryPromptPart`
+        if isinstance(part, RetryPromptPart):  # pyright: ignore[reportDeprecated]
+            translated = _translate_legacy_retry_part(part)
+            if isinstance(translated, ToolReturnPart):
+                return translated
+            part = translated
+        elif not isinstance(part, RetryFeedbackPart):
+            return part
+        if _retry_feedback_speaks_for_the_harness(part):
+            return SystemPromptPart(content=part.model_response(), timestamp=part.timestamp)
+        return UserPromptPart(content=part.model_response(), timestamp=part.timestamp)
+
+    transformed: list[ModelMessage] = []
+    changed = False
+    for message in messages:
+        if not isinstance(message, ModelRequest) or not any(
+            isinstance(part, RetryPromptPart | RetryFeedbackPart)  # pyright: ignore[reportDeprecated]
+            for part in message.parts
+        ):
+            transformed.append(message)
+            continue
+        changed = True
+        transformed.append(replace(message, parts=[translate(part) for part in message.parts]))
+    return transformed if changed else messages
 
 
 def _legacy_fabricated_tool_search_reveals(
@@ -2532,12 +2618,13 @@ def _synthesize_tool_availability_delta_messages(
         part.tool_call_id
         for message in messages
         for part in message.parts
-        if isinstance(part, BaseToolCallPart | BaseToolReturnPart | RetryPromptPart)
+        if isinstance(part, BaseToolCallPart | BaseToolReturnPart)
     }
 
     def is_tool_result(part: ModelRequestPart) -> bool:
-        # A retry without a tool name is output-validation feedback, not a tool result.
-        return isinstance(part, ToolReturnPart) or (isinstance(part, RetryPromptPart) and part.tool_name is not None)
+        # A retry that answers a call is that call's own `ToolReturnPart`, and `_translate_retry_parts`
+        # has already made that true of a legacy `RetryPromptPart` too, so one branch covers both.
+        return isinstance(part, ToolReturnPart)
 
     for message in messages:
         if not isinstance(message, ModelRequest) or not any(

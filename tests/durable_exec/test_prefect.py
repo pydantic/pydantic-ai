@@ -45,7 +45,6 @@ from pydantic_ai import (
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
-    RetryPromptPart,
     RunContext,
     TextPart,
     TextPartDelta,
@@ -161,7 +160,7 @@ except ImportError:  # pragma: lax no cover
     pytest.skip('openai not installed', allow_module_level=True)
 
 from .._inline_snapshot import snapshot
-from ..conftest import IsDatetime, IsSameStr, IsStr
+from ..conftest import IsDatetime, IsSameStr, IsStr, legacy_retry_prompt_part
 from ..continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
 from ..model_lifecycle_utils import LifecycleTrackingModel
 
@@ -2070,7 +2069,7 @@ def test_cache_policy_normalizes_only_framework_tool_call_ids():
     mock_task_ctx = MagicMock()
 
     def key_for(tool_call_id: str) -> str | None:
-        part = RetryPromptPart(content='retry', tool_name='tool', tool_call_id=tool_call_id)
+        part = legacy_retry_prompt_part(content='retry', tool_name='tool', tool_call_id=tool_call_id)
         return cache_policy.compute_key(task_ctx=mock_task_ctx, inputs={'messages': [part]}, flow_parameters={})
 
     assert key_for('pyd_ai_first') == key_for('pyd_ai_second')

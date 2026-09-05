@@ -47,7 +47,7 @@ from pydantic_ai import (
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
-    RetryPromptPart,
+    RetryFeedbackPart,
     SystemPromptPart,
     TextPart,
     TextPartDelta,
@@ -88,7 +88,7 @@ from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
 from .._inline_snapshot import Is, snapshot
 from ..cassette_utils import single_request_body
-from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, try_import
+from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, legacy_retry_prompt_part, try_import
 from ..parts_from_messages import part_types_from_messages
 
 with try_import() as imports_successful:
@@ -435,11 +435,12 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='The country is not supported. Use "La France" instead.',
                         tool_name='get_capital',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        outcome='retried',
                     )
                 ],
                 timestamp=IsNow(tz=timezone.utc),
@@ -3686,9 +3687,9 @@ async def test_google_image_generation_with_native_output(allow_model_requests: 
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    RetryFeedbackPart(
                         content='Please return text.',
-                        tool_call_id=IsStr(),
+                        cause='no_output',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -5805,9 +5806,9 @@ async def test_google_model_retrying_after_empty_response(allow_model_requests: 
         [
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    RetryFeedbackPart(
                         content='Please return text.',
-                        tool_call_id=IsStr(),
+                        cause='no_output',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -6343,7 +6344,9 @@ async def test_google_splits_tool_return_from_user_prompt(google_provider: Googl
         )
     ]
 
-    _, contents = await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+    _, contents = await m._map_messages(  # pyright: ignore[reportPrivateUsage]
+        m.prepare_messages(messages, ModelRequestParameters()), ModelRequestParameters()
+    )
 
     assert contents == snapshot(
         [
@@ -6375,14 +6378,18 @@ async def test_google_splits_tool_return_from_user_prompt(google_provider: Googl
         ModelRequest(
             parts=[
                 ToolReturnPart(tool_name='final_result', content='Final result processed.', tool_call_id='test_id_1'),
-                RetryPromptPart(content='Tool error occurred', tool_name='another_tool', tool_call_id='test_id_2'),
+                legacy_retry_prompt_part(
+                    content='Tool error occurred', tool_name='another_tool', tool_call_id='test_id_2'
+                ),
                 UserPromptPart(content="What's 2 + 2?"),
                 UserPromptPart(content="What's 3 + 3?"),
             ]
         )
     ]
 
-    _, contents = await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+    _, contents = await m._map_messages(  # pyright: ignore[reportPrivateUsage]
+        m.prepare_messages(messages, ModelRequestParameters()), ModelRequestParameters()
+    )
 
     assert contents == snapshot(
         [
@@ -6399,7 +6406,7 @@ async def test_google_splits_tool_return_from_user_prompt(google_provider: Googl
                     {
                         'function_response': {
                             'name': 'another_tool',
-                            'response': {'error': 'Tool error occurred\n\nFix the errors and try again.'},
+                            'response': {'error': 'Tool error occurred'},
                             'id': 'test_id_2',
                         }
                     },
@@ -6428,7 +6435,9 @@ async def test_google_splits_tool_return_from_user_prompt(google_provider: Googl
         )
     ]
 
-    _, contents = await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+    _, contents = await m._map_messages(  # pyright: ignore[reportPrivateUsage]
+        m.prepare_messages(messages, ModelRequestParameters()), ModelRequestParameters()
+    )
 
     assert contents == snapshot(
         [

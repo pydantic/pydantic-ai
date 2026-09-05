@@ -572,7 +572,6 @@ def fill_run_metadata(message: _messages.ModelMessage, *, run_id: str | None, co
 def guard_tool_call_id(
     t: _messages.ToolCallPart
     | _messages.ToolReturnPart
-    | _messages.RetryPromptPart
     | _messages.NativeToolCallPart
     | _messages.NativeToolReturnPart,
 ) -> str:

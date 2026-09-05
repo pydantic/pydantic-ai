@@ -15,7 +15,7 @@ iterate the session for control flow and leave media to the views.
 | [`PartDeltaEvent`][pydantic_ai.messages.PartDeltaEvent] | Incremental speech audio/transcript or text content. |
 | [`PartEndEvent`][pydantic_ai.messages.PartEndEvent] | A finalized part; retained speech audio appears here, not at part start. |
 | [`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent] | A local function tool began executing. |
-| [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent] | A local function tool completed or returned a retry prompt. |
+| [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent] | A local function tool produced a result — a return, a failure, or a retry. |
 | [`DeferredToolRequestsEvent`][pydantic_ai.messages.DeferredToolRequestsEvent] | An inline capability handler resolved deferred requests. |
 | [`DeferredToolResultsEvent`][pydantic_ai.messages.DeferredToolResultsEvent] | Inline deferred results are ready for normal tool processing. |
 | [`RealtimeInputSpeechStartEvent`][pydantic_ai.realtime.RealtimeInputSpeechStartEvent] | The provider detected that the user started speaking, when the profile declares [`emits_input_speech_events`][pydantic_ai.realtime.RealtimeModelProfile.emits_input_speech_events]. |

@@ -709,7 +709,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
 
         if last_model_request:
             for part in last_model_request.parts:
-                if isinstance(part, _messages.ToolReturnPart | _messages.RetryPromptPart):
+                if _is_tool_result_part(part):
                     if part.tool_call_id in tool_call_results:
                         raise exceptions.UserError(
                             f'Tool call {part.tool_call_id!r} was already executed and its result cannot be overridden.'
@@ -1863,10 +1863,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     ) -> ModelRequestNode[DepsT, NodeRunEndT]:
         """Build a retry ModelRequestNode from a ModelRetry exception.
 
-        Increments the retry counter and creates a new request with a RetryPromptPart.
+        Increments the retry counter and creates a new request with a `RetryFeedbackPart`.
         """
         ctx.state.consume_output_retry(ctx.deps.max_output_retries, error=error)
-        m = _messages.RetryPromptPart(content=error.message)
+        m = _messages.RetryFeedbackPart(content=error.message, cause='model_retry')
         retry_node = ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=[m]))
         self._result = retry_node
         return retry_node
@@ -2117,8 +2117,9 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                 # handle responses with only parts that don't constitute output.
                 # This can happen with models that support thinking mode when they don't provide
                 # actionable output alongside their thinking content. so we tell the model to try again.
-                m = _messages.RetryPromptPart(
+                m = _messages.RetryFeedbackPart(
                     content=f'Please {" or ".join(alternatives)}.',
+                    cause='no_output',
                 )
                 raise ToolRetryError(m)
             except ToolRetryError as e:
@@ -2815,8 +2816,8 @@ def _insert_synthesized_returns(
 ) -> _messages.ModelRequest:
     """Insert synthesized returns after the request's existing tool results (if any).
 
-    They go ahead of user-facing parts — including a plain (non-tool-bound) `RetryPromptPart`,
-    which renders as user text — matching where providers expect tool results.
+    They go ahead of user-facing parts — including a retry that answers no call, which renders as
+    a prompt part — matching where providers expect tool results.
     """
     insert_at = next(
         (
@@ -2831,17 +2832,20 @@ def _insert_synthesized_returns(
 
 def _is_tool_result_part(
     part: _messages.ModelRequestPart | _messages.ModelResponsePart,
-) -> TypeGuard[_messages.ToolReturnPart | _messages.RetryPromptPart]:
+) -> TypeGuard[_messages.ToolReturnPart | _messages.RetryPromptPart]:  # pyright: ignore[reportDeprecated]
     """Whether a part is a regular (locally-executed) tool result answering a `ToolCallPart`.
 
-    A `RetryPromptPart` with no `tool_name` is validation feedback rendered as a plain user message,
-    not a tool result, so it doesn't need (or have) a matching tool call. `NativeToolReturnPart` (a
-    sibling `BaseToolReturnPart` subclass) is intentionally excluded: native/builtin results are
-    co-located with their call in one `ModelResponse` and shaped by each model's own serializer, so
-    the pipeline leaves them alone.
+    A caller's history can still hold a legacy `RetryPromptPart`, and a tool-bound one answers its
+    call exactly as a `ToolReturnPart` does — this runs before `prepare_messages` translates it. One
+    with no `tool_name` is feedback about the response as a whole, not a tool result, so it doesn't
+    need (or have) a matching tool call. `NativeToolReturnPart` (a sibling `BaseToolReturnPart`
+    subclass) is intentionally excluded: native/builtin results are co-located with their call in one
+    `ModelResponse` and shaped by each model's own serializer, so the pipeline leaves them alone.
     """
+    # TODO(v3): remove `RetryPromptPart`
     return isinstance(part, _messages.ToolReturnPart) or (
-        isinstance(part, _messages.RetryPromptPart) and part.tool_name is not None
+        isinstance(part, _messages.RetryPromptPart)  # pyright: ignore[reportDeprecated]
+        and part.tool_name is not None
     )
 
 

@@ -182,13 +182,32 @@ def _duplicate_tool_call_ids(calls: Sequence[_messages.ToolCallPart]) -> list[st
 
 def _emit_output_tool_events(
     call: _messages.ToolCallPart,
-    part: _messages.ToolReturnPart | _messages.RetryPromptPart,
+    part: _messages.ToolReturnPart,
     *,
     args_valid: bool | None = None,
 ) -> Iterator[_messages.HandleResponseEvent]:
     """Yield `OutputToolCallEvent` and `OutputToolResultEvent` for an output tool call."""
     yield _messages.OutputToolCallEvent(call, args_valid=args_valid)
     yield _messages.OutputToolResultEvent(part)
+
+
+def tool_bound_retry_part(error: ToolRetryError) -> _messages.ToolReturnPart:
+    """The part carried by a `ToolRetryError` raised against a tool call.
+
+    Every retry raised while handling a call answers that call — `ToolManager._wrap_error_as_retry`,
+    the deferred-result branches, and output-tool validation all build their part from the call's own
+    name and id — so it is never the tool-less `RetryFeedbackPart` that `ToolRetryError` also carries
+    for output that had no call to answer.
+
+    The type system can't carry that invariant — `ToolRetryError.tool_retry` is the union of both —
+    so it is checked here rather than assumed. A raised error rather than an `assert`, because
+    `python -O` strips the statement and would let a part with no `tool_name` reach a caller that
+    reads one.
+    """
+    part = error.tool_retry
+    if isinstance(part, _messages.RetryFeedbackPart):
+        raise RuntimeError('A retry answering a tool call cannot carry a `RetryFeedbackPart`, which answers no call.')
+    return part
 
 
 @dataclasses.dataclass
@@ -204,13 +223,13 @@ class _OutputCallResult(Generic[NodeRunEndT]):
     call: _messages.ToolCallPart
     args_valid: bool | None = None
     final_result: result.FinalResult[NodeRunEndT] | None = None
-    retry_part: _messages.RetryPromptPart | None = None
+    retry_part: _messages.ToolReturnPart | None = None
     raise_exc: BaseException | None = None
 
 
 # The payload `run_one` returns for each tool index under the exhaustive strategy: an output
 # result, a settled function-tool return (part + optional user content), or a deferral signal.
-_FunctionCallParts = list[_messages.ToolReturnPart | _messages.RetryPromptPart | _messages.ToolAvailabilityDeltaPart]
+_FunctionCallParts = list[_messages.ToolReturnPart | _messages.ToolAvailabilityDeltaPart]
 
 _ToolCallPayload = (
     _OutputCallResult[NodeRunEndT]
@@ -336,7 +355,7 @@ async def process_tool_calls(
     `parallel_execution_mode('sequential')` turns every tool into its own barrier.
 
     Under `'graceful'`/`'exhaustive'`, the **retry-wins** invariant applies: if any
-    function/unknown tool produces a `RetryPromptPart`, `final_result` is suppressed so the
+    function/unknown tool asks for a retry, `final_result` is suppressed so the
     model addresses the retries on the next round. Output-tool retries don't trigger this
     ("first valid output wins"). Retry-wins doesn't apply when `final_result` was passed in
     by `Agent.run_stream` (the streamed output is already committed) or under `'early'`
@@ -410,7 +429,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
     #
     # `final_result_was_set_externally`: when `final_result` is passed in pre-set (e.g. from
     # `Agent.run_stream`), the streamed output is already committed and retry-wins can't revoke it.
-    # `retry_wins_triggered`: set when a function/unknown tool produces a `RetryPromptPart`.
+    # `retry_wins_triggered`: set when a function/unknown tool asks for a retry.
     # `output_retries_increment`: accumulates output-retry-budget increments to apply once execution
     # settles, so parallel output tasks don't race the counter.
     # `winning_output_part`: a direct reference to the winning output's 'Final result processed.'
@@ -525,7 +544,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
     def _record_output_part(
         self,
         call: _messages.ToolCallPart,
-        part: _messages.ToolReturnPart | _messages.RetryPromptPart,
+        part: _messages.ToolReturnPart,
         *,
         args_valid: bool | None,
     ) -> Iterator[_messages.HandleResponseEvent]:
@@ -563,7 +582,9 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             # path, which also handles `ToolFailedError`.
             assert isinstance(validated.validation_error, ToolRetryError)
             self.output_retries_increment += 1
-            return _OutputCallResult(call=call, args_valid=False, retry_part=validated.validation_error.tool_retry)
+            return _OutputCallResult(
+                call=call, args_valid=False, retry_part=tool_bound_retry_part(validated.validation_error)
+            )
 
         try:
             result_data: Any = await self.tool_manager.execute_output_tool_call(validated, schema=self.schema)
@@ -574,7 +595,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             return _OutputCallResult(call=call, args_valid=True, raise_exc=wrapped)
         except ToolRetryError as e:
             self.output_retries_increment += 1
-            return _OutputCallResult(call=call, args_valid=True, retry_part=e.tool_retry)
+            return _OutputCallResult(call=call, args_valid=True, retry_part=tool_bound_retry_part(e))
 
         final_result = result.FinalResult(result_data, call.tool_name, call.tool_call_id)
         return _OutputCallResult(call=call, args_valid=True, final_result=final_result)
@@ -698,7 +719,9 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         # tool kind from its `tool_name` (the parallel exhaustive path keys off `call_kinds` instead,
         # but both funnel through `_is_retry_wins_trigger`).
         for part in self.output_parts[before:]:
-            if isinstance(part, _messages.RetryPromptPart) and part.tool_name is not None:
+            # The outcome is checked here as well as inside the predicate so a batch of successful
+            # returns doesn't pay a tool-def lookup each to be discarded.
+            if isinstance(part, _messages.ToolReturnPart) and part.outcome == 'retried':
                 tool_def = self.tool_manager.get_tool_def(part.tool_name)
                 kind = tool_def.kind if tool_def is not None else 'unknown'
                 if self._is_retry_wins_trigger(part, kind=kind):
@@ -735,20 +758,32 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                 )
                 raise ToolFailedError(m)
             elif isinstance(tool_call_result, exceptions.ModelRetry):
-                m = _messages.RetryPromptPart(
+                m = _messages.ToolReturnPart(
                     content=tool_call_result.message,
                     tool_name=call.tool_name,
                     tool_call_id=call.tool_call_id,
+                    outcome='retried',
                 )
                 raise ToolRetryError(m)
-            elif isinstance(tool_call_result, _messages.RetryPromptPart):
-                tool_call_result.tool_name = call.tool_name
-                tool_call_result.tool_call_id = call.tool_call_id
-                raise ToolRetryError(tool_call_result)
+            # TODO(v3): remove `RetryPromptPart`
+            elif isinstance(tool_call_result, _messages.RetryPromptPart):  # pyright: ignore[reportDeprecated]
+                # A handler answering a deferred call with the deprecated part means what a
+                # `ModelRetry` above means: the retry answers this call, so it travels as the call's
+                # own result. The handler's own `tool_name`/`tool_call_id` are ignored either way —
+                # the call being resolved is the one it answers.
+                raise ToolRetryError(
+                    _messages._translate_legacy_retry_part(  # pyright: ignore[reportPrivateUsage]
+                        {
+                            'content': tool_call_result.content,
+                            'tool_name': call.tool_name,
+                            'tool_call_id': call.tool_call_id,
+                        }
+                    )
+                )
             else:
                 tool_result = tool_call_result
         except ToolRetryError as e:
-            return [e.tool_retry], None
+            return [tool_bound_retry_part(e)], None
         except ToolFailedError as e:
             return [e.tool_failed], None
         except exceptions.RunCancelled as e:
@@ -821,7 +856,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                     user_parts_by_index[index] = _messages.UserPromptPart(content=tool_user_content)
 
                 tool_part = tool_parts[0]
-                assert isinstance(tool_part, _messages.ToolReturnPart | _messages.RetryPromptPart)
+                assert isinstance(tool_part, _messages.ToolReturnPart)
                 return _messages.FunctionToolResultEvent(tool_part, content=tool_user_content)
 
         def call_tool(
@@ -933,13 +968,15 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
     def _is_retry_wins_trigger(self, part: _messages.ModelRequestPart, *, kind: ToolKind | Literal['unknown']) -> bool:
         """Whether a settled tool part triggers retry-wins.
 
-        A `RetryPromptPart` (a `ModelRetry` or arg-validation failure) from an actual function
-        tool suppresses an otherwise-valid output, so the model addresses the retry next round.
-        Retries from unknown/hallucinated tools don't — they aren't work that needs to complete
-        before the output is valid. This single predicate backs both the emission-order paths
-        (graceful/early) and the parallel exhaustive path so the rule lives in one place.
+        A retry (a `ModelRetry` or arg-validation failure) from an actual function tool suppresses an
+        otherwise-valid output, so the model addresses the retry next round. Retries from
+        unknown/hallucinated tools don't — they aren't work that needs to complete before the output
+        is valid. This single predicate backs both the emission-order paths (graceful/early) and the
+        parallel exhaustive path so the rule lives in one place. The emission-order caller pre-filters
+        on `outcome == 'retried'` to skip a tool-def lookup per settled return, so widening the set of
+        outcomes that trigger retry-wins means widening that check too.
         """
-        return isinstance(part, _messages.RetryPromptPart) and kind == 'function'
+        return kind == 'function' and isinstance(part, _messages.ToolReturnPart) and part.outcome == 'retried'
 
     def _apply_retry_wins(self) -> None:
         """Suppress the output result if a function tool retried (graceful + exhaustive).
@@ -1009,7 +1046,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                     try:
                         await self.tool_manager.execute_tool_call(validated)
                     except (ToolRetryError, ToolFailedError) as e:
-                        part = e.tool_retry if isinstance(e, ToolRetryError) else e.tool_failed
+                        part = tool_bound_retry_part(e) if isinstance(e, ToolRetryError) else e.tool_failed
                         self.output_parts.append(part)
                         yield _messages.FunctionToolResultEvent(part)
 
@@ -1252,7 +1289,7 @@ class _ExhaustiveProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
                                 if tool_user_content:
                                     function_user_parts[index] = _messages.UserPromptPart(content=tool_user_content)
                                 tool_part = tool_parts[0]
-                                assert isinstance(tool_part, _messages.ToolReturnPart | _messages.RetryPromptPart)
+                                assert isinstance(tool_part, _messages.ToolReturnPart)
                                 if self._is_retry_wins_trigger(tool_part, kind=self.call_kinds[index]):
                                     self.retry_wins_triggered = True
                                 result_event = _messages.FunctionToolResultEvent(tool_part, content=tool_user_content)

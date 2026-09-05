@@ -20,7 +20,7 @@ from rich.markdown import Markdown
 
 from pydantic_ai import Agent, ModelMessage, ModelResponse, ModelRetry, TextPart, ToolCallPart
 from pydantic_ai.capabilities import NativeTool
-from pydantic_ai.messages import RetryPromptPart, ToolReturnPart
+from pydantic_ai.messages import ToolReturnPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.toolsets import FunctionToolset, WrapperToolset
@@ -493,15 +493,19 @@ async def test_streaming_ignores_output_tool_calls():
 async def test_streaming_clears_indicator_for_retried_tool(live_frames: list[str]):
     """A call that comes back as a retry drops its in-flight indicator instead of pinning it.
 
-    `pending_calls` is popped for any `FunctionToolResultEvent`, not only a `ToolReturnPart`.
-    Popping on success alone left `> _Calling tool ...` on screen for the rest of the run. A retry
-    still renders no `Called tool` line — surfacing retries is a separate feature.
+    `pending_calls` is popped for any `FunctionToolResultEvent`. Popping on success alone left
+    `> _Calling tool ...` on screen for the rest of the run. The retried call reports `Called tool`
+    like any other: it is a call that ran and returned, and the run continues from there.
     """
 
     async def retrying_tool_stream(
         messages: list[ModelMessage], info: AgentInfo
     ) -> AsyncIterator[str | DeltaToolCalls]:
-        if any(isinstance(part, RetryPromptPart) for message in messages for part in message.parts):
+        if any(
+            isinstance(part, ToolReturnPart) and part.outcome == 'retried'
+            for message in messages
+            for part in message.parts
+        ):
             yield 'Recovered without the tool.'
         else:
             yield 'Trying a tool.'
@@ -525,9 +529,15 @@ Trying a tool.
 
 > _Calling tool `flaky`…_\
 """,
-            'Trying a tool.',
             """\
 Trying a tool.
+
+> Called tool `flaky`.\
+""",
+            """\
+Trying a tool.
+
+> Called tool `flaky`.
 
 Recovered without the tool.\
 """,

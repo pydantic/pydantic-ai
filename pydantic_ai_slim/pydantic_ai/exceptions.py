@@ -23,7 +23,7 @@ else:
 
 
 if TYPE_CHECKING:
-    from .messages import ModelMessage, ModelResponse, RetryPromptPart, ToolReturnPart
+    from .messages import ModelMessage, ModelResponse, RetryFeedbackPart, ToolReturnPart
     from .usage import RunUsage
 
 __all__ = (
@@ -614,22 +614,33 @@ class FallbackExceptionGroup(ExceptionGroup[Any]):
 
 
 class ToolRetryError(Exception):
-    """Exception used to signal a `ToolRetry` message should be returned to the LLM."""
+    """Exception used to signal a retry message should be returned to the LLM.
 
-    def __init__(self, tool_retry: RetryPromptPart):
+    `tool_retry` is whichever part the retry travels as: a `ToolReturnPart` with `outcome='retried'`
+    when it answers a tool call, a `RetryFeedbackPart` when it doesn't.
+    """
+
+    def __init__(self, tool_retry: RetryFeedbackPart | ToolReturnPart):
         self.tool_retry = tool_retry
-        message = (
-            tool_retry.content
-            if isinstance(tool_retry.content, str)
-            else self._format_error_details(tool_retry.content, tool_retry.tool_name)
-        )
+        # `part_kind` rather than `isinstance`: the parts are imported under `TYPE_CHECKING` only,
+        # because `messages` imports this module.
+        if tool_retry.part_kind == 'tool-return':
+            # Rendered the way `ToolFailedError` below renders its own part: the content without the
+            # `{"error": ...}` wrapper a provider with no native error channel adds, because this is
+            # a human-readable message rather than the wire. The call it answers is on
+            # `tool_retry.tool_name` for anything that needs it.
+            message = tool_retry.model_response_str(wrap_if_error=False)
+        elif isinstance(tool_retry.content, str):
+            message = tool_retry.content
+        else:
+            message = self._format_error_details(tool_retry.content)
         super().__init__(message)
 
     def __reduce__(self) -> tuple[type, tuple[Any, ...]]:
         return self.__class__, (self.tool_retry,)
 
     @staticmethod
-    def _format_error_details(errors: list[pydantic_core.ErrorDetails], tool_name: str | None) -> str:
+    def _format_error_details(errors: list[pydantic_core.ErrorDetails]) -> str:
         """Format ErrorDetails as a human-readable message.
 
         We format manually rather than using ValidationError.from_exception_data because
@@ -638,9 +649,7 @@ class ToolRetryError(Exception):
         The 'msg' field already contains the human-readable message, so we use that directly.
         """
         error_count = len(errors)
-        lines = [
-            f'{error_count} validation error{"" if error_count == 1 else "s"}{f" for {tool_name!r}" if tool_name else ""}'
-        ]
+        lines = [f'{error_count} validation error{"" if error_count == 1 else "s"}']
         for e in errors:
             loc = '.'.join(str(x) for x in e['loc']) if e['loc'] else '__root__'
             lines.append(loc)

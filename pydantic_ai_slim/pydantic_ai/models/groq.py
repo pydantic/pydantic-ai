@@ -33,7 +33,6 @@ from ..messages import (
     ModelResponseStreamEvent,
     NativeToolCallPart,
     NativeToolReturnPart,
-    RetryPromptPart,
     SpeechPart,
     SystemPromptPart,
     TextContent,
@@ -59,6 +58,8 @@ from . import (
     StreamedResponse,
     _suggest_known_model_id_from_provider_error,  # pyright: ignore[reportPrivateUsage]
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
+    _unprepared_part_error,  # pyright: ignore[reportPrivateUsage]
+    _UnpreparedPart,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
     get_user_agent,
@@ -639,15 +640,13 @@ class GroqModel(Model[AsyncGroq]):
                     tool_call_id=_guard_tool_call_id(t=part),
                     content=tool_text,
                 )
-            elif isinstance(part, RetryPromptPart):  # pragma: no branch
-                if part.tool_name is None:
-                    yield chat.ChatCompletionUserMessageParam(role='user', content=part.model_response())
-                else:
-                    yield chat.ChatCompletionToolMessageParam(
-                        role='tool',
-                        tool_call_id=_guard_tool_call_id(t=part),
-                        content=part.model_response(),
-                    )
+            elif isinstance(part, SpeechPart):  # pragma: no cover
+                # Unconverted realtime speech; `prepare_messages` turns these into `UserPromptPart`s.
+                raise _unconverted_speech_part_error()
+            elif isinstance(part, _UnpreparedPart):  # pragma: no cover
+                raise _unprepared_part_error(part)
+            else:
+                assert_never(part)
         if file_content:
             yield await self._map_user_prompt(UserPromptPart(content=file_content))
 
