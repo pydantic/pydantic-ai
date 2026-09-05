@@ -149,8 +149,8 @@ alternatives: stating more than one raises [`UserError`][pydantic_ai.exceptions.
     [Agent Run Context and Dependencies](../durable_execution/temporal.md#agent-run-context-and-dependencies).
 
 The subagent speaks the native tool's geometry vocabulary. Direct-only values such as `dimensions`, arbitrary GPT
-Image 2 sizes, and additional aspect ratios are ignored with a warning. Use `native=False` with
-`fallback_image_model='provider:image-model'` to apply the
+Image 2 sizes, and additional aspect ratios are ignored with a warning. Use `native=False` with a direct generator —
+`local=ImageGenerator(...)` or `fallback_image_model='provider:image-model'` — to apply the
 [direct geometry settings](../image-generation.md#output-geometry).
 
 A provider content block becomes a retry prompt on either local path, so the model that wrote the prompt gets to

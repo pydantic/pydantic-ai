@@ -425,7 +425,7 @@ For details on file management, container lifecycle, and persistence behavior, s
 !!! tip
     For application-controlled generation and editing with dedicated image models, see the
     [direct image-generation API](image-generation.md). For an agent tool that uses the model's native image
-    generation and falls back to a direct image model you pass as `fallback_image_model=`, see the
+    generation and falls back to a direct image model you pass as `local=ImageGenerator(...)` or `fallback_image_model=`, see the
     [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] [capability](capabilities/image-generation.md).
 
 The [`ImageGenerationTool`][pydantic_ai.native_tools.ImageGenerationTool] enables your agent to generate images.

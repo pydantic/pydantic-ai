@@ -149,6 +149,7 @@ class TestImageGenerationCapability:
         assert cap.local is generator
         assert cap.fallback_image_model is None
         assert cap.get_toolset() is not None
+        assert replace(cap, dimensions=(1024, 1024)).local is generator
 
     def test_image_generation_native_false_requires_a_fallback(self):
         """`native=False` with nothing to fall back to is a capability that contributes nothing.
