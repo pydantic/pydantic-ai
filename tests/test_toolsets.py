@@ -301,6 +301,37 @@ async def test_function_toolset_with_defaults_overridden():
         return a - b  # pragma: no cover
 
 
+async def test_prepared_combined_toolset_dispatches_updated_tool():
+    received_definitions: list[ToolDefinition] = []
+
+    class InspectingToolset(FunctionToolset[None]):
+        async def call_tool(
+            self, name: str, tool_args: dict[str, Any], ctx: RunContext[None], tool: ToolsetTool[None]
+        ) -> Any:
+            received_definitions.append(tool.tool_def)
+            return await super().call_tool(name, tool_args, ctx, tool)
+
+    source_toolset = InspectingToolset(id='source')
+
+    @source_toolset.tool_plain
+    async def slow_tool() -> None:
+        await anyio.sleep(0.1)
+
+    def prepare_tool(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+        tool_defs[0].metadata = {'source': 'prepared'}
+        tool_defs[0].timeout = 0.01
+        return tool_defs
+
+    toolset = PreparedToolset(CombinedToolset([source_toolset]), prepare_tool)
+    ctx = build_run_context(None)
+    tool = (await toolset.get_tools(ctx))['slow_tool']
+
+    with pytest.raises(ModelRetry, match=re.escape('Timed out after 0.01 seconds')):
+        await toolset.call_tool('slow_tool', {}, ctx, tool)
+    assert received_definitions[0].metadata == {'source': 'prepared'}
+    assert received_definitions[0].toolset_id is None
+
+
 async def test_prepared_toolset_sync_prepare_func():
     """`PreparedToolset` accepts a synchronous prepare function (no await needed)."""
     base_toolset = FunctionToolset()
