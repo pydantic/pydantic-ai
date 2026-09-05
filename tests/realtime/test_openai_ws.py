@@ -48,7 +48,7 @@ from pydantic_ai.realtime import (
     RealtimeSession,
     RealtimeTurnCompleteEvent,
 )
-from pydantic_ai.usage import RequestUsage, RunUsage
+from pydantic_ai.usage import RunUsage
 
 from ..conftest import IsDatetime, IsSameStr, IsStr, try_import
 from .conftest import REAL_SDP_OFFER

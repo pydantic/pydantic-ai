@@ -7103,10 +7103,11 @@ async def test_agent_realtime_session_priced_cost_limit_raises_with_only_transcr
             usage_limits=UsageLimits(cost_limit=Decimal('0.0001')),
         ).session() as session:
             _ = [part async for part in session.stream_transcripts()]
-
-    response = next(message for message in session.new_messages() if isinstance(message, ModelResponse))
-    assert response.state == 'complete'
-    assert response.usage.cost == session.usage.cost
+            # The view ended because the limit tripped, after the response was finalized and priced;
+            # the error itself is raised when the block exits.
+            response = next(message for message in session.new_messages() if isinstance(message, ModelResponse))
+            assert response.state == 'complete'
+            assert response.usage.cost == session.usage.cost
 
 
 async def test_when_idle_enqueue_after_pump_finishes_is_delivered() -> None:
