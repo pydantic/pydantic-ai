@@ -8,7 +8,7 @@ import io
 import wave
 import weakref
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from threading import Lock as ThreadLock
 from time import time_ns
 from types import TracebackType
@@ -251,9 +251,16 @@ class _TapView(AsyncIterator[_TapItem]):
     collected.
     """
 
-    def __init__(self, iterator: AsyncGenerator[_TapItem, None], taps: set[_Tap], tap: _Tap) -> None:
+    def __init__(
+        self,
+        iterator: AsyncGenerator[_TapItem, None],
+        taps: set[_Tap],
+        tap: _Tap,
+        on_close: Callable[[], None] | None = None,
+    ) -> None:
         self._iterator = iterator
         self._discard = weakref.finalize(self, taps.discard, tap)
+        self._finish = weakref.finalize(self, on_close) if on_close is not None else None
 
     def __aiter__(self) -> AsyncIterator[_TapItem]:
         return self
@@ -263,6 +270,8 @@ class _TapView(AsyncIterator[_TapItem]):
 
     async def aclose(self) -> None:
         self._discard()
+        if self._finish is not None:
+            self._finish()
         await self._iterator.aclose()
 
 
@@ -288,6 +297,13 @@ class _AudioTap:
     """
     played_bytes: int = 0
     """Chunks the consumer finished with — counted when it resumes the iterator for the next one."""
+    progress: asyncio.Event = field(default_factory=asyncio.Event)
+    """Set when playback advances or the view ends, waking `wait_for_playback()`."""
+    ended: bool = False
+
+    def finish(self) -> None:
+        self.ended = True
+        self.progress.set()
 
 
 # The `RealtimeEvent` variants that `_translate_event` handles: the full union minus `ToolCall` and
@@ -1071,10 +1087,43 @@ class RealtimeSession:
                     # next — that is the moment the previous chunk finished playing, which is what
                     # makes `played_audio_bytes` an accurate playback position with no caller counting.
                     tap.played_bytes += len(item)
+                    tap.progress.set()
             finally:
+                tap.finish()
                 self._audio_taps.discard(tap)
 
-        return _TapView(iterate(), self._audio_taps, tap)
+        return _TapView(iterate(), self._audio_taps, tap, tap.finish)
+
+    async def wait_for_playback(self) -> None:
+        """Wait until the session's single audio view has accounted for all audio emitted so far.
+
+        Call this after a reply finishes generating, before closing the session or opening the
+        microphone, so buffered audio is not cut off. Playback advances with the same one-chunk lag
+        as [`played_audio_bytes`][pydantic_ai.realtime.RealtimeSession.played_audio_bytes]: a chunk
+        counts once the consumer requests the next one. Audio discarded by a barge-in, or by the
+        view's buffer overflowing, counts as accounted for rather than played. The wait also ends if
+        the view is closed or abandoned, or the session closes. Requires exactly one active
+        [`stream_audio()`][pydantic_ai.realtime.RealtimeSession.stream_audio] iterator.
+        """
+        tap = self._single_audio_tap('`wait_for_playback()`', 'wait for playback from')
+        while not self._closed and not tap.ended:
+            # Clear before checking so that progress made between the check and the wait still wakes us.
+            tap.progress.clear()
+            playhead = tap.subscribed_at_bytes + tap.played_bytes + tap.dropped_bytes
+            # Once the pump has finished, the only item left in the queue is the completion sentinel.
+            buffer_empty = tap.queue.empty() or (self._pump_finished and tap.queue.qsize() == 1)
+            if buffer_empty and playhead >= self._emitted_audio_bytes:
+                return
+            await tap.progress.wait()
+
+    def _single_audio_tap(self, method: str, purpose: str) -> _AudioTap:
+        if len(self._audio_taps) != 1:
+            raise UserError(
+                f'{method} needs exactly one active `stream_audio()` iterator to {purpose}, '
+                f'not {len(self._audio_taps)}; keep your own accounting instead.'
+            )
+        (tap,) = self._audio_taps
+        return tap
 
     @property
     def played_audio_bytes(self) -> int:
@@ -1090,13 +1139,7 @@ class RealtimeSession:
         [`interrupt(played_bytes=...)`][pydantic_ai.realtime.RealtimeSession.interrupt] on
         barge-in. Requires exactly one active `stream_audio()` iterator, like that call.
         """
-        if len(self._audio_taps) != 1:
-            raise UserError(
-                '`played_audio_bytes` needs exactly one active `stream_audio()` iterator to report '
-                f'the playback position of, not {len(self._audio_taps)}; keep your own accounting instead.'
-            )
-        (tap,) = self._audio_taps
-        return tap.played_bytes
+        return self._single_audio_tap('`played_audio_bytes`', 'report the playback position of').played_bytes
 
     @overload
     def stream_transcripts(self, *, delta: Literal[False] = False) -> AsyncIterator[SpeechPart]: ...
@@ -1591,6 +1634,9 @@ class RealtimeSession:
                 break
             assert isinstance(item, bytes)
             tap.dropped_bytes += len(item)
+        # Every change to the playback accounting wakes `wait_for_playback()`, so it re-checks against
+        # the flushed queue rather than waiting for audio that will never come.
+        tap.progress.set()
 
     async def _auto_barge_in(self, event: RealtimeEvent) -> None:
         """The local half of barge-in, run by the session itself under `handle_barge_in=True`.
@@ -3007,6 +3053,9 @@ class RealtimeSession:
                         self._transcript_tap_drops += 1
 
     def _finish_taps(self, *, discard_pending: bool = False) -> None:
+        if discard_pending:
+            for tap in self._audio_taps:
+                tap.finish()
         audio_queues = (tap.queue for tap in self._audio_taps)
         for queue in (*audio_queues, *self._transcript_taps, *self._transcript_delta_taps):
             if discard_pending:

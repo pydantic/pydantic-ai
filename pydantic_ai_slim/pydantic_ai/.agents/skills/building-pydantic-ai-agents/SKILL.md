@@ -228,6 +228,10 @@ boundary, when generation and tool work are complete. This is not always the end
 on WebRTC sidebands, track playback with `RealtimeOutputSpeechStartEvent` and `RealtimeOutputSpeechEndEvent`. Before
 passing raw microphone bytes to `send_audio`, convert them to mono PCM16 at `session.audio_input_sample_rate`; raw
 chunks carry no sample-rate metadata.
+After `RealtimeTurnCompleteEvent` (or a greeting's finalized `SpeechPart`), await
+`session.wait_for_playback()` before closing the session or opening the microphone. It waits for the single
+device-paced `stream_audio()` view to play (or discard on a barge-in) all audio emitted so far; it requires exactly one
+audio view.
 
 ```python {test="skip"}
 from pydantic_ai import Agent
