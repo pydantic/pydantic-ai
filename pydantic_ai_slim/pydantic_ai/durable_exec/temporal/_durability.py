@@ -13,7 +13,8 @@ from temporalio.workflow import ActivityConfig
 from pydantic_ai._agent_graph import set_agent_graph_sleep
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
-from pydantic_ai.capabilities.abstract import WrapRunHandler
+from pydantic_ai.capabilities.abstract import AbstractCapability, WrapRunHandler
+from pydantic_ai.capabilities.set_tool_metadata import SetToolMetadata
 from pydantic_ai.durable_exec._base import BaseDurabilityCapability
 from pydantic_ai.durable_exec._capability_operation import CapabilityMethodDeclaration
 from pydantic_ai.durable_exec._codec import IDENTITY_CODEC
@@ -36,7 +37,12 @@ from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, ToolsetTool, 
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.toolsets.function import FunctionToolsetTool
 
-from ._operation_backend import TemporalBoundOperation, TemporalOperationBackend
+from ._operation_backend import (
+    ChildWorkflowOperationConfig,
+    TemporalBoundOperation,
+    TemporalOperationBackend,
+    TemporalOperationConfigValue,
+)
 from ._run_context import TemporalRunContext, deserialize_run_context
 from ._toolset import (
     TemporalWrapperToolset,
@@ -44,6 +50,7 @@ from ._toolset import (
     temporalize_toolset as _default_temporalize_toolset,
     tool_result_payload_errors,
     validate_activity_config,
+    validate_child_workflow_config,
     with_non_retryable_errors,
 )
 from ._transports import (
@@ -210,6 +217,8 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             or via the `SetToolMetadata` capability for selector-based config.
             Setting the `'temporal'` key to `False` skips activity wrapping
             (only valid for async tool functions).
+            Setting it to `{'child_workflow': ChildWorkflowConfig(...)}` runs an
+            async function tool as a Temporal child workflow instead.
         """
         super().__init__(models=models, event_stream_handler=event_stream_handler, name=name)
         self.run_context_type = run_context_type
@@ -264,6 +273,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
 
         # Populated by for_agent().
         self._operation_backend: TemporalOperationBackend | None = None
+        self._has_child_workflow_tools = False
 
     def _check_bindable(self) -> None:
         if self.in_durable_context:
@@ -287,6 +297,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             self._deps_type = cast('type[AgentDepsT]', agent.deps_type)
 
         assert self._deps_type is not None
+        agent.root_capability.apply(self._detect_child_workflow_metadata)
         self._operation_backend = TemporalOperationBackend(
             agent_name=self.name,
             deps_type=self._deps_type,
@@ -297,6 +308,11 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             runtime=self,
         )
         self._register_activities(agent)
+
+    def _detect_child_workflow_metadata(self, capability: AbstractCapability[AgentDepsT]) -> None:
+        if isinstance(capability, SetToolMetadata):
+            config = capability.metadata.get('temporal')
+            self._has_child_workflow_tools |= isinstance(config, dict) and 'child_workflow' in config
 
     def _register_activities(self, agent: AbstractAgent[AgentDepsT, Any]) -> None:
         """Bind common model/event operations and adopt the existing toolset activities."""
@@ -346,6 +362,14 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         )
         return wrapped if isinstance(wrapped, (TemporalWrapperToolset, DurableToolsetBase)) else None
 
+    def _wrap_leaf_toolset(self, ts: AbstractToolset[AgentDepsT]) -> WrapperToolset[AgentDepsT] | None:
+        if isinstance(ts, FunctionToolset):
+            self._has_child_workflow_tools |= any(
+                isinstance(config := (tool.metadata or {}).get('temporal'), dict) and 'child_workflow' in config
+                for tool in ts.tools.values()
+            )
+        return super()._wrap_leaf_toolset(ts)
+
     def get_durable_operation_backend(self) -> TemporalOperationBackend:
         backend = self._operation_backend
         assert backend is not None
@@ -365,10 +389,35 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
 
     def _resolve_temporal_tool_config(
         self, operation_id: DurableOperationId, tool: object | None, name: str
-    ) -> ActivityConfig | Literal[False]:
+    ) -> TemporalOperationConfigValue | Literal[False]:
         toolset_id = cast(Any, operation_id).toolset_id
         base_config = self._toolset_operation_config('function', toolset_id)
-        config = resolve_tool_activity_config(cast(ToolsetTool[Any] | None, tool), name, {})
+        typed_tool = cast(ToolsetTool[Any] | None, tool)
+        metadata = typed_tool.tool_def.metadata if typed_tool is not None else None
+        metadata_config = metadata.get('temporal') if metadata is not None else None
+        config: ActivityConfig | dict[str, Any] | Literal[False] | None = (
+            cast(dict[str, Any], metadata_config)
+            if isinstance(metadata_config, dict) and 'child_workflow' in metadata_config
+            else None
+        )
+        if config is None:
+            config = resolve_tool_activity_config(typed_tool, name, {})
+        if isinstance(config, dict) and 'child_workflow' in config:
+            if set(config) != {'child_workflow'}:
+                raise UserError(f'Tool {name!r} has invalid Temporal metadata: `child_workflow` must be the only key.')
+            # Argument validation never executes the tool body, so it remains an activity even when the call is a child.
+            if isinstance(operation_id, ToolsetValidateToolArgumentsId) and operation_id.toolset_kind == 'function':
+                return base_config
+            if not isinstance(operation_id, ToolsetCallToolId) or operation_id.toolset_kind != 'function':
+                raise UserError('Temporal child workflows are only supported for function tool calls.')
+            assert isinstance(tool, FunctionToolsetTool)
+            if not tool.is_async:
+                raise UserError(
+                    f'Temporal metadata for tool {name!r} selects a child workflow, but non-async tools '
+                    'cannot run in workflow code. Make the tool function async instead.'
+                )
+            child_config = validate_child_workflow_config(config['child_workflow'], f'tool {name!r} metadata')
+            return ChildWorkflowOperationConfig(child_workflow=child_config)
         if config is False:
             from pydantic_ai.mcp import MCPToolset
 
@@ -442,9 +491,26 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
     def temporal_activities(self) -> list[Callable[..., Any]]:
         """All Temporal activities registered by this capability.
 
-        Register these with the Temporal worker, either directly or via
-        `AgentPlugin`.
+        These can be registered directly with a Temporal worker only when no tool is configured
+        to run as a child workflow. Use `AgentPlugin` or `PydanticAIPlugin` when child workflows
+        are present so both activity and workflow definitions are registered.
         """
+        backend = self._operation_backend
+        if backend is None:
+            return []
+        registrations = backend.registrations()
+        if self._has_child_workflow_tools:
+            raise UserError(
+                '`TemporalDurability.temporal_activities` cannot be used when a tool is configured to run as a '
+                'child workflow because direct activity registration would omit required workflow definitions. '
+                'Configure the worker with `AgentPlugin(agent)`, or use `PydanticAIPlugin` and list the agent on '
+                'the workflow via `__pydantic_ai_agents__`.'
+            )
+        return [registration for registration in registrations if not isinstance(registration, type)]
+
+    @property
+    def temporal_registrations(self) -> list[Callable[..., Any]]:
+        """All Temporal activity and workflow definitions required by this capability."""
         backend = self._operation_backend
         if backend is None:
             return []

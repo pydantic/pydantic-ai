@@ -54,6 +54,7 @@ from pydantic_ai.capabilities import (
     NativeTool,
     ProcessEventStream,
     ResolveModelId,
+    SetToolMetadata,
     Toolset,
     WrapperCapability,
 )
@@ -96,7 +97,7 @@ try:
     from temporalio.client import Client, WorkflowFailureError
     from temporalio.common import RetryPolicy
     from temporalio.worker import UnsandboxedWorkflowRunner, Worker
-    from temporalio.workflow import ActivityConfig
+    from temporalio.workflow import ActivityConfig, ChildWorkflowConfig
 
     from pydantic_ai.durable_exec._toolset import unwrap_tool_call_result
     from pydantic_ai.durable_exec.temporal import (
@@ -562,6 +563,11 @@ def test_durability_temporal_activities():
     assert len(bound.temporal_activities) == 6
 
 
+def test_durability_temporal_registrations_before_binding():
+    """An unbound capability has no Temporal registrations."""
+    assert TemporalDurability().temporal_registrations == []
+
+
 def test_durability_temporal_activities_with_toolsets():
     """temporal_activities includes toolset activities for agent's toolsets."""
     agent = Agent(
@@ -574,6 +580,53 @@ def test_durability_temporal_activities_with_toolsets():
     assert bound is not None
     # 4 base activities + call/validation activities for both function toolsets
     assert len(bound.temporal_activities) == 8
+
+
+def test_durability_temporal_activities_rejects_omitting_child_workflows():
+    """Direct activity registration must fail before a worker can omit required workflows."""
+
+    async def child_tool() -> str:
+        return 'done'  # pragma: no cover
+
+    toolset = FunctionToolset(id='child_tools')
+    toolset.add_function(
+        child_tool,
+        metadata={'temporal': {'child_workflow': ChildWorkflowConfig()}},
+    )
+    agent = Agent(
+        _durability_fn_model,
+        name='test',
+        toolsets=[toolset],
+        capabilities=[TemporalDurability()],
+    )
+    bound = TemporalDurability.from_agent(agent)
+    assert bound is not None
+
+    with pytest.raises(
+        UserError,
+        match='cannot be used when a tool is configured to run as a child workflow',
+    ):
+        _ = bound.temporal_activities
+
+
+def test_durability_temporal_activities_rejects_child_workflow_metadata_capability():
+    """Selector-based child workflow metadata also requires plugin registration."""
+    agent = Agent(
+        _durability_fn_model,
+        name='test',
+        capabilities=[
+            SetToolMetadata(temporal={'child_workflow': ChildWorkflowConfig()}),
+            TemporalDurability(),
+        ],
+    )
+    bound = TemporalDurability.from_agent(agent)
+    assert bound is not None
+
+    with pytest.raises(
+        UserError,
+        match='cannot be used when a tool is configured to run as a child workflow',
+    ):
+        _ = bound.temporal_activities
 
 
 def test_durability_duplicate_toolset_id_rejected():
