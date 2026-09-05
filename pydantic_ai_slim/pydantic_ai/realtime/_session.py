@@ -314,13 +314,6 @@ _TranslatableEvent: TypeAlias = (
 _SettledToolResult: TypeAlias = tuple[ToolReturnPart | RetryPromptPart, str | Sequence[UserContent] | None]
 
 
-def _as_event(item: object) -> RealtimeEvent:
-    """Unwrap a queue item: re-raise a tool's exception, otherwise return the event."""
-    if isinstance(item, BaseException):
-        raise item
-    return cast('RealtimeEvent', item)
-
-
 def _pcm_to_wav(data: bytes, sample_rate: int) -> bytes:
     """Wrap mono 16-bit PCM bytes in a WAV container at `sample_rate`."""
     buffer = io.BytesIO()
@@ -877,10 +870,11 @@ class RealtimeSession:
             return
         self._closed = True
         self._finish_taps(discard_pending=True)
-        if self._pump_task is not None:
-            # Cancelled before state is settled below so the pump can't mutate it mid-settlement;
-            # the task is awaited together with the rest afterwards.
-            self._pump_task.cancel()
+        # The pump runs from `__aenter__` on. Cancelled before state is settled below so it can't
+        # mutate state mid-settlement; the task is awaited together with the rest afterwards.
+        pump_task = self._pump_task
+        assert pump_task is not None
+        pump_task.cancel()
         if (early_error := self._closing_error or self._pump_error) is not None and (
             chat_span := self._session_instrumentation.chat_span
         ) is not None:
@@ -912,10 +906,7 @@ class RealtimeSession:
         current_task = asyncio.current_task()
         closing_from_own_task = current_task is not None and current_task in self._background_tasks
         tasks = [task for task in self._background_tasks if task is not current_task]
-        if self._pump_task is not None:
-            tasks.append(self._pump_task)
-        if tasks:
-            await cancel_and_drain(*tasks, msg='Realtime session exited')
+        await cancel_and_drain(*tasks, pump_task, msg='Realtime session exited')
 
         # Any open `chat` span was closed by the settlement above (an open span counts as a response
         # in flight), with the error — if any — already recorded on it before settlement.
@@ -1379,12 +1370,7 @@ class RealtimeSession:
             async for chunk in data:
                 if self._closed:
                     return
-                try:
-                    await self.send_audio(chunk)
-                except UserError:
-                    if self._closed:
-                        return
-                    raise
+                await self.send_audio(chunk)
             return
         user_turn_was_active = self._user_turn_active
         if not user_turn_was_active:
@@ -1662,8 +1648,8 @@ class RealtimeSession:
         return any(delivered is error for delivered in self._delivered_errors)
 
     def _raise_delivered(self, error: BaseException) -> Never:
-        if not self._error_was_delivered(error):
-            self._delivered_errors.append(error)
+        """Raise an error its callers have already checked is undelivered, recording the delivery."""
+        self._delivered_errors.append(error)
         raise error
 
     def _first_undelivered_error(self) -> BaseException | None:
@@ -3073,7 +3059,7 @@ class RealtimeSession:
                     if self._error_was_delivered(item):
                         continue
                     self._raise_delivered(item)
-                yield _as_event(item)
+                yield cast('RealtimeEvent', item)
 
         source = queue_events()
         stream: AsyncIterable[RealtimeEvent] = source

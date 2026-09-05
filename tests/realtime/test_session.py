@@ -2869,12 +2869,54 @@ async def test_tool_error_does_not_preempt_send_for_an_active_iterator() -> None
         assert isinstance(await anext(events), PartStartEvent)
         assert isinstance(await anext(events), PartEndEvent)
         assert isinstance(await anext(events), FunctionToolCallEvent)
-        while not session._parked_errors:  # pyright: ignore[reportPrivateUsage]
-            await asyncio.sleep(0)
+        # The failure is parked by the tool task itself, so it is there once that task has finished.
+        await asyncio.gather(*session._background_tasks, return_exceptions=True)  # pyright: ignore[reportPrivateUsage]
 
         await session.send('x')
         assert conn.sent[-1] == 'x'
         with pytest.raises(ValueError, match='tool exploded'):
+            await anext(events)
+
+
+async def test_tool_error_delivered_to_send_is_skipped_by_the_iterator() -> None:
+    """Once the receive side has ended, a send raises the parked failure; the iterator then ends cleanly."""
+
+    async def runner(*args: Any) -> str:
+        raise ValueError('tool exploded')
+
+    conn = FakeRealtimeConnection([ToolCall(tool_call_id='tc1', tool_name='noop', args='{}')])
+    session = RealtimeSession(conn, runner=runner)
+    async with session:
+        events = session.__aiter__()
+        assert isinstance(await anext(events), PartStartEvent)
+        assert isinstance(await anext(events), PartEndEvent)
+        assert isinstance(await anext(events), FunctionToolCallEvent)
+        await asyncio.gather(*session._background_tasks, return_exceptions=True)  # pyright: ignore[reportPrivateUsage]
+        assert session._pump_task is not None  # pyright: ignore[reportPrivateUsage]
+        await session._pump_task  # pyright: ignore[reportPrivateUsage]
+
+        with pytest.raises(ValueError, match='tool exploded'):
+            await session.send('x')
+        with pytest.raises(StopAsyncIteration):
+            await anext(events)
+
+
+async def test_pump_error_delivered_to_send_is_not_raised_again_by_the_iterator() -> None:
+    class _DyingConnection(FakeRealtimeConnection):
+        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+            yield RealtimeInputSpeechStartEvent()
+            raise RuntimeError('socket died')
+
+    session = RealtimeSession(_DyingConnection([]))
+    async with session:
+        events = session.__aiter__()
+        assert isinstance(await anext(events), RealtimeInputSpeechStartEvent)
+        assert session._pump_task is not None  # pyright: ignore[reportPrivateUsage]
+        await session._pump_task  # pyright: ignore[reportPrivateUsage]
+
+        with pytest.raises(RuntimeError, match='socket died'):
+            await session.send('x')
+        with pytest.raises(StopAsyncIteration):
             await anext(events)
 
 
