@@ -263,6 +263,7 @@ def bedrock_anthropic_model_profile(model_name: str) -> ModelProfile | None:
     # Bedrock only honors effort inside the adaptive branch of `_build_additional_model_request_fields`, so don't claim
     # support for non-adaptive models (e.g. Opus 4.5) even when the direct Anthropic API supports it.
     supports_effort = supports_adaptive and bool((downstream or {}).get('anthropic_supports_effort', False))
+
     profile = merge_profile(
         BedrockModelProfile(
             bedrock_supports_tool_choice=True,

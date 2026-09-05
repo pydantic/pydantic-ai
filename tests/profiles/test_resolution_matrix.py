@@ -666,6 +666,25 @@ def test_bedrock_anthropic_claude_sonnet_4_5():
 
 @pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
 @pytest.mark.parametrize(
+    'model_name,expected',
+    [
+        ('us.anthropic.claude-sonnet-4-6', True),
+        ('us.anthropic.claude-sonnet-5', True),
+        ('us.anthropic.claude-opus-4-6-v1', True),
+        ('us.anthropic.claude-opus-5', True),
+        ('us.anthropic.claude-fable-5-1', False),
+    ],
+)
+def test_bedrock_anthropic_adaptive_thinking_tool_choice_support(model_name: str, expected: bool):
+    """Bedrock preserves the underlying Anthropic model's adaptive-thinking tool-choice support."""
+    profile = BedrockProvider.model_profile(model_name)
+    assert profile is not None
+    assert profile.get('bedrock_supports_tool_choice', False) is True
+    assert profile.get('anthropic_supports_forced_tool_choice', False) is expected
+
+
+@pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
+@pytest.mark.parametrize(
     'model_id',
     [
         'us.anthropic.claude-fable-5-1',

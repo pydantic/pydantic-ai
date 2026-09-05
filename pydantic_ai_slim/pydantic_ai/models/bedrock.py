@@ -672,7 +672,10 @@ class BedrockConverseModel(Model[BaseClient]):
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
         settings = merge_model_settings(self.settings, model_settings)
-        if model_request_parameters.output_tools and _is_thinking_enabled(settings, model_request_parameters):
+        profile = cast(BedrockModelProfile, self.profile)
+        thinking_type = _effective_thinking_type(settings, model_request_parameters, profile)
+        thinking_blocks_output_tools = _thinking_blocks_tool_forcing(thinking_type, profile)
+        if model_request_parameters.output_tools and thinking_blocks_output_tools:
             if model_request_parameters.output_mode == 'auto':
                 output_mode = 'native' if self.profile.get('supports_json_schema_output', False) else 'prompted'
                 model_request_parameters = replace(model_request_parameters, output_mode=output_mode)
@@ -682,9 +685,16 @@ class BedrockConverseModel(Model[BaseClient]):
                 suggested_output_type = (
                     'NativeOutput' if self.profile.get('supports_json_schema_output', False) else 'PromptedOutput'
                 )
-                raise UserError(
-                    f'Bedrock does not support thinking and output tools at the same time. Use `output_type={suggested_output_type}(...)` instead.'
-                )
+                if thinking_type == 'adaptive':
+                    limitation = (
+                        f'{self.model_name!r} does not support output tools with adaptive thinking because it rejects '
+                        'the forced tool choice they require.'
+                    )
+                elif profile.get('bedrock_thinking_variant') == 'anthropic':
+                    limitation = 'Bedrock does not support extended thinking and output tools at the same time.'
+                else:
+                    limitation = 'Bedrock does not support thinking and output tools at the same time.'
+                raise UserError(f'{limitation} Use `output_type={suggested_output_type}(...)` instead.')
 
         # Resolve 'auto' to the profile default here (a no-op if already resolved above) so the
         # strict-forcing check below also applies when native mode is reached via the profile default
@@ -1917,22 +1927,51 @@ class _AsyncIteratorWrapper(Generic[T]):
                 raise e  # pragma: lax no cover
 
 
-def _is_thinking_enabled(
+def _effective_thinking_type(
     model_settings: ModelSettings | None,
-    model_request_parameters: ModelRequestParameters | None = None,
+    model_request_parameters: ModelRequestParameters | None,
+    profile: BedrockModelProfile,
+) -> Literal['adaptive', 'enabled'] | None:
+    """Resolve the thinking type used by the output-tool and tool-forcing guards.
+
+    Explicit `bedrock_additional_model_requests_fields` take precedence over unified thinking,
+    matching `_build_additional_model_request_fields`.
+    """
+    if model_settings and profile.get('bedrock_thinking_variant') == 'anthropic':
+        additional_fields = model_settings.get('bedrock_additional_model_requests_fields')
+        if additional_fields is not None and 'thinking' in additional_fields:
+            thinking_config = additional_fields['thinking']
+            if _utils.is_str_dict(thinking_config):
+                thinking_type = thinking_config.get('type')
+                if thinking_type in ('adaptive', 'enabled'):
+                    return thinking_type
+            return None
+
+    if model_settings is not None and 'thinking' in model_settings:
+        unified_thinking = model_settings['thinking']
+    else:
+        unified_thinking = model_request_parameters.thinking if model_request_parameters is not None else None
+    if not unified_thinking:
+        return None
+    if profile.get('bedrock_thinking_variant') == 'anthropic' and profile.get(
+        'bedrock_supports_adaptive_thinking', False
+    ):
+        return 'adaptive'
+    return 'enabled'
+
+
+def _thinking_blocks_tool_forcing(
+    thinking_type: Literal['adaptive', 'enabled'] | None, profile: BedrockModelProfile
 ) -> bool:
-    if model_request_parameters is not None and model_request_parameters.thinking:
-        return True
-    if model_settings:
-        if model_settings.get('thinking'):
-            return True
-        if (
-            (additional_fields := model_settings.get('bedrock_additional_model_requests_fields'))
-            and (thinking := additional_fields.get('thinking'))
-            and thinking.get('type') in ('enabled', 'adaptive')
-        ):
-            return True
-    return False
+    return thinking_type == 'enabled' or (thinking_type == 'adaptive' and not _supports_tool_forcing(profile))
+
+
+def _supports_tool_forcing(profile: BedrockModelProfile) -> bool:
+    """Keep Anthropic's forcing capability distinct from Bedrock's general tool-choice support."""
+    supports_tool_choice = profile.get('bedrock_supports_tool_choice', False)
+    if profile.get('bedrock_thinking_variant') == 'anthropic' and 'anthropic_supports_forced_tool_choice' in profile:
+        return supports_tool_choice and bool(profile['anthropic_supports_forced_tool_choice'])
+    return supports_tool_choice
 
 
 def _support_tool_forcing(
@@ -1944,9 +1983,10 @@ def _support_tool_forcing(
 ) -> bool:
     """Check if model supports tool forcing, raising UserError if explicitly requested but unsupported.
 
-    Also checks for thinking mode compatibility - Bedrock/Anthropic don't support tool forcing with thinking enabled.
+    Also checks thinking compatibility: extended thinking blocks forced tool choice, while
+    adaptive thinking allows it on profiles that advertise support.
     """
-    if not profile.get('bedrock_supports_tool_choice', False):
+    if not _supports_tool_forcing(profile):
         explicit_choice = (model_settings or {}).get('tool_choice')
         if explicit_choice == 'required' or isinstance(explicit_choice, list):
             raise UserError(
@@ -1955,12 +1995,15 @@ def _support_tool_forcing(
             )
         return False
 
-    if _is_thinking_enabled(model_settings, model_request_parameters):
+    thinking_type = _effective_thinking_type(model_settings, model_request_parameters, profile)
+    if _thinking_blocks_tool_forcing(thinking_type, profile):
         explicit_choice = (model_settings or {}).get('tool_choice')
         if explicit_choice == 'required' or isinstance(explicit_choice, list):
-            raise UserError(
-                "Bedrock does not support forcing specific tools with thinking mode. Disable thinking or use `tool_choice='auto'`."
-            )
+            if profile.get('bedrock_thinking_variant') == 'anthropic':
+                limitation = 'Bedrock does not support forced tool choice with extended thinking.'
+            else:
+                limitation = 'Bedrock does not support forced tool choice with thinking enabled.'
+            raise UserError(f"{limitation} Disable thinking or use `tool_choice='auto'`.")
         if effective_tool_choice == 'required' or isinstance(effective_tool_choice, tuple):
             return False
 

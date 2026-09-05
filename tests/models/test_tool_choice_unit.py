@@ -8,7 +8,7 @@ and blocks 'required' and list[str] values before they reach the model-specific 
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import Any, cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -451,13 +451,16 @@ async def test_thinking_with_forced_tool_choice_raises(
     else:  # bedrock
         mock_client = MagicMock()
         provider = BedrockProvider(bedrock_client=mock_client)
-        profile = BedrockModelProfile(bedrock_supports_tool_choice=True)
+        profile = BedrockModelProfile(
+            bedrock_supports_tool_choice=True,
+            bedrock_thinking_variant='anthropic',
+        )
         m = BedrockConverseModel('test-model', provider=provider, profile=profile)
         settings = {
             'bedrock_additional_model_requests_fields': {'thinking': {'type': 'enabled', 'budget_tokens': 1024}},
             'tool_choice': tool_choice,
         }
-        match = 'Bedrock does not support forcing specific tools with thinking mode'
+        match = 'Bedrock does not support forced tool choice with extended thinking'
 
     params = ModelRequestParameters(function_tools=[make_tool('my_tool')], allow_text_output=True)
     with pytest.raises(UserError, match=match):
@@ -520,7 +523,10 @@ def test_support_tool_forcing_implicit_resolution(provider_name: str, resolved_t
         settings: AnthropicModelSettings = {'anthropic_thinking': {'type': 'enabled', 'budget_tokens': 1024}}
         result = anthropic_support_tool_forcing(settings, ModelRequestParameters(), resolved_tool_choice)
     else:  # bedrock
-        profile = BedrockModelProfile(bedrock_supports_tool_choice=True)
+        profile = BedrockModelProfile(
+            bedrock_supports_tool_choice=True,
+            bedrock_thinking_variant='anthropic',
+        )
         settings_bedrock: BedrockModelSettings = {
             'bedrock_additional_model_requests_fields': {'thinking': {'type': 'enabled', 'budget_tokens': 1024}}
         }
@@ -528,6 +534,34 @@ def test_support_tool_forcing_implicit_resolution(provider_name: str, resolved_t
             'test-model', profile, settings_bedrock, ModelRequestParameters(), resolved_tool_choice
         )
     assert result is expected
+
+
+@skip_if_no_bedrock
+def test_bedrock_explicit_tool_forcing_non_anthropic_thinking_errors():
+    profile = BedrockModelProfile(
+        bedrock_supports_tool_choice=True,
+        bedrock_thinking_variant='qwen',
+    )
+    settings = BedrockModelSettings(thinking=True, tool_choice='required')
+
+    with pytest.raises(UserError, match='with thinking enabled'):
+        bedrock_support_tool_forcing('test-model', profile, settings, ModelRequestParameters(), 'required')
+
+
+@skip_if_no_bedrock
+def test_bedrock_anthropic_tool_choice_profile_override_disables_forcing():
+    profile = cast(
+        BedrockModelProfile,
+        {
+            'bedrock_supports_tool_choice': False,
+            'bedrock_thinking_variant': 'anthropic',
+            'anthropic_supports_forced_tool_choice': True,
+        },
+    )
+    settings = BedrockModelSettings(tool_choice='required')
+
+    with pytest.raises(UserError, match='does not support forcing tool use'):
+        bedrock_support_tool_forcing('test-model', profile, settings, ModelRequestParameters(), 'required')
 
 
 @skip_if_no_anthropic
@@ -758,7 +792,10 @@ def test_bedrock_prepare_request_thinking_auto_output_mode(supports_json_schema:
     """When thinking + output tools + auto mode, convert to native or prompted based on profile."""
     mock_client = MagicMock()
     provider = BedrockProvider(bedrock_client=mock_client)
-    profile = BedrockModelProfile(supports_json_schema_output=supports_json_schema)
+    profile = BedrockModelProfile(
+        supports_json_schema_output=supports_json_schema,
+        bedrock_thinking_variant='anthropic',
+    )
     m = BedrockConverseModel('test-model', provider=provider, profile=profile)
 
     settings: BedrockModelSettings = {
