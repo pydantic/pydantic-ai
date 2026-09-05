@@ -47,8 +47,9 @@ fails loudly where it doesn't:
 - **Overrides**: first message, language, voice, TTS knobs, the pipeline LLM, and text-only mode
   are pushed through the conversation-initiation override payload. Every override is gated by a
   per-field toggle under *Security* > *Overrides* in the agent's dashboard settings
-  (`platform_settings.overrides` via the API); the preflight checks each requested override against
-  the agent's allowlist before dialing.
+  (`platform_settings.overrides` via the API); the preflight checks each enumerated override
+  setting against the agent's allowlist before dialing. The raw `elevenlabs_config_override`
+  escape hatch is the one exception: see [Settings](#settings).
 - **Tools**: client tools are workspace entities referenced by the agent, so they cannot be
   declared inline per-conversation. By default the preflight errors when the session's tools and
   the agent's client tools differ in any way; see [Tool synchronization](#tool-synchronization).
@@ -79,7 +80,10 @@ model = ElevenLabsRealtimeModel('agent_0101k2example', settings=settings)
 Each `elevenlabs_*` override setting requires its toggle on the agent, as described above.
 `elevenlabs_llm` selects the LLM the ElevenLabs pipeline runs (e.g. `gpt-5.2`),
 `elevenlabs_dynamic_variables` fills `{{placeholders}}` in the agent's prompts, and
-`elevenlabs_config_override` is the raw escape hatch merged last into the override payload.
+`elevenlabs_config_override` is the raw escape hatch merged last into the override payload. Being
+raw is its point, so it is deliberately not checked against the permission allowlist: a field the
+agent does not permit there surfaces as the server closing the socket (code 1008, naming the
+field) after the handshake, not as a local [`UserError`][pydantic_ai.exceptions.UserError].
 
 Of the shared settings:
 
@@ -103,7 +107,11 @@ at connect time:
   difference (missing, extra, or differing tools), so the two can never silently disagree.
 - `'sync'`: make the workspace match Pydantic AI over REST before dialing: create missing client
   tools, update differing ones, and re-point the agent's `tool_ids`. This mutates workspace state
-  shared by every conversation with the agent, which is why it is opt-in.
+  shared by every conversation with the agent, which is why it is opt-in. Treat it as a
+  deploy-time step (a warm-up connect after a tool change) rather than something a customer's
+  first call should pay: the writes run sequentially at roughly half a second each, and two
+  processes syncing the same agent concurrently race on the final `tool_ids` re-point, last
+  writer wins.
 - `'off'`: trust the agent's configuration (e.g. for read-scoped API keys).
 
 Server-side webhook, MCP, and system tools on the agent are ElevenLabs-owned and never touched;
@@ -116,7 +124,10 @@ ElevenLabs stores tool parameters in its own restricted schema dialect rather th
 `type`, `description`, `enum`, `items`, `properties`, and `required` are supported, other keywords
 (such as `additionalProperties` or numeric bounds) are not, and **every parameter needs a
 description**. Nested models (`$defs`/`$ref`) are inlined and optional (nullable) parameters are
-collapsed onto their non-null type before conversion, with optionality carried by `required` alone.
+collapsed onto their non-null type before conversion, with optionality carried by `required` alone;
+the dialect has no way to say `null`, so a required nullable parameter is advertised as its
+non-null type and the agent's LLM, which only ever sees the advertised schema, always supplies a
+value for it.
 `'sync'` therefore fails loudly for a tool whose parameters lack descriptions (add them in the
 function docstring) or use a shape the dialect cannot express (a union of types, or a recursive
 reference), and the `'error'` comparison checks what the dialect can express, comparing a

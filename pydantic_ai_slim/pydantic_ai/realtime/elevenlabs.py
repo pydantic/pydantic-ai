@@ -11,7 +11,9 @@ ownership of as much of the conversation as ElevenLabs allows per-conversation:
   through `conversation_initiation_client_data.conversation_config_override`. Every overridable field
   is gated by a per-field toggle in the agent's Security tab (`platform_settings.overrides`); the
   connect-time preflight fetches the agent and raises a [`UserError`][pydantic_ai.exceptions.UserError]
-  naming the exact toggle when an override the session needs is not permitted. When the Pydantic AI
+  naming the exact toggle when an override the session needs is not permitted. (The raw
+  `elevenlabs_config_override` escape hatch skips this check by design and is judged by the server
+  after the handshake instead.) When the Pydantic AI
   agent defines no instructions, the ElevenLabs-side prompt is inherited silently.
 - Tool declarations cannot be sent inline per-conversation: client tools are workspace entities
   referenced from the agent. By default the preflight *errors on mismatch* between the session's
@@ -890,6 +892,35 @@ class ElevenLabsRealtimeModel(RealtimeModel):
         _raise_for_status(response, self.agent_id)
         return _SignedUrlResponse.model_validate_json(response.content).signed_url
 
+    async def _workspace_tool_listing(self) -> dict[str, _WorkspaceTool]:
+        """Fetch the full workspace tool listing by id, following the cursor pagination.
+
+        Every page is fetched so attached ids are never misclassified (and duplicated as fresh
+        creates) just because a workspace holds more tools than one page carries.
+        """
+        workspace_tools: dict[str, _WorkspaceTool] = {}
+        cursor: str | None = None
+        seen_cursors: set[str] = set()
+        while True:
+            params: dict[str, Any] = {'page_size': 100}
+            if cursor is not None:
+                params['cursor'] = cursor
+            with _map_rest_errors(self.agent_id):
+                response = await self._http_client.get(
+                    f'{self._provider.base_url}/v1/convai/tools', params=params, headers=self._rest_headers
+                )
+            _raise_for_status(response, self.agent_id)
+            page = _WorkspaceToolsResponse.model_validate_json(response.content)
+            workspace_tools.update({tool.id: tool for tool in page.tools})
+            # A repeated cursor (a server bug) would otherwise refetch the same page forever; ending
+            # the listing there is safe because attached ids it leaves unresolved are preserved in
+            # `tool_ids`, never dropped.
+            if not page.has_more or page.next_cursor is None or page.next_cursor in seen_cursors:
+                break
+            seen_cursors.add(page.next_cursor)
+            cursor = page.next_cursor
+        return workspace_tools
+
     async def _sync_tools(self, agent: _AgentPreflight, tools: Sequence[ToolDefinition]) -> None:
         """Make the agent's client tools match the session's tools over REST (`elevenlabs_tool_sync='sync'`).
 
@@ -922,30 +953,7 @@ class ElevenLabsRealtimeModel(RealtimeModel):
         if problems:
             raise UserError('\n'.join(problems)) from None
 
-        # The listing is cursor-paginated; every page is fetched so attached ids are never
-        # misclassified (and duplicated as fresh creates) just because a workspace holds more tools
-        # than one page carries.
-        workspace_tools: dict[str, _WorkspaceTool] = {}
-        cursor: str | None = None
-        seen_cursors: set[str] = set()
-        while True:
-            params: dict[str, Any] = {'page_size': 100}
-            if cursor is not None:
-                params['cursor'] = cursor
-            with _map_rest_errors(self.agent_id):
-                response = await self._http_client.get(
-                    f'{self._provider.base_url}/v1/convai/tools', params=params, headers=self._rest_headers
-                )
-            _raise_for_status(response, self.agent_id)
-            page = _WorkspaceToolsResponse.model_validate_json(response.content)
-            workspace_tools.update({tool.id: tool for tool in page.tools})
-            # A repeated cursor (a server bug) would otherwise refetch the same page forever; ending
-            # the listing there is safe because attached ids it leaves unresolved are preserved in
-            # `tool_ids`, never dropped.
-            if not page.has_more or page.next_cursor is None or page.next_cursor in seen_cursors:
-                break
-            seen_cursors.add(page.next_cursor)
-            cursor = page.next_cursor
+        workspace_tools = await self._workspace_tool_listing()
 
         attached_ids = agent.tool_ids
         client_id_by_name: dict[str, str] = {}
@@ -959,12 +967,27 @@ class ElevenLabsRealtimeModel(RealtimeModel):
             elif workspace_tool.tool_config.name:  # pragma: no branch
                 client_id_by_name[workspace_tool.tool_config.name] = tool_id
 
+        # A sync that failed between a create and the final re-point leaves its created tools in the
+        # workspace but unattached; recreating them on the retry would accumulate duplicates. An
+        # unattached client tool whose config already matches exactly is adopted instead. One that
+        # differs is left alone (it may belong to another agent) and a fresh tool is created.
+        attached_id_set = set(attached_ids)
+        adoptable_by_name: dict[str, _WorkspaceTool] = {}
+        for workspace_tool in workspace_tools.values():
+            name = workspace_tool.tool_config.name
+            if workspace_tool.id not in attached_id_set and workspace_tool.tool_config.type == 'client' and name:
+                adoptable_by_name.setdefault(name, workspace_tool)
+
         tool_ids = preserved_ids
         for tool in tools:
             config = configs[tool.name]
             remote = remote_by_name.get(tool.name)
             existing_id = client_id_by_name.get(tool.name)
             if remote is None or existing_id is None:
+                orphan = adoptable_by_name.get(tool.name)
+                if orphan is not None and not _tool_mismatches([tool], [orphan.tool_config]):
+                    tool_ids.append(orphan.id)
+                    continue
                 with _map_rest_errors(self.agent_id):
                     response = await self._http_client.post(
                         f'{self._provider.base_url}/v1/convai/tools',

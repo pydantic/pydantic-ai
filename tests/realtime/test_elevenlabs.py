@@ -718,6 +718,66 @@ async def test_tool_sync_patch_only_skips_the_repoint() -> None:
     ]
 
 
+async def test_tool_sync_adopts_a_matching_unattached_workspace_tool() -> None:
+    # A sync that failed between its create and the final re-point leaves the created tool in the
+    # workspace but unattached; the retry adopts it by exact config match instead of POSTing a
+    # duplicate.
+    recorder = RestRecorder(
+        agent_json(),
+        extra={
+            ('GET', '/v1/convai/tools'): httpx2.Response(
+                200, json={'tools': [{'id': 'tool_orphan', 'tool_config': WEATHER_TOOL_REMOTE}]}
+            ),
+            ('PATCH', f'/v1/convai/agents/{AGENT_ID}'): httpx2.Response(200, json={'agent_id': AGENT_ID}),
+        },
+    )
+    ws = FakeWebSocket([HANDSHAKE_FRAME])
+    model = _model(recorder)
+    settings = ElevenLabsRealtimeModelSettings(elevenlabs_tool_sync='sync')
+    with patched_connect(ws):
+        async with _connect(model, tools=[WEATHER_TOOL], model_settings=settings):
+            pass
+    assert recorder.request_summaries() == [
+        f'GET /v1/convai/agents/{AGENT_ID}',
+        'GET /v1/convai/tools',
+        f'PATCH /v1/convai/agents/{AGENT_ID}',
+        'GET /v1/convai/conversation/get-signed-url',
+    ]
+    repointed = json.loads(recorder.requests[2].content)
+    assert repointed == {'conversation_config': {'agent': {'prompt': {'tool_ids': ['tool_orphan']}}}}
+
+
+async def test_tool_sync_leaves_a_differing_unattached_tool_alone() -> None:
+    # An unattached same-named tool whose config differs may belong to another agent: it is neither
+    # adopted nor PATCHed, and a fresh tool is created instead.
+    recorder = RestRecorder(
+        agent_json(),
+        extra={
+            ('GET', '/v1/convai/tools'): httpx2.Response(
+                200,
+                json={'tools': [{'id': 'tool_orphan', 'tool_config': dict(WEATHER_TOOL_REMOTE, description='Stale.')}]},
+            ),
+            ('POST', '/v1/convai/tools'): httpx2.Response(200, json={'id': 'tool_new'}),
+            ('PATCH', f'/v1/convai/agents/{AGENT_ID}'): httpx2.Response(200, json={'agent_id': AGENT_ID}),
+        },
+    )
+    ws = FakeWebSocket([HANDSHAKE_FRAME])
+    model = _model(recorder)
+    settings = ElevenLabsRealtimeModelSettings(elevenlabs_tool_sync='sync')
+    with patched_connect(ws):
+        async with _connect(model, tools=[WEATHER_TOOL], model_settings=settings):
+            pass
+    assert recorder.request_summaries() == [
+        f'GET /v1/convai/agents/{AGENT_ID}',
+        'GET /v1/convai/tools',
+        'POST /v1/convai/tools',
+        f'PATCH /v1/convai/agents/{AGENT_ID}',
+        'GET /v1/convai/conversation/get-signed-url',
+    ]
+    repointed = json.loads(recorder.requests[3].content)
+    assert repointed == {'conversation_config': {'agent': {'prompt': {'tool_ids': ['tool_new']}}}}
+
+
 async def test_tool_sync_follows_the_paginated_tool_listing() -> None:
     # `GET /v1/convai/tools` is cursor-paginated; every page is fetched so an attached tool on a
     # later page is updated in place rather than misclassified and duplicated by a fresh create.
@@ -1187,9 +1247,13 @@ async def test_preflight_resolves_attached_tools_when_the_inline_list_is_empty()
         },
     )
     model = _model(recorder)
-    with pytest.raises(UserError, match="tool 'get_weather' is not configured on the agent"):
+    with pytest.raises(UserError) as exc_info:
         async with _connect(model, tools=[WEATHER_TOOL]):
             pass  # pragma: no cover
+    # Both directions of the mismatch must be reported: the `other_tool` line can only appear if the
+    # per-id fetch's config was retained into the check, not merely requested and discarded.
+    assert "tool 'get_weather' is not configured on the agent" in str(exc_info.value)
+    assert "agent client tool 'other_tool' is not defined by this agent run" in str(exc_info.value)
     assert recorder.request_summaries() == [
         f'GET /v1/convai/agents/{AGENT_ID}',
         'GET /v1/convai/tools/tool_1',
