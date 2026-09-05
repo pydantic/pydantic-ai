@@ -218,7 +218,7 @@ def _ws_cassette(
         )
     cassette = RealtimeCassette.load(path) if plan == 'replay' else RealtimeCassette()
     try:
-        hold_open = request.node.get_closest_marker('realtime_ws_hold_open') is not None
+        hold_open = request.node.get_closest_marker('realtime_ws_hold_open') is not None  # pyright: ignore[reportUnknownMemberType]
         with patched_ws_connect(provider, cassette, plan, hold_open=hold_open):
             yield cassette
     finally:

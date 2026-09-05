@@ -2883,7 +2883,7 @@ async def test_pending_message_error_is_delivered_once_to_every_consumer_shape(
     consumer: Literal['iterating', 'taps_only', 'iterated_then_taps'],
 ) -> None:
     """A failed background enqueue cannot remain parked on an unread event queue."""
-    events = [RealtimeInputSpeechStartEvent()] if consumer == 'iterated_then_taps' else []
+    events: list[RealtimeCodecEvent] = [RealtimeInputSpeechStartEvent()] if consumer == 'iterated_then_taps' else []
     session = RealtimeSession(
         BlockingRealtimeConnection(events),
         usage_limits=UsageLimits(request_limit=0),
@@ -2897,6 +2897,7 @@ async def test_pending_message_error_is_delivered_once_to_every_consumer_shape(
     elif consumer == 'iterated_then_taps':
         iterator = session.__aiter__()
         assert isinstance(await anext(iterator), RealtimeInputSpeechStartEvent)
+        assert isinstance(iterator, AsyncGenerator)
         await iterator.aclose()
 
     transcripts = session.stream_transcripts()
