@@ -11,7 +11,7 @@ from pydantic_ai.native_tools import XSearchTool
 from pydantic_ai.tools import AgentDepsT, RunContext, Tool
 from pydantic_ai.toolsets import AbstractToolset
 
-from .native_or_local import NativeOrLocalTool
+from .native_or_local import NativeOrLocalTool, _is_fallback_derived_local, _mark_fallback_derived_local
 
 if TYPE_CHECKING:
     from pydantic_ai.common_tools.x_search import XSearchFallbackModel, XSearchNativeTool
@@ -123,7 +123,12 @@ class XSearch(NativeOrLocalTool[AgentDepsT]):
         # the local tool would then take effect with `fallback_model` silently ignored. Runs before
         # the base resolves `local`, so it reads what was declared rather than what was
         # materialized.
-        if self.fallback_model is not None and self.local is not None:
+        # `dataclasses.replace` re-enters with the Tool `_default_local` already stored in `local`.
+        # That is derived, not a user `local=`. Drop it so the base rebuilds from the (possibly
+        # updated) `fallback_model`. See #8095.
+        if _is_fallback_derived_local(self.local):
+            self.local = None
+        elif self.fallback_model is not None and self.local is not None:
             raise UserError(
                 'XSearch: cannot specify both `fallback_model` and `local` — '
                 'use `fallback_model` for the default subagent fallback, or `local` for a custom tool'
@@ -160,7 +165,9 @@ class XSearch(NativeOrLocalTool[AgentDepsT]):
             return None
         from pydantic_ai.common_tools.x_search import x_search_tool
 
-        return x_search_tool(model=self.fallback_model, native_tool=self._resolved_native())
+        return _mark_fallback_derived_local(
+            x_search_tool(model=self.fallback_model, native_tool=self._resolved_native())
+        )
 
     def _requires_native(self) -> bool:
         # Handle constraints can only be enforced by the native XSearchTool.

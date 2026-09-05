@@ -259,6 +259,24 @@ class TestXSearchCapability:
         with pytest.raises(UserError, match='cannot specify both `fallback_model` and `local`'):
             XSearch(fallback_model='xai:grok-4-1-fast-non-reasoning', local=my_search)
 
+    def test_xsearch_replace_with_fallback_model(self):
+        """`dataclasses.replace` on XSearch(fallback_model=...) must not treat the derived local as user-supplied.
+
+        Regression for #8095.
+        """
+        from pydantic_ai.tools import Tool
+
+        cap = XSearch(fallback_model='xai:grok-4-1-fast-non-reasoning')
+        copied = replace(cap)
+        assert copied is not cap
+        assert isinstance(copied.local, Tool)
+        assert copied.fallback_model == cap.fallback_model
+        assert copied.get_toolset() is not None
+
+        updated = replace(cap, fallback_model='xai:grok-4.3')
+        assert updated.fallback_model == 'xai:grok-4.3'
+        assert isinstance(updated.local, Tool)
+
     def test_xsearch_fallback_model_with_local_false(self):
         """XSearch(fallback_model=..., local=False) raises UserError."""
         with pytest.raises(UserError, match='cannot specify both `fallback_model` and `local`'):
@@ -696,6 +714,35 @@ class TestImageGenerationCapability:
 
         with pytest.raises(UserError, match='cannot specify both `fallback_model` and `local`'):
             ImageGeneration(fallback_model='openai-responses:gpt-5.4', local=my_gen)
+
+    def test_image_generation_replace_with_fallback_model(self):
+        """`dataclasses.replace` on ImageGeneration(fallback_model=...) must not treat the derived local as user-supplied.
+
+        Regression for #8095: after construction `local` holds the fallback Tool, and replace
+        re-enters `__init__` with that value.
+        """
+        from pydantic_ai.tools import Tool
+
+        cap = ImageGeneration(fallback_model='openai-responses:gpt-5.4')
+        copied = replace(cap)
+        assert copied is not cap
+        assert isinstance(copied.local, Tool)
+        assert copied.fallback_model == cap.fallback_model
+        assert copied.get_toolset() is not None
+
+        updated = replace(cap, fallback_model='openai-responses:gpt-5.5')
+        assert updated.fallback_model == 'openai-responses:gpt-5.5'
+        assert isinstance(updated.local, Tool)
+
+    def test_image_generation_replace_still_rejects_user_local(self):
+        """replace must not open a hole for pairing fallback_model with a caller-supplied local."""
+
+        def my_gen(prompt: str) -> str:
+            return 'image_url'  # pragma: no cover
+
+        cap = ImageGeneration(fallback_model='openai-responses:gpt-5.4')
+        with pytest.raises(UserError, match='cannot specify both `fallback_model` and `local`'):
+            replace(cap, local=my_gen)
 
     def test_image_generation_fallback_model_with_local_false(self):
         """ImageGeneration(fallback_model=..., local=False) raises UserError."""

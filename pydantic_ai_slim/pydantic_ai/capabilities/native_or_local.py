@@ -20,6 +20,20 @@ from .abstract import (
 
 _NativeToolT = TypeVar('_NativeToolT', bound=AbstractNativeTool)
 
+# Stamped onto the Tool `_default_local` builds from `fallback_model`. `dataclasses.replace`
+# reconstructs through `__init__` with that resolved Tool in `local`, and the exclusivity
+# check has to tell that reconstruction apart from a caller who passed `local=` themselves.
+_FALLBACK_DERIVED_ATTR = '_pydantic_ai_fallback_derived'
+
+
+def _mark_fallback_derived_local(local: Tool[AgentDepsT]) -> Tool[AgentDepsT]:
+    object.__setattr__(local, _FALLBACK_DERIVED_ATTR, True)
+    return local
+
+
+def _is_fallback_derived_local(local: object) -> bool:
+    return bool(getattr(local, _FALLBACK_DERIVED_ATTR, False))
+
 
 @dataclass(init=False)
 class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
