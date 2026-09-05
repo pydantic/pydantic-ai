@@ -18,14 +18,14 @@ ImageGenerationFallbackModelFunc = Callable[
     [RunContext[Any]],
     Awaitable[Model | KnownModelName | str] | Model | KnownModelName | str,
 ]
-"""Callable that resolves a fallback model dynamically per-run.
+"""Callable that resolves the subagent's model dynamically per-run.
 
 May return a `Model` instance or a model name string (e.g. `'openai-responses:gpt-5.4'`);
 strings are resolved to a model at call time.
 """
 
 ImageGenerationFallbackModel = Model | KnownModelName | str | ImageGenerationFallbackModelFunc | None
-"""Type for the fallback model: a model, model name, factory callable, or None."""
+"""Type of [`ImageGeneration.fallback_subagent_model`][pydantic_ai.capabilities.ImageGeneration.fallback_subagent_model]: a model, model name, factory callable, or None."""
 
 ImageGenerationNativeTool: TypeAlias = (
     ImageGenerationTool | Callable[[RunContext[AgentDepsT]], Awaitable[ImageGenerationTool] | ImageGenerationTool]
@@ -71,7 +71,7 @@ def _check_image_only_model(model: str) -> None:
     if suggestion := _IMAGE_ONLY_MODELS.get(model_name):
         raise UserError(
             f'{model_name!r} is a dedicated image generation model that cannot be used as '
-            f'`fallback_model` directly. Use a conversational model with image generation '
+            f'`fallback_subagent_model` directly. Use a conversational model with image generation '
             f'support instead, e.g. {suggestion!r}.'
         )
 
