@@ -1501,11 +1501,16 @@ class RealtimeSession:
         # Truncate before cancelling: cancellation triggers `response.done`, which clears the tracked
         # output item, so a truncate sent afterwards could no-op. Both frames go out under one hold of
         # the send lock, so a tool result completing in between can't start a new response for the
-        # cancel to hit instead.
-        await self._send_frame(
-            *([TruncateOutput(audio_end_ms=played_ms)] if played_ms is not None else []),
-            CancelResponse(),
-        )
+        # cancel to hit instead. The client cancel is skipped while the provider's own turn detection
+        # is already cancelling the response spoken over — the same rule as the `played_bytes` path
+        # and `handle_barge_in=True` — so it can't land on the *next* response instead.
+        frames: list[TruncateOutput | CancelResponse] = []
+        if played_ms is not None:
+            frames.append(TruncateOutput(audio_end_ms=played_ms))
+        if not self._server_cancelled_the_response_on_speech:
+            frames.append(CancelResponse())
+        if frames:
+            await self._send_frame(*frames)
         self._pending_interrupted_at_ms = played_ms
         # Mark the barge-in in the trace. When the caller supplied `played_ms` (the ms of output audio
         # actually played before truncating), record it so a reader can see how far the response got before

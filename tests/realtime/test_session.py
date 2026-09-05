@@ -1633,6 +1633,30 @@ async def test_interrupt_played_bytes_cancels_once_the_next_response_has_started
         assert conn.sent == [TruncateOutput(audio_end_ms=0), CancelResponse()]
 
 
+async def test_interrupt_played_ms_skips_the_cancel_while_the_server_interrupts_on_speech() -> None:
+    """`interrupt(played_ms=...)` and a bare `interrupt()` follow the same client-cancel rule as `played_bytes`.
+
+    The docs promise that an interruption raised between the provider's speech onset and its next
+    response sends only the truncation on a VAD that cancels server-side, whichever form of
+    `interrupt()` the app uses; before this, only the `played_bytes` path honoured that.
+    """
+    conn = _GatedRealtimeConnection(
+        [AudioDelta(b'a' * _CHUNK)],
+        [RealtimeInputSpeechStartEvent(), RealtimeInputSpeechEndEvent()],
+        interrupts_response_on_speech=True,
+    )
+    session = RealtimeSession(conn, _noop_runner)
+    async with session:
+        conn.release.set()
+        async for event in session:  # pragma: no branch
+            if isinstance(event, RealtimeInputSpeechEndEvent):
+                break
+        await session.interrupt(played_ms=50)
+        assert conn.sent == [TruncateOutput(audio_end_ms=50)]
+        await session.interrupt()
+        assert conn.sent == [TruncateOutput(audio_end_ms=50)]
+
+
 async def test_interrupt_played_bytes_cancels_outside_a_speech_segment() -> None:
     """An interruption the app raises itself still cancels, even on a VAD that interrupts on speech.
 
