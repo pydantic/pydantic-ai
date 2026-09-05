@@ -101,6 +101,10 @@ def pytest_configure(config: pytest.Config) -> None:
         'markers',
         'moves_cache_prefix(reason): recorded conversation deliberately moves the cache prefix; reason required',
     )
+    config.addinivalue_line(
+        'markers',
+        'realtime_ws_hold_open: keep a replay WebSocket open after its last recorded frame',
+    )
 
 
 if TYPE_CHECKING:

@@ -218,7 +218,8 @@ def _ws_cassette(
         )
     cassette = RealtimeCassette.load(path) if plan == 'replay' else RealtimeCassette()
     try:
-        with patched_ws_connect(provider, cassette, plan):
+        hold_open = request.node.get_closest_marker('realtime_ws_hold_open') is not None
+        with patched_ws_connect(provider, cassette, plan, hold_open=hold_open):
             yield cassette
     finally:
         # Persist recorded frames even if later assertions fail, so cassettes can be recorded first
