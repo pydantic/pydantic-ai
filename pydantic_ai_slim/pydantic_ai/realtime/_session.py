@@ -907,6 +907,11 @@ class RealtimeSession:
             # returned events are discarded — the stream is closing and has no consumer left.
             self._finalize_lost_state()
             self._teardown = asyncio.create_task(self._finish_teardown())
+        elif asyncio.current_task() in self._background_tasks:
+            # A tool closing the session is cancelled by the teardown, at the wait below of its own
+            # `close()` call. One that swallows that cancellation and calls `close()` again would wait
+            # for a teardown that is waiting for it, so there is nothing to wait for from this side.
+            return
 
         await asyncio.shield(self._teardown)
         if (error := self._close_error) is not None:

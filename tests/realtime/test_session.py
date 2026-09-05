@@ -2780,7 +2780,7 @@ async def test_close_completes_when_the_closing_task_is_cancelled() -> None:
     tool_task: asyncio.Task[Any] | None = None
 
     @agent.tool_plain
-    async def slow() -> str:
+    async def slow() -> None:
         nonlocal tool_task
         tool_task = asyncio.current_task()
         tool_started.set()
@@ -2835,7 +2835,7 @@ async def test_concurrent_close_calls_wait_for_the_teardown() -> None:
     tool_task: asyncio.Task[Any] | None = None
 
     @agent.tool_plain
-    async def slow() -> str:
+    async def slow() -> None:
         nonlocal tool_task
         tool_task = asyncio.current_task()
         tool_started.set()
@@ -2852,7 +2852,7 @@ async def test_concurrent_close_calls_wait_for_the_teardown() -> None:
 
     conn = BlockingRealtimeConnection([ToolCall(tool_call_id='tc', tool_name='slow', args='{}')])
     async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
-        consumer = asyncio.create_task(aiter_to_list(session))
+        consumer = asyncio.create_task(drain_events(session))
         await tool_started.wait()
         first = asyncio.create_task(session.close())
         second = asyncio.create_task(session.close())
@@ -2870,13 +2870,35 @@ async def test_concurrent_close_calls_wait_for_the_teardown() -> None:
         assert tool_task.done()
 
 
-async def test_close_error_reaches_the_survivor_when_the_closer_was_cancelled() -> None:
+async def test_tool_that_swallows_its_close_cancellation_and_closes_again_does_not_deadlock() -> None:
+    agent: Agent[None, str] = Agent()
+    closed_twice = asyncio.Event()
+
+    @agent.tool
+    async def hang_up(ctx: RunContext[None]) -> str:
+        session = ctx.realtime_session
+        assert session is not None
+        try:
+            await session.close()
+        except asyncio.CancelledError:
+            pass
+        await session.close()  # would wait for the teardown that is waiting for this task
+        closed_twice.set()
+        return 'done'
+
+    conn = BlockingRealtimeConnection([ToolCall(tool_call_id='tc', tool_name='hang_up', args='{}')])
+    with anyio.fail_after(2):
+        async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
+            _ = [e async for e in session]
+
+    assert session.closed
+    assert closed_twice.is_set()
     agent: Agent[None, str] = Agent()
     tool_started = asyncio.Event()
     tool_cancelling = asyncio.Event()
 
     @agent.tool_plain
-    async def slow() -> str:
+    async def slow() -> None:
         tool_started.set()
         try:
             await asyncio.Event().wait()
