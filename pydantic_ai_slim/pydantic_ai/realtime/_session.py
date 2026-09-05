@@ -2971,7 +2971,6 @@ class RealtimeSession:
                     return  # a usage limit tripped: stop reading the upstream
         except Exception as e:
             self._pump_error = e
-            self._receive_ending = True
         finally:
             self._pump_finished = True
             if not self._closed:
