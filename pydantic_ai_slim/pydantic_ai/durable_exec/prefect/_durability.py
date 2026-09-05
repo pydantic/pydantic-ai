@@ -36,6 +36,15 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
     capability contributes the Prefect operation backend, transparency gate, and task configuration.
     """
 
+    id: str | None = 'prefect_durability'
+    """One-off: an agent runs under a single durability engine, so the id is fixed.
+
+    Declaring it here is what makes a second PrefectDurability a construction-time error rather
+    than a silent double registration of the agent's durable units -- Prefect itself only reports
+    the duplicate and carries on. `name` stays separate: it identifies the *agent's* durable units,
+    while this identifies the capability.
+    """
+
     engine_spec = DurabilityEngineSpec(
         engine_name='Prefect',
         durable_unit_noun='task',
