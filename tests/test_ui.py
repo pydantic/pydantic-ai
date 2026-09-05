@@ -483,6 +483,97 @@ async def test_event_stream_error_closes_open_tool_call():
     )
 
 
+async def test_event_stream_aclose_while_emitting_error():
+    """Closing the transformed stream while the error events are being emitted must not raise.
+
+    The error handler yields too (it closes the open part and then emits the error chunk), so a
+    consumer that aborts at one of those chunks — like the AI SDK does — throws `GeneratorExit` at a
+    yield *inside* the handler, not just at one in the forwarding loop. The protocol trailers must
+    stay outside the `try`/`finally` for that case too, or the `finally` yields while
+    `GeneratorExit` propagates and closing raises. See #7016.
+    """
+
+    async def event_generator() -> AsyncIterator[NativeEvent]:
+        yield PartStartEvent(index=0, part=ToolCallPart(tool_name='my_tool', tool_call_id='call_1', args={}))
+        raise RuntimeError('boom')
+
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+    event_stream = DummyUIEventStream(run_input=request)
+
+    transformed = event_stream.transform_stream(event_generator())
+    # Pull through the tool-call close emitted by the error handler, leaving the generator suspended
+    # at a yield inside `except Exception`.
+    events = [await anext(transformed) for _ in range(4)]
+
+    await _utils.aclose_if_supported(transformed)
+
+    assert events == snapshot(
+        [
+            '<stream>',
+            '<response>',
+            "<tool-call name='my_tool'>{}",
+            "</tool-call name='my_tool'>",
+        ]
+    )
+
+
+async def test_event_stream_aclose_with_tool_call_in_flight():
+    """Closing mid-run with a dispatched tool call skips the interrupted-tool-call cleanup.
+
+    That cleanup exists for the error path, where the client still receives the events. On close
+    there is no consumer left, so it must not be emitted. See #7016.
+    """
+
+    async def event_generator() -> AsyncIterator[NativeEvent]:
+        yield FunctionToolCallEvent(part=ToolCallPart(tool_name='my_tool', tool_call_id='call_1', args={}))
+
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+    event_stream = DummyUIEventStream(run_input=request)
+
+    transformed = event_stream.transform_stream(event_generator())
+    events = [await anext(transformed), await anext(transformed)]
+
+    await _utils.aclose_if_supported(transformed)
+
+    assert events == snapshot(
+        [
+            '<stream>',
+            '<request>',
+        ]
+    )
+    assert event_stream._pending_tool_calls  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_event_stream_native_stream_without_aclose():
+    """`transform_stream()` accepts any `AsyncIterator`, including ones without an `aclose()` method."""
+
+    class OneEventIterator:
+        def __init__(self):
+            self._events: list[NativeEvent] = [PartStartEvent(index=0, part=TextPart(content='Hello'))]
+
+        def __aiter__(self) -> AsyncIterator[NativeEvent]:
+            return self
+
+        async def __anext__(self) -> NativeEvent:
+            if self._events:
+                return self._events.pop(0)
+            raise StopAsyncIteration
+
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+    event_stream = DummyUIEventStream(run_input=request)
+    events = [event async for event in event_stream.transform_stream(OneEventIterator())]
+
+    assert events == snapshot(
+        [
+            '<stream>',
+            '<response>',
+            '<text follows_text=False>Hello',
+            '</response>',
+            '</stream>',
+        ]
+    )
+
+
 async def test_run_stream_builtin_tool_call():
     async def stream_function(
         messages: list[ModelMessage], agent_info: AgentInfo
