@@ -56,7 +56,8 @@ Useful `RunContext` fields include:
 - `ctx.messages`
 - `ctx.retry`
 - `ctx.realtime` — whether the run is a realtime session
-- `ctx.realtime_session` — the live `RealtimeSession` once connected (`None` in classic runs and before connect)
+- `ctx.realtime_session` — the live `RealtimeSession` in tools and `on_event` hooks (`None` in
+  classic runs, setup hooks, and throughout `wrap_run`, whose context copy predates the connection)
 
 Inside a realtime tool, `await ctx.realtime_session.close()` hangs up cleanly: the calling tool does
 not resume, and its call is recorded as interrupted. Use `ctx.cancel()` instead when the session

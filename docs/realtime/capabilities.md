@@ -52,11 +52,13 @@ a realtime model. Pass [`RealtimeModelSettings`][pydantic_ai.realtime.RealtimeMo
 | --- | --- |
 | [`ctx.model_settings`][pydantic_ai.tools.RunContext.model_settings] | The merged [`RealtimeModelSettings`][pydantic_ai.realtime.RealtimeModelSettings] the session was connected with. |
 | [`ctx.realtime`][pydantic_ai.tools.RunContext.realtime] | `True` for the whole run, including `for_run` and instruction functions that run before the connection exists. |
-| [`ctx.realtime_session`][pydantic_ai.tools.RunContext.realtime_session] | The live [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] once it is connected. |
+| [`ctx.realtime_session`][pydantic_ai.tools.RunContext.realtime_session] | The live [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] in tool and `on_event` contexts; `None` in run hooks. |
 
 !!! note
-    `ctx.realtime_session` is still `None` in `before_run`, in instruction functions, and in the
-    pre-handler part of `wrap_run`, which all run before the connection is established.
+    `ctx.realtime_session` is `None` throughout `wrap_run`, both before and after `handler()`, because
+    the hook keeps the context copy captured before the session exists. It is also `None` in
+    `before_run` and instruction functions. Use tool hooks or `on_event` when a capability needs the
+    live session.
 
 ## Seeded history is not processed
 
