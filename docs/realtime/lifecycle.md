@@ -146,7 +146,7 @@ async def main():
         watchdog = asyncio.create_task(close_after(session, 300))
         try:
             async for event in session:
-                print(event)
+                ...  # handle events as usual; the loop ends when the watchdog closes the session
         finally:
             watchdog.cancel()
 ```
