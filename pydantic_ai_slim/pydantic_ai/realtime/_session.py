@@ -7,6 +7,7 @@ import dataclasses
 import io
 import wave
 import weakref
+from collections import deque
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Sequence
 from dataclasses import dataclass, replace
 from threading import Lock as ThreadLock
@@ -740,15 +741,16 @@ class RealtimeSession:
 
         # In-flight user request being assembled from input-transcript events.
         self._user_turn_active = False
-        self._anonymous_user_turn_ended = False
+        self._anonymous_user_turns_ended = 0
         # Insertion order is provider item order. `None` is the single anonymous turn used by
         # providers that do not identify input transcript items.
         self._user_turns: dict[str | None, _UserTurn] = {}
         self._finalized_user_item_ids: set[str] = set()
         # Where in history each user turn belongs, remembered when the turn *starts* — see
         # `_open_user_turn_anchor`. Provider item IDs keep overlapping turns paired with their own
-        # anchors; `_pending_user_turn_anchor` is only for providers whose events carry no item ID.
-        self._pending_user_turn_anchor: tuple[ModelMessage | None] | None = None
+        # anchors; `_pending_anonymous_user_turn_anchors` is only for providers whose events carry no
+        # item ID. It is a queue because a transcript can arrive after the next audio turn starts.
+        self._pending_anonymous_user_turn_anchors: deque[ModelMessage | None] = deque()
         self._pending_user_turn_anchors: dict[str, tuple[ModelMessage | None]] = {}
         self._user_turn_anchors: dict[str | None, ModelMessage | None] = {}
         # Retained input audio (`audio_retention='input_audio'`/`'all'`). `_input_audio` is the rolling buffer
@@ -1388,8 +1390,8 @@ class RealtimeSession:
             return
         if (turn := self._user_turns.get(None)) is not None and turn.speech_ended:
             for event in self._finalize_user():
+                self._publish_taps(event)
                 await self._queue.put(event)
-            self._anonymous_user_turn_ended = False
         user_turn_was_active = self._user_turn_active
         if not user_turn_was_active:
             # Audio starting is the earliest sign of a user turn, and the only one on a provider that
@@ -2078,8 +2080,10 @@ class RealtimeSession:
             part = SpeechPart(speaker='user', transcript='')
             self._claim_user_turn_anchor(None)
             turn = self._user_turns[None] = _UserTurn(
-                part, '', self._take_part_index(), speech_ended=self._anonymous_user_turn_ended
+                part, '', self._take_part_index(), speech_ended=self._anonymous_user_turns_ended > 0
             )
+            if turn.speech_ended:
+                self._anonymous_user_turns_ended -= 1
             events.append(PartStartEvent(index=turn.index, part=part))
         turn = self._user_turns[None]
         if not turn.start_emitted:
@@ -2098,12 +2102,10 @@ class RealtimeSession:
         if not self._input_transcription_enabled:
             return []
         events = self._finalize_user()
-        if events:
-            self._anonymous_user_turn_ended = False
-        elif self._user_turn_active:
+        if not events and self._user_turn_active:
             # The transcript can lag behind the output that marks its boundary. Remember that the
             # anonymous turn is already over so the next audio segment can close it after it arrives.
-            self._anonymous_user_turn_ended = True
+            self._anonymous_user_turns_ended += 1
             self._user_turn_active = False
         return events
 
@@ -2115,7 +2117,6 @@ class RealtimeSession:
         index = turn.index
         if item_id is not None:
             self._finalized_user_item_ids.add(item_id)
-        self._user_turn_active = any(not current.finalized for current in self._user_turns.values())
         # Strip surrounding whitespace at finalization: providers whose transcripts arrive as a cumulative
         # or final snapshot (OpenAI/xAI) already reconcile leading-space drift via `_accumulate_transcript`,
         # but a partial-only stream (Gemini) concatenates deltas verbatim and would otherwise keep the
@@ -2141,7 +2142,6 @@ class RealtimeSession:
         if item_id is None:
             self._record_user_request(None, self._new_request([part]))
             self._user_turns.pop(None)
-            self._anonymous_user_turn_ended = False
         else:
             turn.part = part
             turn.finalized = True
@@ -2149,7 +2149,7 @@ class RealtimeSession:
             for current_id, current in self._user_turns.items():
                 if current_id == item_id:
                     break
-                if current.start_emitted and not current.finalized:
+                if (current.start_emitted or current.speech_ended) and not current.finalized:
                     blocked_by_started_turn = True
                     break
             if blocked_by_started_turn:
@@ -2158,6 +2158,10 @@ class RealtimeSession:
                 self._user_turns.pop(item_id)
                 self._record_user_request(item_id, self._new_request([part]))
                 self._flush_finalized_user_prefix()
+        self._user_turn_active = (
+            any(not current.finalized for current in self._user_turns.values())
+            or len(self._pending_anonymous_user_turn_anchors) > self._anonymous_user_turns_ended
+        )
         end = PartEndEvent(index=index, part=part)
         return [end] if turn.start_emitted else [PartStartEvent(index=index, part=part), end]
 
@@ -2173,21 +2177,22 @@ class RealtimeSession:
         """
         anchor = self._history[-1] if self._history else None
         if item_id is None:
-            self._pending_user_turn_anchor = (anchor,)
+            self._pending_anonymous_user_turn_anchors.append(anchor)
         else:
             self._pending_user_turn_anchors[item_id] = (anchor,)
 
     def _claim_user_turn_anchor(self, item_id: str | None) -> None:
         """Attach the starting turn's remembered position to the item the transcript identified it as."""
         if item_id is None:
-            anchor, self._pending_user_turn_anchor = self._pending_user_turn_anchor, None
+            has_anchor = bool(self._pending_anonymous_user_turn_anchors)
+            anchor = self._pending_anonymous_user_turn_anchors.popleft() if has_anchor else None
         else:
-            anchor = self._pending_user_turn_anchors.pop(item_id, None)
+            pending_anchor = self._pending_user_turn_anchors.pop(item_id, None)
+            anchor = pending_anchor[0] if pending_anchor is not None else None
+            has_anchor = pending_anchor is not None
         # No anchor when the first thing we ever hear about the turn is its transcript (text-only sessions
         # seeded with audio, or a provider that reports nothing before it); the turn starts here instead.
-        self._user_turn_anchors[item_id] = (
-            anchor[0] if anchor is not None else (self._history[-1] if self._history else None)
-        )
+        self._user_turn_anchors[item_id] = anchor if has_anchor else (self._history[-1] if self._history else None)
 
     def _record_user_request(self, item_id: str | None, request: ModelRequest) -> None:
         """Record a finalized user turn at the position it held when it started."""
@@ -2269,7 +2274,8 @@ class RealtimeSession:
         # Finalizing the last blocked item flushed the whole finalized prefix, so nothing remains.
         assert not self._user_turns, 'every pending user turn should have been recorded'
         self._user_turn_anchors.clear()
-        self._pending_user_turn_anchor = None
+        self._pending_anonymous_user_turn_anchors.clear()
+        self._anonymous_user_turns_ended = 0
         self._pending_user_turn_anchors.clear()
         # Drop any input-audio segments whose transcript never arrived, so they can't leak across a
         # long-lived session (finalized items already popped their own segment above).
@@ -2431,6 +2437,8 @@ class RealtimeSession:
         self._record_user_speech_span()
         events = self._finalize_untranscribed_user()
         if self._input_transcription_enabled:
+            if event.item_id is not None and event.item_id in self._finalized_user_item_ids:
+                return [*events, event]
             if event.item_id not in self._user_turns:
                 self._claim_user_turn_anchor(event.item_id)
                 part = SpeechPart(speaker='user', transcript='')

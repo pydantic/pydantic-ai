@@ -571,6 +571,42 @@ async def test_final_transcripts_survive_a_flood_of_deltas() -> None:
     ]
 
 
+async def test_send_audio_finalizes_late_anonymous_transcript_for_transcript_view() -> None:
+    late_transcript_processed = asyncio.Event()
+    next_audio_sent = asyncio.Event()
+
+    class _LateTranscriptBeforeNextAudio(FakeRealtimeConnection):
+        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+            for event in [
+                OutputTranscript(text='answer one', is_final=True),
+                ResponseDone(),
+                InputTranscript(text='question one'),
+            ]:
+                yield event
+            late_transcript_processed.set()
+            await next_audio_sent.wait()
+
+        async def send(self, content: RealtimeInput) -> None:
+            await super().send(content)
+            if len(self.sent) == 2:
+                next_audio_sent.set()
+
+    session = RealtimeSession(_LateTranscriptBeforeNextAudio([]), _noop_runner)
+
+    async with session:
+        await session.send_audio(b'first')
+        transcript_task = asyncio.create_task(aiter_to_list(session.stream_transcripts()))
+        await late_transcript_processed.wait()
+        await session.send_audio(b'second')
+        transcripts = await transcript_task
+
+    assert transcripts == snapshot(
+        [
+            SpeechPart(speaker='user', transcript='question one'),
+        ]
+    )
+
+
 async def test_send_only_session_still_runs_tools() -> None:
     # Tool execution, turn tracking, and usage limits all run off the receive loop, and a caller who
     # sends a prompt and then goes off to do something else has no reason to think iterating is what
@@ -2346,6 +2382,75 @@ async def test_late_overlapping_input_transcripts_keep_their_speech_start_anchor
     )
 
 
+async def test_repeated_speech_end_for_finalized_item_does_not_duplicate_user_turn() -> None:
+    conn = FakeRealtimeConnection(
+        [
+            RealtimeInputSpeechStartEvent(item_id='u1'),
+            RealtimeInputSpeechEndEvent(item_id='u1'),
+            InputTranscript(text='question one', is_final=True, item_id='u1'),
+            RealtimeInputSpeechEndEvent(item_id='u1'),
+            OutputTranscript(text='answer one', is_final=True),
+            ResponseDone(),
+        ]
+    )
+    session = RealtimeSession(conn, _noop_runner)
+
+    events = await collect_events(session)
+
+    assert events == snapshot(
+        [
+            RealtimeInputSpeechStartEvent(item_id='u1'),
+            RealtimeInputSpeechEndEvent(item_id='u1'),
+            PartStartEvent(index=0, part=SpeechPart(speaker='user', transcript='')),
+            PartDeltaEvent(
+                index=0,
+                delta=SpeechPartDelta(speaker='user', transcript_delta='question one', transcript='question one'),
+            ),
+            PartEndEvent(index=0, part=SpeechPart(speaker='user', transcript='question one')),
+            RealtimeInputSpeechEndEvent(item_id='u1'),
+            PartStartEvent(index=1, part=SpeechPart(speaker='assistant', transcript='')),
+            PartDeltaEvent(
+                index=1,
+                delta=SpeechPartDelta(speaker='assistant', transcript_delta='answer one', transcript='answer one'),
+            ),
+            PartEndEvent(index=1, part=SpeechPart(speaker='assistant', transcript='answer one')),
+            RealtimeTurnCompleteEvent(),
+        ]
+    )
+    assert session.all_messages() == snapshot(
+        [
+            ModelRequest(parts=[SpeechPart(speaker='user', transcript='question one')], timestamp=IsDatetime()),
+            ModelResponse(
+                parts=[SpeechPart(speaker='assistant', transcript='answer one')],
+                timestamp=IsDatetime(),
+                finish_reason='stop',
+            ),
+        ]
+    )
+
+
+async def test_later_transcript_waits_for_earlier_speech_end_placeholder() -> None:
+    conn = FakeRealtimeConnection(
+        [
+            RealtimeInputSpeechStartEvent(item_id='u1'),
+            RealtimeInputSpeechEndEvent(item_id='u1'),
+            RealtimeInputSpeechStartEvent(item_id='u2'),
+            InputTranscript(text='question two', is_final=True, item_id='u2'),
+            InputTranscript(text='question one', is_final=True, item_id='u1'),
+        ]
+    )
+    session = RealtimeSession(conn, _noop_runner)
+
+    await collect_events(session)
+
+    assert session.all_messages() == snapshot(
+        [
+            ModelRequest(parts=[SpeechPart(speaker='user', transcript='question one')], timestamp=IsDatetime()),
+            ModelRequest(parts=[SpeechPart(speaker='user', transcript='question two')], timestamp=IsDatetime()),
+        ]
+    )
+
+
 async def test_missing_input_transcript_keeps_a_contentless_user_turn() -> None:
     conn = FakeRealtimeConnection(
         [
@@ -2415,6 +2520,108 @@ async def test_idless_late_transcript_closes_before_the_next_audio_turn() -> Non
         await session.send_audio(b'first')
         events_task = asyncio.create_task(drain_events(session))
         await first_transcript_processed.wait()
+        await session.send_audio(b'second')
+        await events_task
+
+    assert session.all_messages() == snapshot(
+        [
+            ModelRequest(parts=[SpeechPart(speaker='user', transcript='question one')], timestamp=IsDatetime()),
+            ModelResponse(
+                parts=[SpeechPart(speaker='assistant', transcript='answer one')],
+                timestamp=IsDatetime(),
+                finish_reason='stop',
+            ),
+            ModelRequest(parts=[SpeechPart(speaker='user', transcript='question two')], timestamp=IsDatetime()),
+            ModelResponse(
+                parts=[SpeechPart(speaker='assistant', transcript='answer two')],
+                timestamp=IsDatetime(),
+                finish_reason='stop',
+            ),
+        ]
+    )
+
+
+async def test_idless_next_audio_turn_keeps_anchor_when_output_precedes_transcript() -> None:
+    first_transcript_processed = asyncio.Event()
+    second_audio_sent = asyncio.Event()
+
+    class _OutputBeforeSecondTranscript(FakeRealtimeConnection):
+        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+            for event in [
+                OutputTranscript(text='answer one', is_final=True),
+                ResponseDone(),
+                InputTranscript(text='question one'),
+            ]:
+                yield event
+            first_transcript_processed.set()
+            await second_audio_sent.wait()
+            for event in [
+                OutputTranscript(text='answer two', is_final=True),
+                ResponseDone(),
+                InputTranscript(text='question two', is_final=True),
+            ]:
+                yield event
+
+        async def send(self, content: RealtimeInput) -> None:
+            await super().send(content)
+            if len(self.sent) == 2:
+                second_audio_sent.set()
+
+    session = RealtimeSession(_OutputBeforeSecondTranscript([]), _noop_runner)
+
+    async with session:
+        await session.send_audio(b'first')
+        events_task = asyncio.create_task(drain_events(session))
+        await first_transcript_processed.wait()
+        await session.send_audio(b'second')
+        await events_task
+
+    assert session.all_messages() == snapshot(
+        [
+            ModelRequest(parts=[SpeechPart(speaker='user', transcript='question one')], timestamp=IsDatetime()),
+            ModelResponse(
+                parts=[SpeechPart(speaker='assistant', transcript='answer one')],
+                timestamp=IsDatetime(),
+                finish_reason='stop',
+            ),
+            ModelRequest(parts=[SpeechPart(speaker='user', transcript='question two')], timestamp=IsDatetime()),
+            ModelResponse(
+                parts=[SpeechPart(speaker='assistant', transcript='answer two')],
+                timestamp=IsDatetime(),
+                finish_reason='stop',
+            ),
+        ]
+    )
+
+
+async def test_idless_late_transcript_does_not_merge_with_next_audio_turn() -> None:
+    second_audio_sent = asyncio.Event()
+
+    class _LateTranscriptAfterNextAudio(FakeRealtimeConnection):
+        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+            for event in [OutputTranscript(text='answer one', is_final=True), ResponseDone()]:
+                yield event
+            await second_audio_sent.wait()
+            for event in [
+                InputTranscript(text='question one', is_final=True),
+                InputTranscript(text='question two', is_final=True),
+                OutputTranscript(text='answer two', is_final=True),
+                ResponseDone(),
+            ]:
+                yield event
+
+        async def send(self, content: RealtimeInput) -> None:
+            await super().send(content)
+            if len(self.sent) == 2:
+                second_audio_sent.set()
+
+    session = RealtimeSession(_LateTranscriptAfterNextAudio([]), _noop_runner)
+
+    async with session:
+        await session.send_audio(b'first')
+        events_task = asyncio.create_task(drain_events(session))
+        while len(session.all_messages()) < 1:
+            await asyncio.sleep(0)
         await session.send_audio(b'second')
         await events_task
 
@@ -4818,11 +5025,11 @@ async def test_input_audio_segmented_by_item_id_across_overlapping_turns() -> No
     assert session.new_messages() == snapshot(
         [
             ModelRequest(
-                parts=[SpeechPart(speaker='user', transcript='second', audio=_wav_content(b'\xbb'))],
+                parts=[SpeechPart(speaker='user', transcript='first', audio=_wav_content(b'\xaa'))],
                 timestamp=IsDatetime(),
             ),
             ModelRequest(
-                parts=[SpeechPart(speaker='user', transcript='first', audio=_wav_content(b'\xaa'))],
+                parts=[SpeechPart(speaker='user', transcript='second', audio=_wav_content(b'\xbb'))],
                 timestamp=IsDatetime(),
             ),
         ]
