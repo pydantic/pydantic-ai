@@ -13607,14 +13607,17 @@ async def test_openai_responses_text_content_input(allow_model_requests: None, o
 
 
 async def test_openai_responses_compact_messages(allow_model_requests: None, openai_api_key: str):
-    """Test OpenAI compaction: multi-turn conversation compacted via OpenAICompaction capability."""
+    """Stateless compaction triggers when the previous response fills the configured window fraction."""
     from pydantic_ai.models.openai import OpenAICompaction
 
-    model = OpenAIResponsesModel('gpt-4o-mini', provider=OpenAIProvider(api_key=openai_api_key))
+    model = OpenAIResponsesModel(
+        'gpt-4o-mini', provider=OpenAIProvider(api_key=openai_api_key), profile={'context_window': 100}
+    )
     agent = Agent(
         model=model,
         instructions='You are a helpful math assistant. Give short answers.',
-        capabilities=[OpenAICompaction(message_count_threshold=4)],
+        # The cassette reports 38 then 60 tokens, so only the third run compacts.
+        capabilities=[OpenAICompaction(context_window_used_threshold=0.5)],
     )
 
     message_history: list[Any] = []
@@ -13622,7 +13625,6 @@ async def test_openai_responses_compact_messages(allow_model_requests: None, ope
     message_history = result.all_messages()
     result = await agent.run('And 3+3?', message_history=message_history)
     message_history = result.all_messages()
-    # Third run should trigger compaction (>4 messages)
     result = await agent.run('And 5+5?', message_history=message_history)
 
     # Verify the result is reasonable
@@ -13637,7 +13639,7 @@ async def test_openai_responses_compact_messages(allow_model_requests: None, ope
         for part in msg.parts
         if isinstance(part, CompactionPart)
     ]
-    assert len(compaction_parts) >= 1
+    assert len(compaction_parts) == 1
     compaction = compaction_parts[0]
     assert compaction.provider_name == 'openai'
     assert compaction.provider_details is not None
