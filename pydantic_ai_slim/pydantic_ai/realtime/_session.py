@@ -814,6 +814,7 @@ class RealtimeSession:
         self._pump_task: asyncio.Task[None] | None = None
         self._pump_error: Exception | None = None
         self._pump_finished = False
+        self._receive_ending = False
         self._iterator_active = False
         self._stream_exhausted = False
         self._parked_errors: list[BaseException] = []
@@ -1362,8 +1363,10 @@ class RealtimeSession:
         Given an async iterable — a microphone stream, a WebSocket receive loop — each chunk is
         forwarded as it arrives and the call returns when the iterable is exhausted, so a whole
         capture loop can be one task: `asyncio.create_task(session.send_audio(microphone))`. If the
-        session is closed while consuming that iterable, the call returns cleanly. Passing a single
-        chunk to a session that is already closed still raises [`UserError`][pydantic_ai.exceptions.UserError].
+        session is closed while consuming that iterable, the call returns cleanly at the next chunk
+        the source yields. Cancel the task in application code if the source can stall indefinitely.
+        Passing a single chunk to a session that is already closed still raises
+        [`UserError`][pydantic_ai.exceptions.UserError].
 
         Resample the audio to
         [`audio_input_sample_rate`][pydantic_ai.realtime.RealtimeSession.audio_input_sample_rate]
@@ -1652,7 +1655,7 @@ class RealtimeSession:
 
     def _ensure_can_send(self) -> None:
         self._ensure_not_closed()
-        if self._pump_finished and (error := self._first_undelivered_error()) is not None:
+        if (self._pump_finished or self._receive_ending) and (error := self._first_undelivered_error()) is not None:
             self._raise_delivered(error)
 
     def _error_was_delivered(self, error: BaseException) -> bool:
@@ -1676,6 +1679,7 @@ class RealtimeSession:
         self._parked_errors.append(error)
         self._queue.put_nowait(error)
         if not self._iterator_active and self._pump_task is not None:
+            self._receive_ending = True
             self._pump_task.cancel()
 
     def _require_capability(self, capability: str, *, method: str, feature: str) -> None:
@@ -2967,6 +2971,7 @@ class RealtimeSession:
                     return  # a usage limit tripped: stop reading the upstream
         except Exception as e:
             self._pump_error = e
+            self._receive_ending = True
         finally:
             self._pump_finished = True
             if not self._closed:

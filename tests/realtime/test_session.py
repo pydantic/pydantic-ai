@@ -15,6 +15,7 @@ from typing import Any, Literal, TypeVar, cast
 import anyio
 import pytest
 from inline_snapshot import snapshot
+from opentelemetry.context import Context
 from pydantic_core import SchemaValidator, core_schema
 
 from pydantic_ai import Agent, ModelRetry, RunContext
@@ -2790,6 +2791,34 @@ async def test_tool_error_ends_views_when_the_stream_was_never_iterated() -> Non
             assert await asyncio.wait_for(_collect(session.stream_transcripts()), timeout=1) == []
 
 
+async def test_tool_error_preempts_send_while_receive_pump_is_ending() -> None:
+    """A send cannot slip between a taps-only tool failure and the cancelled pump finishing."""
+    pump_cancelled = asyncio.Event()
+
+    class SlowPumpSession(_RealtimeSession):
+        async def _pump(self, context: Context | None) -> None:
+            try:
+                await super()._pump(context)
+            except asyncio.CancelledError:
+                pump_cancelled.set()
+                await asyncio.Event().wait()
+
+    async def runner(*args: Any) -> str:
+        raise ValueError('tool exploded')
+
+    session = SlowPumpSession(
+        BlockingRealtimeConnection([ToolCall(tool_call_id='tc1', tool_name='noop', args='{}')]),
+        tool_manager=make_tool_manager(runner),
+    )
+    await session.__aenter__()
+    await asyncio.wait_for(pump_cancelled.wait(), timeout=1)
+    assert session._pump_task is not None and not session._pump_task.done()  # pyright: ignore[reportPrivateUsage]
+
+    with pytest.raises(ValueError, match='tool exploded'):
+        await session.send('x')
+    await session.close()
+
+
 async def test_tool_retry_exhaustion_ends_views_when_the_stream_was_never_iterated() -> None:
     async def runner(*args: Any) -> str:
         raise UnexpectedModelBehavior('retry budget exhausted')
@@ -2827,6 +2856,26 @@ async def test_tool_error_leaves_views_open_for_an_iterating_consumer() -> None:
         assert session._pump_task is not None and not session._pump_task.done()  # pyright: ignore[reportPrivateUsage]
     with pytest.raises(StopAsyncIteration):
         await anext(audio)
+
+
+async def test_tool_error_does_not_preempt_send_for_an_active_iterator() -> None:
+    async def runner(*args: Any) -> str:
+        raise ValueError('tool exploded')
+
+    conn = BlockingRealtimeConnection([ToolCall(tool_call_id='tc1', tool_name='noop', args='{}')])
+    session = RealtimeSession(conn, runner=runner)
+    async with session:
+        events = session.__aiter__()
+        assert isinstance(await anext(events), PartStartEvent)
+        assert isinstance(await anext(events), PartEndEvent)
+        assert isinstance(await anext(events), FunctionToolCallEvent)
+        while not session._parked_errors:  # pyright: ignore[reportPrivateUsage]
+            await asyncio.sleep(0)
+
+        await session.send('x')
+        assert conn.sent[-1] == 'x'
+        with pytest.raises(ValueError, match='tool exploded'):
+            await anext(events)
 
 
 @pytest.mark.parametrize('consumer', ['iterating', 'taps_only', 'iterated_then_taps'])
@@ -3344,6 +3393,29 @@ async def test_send_audio_accepts_async_iterable() -> None:
         BinaryAudio(data=b'\x01\x02', media_type='audio/pcm'),
         BinaryAudio(data=b'\x03\x04', media_type='audio/pcm'),
     ]
+
+
+async def test_send_audio_iterable_waits_for_next_chunk_after_close() -> None:
+    """Closing does not cancel into a caller-owned async iterable that is blocked between chunks."""
+    source_blocked = asyncio.Event()
+    next_chunk = asyncio.Event()
+
+    async def microphone() -> AsyncIterator[bytes]:
+        yield b'first'
+        source_blocked.set()
+        await next_chunk.wait()
+        yield b'after close'
+
+    conn = BlockingRealtimeConnection([])
+    async with RealtimeSession(conn) as session:
+        sender = asyncio.create_task(session.send_audio(microphone()))
+        await source_blocked.wait()
+        await session.close()
+        assert not sender.done()
+        next_chunk.set()
+        await sender
+
+    assert conn.sent == [BinaryAudio(data=b'first', media_type='audio/pcm')]
 
 
 async def test_send_dispatches_through_bookkeeping_helpers() -> None:

@@ -227,8 +227,9 @@ The session closes cleanly, and `session.result` and its history are settled bef
 exits. The tool does not resume after `close()`: there is no provider left to receive its result, so
 the call is recorded locally with an interrupted result. The code that owns the `session()` context
 does not receive an exception. A concurrent `send_audio()` call consuming a microphone or other
-async iterable returns cleanly when the tool closes the session; sending a single chunk after close
-still raises [`UserError`][pydantic_ai.exceptions.UserError].
+async iterable returns cleanly at the next chunk after the tool closes the session, without sending
+that chunk. If the source can stall indefinitely, cancel the task in application code. Sending a
+single chunk after close still raises [`UserError`][pydantic_ai.exceptions.UserError].
 
 To abort the run instead, [`ctx.cancel()`](../tools-advanced.md#cancelling-the-run-from-a-tool)
 works as in a standard run: the call is likewise recorded as interrupted, and the `session()`
