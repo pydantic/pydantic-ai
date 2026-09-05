@@ -97,7 +97,8 @@ response.
 The session span also reports `pydantic_ai.audio_chunks_dropped` and
 `pydantic_ai.transcript_items_dropped`, summed across bounded
 [audio and transcript consumers](audio.md#consuming-audio-and-transcripts). These totals are written
-when the session closes.
+when the session closes. `pydantic_ai.queue_dropped_deltas` counts older part delta events discarded from the session event
+queue while nothing was iterating it.
 
 See [Debugging and monitoring](../logfire.md) for Logfire setup and privacy controls.
 
