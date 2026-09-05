@@ -154,9 +154,12 @@ async def main():
 For an idle rather than absolute timeout, reset the watchdog on
 [`RealtimeInputSpeechStartEvent`][pydantic_ai.realtime.RealtimeInputSpeechStartEvent] and
 [`RealtimeInputSpeechEndEvent`][pydantic_ai.realtime.RealtimeInputSpeechEndEvent] on OpenAI, Azure
-OpenAI, and xAI. Gemini emits neither event; use assistant
+OpenAI, and xAI. Gemini emits neither event, so reset it from your own input path as well — whenever
+you send audio that is not silence — plus assistant
 [`PartDeltaEvent`][pydantic_ai.messages.PartDeltaEvent] activity and
-[`RealtimeTurnCompleteEvent`][pydantic_ai.realtime.RealtimeTurnCompleteEvent] instead.
+[`RealtimeTurnCompleteEvent`][pydantic_ai.realtime.RealtimeTurnCompleteEvent]; resetting on output
+alone would hang up on a person mid-sentence. With input transcription enabled, user parts from
+[`stream_transcripts()`][pydantic_ai.realtime.RealtimeSession.stream_transcripts] work too.
 
 ## Errors
 
