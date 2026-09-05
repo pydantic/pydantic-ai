@@ -1401,8 +1401,15 @@ class ElevenLabsRealtimeConnection(RealtimeConnection):
         if not self._response_open:
             return []
         self._response_open = False
+        # The conversation id rides on every response's `provider_details`: nothing billable reaches
+        # the socket, so it is the key a consumer needs for the post-hoc cost lookup on the
+        # conversations API, and the response is where it survives into persisted history. A
+        # consumer holding the live connection can also read it from `conversation_id` directly.
+        details = dict(provider_details or {})
+        if self._conversation_id is not None:
+            details.setdefault('conversation_id', self._conversation_id)
         return [
             ResponseDone(
-                interrupted=interrupted, provider_response_id=provider_response_id, provider_details=provider_details
+                interrupted=interrupted, provider_response_id=provider_response_id, provider_details=details or None
             )
         ]

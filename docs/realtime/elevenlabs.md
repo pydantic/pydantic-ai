@@ -174,7 +174,11 @@ Telephony (`ulaw_8000`) agents are not supported.
 - Usage reports LLM context consumption only (as `input_tokens`), and only when `context_usage` is
   in the agent's `conversation.client_events` list (it is not by default). Reports arrive after
   each turn completes and accumulate into the run total without attaching to a specific response.
-  Look up conversation cost post-hoc via the ElevenLabs conversations API using
-  [`ElevenLabsRealtimeConnection.conversation_id`][pydantic_ai.realtime.elevenlabs.ElevenLabsRealtimeConnection.conversation_id].
+  Look up conversation cost post-hoc via the ElevenLabs conversations API: every finalized
+  [`ModelResponse`][pydantic_ai.messages.ModelResponse] carries the server-assigned id in
+  `provider_details['conversation_id']`, so it survives into persisted history, and a consumer
+  holding the live connection can read
+  [`ElevenLabsRealtimeConnection.conversation_id`][pydantic_ai.realtime.elevenlabs.ElevenLabsRealtimeConnection.conversation_id]
+  directly.
 - Client tools whose ElevenLabs registration sets `expects_response: false` are fire-and-forget:
   the session still executes them, but their results are never sent back to the agent.

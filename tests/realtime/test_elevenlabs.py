@@ -1367,6 +1367,11 @@ def _connection(incoming: Sequence[dict[str, Any] | str] = ()) -> tuple[ElevenLa
     return ElevenLabsRealtimeConnection(ws, conversation_id='conv_1'), ws  # type: ignore[arg-type]
 
 
+# Every finalized response of a connection that knows its conversation carries the id in
+# `provider_details`, the key for the post-hoc cost lookup on the conversations API.
+_CONVERSATION = {'conversation_id': 'conv_1'}
+
+
 async def test_send_audio_frames_user_audio_chunk() -> None:
     connection, ws = _connection()
     await connection.send(BinaryAudio(data=b'\x01\x02', media_type='audio/pcm'))
@@ -1444,8 +1449,16 @@ async def test_agent_response_is_the_turn_boundary() -> None:
     )
     assert events == [
         OutputTranscript(text='Hello!', is_final=True),
-        ResponseDone(provider_response_id='resp_1'),
+        ResponseDone(provider_response_id='resp_1', provider_details=_CONVERSATION),
     ]
+
+
+async def test_a_connection_without_a_conversation_id_leaves_provider_details_unset() -> None:
+    # The id is only attached when the handshake reported one; nothing is invented otherwise.
+    ws = FakeWebSocket([{'type': 'agent_response', 'agent_response_event': {'agent_response': 'Hello!'}}])
+    connection = ElevenLabsRealtimeConnection(ws)  # type: ignore[arg-type]
+    events = await collect_codec_events(connection)
+    assert events == [OutputTranscript(text='Hello!', is_final=True), ResponseDone()]
 
 
 async def test_text_output_mode_streams_chat_parts_then_finalizes() -> None:
@@ -1486,7 +1499,7 @@ async def test_response_complete_after_the_boundary_is_dropped() -> None:
             {'type': 'agent_response_complete', 'agent_response_complete_event': {'event_id': 2}},
         ]
     )
-    assert events == [OutputTranscript(text='Hello!', is_final=True), ResponseDone()]
+    assert events == [OutputTranscript(text='Hello!', is_final=True), ResponseDone(provider_details=_CONVERSATION)]
 
 
 async def test_response_complete_closes_an_audio_only_turn() -> None:
@@ -1498,7 +1511,7 @@ async def test_response_complete_closes_an_audio_only_turn() -> None:
             {'type': 'agent_response_complete', 'agent_response_complete_event': {'event_id': 2}},
         ]
     )
-    assert events == [AudioDelta(data=b'\x00\x01'), ResponseDone()]
+    assert events == [AudioDelta(data=b'\x00\x01'), ResponseDone(provider_details=_CONVERSATION)]
 
 
 async def test_a_boundary_with_nothing_streamed_is_dropped() -> None:
@@ -1527,7 +1540,7 @@ async def test_interruption_during_generation_closes_the_turn_as_interrupted() -
     assert events == [
         AudioDelta(data=b'\x00\x01'),
         RealtimeResponseInterruptedEvent(),
-        ResponseDone(interrupted=True, provider_details={'corrected_agent_response': 'Long an'}),
+        ResponseDone(interrupted=True, provider_details={'corrected_agent_response': 'Long an', **_CONVERSATION}),
     ]
 
 
@@ -1551,10 +1564,10 @@ async def test_interruption_during_playback_does_not_taint_the_next_turn() -> No
     )
     assert events == [
         OutputTranscript(text='Long answer...', is_final=True),
-        ResponseDone(),
+        ResponseDone(provider_details=_CONVERSATION),
         RealtimeResponseInterruptedEvent(),
         OutputTranscript(text='Next turn.', is_final=True),
-        ResponseDone(),
+        ResponseDone(provider_details=_CONVERSATION),
     ]
 
 
@@ -1696,7 +1709,7 @@ async def test_malformed_event_payload_is_recoverable_and_leaves_turn_state_alon
     assert isinstance(error, RealtimeSessionErrorEvent)
     assert error.recoverable
     assert error.message.startswith('Failed to parse ElevenLabs Agents event')
-    assert rest == [AudioDelta(data=b'\x00\x01'), ResponseDone()]
+    assert rest == [AudioDelta(data=b'\x00\x01'), ResponseDone(provider_details=_CONVERSATION)]
 
 
 async def test_corrupted_audio_base64_is_a_recoverable_error() -> None:
@@ -1714,7 +1727,7 @@ async def test_corrupted_audio_base64_is_a_recoverable_error() -> None:
     assert isinstance(error, RealtimeSessionErrorEvent)
     assert error.recoverable
     assert error.message.startswith('Failed to parse ElevenLabs Agents event')
-    assert rest == [AudioDelta(data=b'\x00\x01'), ResponseDone()]
+    assert rest == [AudioDelta(data=b'\x00\x01'), ResponseDone(provider_details=_CONVERSATION)]
 
 
 def test_audio_format_validation_rejects_non_ascii_digits() -> None:

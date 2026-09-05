@@ -152,6 +152,9 @@ async def test_tool_round_and_followup_turn(
     assert answer_part.transcript is not None and 'sunny' in answer_part.transcript.lower()
     assert isinstance(answer_part.audio, BinaryContent)
     assert len(answer_part.audio.data) > 0
+    # The conversation id from the handshake rides on the finalized response, so a consumer can
+    # reconcile the conversation's cost from persisted history alone.
+    assert answer.provider_details == {'conversation_id': IsStr()}
 
     # ElevenLabs reports LLM context consumption only (no output tokens or credits reach the
     # socket), once per turn *after* the turn boundary, so it accumulates into the run total
