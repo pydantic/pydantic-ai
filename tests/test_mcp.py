@@ -1681,7 +1681,16 @@ class TestSamplingMessageMapping:
     async def test_map_from_model_response_skips_thinking_and_rejects_unknown(self):
         from pydantic_ai import _mcp as _mcp_helpers
         from pydantic_ai.exceptions import UnexpectedModelBehavior
-        from pydantic_ai.messages import ModelResponse, TextPart, ThinkingPart, ToolCallPart
+        from pydantic_ai.messages import (
+            BinaryContent,
+            FilePart,
+            ModelResponse,
+            NativeToolCallPart,
+            NativeToolReturnPart,
+            TextPart,
+            ThinkingPart,
+            ToolCallPart,
+        )
 
         # `ThinkingPart` is silently skipped, leaving the text content.
         result = _mcp_helpers.map_from_model_response(
@@ -1689,9 +1698,31 @@ class TestSamplingMessageMapping:
         )
         assert result.text == 'visible'
 
-        # Unsupported parts (e.g. tool calls) raise a clear error.
+        # Tool calls have no sampling representation, so they're rendered as text the sampling
+        # server can still reason over (matching the realtime seeding fallback).
+        result = _mcp_helpers.map_from_model_response(
+            ModelResponse(parts=[ToolCallPart(tool_name='foo', args='{}', tool_call_id='pyd_ai_test_1')])
+        )
+        assert result.text == '[Tool pyd_ai_test_1: foo({})]'
+
+        # Native tool call/return exchanges are provider-session-bound and can't round-trip
+        # into sampling, so both sides of the exchange are silently skipped.
+        result = _mcp_helpers.map_from_model_response(
+            ModelResponse(
+                parts=[
+                    NativeToolCallPart(tool_name='native_search', args='{}', tool_call_id='pyd_ai_test_2'),
+                    NativeToolReturnPart(tool_name='native_search', content='found', tool_call_id='pyd_ai_test_2'),
+                    TextPart(content='kept'),
+                ]
+            )
+        )
+        assert result.text == 'kept'
+
+        # Unsupported parts still raise a clear error.
         with pytest.raises(UnexpectedModelBehavior):
-            _mcp_helpers.map_from_model_response(ModelResponse(parts=[ToolCallPart(tool_name='foo', args='{}')]))
+            _mcp_helpers.map_from_model_response(
+                ModelResponse(parts=[FilePart(content=BinaryContent(data=b'x', media_type='application/octet-stream'))])
+            )
 
 
 class TestResourceMethodErrorPaths:
