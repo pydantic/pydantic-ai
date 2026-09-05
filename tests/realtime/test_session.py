@@ -1783,6 +1783,7 @@ async def test_wait_for_playback_returns_immediately_without_audio() -> None:
     async with session:
         stream = session.stream_audio()
         await session.wait_for_playback()
+        assert isinstance(stream, _TapView)
         await stream.aclose()
 
 
@@ -1796,6 +1797,7 @@ async def test_wait_for_playback_requires_exactly_one_audio_stream() -> None:
         second = session.stream_audio()
         with pytest.raises(UserError, match=r'`wait_for_playback\(\)` needs exactly one active.*not 2'):
             await session.wait_for_playback()
+        assert isinstance(first, _TapView) and isinstance(second, _TapView)
         await first.aclose()
         await second.aclose()
 
@@ -1833,6 +1835,7 @@ async def test_wait_for_playback_returns_when_view_is_closed() -> None:
         waiting = asyncio.create_task(session.wait_for_playback())
         await asyncio.sleep(0)
         assert not waiting.done()
+        assert isinstance(stream, _TapView)
         await stream.aclose()
         await waiting
 
