@@ -981,13 +981,9 @@ class RealtimeSession:
 
     def _trim_queue_deltas(self) -> None:
         while self._queue_delta_count > _SESSION_DELTA_QUEUE_SIZE:
-            if isinstance(self._queue[0], PartDeltaEvent):
-                self._queue.popleft()
-            else:
-                for index, queued in enumerate(self._queue):
-                    if isinstance(queued, PartDeltaEvent):
-                        del self._queue[index]
-                        break
+            # Deltas make up the bulk of a backed-up queue, so the oldest one is normally at the head.
+            oldest = next(index for index, queued in enumerate(self._queue) if isinstance(queued, PartDeltaEvent))
+            del self._queue[oldest]
             self._queue_delta_count -= 1
             self._queue_dropped_deltas += 1
 
@@ -999,9 +995,9 @@ class RealtimeSession:
 
     async def _queue_get(self) -> RealtimeEvent | object:
         while not self._queue:
+            # Nothing can append between the clear and the wait: producers run on this event loop.
             self._queue_event.clear()
-            if not self._queue:
-                await self._queue_event.wait()
+            await self._queue_event.wait()
         return self._queue_get_nowait()
 
     @property
