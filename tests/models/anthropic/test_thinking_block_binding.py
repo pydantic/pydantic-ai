@@ -6,7 +6,7 @@ import base64
 import json
 import warnings
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import httpx2
 import pytest
@@ -14,6 +14,7 @@ from opentelemetry import trace
 
 from pydantic_ai import (
     Agent,
+    CompactionPart,
     ModelHTTPError,
     ModelMessage,
     ModelRequest,
@@ -22,6 +23,8 @@ from pydantic_ai import (
     ThinkingPart,
     UsageLimits,
 )
+from pydantic_ai.capabilities import ProcessHistory
+from pydantic_ai.messages import ModelMessagesTypeAdapter
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.instrumented import InstrumentedModel
 
@@ -117,6 +120,44 @@ def recovered_thinking_history() -> list[ModelMessage]:
         ),
         ModelRequest.user_text_prompt('Third turn'),
     ]
+
+
+def test_anthropic_recovery_signals_survive_model_messages_json_round_trip() -> None:
+    """Canonical storage preserves both the inference and count-only recovery carriers."""
+    history = recovered_thinking_history()
+    request = message(history, ModelRequest, index=-1)
+    request.metadata = {'__pydantic_ai__': {'anthropic_count_tokens_drop_stale_thinking_blocks': True}}
+
+    loaded = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(history))
+
+    assert loaded == history
+    assert message(loaded, ModelResponse, index=1).provider_details == snapshot(
+        {
+            'input_transformations': [
+                {'path': 'messages.1.content.0', 'reason': 'prefix_binding_mismatch', 'type': 'thinking_dropped'}
+            ]
+        }
+    )
+    assert message(loaded, ModelRequest, index=-1).metadata == snapshot(
+        {'__pydantic_ai__': {'anthropic_count_tokens_drop_stale_thinking_blocks': True}}
+    )
+
+
+async def test_anthropic_inference_recovery_survives_serialized_agent_history(allow_model_requests: None) -> None:
+    """Canonical replay drives inference recovery after Agent request normalization."""
+    mock_client = MockAnthropic.create_mock(
+        completion_message([BetaTextBlock(text='4', type='text')], usage=BetaUsage(input_tokens=10, output_tokens=1))
+    )
+    model = AnthropicModel('claude-fable-5-1', provider=AnthropicProvider(anthropic_client=mock_client))
+    history = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(recovered_thinking_history()))
+
+    await Agent(model).run('Fourth turn', message_history=history)
+
+    request = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert request['extra_body'] == snapshot(
+        {'thinking': {'block_binding': {'prefix_mismatch_behavior': 'drop_block'}}}
+    )
+    assert _THINKING_BINDING_BETA in request['betas']
 
 
 @pytest.mark.parametrize('model_name', ['claude-fable-5-1', 'claude-fable-5'])
@@ -271,8 +312,12 @@ async def test_anthropic_count_tokens_retries_a_stale_thinking_block(allow_model
     assert _THINKING_BINDING_BETA in requests[1]['betas']
 
 
-async def test_anthropic_count_tokens_recovery_only_carries_into_later_counts(allow_model_requests: None):
-    """A count-only prefix mismatch must not make an otherwise-valid inference drop its thinking."""
+@pytest.mark.parametrize('request_shape', ['unmerged', 'normalized-missing-namespace', 'normalized-valid-namespace'])
+async def test_anthropic_count_tokens_recovery_only_carries_into_later_counts(
+    allow_model_requests: None,
+    request_shape: Literal['unmerged', 'normalized-missing-namespace', 'normalized-valid-namespace'],
+):
+    """Count recovery survives request normalization and storage without leaking into inference."""
     mock_client = MockAnthropic.create_mock(
         completion_message([BetaTextBlock(text='4', type='text')], usage=BetaUsage(input_tokens=10, output_tokens=1))
     )
@@ -286,16 +331,31 @@ async def test_anthropic_count_tokens_recovery_only_carries_into_later_counts(al
 
     mock_client.beta.messages.count_tokens = count_tokens
     model = AnthropicModel('claude-fable-5-1', provider=AnthropicProvider(anthropic_client=mock_client))
-    agent = Agent(model)
+
+    def add_framework_metadata(messages: list[ModelMessage]) -> list[ModelMessage]:
+        if request_shape == 'normalized-valid-namespace':
+            request = message(messages, ModelRequest, index=-1)
+            request.metadata = {'__pydantic_ai__': {'other': True}}
+        return messages
+
+    agent = Agent(model, capabilities=[ProcessHistory(add_framework_metadata)])
+    message_history = (
+        [ModelRequest.user_text_prompt('Earlier request without a response')] if request_shape != 'unmerged' else None
+    )
 
     with warnings.catch_warnings(record=True) as caught_warnings:
         warnings.filterwarnings('always', category=AnthropicStaleThinkingBlockWarning)
         first = await agent.run(
-            'What is 2+2?', usage_limits=UsageLimits(count_tokens_before_request=True, input_tokens_limit=100)
+            'What is 2+2?',
+            message_history=message_history,
+            usage_limits=UsageLimits(count_tokens_before_request=True, input_tokens_limit=100),
+        )
+        replay_history = ModelMessagesTypeAdapter.validate_json(
+            ModelMessagesTypeAdapter.dump_json(first.all_messages())
         )
         await agent.run(
             'And again?',
-            message_history=first.all_messages(),
+            message_history=replay_history,
             usage_limits=UsageLimits(count_tokens_before_request=True, input_tokens_limit=100),
         )
 
@@ -304,9 +364,127 @@ async def test_anthropic_count_tokens_recovery_only_carries_into_later_counts(al
     assert count_requests[2]['extra_body'] == snapshot(
         {'thinking': {'block_binding': {'prefix_mismatch_behavior': 'drop_block'}}}
     )
+    replay_request = next(message for message in reversed(replay_history) if isinstance(message, ModelRequest))
+    assert replay_request.metadata == (
+        snapshot(
+            {
+                '__pydantic_ai__': {
+                    'other': True,
+                    'anthropic_count_tokens_drop_stale_thinking_blocks': True,
+                }
+            }
+        )
+        if request_shape == 'normalized-valid-namespace'
+        else snapshot({'__pydantic_ai__': {'anthropic_count_tokens_drop_stale_thinking_blocks': True}})
+    )
     first_inference, next_turn = get_mock_chat_completion_kwargs(mock_client)
     assert first_inference.get('extra_body') is None
     assert next_turn.get('extra_body') is None
+
+
+async def test_anthropic_count_recovery_marker_survives_normalization_with_explicit_binding(
+    allow_model_requests: None,
+):
+    """A pre-existing marker survives request merges while the caller's binding still wins."""
+    mock_client = MockAnthropic.create_mock(
+        completion_message([BetaTextBlock(text='4', type='text')], usage=BetaUsage(input_tokens=10, output_tokens=1))
+    )
+    count_requests: list[dict[str, Any]] = []
+
+    async def count_tokens(**kwargs: Any) -> BetaMessageTokensCount:
+        count_requests.append(kwargs)
+        return BetaMessageTokensCount(input_tokens=10)
+
+    mock_client.beta.messages.count_tokens = count_tokens
+    settings = AnthropicModelSettings(
+        anthropic_thinking={'type': 'adaptive', 'block_binding': {'prefix_mismatch_behavior': 'error'}}
+    )
+    model = AnthropicModel('claude-fable-5-1', provider=AnthropicProvider(anthropic_client=mock_client))
+    history = [
+        ModelRequest.user_text_prompt('First'),
+        ModelRequest(
+            parts=ModelRequest.user_text_prompt('Second').parts,
+            metadata={'__pydantic_ai__': {'anthropic_count_tokens_drop_stale_thinking_blocks': True}},
+        ),
+    ]
+
+    result = await Agent(model, model_settings=settings).run(
+        'Third',
+        message_history=history,
+        usage_limits=UsageLimits(count_tokens_before_request=True, input_tokens_limit=100),
+    )
+
+    expected_thinking = {'type': 'adaptive', 'block_binding': {'prefix_mismatch_behavior': 'error'}}
+    assert count_requests[0]['thinking'] == expected_thinking
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['thinking'] == expected_thinking
+    assert message(result.all_messages(), ModelRequest).metadata == snapshot(
+        {'__pydantic_ai__': {'anthropic_count_tokens_drop_stale_thinking_blocks': True}}
+    )
+
+
+@pytest.mark.parametrize('count_only', [False, True])
+async def test_anthropic_recovery_before_compaction_does_not_affect_the_new_window(
+    allow_model_requests: None, count_only: bool
+):
+    """Recovery evidence outside or on Anthropic's compaction boundary is stale."""
+    mock_client = MockAnthropic.create_mock(
+        completion_message([BetaTextBlock(text='4', type='text')], usage=BetaUsage(input_tokens=10, output_tokens=1))
+    )
+    history = recovered_thinking_history()
+    message(history, ModelRequest).metadata = {
+        '__pydantic_ai__': {'anthropic_count_tokens_drop_stale_thinking_blocks': True}
+    }
+    history.extend(
+        [
+            ModelResponse(
+                parts=[CompactionPart(content='Summary.', provider_name='anthropic')],
+                provider_details={
+                    'input_transformations': [
+                        {
+                            'path': 'messages.1.content.0',
+                            'reason': 'prefix_binding_mismatch',
+                            'type': 'thinking_dropped',
+                        }
+                    ]
+                },
+            ),
+            ModelRequest.user_text_prompt('After compaction'),
+        ]
+    )
+    model = AnthropicModel('claude-fable-5-1', provider=AnthropicProvider(anthropic_client=mock_client))
+
+    if count_only:
+        await model.count_tokens(history, None, ModelRequestParameters())
+    else:
+        await model.request(history, None, ModelRequestParameters())
+
+    request = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert request.get('extra_body') is None
+    assert _THINKING_BINDING_BETA not in request.get('betas', [])
+
+
+async def test_anthropic_count_recovery_after_compaction_affects_the_new_window(allow_model_requests: None) -> None:
+    """A serialized count-only marker after the boundary still governs the new window."""
+    mock_client = MockAnthropic.create_mock(
+        completion_message([BetaTextBlock(text='4', type='text')], usage=BetaUsage(input_tokens=10, output_tokens=1))
+    )
+    history: list[ModelMessage] = [
+        ModelResponse(parts=[CompactionPart(content='Summary.', provider_name='anthropic')]),
+        ModelRequest(
+            parts=ModelRequest.user_text_prompt('After compaction').parts,
+            metadata={'__pydantic_ai__': {'anthropic_count_tokens_drop_stale_thinking_blocks': True}},
+        ),
+    ]
+    history = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(history))
+    model = AnthropicModel('claude-fable-5-1', provider=AnthropicProvider(anthropic_client=mock_client))
+
+    await model.count_tokens(history, None, ModelRequestParameters())
+
+    request = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert request['extra_body'] == snapshot(
+        {'thinking': {'block_binding': {'prefix_mismatch_behavior': 'drop_block'}}}
+    )
+    assert _THINKING_BINDING_BETA in request['betas']
 
 
 async def test_anthropic_count_tokens_does_not_retry_an_unrelated_bad_request(allow_model_requests: None):
