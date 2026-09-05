@@ -360,9 +360,11 @@ class TestFileStepStore:
     async def test_snapshot_record_suppresses_retry_if_key_ledger_write_was_interrupted(self, tmp_path: Path) -> None:
         store = FileStepStore(tmp_path)
         snapshot = ContinuableSnapshot(run_id='r1', step_index=1, messages=[], idempotency_key='0:1:complete')
+        snapshot_dir = tmp_path / 'r1' / 'snapshots'
+        snapshot_dir.mkdir(parents=True)
+        (snapshot_dir / 'broken.json').write_text('{', encoding='utf-8')
         await store.save_snapshot(snapshot)
         (tmp_path / 'r1' / 'snapshot-keys.jsonl').unlink()
-        (tmp_path / 'r1' / 'snapshots' / 'broken.json').write_text('{', encoding='utf-8')
 
         await store.save_snapshot(snapshot)
 
