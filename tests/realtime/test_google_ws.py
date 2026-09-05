@@ -83,6 +83,7 @@ async def test_audio_in_server_vad_turn(
         [
             'PartStartEvent',
             'PartDeltaEvent',
+            'PartEndEvent',
             'PartStartEvent',
             'PartDeltaEvent',
             'PartEndEvent',

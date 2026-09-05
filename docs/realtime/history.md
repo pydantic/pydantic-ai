@@ -143,7 +143,12 @@ sends one frame per second — so for camera and screen streams, use both delibe
 ## Transcription and history edge cases
 
 Input transcription defaults to `'auto'`; see [Input transcription](audio.md#input-transcription)
-and each provider page for configuration. With transcription disabled:
+and each provider page for configuration. Transcripts are recorded with the user turn they describe,
+even when they arrive after that turn's response or overlap the following turn. If a reported speech
+segment never receives a transcript, the session still records its retained audio or a content-less
+`SpeechPart` when the session closes.
+
+With transcription disabled:
 
 - retained input audio creates an audio-only user `SpeechPart`;
 - without input retention, the session records a content-less user `SpeechPart`;
