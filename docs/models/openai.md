@@ -1091,6 +1091,38 @@ print(result.output)
 #> The capital of France is Paris.
 ```
 
+### Hubris
+
+[Hubris](https://hubris.pw) is an OpenAI-compatible gateway to models from OpenAI, Anthropic, Google, DeepSeek, Qwen and others, billed in Russian rubles. Create an API key at [hubris.pw/keys](https://hubris.pw/keys) and pick a model from the [catalog](https://hubris.pw/models) — model names always use the full `vendor/model` form.
+
+You can set the `HUBRIS_API_KEY` environment variable and use [`HubrisProvider`][pydantic_ai.providers.hubris.HubrisProvider] by name:
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent('hubris:anthropic/claude-sonnet-5')
+result = agent.run_sync('What is the capital of France?')
+print(result.output)
+#> The capital of France is Paris.
+```
+
+Or initialise the model and provider directly:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.hubris import HubrisProvider
+
+model = OpenAIChatModel(
+    'anthropic/claude-sonnet-5',
+    provider=HubrisProvider(api_key='your-hubris-api-key'),
+)
+agent = Agent(model)
+result = agent.run_sync('What is the capital of France?')
+print(result.output)
+#> The capital of France is Paris.
+```
+
 ### SambaNova
 
 To use [SambaNova Cloud](https://cloud.sambanova.ai/), you need to obtain an API key from the [SambaNova Cloud dashboard](https://cloud.sambanova.ai/dashboard).
