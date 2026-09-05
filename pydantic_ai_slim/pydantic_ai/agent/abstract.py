@@ -1737,6 +1737,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
 
         ```python
         from pydantic_ai import Agent
+        from pydantic_ai.realtime import RealtimeTurnCompleteEvent
         from pydantic_ai.realtime.openai import OpenAIRealtimeModel
 
         agent = Agent(instructions='You are a helpful voice assistant.')
@@ -1749,8 +1750,9 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             model = OpenAIRealtimeModel('gpt-realtime')
             async with agent.realtime(model).session() as session:
                 await session.send_audio(b'...')
-                async for _event in session:
-                    pass
+                async for event in session:
+                    if isinstance(event, RealtimeTurnCompleteEvent):
+                        break  # keep listening in a real call; we stop after one reply
         ```
 
         Args:
