@@ -9,6 +9,7 @@ import sys
 import textwrap
 import warnings
 from collections.abc import Callable
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -2887,6 +2888,14 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
     return f'{x} {y}'  # pragma: no cover
 
 
+def tool_with_fixed_tuple(x: tuple[int, int]) -> str:
+    return f'{x}'  # pragma: no cover
+
+
+def tool_with_heterogeneous_tuple(x: tuple[int, str]) -> str:
+    return f'{x}'  # pragma: no cover
+
+
 @pytest.mark.parametrize(
     'tool,tool_strict,expected_params,expected_strict',
     [
@@ -3380,20 +3389,44 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
             snapshot(None),
         ),
         (
-            tool_with_tuples,
-            True,
+            tool_with_fixed_tuple,
+            None,
             snapshot(
                 {
                     'additionalProperties': False,
                     'properties': {
-                        'x': {'maxItems': 1, 'minItems': 1, 'prefixItems': [{'type': 'integer'}], 'type': 'array'},
-                        'y': {'maxItems': 1, 'minItems': 1, 'prefixItems': [{'type': 'string'}], 'type': 'array'},
+                        'x': {
+                            'maxItems': 2,
+                            'minItems': 2,
+                            'prefixItems': [{'type': 'integer'}, {'type': 'integer'}],
+                            'type': 'array',
+                        },
                     },
-                    'required': ['x', 'y'],
+                    'required': ['x'],
                     'type': 'object',
                 }
             ),
-            snapshot(True),
+            snapshot(None),
+        ),
+        (
+            tool_with_heterogeneous_tuple,
+            None,
+            snapshot(
+                {
+                    'additionalProperties': False,
+                    'properties': {
+                        'x': {
+                            'maxItems': 2,
+                            'minItems': 2,
+                            'prefixItems': [{'type': 'integer'}, {'type': 'string'}],
+                            'type': 'array',
+                        },
+                    },
+                    'required': ['x'],
+                    'type': 'object',
+                }
+            ),
+            snapshot(None),
         ),
         # (tool, None, snapshot({}), snapshot({})),
         # (tool, True, snapshot({}), snapshot({})),
@@ -3450,7 +3483,6 @@ def test_strict_schema():
         # We have all these different crazy fields to achieve coverage
         my_recursive: MyModel | None = None
         my_patterns: dict[Annotated[str, Field(pattern='^my-pattern$')], str]
-        my_tuple: tuple[int]
         my_list: list[float]
         my_discriminated_union: Annotated[Apple | Banana, Discriminator('kind')]
 
@@ -3482,14 +3514,8 @@ def test_strict_schema():
                             'required': [],
                         },
                         'my_recursive': {'anyOf': [{'$ref': '#'}, {'type': 'null'}]},
-                        'my_tuple': {
-                            'maxItems': 1,
-                            'minItems': 1,
-                            'prefixItems': [{'type': 'integer'}],
-                            'type': 'array',
-                        },
                     },
-                    'required': ['my_recursive', 'my_patterns', 'my_tuple', 'my_list', 'my_discriminated_union'],
+                    'required': ['my_recursive', 'my_patterns', 'my_list', 'my_discriminated_union'],
                     'type': 'object',
                 },
             },
@@ -3502,11 +3528,10 @@ def test_strict_schema():
                     'properties': {},
                     'required': [],
                 },
-                'my_tuple': {'maxItems': 1, 'minItems': 1, 'prefixItems': [{'type': 'integer'}], 'type': 'array'},
                 'my_list': {'items': {'type': 'number'}, 'type': 'array'},
                 'my_discriminated_union': {'anyOf': [{'$ref': '#/$defs/Apple'}, {'$ref': '#/$defs/Banana'}]},
             },
-            'required': ['my_recursive', 'my_patterns', 'my_tuple', 'my_list', 'my_discriminated_union'],
+            'required': ['my_recursive', 'my_patterns', 'my_list', 'my_discriminated_union'],
             'type': 'object',
             'additionalProperties': False,
         }
@@ -6208,6 +6233,79 @@ def test_transformer_untyped_array_explicit_strict_raises():
     }
     with pytest.raises(UserError, match='OpenAI strict mode requires array items to have a type'):
         OpenAIJsonSchemaTransformer(schema, strict=True).walk()
+
+
+_PREFIX_ITEMS_SCHEMAS = [
+    pytest.param(
+        {
+            'type': 'array',
+            'prefixItems': [{'type': 'integer'}, {'type': 'integer'}],
+            'minItems': 2,
+            'maxItems': 2,
+        },
+        id='homogeneous',
+    ),
+    pytest.param(
+        {
+            'type': 'array',
+            'prefixItems': [{'type': 'integer'}, {'type': 'string'}],
+            'minItems': 2,
+            'maxItems': 2,
+        },
+        id='heterogeneous',
+    ),
+    pytest.param(
+        {'type': 'array', 'prefixItems': [{'type': 'integer'}, {'type': 'integer'}]},
+        id='no-length-bounds',
+    ),
+    pytest.param(
+        {'type': 'array', 'prefixItems': [{'type': 'integer'}], 'items': {'type': 'string'}},
+        id='typed-items-alongside',
+    ),
+]
+
+
+@pytest.mark.parametrize('array_schema', _PREFIX_ITEMS_SCHEMAS)
+def test_transformer_prefix_items_not_strict_compatible(array_schema: dict[str, Any]):
+    """OpenAI strict mode does not support `prefixItems` (tuple types), so `strict=None` must
+    infer non-strict instead of sending a schema the API rejects.
+    See https://github.com/pydantic/pydantic-ai/issues/7315"""
+    schema: dict[str, Any] = {
+        'type': 'object',
+        'properties': {'value': array_schema},
+        'required': ['value'],
+    }
+    expected_prefix_items = deepcopy(array_schema['prefixItems'])
+    transformer = OpenAIJsonSchemaTransformer(schema, strict=None)
+    result = transformer.walk()
+
+    assert result['properties']['value']['prefixItems'] == expected_prefix_items
+    assert transformer.is_strict_compatible is False
+
+
+@pytest.mark.parametrize('array_schema', _PREFIX_ITEMS_SCHEMAS)
+def test_transformer_prefix_items_explicit_strict_raises(array_schema: dict[str, Any]):
+    """Explicit `strict=True` raises a clear error instead of letting OpenAI reject with a 400."""
+    schema: dict[str, Any] = {
+        'type': 'object',
+        'properties': {'value': array_schema},
+        'required': ['value'],
+    }
+    with pytest.raises(UserError, match='OpenAI strict mode does not support tuple types'):
+        OpenAIJsonSchemaTransformer(schema, strict=True).walk()
+
+
+def test_transformer_prefix_items_untouched_when_not_strict():
+    """With `strict=False` there's nothing to repair, so tuple schemas are passed through as-is."""
+
+    class Model(BaseModel):
+        pair: tuple[int, str]
+        bbox: tuple[int, int]
+
+    result = OpenAIJsonSchemaTransformer(Model.model_json_schema(), strict=False).walk()
+
+    assert result['properties']['pair']['prefixItems'] == [{'type': 'integer'}, {'type': 'string'}]
+    assert result['properties']['bbox']['prefixItems'] == [{'type': 'integer'}, {'type': 'integer'}]
 
 
 def chunk_with_usage(
