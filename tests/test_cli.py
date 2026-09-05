@@ -1316,6 +1316,8 @@ def test_run_web_command_cli_models_passed_to_create_web_app(
     call_kwargs = mock_create_app.call_args.kwargs
     # CLI models passed as list; agent model merging/deduplication happens in create_web_app
     assert call_kwargs.get('models') == ['openai:gpt-5', 'anthropic:claude-sonnet-4-6']
+    assert 'base_path' not in call_kwargs
+    assert 'api_path' not in call_kwargs
 
 
 def test_agent_to_cli_sync_with_args(mocker: MockerFixture, env: TestEnv):
