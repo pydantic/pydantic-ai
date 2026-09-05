@@ -2618,10 +2618,10 @@ async def test_idless_late_transcript_does_not_merge_with_next_audio_turn() -> N
     session = RealtimeSession(_LateTranscriptAfterNextAudio([]), _noop_runner)
 
     async with session:
+        transcripts = session.stream_transcripts()
         await session.send_audio(b'first')
         events_task = asyncio.create_task(drain_events(session))
-        while len(session.all_messages()) < 1:
-            await asyncio.sleep(0)
+        assert (await anext(transcripts)).transcript == 'answer one'  # the first reply is in history
         await session.send_audio(b'second')
         await events_task
 

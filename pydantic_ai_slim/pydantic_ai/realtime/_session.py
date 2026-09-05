@@ -10,6 +10,7 @@ import weakref
 from collections import deque
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Sequence
 from dataclasses import dataclass, replace
+from itertools import takewhile
 from threading import Lock as ThreadLock
 from time import time_ns
 from types import TracebackType
@@ -2145,13 +2146,11 @@ class RealtimeSession:
         else:
             turn.part = part
             turn.finalized = True
-            blocked_by_started_turn = False
-            for current_id, current in self._user_turns.items():
-                if current_id == item_id:
-                    break
-                if (current.start_emitted or current.speech_ended) and not current.finalized:
-                    blocked_by_started_turn = True
-                    break
+            earlier_turns = takewhile(lambda entry: entry[0] != item_id, self._user_turns.items())
+            blocked_by_started_turn = any(
+                (current.start_emitted or current.speech_ended) and not current.finalized
+                for _, current in earlier_turns
+            )
             if blocked_by_started_turn:
                 self._flush_finalized_user_prefix()
             else:
@@ -2196,11 +2195,6 @@ class RealtimeSession:
 
     def _record_user_request(self, item_id: str | None, request: ModelRequest) -> None:
         """Record a finalized user turn at the position it held when it started."""
-        # A turn that never opened an anchor has no earlier place to hold: only audio reserves one, so
-        # a text turn simply belongs where it is finalized.
-        if item_id not in self._user_turn_anchors:
-            self._history.append(request)
-            return
         anchor = self._user_turn_anchors.pop(item_id)
         insert_at = 0
         if anchor is not None:
