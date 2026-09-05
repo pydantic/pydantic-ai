@@ -1,5 +1,6 @@
 import warnings
 from collections.abc import Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Literal, cast
 
@@ -192,6 +193,22 @@ class GoogleEmbeddingModel(EmbeddingModel):
 
         super().__init__(settings=settings)
 
+    @contextmanager
+    def _handle_api_error(self):
+        try:
+            yield
+
+        except errors.APIError as e:
+            if (status_code := e.code) >= 400:
+                raise ModelHTTPError(
+                    status_code=status_code,
+                    model_name=self._model_name,
+                    body=cast(object, e.details),  # pyright: ignore[reportUnknownMemberType]
+                    headers=dict(e.response.headers) if e.response is not None else None,
+                    # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+                ) from e
+            raise
+
     @property
     def _client(self) -> Client:
         return self._provider.client
@@ -264,21 +281,12 @@ class GoogleEmbeddingModel(EmbeddingModel):
 
         contents: ContentListUnion = [Content(parts=[Part(text=text)]) for text in texts]
 
-        try:
+        with self._handle_api_error():
             response = await self._client.aio.models.embed_content(
                 model=self._model_name,
                 contents=contents,
                 config=config,
             )
-        except errors.APIError as e:
-            if (status_code := e.code) >= 400:
-                raise ModelHTTPError(
-                    status_code=status_code,
-                    model_name=self._model_name,
-                    body=cast(object, e.details),  # pyright: ignore[reportUnknownMemberType]
-                    headers=dict(e.response.headers) if e.response is not None else None,  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
-                ) from e
-            raise
 
         embeddings: list[list[float]] = [emb.values for emb in (response.embeddings or []) if emb.values is not None]
 
@@ -296,20 +304,12 @@ class GoogleEmbeddingModel(EmbeddingModel):
 
     async def count_tokens(self, text: str) -> int:
         check_allow_model_requests()
-        try:
+
+        with self._handle_api_error():
             response = await self._client.aio.models.count_tokens(
                 model=self._model_name,
                 contents=text,
             )
-        except errors.APIError as e:
-            if (status_code := e.code) >= 400:
-                raise ModelHTTPError(
-                    status_code=status_code,
-                    model_name=self._model_name,
-                    body=cast(object, e.details),  # pyright: ignore[reportUnknownMemberType]
-                    headers=dict(e.response.headers) if e.response is not None else None,  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
-                ) from e
-            raise
 
         if response.total_tokens is None:
             raise UnexpectedModelBehavior('Token counting returned no result')  # pragma: no cover
