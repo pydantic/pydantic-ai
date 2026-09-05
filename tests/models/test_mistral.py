@@ -3093,6 +3093,7 @@ async def test_mistral_model_thinking_part(allow_model_requests: None, openai_ap
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 9, 5, 22, 29, 38, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id='resp_68bb6452990081968f5aff503a55e3b903498c8aa840cf12',
                 finish_reason='stop',

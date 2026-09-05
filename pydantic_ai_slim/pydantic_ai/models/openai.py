@@ -1211,7 +1211,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
 
         This method may be overridden by subclasses of `OpenAIChatModel` to apply custom mappings.
         """
-        return _map_provider_details(response.choices[0])
+        return _map_provider_details(response.choices[0], response.service_tier)
 
     def _process_response(self, response: chat.ChatCompletion | str) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
@@ -2500,6 +2500,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
         if response.moderation:
             provider_details['moderation'] = response.moderation.model_dump()
+        if response.service_tier:
+            provider_details['service_tier'] = response.service_tier
 
         state = _response_status_to_state(response.status, background=bool(response.background))
         if refusal_text is not None:
@@ -4070,7 +4072,7 @@ class OpenAIStreamedResponse(StreamedResponse):
 
         This method may be overridden by subclasses of `OpenAIStreamResponse` to customize the provider details.
         """
-        return _map_provider_details(chunk.choices[0])
+        return _map_provider_details(chunk.choices[0], chunk.service_tier)
 
     def _map_usage(self, response: ChatCompletionChunk) -> usage.RequestUsage:
         return _map_usage(response, self._provider_name, self._provider_url, self.model_name)
@@ -4270,6 +4272,11 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         self.provider_details = {
                             **(self.provider_details or {}),
                             'moderation': chunk.response.moderation.model_dump(),
+                        }
+                    if chunk.response.service_tier:
+                        self.provider_details = {
+                            **(self.provider_details or {}),
+                            'service_tier': chunk.response.service_tier,
                         }
 
                 elif isinstance(chunk, responses.ResponseContentPartAddedEvent):
@@ -5159,6 +5166,7 @@ def _map_usage(
 
 def _map_provider_details(
     choice: chat_completion_chunk.Choice | chat_completion.Choice,
+    service_tier: str | None = None,
 ) -> dict[str, Any] | None:
     provider_details: dict[str, Any] = {}
 
@@ -5167,6 +5175,8 @@ def _map_provider_details(
         provider_details['logprobs'] = _map_logprobs(choice.logprobs.content)
     if raw_finish_reason := choice.finish_reason:
         provider_details['finish_reason'] = raw_finish_reason
+    if service_tier:
+        provider_details['service_tier'] = service_tier
 
     return provider_details or None
 
