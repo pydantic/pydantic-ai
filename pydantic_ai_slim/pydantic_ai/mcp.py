@@ -1283,14 +1283,17 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         When [`cache_tools`][pydantic_ai.mcp.MCPToolset.cache_tools] is enabled (default), results
         are cached and invalidated by `notifications/tools/list_changed` or the toolset's last
         `__aexit__`.
+
+        Returned tools are deep copies, so mutating the list, a tool, or its input schema never
+        leaks into the cache or into later calls (`get_tools()` included).
         """
         if self.cache_tools and self._cached_tools is not None:
-            return self._cached_tools
+            return [tool.model_copy(deep=True) for tool in self._cached_tools]
         async with self:
             tools = await self.client.list_tools()
             if self.cache_tools:
                 self._cached_tools = tools
-            return tools
+            return [tool.model_copy(deep=True) for tool in tools]
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         mcp_tools = await self.list_tools()
