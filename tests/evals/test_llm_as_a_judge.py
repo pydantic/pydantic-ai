@@ -1,6 +1,8 @@
 from __future__ import annotations as _annotations
 
 import re
+from collections.abc import Callable
+from typing import Any
 
 import pytest
 from pytest_mock import MockerFixture
@@ -10,9 +12,18 @@ from ..conftest import BinaryContent, iter_message_parts, try_import
 
 with try_import() as imports_successful:
     from pydantic_ai import Agent
-    from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, SystemPromptPart, ToolCallPart
+    from pydantic_ai.messages import (
+        ModelMessage,
+        ModelRequest,
+        ModelResponse,
+        SystemPromptPart,
+        ToolCallPart,
+        UserPromptPart,
+    )
     from pydantic_ai.models.function import AgentInfo, FunctionModel
     from pydantic_ai.settings import ModelSettings
+    from pydantic_evals import Case, Dataset
+    from pydantic_evals.evaluators import LLMJudge
     from pydantic_evals.evaluators.llm_as_a_judge import (
         GEvalOutput,
         GradingOutput,
@@ -97,6 +108,11 @@ def test_stringify():
 
     # Test with list
     assert _stringify([1, 2, 3]) == '[1,2,3]'
+
+    # Test with bytes-like values, all encoded as the text they contain
+    assert _stringify(b'hi') == '"hi"'
+    assert _stringify(bytearray(b'hi')) == '"hi"'
+    assert _stringify(memoryview(b'hi')) == '"hi"'
 
     # Test with custom object
     class CustomObject:
@@ -300,6 +316,95 @@ async def test_judge_input_output_binary_content_mock(mocker: MockerFixture, ima
 
     # 2) The BinaryContent you passed in should be one of the elements
     assert image_content in raw_prompt, 'Expected the exact BinaryContent instance to be in the prompt list'
+
+
+async def captured_judge_prompt(
+    case: Case[Any, Any, Any],
+    task: Callable[[Any], Any],
+    *,
+    include_input: bool = False,
+    include_expected_output: bool = False,
+) -> str:
+    """Run a case through `Dataset.evaluate` with an `LLMJudge` backed by a prompt-capturing `FunctionModel`."""
+    captured_prompts: list[str] = []
+
+    async def capture_user_prompt(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        captured_prompts.append(
+            '\n'.join(str(part.content) for part in iter_message_parts(messages, ModelRequest, UserPromptPart))
+        )
+        assert info.output_tools is not None
+        args = '{"reason": "ok", "pass": true, "score": 1.0}'
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args)])
+
+    judge = LLMJudge(
+        rubric='Is the output sensible?',
+        model=FunctionModel(capture_user_prompt),
+        include_input=include_input,
+        include_expected_output=include_expected_output,
+    )
+    dataset = Dataset(name='buffer cases', cases=[case], evaluators=[judge])
+    await dataset.evaluate(task, progress=False)
+
+    assert len(captured_prompts) == 1
+    return captured_prompts[0]
+
+
+@pytest.mark.anyio
+async def test_judge_bytes_output_mock():
+    """A bytes output is judged as one whole value, not one byte per line (#7927)."""
+    prompt = await captured_judge_prompt(Case(name='buffer', inputs='ignored'), lambda value: b'The quick brown fox')
+
+    assert '"The quick brown fox"' in prompt
+    assert '84\n104\n101' not in prompt
+
+
+@pytest.mark.anyio
+async def test_judge_bytearray_output_mock():
+    """A bytearray output is judged as one whole value, not one byte per line (#7927)."""
+    prompt = await captured_judge_prompt(
+        Case(name='buffer', inputs='ignored'), lambda value: bytearray(b'The quick brown fox')
+    )
+
+    assert '"The quick brown fox"' in prompt
+    assert '84\n104\n101' not in prompt
+
+
+@pytest.mark.anyio
+async def test_judge_memoryview_output_mock():
+    """A memoryview output is judged as its decoded text, not one byte per line or a memory address (#7927)."""
+    prompt = await captured_judge_prompt(
+        Case(name='buffer', inputs='ignored'), lambda value: memoryview(b'The quick brown fox')
+    )
+
+    assert '"The quick brown fox"' in prompt
+    assert '84\n104\n101' not in prompt
+    assert '<memory at' not in prompt
+
+
+@pytest.mark.anyio
+async def test_judge_buffer_input_mock():
+    """A bytes input is judged as one whole value when `include_input=True` (#7927)."""
+    prompt = await captured_judge_prompt(
+        Case(name='buffer', inputs=b'The quick brown fox'),
+        lambda value: 'ordinary output',
+        include_input=True,
+    )
+
+    assert '"The quick brown fox"' in prompt
+    assert '84\n104\n101' not in prompt
+
+
+@pytest.mark.anyio
+async def test_judge_buffer_expected_output_mock():
+    """A bytes expected output is judged as one whole value when `include_expected_output=True` (#7927)."""
+    prompt = await captured_judge_prompt(
+        Case(name='buffer', inputs='ignored', expected_output=b'The quick brown fox'),
+        lambda value: 'ordinary output',
+        include_expected_output=True,
+    )
+
+    assert '"The quick brown fox"' in prompt
+    assert '84\n104\n101' not in prompt
 
 
 @pytest.mark.anyio
