@@ -2594,6 +2594,44 @@ async def test_idless_next_audio_turn_keeps_anchor_when_output_precedes_transcri
     )
 
 
+async def test_idless_speech_start_reanchors_the_turn_local_audio_opened() -> None:
+    """Local audio reserves the turn's place; an id-less speech start for the same turn must not reserve a second one."""
+    conn = FakeRealtimeConnection(
+        [
+            RealtimeInputSpeechStartEvent(),
+            InputTranscript(text='question one', is_final=True),
+            OutputTranscript(text='answer one', is_final=True),
+            ResponseDone(),
+            RealtimeInputSpeechStartEvent(),
+            InputTranscript(text='question two', is_final=True),
+            OutputTranscript(text='answer two', is_final=True),
+            ResponseDone(),
+        ]
+    )
+    session = RealtimeSession(conn, _noop_runner)
+    async with session:
+        await session.send_audio(b'first')
+        await drain_events(session)
+
+    assert not session._user_turn_active  # pyright: ignore[reportPrivateUsage]
+    assert session.all_messages() == snapshot(
+        [
+            ModelRequest(parts=[SpeechPart(speaker='user', transcript='question one')], timestamp=IsDatetime()),
+            ModelResponse(
+                parts=[SpeechPart(speaker='assistant', transcript='answer one')],
+                timestamp=IsDatetime(),
+                finish_reason='stop',
+            ),
+            ModelRequest(parts=[SpeechPart(speaker='user', transcript='question two')], timestamp=IsDatetime()),
+            ModelResponse(
+                parts=[SpeechPart(speaker='assistant', transcript='answer two')],
+                timestamp=IsDatetime(),
+                finish_reason='stop',
+            ),
+        ]
+    )
+
+
 async def test_idless_late_transcript_does_not_merge_with_next_audio_turn() -> None:
     second_audio_sent = asyncio.Event()
 

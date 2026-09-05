@@ -2176,7 +2176,14 @@ class RealtimeSession:
         """
         anchor = self._history[-1] if self._history else None
         if item_id is None:
-            self._pending_anonymous_user_turn_anchors.append(anchor)
+            anchors = self._pending_anonymous_user_turn_anchors
+            if len(anchors) > self._anonymous_user_turns_ended:
+                # An anonymous turn is still open — local audio reserved its place already — so a
+                # speech start now is the provider confirming that turn, not a new one: re-anchor it
+                # rather than reserving a second place the next turn would then inherit.
+                anchors[-1] = anchor
+            else:
+                anchors.append(anchor)
         else:
             self._pending_user_turn_anchors[item_id] = (anchor,)
 
