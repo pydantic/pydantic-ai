@@ -18,13 +18,13 @@ from typing_extensions import deprecated
 from pydantic_ai import (
     AbstractToolset,
     CancellationToken,
-    _agent_graph,
     _instructions,
     _utils,
     messages as _messages,
     models,
     usage as _usage,
 )
+from pydantic_ai._agent_graph import state as _state
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent import AbstractAgent, AgentRun, AgentRunResult, EventStreamHandler, WrapperAgent
 from pydantic_ai.agent.abstract import (
@@ -353,7 +353,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             super().override(model=self._temporal_model, toolsets=merged_toolsets, tools=[]),
             self._temporal_model.using_model(model),
             _utils.disable_threads(),
-            _agent_graph.set_agent_graph_sleep(workflow.sleep),
+            _state.set_agent_graph_sleep(workflow.sleep),
         ):
             temporal_active_token = self._temporal_overrides_active.set(True)
             try:

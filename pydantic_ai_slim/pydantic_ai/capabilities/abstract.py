@@ -43,7 +43,7 @@ from ._merge import merge_capability_fields
 from ._on_event import collect_on_event_methods, marked_listens_to
 
 if TYPE_CHECKING:
-    from pydantic_ai import _agent_graph
+    from pydantic_ai._agent_graph import graph as _graph
     from pydantic_ai.agent.abstract import AbstractAgent, AgentModelSettings
     from pydantic_ai.capabilities.prefix_tools import PrefixTools
     from pydantic_ai.models import (
@@ -61,16 +61,16 @@ if TYPE_CHECKING:
 # --- Handler type aliases for use in hook method signatures ---
 # These make it easier to write correct type annotations when subclassing AbstractCapability.
 
-AgentNode: TypeAlias = '_agent_graph.AgentNode[AgentDepsT, Any]'
+AgentNode: TypeAlias = '_graph.AgentNode[AgentDepsT, Any]'
 """Type alias for an agent graph node (`UserPromptNode`, `ModelRequestNode`, `CallToolsNode`)."""
 
-NodeResult: TypeAlias = '_agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]'
+NodeResult: TypeAlias = '_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]'
 """Type alias for the result of executing an agent graph node: either the next node or `End`."""
 
 WrapRunHandler: TypeAlias = 'Callable[[], Awaitable[AgentRunResult[Any]]]'
 """Handler type for [`wrap_run`][pydantic_ai.capabilities.AbstractCapability.wrap_run]."""
 
-WrapNodeRunHandler: TypeAlias = 'Callable[[_agent_graph.AgentNode[AgentDepsT, Any]], Awaitable[_agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]]]'
+WrapNodeRunHandler: TypeAlias = 'Callable[[_graph.AgentNode[AgentDepsT, Any]], Awaitable[_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]]]'
 """Handler type for [`wrap_node_run`][pydantic_ai.capabilities.AbstractCapability.wrap_node_run]."""
 
 WrapModelRequestHandler: TypeAlias = 'Callable[[ModelRequestContext], Awaitable[ModelResponse]]'
