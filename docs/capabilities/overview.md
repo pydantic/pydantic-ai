@@ -44,7 +44,7 @@ Connections to systems outside the agent's workspace, and abilities the provider
 | Capability | Package | What it does |
 |---|---|---|
 | [MCP](mcp.md) | Core | Connect any MCP server's tools; local by default, provider-native connectors opt-in |
-| [Image Generation](image-generation.md) | Core | Generate and edit images; provider-native where supported, direct image-model fallback via `fallback_image_model` elsewhere |
+| [Image Generation](image-generation.md) | Core | Generate and edit images; provider-native where supported, direct image-model fallback elsewhere |
 | [Native Tool](../native-tools.md) | Core | Register any provider-native tool with the agent |
 | [StackOne](https://pydantic.dev/docs/ai/harness/stackone/) | Harness | Act on linked SaaS accounts (HRIS, ATS, CRM, …) via [StackOne](https://www.stackone.com) |
 | [LocalStack](https://pydantic.dev/docs/ai/harness/localstack/) | Harness | An emulated AWS environment with AWS CLI tools |
