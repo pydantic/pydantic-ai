@@ -38,6 +38,7 @@ from pydantic_ai.messages import (
     BinaryImage,
     DeferredToolRequestsEvent,
     DeferredToolResultsEvent,
+    EnqueuedMessagesEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     InstructionPart,
@@ -5464,27 +5465,38 @@ async def test_asap_enqueue_waits_for_active_response_to_complete() -> None:
 async def test_session_enqueue_asap_waits_for_active_response_to_complete() -> None:
     conn = _SessionEnqueueDuringSpeechConnection()
     agent: Agent[None, str] = Agent()
+    enqueue_ids: list[str] = []
 
     async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
 
         async def send_and_enqueue_during_speech() -> None:
             await conn.audio_started.wait()
             await session.send('sent immediately')
-            assert session.enqueue('queued for the boundary') is not None
+            enqueue_id = session.enqueue('queued for the boundary')
+            assert enqueue_id is not None
+            enqueue_ids.append(enqueue_id)
             conn.enqueued.set()
 
         task = asyncio.create_task(send_and_enqueue_during_speech())
-        _ = [event async for event in session]
+        events = [event async for event in session]
         await task
 
     assert [item for item in conn.sent_before_response_complete if isinstance(item, str)] == ['sent immediately']
     assert [item for item in conn.sent if isinstance(item, str)] == ['sent immediately', 'queued for the boundary']
-    assert session.new_messages()[-1] == ModelRequest(
+    request = session.new_messages()[-1]
+    assert request == ModelRequest(
         parts=[UserPromptPart(content='queued for the boundary', timestamp=IsDatetime())],
         timestamp=IsDatetime(),
         conversation_id=IsStr(),
         run_id=IsStr(),
     )
+    enqueued_events = [event for event in events if isinstance(event, EnqueuedMessagesEvent)]
+    assert len(enqueued_events) == 1
+    assert enqueued_events[0].enqueue_id == enqueue_ids[0]
+    assert enqueued_events[0].messages == (request,)
+    assert enqueued_events[0].messages[0] is request
+    turn_boundary = next(index for index, event in enumerate(events) if isinstance(event, RealtimeTurnCompleteEvent))
+    assert events.index(enqueued_events[0]) > turn_boundary
 
 
 class _RespondingConnection(FakeRealtimeConnection):
@@ -5577,15 +5589,18 @@ async def test_session_enqueue_rejects_invalid_content_immediately() -> None:
 )
 async def test_agent_realtime_session_delivers_enqueued_text(priority: Literal['asap', 'when_idle']) -> None:
     agent: Agent[None, str] = Agent()
+    enqueue_ids: list[str] = []
 
     @agent.tool
     def queue_followup(ctx: RunContext[object]) -> str:
-        assert ctx.enqueue('follow-up context', priority=priority) is not None
+        enqueue_id = ctx.enqueue('follow-up context', priority=priority)
+        assert enqueue_id is not None
+        enqueue_ids.append(enqueue_id)
         return 'queued'
 
     conn = _EnqueueConnection([])
     async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
-        _ = [event async for event in session]
+        events = [event async for event in session]
 
     assert [type(item).__name__ for item in conn.sent] == ['ToolResult', 'str']
     call_response, tool_return, followup = session.new_messages()
@@ -5597,6 +5612,11 @@ async def test_agent_realtime_session_delivers_enqueued_text(priority: Literal['
         conversation_id=IsStr(),
         run_id=IsStr(),
     )
+    enqueued_events = [event for event in events if isinstance(event, EnqueuedMessagesEvent)]
+    assert len(enqueued_events) == 1
+    assert enqueued_events[0].enqueue_id == enqueue_ids[0]
+    assert enqueued_events[0].messages == (followup,)
+    assert enqueued_events[0].messages[0] is followup
 
 
 class _ConcurrentEnqueueConnection(FakeRealtimeConnection):
