@@ -717,7 +717,7 @@ class StructuredTextOutputSchema(OutputSchema[OutputDataT], ABC):
         if '{schema}' not in template:
             template = '\n\n'.join([template, '{schema}'])
 
-        return template.format(schema=json.dumps(schema))
+        return template.replace('{schema}', json.dumps(schema))
 
 
 class NativeOutputSchema(StructuredTextOutputSchema[OutputDataT]):
