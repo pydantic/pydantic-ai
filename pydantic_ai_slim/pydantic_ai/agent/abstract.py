@@ -1730,8 +1730,10 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         do not apply; structured output should be delegated to a normal [`Agent`][pydantic_ai.Agent] (see the
         realtime docs). Capabilities run `for_run` once when the session connects; their instructions,
         toolsets, and native tools are applied. Tool hooks (`prepare_tools` and `before`/`after`/`wrap`/
-        `on_error` for `tool_validate` and `tool_execute`) run for each tool call. Run-, graph-,
-        model-request-, event-stream-, and output-stage hooks do not run.
+        `on_error` for `tool_validate` and `tool_execute`) run for each tool call. Run hooks
+        (`before_run`, `after_run`, `wrap_run`, `on_run_error`) run once around the session and
+        event-stream hooks wrap the session iterator; graph, model-request, and output-stage hooks
+        do not run.
 
         ```python
         from pydantic_ai import Agent
@@ -1760,8 +1762,9 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 (there is no per-request rebuild in a realtime session).
             toolsets: Optional additional toolsets for the session, on top of the agent's.
             capabilities: Optional additional capabilities for the session. Their `for_run`, setup
-                contributions, and tool-lifecycle hooks apply; run, model-request, graph, event-stream,
-                and output hooks are not invoked.
+                contributions, and tool-lifecycle hooks apply; run hooks fire once around the session
+                and event-stream hooks wrap the iterator; model-request, graph, and output hooks are not
+                invoked.
             usage: Optional [`RunUsage`][pydantic_ai.usage.RunUsage] to accumulate token usage into;
                 exposed as `session.usage`. A fresh one is used when omitted.
             usage_limits: Optional [`UsageLimits`][pydantic_ai.usage.UsageLimits]. Request, token, and

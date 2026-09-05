@@ -125,8 +125,9 @@ class RealtimeModelSettings(TypedDict, total=False):
     [`thinking`][pydantic_ai.settings.ModelSettings.thinking] setting on the request-response models.
 
     `True` enables it at the provider default, and `'minimal'`/`'low'`/`'medium'`/`'high'`/`'xhigh'`
-    selects an effort level. `False` disables thinking on Gemini. OpenAI realtime does not accept a
-    disabled effort, so `False` omits `reasoning` and leaves the model's default behavior unchanged.
+    selects an effort level. `False` disables thinking on Gemini and xAI (sent as `reasoning.effort:
+    'none'` there). OpenAI realtime does not accept a disabled effort, so `False` omits `reasoning`
+    and leaves the model's default behavior unchanged.
     OpenAI and Gemini apply it only to models whose profile reports
     [`supports_thinking`][pydantic_ai.realtime.RealtimeModelProfile.supports_thinking]. Other models
     silently ignore it. Providers with a richer native config expose it separately
