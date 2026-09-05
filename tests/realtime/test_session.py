@@ -2773,6 +2773,139 @@ async def test_upstream_error_surfaces_at_close_when_the_stream_was_never_iterat
             raise ValueError('mine')
 
 
+async def test_close_completes_when_the_closing_task_is_cancelled() -> None:
+    agent: Agent[None, str] = Agent()
+    tool_started = asyncio.Event()
+    tool_cancelled = asyncio.Event()
+    tool_task: asyncio.Task[Any] | None = None
+
+    @agent.tool_plain
+    async def slow() -> str:
+        nonlocal tool_task
+        tool_task = asyncio.current_task()
+        tool_started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            tool_cancelled.set()
+            await asyncio.sleep(0.05)
+            raise
+
+    conn = BlockingRealtimeConnection([ToolCall(tool_call_id='tc', tool_name='slow', args='{}')])
+
+    async def close_after(session: _RealtimeSession) -> None:
+        await tool_started.wait()
+        await session.close()
+
+    async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
+        watchdog = asyncio.create_task(close_after(session))
+        try:
+            async for _ in session:
+                pass
+        finally:
+            watchdog.cancel()
+
+    assert session.closed
+    assert session._pump_task is not None and session._pump_task.done()  # pyright: ignore[reportPrivateUsage]
+    assert tool_task is not None and tool_task.done()
+    assert tool_cancelled.is_set()
+    assert [
+        (part.tool_name, part.content, part.tool_call_id, part.outcome)
+        for message in session.all_messages()
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, ToolReturnPart)
+    ] == [
+        (
+            'slow',
+            'The tool call was interrupted before a result was produced.',
+            'tc',
+            'interrupted',
+        )
+    ]
+    assert session._loop is None  # pyright: ignore[reportPrivateUsage]
+    assert isinstance((await asyncio.gather(watchdog, return_exceptions=True))[0], asyncio.CancelledError)
+
+
+async def test_concurrent_close_calls_wait_for_the_teardown() -> None:
+    agent: Agent[None, str] = Agent()
+    tool_started = asyncio.Event()
+    tool_cancelling = asyncio.Event()
+    finish_tool_cleanup = asyncio.Event()
+    tool_task: asyncio.Task[Any] | None = None
+
+    @agent.tool_plain
+    async def slow() -> str:
+        nonlocal tool_task
+        tool_task = asyncio.current_task()
+        tool_started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            tool_cancelling.set()
+            while not finish_tool_cleanup.is_set():
+                try:
+                    await finish_tool_cleanup.wait()
+                except asyncio.CancelledError:
+                    pass
+            raise
+
+    conn = BlockingRealtimeConnection([ToolCall(tool_call_id='tc', tool_name='slow', args='{}')])
+    async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
+        consumer = asyncio.create_task(aiter_to_list(session))
+        await tool_started.wait()
+        first = asyncio.create_task(session.close())
+        second = asyncio.create_task(session.close())
+        await tool_cancelling.wait()
+        await asyncio.sleep(0)
+
+        assert not first.done()
+        assert not second.done()
+        assert session._pump_task is not None and session._pump_task.done()  # pyright: ignore[reportPrivateUsage]
+        assert tool_task is not None and not tool_task.done()
+
+        finish_tool_cleanup.set()
+        await asyncio.gather(first, second, consumer)
+
+        assert tool_task.done()
+
+
+async def test_close_error_reaches_the_survivor_when_the_closer_was_cancelled() -> None:
+    agent: Agent[None, str] = Agent()
+    tool_started = asyncio.Event()
+    tool_cancelling = asyncio.Event()
+
+    @agent.tool_plain
+    async def slow() -> str:
+        tool_started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            tool_cancelling.set()
+            await asyncio.sleep(0.05)
+            raise
+
+    class _ExplodesWithRunningTool(FakeRealtimeConnection):
+        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+            yield ToolCall(tool_call_id='tc', tool_name='slow', args='{}')
+            await tool_started.wait()
+            raise RuntimeError('connection dropped')
+
+    session: _RealtimeSession | None = None
+    closer: asyncio.Task[None] | None = None
+    with pytest.raises(RuntimeError, match='connection dropped'):
+        async with agent.realtime(FakeRealtimeModel(_ExplodesWithRunningTool([]))).session() as session:
+            assert [chunk async for chunk in session.stream_audio()] == []
+            closer = asyncio.create_task(session.close())
+            await tool_cancelling.wait()
+            closer.cancel()
+
+    assert session is not None
+    assert closer is not None
+    assert isinstance((await asyncio.gather(closer, return_exceptions=True))[0], asyncio.CancelledError)
+    await session.close()
+
+
 async def test_tool_error_ends_views_when_the_stream_was_never_iterated() -> None:
     """A failed tool ends taps so a taps-only caller reaches `close()` and receives the error."""
 
@@ -6555,7 +6688,7 @@ async def test_tool_can_close_realtime_session(loop_errors: list[dict[str, Any]]
     task = state['task']
     assert session.closed
     assert session.result is not None
-    # `close()` ran to completion on the tool's task before that task was cancelled.
+    # The teardown task ran to completion before the session context exited.
     assert session._loop is None  # pyright: ignore[reportPrivateUsage]
     assert task is not None and task.done() and task.cancelled()
     assert conn.iteration_task is not None and conn.iteration_task.done()
