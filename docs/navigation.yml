@@ -323,6 +323,10 @@ navigation:
             path: "advisor.md"
             source: "harness"
             slug: "harness/advisor"
+          - page: "Background Tools"
+            path: "background-tools.md"
+            source: "harness"
+            slug: "harness/background-tools"
       - section: "Context Management"
         slug: ""
         contents:
