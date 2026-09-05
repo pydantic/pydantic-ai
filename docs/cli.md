@@ -207,6 +207,9 @@ clai web -m openai:gpt-5.2 -i 'You are a helpful coding assistant'
 
 # Custom agent with extra instructions for each run
 clai web --agent my_module:my_agent -i 'Always respond in Spanish'
+
+# With MCP servers
+clai web -m openai:gpt-5.2 --mcp-config mcp_servers.json
 ```
 
 !!! note "Memory Tool"
@@ -220,6 +223,7 @@ clai web --agent my_module:my_agent -i 'Always respond in Spanish'
 | `--model`, `-m` | Models to list as options in the UI (repeatable) |
 | `--tool`, `-t` | [Native tool](native-tools.md)s to list as options in the UI (repeatable). See [available tools](web.md#native-tool-support). |
 | `--instructions`, `-i` | System instructions. When `--agent` is specified, these are additional to the agent's existing instructions. |
+| `--mcp-config` | Path to MCP servers configuration file (JSON, using the same `mcpServers` shape as Claude Desktop, Claude Code, and Cursor). |
 | `--host` | Host to bind server (default: 127.0.0.1) |
 | `--port` | Port to bind server (default: 7932) |
 | `--html-source` | URL or file path for the chat UI HTML. |

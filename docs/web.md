@@ -82,6 +82,49 @@ app = agent.to_web(models=['anthropic:claude-sonnet-4-6'])
 !!! note "Memory Tool"
     The `memory` native tool is not supported via `to_web()` or `clai web`. If your agent needs memory, configure the [`MemoryTool`][pydantic_ai.native_tools.MemoryTool] directly on the agent at construction time.
 
+
+## MCP Server Support
+
+You can attach [MCP toolsets](mcp/client.md) to the web UI using `toolsets`:
+
+```python {test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.mcp import load_mcp_toolsets
+
+agent = Agent('openai:gpt-5.2')
+toolsets = load_mcp_toolsets('mcp_servers.json')
+
+app = agent.to_web(toolsets=toolsets)
+```
+### Mounting in a Parent ASGI Application
+
+When serving `agent.to_web()` standalone (e.g. with `uvicorn`), the application automatically manages the MCP toolset connections during its Starlette lifespan, keeping subprocesses alive across requests.
+
+If you mount `agent.to_web()` as a sub-application inside another ASGI app (like FastAPI or a parent Starlette application), ASGI servers only dispatch lifespan events to the root application. You can manage the toolset connections across the parent application's lifetime using [`web_toolset_lifespan`][pydantic_ai.ui.web_toolset_lifespan]:
+
+```python {test="skip" lint="skip"}
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI
+
+from pydantic_ai import Agent
+from pydantic_ai.mcp import load_mcp_toolsets
+from pydantic_ai.ui import web_toolset_lifespan
+
+agent = Agent('openai:gpt-5.2')
+toolsets = load_mcp_toolsets('mcp_servers.json')
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    async with web_toolset_lifespan(toolsets):
+        yield
+
+
+parent_app = FastAPI(lifespan=lifespan)
+parent_app.mount('/chat', agent.to_web(toolsets=toolsets))
+```
+
 ## Extra Instructions
 
 You can pass extra instructions that will be included in each agent run:

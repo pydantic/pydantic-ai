@@ -161,6 +161,10 @@ def _cli_web(args_list: list[str], prog_name: str, default_model: str, qualified
         description='Start a web-based chat interface for a generic or specified agent',
     )
     parser.add_argument(
+        '--mcp-config',
+        help='Path to MCP servers configuration file (JSON, using the same mcpServers shape as Claude Desktop, Claude Code, and Cursor).',
+    )
+    parser.add_argument(
         '--agent',
         '-a',
         help='Agent to serve: a module path like "module:variable" or a YAML/JSON spec file like "agent.yml". '
@@ -211,6 +215,7 @@ def _cli_web(args_list: list[str], prog_name: str, default_model: str, qualified
 
     return run_web_command(
         agent_path=args.agent,
+        mcp_config=args.mcp_config,
         host=args.host,
         port=args.port,
         models=args.models or [],
