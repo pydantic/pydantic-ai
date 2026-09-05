@@ -2927,10 +2927,10 @@ class RealtimeSession:
                     await self._queue.put(out)
             return False
         if isinstance(event, SessionUsage):
+            # Only part and response boundaries come out of a usage report, never a speech-start
+            # or interruption signal, so there is nothing for `_auto_barge_in` to do here.
             for out in await self._handle_usage_event(event):
                 self._publish_taps(out)
-                if self._handle_barge_in:
-                    await self._auto_barge_in(out)
                 await self._queue.put(out)
             return False
         for out in self._translate_event(event):
