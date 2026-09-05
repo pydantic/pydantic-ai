@@ -58,7 +58,7 @@ from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.usage import RequestUsage, RunUsage
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsNow, IsStr
+from .conftest import IsDatetime, IsNow, IsStr, iter_message_parts
 
 pytestmark = pytest.mark.anyio
 
@@ -1134,9 +1134,7 @@ async def test_toolset_explicit_max_retries_overrides_agent():
             'ModelRequest',
         ]
     )
-    retry_parts = [
-        p for m in messages for p in getattr(m, 'parts', []) if isinstance(p, ToolReturnPart) and p.outcome == 'retried'
-    ]
+    retry_parts = [p for p in iter_message_parts(messages, ModelRequest, ToolReturnPart) if p.outcome == 'retried']
     assert [p.content for p in retry_parts] == snapshot(['Always fails', 'Always fails'])
 
 
@@ -1158,9 +1156,7 @@ async def test_tool_explicit_retries_overrides_toolset_and_agent():
 
     # Initial call + 3 retries = 4 attempts.
     assert len(attempts) == 4
-    retry_parts = [
-        p for m in messages for p in getattr(m, 'parts', []) if isinstance(p, ToolReturnPart) and p.outcome == 'retried'
-    ]
+    retry_parts = [p for p in iter_message_parts(messages, ModelRequest, ToolReturnPart) if p.outcome == 'retried']
     assert [p.content for p in retry_parts] == snapshot(['Always fails', 'Always fails', 'Always fails'])
 
 
@@ -1253,9 +1249,7 @@ async def test_toolset_tool_max_retries_none_uses_tool_retries_not_output_retrie
     assert [type(m).__name__ for m in messages] == snapshot(
         ['ModelRequest', 'ModelResponse', 'ModelRequest', 'ModelResponse', 'ModelRequest']
     )
-    retry_parts = [
-        p for m in messages for p in getattr(m, 'parts', []) if isinstance(p, ToolReturnPart) and p.outcome == 'retried'
-    ]
+    retry_parts = [p for p in iter_message_parts(messages, ModelRequest, ToolReturnPart) if p.outcome == 'retried']
     assert [p.content for p in retry_parts] == snapshot(['Always fails'])
 
 

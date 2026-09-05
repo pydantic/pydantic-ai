@@ -22,6 +22,7 @@ from pydantic_ai.messages import (
     AgentStreamEvent,
     CustomEvent,
     ModelMessage,
+    ModelRequest,
     ModelResponse,
     TextPart,
     ToolReturnPart,
@@ -32,6 +33,7 @@ from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls
 from pydantic_ai.run import AgentRunResultEvent
 
 from ._inline_snapshot import snapshot
+from .conftest import iter_message_parts
 
 pytestmark = pytest.mark.anyio
 
@@ -42,9 +44,7 @@ def _tool_has_answered(messages: list[ModelMessage]) -> bool:
     A retry is that call's own `ToolReturnPart` carrying `outcome='retried'`, so a plain
     `isinstance` check reads one as an answer and stops the model calling the tool again.
     """
-    return any(
-        isinstance(part, ToolReturnPart) and part.outcome != 'retried' for message in messages for part in message.parts
-    )
+    return any(part.outcome != 'retried' for part in iter_message_parts(messages, ModelRequest, ToolReturnPart))
 
 
 async def _tool_then_text(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
