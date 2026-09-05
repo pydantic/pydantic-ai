@@ -9,8 +9,8 @@ Two related areas:
     - `CodeExecutionTool` uses `executable_code` / `code_execution_result` parts and is
       preserved regardless of the tool-combination capability.
 - Response assembly (`_process_response_from_parts`) and streaming
-  (`GeminiStreamedResponse`) filling an empty Gemini 3+ `file_search` `tool_response`
-  from `grounding_metadata`, including the streaming cross-chunk deferral.
+  (`GeminiStreamedResponse`) filling Gemini 3+ Web Search and File Search tool returns
+  from `grounding_metadata`, including streaming cross-chunk deferral.
 """
 
 from __future__ import annotations as _annotations
@@ -207,11 +207,9 @@ def test_content_model_response_pre_gemini_3_preserves_code_execution(supports_t
     )
 
 
-# On Gemini 3+ File Search runs server-side: the API returns explicit `tool_call`/`tool_response` parts but
-# leaves the response empty, delivering the retrieved contexts (incl. each doc's `custom_metadata`, e.g.
-# `source_url`) in `grounding_metadata`. These pin that the empty `NativeToolReturnPart` is filled from it.
-# Unit, not VCR: the cassette matcher is body-insensitive, and the streaming cross-chunk assembly is asserted
-# at the event level, which VCR can't reach.
+# Gemini 3+ returns explicit Web Search and File Search parts but delivers their useful sources in
+# `grounding_metadata`. These are unit tests because the cassette matcher is body-insensitive and cannot
+# assert cross-chunk event assembly.
 
 _FILE_SEARCH_GROUNDING_METADATA: dict[str, Any] = {
     'grounding_chunks': [
@@ -225,6 +223,29 @@ _FILE_SEARCH_GROUNDING_METADATA: dict[str, Any] = {
         }
     ]
 }
+
+_WEB_SEARCH_GROUNDING_METADATA: dict[str, Any] = {
+    'grounding_chunks': [{'web': {'uri': 'https://example.com', 'title': 'Example', 'domain': 'example.com'}}]
+}
+
+_MULTIPLE_WEB_SEARCH_PARTS: list[dict[str, Any]] = [
+    {'tool_call': {'id': 'call_1', 'tool_type': 'GOOGLE_SEARCH_WEB', 'args': {}}},
+    {
+        'tool_response': {
+            'id': 'call_1',
+            'tool_type': 'GOOGLE_SEARCH_WEB',
+            'response': {'result': 'first'},
+        }
+    },
+    {'tool_call': {'id': 'call_2', 'tool_type': 'GOOGLE_SEARCH_WEB', 'args': {}}},
+    {
+        'tool_response': {
+            'id': 'call_2',
+            'tool_type': 'GOOGLE_SEARCH_WEB',
+            'response': {'result': 'second'},
+        }
+    },
+]
 
 
 def _process_response(parts: list[dict[str, Any]], *, grounding: dict[str, Any]) -> ModelResponse:
@@ -276,6 +297,60 @@ def test_file_search_populated_tool_response_not_overwritten():
     _, file_search_return = response.parts
     assert isinstance(file_search_return, NativeToolReturnPart)
     assert file_search_return.content == {'kept': 'value'}
+
+
+def test_web_search_grounding_replaces_tool_response_and_preserves_raw_response():
+    response = _process_response(
+        [
+            {'tool_call': {'id': 'web_search_call', 'tool_type': 'GOOGLE_SEARCH_WEB', 'args': {}}},
+            {
+                'tool_response': {
+                    'id': 'web_search_call',
+                    'tool_type': 'GOOGLE_SEARCH_WEB',
+                    'response': {'search_suggestions': '<style>chip</style>'},
+                }
+            },
+        ],
+        grounding=_WEB_SEARCH_GROUNDING_METADATA,
+    )
+
+    _, web_search_return = response.parts
+    assert isinstance(web_search_return, NativeToolReturnPart)
+    assert web_search_return.content == snapshot(
+        [{'uri': 'https://example.com', 'title': 'Example', 'domain': 'example.com'}]
+    )
+    assert web_search_return.provider_details == {'raw_tool_response': {'search_suggestions': '<style>chip</style>'}}
+    assert _content_model_response(response, frozenset({'google-gla'}), supports_tool_combination=True) == snapshot(
+        {
+            'role': 'model',
+            'parts': [
+                {
+                    'tool_call': {
+                        'id': 'web_search_call',
+                        'tool_type': ToolType.GOOGLE_SEARCH_WEB,
+                        'args': {},
+                    }
+                },
+                {
+                    'tool_response': {
+                        'id': 'web_search_call',
+                        'tool_type': ToolType.GOOGLE_SEARCH_WEB,
+                        'response': {'search_suggestions': '<style>chip</style>'},
+                    }
+                },
+            ],
+        }
+    )
+
+
+def test_web_search_multiple_returns_keep_provider_responses():
+    response = _process_response(
+        _MULTIPLE_WEB_SEARCH_PARTS,
+        grounding=_WEB_SEARCH_GROUNDING_METADATA,
+    )
+
+    returns = [part for part in response.parts if isinstance(part, NativeToolReturnPart)]
+    assert [part.content for part in returns] == [{'result': 'first'}, {'result': 'second'}]
 
 
 def _stream_chunk(parts: list[dict[str, Any]], grounding: dict[str, Any] | None = None) -> GenerateContentResponse:
@@ -374,3 +449,58 @@ async def test_file_search_grounding_absent_leaves_empty_content_streaming():
     # consumers see every part present in the final response.
     starts = _file_search_return_start_parts(events)
     assert len(starts) == 1 and starts[0].content is None
+
+
+@pytest.mark.anyio
+async def test_web_search_stream_accumulates_grounding_sources():
+    events, parts = await _drive_stream(
+        [
+            _stream_chunk([{'tool_call': {'id': 'web_search_call', 'tool_type': 'GOOGLE_SEARCH_WEB', 'args': {}}}]),
+            _stream_chunk(
+                [
+                    {
+                        'tool_response': {
+                            'id': 'web_search_call',
+                            'tool_type': 'GOOGLE_SEARCH_WEB',
+                            'response': {'search_suggestions': '<style>chip</style>'},
+                        }
+                    }
+                ]
+            ),
+            _stream_chunk(
+                [{'text': 'Grounded answer.'}],
+                grounding={'grounding_chunks': [{'web': {'uri': 'https://one.example', 'title': 'One'}}]},
+            ),
+            _stream_chunk(
+                [{'text': ''}],
+                grounding={'grounding_chunks': [{'web': {'uri': 'https://two.example', 'title': 'Two'}}]},
+            ),
+        ]
+    )
+
+    returns = [part for part in parts if isinstance(part, NativeToolReturnPart)]
+    assert len(returns) == 1
+    assert returns[0].content == snapshot(
+        [
+            {'domain': None, 'uri': 'https://one.example', 'title': 'One'},
+            {'domain': None, 'uri': 'https://two.example', 'title': 'Two'},
+        ]
+    )
+    assert [
+        event.part
+        for event in events
+        if isinstance(event, PartStartEvent) and isinstance(event.part, NativeToolReturnPart)
+    ] == returns
+
+
+@pytest.mark.anyio
+async def test_web_search_stream_multiple_returns_keep_provider_responses():
+    _, parts = await _drive_stream(
+        [
+            _stream_chunk(_MULTIPLE_WEB_SEARCH_PARTS),
+            _stream_chunk([{'text': 'Grounded answer.'}], grounding=_WEB_SEARCH_GROUNDING_METADATA),
+        ]
+    )
+
+    returns = [part for part in parts if isinstance(part, NativeToolReturnPart)]
+    assert [part.content for part in returns] == [{'result': 'first'}, {'result': 'second'}]
