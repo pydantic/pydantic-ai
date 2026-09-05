@@ -2931,8 +2931,10 @@ async def test_session_exit_waits_for_the_teardown_under_a_cancelled_anyio_scope
         assert not exited.is_set()
         finish_tool_cleanup.set()
 
-    with anyio.CancelScope() as scope:
-        watcher = asyncio.create_task(cancel_and_watch(scope))
+    session: _RealtimeSession | None = None
+    scope = anyio.CancelScope()
+    watcher = asyncio.create_task(cancel_and_watch(scope))
+    with scope:
         async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
             async for _ in session:  # pragma: no branch - the scope cancel ends the loop
                 pass
@@ -2940,6 +2942,7 @@ async def test_session_exit_waits_for_the_teardown_under_a_cancelled_anyio_scope
 
     await watcher
     assert scope.cancel_called
+    assert session is not None
     assert session.closed
     assert session._loop is None  # pyright: ignore[reportPrivateUsage]
 
