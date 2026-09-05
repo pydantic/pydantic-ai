@@ -1621,6 +1621,25 @@ def test_run_chat_banner_names_the_model_the_session_will_use(
     assert 'test:test' not in output
 
 
+def test_run_chat_shows_a_banner_for_an_agent_that_only_has_an_override(
+    mocker: MockerFixture, tmp_path: Path, terminal_clai: None
+):
+    """The override is the session's model, so deciding on `agent.model` alone would skip the banner."""
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('hi')])  # pragma: no cover
+
+    console, io = _chat_console()
+    agent = Agent(name='modelless_agent')
+
+    with agent.override(model=FunctionModel(respond)):
+        with create_pipe_input() as inp:
+            _exit_immediately(mocker, inp)
+            anyio.run(run_chat, True, agent, console, 'monokai', 'pydantic-ai', tmp_path)
+
+    assert 'agent: modelless_agent • model: function:function:respond:' in _plain(io.getvalue())
+
+
 def test_clai_intro_counts_tools_from_an_override(
     capfd: CaptureFixture[str],
     mocker: MockerFixture,

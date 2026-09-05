@@ -1529,7 +1529,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         model_contribution = None if model_is_explicit else bootstrap_capability.get_model()
         self._check_dynamic_model_resume(model_contribution, message_history)
 
-        has_default_model = self._override_model.get() is not None or model is not None or self.model is not None
+        has_default_model = self._has_model(model)
 
         # The string the run's model was selected from, if any — carried through to
         # `ModelRequestContext.model_id` so durable-execution capabilities can round-trip
@@ -2261,7 +2261,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         usage = usage or _usage.RunUsage()
         messages = list(message_history or [])
         capability = self._effective_root_capability()
-        has_default_model = self._override_model.get() is not None or model is not None or self.model is not None
+        has_default_model = self._has_model(model)
         default_model = (
             await self._resolve_model_selection(self._pick_raw_model(model), capability=capability, deps=deps)
             if has_default_model
@@ -2843,6 +2843,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             return func_
 
         return toolset_decorator if func is None else toolset_decorator(func)
+
+    def _has_model(self, model: models.Model | models.KnownModelName | str | None) -> bool:
+        """Whether a run given `model` would have one to use, counting an `override(model=...)`.
+
+        What `_pick_raw_model` answers for, asked ahead of it by callers that would rather not have
+        it raise. A capability can still contribute a model when this is False.
+        """
+        return model is not None or self._override_model.get() is not None or self.model is not None
 
     def _pick_raw_model(
         self, model: models.Model | models.KnownModelName | str | None

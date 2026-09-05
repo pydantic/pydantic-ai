@@ -451,7 +451,7 @@ async def run_chat(
     # that anyway; `_print_intro` resolves which model it will be, overrides included.
     if (
         isinstance(agent, Agent)
-        and (model is not None or agent.model is not None)
+        and agent._has_model(model)  # pyright: ignore[reportPrivateUsage]
         and _display.banner_available(is_terminal=console.is_terminal)
     ):
         _print_intro(console, agent, model)
