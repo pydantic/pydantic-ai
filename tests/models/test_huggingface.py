@@ -22,6 +22,7 @@ from pydantic_ai import (
     ModelRequest,
     ModelResponse,
     ModelRetry,
+    RetryFeedbackPart,
     RetryPromptPart,
     SystemPromptPart,
     TextContent,
@@ -762,7 +763,12 @@ async def test_process_response_no_created_timestamp(allow_model_requests: None)
     assert response_message.timestamp == IsNow(tz=timezone.utc)
 
 
-async def test_retry_prompt_without_tool_name(allow_model_requests: None):
+async def test_retry_feedback_without_inline_system_prompts(allow_model_requests: None):
+    """A tool-less retry reaches the model in the harness's voice, not as something a person wrote.
+
+    `'test-model'` is a bare name, so it gets no profile and no inline system prompt support — the
+    rendered `SystemPromptPart` degrades to `<system>`-tagged user text rather than a system message.
+    """
     responses = [
         completion_message(
             ChatCompletionOutputMessage.parse_obj_as_instance({'content': 'invalid-response', 'role': 'assistant'})  # pyright: ignore[reportUnknownMemberType]
@@ -812,9 +818,9 @@ async def test_retry_prompt_without_tool_name(allow_model_requests: None):
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    RetryFeedbackPart(
                         content='Response is invalid',
-                        tool_call_id=IsStr(),
+                        cause='model_retry',
                         timestamp=IsNow(tz=timezone.utc),
                     )
                 ],
@@ -845,10 +851,15 @@ async def test_retry_prompt_without_tool_name(allow_model_requests: None):
         'role': 'assistant',
         'content': 'invalid-response',
     }
-    assert {k: v for k, v in asdict(messages[-1]).items() if v is not None} == {
-        'role': 'user',
-        'content': 'Validation feedback:\nResponse is invalid\n\nFix the errors and try again.',
-    }
+    assert {k: v for k, v in asdict(messages[-1]).items() if v is not None} == snapshot(
+        {
+            'role': 'user',
+            'content': """\
+<system>The response was not accepted:
+Response is invalid</system>\
+""",
+        }
+    )
 
 
 async def test_thinking_part_in_history(allow_model_requests: None):

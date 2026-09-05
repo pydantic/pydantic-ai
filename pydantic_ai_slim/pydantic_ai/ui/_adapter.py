@@ -30,6 +30,7 @@ from pydantic_ai.messages import (
     CompactionPart,
     ForceDownloadMode,
     ModelMessage,
+    RetryFeedbackPart,
     ToolAvailabilityDeltaPart,
     _drop_compaction_parts,  # pyright: ignore[reportPrivateUsage]
     sanitize_messages,
@@ -75,6 +76,7 @@ DispatchOutputDataT = TypeVar('DispatchOutputDataT')
 _TOOL_NAME_PATTERN = re.compile(r'[a-zA-Z0-9_-]{1,64}')
 """The tool-name shape accepted by the strictest supported model providers."""
 _TOOL_AVAILABILITY_DELTA_PART_ADAPTER = TypeAdapter(ToolAvailabilityDeltaPart)
+_RETRY_FEEDBACK_PART_ADAPTER = TypeAdapter(RetryFeedbackPart)
 
 
 # TODO(v3): remove this helper along with the Vercel AI adapter's deprecated `preserve_file_data` alias (AG-UI's `preserve_file_data` is a separate, non-deprecated setting)
@@ -160,6 +162,53 @@ def tool_availability_delta_from_payload(payload: Mapping[str, Any]) -> ToolAvai
     if part.tool_call_id is not None and not part.tool_call_id.strip():
         part.tool_call_id = None
     return part
+
+
+def retry_feedback_payload(part: RetryFeedbackPart) -> dict[str, Any]:
+    """Serialize a [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart] for a metadata channel.
+
+    Both protocols render harness retry feedback into a system-role message, whose text is lossy — the
+    per-`cause` wording, and for a validation error the JSON block wrapped around the details — and
+    indistinguishable from a system message the client wrote. So the part itself rides alongside it
+    under a `retry_feedback` key in the metadata channel each protocol already uses for Pydantic AI
+    continuity claims (Vercel AI's `providerMetadata`, AG-UI's `encrypted_value`), and that is what
+    `load_messages` reconstructs from.
+
+    Each error's `ctx` is dropped here and its `input` emptied, matching the `include_input='none'` rendering
+    [`RetryFeedbackPart.model_response`][pydantic_ai.messages.RetryFeedbackPart.model_response] is
+    fixed at, so this channel discloses no more than the text beside it. `ctx` can hold whatever a
+    `field_validator` was given as context and `input` is the value the model sent, and the client
+    reads and echoes this channel — neither belongs there when the rendered text drops both. Nothing
+    reads them back: the part is reconstructed only to be rendered. `input` is emptied rather than
+    excluded because [`pydantic_core.ErrorDetails`][] requires the key, and a payload missing it would
+    fail to revalidate and silently load as a plain
+    [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] instead.
+    """
+    if isinstance(part.content, str):
+        return _RETRY_FEEDBACK_PART_ADAPTER.dump_python(part, mode='json')
+    payload = _RETRY_FEEDBACK_PART_ADAPTER.dump_python(
+        part, mode='json', exclude={'content': {'__all__': {'ctx', 'input'}}}
+    )
+    for error in payload['content']:
+        error['input'] = None
+    return payload
+
+
+def retry_feedback_from_payload(payload: object) -> RetryFeedbackPart | None:
+    """Rebuild the `RetryFeedbackPart` a system-role message claims to have been dumped from, or `None`.
+
+    `None` for anything that doesn't validate — including the absent payload of a system message the
+    client wrote — so only a message carrying the adapter's own marker can load as harness feedback.
+
+    Like every claim in that channel the marker is client-echoed, so it proves origin no more than a
+    `tool_kind` claim does: it separates our own dumped feedback from ordinary client system text, and
+    [`sanitize_messages`][pydantic_ai.messages.sanitize_messages] is what keeps a forged one from
+    reaching the model when the server owns the system prompt.
+    """
+    try:
+        return _RETRY_FEEDBACK_PART_ADAPTER.validate_python(payload)
+    except ValidationError:
+        return None
 
 
 @runtime_checkable

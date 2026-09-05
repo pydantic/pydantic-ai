@@ -838,7 +838,7 @@ async def test_cohere_model_builtin_tools(allow_model_requests: None, co_api_key
 async def test_cohere_empty_response_skipped_in_history(allow_model_requests: None):
     """An empty `ModelResponse(parts=[])` must not be sent back as an assistant message with
     neither content nor tool calls, which Cohere rejects with a 400. The agent graph retries
-    empty responses by emitting a `RetryPromptPart`, relying on the model adapter to omit the
+    empty responses by emitting a `RetryFeedbackPart`, relying on the model adapter to omit the
     empty response from the API payload.
     """
     completions = [
@@ -859,7 +859,7 @@ async def test_cohere_empty_response_skipped_in_history(allow_model_requests: No
     # self-correct.
     second_call_messages = cast(MockAsyncClientV2, mock_client).chat_kwargs[1]['messages']
     assert not any(message.role == 'assistant' for message in second_call_messages)
-    assert [message.role for message in second_call_messages] == snapshot(['user', 'user'])
+    assert [message.role for message in second_call_messages] == snapshot(['user', 'system'])
 
 
 @pytest.mark.parametrize(

@@ -43,6 +43,7 @@ from pydantic_ai import (
     ModelSelectionContext,
     PrefixedToolset,
     RequestUsage,
+    RetryFeedbackPart,
     RetryPromptPart,
     RunContext,
     SystemPromptPart,
@@ -1243,10 +1244,10 @@ def test_plain_response_then_tuple():
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    RetryFeedbackPart(
                         content='Please include your response in a tool call.',
+                        cause='no_output',
                         timestamp=IsNow(tz=timezone.utc),
-                        tool_call_id=IsStr(),
                     )
                 ],
                 timestamp=IsNow(tz=timezone.utc),
@@ -1257,7 +1258,7 @@ def test_plain_response_then_tuple():
                 parts=[
                     ToolCallPart(tool_name='final_result', args='{"response": ["foo", "bar"]}', tool_call_id=IsStr())
                 ],
-                usage=RequestUsage(input_tokens=68, output_tokens=8),
+                usage=RequestUsage(input_tokens=66, output_tokens=8),
                 model_name='function:return_tuple:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
@@ -1960,9 +1961,9 @@ def test_output_type_text_output_function_with_retry():
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    RetryFeedbackPart(
                         content='City not found, I only know Mexico City',
-                        tool_call_id=IsStr(),
+                        cause='model_retry',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -1972,7 +1973,7 @@ def test_output_type_text_output_function_with_retry():
             ),
             ModelResponse(
                 parts=[TextPart(content='Mexico City')],
-                usage=RequestUsage(input_tokens=70, output_tokens=5),
+                usage=RequestUsage(input_tokens=66, output_tokens=5),
                 model_name='function:call_tool:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -2510,12 +2511,12 @@ def test_output_type_union_text_fallback_invalid_data_retries():
     assert result.output == snapshot(Apple(color='green'))
     assert calls == 2
 
-    retry_parts = list(iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart))
+    retry_parts = list(iter_message_parts(result.all_messages(), ModelRequest, RetryFeedbackPart))
     assert retry_parts == snapshot(
         [
-            RetryPromptPart(
+            RetryFeedbackPart(
                 content=[{'type': 'missing', 'loc': ('color',), 'msg': 'Field required', 'input': {'length': 12.0}}],
-                tool_call_id=IsStr(),
+                cause='validation_error',
                 timestamp=IsDatetime(),
             )
         ]
@@ -2548,10 +2549,10 @@ def test_output_type_union_text_fallback_invalid_kind_retries():
     assert result.output == snapshot(Banana(length=6.0))
     assert calls == 2
 
-    retry_parts = list(iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart))
+    retry_parts = list(iter_message_parts(result.all_messages(), ModelRequest, RetryFeedbackPart))
     assert retry_parts == snapshot(
         [
-            RetryPromptPart(
+            RetryFeedbackPart(
                 content=[
                     {
                         'type': 'literal_error',
@@ -2560,7 +2561,7 @@ def test_output_type_union_text_fallback_invalid_kind_retries():
                         'input': 'Cherry',
                     }
                 ],
-                tool_call_id=IsStr(),
+                cause='validation_error',
                 timestamp=IsDatetime(),
             )
         ]
@@ -2595,10 +2596,10 @@ def test_prompted_output_union_invalid_kind_retries():
     assert result.output == snapshot(Banana(length=6.0))
     assert calls == 2
 
-    retry_parts = list(iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart))
+    retry_parts = list(iter_message_parts(result.all_messages(), ModelRequest, RetryFeedbackPart))
     assert retry_parts == snapshot(
         [
-            RetryPromptPart(
+            RetryFeedbackPart(
                 content=[
                     {
                         'type': 'literal_error',
@@ -2607,7 +2608,7 @@ def test_prompted_output_union_invalid_kind_retries():
                         'input': 'Cherry',
                     }
                 ],
-                tool_call_id=IsStr(),
+                cause='validation_error',
                 timestamp=IsDatetime(),
             )
         ]
@@ -3047,7 +3048,7 @@ def test_native_output():
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    RetryFeedbackPart(
                         content=[
                             ErrorDetails(
                                 type='missing',
@@ -3056,7 +3057,7 @@ def test_native_output():
                                 input={'city': 'Mexico City'},
                             ),
                         ],
-                        tool_call_id=IsStr(),
+                        cause='validation_error',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -3066,7 +3067,7 @@ def test_native_output():
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city": "Mexico City", "country": "Mexico"}')],
-                usage=RequestUsage(input_tokens=81, output_tokens=12),
+                usage=RequestUsage(input_tokens=78, output_tokens=12),
                 model_name='function:return_city_location:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -3134,9 +3135,9 @@ def test_prompted_output_function_with_retry():
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    RetryFeedbackPart(
                         content='City not found, I only know Mexico City',
-                        tool_call_id=IsStr(),
+                        cause='model_retry',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -3146,7 +3147,7 @@ def test_prompted_output_function_with_retry():
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city": "Mexico City"}')],
-                usage=RequestUsage(input_tokens=70, output_tokens=11),
+                usage=RequestUsage(input_tokens=66, output_tokens=11),
                 model_name='function:call_tool:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -3790,9 +3791,9 @@ def test_empty_response():
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    RetryFeedbackPart(
                         content='Please return text.',
-                        tool_call_id=IsStr(),
+                        cause='no_output',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -3802,7 +3803,7 @@ def test_empty_response():
             ),
             ModelResponse(
                 parts=[TextPart(content='ok here is text')],
-                usage=RequestUsage(input_tokens=63, output_tokens=4),
+                usage=RequestUsage(input_tokens=61, output_tokens=4),
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -3845,9 +3846,9 @@ def test_empty_response_exceeds_max_retries():
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    RetryFeedbackPart(
                         content='Please return text or include your response in a tool call.',
-                        tool_call_id=IsStr(),
+                        cause='no_output',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -3857,7 +3858,7 @@ def test_empty_response_exceeds_max_retries():
             ),
             ModelResponse(
                 parts=[],
-                usage=RequestUsage(input_tokens=71),
+                usage=RequestUsage(input_tokens=69),
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -8955,9 +8956,9 @@ def test_empty_final_response():
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    RetryFeedbackPart(
                         content='Please return text or call a tool.',
-                        tool_call_id=IsStr(),
+                        cause='no_output',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -8967,7 +8968,7 @@ def test_empty_final_response():
             ),
             ModelResponse(
                 parts=[TextPart(content='baz')],
-                usage=RequestUsage(input_tokens=69, output_tokens=11),
+                usage=RequestUsage(input_tokens=67, output_tokens=11),
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -10631,9 +10632,9 @@ async def test_thinking_only_response_retry():
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    RetryFeedbackPart(
                         content='Please return text.',
-                        tool_call_id=IsStr(),
+                        cause='no_output',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -10644,7 +10645,7 @@ async def test_thinking_only_response_retry():
             ),
             ModelResponse(
                 parts=[TextPart(content='Final answer')],
-                usage=RequestUsage(input_tokens=63, output_tokens=8),
+                usage=RequestUsage(input_tokens=61, output_tokens=8),
                 model_name='function:model_function:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -10694,9 +10695,9 @@ async def test_retry_message_no_tools():
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    RetryFeedbackPart(
                         content='Please return text.',
-                        tool_call_id=IsStr(),
+                        cause='no_output',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -10706,7 +10707,7 @@ async def test_retry_message_no_tools():
             ),
             ModelResponse(
                 parts=[TextPart(content='result')],
-                usage=RequestUsage(input_tokens=63, output_tokens=3),
+                usage=RequestUsage(input_tokens=61, output_tokens=3),
                 model_name='function:model_function:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -10756,9 +10757,9 @@ async def test_thinking_only_response_retry_with_tool_output():
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    RetryFeedbackPart(
                         content='Please include your response in a tool call.',
-                        tool_call_id=IsStr(),
+                        cause='no_output',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -10774,7 +10775,7 @@ async def test_thinking_only_response_retry_with_tool_output():
                         tool_call_id=IsStr(),
                     )
                 ],
-                usage=RequestUsage(input_tokens=68, output_tokens=9),
+                usage=RequestUsage(input_tokens=66, output_tokens=9),
                 model_name='function:model_function:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -10881,9 +10882,9 @@ async def test_thinking_only_response_after_tool_call_retries():
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    RetryFeedbackPart(
                         content='Please return text or call a tool.',
-                        tool_call_id=IsStr(),
+                        cause='no_output',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -10893,7 +10894,7 @@ async def test_thinking_only_response_after_tool_call_retries():
             ),
             ModelResponse(
                 parts=[TextPart(content='Your progress is saved.')],
-                usage=RequestUsage(input_tokens=68, output_tokens=20),
+                usage=RequestUsage(input_tokens=66, output_tokens=20),
                 model_name='function:model_function:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -12645,7 +12646,7 @@ async def test_agent_blank_text_response_retries_without_none_output():
     """Test that a response with only empty text still triggers an output retry for plain `str`.
 
     Empty text is treated as no text output; when `None` is not an allowed output type, the
-    agent asks the model to try again rather than accepting an empty answer. The retry prompt
+    agent asks the model to try again rather than accepting an empty answer. The retry feedback
     content is pinned so a retry issued for the wrong reason fails the test.
     """
 
@@ -12663,9 +12664,9 @@ async def test_agent_blank_text_response_retries_without_none_output():
     assert isinstance(retry_request, ModelRequest)
     assert retry_request.parts == snapshot(
         [
-            RetryPromptPart(
+            RetryFeedbackPart(
                 content='Please return text.',
-                tool_call_id=IsStr(),
+                cause='no_output',
                 timestamp=IsNow(tz=timezone.utc),
             )
         ]
@@ -12999,9 +13000,9 @@ async def test_agent_allows_none_output_validator_retry():
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    RetryFeedbackPart(
                         content='None not acceptable, please respond',
-                        tool_call_id=IsStr(),
+                        cause='model_retry',
                         timestamp=IsNow(tz=timezone.utc),
                     )
                 ],
@@ -13011,7 +13012,7 @@ async def test_agent_allows_none_output_validator_retry():
             ),
             ModelResponse(
                 parts=[TextPart(content='hello')],
-                usage=RequestUsage(input_tokens=65, output_tokens=1),
+                usage=RequestUsage(input_tokens=61, output_tokens=1),
                 model_name='function:model_then_text:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),

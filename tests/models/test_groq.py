@@ -31,6 +31,7 @@ from pydantic_ai import (
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
+    RetryFeedbackPart,
     RetryPromptPart,
     SystemPromptPart,
     TextContent,
@@ -5578,7 +5579,7 @@ async def test_tool_use_failed_error_with_text(allow_model_requests: None, groq_
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    RetryFeedbackPart(
                         content=[
                             {
                                 'type': 'json_invalid',
@@ -5587,7 +5588,7 @@ async def test_tool_use_failed_error_with_text(allow_model_requests: None, groq_
                                 'input': 'maybe',
                             }
                         ],
-                        tool_call_id=IsStr(),
+                        cause='validation_error',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -5699,7 +5700,7 @@ We need to respond with just the string maybe, not JSON, and no tool call. So ju
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    RetryFeedbackPart(
                         content=[
                             {
                                 'type': 'json_invalid',
@@ -5708,7 +5709,7 @@ We need to respond with just the string maybe, not JSON, and no tool call. So ju
                                 'input': 'maybe',
                             }
                         ],
-                        tool_call_id=IsStr(),
+                        cause='validation_error',
                         timestamp=IsDatetime(),
                     )
                 ],

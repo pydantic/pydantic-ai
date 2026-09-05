@@ -36,6 +36,7 @@ from pydantic_ai import (
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
+    RetryFeedbackPart,
     RetryPromptPart,
     RunContext,
     SystemPromptPart,
@@ -14376,9 +14377,9 @@ How can I help you today?\
         [
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    RetryFeedbackPart(
                         content='Please return text.',
-                        tool_call_id=IsStr(),
+                        cause='no_output',
                         timestamp=IsDatetime(),
                     )
                 ],

@@ -47,6 +47,7 @@ from pydantic_ai import (
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
+    RetryFeedbackPart,
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
@@ -3686,9 +3687,9 @@ async def test_google_image_generation_with_native_output(allow_model_requests: 
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    RetryFeedbackPart(
                         content='Please return text.',
-                        tool_call_id=IsStr(),
+                        cause='no_output',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -5805,9 +5806,9 @@ async def test_google_model_retrying_after_empty_response(allow_model_requests: 
         [
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    RetryFeedbackPart(
                         content='Please return text.',
-                        tool_call_id=IsStr(),
+                        cause='no_output',
                         timestamp=IsDatetime(),
                     )
                 ],

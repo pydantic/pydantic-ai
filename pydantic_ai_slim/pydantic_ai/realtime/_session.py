@@ -25,6 +25,7 @@ from .._tool_execution import (
     _reject_unloaded_capability_reveals,  # pyright: ignore[reportPrivateUsage]
     build_tool_return_part,
     cancelled_sub_agent_return,
+    tool_bound_retry_part,
 )
 from .._utils import aclose_all, cancel_and_drain, dataclasses_no_defaults_repr, fill_run_metadata
 from ..exceptions import ApprovalRequired, CallDeferred, RunCancelled, ToolFailedError, ToolRetryError, UserError
@@ -2541,7 +2542,7 @@ class RealtimeSession:
                 on_inline_deferred=on_inline_deferred,
             )
         except ToolRetryError as e:
-            result_part = e.tool_retry
+            result_part = tool_bound_retry_part(e)
             user_content = None
         except ToolFailedError as e:
             # A tool that raised `ToolFailed` yields a `failed` result rather than a retry. Send it

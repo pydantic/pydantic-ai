@@ -656,10 +656,10 @@ def get_instructions_source(messages: Sequence[ModelMessage]) -> ModelRequest | 
         most_recent_request = last_two_requests[0]
         second_most_recent_request = last_two_requests[1]
 
-        # If we've gotten this far and the most recent request consists of only tool-return parts or retry-prompt
-        # parts, we use the instructions from the second-to-most-recent request. This is necessary because when
-        # handling result tools, we generate a "mock" ModelRequest with a tool-return part for it, and that
-        # ModelRequest will not have the relevant instructions from the agent.
+        # If we've gotten this far and the most recent request consists of only tool-return, retry-prompt or
+        # retry-feedback parts, we use the instructions from the second-to-most-recent request. This is necessary
+        # because when handling result tools, we generate a "mock" ModelRequest with a tool-return part for it, and
+        # that ModelRequest will not have the relevant instructions from the agent.
 
         # While it's possible that you could have a message history where the most recent request has only tool
         # returns, I believe there is no way to achieve that would _change_ the instructions without manually
@@ -670,7 +670,10 @@ def get_instructions_source(messages: Sequence[ModelMessage]) -> ModelRequest | 
 
         # If you have a use case where this causes pain, please open a GitHub issue and we can discuss alternatives.
 
-        if all(p.part_kind == 'tool-return' or p.part_kind == 'retry-prompt' for p in most_recent_request.parts):
+        if all(
+            p.part_kind == 'tool-return' or p.part_kind == 'retry-prompt' or p.part_kind == 'retry-feedback'
+            for p in most_recent_request.parts
+        ):
             return second_most_recent_request
 
     return None

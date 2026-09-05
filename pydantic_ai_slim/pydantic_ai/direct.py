@@ -52,6 +52,35 @@ def _ensure_instruction_parts(
     return model_request_parameters
 
 
+def _prepare_messages_carrying_retry_feedback(
+    model: models.Model,
+    msgs: Sequence[messages.ModelMessage],
+    model_request_parameters: models.ModelRequestParameters,
+) -> list[messages.ModelMessage]:
+    """Run the model's message preparation, for the one history shape that cannot go out without it.
+
+    A [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart] is kept model-neutrally and only
+    becomes something a model can send at
+    [`prepare_messages`][pydantic_ai.models.Model.prepare_messages] time, so an unrendered one
+    reaching an adapter raises a `UserError` naming that step.
+
+    Preparation does more than render feedback, though — it wraps mid-conversation system prompts,
+    synthesizes tool-search exchanges, announces tool-availability deltas, converts realtime speech
+    parts — and these helpers are documented as thin wrappers around
+    [`Model.request`][pydantic_ai.models.Model.request], sending the history they are handed. A
+    history holding a feedback part can only have been built by a version that has one, so scoping
+    preparation to those histories leaves every other caller's request exactly as it was.
+    """
+    if any(
+        isinstance(part, messages.RetryFeedbackPart)
+        for message in msgs
+        if isinstance(message, messages.ModelRequest)
+        for part in message.parts
+    ):
+        return model.prepare_messages(list(msgs), model_request_parameters)
+    return list(msgs)
+
+
 async def model_request(
     model: models.Model | models.KnownModelName | str,
     messages: Sequence[messages.ModelMessage],
@@ -99,7 +128,7 @@ async def model_request(
     model_instance = _prepare_model(model, instrument)
     mrp = _ensure_instruction_parts(messages, model_request_parameters or models.ModelRequestParameters())
     return await model_instance.request(
-        list(messages),
+        _prepare_messages_carrying_retry_feedback(model_instance, messages, mrp),
         model_settings,
         mrp,
     )
@@ -218,7 +247,7 @@ def model_request_stream(
     model_instance = _prepare_model(model, instrument)
     mrp = _ensure_instruction_parts(messages, model_request_parameters or models.ModelRequestParameters())
     return model_instance.request_stream(
-        list(messages),
+        _prepare_messages_carrying_retry_feedback(model_instance, messages, mrp),
         model_settings,
         mrp,
     )

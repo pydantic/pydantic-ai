@@ -6,19 +6,22 @@ import importlib.metadata
 import json
 import re
 import warnings
+from collections.abc import Mapping
 from typing import Any, Final, Literal
 
 from typing_extensions import Required, TypedDict
 
 from ..._utils import is_str_dict
-from ...messages import ThinkingPart, ToolPartKind, parse_tool_kind, tool_return_content_ta
+from ...messages import RetryFeedbackPart, ThinkingPart, ToolPartKind, parse_tool_kind, tool_return_content_ta
+from .._adapter import retry_feedback_from_payload, retry_feedback_payload
 
 ENCRYPTED_VALUE_VERSION = (0, 1, 11)
-"""AG-UI version that added the `encrypted_value` field to `ToolCall` and `ToolMessage`.
+"""AG-UI version that added the `encrypted_value` field to `ToolCall` and to `BaseMessage` (so to
+`ToolMessage` and `SystemMessage` alike).
 
-Gates the field-based `tool_kind` round-trip in `dump_messages`/`load_messages`. The streaming
-carrier (`ReasoningEncryptedValueEvent`) is a separate `REASONING_*` event gated on
-`REASONING_VERSION` — see `tool_kind_encrypted_value`.
+Gates the field-based `tool_kind`, tool-result `outcome` and retry-feedback round-trips in
+`dump_messages`/`load_messages`. The streaming carrier (`ReasoningEncryptedValueEvent`) is a separate
+`REASONING_*` event gated on `REASONING_VERSION` — see `tool_kind_encrypted_value`.
 """
 
 REASONING_VERSION = (0, 1, 11)
@@ -154,6 +157,11 @@ _ENCRYPTED_VALUE_NAMESPACE: Final = 'pydantic_ai'
 provider blob in the same slot is never mistaken for our data."""
 
 
+def _namespaced_encrypted_value(payload: Mapping[str, object]) -> str:
+    """Pack a payload into an AG-UI `encrypted_value` blob under the `pydantic_ai` namespace."""
+    return json.dumps({_ENCRYPTED_VALUE_NAMESPACE: payload})
+
+
 def tool_kind_encrypted_value(
     tool_kind: ToolPartKind | None, outcome: Literal['success', 'failed', 'denied', 'interrupted'] | None = None
 ) -> str | None:
@@ -181,7 +189,7 @@ def tool_kind_encrypted_value(
         payload['outcome'] = outcome
     if not payload:
         return None
-    return json.dumps({_ENCRYPTED_VALUE_NAMESPACE: payload})
+    return _namespaced_encrypted_value(payload)
 
 
 class _EncryptedValueKwargs(TypedDict, total=False):
@@ -207,18 +215,36 @@ def tool_kind_encrypted_value_kwargs(
     return {'encrypted_value': value} if value is not None else {}
 
 
-def warn_tool_kind_not_persisted(ag_ui_version: str) -> None:
-    """Warn that typed tool parts' `tool_kind` will be lost when dumping below `ENCRYPTED_VALUE_VERSION`.
+def retry_feedback_encrypted_value_kwargs(part: RetryFeedbackPart, *, supported: bool) -> _EncryptedValueKwargs:
+    """`SystemMessage` kwargs carrying the `RetryFeedbackPart` its text was rendered from.
 
-    The `encrypted_value` carrier only exists from 0.1.11, so on older versions features like lazy
-    capabilities and tool search silently forget their state across a round-trip; upgrading the client
-    fixes it.
+    The same namespaced `encrypted_value` carrier as `tool_kind_encrypted_value`, used here because a
+    `SystemMessage` has no other metadata slot. It is what tells our own rendered feedback apart from
+    a system message the client wrote, and what restores the part's `cause` and raw content — neither
+    of which the rendered text alone can give back.
+
+    Empty when the target version predates the field (`supported=False`), in which case the message
+    reloads as a plain `SystemPromptPart` and `dump_messages` warns via
+    `warn_encrypted_value_not_persisted`.
+    """
+    if not supported:
+        return {}
+    return {'encrypted_value': _namespaced_encrypted_value({'retry_feedback': retry_feedback_payload(part)})}
+
+
+def warn_encrypted_value_not_persisted(ag_ui_version: str) -> None:
+    """Warn that the claims riding on `encrypted_value` are lost when dumping below `ENCRYPTED_VALUE_VERSION`.
+
+    The carrier only exists from 0.1.11, so on older versions features like lazy capabilities and tool
+    search silently forget their state across a round-trip, and harness retry feedback reloads as an
+    operator-authored system prompt; upgrading the client fixes both.
     """
     warnings.warn(
         f'ag-ui-protocol {ag_ui_version} predates the `encrypted_value` field (added in 0.1.11), so '
-        'the `tool_kind` of typed tool parts (e.g. lazy capabilities, tool search) cannot be carried '
-        'across a dump/load round-trip and those parts will reload as their base classes. Upgrade the '
-        'client to ag-ui-protocol >= 0.1.11 to preserve it.',
+        'the claims Pydantic AI carries there cannot survive a dump/load round-trip: the `tool_kind` '
+        'of typed tool parts (e.g. lazy capabilities, tool search) is dropped and those parts reload '
+        'as their base classes, and a `RetryFeedbackPart` reloads as a plain `SystemPromptPart`. '
+        'Upgrade the client to ag-ui-protocol >= 0.1.11 to preserve them.',
         UserWarning,
         stacklevel=3,
     )
@@ -269,6 +295,19 @@ def parse_encrypted_outcome(encrypted_value: str | None) -> Literal['failed', 'd
     if outcome == 'failed' or outcome == 'denied' or outcome == 'interrupted':
         return outcome
     return None
+
+
+def parse_encrypted_retry_feedback(encrypted_value: str | None) -> RetryFeedbackPart | None:
+    """Read a `RetryFeedbackPart` claim from the `pydantic_ai` namespace of an `encrypted_value` blob.
+
+    An absent, forged or malformed claim reads as `None`, so the message it rode on stays a plain
+    system prompt — see `retry_feedback_from_payload` for why the marker separates provenance rather
+    than proving it.
+    """
+    namespaced = _parse_encrypted_namespace(encrypted_value)
+    if namespaced is None:
+        return None
+    return retry_feedback_from_payload(namespaced.get('retry_feedback'))
 
 
 def parse_builtin_tool_call_id(tool_call_id: str) -> tuple[str, str] | None:

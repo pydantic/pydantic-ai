@@ -48,6 +48,7 @@ from pydantic_ai import (
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
+    RetryFeedbackPart,
     RetryPromptPart,
     RunContext,
     TextPart,
@@ -2072,9 +2073,9 @@ async def test_empty_response():
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    RetryFeedbackPart(
                         content='Please return text.',
-                        tool_call_id=IsStr(),
+                        cause='no_output',
                         timestamp=IsDatetime(),
                     )
                 ],

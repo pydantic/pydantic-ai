@@ -35,6 +35,7 @@ from pydantic_ai import (
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
+    RetryFeedbackPart,
     RetryPromptPart,
     SystemPromptPart,
     TextContent,
@@ -9286,9 +9287,9 @@ async def test_openai_responses_image_generation_tool_without_image_output(
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    RetryFeedbackPart(
                         content='Please return text.',
-                        tool_call_id=IsStr(),
+                        cause='no_output',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -9454,9 +9455,9 @@ async def test_openai_responses_image_generation_with_tool_output(allow_model_re
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    RetryFeedbackPart(
                         content='Please return text or include your response in a tool call.',
-                        tool_call_id=IsStr(),
+                        cause='no_output',
                         timestamp=IsDatetime(),
                     )
                 ],

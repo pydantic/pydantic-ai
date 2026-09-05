@@ -24,7 +24,7 @@ from pydantic_ai.exceptions import (
     UsageLimitExceeded,
     UserError,
 )
-from pydantic_ai.messages import RetryPromptPart, ToolReturnPart
+from pydantic_ai.messages import RetryFeedbackPart, RetryPromptPart, ToolReturnPart
 
 
 def test_tool_failed_pydantic_schema_accepts_instance() -> None:
@@ -186,9 +186,31 @@ def test_tool_retry_error_pickle_round_trip():
 
     assert type(restored) is ToolRetryError
     assert str(restored) == str(exc)
+    assert isinstance(restored.tool_retry, RetryPromptPart)
     assert restored.tool_retry.content == 'retry this'
     assert restored.tool_retry.tool_name == 'my_tool'
     assert restored.tool_retry.tool_call_id == part.tool_call_id
+    assert restored.tool_retry.timestamp == part.timestamp
+
+
+def test_tool_retry_error_pickle_round_trip_with_feedback():
+    """`tool_retry` also holds the retry that answers no call, so the reconstruction must accept one.
+
+    `__reduce__` rebuilds through `__init__`, which formats a message differently for this part: there
+    is no `tool_name` to name in it. Error details rather than a string is what reaches that branch.
+    """
+    errors: list[ErrorDetails] = [
+        {'type': 'missing', 'loc': ('city',), 'msg': 'Field required', 'input': {'country': 'FR'}}
+    ]
+    part = RetryFeedbackPart(content=errors, cause='validation_error')
+    exc = ToolRetryError(part)
+    restored = pickle.loads(pickle.dumps(exc))
+
+    assert type(restored) is ToolRetryError
+    assert str(restored) == str(exc)
+    assert isinstance(restored.tool_retry, RetryFeedbackPart)
+    assert restored.tool_retry.content == errors
+    assert restored.tool_retry.cause == 'validation_error'
     assert restored.tool_retry.timestamp == part.timestamp
 
 

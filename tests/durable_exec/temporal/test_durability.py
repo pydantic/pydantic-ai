@@ -29,10 +29,13 @@ from pydantic_ai import (
     MultiModalContent,
     PartDeltaEvent,
     PartStartEvent,
+    PromptedOutput,
     RequestUsage,
+    RetryFeedbackPart,
     RetryPromptPart,
     RunContext,
     RunUsage,
+    SystemPromptPart,
     TextPart,
     TextPartDelta,
     Tool,
@@ -4502,3 +4505,183 @@ async def test_durability_prepare_renamed_tool_runs_in_activity(client: Client):
     assert output == snapshot('the registered function ran')
     # The model only ever saw the renamed tool, in both steps.
     assert _renamed_tool_names == snapshot([['exposed_tool'], ['exposed_tool']])
+
+
+# --- Retry feedback for output that answered no tool call ---
+
+
+@dataclass
+class RetryFeedbackAnswer:
+    count: int
+
+
+_retry_feedback_shown: list[list[SystemPromptPart | UserPromptPart]] = []
+"""The parts carrying the harness's own voice the model was shown, one entry per model request."""
+
+
+def _retry_feedback_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    # A raw `RetryFeedbackPart` raises rather than rendering when it reaches a model, so whatever
+    # lands here is what `prepare_messages` made of it under the profile of the model being used.
+    shown = [
+        part
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, SystemPromptPart)
+        or (isinstance(part, UserPromptPart) and isinstance(part.content, str) and part.content.startswith('<system>'))
+    ]
+    _retry_feedback_shown.append(shown)
+    return ModelResponse(parts=[TextPart('{"count": 3}' if shown else '{"count": "lots"}')])
+
+
+_retry_feedback_inline_model = FunctionModel(
+    _retry_feedback_model,
+    model_name='retry-feedback-inline',
+    profile=ModelProfile(supports_inline_system_prompts=True),
+)
+
+
+def _resolve_retry_feedback_alias(ctx: ModelResolutionContext[None], model_id: str) -> FunctionModel | None:
+    """Resolve the alias for the model that takes a mid-conversation system message.
+
+    `infer_model` can't build the alias, so the raw string is what crosses the activity boundary and
+    the worker-side chain rebuilds the model there.
+    """
+    return _retry_feedback_inline_model if model_id == 'retry-feedback-inline' else None
+
+
+_retry_feedback_agent = Agent(
+    FunctionModel(_retry_feedback_model),
+    name='durability_retry_feedback_agent',
+    deps_type=type(None),
+    output_type=PromptedOutput(RetryFeedbackAnswer),
+    capabilities=[
+        ResolveModelId(_resolve_retry_feedback_alias),
+        TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
+    ],
+)
+
+
+@dataclass
+class RetryFeedbackResult:
+    count: int
+    messages: list[ModelMessage]
+
+
+@workflow.defn
+class DurabilityRetryFeedbackWorkflow:
+    @workflow.run
+    async def run(
+        self, prompt: str, model_id: str | None, message_history: list[ModelMessage] | None
+    ) -> RetryFeedbackResult:
+        result = await _retry_feedback_agent.run(prompt, model=model_id, message_history=message_history)
+        return RetryFeedbackResult(count=result.output.count, messages=result.all_messages())
+
+
+async def test_durability_output_retry_feedback_survives_the_activity_and_a_resume(client: Client):
+    """Output that failed validation retries as a durable history fact, in the harness's own voice.
+
+    The retry answers no tool call, so it is a `RetryFeedbackPart` and not the `RetryPromptPart` the
+    tool path carries. It has to cross the model activity's payload boundary, come back out through
+    the workflow's own result, and go back in as a second execution's argument — the shape a suspend
+    and resume leaves behind.
+
+    The resuming model is reached by an alias only the `ResolveModelId` capability can build, so the
+    workflow leaves the history untouched and the raw part is what crosses the activity boundary
+    there. Keeping the presentation out of the history is what lets that one stored part land as a
+    real `SystemPromptPart` for a model that takes a mid-conversation system message, and as
+    `<system>`-tagged user text for the one that wrote it.
+    """
+    _retry_feedback_shown.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DurabilityRetryFeedbackWorkflow],
+        plugins=[AgentPlugin(_retry_feedback_agent)],
+    ):
+        first = await client.execute_workflow(
+            DurabilityRetryFeedbackWorkflow.run,
+            args=['how many?', None, None],
+            id=f'{DurabilityRetryFeedbackWorkflow.__name__}-first-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+        second = await client.execute_workflow(
+            DurabilityRetryFeedbackWorkflow.run,
+            args=['how many again?', 'retry-feedback-inline', first.messages],
+            id=f'{DurabilityRetryFeedbackWorkflow.__name__}-second-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+
+    # Both runs recovered: the retry reached the model and the next response validated.
+    assert (first.count, second.count) == (3, 3)
+    # The resumed history still carries the part model-neutrally...
+    assert [
+        part
+        for message in second.messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, RetryFeedbackPart)
+    ] == snapshot(
+        [
+            RetryFeedbackPart(
+                content=[
+                    {
+                        'type': 'int_parsing',
+                        'loc': ('count',),
+                        'msg': 'Input should be a valid integer, unable to parse string as an integer',
+                        'input': 'lots',
+                    }
+                ],
+                cause='validation_error',
+                timestamp=IsDatetime(),
+            )
+        ]
+    )
+    # ...and the two executions rendered that one part differently, each under the profile of the
+    # model that was actually being used: `<system>`-tagged user text for the model that wrote it,
+    # a real system message for the one that resumed it.
+    assert _retry_feedback_shown == snapshot(
+        [
+            [],
+            [
+                UserPromptPart(
+                    content="""\
+<system>The response failed validation:
+1 validation error:
+```json
+[
+  {
+    "type": "int_parsing",
+    "loc": [
+      "count"
+    ],
+    "msg": "Input should be a valid integer, unable to parse string as an integer"
+  }
+]
+```</system>\
+""",
+                    timestamp=IsDatetime(),
+                )
+            ],
+            [
+                SystemPromptPart(
+                    content="""\
+The response failed validation:
+1 validation error:
+```json
+[
+  {
+    "type": "int_parsing",
+    "loc": [
+      "count"
+    ],
+    "msg": "Input should be a valid integer, unable to parse string as an integer"
+  }
+]
+```\
+""",
+                    timestamp=IsDatetime(),
+                )
+            ],
+        ]
+    )

@@ -29,6 +29,7 @@ from ...messages import (
     ModelResponse,
     NativeToolCallPart,
     NativeToolReturnPart,
+    RetryFeedbackPart,
     RetryPromptPart,
     SpeechPart,
     SystemPromptPart,
@@ -47,6 +48,7 @@ from ...messages import (
     parse_tool_kind,
     tool_return_content_ta,
 )
+from ...models import _render_retry_feedback  # pyright: ignore[reportPrivateUsage]
 from ...output import OutputDataT
 from ...tools import AgentDepsT, DeferredToolResults, ToolDenied
 from .. import MessagesBuilder, UIAdapter
@@ -54,6 +56,8 @@ from .._adapter import (
     compaction_part_from_payload,
     compaction_payload,
     resolve_allow_uploaded_files,
+    retry_feedback_from_payload,
+    retry_feedback_payload,
     tool_availability_delta_from_payload,
 )
 from ._event_stream import VercelAIEventStream
@@ -315,7 +319,14 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             if msg.role == 'system':
                 for part in msg.parts:
                     if isinstance(part, TextUIPart):
-                        builder.add(SystemPromptPart(content=part.text))
+                        # A system part only reloads as harness retry feedback when it carries the
+                        # marker this adapter dumped it with; a client-authored system message has
+                        # no such payload and stays a plain `SystemPromptPart`, so it can never gain
+                        # harness provenance. See `retry_feedback_from_payload`.
+                        feedback = retry_feedback_from_payload(
+                            load_provider_metadata(part.provider_metadata).get('retry_feedback')
+                        )
+                        builder.add(feedback if feedback is not None else SystemPromptPart(content=part.text))
                     else:  # pragma: no cover
                         raise ValueError(f'Unsupported system message part type: {type(part)}')
             elif msg.role == 'user':
@@ -670,6 +681,19 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                 else:
                     # Non-tool retries (e.g., output validation errors) become user text
                     user_ui_parts.append(TextUIPart(text=part.model_response(), state='done'))
+            elif isinstance(part, RetryFeedbackPart):
+                # Harness feedback carries the system voice it is rendered in for the model, not the
+                # user's, so it dumps as a system part rather than as text a person appears to have
+                # written (https://github.com/pydantic/pydantic-ai/issues/6404). The part itself
+                # rides in `provider_metadata` so the reload reconstructs it instead of the
+                # `SystemPromptPart` the rendered text alone would produce.
+                system_ui_parts.append(
+                    TextUIPart(
+                        text=_render_retry_feedback(part),
+                        state='done',
+                        provider_metadata=dump_provider_metadata(retry_feedback=retry_feedback_payload(part)),
+                    )
+                )
             elif isinstance(part, SpeechPart):  # pragma: no cover
                 pass  # Realtime audio parts are not rendered in the UI
             else:
@@ -975,6 +999,16 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         is therefore presented to the model as a definitive failure rather than a request to correct
         and retry; keep the conversation in-process rather than persisting through the Vercel AI wire
         format if you need retry semantics to survive a round-trip.
+
+        A `RetryFeedbackPart` dumps as a `role='system'` message holding the same text the model is
+        shown, with the part itself in that message's `providerMetadata`; it reloads as a
+        `RetryFeedbackPart` only from there, so a system message the client wrote stays a
+        `SystemPromptPart`.
+
+        Ordering is lossy within a single `ModelRequest`: system-voice parts (`SystemPromptPart`,
+        `RetryFeedbackPart`) and user content go out as two `UIMessage`s, and the `role='system'` one
+        always comes first, so feedback authored *after* a `UserPromptPart` reloads before it. AG-UI
+        keeps the authored order; this adapter's split-by-role dump cannot.
 
         Tool calls lose one thing too: `ToolCallPart.args` that don't parse as a JSON object are
         rewritten to `{'INVALID_JSON': '<raw args>'}` (see

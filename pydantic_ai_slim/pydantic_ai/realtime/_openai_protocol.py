@@ -68,6 +68,7 @@ from ..messages import (
     RealtimeInputSpeechStartEvent,
     RealtimeInputTranscriptionErrorEvent,
     RealtimeSessionErrorEvent,
+    RetryFeedbackPart,
     RetryPromptPart,
     SpeechPart,
     SystemPromptPart,
@@ -79,6 +80,10 @@ from ..messages import (
     ToolReturnPart,
     UserContent,
     UserPromptPart,
+)
+from ..models import (
+    _render_retry_feedback,  # pyright: ignore[reportPrivateUsage]
+    _wrap_in_system_tags,  # pyright: ignore[reportPrivateUsage]
 )
 from ..models._tool_choice import ResolvedToolChoice
 from ..profiles import DEFAULT_THINKING_TAGS
@@ -530,6 +535,15 @@ async def _seed_request_items(
                         'output': output,
                     }
                 )
+        elif isinstance(part, RetryFeedbackPart):
+            # A seeded item takes `user` or `assistant` only — a `SystemPromptPart` is routed to the
+            # session `instructions` instead — and this feedback answers one response rather than
+            # standing over the session, so routing it there would be wrong. It takes the same
+            # `<system>` tagging every model without a mid-conversation system message gets, which
+            # is what keeps the model from reading it as something a person said
+            # (https://github.com/pydantic/pydantic-ai/issues/6404).
+            feedback = _wrap_in_system_tags(_render_retry_feedback(part, escape_system_close_tags=True))
+            items.append(_message_item('user', [_text_content('input_text', feedback)]))
         else:
             assert_never(part)
     return items

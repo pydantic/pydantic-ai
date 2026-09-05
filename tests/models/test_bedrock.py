@@ -38,6 +38,7 @@ from pydantic_ai import (
     PartEndEvent,
     PartStartEvent,
     RequestUsage,
+    RetryFeedbackPart,
     RetryPromptPart,
     SystemPromptPart,
     TextContent,
@@ -871,7 +872,7 @@ The temperature in London on 1st January 2022 was 30°C.\
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    RetryFeedbackPart(
                         content=[
                             {
                                 'type': 'json_invalid',
@@ -884,7 +885,7 @@ The temperature in London on 1st January 2022 was 30°C.\
 """,
                             }
                         ],
-                        tool_call_id=IsStr(),
+                        cause='validation_error',
                         timestamp=IsDatetime(),
                     )
                 ],
