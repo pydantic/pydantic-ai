@@ -15,6 +15,8 @@ failures and [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] produce a
 exceptions end the session and propagate from iteration; if the event stream was never iterated,
 they end the audio and transcript views and are raised when the session closes. (A consumer that
 started iterating and then stopped has chosen to stop listening: nothing is raised on its behalf.)
+The failed call is recorded with `outcome='failed'`, so the settled history can be passed to
+[`Agent.run(message_history=...)`][pydantic_ai.agent.AbstractAgent.run].
 The general
 [`on_tool_execute_error`][pydantic_ai.capabilities.AbstractCapability.on_tool_execute_error]
 capability hook also applies in realtime and can turn an exception into a replacement result or

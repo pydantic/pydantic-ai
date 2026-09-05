@@ -780,6 +780,20 @@ async def test_tool_error_ends_transcript_only_session(
                 conversation_id=IsStr(),
                 state='interrupted',
             ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_weather',
+                        content='The tool raised an unhandled error and the session ended.',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                        outcome='failed',
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
         ]
     )
 
