@@ -104,7 +104,7 @@ class EventStreamHandlerId:
 
 @dataclass(frozen=True)
 class EventStreamHandlerParams:
-    event: AgentStreamEvent
+    events: list[AgentStreamEvent]
     _: KW_ONLY
     run_context: RunContext[Any]
 

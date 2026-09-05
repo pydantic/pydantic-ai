@@ -568,6 +568,86 @@ async def test_temporal_agent_history_replays_after_migrating_to_durability(clie
         _migration_agent = _legacy_migration_agent
 
 
+class _UnpatchedEventDispatchDurability(TemporalDurability[None]):
+    @property
+    def _batch_event_stream_dispatch(self) -> bool:
+        return False
+
+
+_event_dispatch_agent_name = 'event_dispatch_patch_replay'
+_unpatched_event_dispatch_agent = Agent(
+    TestModel(custom_output_text='replayed'),
+    name=_event_dispatch_agent_name,
+    deps_type=type(None),
+    tools=[_migration_tool],
+    capabilities=[
+        _UnpatchedEventDispatchDurability(
+            activity_config=BASE_ACTIVITY_CONFIG,
+            event_stream_handler=_migration_event_stream_handler,
+        )
+    ],
+)
+_patched_event_dispatch_agent = Agent(
+    TestModel(custom_output_text='replayed'),
+    name=_event_dispatch_agent_name,
+    deps_type=type(None),
+    tools=[_migration_tool],
+    capabilities=[
+        TemporalDurability(
+            activity_config=BASE_ACTIVITY_CONFIG,
+            event_stream_handler=_migration_event_stream_handler,
+        )
+    ],
+)
+_event_dispatch_agent: AbstractAgent[None, str] = _patched_event_dispatch_agent
+
+
+@workflow.defn
+class EventDispatchPatchReplayWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        return (await _event_dispatch_agent.run(prompt)).output
+
+
+@pytest.mark.parametrize('record_patched', [False, True])
+async def test_event_dispatch_patch_replays_patched_and_unpatched_histories(
+    client: Client, record_patched: bool
+) -> None:
+    global _event_dispatch_agent
+
+    recorded_agent = _patched_event_dispatch_agent if record_patched else _unpatched_event_dispatch_agent
+    _event_dispatch_agent = recorded_agent
+    durability = TemporalDurability.from_agent(recorded_agent)
+    assert durability is not None
+    workflow_id = f'{EventDispatchPatchReplayWorkflow.__name__}-{record_patched}-{uuid.uuid4()}'
+    try:
+        async with Worker(
+            client,
+            task_queue=TASK_QUEUE,
+            workflows=[EventDispatchPatchReplayWorkflow],
+            plugins=[AgentPlugin(recorded_agent)],
+            workflow_runner=UnsandboxedWorkflowRunner(),
+        ):
+            output = await client.execute_workflow(
+                EventDispatchPatchReplayWorkflow.run,
+                args=['hello'],
+                id=workflow_id,
+                task_queue=TASK_QUEUE,
+            )
+            history = await client.get_workflow_handle(workflow_id).fetch_history()
+
+        assert output == 'replayed'
+
+        _event_dispatch_agent = _patched_event_dispatch_agent
+        await Replayer(
+            workflows=[EventDispatchPatchReplayWorkflow],
+            workflow_runner=UnsandboxedWorkflowRunner(),
+            data_converter=pydantic_data_converter,
+        ).replay_workflow(history)
+    finally:
+        _event_dispatch_agent = _patched_event_dispatch_agent
+
+
 def test_temporal_agent_construction_warns_deprecated() -> None:
     """The `TemporalAgent` deprecation fires at runtime; the module-level filters only suppress it."""
     with pytest.warns(PydanticAIDeprecationWarning, match='`TemporalAgent` is deprecated'):
