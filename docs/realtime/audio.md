@@ -74,6 +74,9 @@ An unconsumed view buffers up to its bound, dropping the oldest item when full, 
 [`close()`][pydantic_ai.realtime.RealtimeSession.close] discards pending items and ends every live
 iterator; [`closed`][pydantic_ai.realtime.RealtimeSession.closed] reports the state.
 
+If nothing is iterating the session, the session keeps the most recent 512 audio and transcript
+delta events for a late `async for`; older deltas are discarded. Structural events are always kept.
+
 ### Live captions
 
 For live captions, pass `delta=True` to

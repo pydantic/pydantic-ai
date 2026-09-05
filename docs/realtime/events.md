@@ -7,6 +7,9 @@ high-level [`stream_audio()`][pydantic_ai.realtime.RealtimeSession.stream_audio]
 [Audio, images, and transcripts](audio.md) are derived from this same stream, so most applications
 iterate the session for control flow and leave media to the views.
 
+If nothing is iterating the session, the session keeps the most recent 512 audio and transcript
+delta events for a late `async for`; older deltas are discarded. Structural events are always kept.
+
 ## Event reference
 
 | Event | Meaning |

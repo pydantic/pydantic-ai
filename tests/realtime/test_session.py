@@ -4037,6 +4037,91 @@ async def test_concurrent_iteration_raises() -> None:
         await anext(late)
 
 
+def _queued_realtime_events(session: _RealtimeSession) -> list[RealtimeEvent]:
+    return [
+        item
+        for item in session._queue  # pyright: ignore[reportPrivateUsage]
+        if isinstance(
+            item,
+            (
+                PartStartEvent,
+                PartDeltaEvent,
+                PartEndEvent,
+                RealtimeInputSpeechStartEvent,
+                RealtimeInputSpeechEndEvent,
+                RealtimeTurnCompleteEvent,
+            ),
+        )
+    ]
+
+
+async def test_unconsumed_session_queue_keeps_structural_events_and_latest_deltas() -> None:
+    chunks = [index.to_bytes(2) for index in range(2000)]
+    connection = FakeRealtimeConnection(
+        [
+            RealtimeInputSpeechStartEvent(),
+            *[AudioDelta(chunk) for chunk in chunks[:1000]],
+            RealtimeInputSpeechEndEvent(),
+            *[AudioDelta(chunk) for chunk in chunks[1000:]],
+            ResponseDone(),
+        ]
+    )
+
+    async with RealtimeSession(connection) as session:
+        assert [chunk async for chunk in session.stream_audio()] == chunks[-32:]
+
+        queued = _queued_realtime_events(session)
+        assert sum(isinstance(event, PartDeltaEvent) for event in queued) == 512
+        assert [type(event) for event in queued if not isinstance(event, PartDeltaEvent)] == [
+            RealtimeInputSpeechStartEvent,
+            PartStartEvent,
+            RealtimeInputSpeechEndEvent,
+            PartEndEvent,
+            RealtimeTurnCompleteEvent,
+        ]
+
+        late_events = [event async for event in session]
+        late_chunks = [
+            event.delta.audio_chunk
+            for event in late_events
+            if isinstance(event, PartDeltaEvent) and isinstance(event.delta, SpeechPartDelta)
+        ]
+        assert late_chunks == chunks[-512:]
+
+
+async def test_active_session_iterator_does_not_drop_deltas() -> None:
+    chunks = [index.to_bytes(2) for index in range(2000)]
+    async with RealtimeSession(FakeRealtimeConnection([AudioDelta(chunk) for chunk in chunks])) as session:
+        events = [event async for event in session]
+        assert [
+            event.delta.audio_chunk
+            for event in events
+            if isinstance(event, PartDeltaEvent) and isinstance(event.delta, SpeechPartDelta)
+        ] == chunks
+        assert session._queue_dropped_deltas == 0  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_closing_session_iterator_bounds_remaining_deltas() -> None:
+    chunks = [index.to_bytes(2) for index in range(2000)]
+    async with RealtimeSession(FakeRealtimeConnection([AudioDelta(chunk) for chunk in chunks])) as session:
+        events = session.__aiter__()
+        assert isinstance(await anext(events), PartStartEvent)
+        await events.aclose()
+
+        assert session._queue_delta_count == 512  # pyright: ignore[reportPrivateUsage]
+        assert session._queue_dropped_deltas == 1488  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_unconsumed_session_queue_keeps_parked_exception() -> None:
+    chunks = [index.to_bytes(2) for index in range(2000)]
+    session = RealtimeSession(FakeRealtimeConnection([AudioDelta(chunk) for chunk in chunks]))
+
+    with pytest.raises(RuntimeError, match='tool failed'):
+        async with session:
+            session._queue_put(RuntimeError('tool failed'))  # pyright: ignore[reportPrivateUsage]
+            _ = [chunk async for chunk in session.stream_audio()]
+
+
 async def test_direct_session_must_be_entered_and_streams_once() -> None:
     session = RealtimeSession(FakeRealtimeConnection([]), _noop_runner)
 
@@ -5915,9 +6000,7 @@ async def test_deferred_asap_drain_failure_after_tool_is_forwarded(monkeypatch: 
     await asyncio.gather(task, return_exceptions=True)
     await asyncio.sleep(0)  # let the done-callback run
 
-    queued: list[Any] = []
-    while not session._queue.empty():  # pyright: ignore[reportPrivateUsage]
-        queued.append(session._queue.get_nowait())  # pyright: ignore[reportPrivateUsage]
+    queued = list(session._queue)  # pyright: ignore[reportPrivateUsage]
     assert any(isinstance(item, RuntimeError) and str(item) == 'drain send failed' for item in queued)
 
 
