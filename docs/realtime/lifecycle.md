@@ -138,13 +138,10 @@ for provider operations and
 user transcription. The session remains usable after either event.
 
 Failures surface from the responsible call where possible; a failed `send_audio()` raises there.
-Receive-loop and tool failures surface according to how the session is consumed:
-
-- While the event stream is being iterated, the failure is raised from `async for`.
-- When the event stream was never iterated (only the audio or transcript views are consumed), the
-  views end and the failure is raised when the `async with` block exits (from
-  [`close()`][pydantic_ai.realtime.RealtimeSession.close]).
-- A consumer that started iterating and then stopped has chosen to stop listening: a later failure
-  is not raised on its behalf.
+Receive-loop and tool failures are raised from `async for` while the event stream is being
+iterated. Otherwise the audio and transcript views end, and the failure is raised when the `async
+with` block exits (from [`close()`][pydantic_ai.realtime.RealtimeSession.close]). If the receive side
+has already failed, the next outbound session method raises that failure instead; it is delivered
+only once.
 
 For symptom-first debugging, see [Troubleshooting](troubleshooting.md).

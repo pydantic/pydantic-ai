@@ -12,9 +12,9 @@ When a model calls a tool, the session emits
 result, and emits [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent]. Parse
 failures and [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] produce a
 [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart], matching a standard agent run. Other tool
-exceptions end the session and propagate from iteration; if the event stream was never iterated,
-they end the audio and transcript views and are raised when the session closes. (A consumer that
-started iterating and then stopped has chosen to stop listening: nothing is raised on its behalf.)
+exceptions are raised from `async for` while the event stream is being iterated. Otherwise they end
+the audio and transcript views and are raised when the session closes. If the receive side has
+already ended, an outbound session method raises the failure instead; it is delivered only once.
 The general
 [`on_tool_execute_error`][pydantic_ai.capabilities.AbstractCapability.on_tool_execute_error]
 capability hook also applies in realtime and can turn an exception into a replacement result or
@@ -226,7 +226,9 @@ async def hang_up(ctx: RunContext[None]) -> None:
 The session closes cleanly, and `session.result` and its history are settled before the context
 exits. The tool does not resume after `close()`: there is no provider left to receive its result, so
 the call is recorded locally with an interrupted result. The code that owns the `session()` context
-does not receive an exception.
+does not receive an exception. A concurrent `send_audio()` call consuming a microphone or other
+async iterable returns cleanly when the tool closes the session; sending a single chunk after close
+still raises [`UserError`][pydantic_ai.exceptions.UserError].
 
 To abort the run instead, [`ctx.cancel()`](../tools-advanced.md#cancelling-the-run-from-a-tool)
 works as in a standard run: the call is likewise recorded as interrupted, and the `session()`
