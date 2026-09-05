@@ -59,6 +59,8 @@ agent = Agent(model)
 ...
 ```
 
+`api_key` also accepts an async callable returning the key (`Callable[[], Awaitable[str]]`), which the OpenAI SDK resolves on each request — useful for short-lived or rotating credentials.
+
 ## Custom OpenAI Client
 
 `OpenAIProvider` also accepts a custom `AsyncOpenAI` client via the `openai_client` parameter, so you can customise the `organization`, `project`, `base_url` etc. as defined in the [OpenAI API docs](https://platform.openai.com/docs/api-reference).
