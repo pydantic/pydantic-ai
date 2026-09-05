@@ -1,0 +1,986 @@
+"""OpenAI Codex provider unit tests: OAuth flow, credential lifecycle, and provider wiring.
+
+These are unit tests by necessity, not omission: the lifecycle under test (single-flight
+refresh, 401 replay, rotated-grant races, application credential sources, the localhost
+callback server) is driven by token expiry and concurrency, which recorded cassettes cannot
+replay deterministically, and recording against the real token endpoint would spend (and
+rotate) a live subscription grant. The model wire-dialect tests live in
+`tests/models/test_openai_responses.py`.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import base64
+import hashlib
+import json
+import pickle
+import socket
+import time
+from collections.abc import AsyncIterator
+from dataclasses import asdict
+from pathlib import Path
+from typing import Any
+
+import anyio
+import httpx
+import httpx2
+import pytest
+
+from pydantic_ai.exceptions import ModelAPIError, UserError
+from pydantic_ai.models import infer_model, infer_model_profile
+from pydantic_ai.providers import infer_provider_class
+
+from ..conftest import TestEnv, try_import
+
+with try_import() as imports_successful:
+    from pydantic_ai.models.openai_codex import OpenAICodexModel
+    from pydantic_ai.providers.openai_codex import (
+        CredentialsPersistenceError,
+        CredentialsRefreshError,
+        OpenAICodexCredentials,
+        OpenAICodexOAuthFlow,
+        OpenAICodexProvider,
+        _account_id_from_id_token,  # pyright: ignore[reportPrivateUsage]
+        _credentials_from_token_response,  # pyright: ignore[reportPrivateUsage]
+        _jwt_expires_at,  # pyright: ignore[reportPrivateUsage]
+        _OpenAICodexAuth,  # pyright: ignore[reportPrivateUsage]
+        _post_token_request,  # pyright: ignore[reportPrivateUsage]
+        _refresh_credentials,  # pyright: ignore[reportPrivateUsage]
+        _token_response_ta,  # pyright: ignore[reportPrivateUsage]
+        _TokenResponse,  # pyright: ignore[reportPrivateUsage]
+    )
+
+pytestmark = [
+    pytest.mark.skipif(not imports_successful(), reason='OpenAI client not installed'),
+    pytest.mark.anyio,
+]
+
+PUBLIC_CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann'
+
+
+def make_jwt(payload: dict[str, Any]) -> str:
+    def encode(part: dict[str, Any]) -> str:
+        return base64.urlsafe_b64encode(json.dumps(part).encode()).rstrip(b'=').decode()
+
+    return f'{encode({"alg": "none"})}.{encode(payload)}.signature'
+
+
+def make_credentials(*, exp: float | None = None, access_token: str = 'access-old') -> OpenAICodexCredentials:
+    token = access_token if exp is None else make_jwt({'exp': exp})
+    return OpenAICodexCredentials(access_token=token, refresh_token='refresh-1', account_id='acc-1')
+
+
+def make_provider(credentials: OpenAICodexCredentials | None = None) -> OpenAICodexProvider:
+    return OpenAICodexProvider(credentials=credentials or make_credentials(exp=time.time() + 3600))
+
+
+class TokenEndpointMock:
+    """Stands in for `_post_token_request`, recording forms and returning queued payloads/exceptions."""
+
+    def __init__(self, *results: dict[str, Any] | Exception):
+        self.results = list(results)
+        self.forms: list[dict[str, Any]] = []
+
+    async def __call__(
+        self, url: str, form: dict[str, Any], http_client: httpx2.AsyncClient | None = None
+    ) -> _TokenResponse:
+        self.forms.append(form)
+        await asyncio.sleep(0.001)  # widen race windows for single-flight assertions
+        result = self.results[min(len(self.forms), len(self.results)) - 1]
+        if isinstance(result, Exception):
+            raise result
+        return _token_response_ta.validate_python(result)
+
+
+TOKEN_RESPONSE: dict[str, Any] = {
+    'access_token': 'access-new',
+    'refresh_token': 'refresh-2',
+    'id_token': make_jwt({'https://api.openai.com/auth': {'chatgpt_account_id': 'acc-9'}}),
+}
+
+
+def authed_client(provider: OpenAICodexProvider, handler: Any) -> httpx2.AsyncClient:
+    transport = httpx2.MockTransport(handler)
+    return httpx2.AsyncClient(transport=transport, auth=_OpenAICodexAuth(provider))
+
+
+# --- Credentials parsing and CLI loading ---
+
+
+def test_credentials_from_codex_cli_auth():
+    creds = OpenAICodexCredentials.from_codex_cli_auth(
+        {
+            'OPENAI_API_KEY': None,
+            'tokens': {
+                'access_token': 'super-secret-access',
+                'refresh_token': 'super-secret-refresh',
+                'account_id': 'acc',
+            },
+            'last_refresh': 'whenever',
+            'some_future_field': {'nested': 1},
+        }
+    )
+    assert creds.account_id == 'acc'
+    assert creds.access_token == 'super-secret-access'
+    assert creds.refresh_token == 'super-secret-refresh'
+
+
+def test_credentials_repr_hides_tokens():
+    """A logged instance must not leak reusable subscription credentials."""
+    creds = OpenAICodexCredentials(
+        access_token='super-secret-access', refresh_token='super-secret-refresh', account_id='acc'
+    )
+    assert repr(creds) == "OpenAICodexCredentials(account_id='acc')"
+    assert asdict(creds)['refresh_token'] == 'super-secret-refresh'  # persistence round-trip is unaffected
+
+
+@pytest.mark.parametrize(
+    'data,expected',
+    [
+        pytest.param({'nope': {}}, 'tokens', id='no-tokens-entry'),
+        pytest.param({'tokens': 'not-an-object'}, 'tokens', id='tokens-not-an-object'),
+        pytest.param({'tokens': {'refresh_token': 'r', 'account_id': 'acc'}}, 'access_token', id='missing-field'),
+    ],
+)
+def test_credentials_malformed_codex_cli_auth(data: Any, expected: str):
+    """Validation is pydantic's job; the wrapper adds the `codex login` hint and the field detail."""
+    with pytest.raises(UserError, match=r'Run `codex login`') as exc_info:
+        OpenAICodexCredentials.from_codex_cli_auth(data)
+    assert expected in str(exc_info.value)
+
+
+def test_from_codex_cli_honors_code_home(env: TestEnv, tmp_path: Path):
+    auth_json = tmp_path / 'auth.json'
+    original = json.dumps(
+        {
+            'OPENAI_API_KEY': None,
+            'last_refresh': 'x',
+            'tokens': {'access_token': 'a', 'refresh_token': 'r', 'account_id': 'acc'},
+        }
+    )
+    auth_json.write_text(original)
+    env.set('CODEX_HOME', str(tmp_path))
+
+    provider = OpenAICodexProvider()
+
+    assert provider.credentials.account_id == 'acc'
+    assert provider.name == 'openai-codex'
+    assert provider.base_url == 'https://chatgpt.com/backend-api/codex'
+    # Read-only contract: byte-for-byte unchanged after construction.
+    assert auth_json.read_text() == original
+
+
+def test_from_codex_cli_missing_file(env: TestEnv, tmp_path: Path):
+    env.set('CODEX_HOME', str(tmp_path))
+    with pytest.raises(UserError, match=r'codex login'):
+        OpenAICodexProvider()
+
+
+def test_from_codex_cli_unreadable_file(env: TestEnv, tmp_path: Path):
+    (tmp_path / 'auth.json').mkdir()  # a directory: `read_text` raises an `OSError` subclass
+    env.set('CODEX_HOME', str(tmp_path))
+    with pytest.raises(UserError, match='Could not read'):
+        OpenAICodexProvider()
+
+
+def test_from_codex_cli_malformed_json(env: TestEnv, tmp_path: Path):
+    (tmp_path / 'auth.json').write_text('not json')
+    env.set('CODEX_HOME', str(tmp_path))
+    with pytest.raises(UserError, match='Malformed'):
+        OpenAICodexProvider()
+
+
+def test_no_openai_api_key_fallback(env: TestEnv, tmp_path: Path):
+    env.set('CODEX_HOME', str(tmp_path))
+    env.set('OPENAI_API_KEY', 'sk-fake')
+    with pytest.raises(UserError, match=r'codex login'):
+        OpenAICodexProvider()
+
+
+# --- JWT expiry hint ---
+
+
+def test_jwt_expiry_hint():
+    now = time.time()
+    assert _jwt_expires_at(make_jwt({'exp': now - 100})) is not None
+    assert _jwt_expires_at('garbage') is None
+
+
+def test_account_id_claim_fallbacks():
+    assert _account_id_from_id_token('garbage') is None  # unparsable id_token
+    # Top-level claims are consulted when the nested claim is absent or empty.
+    assert _account_id_from_id_token(make_jwt({'chatgpt_account_id': 'acc-top'})) == 'acc-top'
+    assert _account_id_from_id_token(make_jwt({'account_id': 'acc-legacy'})) == 'acc-legacy'
+    assert _account_id_from_id_token(make_jwt({})) is None
+
+
+@pytest.mark.parametrize('exc_type', [CredentialsRefreshError, CredentialsPersistenceError])
+def test_credentials_errors_are_model_api_errors(
+    exc_type: type[CredentialsRefreshError] | type[CredentialsPersistenceError],
+):
+    """Credential failures are `ModelAPIError`s (so e.g. `FallbackModel` falls back on them) and
+    survive a pickle round-trip despite the narrower single-argument constructor."""
+    exc = exc_type('something broke')
+    assert isinstance(exc, ModelAPIError)
+    assert exc.model_name == 'openai-codex'
+    restored = pickle.loads(pickle.dumps(exc))
+    assert type(restored) is exc_type
+    assert restored.model_name == 'openai-codex'
+    assert restored.message == 'something broke'
+
+
+def test_token_response_without_account_id_anywhere():
+    """The account id has three possible sources, so its absence is the one check left to make."""
+    with pytest.raises(CredentialsRefreshError, match='account id'):
+        _credentials_from_token_response(_TokenResponse(access_token='a', refresh_token='r'))
+
+
+async def test_post_token_request_success_and_error_shapes(monkeypatch: pytest.MonkeyPatch):
+    """The OAuth POST helper: success, a 200 that is missing tokens, JSON error with `invalid_grant`
+    hint, JSON error without a description, and a non-JSON error body."""
+    real_client = httpx2.AsyncClient
+    queue = [
+        httpx2.Response(200, json={'access_token': 'a', 'refresh_token': 'r'}),
+        httpx2.Response(200, json={'ok': True}),
+        httpx2.Response(400, json={'error': 'invalid_grant', 'error_description': 'expired'}),
+        httpx2.Response(403, json={'error': 'access_denied'}),
+        httpx2.Response(500, text='gateway exploded'),
+    ]
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return queue.pop(0)
+
+    def client_factory(**kwargs: Any) -> httpx2.AsyncClient:
+        return real_client(transport=httpx2.MockTransport(handler), **kwargs)
+
+    monkeypatch.setattr(httpx2, 'AsyncClient', client_factory)
+
+    url = 'https://auth.openai.com/oauth/token'
+    assert await _post_token_request(url, {'grant_type': 'refresh_token'}) == _TokenResponse(
+        access_token='a', refresh_token='r'
+    )
+    # A 200 that omits the tokens is as unusable as an error: pydantic catches it at the boundary.
+    with pytest.raises(CredentialsRefreshError, match='unexpected response'):
+        await _post_token_request(url, {})
+    with pytest.raises(CredentialsRefreshError, match='expired; the grant was rejected'):
+        await _post_token_request(url, {})
+    with pytest.raises(CredentialsRefreshError, match='access_denied'):
+        await _post_token_request(url, {})
+    with pytest.raises(CredentialsRefreshError, match='gateway exploded'):
+        await _post_token_request(url, {})
+
+
+async def test_post_token_request_rejects_non_object_success_bodies():
+    """A 200 carrying JSON `null`, a list, or unparsable text raises instead of `AttributeError` later."""
+    queue = [
+        httpx2.Response(200, json=None),
+        httpx2.Response(200, json=[1, 2]),
+        httpx2.Response(200, text='not json'),
+    ]
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return queue.pop(0)
+
+    client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
+    async with client:
+        for _ in range(3):
+            with pytest.raises(CredentialsRefreshError, match='unexpected response'):
+                await _post_token_request('https://auth.openai.com/oauth/token', {}, http_client=client)
+    assert _jwt_expires_at('a.b') is None
+    assert _jwt_expires_at(f'a.{base64.urlsafe_b64encode(b"not json").decode()}.c') is None
+    assert _jwt_expires_at(make_jwt({'exp': 'soon'})) is None
+    assert _jwt_expires_at(make_jwt({'exp': True})) is None
+    assert _jwt_expires_at(make_jwt({'exp': 10**14})) is None  # absurd values degrade to None
+    assert _jwt_expires_at(make_jwt({})) is None
+
+
+# --- Proactive (expiry-hint) refresh: single flight under concurrency ---
+
+
+async def test_simultaneous_expiry_performs_one_refresh(monkeypatch: pytest.MonkeyPatch):
+    mock = TokenEndpointMock(TOKEN_RESPONSE)
+    monkeypatch.setattr('pydantic_ai.providers.openai_codex._post_token_request', mock)
+    provider = make_provider(make_credentials(exp=time.time() - 10))
+
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        assert request.headers['authorization'] == 'Bearer access-new'
+        return httpx2.Response(200)
+
+    async with authed_client(provider, handler) as client:
+        responses = await asyncio.gather(*(client.get('https://chatgpt.com/backend-api/codex/x') for _ in range(5)))
+
+    assert all(r.status_code == 200 for r in responses)
+    assert len(mock.forms) == 1  # five waiters, one network refresh
+    assert mock.forms[0] == {'grant_type': 'refresh_token', 'refresh_token': 'refresh-1', 'client_id': PUBLIC_CLIENT_ID}
+    assert provider.credentials.refresh_token == 'refresh-2'
+
+
+async def test_fresh_credentials_skip_proactive_refresh(monkeypatch: pytest.MonkeyPatch):
+    mock = TokenEndpointMock(TOKEN_RESPONSE)
+    monkeypatch.setattr('pydantic_ai.providers.openai_codex._post_token_request', mock)
+    provider = make_provider()  # healthy JWT
+
+    old_bearer = f'Bearer {provider.credentials.access_token}'
+
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        assert request.headers['authorization'] == old_bearer
+        assert request.headers['chatgpt-account-id'] == 'acc-1'
+        assert request.headers['originator'] == 'pydantic-ai'
+        return httpx2.Response(200)
+
+    async with authed_client(provider, handler) as client:
+        response = await client.get('https://chatgpt.com/backend-api/codex/x')
+
+    assert response.status_code == 200
+    assert mock.forms == []
+
+
+async def test_malformed_jwt_degrades_to_401_path(monkeypatch: pytest.MonkeyPatch):
+    mock = TokenEndpointMock(TOKEN_RESPONSE)
+    monkeypatch.setattr('pydantic_ai.providers.openai_codex._post_token_request', mock)
+    provider = make_provider(make_credentials(access_token='not-a-jwt'))
+    old_bearer = f'Bearer {provider.credentials.access_token}'
+    requests_seen: list[str] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        requests_seen.append(request.headers['authorization'])
+        if len(requests_seen) == 1:
+            return httpx2.Response(401)
+        return httpx2.Response(200)
+
+    async with authed_client(provider, handler) as client:
+        response = await client.get('https://chatgpt.com/backend-api/codex/x')
+
+    assert response.status_code == 200
+    assert len(mock.forms) == 1  # exactly one refresh, from the 401, not the unparsable hint
+    assert requests_seen == [old_bearer, 'Bearer access-new']  # original + one replay
+
+
+# --- 401-triggered refresh-and-replay ---
+
+
+async def test_simultaneous_401s_single_flight_recheck(monkeypatch: pytest.MonkeyPatch):
+    mock = TokenEndpointMock(TOKEN_RESPONSE)
+    monkeypatch.setattr('pydantic_ai.providers.openai_codex._post_token_request', mock)
+    provider = make_provider(make_credentials())  # no expiry hint: only the 401 can trigger refresh
+    old_bearer = f'Bearer {provider.credentials.access_token}'
+    sends: list[str] = []
+    lock = anyio.Lock()
+
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        async with lock:
+            bearer = request.headers['authorization']
+            is_replay = bearer != old_bearer
+            sends.append(bearer)
+        if is_replay:
+            return httpx2.Response(200)
+        return httpx2.Response(401)
+
+    async with authed_client(provider, handler) as client:
+        responses = await asyncio.gather(*(client.get('https://chatgpt.com/backend-api/codex/x') for _ in range(5)))
+
+    assert all(r.status_code == 200 for r in responses)
+    assert len(mock.forms) == 1  # five simultaneous 401s must not mean five refreshes
+    assert provider.credentials.access_token == 'access-new'
+    assert len(sends) == 10  # every logical request was sent exactly twice (original + replay)
+    assert sorted(set(sends)) == sorted({'Bearer access-new', old_bearer})
+
+
+async def test_401_after_inflight_rotation_replays_without_second_refresh(monkeypatch: pytest.MonkeyPatch):
+    mock = TokenEndpointMock(TOKEN_RESPONSE)
+    monkeypatch.setattr('pydantic_ai.providers.openai_codex._post_token_request', mock)
+    provider = make_provider(make_credentials())
+    calls = 0
+
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            # Another task rotates the credentials while this request is in flight, so its 401
+            # must replay with the fresh set directly instead of refreshing a second time.
+            await provider._refresh_for_401(0)  # pyright: ignore[reportPrivateUsage]
+            return httpx2.Response(401)
+        return httpx2.Response(200)
+
+    async with authed_client(provider, handler) as client:
+        response = await client.get('https://chatgpt.com/backend-api/codex/x')
+
+    assert response.status_code == 200
+    assert len(mock.forms) == 1  # only the in-flight rotation refreshed; the 401 did not
+
+
+async def test_failed_refresh_is_single_flighted_across_waiters(monkeypatch: pytest.MonkeyPatch):
+    """A burst of 401s whose refresh fails shares that failure instead of retrying it per waiter."""
+    mock = TokenEndpointMock(CredentialsRefreshError('the grant is dead'))
+    monkeypatch.setattr('pydantic_ai.providers.openai_codex._post_token_request', mock)
+    provider = make_provider(make_credentials())
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(401)
+
+    async with authed_client(provider, handler) as client:
+        results = await asyncio.gather(
+            *(client.get('https://chatgpt.com/backend-api/codex/x') for _ in range(5)),
+            return_exceptions=True,
+        )
+
+    assert all(isinstance(result, CredentialsRefreshError) for result in results)
+    assert len(mock.forms) == 1  # one failed refresh, shared with every waiter
+
+
+async def test_stale_refresh_transport_error_falls_through_to_request(monkeypatch: pytest.MonkeyPatch):
+    """A transport failure during the proactive refresh must not abort a request whose token still works."""
+    mock = TokenEndpointMock(RuntimeError('network down'))
+    monkeypatch.setattr('pydantic_ai.providers.openai_codex._post_token_request', mock)
+    provider = make_provider(make_credentials(exp=time.time() - 100))
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200)
+
+    async with authed_client(provider, handler) as client:
+        response = await client.get('https://chatgpt.com/backend-api/codex/x')
+
+    assert response.status_code == 200  # served with the still-current token
+    assert len(mock.forms) == 1  # the proactive attempt happened, and its failure stayed quiet
+
+
+async def test_stale_refresh_save_error_propagates(monkeypatch: pytest.MonkeyPatch):
+    """The proactive path swallows refresh failures but never a failed save of rotated credentials."""
+    monkeypatch.setattr('pydantic_ai.providers.openai_codex._post_token_request', TokenEndpointMock(TOKEN_RESPONSE))
+    source = FakeCredentialSource(make_credentials(access_token='access-v1', exp=time.time() - 100))
+
+    async def exploding_save(credentials: OpenAICodexCredentials) -> None:
+        raise RuntimeError('db down')
+
+    source.save = exploding_save
+    provider = OpenAICodexProvider(credential_source=source)
+
+    def handler(request: httpx2.Request) -> httpx2.Response:  # pragma: no cover
+        raise AssertionError('the persistence error must surface before any request goes out')
+
+    async with authed_client(provider, handler) as client:
+        with pytest.raises(CredentialsPersistenceError):
+            await client.get(CODEX_URL)
+
+    assert provider.credentials.access_token == 'access-new'  # memory is current
+
+
+# --- Application credential source (multi-replica coordination seam) ---
+
+
+class FakeCredentialSource:
+    """In-memory stand-in for an application's credential store."""
+
+    def __init__(self, credentials: OpenAICodexCredentials | None = None):
+        self.credentials = credentials if credentials is not None else make_credentials(access_token='access-v1')
+        self.loads = 0
+        self.saves: list[str] = []
+
+    async def load(self) -> OpenAICodexCredentials:
+        self.loads += 1
+        return self.credentials
+
+    async def save(self, credentials: OpenAICodexCredentials) -> None:
+        self.credentials = credentials
+        self.saves.append(credentials.access_token)
+
+
+CODEX_URL = 'https://chatgpt.com/backend-api/codex/x'
+
+
+async def test_credential_source_loads_once_and_reuses():
+    source = FakeCredentialSource()
+    provider = OpenAICodexProvider(credential_source=source)
+    seen: list[str] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        seen.append(request.headers['authorization'])
+        return httpx2.Response(200)
+
+    async with authed_client(provider, handler) as client:
+        for _ in range(2):
+            assert (await client.get(CODEX_URL)).status_code == 200
+
+    assert seen == ['Bearer access-v1', 'Bearer access-v1']
+    assert source.loads == 1  # loaded lazily on first use, then held in memory
+    assert source.saves == []
+
+
+async def test_credential_source_refreshes_and_saves(monkeypatch: pytest.MonkeyPatch):
+    """A stale token is refreshed by the provider, and the rotated set is persisted."""
+    monkeypatch.setattr('pydantic_ai.providers.openai_codex._post_token_request', TokenEndpointMock(TOKEN_RESPONSE))
+    source = FakeCredentialSource(make_credentials(access_token='access-v1', exp=time.time() - 100))
+    provider = OpenAICodexProvider(credential_source=source)
+    seen: list[str] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        seen.append(request.headers['authorization'])
+        return httpx2.Response(200)
+
+    async with authed_client(provider, handler) as client:
+        assert (await client.get(CODEX_URL)).status_code == 200
+
+    assert seen == ['Bearer access-new']  # the stale token never went out
+    assert source.saves == ['access-new']  # and the rotation was persisted for the next process
+
+
+async def test_credential_source_adopts_a_peer_replicas_rotation(monkeypatch: pytest.MonkeyPatch):
+    """The whole point of shared storage: never spend a refresh token a peer already rotated."""
+    mock = TokenEndpointMock(TOKEN_RESPONSE)
+    monkeypatch.setattr('pydantic_ai.providers.openai_codex._post_token_request', mock)
+    source = FakeCredentialSource()
+    provider = OpenAICodexProvider(credential_source=source)
+
+    peer_rotated = False
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        token = request.headers['authorization']
+        if peer_rotated and token != 'Bearer access-peer':
+            return httpx2.Response(401)  # the grant this provider holds was superseded
+        return httpx2.Response(200)
+
+    async with authed_client(provider, handler) as client:
+        assert (await client.get(CODEX_URL)).status_code == 200  # loads and uses access-v1
+        # A peer replica rotates the shared grant while this provider holds the old set.
+        source.credentials = make_credentials(access_token='access-peer')
+        peer_rotated = True
+        assert (await client.get(CODEX_URL)).status_code == 200
+
+    assert mock.forms == []  # no upstream refresh: the peer's set was adopted from storage
+    assert source.saves == []
+    assert provider.credentials.access_token == 'access-peer'
+
+
+async def test_credential_source_save_failure_surfaces(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr('pydantic_ai.providers.openai_codex._post_token_request', TokenEndpointMock(TOKEN_RESPONSE))
+    source = FakeCredentialSource(make_credentials(access_token='access-v1', exp=time.time() - 100))
+
+    async def exploding_save(credentials: OpenAICodexCredentials) -> None:
+        raise RuntimeError('database on fire')
+
+    source.save = exploding_save
+    provider = OpenAICodexProvider(credential_source=source)
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200)  # pragma: no cover
+
+    async with authed_client(provider, handler) as client:
+        with pytest.raises(CredentialsPersistenceError, match='credential source'):
+            await client.get(CODEX_URL)
+
+    assert provider.credentials.access_token == 'access-new'  # memory is current
+
+
+async def test_401_replay_resends_a_one_shot_streaming_body(monkeypatch: pytest.MonkeyPatch):
+    """The auth flow buffers the outgoing body, so a replay after refresh does not raise `StreamConsumed`."""
+    monkeypatch.setattr('pydantic_ai.providers.openai_codex._post_token_request', TokenEndpointMock(TOKEN_RESPONSE))
+    provider = make_provider()
+    bodies: list[bytes] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        bodies.append(request.content)
+        if request.headers['authorization'] == 'Bearer access-new':
+            return httpx2.Response(200)
+        return httpx2.Response(401)
+
+    async def one_shot_body() -> AsyncIterator[bytes]:
+        yield b'{"prompt": '
+        yield b'"hi"}'
+
+    async with authed_client(provider, handler) as client:
+        response = await client.post(CODEX_URL, content=one_shot_body())
+
+    assert response.status_code == 200
+    assert bodies == [b'{"prompt": "hi"}', b'{"prompt": "hi"}']  # the replay carried the full body
+
+
+async def test_credentials_unavailable_before_the_source_is_loaded():
+    provider = OpenAICodexProvider(credential_source=FakeCredentialSource())
+    with pytest.raises(UserError, match='credential_source'):
+        _ = provider.credentials
+
+
+async def test_credential_source_is_mutually_exclusive():
+    with pytest.raises(AssertionError, match='credentials'):
+        OpenAICodexProvider(credentials=make_credentials(), credential_source=FakeCredentialSource())
+
+
+async def test_refresh_credentials_primitive():
+    """The upstream-refresh building block behind every automatic refresh."""
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        assert str(request.url) == 'https://auth.openai.com/oauth/token'
+        assert b'grant_type=refresh_token' in request.content
+        return httpx2.Response(200, json=TOKEN_RESPONSE)
+
+    client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
+    async with client:
+        rotated = await _refresh_credentials(make_credentials(), http_client=client)
+
+    assert rotated.access_token == 'access-new'
+    assert rotated.account_id == 'acc-9'  # extracted from the id_token in the response
+
+
+async def test_non_expiry_401_does_not_loop(monkeypatch: pytest.MonkeyPatch):
+    mock = TokenEndpointMock(TOKEN_RESPONSE, TOKEN_RESPONSE)
+    monkeypatch.setattr('pydantic_ai.providers.openai_codex._post_token_request', mock)
+    provider = make_provider()
+    sends: list[str] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        sends.append(request.headers['authorization'])
+        return httpx2.Response(401, json={'error': 'insufficient_quota'})
+
+    async with authed_client(provider, handler) as client:
+        first = await client.get('https://chatgpt.com/backend-api/codex/x')
+        second = await client.get('https://chatgpt.com/backend-api/codex/x')
+
+    assert first.status_code == second.status_code == 401
+    assert len(sends) == 4  # exactly two sends per request: original plus a single replay
+    assert len(mock.forms) == 2  # at most one refresh per request, never a loop
+
+
+async def test_refresh_failure_surfaces_and_keeps_old_credentials(monkeypatch: pytest.MonkeyPatch):
+    error = CredentialsRefreshError('Token request failed with status 400: invalid_grant; rerun the authorization flow')
+    mock = TokenEndpointMock(error)
+    monkeypatch.setattr('pydantic_ai.providers.openai_codex._post_token_request', mock)
+    provider = make_provider()
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(401)
+
+    async with authed_client(provider, handler) as client:
+        with pytest.raises(CredentialsRefreshError, match='invalid_grant'):
+            await client.get('https://chatgpt.com/backend-api/codex/x')
+
+    assert mock.forms == [{'grant_type': 'refresh_token', 'refresh_token': 'refresh-1', 'client_id': PUBLIC_CLIENT_ID}]
+
+
+async def test_save_failure_on_the_401_path_updates_memory_but_raises(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr('pydantic_ai.providers.openai_codex._post_token_request', TokenEndpointMock(TOKEN_RESPONSE))
+    source = FakeCredentialSource(make_credentials(exp=time.time() + 3600))
+    old_bearer = f'Bearer {source.credentials.access_token}'
+
+    async def exploding_save(credentials: OpenAICodexCredentials) -> None:
+        raise RuntimeError('db down')
+
+    source.save = exploding_save
+    provider = OpenAICodexProvider(credential_source=source)
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        # The persistence error surfaces during the refresh, so the replay never goes out.
+        assert request.headers['authorization'] == old_bearer
+        return httpx2.Response(401)
+
+    async with authed_client(provider, handler) as client:
+        with pytest.raises(CredentialsPersistenceError, match='credential source'):
+            await client.get(CODEX_URL)
+
+    # In-memory credentials are current even though persistence failed.
+    assert provider.credentials.access_token == 'access-new'
+
+
+def test_sync_auth_flow_is_rejected():
+    """Refresh-and-replay is async, so a sync client must fail loudly rather than send no auth."""
+    auth = _OpenAICodexAuth(make_provider())
+    with pytest.raises(UserError, match='requires an async HTTP client'):
+        auth.sync_auth_flow(httpx2.Request('GET', 'https://example.com'))
+
+
+async def test_auth_never_sent_to_foreign_or_plaintext_destinations():
+    """A caller-supplied client may be reused for other destinations; credentials stay home."""
+    provider = make_provider()
+    seen: list[httpx2.Request] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        seen.append(request)
+        return httpx2.Response(200)
+
+    async with authed_client(provider, handler) as client:
+        await client.get('https://example.com/unrelated')  # foreign host
+        await client.get('http://chatgpt.com/backend-api/codex/x')  # right host, plaintext scheme
+
+    for request in seen:
+        assert 'authorization' not in request.headers
+        assert 'chatgpt-account-id' not in request.headers
+        assert 'originator' not in request.headers
+
+
+async def test_credential_source_loads_once_under_concurrency():
+    """Two tasks racing the first request load the source once, not once each."""
+    release = anyio.Event()
+    source = FakeCredentialSource()
+    inner_load = source.load
+
+    async def slow_load() -> OpenAICodexCredentials:
+        await release.wait()  # hold the lock so the second task queues behind it
+        return await inner_load()
+
+    source.load = slow_load
+    provider = OpenAICodexProvider(credential_source=source)
+
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(provider._load_if_needed)  # pyright: ignore[reportPrivateUsage]
+        tg.start_soon(provider._load_if_needed)  # pyright: ignore[reportPrivateUsage]
+        await anyio.sleep(0)  # let both tasks reach the lock before the load completes
+        release.set()
+
+    assert source.loads == 1
+
+
+def test_openai_client_passthrough():
+    from openai import AsyncOpenAI
+
+    client = AsyncOpenAI(api_key='irrelevant', base_url='https://chatgpt.com/backend-api/codex')
+    provider = OpenAICodexProvider(openai_client=client)
+    assert provider.client is client  # used as-is: no credential injection, no auth wrapping
+    with pytest.raises(UserError, match='openai_client'):
+        _ = provider.credentials
+
+
+def test_shared_http_client_with_auth_is_rejected():
+    """A client that already carries auth (e.g. another provider's) must not be silently rebound."""
+    first_client = httpx2.AsyncClient()
+    OpenAICodexProvider(credentials=make_credentials(), http_client=first_client)
+    with pytest.raises(UserError, match='already has auth configured'):
+        OpenAICodexProvider(credentials=make_credentials(), http_client=first_client)
+
+
+def test_legacy_http_client_is_rejected():
+    with pytest.raises(UserError, match='requires an `httpx2` client'):
+        OpenAICodexProvider(credentials=make_credentials(), http_client=httpx.AsyncClient())
+
+
+async def test_refresh_uses_the_provider_http_client():
+    """Refreshes ride the provider's own client, so custom transports and proxies apply to them too."""
+    token_hits = 0
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        nonlocal token_hits
+        if request.url.host == 'auth.openai.com':
+            token_hits += 1
+            assert 'authorization' not in request.headers  # host scoping keeps the bearer off the auth host
+            return httpx2.Response(200, json=TOKEN_RESPONSE)
+        if request.headers['authorization'] == 'Bearer access-new':
+            return httpx2.Response(200)
+        return httpx2.Response(401)
+
+    http_client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
+    provider = OpenAICodexProvider(credentials=make_credentials(), http_client=http_client)
+    async with http_client:
+        response = await http_client.get('https://chatgpt.com/backend-api/codex/x')
+
+    assert response.status_code == 200
+    assert token_hits == 1  # the refresh went through the provider's transport
+    assert provider.credentials.access_token == 'access-new'
+
+
+async def test_caller_supplied_http_client_gets_scoped_auth():
+    http_client = httpx2.AsyncClient()
+    try:
+        OpenAICodexProvider(credentials=make_credentials(), http_client=http_client)
+        assert isinstance(http_client.auth, _OpenAICodexAuth)
+    finally:
+        await http_client.aclose()
+
+
+async def test_reopen_after_close_reattaches_auth():
+    """Exiting the provider context closes its owned client; re-entering rebuilds one with auth."""
+    provider = make_provider()
+    async with provider:
+        pass
+    async with provider:
+        http_client = provider.client._client  # pyright: ignore[reportPrivateUsage]
+        assert not http_client.is_closed
+        assert isinstance(http_client.auth, _OpenAICodexAuth)
+
+
+# --- Flow primitives ---
+
+
+def test_authorization_url_shape():
+    flow = OpenAICodexOAuthFlow(state='my-state')
+    url = flow.authorization_url()
+    assert url.startswith('https://auth.openai.com/oauth/authorize?')
+    assert 'response_type=code' in url
+    assert f'client_id={PUBLIC_CLIENT_ID}' in url
+    assert 'state=my-state' in url
+    assert 'code_challenge_method=S256' in url
+    challenge = url.split('code_challenge=')[1].split('&')[0]
+    expected = base64.urlsafe_b64encode(hashlib.sha256(flow.code_verifier.encode()).digest()).rstrip(b'=').decode()
+    assert challenge == expected
+    assert 'redirect_uri=http%3A%2F%2Flocalhost%3A1455%2Fauth%2Fcallback' in url
+    # Production-parity params (live-verified 2026-08-25): without `id_token_add_organizations`,
+    # the id_token can omit the account id for multi-org accounts.
+    assert 'id_token_add_organizations=true' in url
+    assert 'codex_cli_simplified_flow=true' in url
+
+
+def test_authorization_url_extra_params_add_and_override():
+    flow = OpenAICodexOAuthFlow(state='my-state')
+    url = flow.authorization_url(extra_params={'prompt': 'login', 'codex_cli_simplified_flow': 'false'})
+    assert 'prompt=login' in url  # added
+    assert 'codex_cli_simplified_flow=false' in url  # overridden
+    assert 'codex_cli_simplified_flow=true' not in url
+    assert 'id_token_add_organizations=true' in url  # untouched default survives
+
+
+def test_authorization_url_rejects_flow_bound_overrides():
+    """Overriding what the flow validates or exchanges against would yield an unusable code."""
+    flow = OpenAICodexOAuthFlow()
+    with pytest.raises(UserError, match='cannot override client_id, code_challenge, redirect_uri, state'):
+        flow.authorization_url(
+            extra_params={
+                'client_id': 'other',
+                'redirect_uri': 'https://example.com/cb',
+                'state': 'forged',
+                'code_challenge': 'unpaired',
+            }
+        )
+
+
+async def test_exchange_code_posts_pkce_form(monkeypatch: pytest.MonkeyPatch):
+    mock = TokenEndpointMock(TOKEN_RESPONSE)
+    monkeypatch.setattr('pydantic_ai.providers.openai_codex._post_token_request', mock)
+    flow = OpenAICodexOAuthFlow()
+    credentials = await flow.exchange_code('the-code')
+
+    assert mock.forms[0]['grant_type'] == 'authorization_code'
+    assert mock.forms[0]['code'] == 'the-code'
+    assert mock.forms[0]['code_verifier'] == flow.code_verifier
+    assert credentials.account_id == 'acc-9'  # extracted from the nested id_token claim
+
+
+def _free_port() -> int:
+    with socket.socket() as sock:
+        sock.bind(('127.0.0.1', 0))
+        return sock.getsockname()[1]
+
+
+async def _get_callback(url: str, params: dict[str, str]) -> httpx2.Response:
+    """GET the callback URL, retrying briefly while the one-shot server binds."""
+    async with httpx2.AsyncClient() as client:
+        for _ in range(50):
+            try:
+                return await client.get(url, params=params)
+            except httpx2.ConnectError:
+                await asyncio.sleep(0.05)
+        raise AssertionError('callback server never came up')  # pragma: no cover
+
+
+async def test_exchange_code_from_callback(monkeypatch: pytest.MonkeyPatch):
+    """The built-in one-shot server ignores foreign-state requests and exchanges the real one."""
+    mock = TokenEndpointMock(TOKEN_RESPONSE)
+    monkeypatch.setattr('pydantic_ai.providers.openai_codex._post_token_request', mock)
+    url = f'http://127.0.0.1:{_free_port()}/auth/callback'
+    flow = OpenAICodexOAuthFlow(redirect_uri=url)
+    exchange = asyncio.create_task(flow.exchange_code_from_callback())
+
+    stray = await _get_callback(url, {'state': 'not-this-flow', 'code': 'stray-code'})
+    assert stray.status_code == 200  # answered politely, but ignored: the server keeps serving
+    accepted = await _get_callback(url, {'state': flow.state, 'code': 'the-code'})
+    assert 'close this tab' in accepted.text
+
+    credentials = await exchange
+    assert credentials.account_id == 'acc-9'
+    assert mock.forms == [
+        {
+            'grant_type': 'authorization_code',
+            'code': 'the-code',
+            'code_verifier': flow.code_verifier,
+            'redirect_uri': url,
+            'client_id': PUBLIC_CLIENT_ID,
+        }
+    ]
+
+
+async def test_exchange_code_from_callback_survives_malformed_request_line(monkeypatch: pytest.MonkeyPatch):
+    """REGRESSION: a malformed request line (port scanner, browser prefetch) must not kill the login.
+
+    `urlparse` raises `ValueError: Invalid IPv6 URL` on a path like `http://[/auth/callback`;
+    unguarded, that crashed the handler mid-login with a raw traceback. The server must answer
+    400 and keep serving until the real callback arrives (previously fixed on #6433).
+    """
+    mock = TokenEndpointMock(TOKEN_RESPONSE)
+    monkeypatch.setattr('pydantic_ai.providers.openai_codex._post_token_request', mock)
+    port = _free_port()
+    url = f'http://127.0.0.1:{port}/auth/callback'
+    flow = OpenAICodexOAuthFlow(redirect_uri=url)
+    exchange = asyncio.create_task(flow.exchange_code_from_callback())
+
+    await _get_callback(url, {'state': 'not-this-flow'})  # also waits for the server to bind
+    reader, writer = await asyncio.open_connection('127.0.0.1', port)
+    writer.write(b'GET http://[/auth/callback HTTP/1.1\r\nHost: x\r\n\r\n')
+    await writer.drain()
+    status_line = await reader.readline()
+    assert b'400' in status_line
+    writer.close()
+
+    accepted = await _get_callback(url, {'state': flow.state, 'code': 'the-code'})
+    assert 'close this tab' in accepted.text
+    credentials = await exchange
+    assert credentials.account_id == 'acc-9'
+
+
+async def test_exchange_code_from_callback_drops_stalled_client(monkeypatch: pytest.MonkeyPatch):
+    """A connection that never sends its request line must not block the real callback."""
+    mock = TokenEndpointMock(TOKEN_RESPONSE)
+    monkeypatch.setattr('pydantic_ai.providers.openai_codex._post_token_request', mock)
+    monkeypatch.setattr('pydantic_ai.providers._oauth._CALLBACK_READ_TIMEOUT', 0.2)
+    port = _free_port()
+    url = f'http://127.0.0.1:{port}/auth/callback'
+    flow = OpenAICodexOAuthFlow(redirect_uri=url)
+    exchange = asyncio.create_task(flow.exchange_code_from_callback())
+
+    await _get_callback(url, {'state': 'not-this-flow'})  # also waits for the server to bind
+    reader, writer = await asyncio.open_connection('127.0.0.1', port)
+    assert await reader.read() == b''  # the server hangs up on the silent connection
+    writer.close()
+
+    accepted = await _get_callback(url, {'state': flow.state, 'code': 'the-code'})
+    assert 'close this tab' in accepted.text
+    credentials = await exchange
+    assert credentials.account_id == 'acc-9'
+
+
+async def test_exchange_code_from_callback_denied():
+    """An error callback (e.g. the user clicked Deny) surfaces instead of hanging."""
+    url = f'http://127.0.0.1:{_free_port()}/auth/callback'
+    flow = OpenAICodexOAuthFlow(redirect_uri=url)
+    exchange = asyncio.create_task(flow.exchange_code_from_callback())
+
+    await _get_callback(url, {'state': flow.state, 'error': 'access_denied'})
+
+    with pytest.raises(UserError, match='Authorization failed: access_denied'):
+        await exchange
+
+
+# --- Prefix inference and profile dialect ---
+
+
+def test_provider_class_inference():
+    assert infer_provider_class('openai-codex') is OpenAICodexProvider
+
+
+def test_openai_codex_prefix_infers_responses_model(env: TestEnv, tmp_path: Path):
+    (tmp_path / 'auth.json').write_text(
+        json.dumps({'tokens': {'access_token': 'a', 'refresh_token': 'r', 'account_id': 'acc'}})
+    )
+    env.set('CODEX_HOME', str(tmp_path))
+    model = infer_model('openai-codex:gpt-5.6-luna')
+
+    assert isinstance(model, OpenAICodexModel)
+    assert model.profile.get('openai_responses_requires_streaming') is True
+    assert model.profile.get('openai_responses_requires_store_false') is True
+    assert model.profile.get('openai_supports_input_token_counting') is False
+    unsupported = model.profile.get('openai_unsupported_model_settings', ())
+    assert {'max_tokens', 'temperature', 'top_p', 'openai_top_logprobs', 'openai_truncation', 'openai_user'} <= set(
+        unsupported
+    )
+
+
+def test_standard_openai_profile_untouched():
+    profile = infer_model_profile('openai:gpt-5')
+    assert profile.get('openai_responses_requires_streaming', False) is False
+    assert profile.get('openai_supports_input_token_counting', True) is True

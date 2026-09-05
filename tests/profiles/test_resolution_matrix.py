@@ -482,6 +482,47 @@ def test_openai_o3_mini():
     )
 
 
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_openai_codex_gpt_5_6():
+    """The Codex subscription backend: the standard OpenAI profile plus the narrower wire dialect."""
+    from pydantic_ai.providers.openai_codex import OpenAICodexProvider
+
+    profile = OpenAICodexProvider.model_profile('gpt-5.6-luna')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'supports_image_output': True,
+            'supports_inline_system_prompts': True,
+            'supports_thinking': True,
+            'openai_supports_encrypted_reasoning_content': True,
+            'openai_supports_reasoning': True,
+            'openai_reasoning_enabled_by_default': True,
+            'openai_supports_reasoning_effort_none': True,
+            'openai_responses_supports_reasoning_mode': True,
+            'openai_responses_supports_reasoning_context': True,
+            'openai_supports_phase': True,
+            'openai_supports_prompt_cache_breakpoints': True,
+            'openai_supports_minimal_reasoning_effort': False,
+            'supported_native_tools': frozenset(
+                {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, ToolSearchTool, WebSearchTool}
+            ),
+            'openai_unsupported_model_settings': (
+                'max_tokens',
+                'temperature',
+                'top_p',
+                'openai_top_logprobs',
+                'openai_truncation',
+                'openai_user',
+            ),
+            'openai_responses_requires_streaming': True,
+            'openai_responses_requires_store_false': True,
+            'openai_supports_input_token_counting': False,
+        }
+    )
+
+
 @pytest.mark.skipif(not google_imports(), reason='google not installed')
 def test_google_gemini_3_pro():
     profile = GoogleProvider.model_profile('gemini-3.0-pro')
