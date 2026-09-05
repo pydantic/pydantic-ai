@@ -63,16 +63,30 @@ chunk to the device before pulling the next — the session can handle that half
 `handle_barge_in=True` when opening the session:
 
 ```python
+import asyncio
+from collections.abc import AsyncIterator
+
 from pydantic_ai import Agent
+from pydantic_ai.realtime import RealtimeTurnCompleteEvent
 
 agent = Agent(instructions='You are a helpful voice assistant.')
+
+
+async def play_audio(chunks: AsyncIterator[bytes]) -> None:
+    async for chunk in chunks:
+        ...  # write the chunk to your speaker, waiting until the device consumed it
 
 
 async def main():
     realtime = agent.realtime('openai:gpt-realtime')
     async with realtime.session(handle_barge_in=True) as session:
-        async for chunk in session.stream_audio():
-            ...  # write the chunk to your speaker, waiting until the device consumed it
+        playback = asyncio.create_task(play_audio(session.stream_audio()))
+        await session.send('Say hello.')
+        async for event in session:
+            if isinstance(event, RealtimeTurnCompleteEvent):
+                break  # keep listening in a real call; we stop after one reply
+        await session.wait_for_playback()
+    await playback
 ```
 
 When the user speaks over the model, the session discards the buffered audio the user will never
@@ -187,7 +201,7 @@ import asyncio
 from collections.abc import AsyncIterator
 
 from pydantic_ai import Agent
-from pydantic_ai.realtime import RealtimeSession
+from pydantic_ai.messages import PartEndEvent, SpeechPart
 
 agent = Agent(instructions='You are a welcoming museum guide.')
 
@@ -197,20 +211,17 @@ async def play_audio(chunks: AsyncIterator[bytes]) -> None:
         ...  # Write the PCM16 chunk to your speaker or audio output stream.
 
 
-async def wait_for_assistant_speech(session: RealtimeSession) -> None:
-    async for part in session.stream_transcripts():
-        if part.speaker == 'assistant':
-            return
-
-
 async def main():
     async with agent.realtime('openai:gpt-realtime').session() as session:
         playback = asyncio.create_task(play_audio(session.stream_audio()))
-        greeted = asyncio.create_task(wait_for_assistant_speech(session))
         await session.send('Greet the visitor.')
-        await greeted
-        ...  # wait for the speaker to drain, then open the microphone and start sending audio
-        await playback
+        async for event in session:
+            if isinstance(event, PartEndEvent) and isinstance(event.part, SpeechPart):
+                if event.part.speaker == 'assistant':
+                    break
+        await session.wait_for_playback()
+        ...  # open the microphone and start sending audio
+    await playback
 ```
 
 With manual turn control, [`create_response()`][pydantic_ai.realtime.RealtimeSession.create_response]

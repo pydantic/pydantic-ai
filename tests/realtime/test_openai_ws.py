@@ -319,6 +319,42 @@ async def test_media_views_subscribe_before_iteration(
     assert transcript_parts[0].transcript
 
 
+async def test_wait_for_playback_drains_audio_before_close(
+    openai_ws_cassette: tuple[Provider[Any], RealtimeCassette],
+) -> None:
+    """A generation boundary does not let session teardown cut off device-paced playback."""
+    provider, _ = openai_ws_cassette
+    model = OpenAIRealtimeModel('gpt-realtime', provider=provider)
+    agent = Agent(instructions='Reply in one short sentence.')
+    emitted: list[bytes] = []
+    played: list[bytes] = []
+
+    async with agent.realtime(model).session() as session:
+        audio = session.stream_audio()
+
+        async def play_audio() -> None:
+            async for chunk in audio:
+                await asyncio.sleep(0.005)
+                played.append(chunk)
+
+        playback = asyncio.create_task(play_audio())
+        await session.send('Say hello.')
+        with anyio.fail_after(30):
+            async for event in session:  # pragma: no branch
+                if (
+                    isinstance(event, PartDeltaEvent)
+                    and isinstance(event.delta, SpeechPartDelta)
+                    and event.delta.audio_chunk
+                ):
+                    emitted.append(event.delta.audio_chunk)
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+            await session.wait_for_playback()
+        assert played == emitted
+
+    await playback
+
+
 async def test_provider_factory_text_turn(
     openai_ws_cassette: tuple[Provider[Any], RealtimeCassette], openai_api_key: str
 ) -> None:

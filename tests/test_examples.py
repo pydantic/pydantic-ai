@@ -175,6 +175,10 @@ class MockRealtimeConnection(RealtimeConnection):
     def __init__(self, function_tool_names: Sequence[str] = ()) -> None:
         self._function_tool_names = function_tool_names
         self._tool_result_received = asyncio.Event()
+        self._closed = asyncio.Event()
+
+    async def aclose(self) -> None:
+        self._closed.set()
 
     async def send(self, content: RealtimeInput) -> None:
         if isinstance(content, ToolResult):
@@ -196,6 +200,7 @@ class MockRealtimeConnection(RealtimeConnection):
             yield AudioDelta(data=b'\x00\x00')
             yield OutputTranscript(text='Hello from the realtime assistant.', is_final=True)
             yield ResponseDone()
+        await self._closed.wait()
 
 
 @asynccontextmanager
@@ -205,7 +210,11 @@ async def _mock_realtime_connect(
     model_request_parameters: ModelRequestParameters,
     **kwargs: Any,
 ) -> AsyncGenerator[RealtimeConnection]:
-    yield MockRealtimeConnection([tool.name for tool in model_request_parameters.function_tools])
+    connection = MockRealtimeConnection([tool.name for tool in model_request_parameters.function_tools])
+    try:
+        yield connection
+    finally:
+        await connection.aclose()
 
 
 def _patch_realtime_models(mocker: MockerFixture) -> None:

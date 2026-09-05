@@ -20,6 +20,8 @@ by your Azure deployment name:
 
 ```python
 from pydantic_ai import Agent
+from pydantic_ai.messages import PartEndEvent, SpeechPart
+from pydantic_ai.realtime import RealtimeTurnCompleteEvent
 
 agent = Agent(instructions='You are a helpful voice assistant.')
 
@@ -28,10 +30,11 @@ async def main():
     async with agent.realtime('azure:my-realtime-deployment').session() as session:
         await session.send('Say hello.')
 
-        async for part in session.stream_transcripts():
-            print(f'{part.speaker}: {part.transcript}')
-            #> assistant: Hello from the realtime assistant.
-            if part.speaker == 'assistant':
+        async for event in session:
+            if isinstance(event, PartEndEvent) and isinstance(event.part, SpeechPart):
+                print(f'{event.part.speaker}: {event.part.transcript}')
+                #> assistant: Hello from the realtime assistant.
+            if isinstance(event, RealtimeTurnCompleteEvent):
                 break  # keep listening in a real call; we stop after one reply
 ```
 
@@ -157,6 +160,7 @@ mixture of the two.
 ```python
 from pydantic_ai import Agent
 from pydantic_ai.providers.azure import AzureProvider
+from pydantic_ai.realtime import RealtimeTurnCompleteEvent
 from pydantic_ai.realtime.azure import AzureRealtimeModel, AzureRealtimeModelSettings
 
 provider = AzureProvider(
@@ -177,7 +181,8 @@ async def main():
     async with agent.realtime(model).session() as session:
         await session.send('Say hello.')
         async for event in session:
-            ...
+            if isinstance(event, RealtimeTurnCompleteEvent):
+                break  # keep listening in a real call; we stop after one reply
 ```
 
 Voice-Live-only knobs use the `azure_voice_live_*` prefix (e.g.
