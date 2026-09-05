@@ -111,7 +111,19 @@ _AZURE_REALTIME_API_BASES: tuple[tuple[tuple[str, ...], frozenset[AzureRealtimeA
     # Voice-Live-only models — auto-routed there. Native-audio models, then the cascade chat families
     # served via Azure speech-to-text and text-to-speech (`gpt-4o` also covers `gpt-4o-mini`; `gpt-5` and
     # `gpt-4.1` cover their point releases like `gpt-5.2`).
-    (('phi4-mm-realtime', 'azure-realtime', 'gpt-4o', 'gpt-4.1', 'gpt-5', 'phi4-mini'), _VOICE_LIVE),
+    (
+        (
+            'phi4-mm-realtime',
+            'azure-realtime',
+            'gpt-realtime-datazone',
+            'gpt-realtime-1.5-datazone',
+            'gpt-4o',
+            'gpt-4.1',
+            'gpt-5',
+            'phi4-mini',
+        ),
+        _VOICE_LIVE,
+    ),
 )
 
 
