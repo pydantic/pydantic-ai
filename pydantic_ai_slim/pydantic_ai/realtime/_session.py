@@ -12,12 +12,12 @@ from dataclasses import dataclass, replace
 from threading import Lock as ThreadLock
 from time import time_ns
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, Literal, Never, TypeAlias, TypeVar, cast, overload
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypeVar, cast, overload
 
 from anyio import Lock
 from opentelemetry import context as otel_context
 from opentelemetry.context import Context
-from typing_extensions import TypeAliasType, assert_never
+from typing_extensions import Never, TypeAliasType, assert_never
 
 from .. import _agent_graph
 from .._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority
