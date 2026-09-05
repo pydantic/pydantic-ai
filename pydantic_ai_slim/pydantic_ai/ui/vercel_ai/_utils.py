@@ -75,7 +75,7 @@ def tool_return_output(part: BaseToolReturnPart) -> Any:
     """Serialize a tool return's full content for `ToolOutputAvailablePart.output`.
 
     Vercel's `output` field is `Any`, so the full return — file data included — is always dumped inline
-    and rehydrated on load via `ToolReturnContent`'s discriminator (`_validate_tool_output`). No gating.
+    and rehydrated on load through the `ToolReturnContent` union (`_validate_tool_output`). No gating.
     The same function serializes both the `dump_messages` history path and the live event stream
     (`tool-output-available`), so files survive either round-trip.
     """

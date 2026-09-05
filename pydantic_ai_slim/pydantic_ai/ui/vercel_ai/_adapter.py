@@ -16,6 +16,7 @@ from pydantic_ai._utils import is_str_dict as _is_str_dict
 
 from ... import _instructions
 from ...messages import (
+    _FILE_URL_KINDS,  # pyright: ignore[reportPrivateUsage]
     AudioUrl,
     BinaryContent,
     CachePoint,
@@ -27,6 +28,7 @@ from ...messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    MultiModalContent,
     NativeToolCallPart,
     NativeToolReturnPart,
     RetryPromptPart,
@@ -1127,36 +1129,62 @@ def _denial_reason(part: ToolUIPart | DynamicToolUIPart) -> str:
 def _validate_tool_output(output: Any) -> Any:
     """Rehydrate `ToolOutputAvailablePart.output` (typed `Any` on the wire) into `ToolReturnContent`.
 
-    `tool_return_content_ta` runs the lifted `Discriminator` on the union, so multimodal items
+    `tool_return_content_ta` resolves the `ToolReturnContent` union, so multimodal items
     (`BinaryContent`, `ImageUrl`, etc.) come back as their subclasses instead of raw dicts.
-    `BinaryContent` instances with image media types are narrowed to `BinaryImage`. JS-serialized
-    binary shapes are coerced to `bytes` first (see `_coerce_js_binary_data`).
+    `BinaryContent` instances with image media types are narrowed to `BinaryImage`. The file shapes a
+    browser tool is documented to return are completed first (see `_normalize_client_file_shapes`).
     """
-    return tool_return_content_ta.validate_python(_coerce_js_binary_data(output))
+    return tool_return_content_ta.validate_python(_normalize_client_file_shapes(output))
 
 
-def _coerce_js_binary_data(value: Any) -> Any:
-    """Convert `BinaryContent.data` shapes that JavaScript frontends commonly emit into `bytes`.
+_multi_modal_content_ta: TypeAdapter[MultiModalContent] = TypeAdapter(MultiModalContent)
+"""Builds a URL item from the client's own mapping, so `_normalize_client_file_shapes` can read back the
+media type the type itself infers rather than repeating that inference here."""
 
-    This is what lets a Vercel AI [client-side tool](https://ai-sdk.dev/docs/ai-sdk-ui/chatbot-tool-usage)
-    (resolved server-side as an external/deferred tool call) return a file — an image, say — by putting a
-    `{kind: 'binary', media_type: ..., data: ...}` shape in its output, without base64-encoding the bytes
-    by hand. `JSON.stringify` serializes a `Uint8Array` as `{'0': N, '1': N, ...}` and a Node `Buffer` as
-    `{'type': 'Buffer', 'data': [N, ...]}`; pydantic's bytes validator rejects both, so we normalize them
-    (and pass base64 strings through untouched) at the wire boundary before validation. A file the agent
-    itself produced round-trips as base64 and never hits these shapes.
+
+def _normalize_client_file_shapes(value: Any) -> Any:
+    """Complete the file shapes a Vercel AI client-side tool is documented to return.
+
+    A [client-side tool](https://ai-sdk.dev/docs/ai-sdk-ui/chatbot-tool-usage) (resolved server-side as
+    an external/deferred tool call) returns a file by putting a shape matching one of our multi-modal
+    types in its output, and `docs/ui/vercel-ai.md` documents two of those shapes in forms the
+    `ToolReturnContent` union cannot take as they stand:
+
+    - `{kind: 'binary', media_type: ..., data: ...}` with the raw bytes a JavaScript frontend produces:
+      `JSON.stringify` serializes a `Uint8Array` as `{'0': N, '1': N, ...}` and a Node `Buffer` as
+      `{'type': 'Buffer', 'data': [N, ...]}`, both of which pydantic's bytes validator rejects. Base64
+      strings pass through untouched, which is what a file the agent itself produced round-trips as.
+    - `{kind: 'image-url', url: ...}` and its three siblings with no `media_type`: the union requires
+      one of a URL item, so we infer it here the way the type itself would, by building the item and
+      reading back the media type it derived from the URL. A URL the type cannot derive one from is
+      left alone, and reaches the agent as the ordinary mapping it is rather than as a file that would
+      raise the moment the history is dumped.
+
+    Everything else is passed through, and a plain user mapping that merely reuses one of our `kind`
+    values keeps the values its tool put in it: the binary branch is gated on the `media_type` a real
+    `BinaryContent` carries, and the URL branch validates the mapping as it stands, so it writes a
+    media type only into a mapping that is already the file it claims to be.
     """
     if isinstance(value, list):
-        return [_coerce_js_binary_data(v) for v in value]  # pyright: ignore[reportUnknownVariableType]
+        return [_normalize_client_file_shapes(v) for v in value]  # pyright: ignore[reportUnknownVariableType]
     if not isinstance(value, dict):
         return value
-    coerced: dict[str, Any] = {k: _coerce_js_binary_data(v) for k, v in value.items()}  # pyright: ignore[reportUnknownVariableType]
-    # Gate on `media_type` (the type-specific field a real `BinaryContent` carries) so this matches
-    # the core `ToolReturnContent` discriminator: a plain user mapping that merely reuses
-    # `kind: 'binary'` stays untouched instead of having its `data` rewritten to bytes.
-    if coerced.get('kind') == 'binary' and 'media_type' in coerced:
-        coerced['data'] = _js_binary_to_bytes(coerced.get('data'))
-    return coerced
+    normalized: dict[str, Any] = {k: _normalize_client_file_shapes(v) for k, v in value.items()}  # pyright: ignore[reportUnknownVariableType]
+    kind = normalized.get('kind')
+    if kind == 'binary' and 'media_type' in normalized:
+        normalized['data'] = _js_binary_to_bytes(normalized.get('data'))
+    # Absent, `null` or `''` are the three ways a client leaves the media type open — `File.type` is
+    # `''` whenever the browser cannot tell — and are what `FileUrl` itself treats as "infer one". A
+    # `media_type` of any other shape is the client's own value and is left for validation to judge.
+    elif kind in _FILE_URL_KINDS and normalized.get('media_type') in (None, ''):
+        try:
+            normalized['media_type'] = _multi_modal_content_ta.validate_python(normalized).media_type
+        except ValueError:
+            # `Could not infer media type`, or a mapping the type rejects — a missing `url` included:
+            # leave it as the client sent it, rather than adding a key to something that stays a plain
+            # mapping anyway.
+            pass
+    return normalized
 
 
 def _js_binary_to_bytes(data: Any) -> Any:
