@@ -2719,9 +2719,12 @@ class RealtimeSession:
             self._begin_response()
         self.usage.incr(event.usage)
         if event.response_scoped:
+            # Measured before accumulating: a tool-call response is finalized by the accumulation
+            # itself, which resets the accumulator.
+            response_input_tokens = (self._pending_response_usage + event.usage).input_tokens
             self._accumulate_response_usage(event)
             if self._usage_limits is not None:
-                self._usage_limits.check_per_request_input_tokens(self._pending_response_usage.input_tokens)
+                self._usage_limits.check_per_request_input_tokens(response_input_tokens)
         # Response pricing happens at finalization, so cost is provisionally unavailable here.
         self._check_usage_limits(warn_if_cost_unavailable=False)
         if self._asap_drain_ready:

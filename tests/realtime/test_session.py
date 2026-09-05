@@ -7156,6 +7156,24 @@ async def test_agent_realtime_session_per_request_input_token_limit_raises() -> 
             _ = [e async for e in session]
 
 
+async def test_agent_realtime_session_per_request_input_token_limit_covers_a_tool_call_response() -> None:
+    """OpenAI reports a tool-call response's usage right before `response.done`, which finalizes the
+    response immediately; the per-request check must see that usage rather than the reset accumulator."""
+    conn = FakeRealtimeConnection(
+        [
+            ToolCall(tool_call_id='tc1', tool_name='noop', args='{}'),
+            SessionUsage(usage=RequestUsage(input_tokens=51), response_scoped=True),
+            ResponseDone(),
+        ]
+    )
+    agent: Agent[None, str] = Agent()
+    async with agent.realtime(
+        FakeRealtimeModel(conn), usage_limits=UsageLimits(per_request_input_tokens_limit=50)
+    ).session() as session:
+        with pytest.raises(UsageLimitExceeded, match='per_request_input_tokens_limit of 50'):
+            _ = [e async for e in session]
+
+
 async def test_agent_realtime_session_request_limit_raises() -> None:
     conn = FakeRealtimeConnection(
         [
