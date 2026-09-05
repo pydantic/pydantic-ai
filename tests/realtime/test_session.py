@@ -15,6 +15,7 @@ from typing import Any, Literal, TypeVar, cast
 import anyio
 import pytest
 from inline_snapshot import snapshot
+from opentelemetry.context import Context
 from pydantic_core import SchemaValidator, core_schema
 
 from pydantic_ai import Agent, ModelRetry, RunContext
@@ -2790,6 +2791,34 @@ async def test_tool_error_ends_views_when_the_stream_was_never_iterated() -> Non
             assert await asyncio.wait_for(_collect(session.stream_transcripts()), timeout=1) == []
 
 
+async def test_tool_error_preempts_send_while_receive_pump_is_ending() -> None:
+    """A send cannot slip between a taps-only tool failure and the cancelled pump finishing."""
+    pump_cancelled = asyncio.Event()
+
+    class SlowPumpSession(_RealtimeSession):
+        async def _pump(self, context: Context | None) -> None:
+            try:
+                await super()._pump(context)
+            except asyncio.CancelledError:
+                pump_cancelled.set()
+                await asyncio.Event().wait()
+
+    async def runner(*args: Any) -> str:
+        raise ValueError('tool exploded')
+
+    session = SlowPumpSession(
+        BlockingRealtimeConnection([ToolCall(tool_call_id='tc1', tool_name='noop', args='{}')]),
+        tool_manager=make_tool_manager(runner),
+    )
+    await session.__aenter__()
+    await asyncio.wait_for(pump_cancelled.wait(), timeout=1)
+    assert session._pump_task is not None and not session._pump_task.done()  # pyright: ignore[reportPrivateUsage]
+
+    with pytest.raises(ValueError, match='tool exploded'):
+        await session.send('x')
+    await session.close()
+
+
 async def test_tool_retry_exhaustion_ends_views_when_the_stream_was_never_iterated() -> None:
     async def runner(*args: Any) -> str:
         raise UnexpectedModelBehavior('retry budget exhausted')
@@ -2827,6 +2856,145 @@ async def test_tool_error_leaves_views_open_for_an_iterating_consumer() -> None:
         assert session._pump_task is not None and not session._pump_task.done()  # pyright: ignore[reportPrivateUsage]
     with pytest.raises(StopAsyncIteration):
         await anext(audio)
+
+
+async def test_tool_error_does_not_preempt_send_for_an_active_iterator() -> None:
+    async def runner(*args: Any) -> str:
+        raise ValueError('tool exploded')
+
+    conn = BlockingRealtimeConnection([ToolCall(tool_call_id='tc1', tool_name='noop', args='{}')])
+    session = RealtimeSession(conn, runner=runner)
+    async with session:
+        events = session.__aiter__()
+        assert isinstance(await anext(events), PartStartEvent)
+        assert isinstance(await anext(events), PartEndEvent)
+        assert isinstance(await anext(events), FunctionToolCallEvent)
+        # The failure is parked by the tool task itself, so it is there once that task has finished.
+        await asyncio.gather(*session._background_tasks, return_exceptions=True)  # pyright: ignore[reportPrivateUsage]
+
+        await session.send('x')
+        assert conn.sent[-1] == 'x'
+        with pytest.raises(ValueError, match='tool exploded'):
+            await anext(events)
+
+
+async def test_tool_error_delivered_to_send_is_skipped_by_the_iterator() -> None:
+    """Once the receive side has ended, a send raises the parked failure; the iterator then ends cleanly."""
+
+    async def runner(*args: Any) -> str:
+        raise ValueError('tool exploded')
+
+    conn = FakeRealtimeConnection([ToolCall(tool_call_id='tc1', tool_name='noop', args='{}')])
+    session = RealtimeSession(conn, runner=runner)
+    async with session:
+        events = session.__aiter__()
+        assert isinstance(await anext(events), PartStartEvent)
+        assert isinstance(await anext(events), PartEndEvent)
+        assert isinstance(await anext(events), FunctionToolCallEvent)
+        await asyncio.gather(*session._background_tasks, return_exceptions=True)  # pyright: ignore[reportPrivateUsage]
+        assert session._pump_task is not None  # pyright: ignore[reportPrivateUsage]
+        await session._pump_task  # pyright: ignore[reportPrivateUsage]
+
+        with pytest.raises(ValueError, match='tool exploded'):
+            await session.send('x')
+        with pytest.raises(StopAsyncIteration):
+            await anext(events)
+
+
+async def test_pump_error_delivered_to_send_is_not_raised_again_by_the_iterator() -> None:
+    class _DyingConnection(FakeRealtimeConnection):
+        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+            yield RealtimeInputSpeechStartEvent()
+            raise RuntimeError('socket died')
+
+    session = RealtimeSession(_DyingConnection([]))
+    async with session:
+        events = session.__aiter__()
+        assert isinstance(await anext(events), RealtimeInputSpeechStartEvent)
+        assert session._pump_task is not None  # pyright: ignore[reportPrivateUsage]
+        await session._pump_task  # pyright: ignore[reportPrivateUsage]
+
+        with pytest.raises(RuntimeError, match='socket died'):
+            await session.send('x')
+        with pytest.raises(StopAsyncIteration):
+            await anext(events)
+
+
+@pytest.mark.parametrize('consumer', ['iterating', 'taps_only', 'iterated_then_taps'])
+async def test_pending_message_error_is_delivered_once_to_every_consumer_shape(
+    consumer: Literal['iterating', 'taps_only', 'iterated_then_taps'],
+) -> None:
+    """A failed background enqueue cannot remain parked on an unread event queue."""
+    events: list[RealtimeCodecEvent] = [RealtimeInputSpeechStartEvent()] if consumer == 'iterated_then_taps' else []
+    session = RealtimeSession(
+        BlockingRealtimeConnection(events),
+        usage_limits=UsageLimits(request_limit=0),
+    )
+    await session.__aenter__()
+
+    event_task: asyncio.Task[list[RealtimeEvent]] | None = None
+    if consumer == 'iterating':
+        event_task = asyncio.create_task(drain_events(session))
+        await asyncio.sleep(0)
+    elif consumer == 'iterated_then_taps':
+        iterator = session.__aiter__()
+        assert isinstance(await anext(iterator), RealtimeInputSpeechStartEvent)
+        assert isinstance(iterator, AsyncGenerator)
+        await iterator.aclose()
+
+    transcripts = session.stream_transcripts()
+    session.enqueue('too expensive')
+
+    if event_task is not None:
+        with pytest.raises(UsageLimitExceeded, match='request_limit of 0'):
+            await asyncio.wait_for(event_task, timeout=1)
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(anext(transcripts), timeout=0.05)
+        await session.close()
+    else:
+        assert await asyncio.wait_for(_collect(transcripts), timeout=1) == []
+        with pytest.raises(UsageLimitExceeded, match='request_limit of 0'):
+            await session.close()
+        await session.close()
+    assert session.result is None
+
+
+async def test_receive_failure_is_delivered_by_next_send() -> None:
+    """A send-only bridge exits when the already-ended receive side failed."""
+    session = RealtimeSession(ExplodingConnection())
+    await session.__aenter__()
+    assert session._pump_task is not None  # pyright: ignore[reportPrivateUsage]
+    await session._pump_task  # pyright: ignore[reportPrivateUsage]
+
+    with pytest.raises(RuntimeError, match='connection dropped'):
+        await session.send_audio(b'next microphone chunk')
+    await session.close()
+    assert session.result is None
+
+
+async def test_session_entry_starts_receive_pump() -> None:
+    """Entering alone is enough to observe a fatal provider frame at context exit."""
+    session = RealtimeSession(ExplodingConnection())
+    with pytest.raises(RuntimeError, match='connection dropped'):
+        async with session:
+            await asyncio.sleep(0)
+    await session.close()
+    assert session.result is None
+
+
+async def test_failed_taps_only_agent_session_has_no_result() -> None:
+    agent: Agent[None, str] = Agent()
+    session: _RealtimeSession | None = None
+    with pytest.raises(UsageLimitExceeded, match='request_limit of 0'):
+        async with agent.realtime(
+            FakeRealtimeModel(BlockingRealtimeConnection([])),
+            usage_limits=UsageLimits(request_limit=0),
+        ).session() as session:
+            session.enqueue('too expensive')
+            assert await asyncio.wait_for(_collect(session.stream_transcripts()), timeout=1) == []
+
+    assert session is not None
+    assert session.result is None
 
 
 async def _collect(iterator: AsyncIterator[Any]) -> list[Any]:
@@ -3268,6 +3436,29 @@ async def test_send_audio_accepts_async_iterable() -> None:
         BinaryAudio(data=b'\x01\x02', media_type='audio/pcm'),
         BinaryAudio(data=b'\x03\x04', media_type='audio/pcm'),
     ]
+
+
+async def test_send_audio_iterable_waits_for_next_chunk_after_close() -> None:
+    """Closing does not cancel into a caller-owned async iterable that is blocked between chunks."""
+    source_blocked = asyncio.Event()
+    next_chunk = asyncio.Event()
+
+    async def microphone() -> AsyncIterator[bytes]:
+        yield b'first'
+        source_blocked.set()
+        await next_chunk.wait()
+        yield b'after close'
+
+    conn = BlockingRealtimeConnection([])
+    async with RealtimeSession(conn) as session:
+        sender = asyncio.create_task(session.send_audio(microphone()))
+        await source_blocked.wait()
+        await session.close()
+        assert not sender.done()
+        next_chunk.set()
+        await sender
+
+    assert conn.sent == [BinaryAudio(data=b'first', media_type='audio/pcm')]
 
 
 async def test_send_dispatches_through_bookkeeping_helpers() -> None:
@@ -5886,12 +6077,15 @@ async def test_tool_completion_drains_messages_deferred_until_usage_arrives(monk
     assert 'after tool' in conn.sent
 
 
-async def test_deferred_asap_drain_failure_after_tool_is_forwarded(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize('consumer', ['iterating', 'taps_only'])
+async def test_deferred_asap_drain_failure_after_tool_is_forwarded(
+    monkeypatch: pytest.MonkeyPatch, consumer: Literal['iterating', 'taps_only']
+) -> None:
     # The post-`finally` deferred `asap` drain in `_run_tool` runs OUTSIDE its try/except. If its
     # `connection.send` fails (e.g. the socket just dropped), `_tool_task_done` must forward the error to
     # the consumer — mirroring `_pending_message_task_done` — instead of letting it vanish as an
     # unretrieved-task-exception warning at GC, silently losing the enqueued follow-up.
-    class _FailingDrain(FakeRealtimeConnection):
+    class _FailingDrain(BlockingRealtimeConnection):
         async def send(self, content: RealtimeInput) -> None:
             if isinstance(content, str):
                 raise RuntimeError('drain send failed')
@@ -5900,6 +6094,10 @@ async def test_deferred_asap_drain_failure_after_tool_is_forwarded(monkeypatch: 
 
     conn = _FailingDrain([])
     session = RealtimeSession(conn)
+    await session.__aenter__()
+    event_task = asyncio.create_task(drain_events(session)) if consumer == 'iterating' else None
+    transcripts = session.stream_transcripts()
+    await asyncio.sleep(0)
     session._asap_drain_deferred = True  # pyright: ignore[reportPrivateUsage]
     session._pending_messages.append(  # pyright: ignore[reportPrivateUsage]
         PendingMessage(messages=[ModelRequest(parts=[UserPromptPart(content='after tool')])], priority='asap')
@@ -5939,10 +6137,15 @@ async def test_deferred_asap_drain_failure_after_tool_is_forwarded(monkeypatch: 
     await asyncio.gather(task, return_exceptions=True)
     await asyncio.sleep(0)  # let the done-callback run
 
-    queued: list[Any] = []
-    while not session._queue.empty():  # pyright: ignore[reportPrivateUsage]
-        queued.append(session._queue.get_nowait())  # pyright: ignore[reportPrivateUsage]
-    assert any(isinstance(item, RuntimeError) and str(item) == 'drain send failed' for item in queued)
+    if event_task is not None:
+        with pytest.raises(RuntimeError, match='drain send failed'):
+            await event_task
+        await session.close()
+    else:
+        assert await asyncio.wait_for(_collect(transcripts), timeout=1) == []
+        with pytest.raises(RuntimeError, match='drain send failed'):
+            await session.close()
+    await session.close()
 
 
 async def test_tool_call_limit_stops_pump_before_later_events() -> None:
@@ -6053,9 +6256,6 @@ async def test_tool_call_limit_counts_in_flight_calls() -> None:
 async def test_iterator_reuses_receive_pump_started_by_session_owner() -> None:
     session = RealtimeSession(FakeRealtimeConnection([ResponseDone()]))
     async with session:
-        session._pump_task = asyncio.create_task(  # pyright: ignore[reportPrivateUsage]
-            session._pump(session._session_instrumentation.context)  # pyright: ignore[reportPrivateUsage]
-        )
         assert [event async for event in session] == [RealtimeTurnCompleteEvent()]
 
 
@@ -6586,6 +6786,48 @@ async def test_tool_can_close_realtime_session_without_iterating(loop_errors: li
         ('tc', 'The tool call was interrupted before a result was produced.', 'interrupted')
     ]
     assert loop_errors == []
+
+
+@pytest.mark.parametrize('consumer', ['iterating', 'taps_only'])
+async def test_tool_close_ends_async_audio_sender_cleanly(
+    loop_errors: list[dict[str, Any]], consumer: Literal['iterating', 'taps_only']
+) -> None:
+    """A microphone task owned by the app does not fail when a tool hangs up."""
+    agent = Agent[None, str](deps_type=type(None))
+    microphone_started = asyncio.Event()
+
+    @agent.tool
+    async def hang_up(ctx: RunContext[None]) -> None:
+        assert ctx.realtime_session is not None
+        await microphone_started.wait()
+        await ctx.realtime_session.close()
+
+    async def microphone() -> AsyncIterator[bytes]:
+        microphone_started.set()
+        while True:
+            yield b'\x00\x00'
+            await asyncio.sleep(0)
+
+    conn = IdleAfterToolConnection(ToolCall(tool_call_id='tc', tool_name='hang_up', args='{}'))
+    with anyio.fail_after(5):
+        async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
+            microphone_task = asyncio.create_task(session.send_audio(microphone()))
+            if consumer == 'iterating':
+                _ = [event async for event in session]
+            else:
+                assert [chunk async for chunk in session.stream_audio()] == []
+            await microphone_task
+
+    assert session.result is not None
+    assert loop_errors == []
+
+
+async def test_single_audio_chunk_still_fails_after_close() -> None:
+    session = RealtimeSession(FakeRealtimeConnection([]))
+    async with session:
+        pass
+    with pytest.raises(UserError, match='session is closed'):
+        await session.send_audio(b'\x00\x00')
 
 
 async def test_tool_that_swallows_the_cancel_after_closing_records_one_return(
