@@ -283,6 +283,14 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
     ) -> AgentRunResult[Any]:
         return await self.wrapped.after_run(ctx, result=result)
 
+    def _after_run_finalized(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        result: AgentRunResult[Any],
+    ) -> None:
+        self.wrapped._after_run_finalized(ctx, result=result)
+
     async def wrap_run(
         self,
         ctx: RunContext[AgentDepsT],

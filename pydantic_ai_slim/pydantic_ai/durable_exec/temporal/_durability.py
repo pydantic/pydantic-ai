@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Generator, Mapping
+from collections.abc import AsyncIterable, Callable, Generator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import timedelta
@@ -8,13 +8,18 @@ from typing import Any, Literal, cast
 
 from pydantic_core import PydanticSerializationError
 from temporalio import workflow
+from temporalio.client import Client, WorkflowHandle
 from temporalio.workflow import ActivityConfig
 
 from pydantic_ai._agent_graph import set_agent_graph_sleep
+from pydantic_ai._utils import aclose_if_supported
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities.abstract import WrapRunHandler
-from pydantic_ai.durable_exec._base import BaseDurabilityCapability
+from pydantic_ai.durable_exec._base import (
+    MODEL_RESPONSE_STREAM_EVENT_TYPES,
+    BaseDurabilityCapability,
+)
 from pydantic_ai.durable_exec._capability_operation import CapabilityMethodDeclaration
 from pydantic_ai.durable_exec._codec import IDENTITY_CODEC
 from pydantic_ai.durable_exec._operation import (
@@ -28,14 +33,24 @@ from pydantic_ai.durable_exec._spec import DurabilityEngineSpec
 from pydantic_ai.durable_exec._toolset import DurableToolsetBase, validation_context_from_agent
 from pydantic_ai.durable_exec._utils import StreamedActivityResult, disable_threads, managed_model_scope
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ModelResponse
+from pydantic_ai.messages import AgentStreamEvent, ModelResponse
 from pydantic_ai.models import CompletedStreamedResponse, Model, ModelRequestParameters, infer_model
+from pydantic_ai.output import OutputDataT
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, ToolsetTool, WrapperToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.toolsets.function import FunctionToolsetTool
 
+from ._event_stream import (
+    DurableAgentRunEvents,
+    WorkflowStreamTopic,
+    _coerce_workflow_stream_topic,  # pyright: ignore[reportPrivateUsage]
+    publish_agent_event,
+    publish_agent_result,
+    stream_agent_events,
+    workflow_stream_event_handler,
+)
 from ._operation_backend import TemporalBoundOperation, TemporalOperationBackend
 from ._run_context import TemporalRunContext, deserialize_run_context
 from ._toolset import (
@@ -151,6 +166,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         *,
         models: Mapping[str, Model] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        event_stream_topic: str | WorkflowStreamTopic | None = None,
         name: str | None = None,
         deps_type: type[AgentDepsT] | None = None,
         activity_config: ActivityConfig | None = None,
@@ -182,6 +198,17 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             event_stream_handler: Optional event stream handler. Model events are handled
                 live inside model-request activities, and tool events are handled in
                 per-event activities.
+            event_stream_topic: If set, the run's events are published to this
+                [Workflow Stream](https://docs.temporal.io/develop/python/workflows/workflow-streams)
+                topic on the workflow running the agent, so a consumer outside the workflow can
+                observe them in real time with
+                [`stream_agent_events()`][pydantic_ai.durable_exec.temporal.TemporalDurability.stream_agent_events]
+                — no separate message queue needed. The workflow has to host an
+                [`AgentEventStream`][pydantic_ai.durable_exec.temporal.AgentEventStream]. Pass a
+                [`WorkflowStreamTopic`][pydantic_ai.durable_exec.temporal.WorkflowStreamTopic] rather
+                than a bare name to filter which events are published or to tune the flush interval.
+                Orthogonal to `event_stream_handler`: setting the topic enables streaming on its own,
+                and when both are set the handler still sees every event.
             name: Unique agent name used in the Temporal activity names. Defaults to the agent's
                 `name` when the capability is bound.
             deps_type: The type of the agent's dependencies, needed for Temporal
@@ -212,6 +239,9 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             (only valid for async tool functions).
         """
         super().__init__(models=models, event_stream_handler=event_stream_handler, name=name)
+        self._event_stream_topic = (
+            _coerce_workflow_stream_topic(event_stream_topic) if event_stream_topic is not None else None
+        )
         self.run_context_type = run_context_type
         self._deps_type = deps_type
 
@@ -468,6 +498,98 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
 
         with disable_threads(), set_agent_graph_sleep(workflow.sleep):
             return await handler()
+
+    def _after_run_finalized(self, ctx: RunContext[AgentDepsT], *, result: AgentRunResult[Any]) -> None:
+        """Publish the run's terminal event once every success-path finalizer has accepted it."""
+        if (topic := self._event_stream_topic) is not None and self.in_durable_context:
+            publish_agent_result(topic.name, result)
+
+    @property
+    def has_wrap_run_event_stream(self) -> bool:
+        # A topic on its own is a reason to stream, even without an `event_stream_handler`. Outside a
+        # workflow there is nothing to publish to, so it isn't a reason to stream there.
+        return super().has_wrap_run_event_stream or (self._event_stream_topic is not None and self.in_durable_context)
+
+    def _model_stream_event_handler(self) -> EventStreamHandler[AgentDepsT] | None:
+        """Publish the live model stream to the topic from inside the model-request activity.
+
+        Model events are the only ones worth sending out of an activity: they're produced there, and
+        waiting for the activity to finish before publishing them would defeat the point of streaming
+        tokens. Everything else is published from workflow code by `wrap_run_event_stream`.
+        """
+        handler = super()._model_stream_event_handler()
+        if (topic := self._event_stream_topic) is None:
+            return handler
+        return workflow_stream_event_handler(topic, handler=handler)
+
+    async def wrap_run_event_stream(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        stream: AsyncIterable[AgentStreamEvent],
+    ) -> AsyncIterable[AgentStreamEvent]:
+        """Publish the run's workflow-side events to the topic."""
+        events = super().wrap_run_event_stream(ctx, stream=stream)
+        if (topic := self._event_stream_topic) is None or not self.in_durable_context:
+            async for event in events:
+                yield event
+            return
+
+        # Model events already went out from the activity that produced them; the copies replayed
+        # here are the same events. Everything else originates in workflow code, where publishing is
+        # free (no activity, no signal) and replay-safe, as replay rebuilds the log identically.
+        try:
+            async for event in events:
+                if not isinstance(event, MODEL_RESPONSE_STREAM_EVENT_TYPES) and (
+                    topic.events is None or topic.events(event)
+                ):
+                    publish_agent_event(topic.name, event)
+                yield event
+        finally:
+            await aclose_if_supported(events)
+
+    def stream_agent_events(
+        self,
+        client: Client,
+        handle: WorkflowHandle[Any, Any],
+        *,
+        output_type: type[OutputDataT] = cast('type[Any]', Any),
+        topic: str | WorkflowStreamTopic | None = None,
+        from_offset: int = 0,
+        poll_cooldown: timedelta = timedelta(milliseconds=100),
+    ) -> DurableAgentRunEvents[OutputDataT]:
+        """Subscribe to the events a durable agent run publishes to its `event_stream_topic`.
+
+        This is a durable [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events]
+        across the workflow boundary: the events arrive typed and in order, ending with the
+        [`AgentRunResultEvent`][pydantic_ai.run.AgentRunResultEvent] that carries the run's result.
+        They can be handed straight to a [`UIAdapter`][pydantic_ai.ui.UIAdapter] to drive a frontend.
+
+        Args:
+            client: A Temporal `Client` configured with
+                [`PydanticAIPlugin`][pydantic_ai.durable_exec.temporal.PydanticAIPlugin], so events
+                decode back into typed Pydantic AI events.
+            handle: The handle for the workflow running the agent.
+            output_type: The agent's output type, so the terminal event's result is decoded into it.
+            topic: The topic to subscribe to. Defaults to this capability's `event_stream_topic`.
+            from_offset: The stream offset to start from, inclusive; pass `offset + 1` to resume.
+            poll_cooldown: How long to wait between polls when no new events are ready. Must be
+                greater than zero.
+        """
+        topic = topic if topic is not None else self._event_stream_topic
+        if topic is None:
+            raise UserError(
+                'This `TemporalDurability` has no `event_stream_topic`, so there is no stream to '
+                'subscribe to. Set one on the capability, or pass `topic=` here.'
+            )
+        return stream_agent_events(
+            client,
+            handle,
+            topic,
+            output_type=output_type,
+            from_offset=from_offset,
+            poll_cooldown=poll_cooldown,
+        )
 
     async def on_run_error(self, ctx: RunContext[AgentDepsT], *, error: BaseException) -> AgentRunResult[Any]:
         """Explain a serialization failure raised while scheduling an activity.

@@ -308,6 +308,7 @@ async def _run_lifecycle_hooks(  # noqa: C901
         # finalize as a success.
         _utils.raise_if_cancelling()
         await finalize(result)
+        run_capability._after_run_finalized(run_ctx, result=result)  # pyright: ignore[reportPrivateUsage]
         _run_error = None
 
     short_circuited = _wrap_task.done() and not _run_ready.is_set()
