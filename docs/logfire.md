@@ -435,3 +435,7 @@ The `gen_ai.tool.definitions` attribute (tool name, description, and parameters)
 Use the agent's `metadata` parameter to attach additional data to the agent's span.
 When instrumentation is enabled, the computed metadata is recorded on the agent span under the `metadata` attribute.
 See the [usage and metadata example in the agents guide](agent.md#run-metadata) for details and usage.
+
+### The first-run banner
+
+Until instrumentation is configured, the first agent run in a process prints a short banner to `stderr` describing the run and pointing here. It's only shown interactively: never when instrumentation is configured, when `stderr` isn't a terminal, or when `CI` is set to any value. Set `PYDANTIC_AI_NO_BANNER` to any value to turn it off entirely.

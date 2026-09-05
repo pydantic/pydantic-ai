@@ -41,6 +41,7 @@ from pydantic_ai.capabilities._deferred_capability_loader import DeferredCapabil
 
 from .. import (
     _agent_graph,
+    _display,
     _instructions,
     _output,
     _system_prompt,
@@ -1528,7 +1529,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         model_contribution = None if model_is_explicit else bootstrap_capability.get_model()
         self._check_dynamic_model_resume(model_contribution, message_history)
 
-        has_default_model = self._override_model.get() is not None or model is not None or self.model is not None
+        has_default_model = self._has_model(model)
 
         # The string the run's model was selected from, if any — carried through to
         # `ModelRequestContext.model_id` so durable-execution capabilities can round-trip
@@ -1826,6 +1827,19 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 resolved_models=resolved_models_by_selection,
             )
 
+        def display_banner(*, model: str, tools: int) -> None:
+            # Called by the graph once the run's first step has resolved the model it will actually
+            # use and the tools it will actually offer; everything else is settled here and now.
+            _display.display_agent_banner(
+                name=self.name,
+                model=model,
+                # A run-level `output_type=` overrides what the agent was built with.
+                output_type=output_type_,
+                tools=tools,
+                capabilities=_registered_capability_count(bootstrap_capability),
+                instrumented=instrumentation_settings is not None,
+            )
+
         model_resources = _RunModelResources(self._entered_model_ids.copy())
         graph_deps = _agent_graph.GraphAgentDeps[AgentDepsT, OutputDataT](
             user_deps=deps,
@@ -1853,6 +1867,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             discovered_tool_names=discovered_tool_names,
             native_tools=cap_native_tools,
             tool_manager=tool_manager,
+            display_banner=display_banner,
             tracer=tracer,
             get_instructions=get_instructions,
             instrumentation_settings=instrumentation_settings,
@@ -2246,7 +2261,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         usage = usage or _usage.RunUsage()
         messages = list(message_history or [])
         capability = self._effective_root_capability()
-        has_default_model = self._override_model.get() is not None or model is not None or self.model is not None
+        has_default_model = self._has_model(model)
         default_model = (
             await self._resolve_model_selection(self._pick_raw_model(model), capability=capability, deps=deps)
             if has_default_model
@@ -2828,6 +2843,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             return func_
 
         return toolset_decorator if func is None else toolset_decorator(func)
+
+    def _has_model(self, model: models.Model | models.KnownModelName | str | None) -> bool:
+        """Whether a run given `model` would have one to use, counting an `override(model=...)`.
+
+        What `_pick_raw_model` answers for, asked ahead of it by callers that would rather not have
+        it raise. A capability can still contribute a model when this is False.
+        """
+        return model is not None or self._override_model.get() is not None or self.model is not None
 
     def _pick_raw_model(
         self, model: models.Model | models.KnownModelName | str | None
@@ -4289,6 +4312,15 @@ _AUTO_INJECT_CAPABILITY_TYPES: tuple[type[AbstractCapability[Any]], ...] = (
     PendingMessageDrainCapability,
 )
 """Infrastructure capabilities auto-injected when not already present."""
+
+
+def _registered_capability_count(capability: AbstractCapability[Any]) -> int:
+    """Count the capabilities the user registered, for a `pydantic_ai._display` banner.
+
+    Infrastructure capabilities are injected for every agent, so counting those would say nothing
+    about the agent the user actually wrote.
+    """
+    return sum(not isinstance(leaf, _AUTO_INJECT_CAPABILITY_TYPES) for leaf in leaf_capabilities(capability))
 
 
 def _inject_auto_capabilities(capabilities: list[AbstractCapability[Any]]) -> None:
