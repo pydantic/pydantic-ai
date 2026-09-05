@@ -4080,7 +4080,7 @@ def _queued_realtime_events(session: _RealtimeSession) -> list[RealtimeEvent]:
 
 
 async def test_unconsumed_session_queue_keeps_structural_events_and_latest_deltas() -> None:
-    chunks = [index.to_bytes(2) for index in range(2000)]
+    chunks = [index.to_bytes(2, 'big') for index in range(2000)]
     connection = FakeRealtimeConnection(
         [
             RealtimeInputSpeechStartEvent(),
@@ -4114,7 +4114,7 @@ async def test_unconsumed_session_queue_keeps_structural_events_and_latest_delta
 
 
 async def test_active_session_iterator_does_not_drop_deltas() -> None:
-    chunks = [index.to_bytes(2) for index in range(2000)]
+    chunks = [index.to_bytes(2, 'big') for index in range(2000)]
     async with RealtimeSession(FakeRealtimeConnection([AudioDelta(chunk) for chunk in chunks])) as session:
         events = [event async for event in session]
         assert [
@@ -4126,10 +4126,11 @@ async def test_active_session_iterator_does_not_drop_deltas() -> None:
 
 
 async def test_closing_session_iterator_bounds_remaining_deltas() -> None:
-    chunks = [index.to_bytes(2) for index in range(2000)]
+    chunks = [index.to_bytes(2, 'big') for index in range(2000)]
     async with RealtimeSession(FakeRealtimeConnection([AudioDelta(chunk) for chunk in chunks])) as session:
         events = session.__aiter__()
         assert isinstance(await anext(events), PartStartEvent)
+        assert isinstance(events, AsyncGenerator)
         await events.aclose()
 
         assert session._queue_delta_count == 512  # pyright: ignore[reportPrivateUsage]
@@ -4137,7 +4138,7 @@ async def test_closing_session_iterator_bounds_remaining_deltas() -> None:
 
 
 async def test_unconsumed_session_queue_keeps_parked_exception() -> None:
-    chunks = [index.to_bytes(2) for index in range(2000)]
+    chunks = [index.to_bytes(2, 'big') for index in range(2000)]
     session = RealtimeSession(FakeRealtimeConnection([AudioDelta(chunk) for chunk in chunks]))
 
     with pytest.raises(RuntimeError, match='tool failed'):

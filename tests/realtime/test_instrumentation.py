@@ -1075,7 +1075,7 @@ async def test_session_span_counts_dropped_transcript_deltas() -> None:
 
 async def test_session_span_counts_dropped_session_queue_deltas() -> None:
     settings, exporter = _settings()
-    chunks = [index.to_bytes(2) for index in range(520)]
+    chunks = [index.to_bytes(2, 'big') for index in range(520)]
     session = RealtimeSession(
         _Connection([AudioDelta(chunk) for chunk in chunks]),
         _ok_runner,
