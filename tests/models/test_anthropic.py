@@ -3890,6 +3890,7 @@ async def test_anthropic_model_thinking_part_from_other_model(
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 9, 10, 22, 37, 27, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id='resp_68c1fda6f11081a1b9fa80ae9122743506da9901a3d98ab7',
                 finish_reason='stop',
@@ -9013,6 +9014,7 @@ async def test_anthropic_server_tool_pass_history_to_another_provider(
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 11, 19, 23, 41, 8, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id='resp_0dcd74f01910b54500691e5594957481a0ac36dde76eca939f',
                 finish_reason='stop',
