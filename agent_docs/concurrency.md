@@ -1,23 +1,25 @@
 # Async & Concurrency
 
-> Rules for `asyncio`/`anyio` code, almost all of them paid for by a real bug in this repo
+> Rules for `asyncio`/`anyio` code, most of them paid for by a real bug in this repo
 
 **When to check**: Whenever you write or review code that spawns a task, opens a task group or cancel scope, creates a lock/event/stream, writes an async context manager or async generator, crosses a thread or event-loop boundary, or tests any of those
 
-Where a rule was paid for by code in this repo, it names the symbol, file, or test that proves it — check that before you argue with the rule, and update the rule if the code has moved.
+Most rules name the symbol, file, or test that proves them; a rule with no anchor is judgment, not evidence. Check the anchor before you argue with a rule, and before you extend one — the usual way to get this wrong is to state a true general mechanism more broadly than the code supports, or to describe a design that was proposed but never shipped. If the code has moved, update the rule.
+
+Before adding any of this, name the scope that guarantees teardown for every task, scope, lock, stream, span, and connection you create. "The garbage collector" or "the caller remembers" is a bug, not a design.
 
 ## Rules
 
 ### Ownership
 
-- Name the scope that guarantees teardown for every task, scope, lock, stream, span, and connection you create. "The garbage collector" or "the caller remembers" is a bug, not a design.
 - Iteration owns no teardown. `async for ... break` doesn't close an async iterator, and asyncio finalizes an abandoned async generator in *a different task, under an unrelated copied context* (`loop._asyncgen_finalizer_hook`), so nothing may depend on that cleanup having run. A task born during iteration must still be stored on and drained by the enclosing context manager — `RealtimeSession._start_pump` is lazy and `__aexit__` drains it (`realtime/_session.py`).
 - Prefer a task group, whose `async with` encloses everything the children touch, over loose tasks. Avoid `asyncio.gather(..., return_exceptions=False)` when one failure should stop the batch — it propagates the first failure while siblings keep running. Use `_utils.gather`, which cancels and drains them. `return_exceptions=True` is fine for a cleanup-only drain (`_utils.cancel_and_drain`).
 - Use `asyncio.create_task` only for a task that must outlive the frame starting it. Then keep the handle where the owner can reach it at teardown (`SyncStreamBridge._pump_tasks`, `RealtimeSession._background_tasks`, both added on create and discarded in a done-callback) and cancel *and await* it there via `_utils.cancel_and_drain` — `cancel()` requests, it does not tear down. Pass `name=` when there are many of a kind (`_tool_execution.py` names each by tool).
 
 ### Cancellation: level vs. edge
 
-- Know which one you're in. `asyncio` is edge-triggered: catching the delivered `CancelledError` resumes execution until something cancels again. A cancelled `anyio` scope is level-triggered: every later cancellation checkpoint raises again unless shielded, so async cleanup inside one needs a shield to finish.
+`asyncio` is edge-triggered: catching the delivered `CancelledError` resumes execution until something cancels again. A cancelled `anyio` scope is level-triggered: every later cancellation checkpoint raises again unless shielded, so async cleanup inside one cannot finish. Know which you are in before writing cleanup.
+
 - Shield cleanup that must complete under an outer `anyio` cancel — `_utils.cancel_and_drain` is the ready-made task drain. Your `finally` and each child's cleanup are unprotected unless they shield themselves. Don't shield task-group exit alone: `TaskGroup.__aexit__` already shields the parent's *remaining* wait once the first cancel reaches it (anyio #695).
 - Keep cancellation bookkeeping at one edge: `RunCancellation.resolve()` consumes only controller-issued cancels via `Task.uncancel()`, while `_utils.raise_if_cancelling()` separately re-asserts a cancel a completed step swallowed (`_cancel.py`, `run.py`). `Task.cancelling()`/`uncancel()` are 3.11+: on 3.10 `resolve()` can't disambiguate the race so first-party wins, while `raise_if_cancelling()` is a bare `return`, so an absorbed *external* cancel is lost outright. Under Trio `RunCancellation.bind()` never binds, so first-party cancellation doesn't arm at all.
 - One owner per deadline. `FunctionToolset.call_tool` takes the per-tool timeout when set, else its toolset/agent fallback, and enforces exactly one scope — so a longer per-tool value *replaces* the agent default instead of being capped by it. `ToolManager` adds no timeout; MCP, custom, and external toolsets own deadlines at their own transport.
