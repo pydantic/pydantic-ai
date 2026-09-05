@@ -78,10 +78,11 @@ iterator; [`closed`][pydantic_ai.realtime.RealtimeSession.closed] reports the st
 
 After a reply finishes generating, await
 [`wait_for_playback()`][pydantic_ai.realtime.RealtimeSession.wait_for_playback] before closing the
-session or opening the microphone. It returns when the single `stream_audio()` consumer has taken
-all audio emitted so far, using the same one-chunk-lag accounting as
-[`played_audio_bytes`][pydantic_ai.realtime.RealtimeSession.played_audio_bytes]. It requires exactly
-one audio view and also returns if that view or the session closes.
+session or opening the microphone. It returns once the single `stream_audio()` consumer has accounted
+for all audio emitted so far: played, using the same one-chunk-lag accounting as
+[`played_audio_bytes`][pydantic_ai.realtime.RealtimeSession.played_audio_bytes], or discarded by a
+barge-in or by the view's buffer overflowing. It requires exactly one audio view and also returns if
+that view or the session closes.
 
 ### Live captions
 

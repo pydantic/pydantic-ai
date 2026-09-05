@@ -77,7 +77,7 @@ audio chunks ready for playback, while
 yields finalized speech from both speakers or live deltas with `delta=True`. These bounded views can
 run concurrently with each other and with the session's raw event iterator.
 [`RealtimeSession.wait_for_playback()`][pydantic_ai.realtime.RealtimeSession.wait_for_playback]
-waits for the single audio view to consume all audio emitted so far.
+waits until the single audio view has played, or discarded on a barge-in, all audio emitted so far.
 [`RealtimeSession.close()`][pydantic_ai.realtime.RealtimeSession.close] ends the session and every
 live view; [`RealtimeSession.closed`][pydantic_ai.realtime.RealtimeSession.closed] exposes its state.
 

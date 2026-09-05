@@ -1095,13 +1095,14 @@ class RealtimeSession:
         return _TapView(iterate(), self._audio_taps, tap, tap.finish)
 
     async def wait_for_playback(self) -> None:
-        """Wait until the session's single audio view has played all audio emitted so far.
+        """Wait until the session's single audio view has accounted for all audio emitted so far.
 
         Call this after a reply finishes generating, before closing the session or opening the
         microphone, so buffered audio is not cut off. Playback advances with the same one-chunk lag
         as [`played_audio_bytes`][pydantic_ai.realtime.RealtimeSession.played_audio_bytes]: a chunk
-        counts once the consumer requests the next one. The wait also ends if the view is closed or
-        abandoned, or the session closes. Requires exactly one active
+        counts once the consumer requests the next one. Audio discarded by a barge-in, or by the
+        view's buffer overflowing, counts as accounted for rather than played. The wait also ends if
+        the view is closed or abandoned, or the session closes. Requires exactly one active
         [`stream_audio()`][pydantic_ai.realtime.RealtimeSession.stream_audio] iterator.
         """
         tap = self._single_audio_tap('`wait_for_playback()`', 'wait for playback from')
@@ -1633,6 +1634,9 @@ class RealtimeSession:
                 break
             assert isinstance(item, bytes)
             tap.dropped_bytes += len(item)
+        # Every change to the playback accounting wakes `wait_for_playback()`, so it re-checks against
+        # the flushed queue rather than waiting for audio that will never come.
+        tap.progress.set()
 
     async def _auto_barge_in(self, event: RealtimeEvent) -> None:
         """The local half of barge-in, run by the session itself under `handle_barge_in=True`.

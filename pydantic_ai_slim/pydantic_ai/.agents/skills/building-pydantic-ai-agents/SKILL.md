@@ -230,7 +230,8 @@ passing raw microphone bytes to `send_audio`, convert them to mono PCM16 at `ses
 chunks carry no sample-rate metadata.
 After `RealtimeTurnCompleteEvent` (or a greeting's finalized `SpeechPart`), await
 `session.wait_for_playback()` before closing the session or opening the microphone. It waits for the single
-device-paced `stream_audio()` view to consume all audio emitted so far; it requires exactly one audio view.
+device-paced `stream_audio()` view to play (or discard on a barge-in) all audio emitted so far; it requires exactly one
+audio view.
 
 ```python {test="skip"}
 from pydantic_ai import Agent
