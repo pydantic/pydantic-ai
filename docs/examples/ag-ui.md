@@ -191,6 +191,31 @@ If you've [run the example](#running-the-example), you can view it at <http://lo
 
 ```snippet {path="/examples/pydantic_ai_examples/ag_ui/api/shared_state.py"}```
 
+### Tool Approval
+
+Demonstrates the AG-UI interrupt lifecycle. A tool declared with
+[`requires_approval=True`](../deferred-tools.md#human-in-the-loop-tool-approval) pauses the run when the
+model proposes a call, and the adapter emits `RUN_FINISHED` with `outcome.type == "interrupt"`. The client
+renders an approval UI from `outcome.interrupts[]` and posts a follow-up `RunAgentInput` carrying `resume[]`
+to approve, deny, or edit the call. The agent's `output_type` includes
+[`DeferredToolRequests`][pydantic_ai.output.DeferredToolRequests] so the run can pause instead of erroring.
+
+Requires `ag-ui-protocol >= 0.1.19`.
+
+#### Approval Tools
+
+- `delete_file` - server side tool that only runs once the user approves it
+
+#### Approval Prompt
+
+```text
+Delete the file at /tmp/report.txt
+```
+
+#### Tool Approval - Code {#tool-approval-code}
+
+```snippet {path="/examples/pydantic_ai_examples/ag_ui/api/tool_approval.py"}```
+
 ### Tool Based Generative UI
 
 This example demonstrates customised rendering for tool output with user confirmation.
