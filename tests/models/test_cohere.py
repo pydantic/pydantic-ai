@@ -2,12 +2,13 @@ from __future__ import annotations as _annotations
 
 import json
 import re
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, cast
 
+import anyio
 import pytest
 
 from pydantic_ai import (
@@ -28,6 +29,7 @@ from pydantic_ai import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai._utils import PeekableAsyncStream
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import ModelRequestParameters, ToolDefinition
@@ -1390,40 +1392,78 @@ async def test_stream_event_edge_cases():
     assert response.provider_details is None
 
 
-@pytest.mark.parametrize(
-    ('error_message', 'raises'),
-    [
-        ('async generator is already running', False),
-        ('boom', True),
-    ],
-)
-async def test_close_stream_only_suppresses_async_generator_race(error_message: str, raises: bool):
-    class FailingStream:
-        async def aclose(self) -> None:
-            raise RuntimeError(error_message)
+async def test_close_stream_closes_underlying_source():
+    """`close_stream` must close the provider stream, not silently no-op."""
+    closed = anyio.Event()
 
+    async def source() -> AsyncIterator[Any]:
+        try:
+            yield MessageEndV2ChatStreamResponse(delta=None)
+            await anyio.sleep_forever()  # pragma: no cover
+        finally:
+            closed.set()
+
+    peekable: PeekableAsyncStream[Any, AsyncIterator[Any]] = PeekableAsyncStream(source())
     response = CohereStreamedResponse(
         model_request_parameters=ModelRequestParameters(),
         _model_name='command-r7b-12-2024',
         _provider_name='cohere',
         _provider_url='https://api.cohere.com',
-        _response=cast(Any, FailingStream()),
+        _response=peekable,
     )
 
-    if raises:
-        with pytest.raises(RuntimeError, match='boom'):
-            await response.close_stream()
-    else:
-        await response.close_stream()
-
-
-async def test_close_stream_no_aclose():
-    """`close_stream` is a no-op when the underlying response has no `aclose` method."""
-    response = CohereStreamedResponse(
-        model_request_parameters=ModelRequestParameters(),
-        _model_name='command-r7b-12-2024',
-        _provider_name='cohere',
-        _provider_url='https://api.cohere.com',
-        _response=cast(Any, iter([])),
-    )
+    assert await anext(aiter(peekable)) is not None
     await response.close_stream()
+    assert closed.is_set()
+
+
+async def test_request_stream_closes_source_on_early_exit(allow_model_requests: None):
+    """Abandoning the stream without consuming it must still tear down the connection.
+
+    `chat_stream` wraps the SDK's `async with` on the HTTP response, so leaving
+    `request_stream`'s context early has to close it or the connection leaks.
+    """
+    closed = anyio.Event()
+
+    async def source() -> AsyncIterator[Any]:
+        try:
+            yield ContentStartV2ChatStreamResponse(
+                index=0,
+                delta=ChatContentStartEventDelta(
+                    message=ChatContentStartEventDeltaMessage(content=ChatContentStartEventDeltaMessageContent(text=''))
+                ),
+            )
+            yield ContentDeltaV2ChatStreamResponse(
+                index=0,
+                delta=ChatContentDeltaEventDelta(
+                    message=ChatContentDeltaEventDeltaMessage(
+                        content=ChatContentDeltaEventDeltaMessageContent(text='hello')
+                    )
+                ),
+            )
+            await anyio.sleep_forever()  # pragma: no cover
+        finally:
+            closed.set()
+
+    stream = source()
+
+    class _GeneratorClient:
+        """`chat_stream` returns an async generator, as the real `AsyncClientV2` does."""
+
+        _client_wrapper = MockClientWrapper()
+
+        def chat_stream(self, *_args: Any, **_kwargs: Any) -> AsyncIterator[Any]:
+            return stream
+
+    m = CohereModel(
+        'command-r7b-12-2024',
+        provider=CohereProvider(cohere_client=cast(Any, _GeneratorClient())),
+    )
+
+    async with m.request_stream(
+        [ModelRequest(parts=[UserPromptPart('hello')])], None, ModelRequestParameters()
+    ) as response:
+        async for _ in response:
+            break  # abandon mid-stream, leaving the connection live
+
+    assert closed.is_set()

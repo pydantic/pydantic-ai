@@ -14,6 +14,7 @@ from pydantic_ai.exceptions import ModelAPIError
 from .. import ModelHTTPError, usage
 from .._run_context import RunContext
 from .._utils import (
+    PeekableAsyncStream as _PeekableAsyncStream,
     generate_tool_call_id as _generate_tool_call_id,
     guard_tool_call_id as _guard_tool_call_id,
     is_str_dict as _is_str_dict,
@@ -80,6 +81,7 @@ try:
         Usage as CohereUsage,
         UserChatMessageV2,
         V2ChatResponse,
+        V2ChatStreamResponse,
     )
     from cohere.core.api_error import ApiError
     from cohere.v2.client import OMIT
@@ -240,13 +242,24 @@ class CohereModel(Model[AsyncClientV2]):
                 presence_penalty=cohere_settings.get('presence_penalty', OMIT),
                 frequency_penalty=cohere_settings.get('frequency_penalty', OMIT),
             )
-        yield CohereStreamedResponse(
-            model_request_parameters=model_request_parameters,
-            _model_name=self._model_name,
-            _provider_name=self._provider.name,
-            _provider_url=self.base_url,
-            _response=response_iter,
+        peekable_response: _PeekableAsyncStream[V2ChatStreamResponse, AsyncIterator[V2ChatStreamResponse]] = (
+            _PeekableAsyncStream(response_iter)
         )
+        try:
+            yield CohereStreamedResponse(
+                model_request_parameters=model_request_parameters,
+                _model_name=self._model_name,
+                _provider_name=self._provider.name,
+                _provider_url=self.base_url,
+                _response=peekable_response,
+            )
+        finally:
+            # `chat_stream` is an async generator wrapping the SDK's `async with` on the HTTP
+            # response, so abandoning it early (a `break`, or an exception) leaves the connection
+            # open until GC unless we close it here. Same shape as `GoogleModel.request_stream`.
+            aclose = getattr(response_iter, 'aclose', None)
+            if aclose is not None:  # pragma: no branch
+                await aclose()
 
     async def _chat(
         self,
@@ -516,18 +529,11 @@ class CohereStreamedResponse(StreamedResponse):
     _model_name: CohereModelName
     _provider_name: str
     _provider_url: str
-    _response: AsyncIterator[Any]
+    _response: _PeekableAsyncStream[V2ChatStreamResponse, AsyncIterator[V2ChatStreamResponse]]
     _timestamp: datetime = field(default_factory=_now_utc)
 
     async def close_stream(self) -> None:
-        aclose = getattr(self._response, 'aclose', None)
-        if aclose is None:
-            return
-        try:
-            await aclose()
-        except RuntimeError as e:
-            if 'async generator is already running' not in str(e):
-                raise
+        await self._response.aclose()
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         thinking_indices: set[int] = set()
