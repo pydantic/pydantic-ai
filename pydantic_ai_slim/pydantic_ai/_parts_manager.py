@@ -135,6 +135,26 @@ class ModelResponsePartsManager:
                 self._materialize_and_cache_part(part_index)
         return [p for p in self._parts if not isinstance(p, ToolCallPartDelta)]
 
+    def get_part(self, index: int) -> ManagedPart | None:
+        """Return the part at the unfiltered stream `index`.
+
+        Returns None while the part is still a dangling `ToolCallPartDelta` (a tool-call
+        delta that never received a name and so was never promoted to a real part).
+
+        `PartStartEvent.index` values come from the unfiltered `_parts` space (see
+        `_append_part`), so a lookup by that index must NOT go through `get_parts`:
+        the filtered list is shorter whenever a dangling delta exists, which returns
+        the wrong part for the index or raises `IndexError` past the end of the
+        filtered list.
+        """
+        if index < 0 or index >= len(self._parts):
+            return None
+        if index in self._string_buffers and not isinstance(self._parts[index], ToolCallPartDelta):
+            self._materialize_and_cache_part(index)
+        if isinstance(self._parts[index], ToolCallPartDelta):
+            return None
+        return self._parts[index]
+
     def get_part_by_vendor_id(self, vendor_id: VendorId) -> ManagedPart | None:
         """Return a part by its vendor ID.
 
