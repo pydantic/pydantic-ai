@@ -1644,6 +1644,31 @@ def test_clai_intro_counts_tools_from_an_override(
     assert 'tools: 1' in _plain(capfd.readouterr().out)
 
 
+def test_run_chat_opens_even_if_the_banner_cannot_be_written(
+    mocker: MockerFixture, tmp_path: Path, terminal_clai: None
+):
+    """A terminal whose encoding can't take the logo shouldn't take the session down with it."""
+
+    class NoLogoIO(StringIO):
+        """Rejects the logo's own character the way an ASCII terminal rejects everything unencodable."""
+
+        def write(self, s: str) -> int:
+            if '·' in s:
+                raise UnicodeEncodeError('ascii', s, 0, 1, 'ordinal not in range(128)')
+            return super().write(s)
+
+    io = NoLogoIO()
+    console = Console(file=io, force_terminal=True)
+
+    with create_pipe_input() as inp:
+        _exit_immediately(mocker, inp)
+        assert anyio.run(run_chat, True, Agent(TestModel()), console, 'monokai', 'pydantic-ai', tmp_path) == 0
+
+    # The chat opened and ran to its `/exit` without a header, rather than not at all.
+    assert '______' not in io.getvalue()
+    assert 'Exiting' in _plain(io.getvalue())
+
+
 def test_clai_intro_falls_back_to_one_line_when_banner_is_suppressed(
     capfd: CaptureFixture[str], mocker: MockerFixture, env: TestEnv, terminal_clai: None
 ):

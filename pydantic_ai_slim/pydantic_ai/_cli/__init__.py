@@ -182,9 +182,13 @@ def _print_intro(
         observability=not instrumented,
     )
     try:
-        # The banner arrives laid out in columns and pre-coloured, so rich reads its ANSI back
-        # rather than re-highlighting or re-wrapping it; `list[str]` as an output type isn't markup.
-        console.print(Text.from_ansi(banner), soft_wrap=True)
+        # Rendered by the console but written by hand: a write rich fails on stays in its buffer, so
+        # the next thing the session printed would re-emit the banner and fail outside this guard.
+        with console.capture() as capture:
+            # The banner arrives laid out in columns and pre-coloured, so rich reads its ANSI back
+            # rather than re-highlighting or re-wrapping it; `list[str]` as an output type isn't markup.
+            console.print(Text.from_ansi(banner), soft_wrap=True)
+        console.file.write(capture.get())
     except Exception:
         # A terminal whose encoding can't take the logo (`LC_ALL=C`) is no reason to fail a session
         # before it starts. The chat opens without a header rather than not at all.
