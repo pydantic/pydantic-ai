@@ -241,6 +241,10 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
         from .github import GitHubProvider  # pyright: ignore[reportDeprecated]
 
         return GitHubProvider  # pyright: ignore[reportDeprecated]
+    elif provider == 'github-copilot':
+        from .github_copilot import GitHubCopilotProvider
+
+        return GitHubCopilotProvider
     elif provider == 'litellm':
         from .litellm import LiteLLMProvider
 

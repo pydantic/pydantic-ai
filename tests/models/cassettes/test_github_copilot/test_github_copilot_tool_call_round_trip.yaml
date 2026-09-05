@@ -1,0 +1,214 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '453'
+      content-type:
+      - application/json
+      copilot-integration-id:
+      - vscode-chat
+      editor-plugin-version:
+      - copilot-chat/0.26.7
+      editor-version:
+      - vscode/1.95.0
+      host:
+      - api.githubcopilot.com
+      openai-intent:
+      - conversation-panel
+    method: POST
+    parsed_body:
+      messages:
+      - content: Be concise.
+        role: system
+      - content: What is the weather in Paris?
+        role: user
+      model: claude-haiku-4.5
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: Get the weather in a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          strict: true
+        type: function
+    uri: https://api.githubcopilot.com/chat/completions
+  response:
+    headers:
+      content-length:
+      - '1036'
+      content-security-policy:
+      - default-src 'none'; sandbox
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        message:
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"city":"Paris"}'
+              name: get_weather
+            id: toolu_01TaRi3WW6sFE7WSbbVm976f
+            type: function
+      copilot_usage:
+        token_details:
+        - batch_size: 1000000
+          cost_per_batch: 100000000000
+          model: claude-haiku-4.5
+          token_count: 569
+          token_type: input
+        - batch_size: 1000000
+          cost_per_batch: 10000000000
+          model: claude-haiku-4.5
+          token_count: 0
+          token_type: cache_read
+        - batch_size: 1000000
+          cost_per_batch: 125000000000
+          model: claude-haiku-4.5
+          token_count: 0
+          token_type: cache_write
+        - batch_size: 1000000
+          cost_per_batch: 500000000000
+          model: claude-haiku-4.5
+          token_count: 54
+          token_type: output
+        total_nano_aiu: 83900000
+      created: 1788537842
+      id: msg_011CeigZ9rYh8eZJiJ69BiHL
+      model: claude-haiku-4.5
+      usage:
+        completion_tokens: 54
+        prompt_tokens: 569
+        prompt_tokens_details:
+          cached_tokens: 0
+        total_tokens: 623
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '733'
+      content-type:
+      - application/json
+      copilot-integration-id:
+      - vscode-chat
+      editor-plugin-version:
+      - copilot-chat/0.26.7
+      editor-version:
+      - vscode/1.95.0
+      host:
+      - api.githubcopilot.com
+      openai-intent:
+      - conversation-panel
+    method: POST
+    parsed_body:
+      messages:
+      - content: Be concise.
+        role: system
+      - content: What is the weather in Paris?
+        role: user
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: toolu_01TaRi3WW6sFE7WSbbVm976f
+          type: function
+      - content: sunny
+        role: tool
+        tool_call_id: toolu_01TaRi3WW6sFE7WSbbVm976f
+      model: claude-haiku-4.5
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: Get the weather in a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          strict: true
+        type: function
+    uri: https://api.githubcopilot.com/chat/completions
+  response:
+    headers:
+      content-length:
+      - '937'
+      content-security-policy:
+      - default-src 'none'; sandbox
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        message:
+          content: The weather in Paris is currently **sunny**.
+          role: assistant
+      copilot_usage:
+        token_details:
+        - batch_size: 1000000
+          cost_per_batch: 100000000000
+          model: claude-haiku-4.5
+          token_count: 636
+          token_type: input
+        - batch_size: 1000000
+          cost_per_batch: 10000000000
+          model: claude-haiku-4.5
+          token_count: 0
+          token_type: cache_read
+        - batch_size: 1000000
+          cost_per_batch: 125000000000
+          model: claude-haiku-4.5
+          token_count: 0
+          token_type: cache_write
+        - batch_size: 1000000
+          cost_per_batch: 500000000000
+          model: claude-haiku-4.5
+          token_count: 12
+          token_type: output
+        total_nano_aiu: 69600000
+      created: 1788537843
+      id: msg_011CeigZFxejy3ENFTxNGWEc
+      model: claude-haiku-4.5
+      usage:
+        completion_tokens: 12
+        prompt_tokens: 636
+        prompt_tokens_details:
+          cached_tokens: 0
+        total_tokens: 648
+    status:
+      code: 200
+      message: OK
+version: 1
