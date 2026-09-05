@@ -86,7 +86,7 @@ async def main():
             if isinstance(event, RealtimeTurnCompleteEvent):
                 break  # keep listening in a real call; we stop after one reply
         await session.wait_for_playback()
-    await playback
+    await playback  # the audio view ends once the session has closed
 ```
 
 When the user speaks over the model, the session discards the buffered audio the user will never
@@ -120,16 +120,17 @@ flush-attribute-truncate-cancel treatment as `handle_barge_in=True`:
 
 ```python
 import asyncio
+from collections.abc import AsyncIterator
 
 from pydantic_ai.realtime import RealtimeInputSpeechStartEvent, RealtimeSession
 
 
 async def conversation(session: RealtimeSession) -> None:
-    async def play_audio() -> None:
-        async for chunk in session.stream_audio():
+    async def play_audio(chunks: AsyncIterator[bytes]) -> None:
+        async for chunk in chunks:
             ...  # write the chunk to your speaker, waiting until the device consumed it
 
-    playback = asyncio.create_task(play_audio())
+    playback = asyncio.create_task(play_audio(session.stream_audio()))
     async for event in session:
         if isinstance(event, RealtimeInputSpeechStartEvent):
             await session.interrupt(played_bytes=session.played_audio_bytes)
@@ -141,11 +142,12 @@ count actual device consumption yourself and pass that. This handler covers the 
 report speech onset; on Gemini, which interrupts itself and leaves only the local flush to do,
 prefer `handle_barge_in=True`, which performs that flush for you.
 
-Interrupting while the provider has a speech segment open sends only the truncation on the models
-whose own turn detection cancels the response being spoken over (OpenAI and Azure OpenAI by
-default, and xAI): a second, client-side cancel racing the provider's can be applied to the *next*
-response and silence the reply to the barge-in. An interruption you raise outside a speech segment
-— a stop button, a tool cutting the model off — still cancels, since nothing else is stopping it.
+Interrupting between the provider's speech onset and the start of its next response sends only the
+truncation on the models whose own turn detection cancels the response being spoken over (OpenAI
+and Azure OpenAI by default, and xAI): a second, client-side cancel racing the provider's can be
+applied to the *next* response and silence the reply to the barge-in. This holds for every form of
+`interrupt()`. An interruption you raise outside that window — a stop button, a tool cutting the
+model off — still cancels, since nothing else is stopping it.
 
 Finally, when playback doesn't drain a single session-long `stream_audio()` iterator — several
 consumers, a playback layer that buffers ahead of the device, or a transport where the session
@@ -168,9 +170,9 @@ async def handle_events(session: RealtimeSession, speaker: Speaker):
     async for event in session:
         if isinstance(event, RealtimeInputSpeechStartEvent) and speaker.has_unplayed_audio():
             speaker.flush()
-            if session.profile['supports_output_truncation']:
+            if session.profile.get('supports_output_truncation', False):
                 await session.interrupt(played_ms=speaker.played_ms())
-            elif session.profile['supports_interruption']:
+            elif session.profile.get('supports_interruption', False):
                 await session.interrupt()
 ```
 
@@ -221,7 +223,7 @@ async def main():
                     break
         await session.wait_for_playback()
         ...  # open the microphone and start sending audio
-    await playback
+    await playback  # the audio view ends once the session has closed
 ```
 
 With manual turn control, [`create_response()`][pydantic_ai.realtime.RealtimeSession.create_response]

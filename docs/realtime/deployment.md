@@ -42,6 +42,7 @@ from pydantic_ai import Agent
 
 agent = Agent(instructions='You are a concise voice assistant.')
 realtime = agent.realtime('openai:gpt-realtime')
+sideband_tasks: set[asyncio.Task[None]] = set()
 
 
 async def handle_offer(sdp_offer: str) -> str:
@@ -52,9 +53,15 @@ async def handle_offer(sdp_offer: str) -> str:
             async for event in session:
                 print(event)
 
-    asyncio.create_task(run_sideband())
+    task = asyncio.create_task(run_sideband())
+    sideband_tasks.add(task)  # (1)!
+    task.add_done_callback(sideband_tasks.discard)
     return answer.sdp
 ```
+
+1. asyncio keeps only a weak reference to a task, so hold one yourself until the call ends; the done
+   callback also surfaces an error the sideband session raised instead of leaving it as a "never
+   retrieved" warning.
 
 The secure offer-relay flow never gives the browser a token. As an alternative,
 [`AgentRealtime.create_client_secret`][pydantic_ai.agent.AgentRealtime.create_client_secret] mints a
