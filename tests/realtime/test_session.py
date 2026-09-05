@@ -7161,7 +7161,7 @@ async def test_agent_realtime_session_per_request_input_token_limit_covers_a_too
     response immediately; the per-request check must see that usage rather than the reset accumulator."""
     conn = FakeRealtimeConnection(
         [
-            ToolCall(tool_call_id='tc1', tool_name='noop', args='{}'),
+            ToolCall(tool_call_id='tc1', tool_name='noop', args='{}', response_usage_follows=True),
             SessionUsage(usage=RequestUsage(input_tokens=51), response_scoped=True),
             ResponseDone(),
         ]
