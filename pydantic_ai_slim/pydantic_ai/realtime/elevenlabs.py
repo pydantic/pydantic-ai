@@ -311,6 +311,18 @@ class _WorkspaceToolsResponse(BaseModel):
     next_cursor: str | None = None
 
 
+class _DependentAgentsResponse(BaseModel):
+    """One page of `GET /v1/convai/tools/{tool_id}/dependent-agents` (verified live).
+
+    Only emptiness is read: any listed agent, or a further page, means the tool has dependents.
+    """
+
+    model_config = ConfigDict(extra='allow')
+
+    agents: list[Any] = []
+    has_more: bool = False
+
+
 # --- Wire event models ---------------------------------------------------------------------------
 # ElevenLabs wraps most server events as `{"type": <x>, "<x>_event": {...}}`; the models below type
 # the payloads the adapter reads. There is no SDK to borrow event types from.
@@ -921,6 +933,23 @@ class ElevenLabsRealtimeModel(RealtimeModel):
             cursor = page.next_cursor
         return workspace_tools
 
+    async def _tool_has_dependents(self, tool_id: str) -> bool:
+        """Whether any agent in the workspace references the tool.
+
+        Gates adoption on true orphanhood: "not attached to this agent" alone would also match a
+        tool another agent uses, and a later sync's PATCH would then rewrite it under that agent. A
+        `has_more` page with no listed agents is treated as having dependents, erring toward a fresh
+        create over a shared mutation.
+        """
+        with _map_rest_errors(self.agent_id):
+            response = await self._http_client.get(
+                f'{self._provider.base_url}/v1/convai/tools/{tool_id}/dependent-agents',
+                headers=self._rest_headers,
+            )
+        _raise_for_status(response, self.agent_id)
+        page = _DependentAgentsResponse.model_validate_json(response.content)
+        return bool(page.agents) or page.has_more
+
     async def _sync_tools(self, agent: _AgentPreflight, tools: Sequence[ToolDefinition]) -> None:
         """Make the agent's client tools match the session's tools over REST (`elevenlabs_tool_sync='sync'`).
 
@@ -969,8 +998,11 @@ class ElevenLabsRealtimeModel(RealtimeModel):
 
         # A sync that failed between a create and the final re-point leaves its created tools in the
         # workspace but unattached; recreating them on the retry would accumulate duplicates. An
-        # unattached client tool whose config already matches exactly is adopted instead. One that
-        # differs is left alone (it may belong to another agent) and a fresh tool is created.
+        # unattached client tool whose config already matches exactly AND which no agent in the
+        # workspace depends on is adopted instead. The dependents check matters because "not attached
+        # to this agent" is not "orphaned": adopting another agent's matching tool would let a later
+        # sync's PATCH rewrite it under that agent. A tool that differs, or that anything depends on,
+        # is left alone and a fresh one is created.
         attached_id_set = set(attached_ids)
         adoptable_by_name: dict[str, _WorkspaceTool] = {}
         for workspace_tool in workspace_tools.values():
@@ -985,7 +1017,11 @@ class ElevenLabsRealtimeModel(RealtimeModel):
             existing_id = client_id_by_name.get(tool.name)
             if remote is None or existing_id is None:
                 orphan = adoptable_by_name.get(tool.name)
-                if orphan is not None and not _tool_mismatches([tool], [orphan.tool_config]):
+                if (
+                    orphan is not None
+                    and not _tool_mismatches([tool], [orphan.tool_config])
+                    and not await self._tool_has_dependents(orphan.id)
+                ):
                     tool_ids.append(orphan.id)
                     continue
                 with _map_rest_errors(self.agent_id):
