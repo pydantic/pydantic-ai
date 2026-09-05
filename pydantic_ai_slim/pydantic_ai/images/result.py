@@ -83,10 +83,9 @@ class ImageGenerationResult:
 
         Uses [`genai-prices`](https://github.com/pydantic/genai-prices) for pricing data.
 
-        Token-priced image models (GPT Image, Gemini image) are covered. Models priced per
-        generated image rather than per token are not yet in the pricing data and raise
-        `LookupError`; see [genai-prices#185](https://github.com/pydantic/genai-prices/issues/185)
-        and [genai-prices#410](https://github.com/pydantic/genai-prices/issues/410).
+        Models priced per token are covered, such as the GPT Image and Gemini image families. The
+        Grok Imagine family raises `LookupError`: it has no entry in the pricing data, and there is
+        no unit that counts generated images to price it with.
 
         Returns:
             A price calculation object with `total_price`, `input_price`, and other cost details.

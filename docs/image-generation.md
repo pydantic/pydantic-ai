@@ -440,9 +440,9 @@ calculation, and is kept separate from [`cost()`][pydantic_ai.images.ImageGenera
 
 !!! note "Image pricing"
     [`ImageGenerationResult.cost()`][pydantic_ai.images.ImageGenerationResult.cost] covers models priced per token,
-    such as the GPT Image and Gemini image families. Models priced per generated image are not yet represented in
-    [`genai-prices`](https://github.com/pydantic/genai-prices) and raise `LookupError`; usage details and
-    provider-reported metadata are preserved on the result either way.
+    such as the GPT Image and Gemini image families. The Grok Imagine family raises `LookupError`: it has no entry in
+    [`genai-prices`](https://github.com/pydantic/genai-prices), and there is no unit that counts generated images to
+    price it with. Usage details and provider-reported metadata are preserved on the result either way.
 
 ## Error Handling
 

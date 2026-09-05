@@ -370,8 +370,8 @@ def test_image_generator_sync_forwards_reference_images():
 def test_image_generation_cost_is_unavailable_for_unpriced_models():
     """`TestImageGenerationModel` has no pricing data, so `cost()` surfaces `genai-prices`' `LookupError`.
 
-    Models priced per generated image rather than per token are in the same position until
-    genai-prices represents that unit; the token-priced case is covered below.
+    Models priced per generated image rather than per token are in the same position: there is no
+    unit that counts generated images. The token-priced case is covered below.
     """
     result = ImageGenerator(TestImageGenerationModel()).generate_sync('tiny robot')
 
@@ -382,9 +382,7 @@ def test_image_generation_cost_is_unavailable_for_unpriced_models():
 def test_image_generation_cost_is_calculated_for_token_priced_models():
     """Token-priced image models resolve through `genai-prices` like any other result type.
 
-    Pins that `cost()` is wired to `calc_price` rather than raising unconditionally — the
-    method shipped disabled while genai-prices lacked image pricing, and that gap has closed
-    for the token-priced families.
+    Pins that `cost()` is wired to `calc_price` rather than raising unconditionally.
     """
     result = ImageGenerationResult(
         images=[GeneratedImage(content=BinaryImage(data=TINY_PNG, media_type='image/png'))],
