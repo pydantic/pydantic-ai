@@ -51,7 +51,7 @@ a realtime model. Pass [`RealtimeModelSettings`][pydantic_ai.realtime.RealtimeMo
 | `RunContext` field | Value in a realtime session |
 | --- | --- |
 | [`ctx.model_settings`][pydantic_ai.tools.RunContext.model_settings] | The merged [`RealtimeModelSettings`][pydantic_ai.realtime.RealtimeModelSettings] the session was connected with. |
-| [`ctx.realtime`][pydantic_ai.tools.RunContext.realtime] | `True` from `before_run` onward. |
+| [`ctx.realtime`][pydantic_ai.tools.RunContext.realtime] | `True` for the whole run, including `for_run` and instruction functions that run before the connection exists. |
 | [`ctx.realtime_session`][pydantic_ai.tools.RunContext.realtime_session] | The live [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] in tool and `on_event` contexts; `None` in run hooks. |
 
 !!! note

@@ -42,6 +42,7 @@ from pydantic_ai import Agent
 
 agent = Agent(instructions='You are a concise voice assistant.')
 realtime = agent.realtime('openai:gpt-realtime')
+sideband_tasks: set[asyncio.Task[None]] = set()
 
 
 async def handle_offer(sdp_offer: str) -> str:
@@ -52,9 +53,15 @@ async def handle_offer(sdp_offer: str) -> str:
             async for event in session:
                 print(event)
 
-    asyncio.create_task(run_sideband())
+    task = asyncio.create_task(run_sideband())
+    sideband_tasks.add(task)  # (1)!
+    task.add_done_callback(sideband_tasks.discard)
     return answer.sdp
 ```
+
+1. asyncio keeps only a weak reference to a task, so hold one yourself until the call ends; the done
+   callback also surfaces an error the sideband session raised instead of leaving it as a "never
+   retrieved" warning.
 
 The secure offer-relay flow never gives the browser a token. As an alternative,
 [`AgentRealtime.create_client_secret`][pydantic_ai.agent.AgentRealtime.create_client_secret] mints a
@@ -107,19 +114,29 @@ app = FastAPI()
 @app.websocket('/voice')
 async def voice_socket(websocket: WebSocket):
     await websocket.accept()
+
+    async def microphone():
+        while True:
+            yield await websocket.receive_bytes()
+
     async with agent.realtime('openai:gpt-realtime').session() as session:
 
-        async def pump_input():
-            while True:
-                await session.send_audio(await websocket.receive_bytes())
-
-        input_task = asyncio.create_task(pump_input())
-        try:
+        async def playback():
             async for chunk in session.stream_audio():
                 await websocket.send_bytes(chunk)
+
+        playback_task = asyncio.create_task(playback())
+        try:
+            await session.send_audio(microphone())
         finally:
-            input_task.cancel()
+            playback_task.cancel()
 ```
+
+[`send_audio()`][pydantic_ai.realtime.RealtimeSession.send_audio] consumes the async iterator for the
+whole call, so when the browser disconnects, `receive_bytes()` raises, the `finally` stops playback,
+and leaving the `async with` block hangs up the provider session. Driving the input from a bare
+`asyncio.create_task` instead would swallow that error and leave the billed session open with nobody
+listening.
 
 `handle_barge_in=True` is a no-op for this relay: `played_audio_bytes` counts a chunk as played when
 the relay forwards it, before the browser has actually played it, so the session sees no unplayed
