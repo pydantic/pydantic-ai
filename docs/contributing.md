@@ -161,18 +161,17 @@ and picks untracked files up with it.
 
 A full run is single-process. `PYRIGHT_THREADS` turns on Pyright's parallel check phase, which
 reaches the same diagnostics: `auto` is up to one worker per logical core, and a positive integer
-caps them. Measured on this repo, a full run took 42 seconds single-process and 20 across eight
-cores.
+caps them. A narrowed run stays single-process either way.
 
 ```bash
 export PYRIGHT_THREADS=auto
 ```
 
 Export it rather than setting it per command, so a hook run that falls back to the full check picks
-it up too. Every worker is a full Node process, though, so a machine already near its memory limit
-swaps and comes out slower than the default. Unset the variable or set it to `1` to go back to a
-single process: anything Pyright cannot read as a positive integer, `0` and `off` included, means
-`auto`.
+it up too. Every worker is a full Node process, so they pay for themselves only on a machine with
+the memory to hold them; one already near its limit swaps and comes out slower than the default.
+Unset the variable or set it to `1` to go back to a single process: anything Pyright cannot read as
+a positive integer, `0` and `off` included, means `auto`.
 
 ## Documentation Changes
 
