@@ -1768,7 +1768,19 @@ class RetryPromptPart:
                     i: {'ctx', 'input'} if len(e.get('loc', ())) <= 1 else {'ctx'} for i, e in enumerate(self.content)
                 }
             else:
-                exclude = {'__all__': {'ctx'}}
+                exclude = {}
+                seen_input_ids = set()
+                for i, e in enumerate(self.content):
+                    exc_set = {'ctx'}
+                    inp = e.get('input')
+                    # Deduplicate complex inputs (dicts/lists) to prevent multiplicative context growth
+                    if isinstance(inp, (dict, list)):
+                        inp_id = id(inp)
+                        if inp_id in seen_input_ids:
+                            exc_set.add('input')
+                        else:
+                            seen_input_ids.add(inp_id)
+                    exclude[i] = exc_set
             json_errors = error_details_ta.dump_json(self.content, exclude=exclude, indent=2)
             plural = isinstance(self.content, list) and len(self.content) != 1
             description = (
