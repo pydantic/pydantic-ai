@@ -178,7 +178,8 @@ _MODEL_THINKING_LEVELS: tuple[tuple[str, frozenset[GoogleThinkingLevel]], ...] =
     ('gemini-3.7-flash', frozenset(('LOW', 'MEDIUM', 'HIGH'))),
     ('gemini-3.8-flash', frozenset(('LOW', 'MEDIUM', 'HIGH'))),
     ('gemini-3.1-pro-preview', frozenset(('LOW', 'MEDIUM', 'HIGH'))),
-    # Retired: the Developer API 404s this id in favor of `gemini-3.1-pro-preview`.
+    # Verified live 2026-09-06: the Developer API 404s this id toward `gemini-3.1-pro-preview`.
+    # The level set is from Google's documented thinking table.
     ('gemini-3-pro-preview', frozenset(('LOW', 'HIGH'))),
 )
 """Model name prefixes mapped to their documented thinking levels."""

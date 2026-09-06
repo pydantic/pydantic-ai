@@ -251,6 +251,8 @@ def test_model_profile_minimal_thinking_level_matches_model_prefix():
     [
         ('gemini-3.1-flash-lite-image', frozenset(('MINIMAL', 'HIGH'))),
         ('gemini-3.7-flash', frozenset(('LOW', 'MEDIUM', 'HIGH'))),
+        ('gemini-3.8-flash', frozenset(('LOW', 'MEDIUM', 'HIGH'))),
+        ('gemini-3.1-pro-preview', frozenset(('LOW', 'MEDIUM', 'HIGH'))),
         ('gemini-3-pro-preview', frozenset(('LOW', 'HIGH'))),
         # Models supporting the full scale carry no level set.
         ('gemini-3-flash-preview', None),
