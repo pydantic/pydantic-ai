@@ -12,9 +12,9 @@ from .settings import (
 )
 
 # Keyed by the members of the gRPC `ImageAspectRatio` enum, the only ratio vocabulary the image RPC
-# accepts. A portable ratio the enum omits — `21:9` is the one `ImageGenerationAspectRatio` carries —
-# has no wire representation at all, and bumping the `xai-sdk` floor does not add it: 1.19.0, the
-# newest published release, generates the same 13 members as the locked 1.18.0.
+# accepts. The seven portable ratios the enum omits — `1:4`, `1:8`, `4:1`, `4:5`, `5:4`, `8:1` and
+# `21:9` — have no wire representation at all, and bumping the `xai-sdk` floor does not add them:
+# 1.19.0, the newest published release, generates the same 13 members as the locked 1.18.0.
 _XAI_GEOMETRIES: dict[ImageAspectRatio, dict[ImageResolution, ImageDimensions]] = {
     '1:1': {'1k': (1024, 1024), '2k': (2048, 2048)},
     '3:4': {'1k': (864, 1152), '2k': (1776, 2368)},
@@ -31,7 +31,12 @@ _XAI_GEOMETRIES: dict[ImageAspectRatio, dict[ImageResolution, ImageDimensions]] 
     '2:1': {'1k': (1408, 704), '2k': (2912, 1456)},
 }
 # Both canonical models share the single `_XAI_GEOMETRIES` table, so an alias needs no geometry data
-# of its own — it only has to be recognized here. Enumerated rather than matched by prefix so an
+# of its own — it only has to be recognized here. xAI's own model pages, linked below, are what say
+# these names are aliases; `test_xai_image_generation_unlisted_model_vcr` records the live API
+# answering a `-pro` request as `grok-imagine-image-quality`, and
+# `test_xai_image_generation_resolves_dimensions_for_documented_aliases` pins that every alias here
+# resolves to the same geometry the canonical pair gets from
+# `test_xai_image_generation_resolves_dimensions`. Enumerated rather than matched by prefix so an
 # unknown future model still falls through to the error, the way `grok-imagine-image-9` should.
 # `grok-imagine-image-2.0` is a third model rather than an alias of either, and xAI publishes no
 # ratio-to-pixel mapping for it, so `dimensions` keeps raising there until someone probes it; its

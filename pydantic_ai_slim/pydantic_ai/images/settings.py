@@ -102,7 +102,8 @@ def merge_image_generation_settings(
     base: ImageGenerationSettings | None, overrides: ImageGenerationSettings | None
 ) -> ImageGenerationSettings | None:
     """Merge two sets of image generation settings, with overrides taking precedence."""
-    # Note: we may want merge recursively if/when we add non-primitive values.
+    # A shallow merge: an override replaces a whole value, `extra_headers` and `extra_body` included,
+    # rather than being merged key by key. Matches `merge_model_settings`.
     if base and overrides:
         return base | overrides
     else:

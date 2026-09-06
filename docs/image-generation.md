@@ -287,8 +287,9 @@ When only `aspect_ratio` is provided, these are the canonical exact dimensions. 
 which has no ratio field to carry one; Gemini and Grok Imagine take the ratio and a size tier as native request fields,
 and the table records the shape they return for it. A dash means the model family names no canonical shape for that
 ratio: OpenAI and Grok Imagine raise [`UserError`][pydantic_ai.exceptions.UserError], while Gemini still receives the
-ratio and answers for itself. Grok Imagine's `21:9` dash is the transport rather than the model — the gRPC
-`ImageAspectRatio` enum `xai-sdk` generates has no member for that ratio, so the request cannot carry it.
+ratio and answers for itself. Every Grok Imagine dash is the transport rather than the model — the gRPC
+`ImageAspectRatio` enum `xai-sdk` generates has no member for `1:4`, `1:8`, `4:1`, `4:5`, `5:4`, `8:1` or `21:9`, so
+the request cannot carry them.
 
 | Ratio | GPT Image 1.x | GPT Image 2 | Gemini 2.5 Flash | Gemini 3 Pro | Gemini 3.1 Flash / Flash Lite | Grok Imagine |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -327,7 +328,7 @@ them exactly:
 | Gemini 3.1 Flash Lite Image | The fourteen `1K` dimensions shown in its column above. This model serves no other tier. |
 | Gemini 3 Pro Image | The ten `1K` dimensions shown above, plus `2K` and `4K` variants obtained by multiplying both sides by 2 or 4. |
 | Gemini 3.1 Flash Image | The ten standard `1K` dimensions shown above, their `2K` and `4K` variants obtained by multiplying both sides by 2 or 4, and their `512` variants obtained by halving both sides — plus the five rows in the table below, whose tiers do not scale uniformly. |
-| Grok Imagine (`grok-imagine-image`, `grok-imagine-image-quality`) | The verified `1k` and `2k` dimensions in the table below. |
+| Grok Imagine (`grok-imagine-image` and `grok-imagine-image-quality`, and the dated, `-latest` and `-pro` names that resolve to them) | The verified `1k` and `2k` dimensions in the table below. |
 
 These Gemini 3.1 rows were verified against the live API, which returns shapes different from Google's published table
 for the four extended ratios. Flash Lite serves only their `1K` column:
@@ -341,7 +342,8 @@ for the four extended ratios. Flash Lite serves only their `1K` column:
 | `21:9` | `784×336` | `1584×672` | `3168×1344` | `6336×2688` |
 
 xAI documents the ratios and resolution tiers but not their complete exact pixel mapping. These dimensions were verified
-against both `grok-imagine-image` and `grok-imagine-image-quality`. `grok-imagine-image-2.0` is a separate model that
+against `grok-imagine-image`, `grok-imagine-image-quality` and the dated, `-latest`
+and `-pro` names that resolve to them. `grok-imagine-image-2.0` is a separate model that
 nobody has probed, so `dimensions` raises [`UserError`][pydantic_ai.exceptions.UserError] there; use `aspect_ratio` or
 the `xai_`-prefixed settings, which xAI validates itself:
 
