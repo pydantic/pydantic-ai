@@ -54,7 +54,7 @@ from ..native_tools import (
 )
 from ..output import OutputObjectDefinition
 from ..profiles import ModelProfileSpec
-from ..profiles.google import GoogleModelProfile
+from ..profiles.google import GOOGLE_THINKING_LEVELS, GoogleModelProfile, GoogleThinkingLevel
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings, ServiceTier, ThinkingEffort, ToolChoiceScalar
 from ..tools import ToolDefinition
@@ -443,9 +443,17 @@ def _google_cloud_service_tier_headers(service_tier: GoogleCloudServiceTier) -> 
     assert_never(service_tier)  # pragma: no cover
 
 
-def _thinking_effort_to_level(thinking: ThinkingEffort) -> Literal['MINIMAL', 'LOW', 'MEDIUM', 'HIGH']:
+_GOOGLE_THINKING_LEVEL_ORDER: dict[GoogleThinkingLevel, int] = {
+    'MINIMAL': 0,
+    'LOW': 1,
+    'MEDIUM': 2,
+    'HIGH': 3,
+}
+
+
+def _thinking_effort_to_level(thinking: ThinkingEffort) -> GoogleThinkingLevel:
     """Normalize unified thinking effort to a Gemini thinking level."""
-    level_by_effort: dict[ThinkingEffort, Literal['MINIMAL', 'LOW', 'MEDIUM', 'HIGH']] = {
+    level_by_effort: dict[ThinkingEffort, GoogleThinkingLevel] = {
         'minimal': 'MINIMAL',
         'low': 'LOW',
         'medium': 'MEDIUM',
@@ -455,13 +463,28 @@ def _thinking_effort_to_level(thinking: ThinkingEffort) -> Literal['MINIMAL', 'L
     return level_by_effort[thinking]
 
 
-def _resolve_google_thinking_level(
-    thinking: ThinkingEffort, profile: GoogleModelProfile
-) -> Literal['MINIMAL', 'LOW', 'MEDIUM', 'HIGH']:
-    """Map unified thinking to the closest thinking level the model supports."""
-    if thinking == 'minimal' and not profile.get('google_supports_minimal_thinking_level', True):
-        return 'LOW'
-    return _thinking_effort_to_level(thinking)
+def _resolve_google_thinking_level(thinking: ThinkingEffort, profile: GoogleModelProfile) -> GoogleThinkingLevel:
+    """Map unified thinking to the closest thinking level the model supports.
+
+    Snaps to the nearest supported level on the `MINIMAL < LOW < MEDIUM < HIGH` scale;
+    equidistant levels round down to the cheaper one.
+    """
+    levels = profile.get('google_thinking_levels')
+    if levels is None:
+        # Sparse profile without a level set: fall back to the boolean floor flag.
+        levels = (
+            GOOGLE_THINKING_LEVELS
+            if profile.get('google_supports_minimal_thinking_level', True)
+            else GOOGLE_THINKING_LEVELS - {'MINIMAL'}
+        )
+    requested = _GOOGLE_THINKING_LEVEL_ORDER[_thinking_effort_to_level(thinking)]
+    return min(
+        levels,
+        key=lambda level: (
+            abs(_GOOGLE_THINKING_LEVEL_ORDER[level] - requested),
+            _GOOGLE_THINKING_LEVEL_ORDER[level],
+        ),
+    )
 
 
 @dataclass(init=False)
