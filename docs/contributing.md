@@ -136,18 +136,28 @@ To run code formatting, linting, static type checks, and tests with coverage rep
 make
 ```
 
-If your machine swaps or stalls during type checking, cap `pyright`'s worker count with
-`PYRIGHT_THREADS`. It defaults to `auto`, which spawns up to one worker process per logical core;
-a positive integer caps them, with `1` dropping to a single process, which can be faster when a
-worker per core exhausts memory. Any other value falls back to `auto`.
+### Type checking
 
-```bash
-export PYRIGHT_THREADS=1
-```
+`make typecheck` runs Pyright over every file in the project.
 
-Export it rather than setting it per command, and add it to your shell profile to make it stick:
-`pre-commit` runs the same type check on every commit that touches Python, and `make` runs it as
-part of the default goal.
+The pre-commit hook runs `make typecheck-changed` instead, which checks only the files whose content
+changed since Pyright last passed plus everything that transitively imports them. It records what
+passed under your git directory, so the record is per-worktree and never committed.
+
+CI runs that same hook, and whenever it runs it checks everything: GitHub Actions always sets `CI`,
+and on seeing it `make typecheck-changed` narrows nothing and hands the whole project to
+`make typecheck-pyright`. A fresh runner has no record to narrow against in the first place. CI still
+skips the hook outright on a pull request that touches nothing Pyright reads, as it did before.
+
+Locally it follows the imports Pyright resolves statically, and falls back to the full run whenever
+something could leave that set incomplete: a first run; an interpreter older than Python 3.11, which
+is what it needs to read `pyproject.toml`; a new Pyright or Python version, including one asked for
+through `PYRIGHT_PYTHON`; a change to
+`pyproject.toml`, `uv.lock` or the `Makefile`; an import that would now resolve to a different file
+or a new top-level module that could shadow an installed one; or a change reaching more than half the
+project. A narrowed run only ever considers tracked files, so run `make typecheck` yourself before
+relying on a green hook for a file you have not added; a fallback run hands Pyright the whole project
+and picks untracked files up with it.
 
 ## Documentation Changes
 

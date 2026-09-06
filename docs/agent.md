@@ -306,7 +306,7 @@ Pydantic AI has two families of user-defined events. They ride the same stream a
 | **Reaches the frontend** | yes, via the [AG-UI](ui/ag-ui.md) and [Vercel AI](ui/vercel-ai.md) adapters | no, it is an internal signal; re-publish it as a `CustomEvent` if the frontend needs it |
 | **Can carry a decision** | no | yes, with `dispatch='immediate'` |
 
-If you are writing a **capability**, define [`CapabilityEvent`][pydantic_ai.messages.CapabilityEvent]s, as described in [Capability events](capabilities/overview.md#capability-events): its events are part of its contract with the rest of the run, and the namespace is what keeps two capabilities from colliding on a name. If you are writing an **application**, define `CustomEvent`s. To surface a capability's event to your frontend, listen for it with an [event hook](hooks.md#event-stream-hooks) and emit your own `CustomEvent` carrying the public payload.
+If you are writing a **capability**, define [`CapabilityEvent`][pydantic_ai.messages.CapabilityEvent]s, as described in [Capability events](capabilities/overview.md#capability-events): its events are part of its contract with the rest of the run, and the namespace is what keeps two capabilities from colliding on a name. If you are writing an **application**, define `CustomEvent`s. To surface a capability's event to your frontend, listen for it with [`@agent.on_event`](hooks.md#listening-without-a-hooks-capability) and emit your own `CustomEvent` carrying the public payload.
 
 #### Defining and emitting an event
 
@@ -317,7 +317,6 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 
 from pydantic_ai import Agent, CustomEvent, RunContext
-from pydantic_ai.capabilities import Hooks
 from pydantic_ai.messages import ModelMessage, ToolReturnPart
 from pydantic_ai.models.function import (
     AgentInfo,
@@ -350,18 +349,15 @@ async def model_function(
         }
 
 
-hooks = Hooks()
+agent = Agent(FunctionModel(stream_function=model_function))
 progress: list[str] = []
 
 
-@hooks.on.event(SyncProgressEvent)
+@agent.on_event(SyncProgressEvent)
 async def record_progress(ctx: RunContext, event: SyncProgressEvent) -> None:
     progress.append(
         f'{event.done}/{event.total} from {event.tool_name} ({event.tool_call_id})'
     )
-
-
-agent = Agent(FunctionModel(stream_function=model_function), capabilities=[hooks])
 
 
 @agent.tool
@@ -386,7 +382,7 @@ async def main():
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
-Any consumer of the run's events sees them: an [event hook](hooks.md#event-stream-hooks) as above, an `event_stream_handler=`, [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events], `agent.iter()` streaming, and the [AG-UI](ui/ag-ui.md) and [Vercel AI](ui/vercel-ai.md) adapters. Payload fields can hold any object, but to flow through [durable execution](durable_execution/overview.md) and the UI adapters they need to be serializable by pydantic.
+Any consumer of the run's events sees them: an [`@agent.on_event`](hooks.md#listening-without-a-hooks-capability) listener as above, an [event hook](hooks.md#event-stream-hooks), an `event_stream_handler=`, [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events], `agent.iter()` streaming, and the [AG-UI](ui/ag-ui.md) and [Vercel AI](ui/vercel-ai.md) adapters. Payload fields can hold any object, but to flow through [durable execution](durable_execution/overview.md) and the UI adapters they need to be serializable by pydantic.
 
 The payload cannot use the field names the envelope needs for itself: `data`, `tool_call_id`, `tool_name`, and `event_kind` are rejected when the class is defined, so pick another name (`payload`, `call_id`) for a field that would collide.
 
@@ -588,7 +584,7 @@ _(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())
 
 You can retrieve usage statistics (tokens, requests, etc.) at any time from the [`AgentRun`][pydantic_ai.agent.AgentRun] object via `agent_run.usage`. This property returns a [`RunUsage`][pydantic_ai.usage.RunUsage] object containing the usage data.
 
-[`RunUsage.cost`][pydantic_ai.usage.RunUsage.cost] additionally holds a best-effort estimate of the run's total cost in USD, calculated from each request's usage with [genai-prices](https://github.com/pydantic/genai-prices). Requests to models or providers that genai-prices doesn't have pricing data for don't contribute to the total.
+[`RunUsage.cost`][pydantic_ai.usage.RunUsage.cost] additionally holds a best-effort estimate of the run's total cost in USD, calculated from each request's usage with [genai-prices](https://github.com/pydantic/genai-prices). Requests to models or providers that genai-prices doesn't have pricing data for don't contribute to the total. See [keeping model prices up to date](#keeping-model-prices-up-to-date) for how to price models released after your install.
 
 Once the run finishes, `agent_run.result` becomes an [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] object containing the final output (and related metadata).
 
@@ -1003,6 +999,25 @@ Cancellation is **run-scoped**: `cancel()` cancels the run its `RunContext` belo
 
 ### Additional Configuration
 
+#### Keeping model prices up to date
+
+Pydantic AI bundles model prices at release time. To estimate costs for models released after you installed it, download updated prices when your app starts:
+
+```python
+from pydantic_ai import prices
+
+updater = prices.update_in_background()
+
+try:
+    ...  # run your app
+finally:
+    updater.stop()
+```
+
+The price list updates immediately and then hourly in a background thread. Failed downloads leave the most recent prices in use.
+
+For a custom URL or update interval, use [`genai_prices.UpdatePrices`](https://github.com/pydantic/genai-prices/blob/main/packages/python/README.md#updateprices), which shares the same background task.
+
 #### Usage Limits
 
 Pydantic AI offers a [`UsageLimits`][pydantic_ai.usage.UsageLimits] structure to help you limit your
@@ -1161,7 +1176,7 @@ except UsageLimitExceeded as e:
 Like `output_tokens_limit`, this is checked after each response, since a response's output cost isn't known until it arrives. Setting `count_tokens_before_request=True` additionally prices the counted input tokens and rejects the request up front when that lower bound alone exceeds the limit.
 
 !!! note
-    Cost is best-effort: it's `None` for models and providers [genai-prices](https://github.com/pydantic/genai-prices) has no pricing data for. With a [`cost_limit`][pydantic_ai.usage.UsageLimits.cost_limit], a run that could not be priced at all emits [`CostNotFoundWarning`][pydantic_ai.exceptions.CostNotFoundWarning] rather than being silently unconstrained; an unexpected pricing failure emits [`CostCalculationFailedWarning`][pydantic_ai.exceptions.CostCalculationFailedWarning]. Don't rely on `cost_limit` as a hard billing guarantee — pair it with [`request_limit`][pydantic_ai.usage.UsageLimits.request_limit] or your provider's own spend controls.
+    Cost is best-effort: it's `None` for models and providers [genai-prices](https://github.com/pydantic/genai-prices) has no pricing data for, including models released after your install unless you [keep prices up to date](#keeping-model-prices-up-to-date). With a [`cost_limit`][pydantic_ai.usage.UsageLimits.cost_limit], a run that could not be priced at all emits [`CostNotFoundWarning`][pydantic_ai.exceptions.CostNotFoundWarning] rather than being silently unconstrained; an unexpected pricing failure emits [`CostCalculationFailedWarning`][pydantic_ai.exceptions.CostCalculationFailedWarning]. Don't rely on `cost_limit` as a hard billing guarantee — pair it with [`request_limit`][pydantic_ai.usage.UsageLimits.request_limit] or your provider's own spend controls.
 
 #### Model (Run) Settings
 

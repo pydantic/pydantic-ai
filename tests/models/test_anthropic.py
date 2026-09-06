@@ -61,6 +61,7 @@ from pydantic_ai.messages import (
     CompactionPart,
     InstructionPart,
     ToolAvailabilityDeltaPart,
+    ToolReturn,
     ToolSearchCallPart,
     ToolSearchReturnPart,
     UploadedFile,
@@ -12157,6 +12158,115 @@ async def test_anthropic_lazy_advertisement_uses_reveal_order(allow_model_reques
 
     [request] = get_mock_chat_completion_kwargs(mock_client)
     assert [tool.get('name') for tool in request['tools']][-2:] == ['beta', 'alpha']
+
+
+def _deferred_tool_parameters() -> ModelRequestParameters:
+    return ModelRequestParameters(
+        function_tools=[
+            ToolDefinition(name='delete_map', parameters_json_schema={'type': 'object'}, defer_loading=True),
+            ToolDefinition(name='archive_map', parameters_json_schema={'type': 'object'}, defer_loading=True),
+        ],
+    )
+
+
+async def test_anthropic_tool_return_reveal_parallel_batch_live(
+    allow_model_requests: None,
+    anthropic_model: AnthropicModelFactory,
+    request_capture: RequestCapture,
+) -> None:
+    agent = Agent(
+        anthropic_model('claude-haiku-4-5', capture=True),
+        instructions=(
+            'On your first response, call reveal_cleanup and list_maps together in one parallel tool-use response. '
+            'Do not write any text before those calls. After both results, reply exactly DONE. Do not call delete_map.'
+        ),
+        model_settings=AnthropicModelSettings(parallel_tool_calls=True, temperature=0),
+    )
+
+    @agent.tool_plain
+    def reveal_cleanup() -> ToolReturn[str]:
+        return ToolReturn('cleanup enabled', tools=['delete_map'])
+
+    @agent.tool_plain
+    def list_maps() -> list[str]:
+        return ['world']
+
+    @agent.tool_plain(defer_loading=True)
+    def delete_map() -> None:
+        pass
+
+    result = await agent.run('Prepare to clean up the maps.')
+
+    assert result.output == 'DONE'
+    request_bodies = request_capture.bodies('/v1/messages')
+    assert message_shape(request_bodies[1]) == snapshot(
+        [
+            ('user', ['text']),
+            ('assistant', ['tool_use', 'tool_use']),
+            ('user', ['tool_result', 'tool_result']),
+            ('assistant', ['tool_use']),
+            ('user', ['tool_result']),
+        ]
+    )
+
+
+def test_anthropic_synthesized_reveal_does_not_cross_unrelated_parts() -> None:
+    """A cassette cannot detect changes to the projected message order."""
+    model = AnthropicModel(
+        'claude-sonnet-5', provider=AnthropicProvider(anthropic_client=cast(AsyncAnthropic, MockAnthropic()))
+    )
+    messages = model.prepare_messages(
+        [
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(tool_name='reveal', content='ready', tool_call_id='reveal'),
+                    ToolAvailabilityDeltaPart(tools_added=['delete_map']),
+                    RetryPromptPart(content='Retry the final output.'),
+                    ToolAvailabilityDeltaPart(tools_added=['archive_map']),
+                    UserPromptPart(content='Continue.'),
+                ]
+            ),
+        ],
+        _deferred_tool_parameters(),
+    )
+
+    assert [[type(part) for part in message.parts] for message in messages] == [
+        [ToolReturnPart],
+        [ToolSearchCallPart],
+        [ToolSearchReturnPart, RetryPromptPart],
+        [ToolSearchCallPart],
+        [ToolSearchReturnPart, UserPromptPart],
+    ]
+
+
+def test_anthropic_synthesized_reveals_follow_parallel_results() -> None:
+    """A cassette cannot detect changes to the projected message order."""
+    model = AnthropicModel(
+        'claude-sonnet-5', provider=AnthropicProvider(anthropic_client=cast(AsyncAnthropic, MockAnthropic()))
+    )
+    messages = model.prepare_messages(
+        [
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(tool_name='reveal', content='x', tool_call_id='reveal'),
+                    ToolAvailabilityDeltaPart(tools_added=['delete_map']),
+                    RetryPromptPart(tool_name='list_maps', content='retry', tool_call_id='list_maps'),
+                    ToolAvailabilityDeltaPart(tools_added=['archive_map']),
+                    ToolReturnPart(tool_name='status', content='ready', tool_call_id='status'),
+                    UserPromptPart(content='continue'),
+                ]
+            )
+        ],
+        _deferred_tool_parameters(),
+    )
+
+    assert [[type(part) for part in message.parts] for message in messages] == [
+        [ToolReturnPart, RetryPromptPart, ToolReturnPart],
+        [ToolSearchCallPart],
+        [ToolSearchReturnPart],
+        [ToolSearchCallPart],
+        [ToolSearchReturnPart, UserPromptPart],
+    ]
 
 
 @pytest.mark.parametrize(

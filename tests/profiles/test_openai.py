@@ -119,6 +119,16 @@ REASONING_CASES = [
         supports_minimal_reasoning_effort=False,
         supports_context=True,
     ),
+    # gpt-6-astra: reasons by default with no `effort='none'`; carries over `reasoning.mode` and
+    # `reasoning.context='all_turns'` from GPT-5.6. Pinned from the model guide
+    # (https://developers.openai.com/api/docs/models/gpt-6-astra); live verification pending access.
+    ReasoningCase(
+        model='gpt-6-astra',
+        enabled_by_default=True,
+        supports_mode=True,
+        supports_minimal_reasoning_effort=False,
+        supports_context=True,
+    ),
     # no reasoning
     ReasoningCase(model='gpt-5-chat'),
     ReasoningCase(model='gpt-4o'),

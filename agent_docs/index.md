@@ -131,5 +131,6 @@ Check these when working in specific areas:
 - **[Code Simplification & Idioms](code-simplification.md)**: When refactoring code for clarity or looking to simplify complex patterns
 - **[Documentation](documentation.md)**: When writing or reviewing documentation, comments, docstrings, examples, or other user-facing text
 - **[API Design & Interfaces](api-design.md)**: When designing or modifying public APIs, parameters, or class interfaces
+- **[Async & Concurrency](concurrency.md)**: When spawning tasks, using task groups or cancel scopes, creating locks/events/streams, writing async context managers or generators, crossing a thread or event-loop boundary, or testing any of it
 - **[Pydantic AI Slim Architecture](pydantic-ai-slim.md)**: When changing agents, tools, output, message history, providers, profiles, capabilities, toolsets, UI adapters, or durable execution
 <!-- /braindump -->
