@@ -301,6 +301,41 @@ async def test_function_toolset_with_defaults_overridden():
         return a - b  # pragma: no cover
 
 
+async def test_function_toolset_user_error_add_tool_during_get_tools():
+    """Adding a tool from a tool `prepare` callback raises `UserError` instead of `RuntimeError`."""
+    toolset = FunctionToolset()
+
+    def subtract(a: int, b: int) -> int:
+        """Subtract two numbers"""
+        return a - b  # pragma: no cover
+
+    registered = False
+
+    async def prepare_adds_tool(ctx: RunContext, tool_def: ToolDefinition) -> ToolDefinition:
+        nonlocal registered
+        if not registered:
+            registered = True
+            toolset.add_function(subtract)
+        return tool_def
+
+    @toolset.tool_plain(prepare=prepare_adds_tool)
+    def add(a: int, b: int) -> int:
+        """Add two numbers"""
+        return a + b  # pragma: no cover
+
+    with pytest.raises(
+        UserError,
+        match=re.escape("Cannot add tool 'subtract' while this toolset is preparing tool definitions."),
+    ):
+        await toolset.get_tools(build_run_context(None))
+
+    # The guard is reset when `get_tools()` exits, so registration works again between calls...
+    toolset.add_function(subtract)
+    # ...and the next `get_tools()` no longer sees the toolset as mid-iteration.
+    tools = await toolset.get_tools(build_run_context(None))
+    assert list(tools.keys()) == ['add', 'subtract']
+
+
 async def test_prepared_toolset_sync_prepare_func():
     """`PreparedToolset` accepts a synchronous prepare function (no await needed)."""
     base_toolset = FunctionToolset()

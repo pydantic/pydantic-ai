@@ -148,6 +148,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             for instruction in normalize_instructions(instructions)
         ]
 
+        self._getting_tools = False
         self.tools = {}
         for tool in tools:
             if isinstance(tool, Tool):
@@ -597,6 +598,13 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         Args:
             tool: The tool to add.
         """
+        if self._getting_tools:
+            raise UserError(
+                f'Cannot add tool {tool.name!r} while this toolset is preparing tool definitions.'
+                ' Adding tools from a tool `prepare` callback or tool function is not supported.'
+                ' To add tools dynamically during a run, use a `DynamicToolset`, the agent-level'
+                ' `prepare_tools` hook, or a `DeferredLoadingToolset` for tools that load on demand.'
+            )
         if tool.name in self.tools:
             raise UserError(f'Tool name conflicts with existing tool: {tool.name!r}')
         if tool.max_retries is None and self.max_retries is not None:
@@ -625,6 +633,13 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         return parts or None
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
+        self._getting_tools = True
+        try:
+            return await self._get_tools(ctx)
+        finally:
+            self._getting_tools = False
+
+    async def _get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         tools: dict[str, ToolsetTool[AgentDepsT]] = {}
         for original_name, tool in self.tools.items():
             max_retries = tool.max_retries if tool.max_retries is not None else self.max_retries
