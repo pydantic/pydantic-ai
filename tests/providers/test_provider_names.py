@@ -15,6 +15,7 @@ with try_import() as imports_successful:
     from google.auth.exceptions import DefaultCredentialsError, GoogleAuthError
     from openai import OpenAIError
 
+    from pydantic_ai.providers.aitokenking import AITokenKingProvider
     from pydantic_ai.providers.anthropic import AnthropicProvider
     from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.providers.bedrock import BedrockProvider
@@ -66,6 +67,7 @@ with try_import() as imports_successful:
         ('crusoe', CrusoeProvider, 'CRUSOE_API_KEY'),
         ('nebius', NebiusProvider, 'NEBIUS_API_KEY'),
         ('ovhcloud', OVHcloudProvider, 'OVHCLOUD_API_KEY'),
+        ('aitokenking', AITokenKingProvider, 'AITOKENKING_API_KEY'),
         ('snowflake', SnowflakeProvider, 'SNOWFLAKE_ACCOUNT'),
         ('gateway/chat', OpenAIProvider, 'PYDANTIC_AI_GATEWAY_API_KEY'),
         ('gateway/groq', GroqProvider, 'PYDANTIC_AI_GATEWAY_API_KEY'),

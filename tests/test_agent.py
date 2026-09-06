@@ -100,6 +100,7 @@ from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDef
 from pydantic_graph import End
 
 if TYPE_CHECKING:
+    from pydantic_ai.providers.aitokenking import AITokenKingProvider
     from pydantic_ai.providers.alibaba import AlibabaProvider
     from pydantic_ai.providers.anthropic import AnthropicProvider
     from pydantic_ai.providers.azure import AzureProvider
@@ -126,6 +127,7 @@ if TYPE_CHECKING:
     from pydantic_ai.providers.vllm import VLLMProvider
 else:
     try:
+        from pydantic_ai.providers.aitokenking import AITokenKingProvider
         from pydantic_ai.providers.alibaba import AlibabaProvider
         from pydantic_ai.providers.azure import AzureProvider
         from pydantic_ai.providers.cerebras import CerebrasProvider
@@ -149,7 +151,7 @@ else:
         CrusoeProvider = FireworksProvider = GitHubProvider = HerokuProvider = None
         MoonshotAIProvider = NebiusProvider = OllamaProvider = OpenAIProvider = None
         OpenRouterProvider = OVHcloudProvider = SambaNovaProvider = None
-        TogetherProvider = VercelProvider = VLLMProvider = None
+        TogetherProvider = VercelProvider = VLLMProvider = AITokenKingProvider = None
 
     try:
         from pydantic_ai.providers.anthropic import AnthropicProvider
@@ -9149,6 +9151,7 @@ async def test_azure_provider_lifecycle_closes_client():
         pytest.param(lambda: TogetherProvider(api_key='t'), marks=[requires_openai], id='together'),
         pytest.param(lambda: VercelProvider(api_key='t'), marks=[requires_openai], id='vercel'),
         pytest.param(lambda: AlibabaProvider(api_key='t'), marks=[requires_openai], id='alibaba'),
+        pytest.param(lambda: AITokenKingProvider(api_key='t'), marks=[requires_openai], id='aitokenking'),
         pytest.param(lambda: VLLMProvider(base_url='http://localhost:8000/v1'), marks=[requires_openai], id='vllm'),
     ],
 )

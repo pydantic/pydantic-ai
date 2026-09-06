@@ -257,6 +257,10 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
         from .ovhcloud import OVHcloudProvider
 
         return OVHcloudProvider
+    elif provider == 'aitokenking':
+        from .aitokenking import AITokenKingProvider
+
+        return AITokenKingProvider
     elif provider == 'alibaba':
         from .alibaba import AlibabaProvider
 

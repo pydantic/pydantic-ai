@@ -123,6 +123,7 @@ def known_model_names() -> tuple[str, ...]:
 OpenAIChatCompatibleProvider = TypeAliasType(
     'OpenAIChatCompatibleProvider',
     Literal[
+        'aitokenking',
         'alibaba',
         'azure',
         'cerebras',

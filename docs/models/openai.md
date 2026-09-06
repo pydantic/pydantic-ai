@@ -1057,6 +1057,45 @@ print(result.output)
 #> The capital of France is Paris.
 ```
 
+### AI Token King
+
+[AI Token King](https://aitokenking.com.tw) is an OpenAI-compatible gateway that serves models from several
+labs behind a single API key. Create a key in the platform console, then set the `AITOKENKING_API_KEY`
+environment variable and use [`AITokenKingProvider`][pydantic_ai.providers.aitokenking.AITokenKingProvider]
+by name:
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent('aitokenking:gpt-5.6-terra')
+result = agent.run_sync('What is the capital of France?')
+print(result.output)
+#> The capital of France is Paris.
+```
+
+If you need to configure the provider, you can use the
+[`AITokenKingProvider`][pydantic_ai.providers.aitokenking.AITokenKingProvider] class:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.aitokenking import AITokenKingProvider
+
+model = OpenAIChatModel(
+    'gpt-5.6-terra',
+    provider=AITokenKingProvider(api_key='your-api-key'),
+)
+agent = Agent(model)
+result = agent.run_sync('What is the capital of France?')
+print(result.output)
+#> The capital of France is Paris.
+```
+
+Model ids are passed through to the gateway unchanged. The provider maps each model family it
+recognises (`claude-`, `deepseek-`, `gemini-`, `glm-`, `gpt-`, `kimi-`, `qwen`) onto the matching
+Pydantic AI model profile; families without an upstream profile fall back to the OpenAI-compatible
+defaults.
+
 ### OVHcloud AI Endpoints
 
 To use OVHcloud AI Endpoints, you need to create a new API key. To do so, go to the [OVHcloud manager](https://ovh.com/manager), then in Public Cloud > AI Endpoints > API keys. Click on `Create a new API key` and copy your new key.

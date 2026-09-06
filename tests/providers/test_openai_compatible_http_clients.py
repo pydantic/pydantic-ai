@@ -20,6 +20,7 @@ with try_import() as imports_successful:
     from openai import AsyncOpenAI
 
     from pydantic_ai.models.openai import OpenAIChatModel, OpenAIChatModelSettings
+    from pydantic_ai.providers.aitokenking import AITokenKingProvider
     from pydantic_ai.providers.alibaba import AlibabaProvider
     from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.providers.bedrock_mantle import BedrockMantleProvider
@@ -57,6 +58,11 @@ class Case:
 
 
 CASES = [
+    Case(
+        'aitokenking',
+        lambda: AITokenKingProvider(api_key='test'),
+        lambda http_client: AITokenKingProvider(api_key='test', http_client=http_client),
+    ),
     Case(
         'alibaba',
         lambda: AlibabaProvider(api_key='test'),
@@ -176,6 +182,7 @@ CASES = [
 ]
 
 IMPORT_GUARD_CASES = [
+    ('aitokenking', 'use the AI Token King provider'),
     ('alibaba', 'use the Alibaba provider'),
     ('azure', 'use the Azure provider'),
     ('bedrock_mantle', 'use the Bedrock Mantle provider'),

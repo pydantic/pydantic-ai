@@ -1636,6 +1636,26 @@ def test_ovhcloud_llama():
     assert _normalize(profile) == snapshot({'json_schema_transformer': InlineDefsJsonSchemaTransformer})
 
 
+def test_aitokenking_qwen():
+    from pydantic_ai.providers.aitokenking import AITokenKingProvider
+
+    profile = AITokenKingProvider.model_profile('qwen3.8-max')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'ignore_streamed_leading_whitespace': True,
+        }
+    )
+
+
+def test_aitokenking_unknown_family():
+    """Families the gateway serves that have no upstream profile still get the OpenAI-compatible base."""
+    from pydantic_ai.providers.aitokenking import AITokenKingProvider
+
+    profile = AITokenKingProvider.model_profile('minimax-m3')
+    assert _normalize(profile) == snapshot({'json_schema_transformer': OpenAIJsonSchemaTransformer})
+
+
 def test_alibaba_qwen():
     from pydantic_ai.providers.alibaba import AlibabaProvider
 
