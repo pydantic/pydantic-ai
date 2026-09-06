@@ -507,7 +507,12 @@ class TestOpenAIResponsesThinkingTranslation:
 
 @pytest.mark.skipif(not google_imports(), reason='google-genai not installed')
 class TestGoogleThinkingTranslation:
-    """Test Google model _translate_thinking translation."""
+    """Test Google model _translate_thinking translation.
+
+    Unit-pinned because cassette matchers aren't sensitive to the request body — asserting the
+    translated config directly is what catches resolution drift; wire-level cases live in
+    `tests/test_thinking_wire_contract.py`.
+    """
 
     @pytest.fixture
     def gemini_3_model(self):
@@ -675,6 +680,32 @@ class TestGoogleThinkingTranslation:
         params = ModelRequestParameters(thinking='low')
         settings: ModelSettings = {}
         with pytest.raises(UserError, match='must contain at least one level'):
+            GoogleModel._translate_thinking(model, settings, params)
+
+    def test_thinking_snaps_table_derived_levels(self):
+        """The snap applies to a level set derived by `google_model_profile`, not just hand-built ones."""
+        model = FunctionModel(_echo, profile=google_model_profile('gemini-3.7-flash'))
+        params = ModelRequestParameters(thinking='minimal')
+        settings: ModelSettings = {}
+        result = GoogleModel._translate_thinking(model, settings, params)
+        assert result == snapshot({'include_thoughts': True, 'thinking_level': 'LOW'})
+
+        params_false = ModelRequestParameters(thinking=False)
+        assert GoogleModel._translate_thinking(model, settings, params_false) == snapshot({'thinking_level': 'LOW'})
+
+    def test_thinking_unknown_levels_rejected(self):
+        """Levels the resolver can't order (e.g. lowercase misspellings) are rejected as config errors."""
+        model = FunctionModel(
+            _echo,
+            profile=GoogleModelProfile(
+                supports_thinking=True,
+                google_supports_thinking_level=True,
+                google_thinking_levels=frozenset({'minimal'}),
+            ),
+        )
+        params = ModelRequestParameters(thinking='low')
+        settings: ModelSettings = {}
+        with pytest.raises(UserError, match='unknown levels'):
             GoogleModel._translate_thinking(model, settings, params)
 
     def test_thinking_false_gemini_25(self, gemini_25_model: FunctionModel):

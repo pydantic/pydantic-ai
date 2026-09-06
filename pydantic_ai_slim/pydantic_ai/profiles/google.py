@@ -12,10 +12,13 @@ if TYPE_CHECKING:
 
 
 GoogleThinkingLevel: TypeAlias = Literal['MINIMAL', 'LOW', 'MEDIUM', 'HIGH']
-"""Native Gemini `thinking_level` values, ordered `MINIMAL < LOW < MEDIUM < HIGH`."""
+"""Native Gemini `thinking_level` values."""
 
-GOOGLE_THINKING_LEVELS: frozenset[GoogleThinkingLevel] = frozenset(('MINIMAL', 'LOW', 'MEDIUM', 'HIGH'))
-"""The full thinking-level scale."""
+GOOGLE_THINKING_LEVEL_SCALE: tuple[GoogleThinkingLevel, ...] = ('MINIMAL', 'LOW', 'MEDIUM', 'HIGH')
+"""The full thinking-level scale, cheapest first. The resolver's order map derives from this."""
+
+GOOGLE_THINKING_LEVELS: frozenset[GoogleThinkingLevel] = frozenset(GOOGLE_THINKING_LEVEL_SCALE)
+"""The full thinking-level scale as a set."""
 
 # MIME types supported in native FunctionResponseDict.parts for Gemini 3+.
 # See https://ai.google.dev/gemini-api/docs/function-calling?example=meeting#multimodal

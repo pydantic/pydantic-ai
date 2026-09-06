@@ -54,7 +54,12 @@ from ..native_tools import (
 )
 from ..output import OutputObjectDefinition
 from ..profiles import ModelProfileSpec
-from ..profiles.google import GOOGLE_THINKING_LEVELS, GoogleModelProfile, GoogleThinkingLevel
+from ..profiles.google import (
+    GOOGLE_THINKING_LEVEL_SCALE,
+    GOOGLE_THINKING_LEVELS,
+    GoogleModelProfile,
+    GoogleThinkingLevel,
+)
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings, ServiceTier, ThinkingEffort, ToolChoiceScalar
 from ..tools import ToolDefinition
@@ -444,10 +449,7 @@ def _google_cloud_service_tier_headers(service_tier: GoogleCloudServiceTier) -> 
 
 
 _GOOGLE_THINKING_LEVEL_ORDER: dict[GoogleThinkingLevel, int] = {
-    'MINIMAL': 0,
-    'LOW': 1,
-    'MEDIUM': 2,
-    'HIGH': 3,
+    level: order for order, level in enumerate(GOOGLE_THINKING_LEVEL_SCALE)
 }
 
 
@@ -479,6 +481,11 @@ def _resolve_google_thinking_level(thinking: ThinkingEffort, profile: GoogleMode
         )
     if not levels:
         raise UserError('`google_thinking_levels` must contain at least one level when `thinking` is set')
+    if unknown := levels - GOOGLE_THINKING_LEVELS:
+        raise UserError(
+            f'`google_thinking_levels` contains unknown levels: {sorted(unknown)!r}; '
+            f'expected a subset of {sorted(GOOGLE_THINKING_LEVELS)!r}'
+        )
     requested = _GOOGLE_THINKING_LEVEL_ORDER[_thinking_effort_to_level(thinking)]
     return min(
         levels,

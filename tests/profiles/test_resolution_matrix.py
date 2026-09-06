@@ -1052,6 +1052,7 @@ def test_openrouter_google_gemini_3_pro():
     )
 
 
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 def test_openrouter_google_gemini_3_8_flash_thinking_levels():
     """Google via OpenRouter — the restricted level set survives the three-layer merge."""
     from pydantic_ai.providers.openrouter import OpenRouterProvider
