@@ -662,6 +662,21 @@ class TestGoogleThinkingTranslation:
         result = GoogleModel._translate_thinking(low_high_model, settings, params)
         assert result == snapshot({'include_thoughts': True, 'thinking_level': 'LOW'})
 
+    def test_thinking_empty_levels_rejected(self):
+        """An explicitly empty `google_thinking_levels` is malformed config, not 'no levels'."""
+        model = FunctionModel(
+            _echo,
+            profile=GoogleModelProfile(
+                supports_thinking=True,
+                google_supports_thinking_level=True,
+                google_thinking_levels=frozenset(),
+            ),
+        )
+        params = ModelRequestParameters(thinking='low')
+        settings: ModelSettings = {}
+        with pytest.raises(UserError, match='must contain at least one level'):
+            GoogleModel._translate_thinking(model, settings, params)
+
     def test_thinking_false_gemini_25(self, gemini_25_model: FunctionModel):
         """thinking=False on Gemini 2.5 uses thinking_budget=0."""
         params = ModelRequestParameters(thinking=False)

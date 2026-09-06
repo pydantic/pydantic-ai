@@ -477,6 +477,8 @@ def _resolve_google_thinking_level(thinking: ThinkingEffort, profile: GoogleMode
             if profile.get('google_supports_minimal_thinking_level', True)
             else GOOGLE_THINKING_LEVELS - {'MINIMAL'}
         )
+    if not levels:
+        raise UserError('`google_thinking_levels` must contain at least one level when `thinking` is set')
     requested = _GOOGLE_THINKING_LEVEL_ORDER[_thinking_effort_to_level(thinking)]
     return min(
         levels,
