@@ -248,6 +248,10 @@ jobs:
           extra_args: --all-files --verbose
         env:
           SKIP: ${{ needs.classify.outputs.pyright_changed == 'true' && 'no-commit-to-branch' || 'no-commit-to-branch,typecheck' }}
+          # The `Makefile` leaves pyright single-process by default, for laptops where a worker
+          # per core swaps. A runner has the memory, and the workers are worth about a quarter of
+          # this step here, so CI opts back in.
+          PYRIGHT_THREADS: auto
           # pre-commit hooks shell out via `uv run`; without this they would
           # re-sync the venv and drop the out-of-band harness install above.
           UV_NO_SYNC: "1"
