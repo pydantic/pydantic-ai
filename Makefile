@@ -42,7 +42,7 @@ lint: ## Lint the code
 # Worker processes for pyright's check phase, all producing identical output. Unset is pyright's own
 # single-process check, and so is 1; 'auto' is up to one worker per logical core and a positive
 # integer caps them. Anything else pyright cannot read as a positive integer, 0 and 'off' included,
-# means 'auto': https://github.com/microsoft/pyright/blob/1.1.411/packages/pyright-internal/src/pyright.ts#L1366-L1377
+# means 'auto' -- pyright's parseThreadsArgValue: https://github.com/microsoft/pyright/blob/1.1.411/packages/pyright-internal/src/pyright.ts#L1366-L1377
 # See docs/contributing.md for when the workers pay for themselves.
 PYRIGHT_THREADS ?=
 

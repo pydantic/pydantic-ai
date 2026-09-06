@@ -160,8 +160,8 @@ relying on a green hook for a file you have not added; a fallback run hands Pyri
 and picks untracked files up with it.
 
 A full run is single-process. `PYRIGHT_THREADS` turns on Pyright's parallel check phase, which
-reaches the same diagnostics: `auto` is up to one worker per logical core, and a positive integer
-caps them. A narrowed run stays single-process either way.
+reaches the same diagnostics in less wall time: `auto` is up to one worker per logical core, and a
+positive integer caps them. A narrowed run stays single-process either way.
 
 ```bash
 export PYRIGHT_THREADS=auto
