@@ -77,7 +77,16 @@ class DeferredCapabilityLoaderToolset(WrapperToolset[AgentDepsT]):
         if capability is None:
             raise ModelRetry(f'No capability found with id {capability_id!r}.')
         if capability_id in ctx.active_capability_ids:
-            raise ModelRetry(LOAD_CAPABILITY_ALREADY_ACTIVE_MESSAGE_TEMPLATE.format(capability_id=capability_id))
+            # Loading an already-active capability is well-formed and idempotent: its
+            # instructions and tools are already in context. Refusing with `ModelRetry`
+            # frames the call as a validation error and burns retry budget, so a model
+            # that repeats the call kills the run; redirect with a normal success
+            # return instead, so the message lands as ordinary tool output.
+            return ToolReturn(
+                return_value={
+                    'instructions': LOAD_CAPABILITY_ALREADY_ACTIVE_MESSAGE_TEMPLATE.format(capability_id=capability_id)
+                }
+            )
 
         # Sourced through `_collect_instructions` rather than `get_instructions` so a loaded
         # capability's parts carry the same `capability:<id>` keys they would have had if the

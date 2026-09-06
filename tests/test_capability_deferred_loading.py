@@ -2187,7 +2187,7 @@ async def test_load_capability_inherits_agent_tool_retries() -> None:
     assert calls == 4
 
 
-async def test_load_capability_retries_for_already_available_capability() -> None:
+async def test_load_capability_already_available_returns_success_notice() -> None:
     always_on = Capability[object](
         id='always-on',
         description='Already visible.',
@@ -2199,19 +2199,16 @@ async def test_load_capability_retries_for_already_available_capability() -> Non
         instructions='Deferred instructions.',
         defer_loading=True,
     )
-    expected_retry = LOAD_CAPABILITY_ALREADY_ACTIVE_MESSAGE_TEMPLATE.format(capability_id='always-on')
-    retry_messages: list[str] = []
+    expected_notice = LOAD_CAPABILITY_ALREADY_ACTIVE_MESSAGE_TEMPLATE.format(capability_id='always-on')
 
     def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
-        retries = [
-            part.content
+        # Stop once the already-active notice came back as a normal tool return.
+        if any(
+            isinstance(part, LoadCapabilityReturnPart)
             for message in messages
             if isinstance(message, ModelRequest)
             for part in message.parts
-            if isinstance(part, RetryPromptPart) and isinstance(part.content, str)
-        ]
-        if retries:
-            retry_messages.extend(retries)
+        ):
             return make_text_response('done')
 
         return ModelResponse(
@@ -2228,34 +2225,23 @@ async def test_load_capability_retries_for_already_available_capability() -> Non
     result = await agent.run('load always-on')
 
     assert result.output == 'done'
-    assert retry_messages == [expected_retry]
-    assert not any(
-        isinstance(part, LoadCapabilityReturnPart) for message in result.all_messages() for part in message.parts
-    )
+    history_parts = [part for message in result.all_messages() for part in message.parts]
+    # A redundant load is a no-op success, not a validation failure: no retry is requested.
+    assert not any(isinstance(part, RetryPromptPart) for part in history_parts)
+    [notice_return] = [part for part in history_parts if isinstance(part, LoadCapabilityReturnPart)]
+    assert notice_return.instructions == expected_notice
 
 
-async def test_load_capability_retries_when_capability_is_already_loaded() -> None:
+async def test_load_capability_repeated_load_returns_success_notice() -> None:
     deferred = Capability[object](
         id='deferred',
         description='Deferred.',
         instructions='Deferred instructions.',
         defer_loading=True,
     )
-    expected_retry = LOAD_CAPABILITY_ALREADY_ACTIVE_MESSAGE_TEMPLATE.format(capability_id='deferred')
-    retry_messages: list[str] = []
+    expected_notice = LOAD_CAPABILITY_ALREADY_ACTIVE_MESSAGE_TEMPLATE.format(capability_id='deferred')
 
     def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
-        retries = [
-            part.content
-            for message in messages
-            if isinstance(message, ModelRequest)
-            for part in message.parts
-            if isinstance(part, RetryPromptPart) and isinstance(part.content, str)
-        ]
-        if retries:
-            retry_messages.extend(retries)
-            return make_text_response('done')
-
         load_returns = [
             part
             for message in messages
@@ -2263,6 +2249,9 @@ async def test_load_capability_retries_when_capability_is_already_loaded() -> No
             for part in message.parts
             if isinstance(part, LoadCapabilityReturnPart)
         ]
+        if len(load_returns) >= 2:
+            return make_text_response('done')
+
         return ModelResponse(
             parts=[
                 ToolCallPart(
@@ -2277,12 +2266,47 @@ async def test_load_capability_retries_when_capability_is_already_loaded() -> No
     result = await agent.run('load twice')
 
     assert result.output == 'done'
-    assert retry_messages == [expected_retry]
-    load_returns = [
-        part
-        for message in result.all_messages()
-        for part in message.parts
-        if isinstance(part, LoadCapabilityReturnPart)
-    ]
-    assert len(load_returns) == 1
+    history_parts = [part for message in result.all_messages() for part in message.parts]
+    assert not any(isinstance(part, RetryPromptPart) for part in history_parts)
+    load_returns = [part for part in history_parts if isinstance(part, LoadCapabilityReturnPart)]
+    assert len(load_returns) == 2
     assert load_returns[0].instructions == 'Deferred instructions.'
+    assert load_returns[1].instructions == expected_notice
+
+
+async def test_load_capability_survives_repeated_loads_beyond_retry_budget() -> None:
+    """A model that repeats `load_capability` must not exhaust the retry budget and kill the run."""
+    deferred = Capability[object](
+        id='deferred',
+        description='Deferred.',
+        instructions='Deferred instructions.',
+        defer_loading=True,
+    )
+
+    def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        loads = sum(
+            1
+            for message in messages
+            if isinstance(message, ModelResponse)
+            for part in message.parts
+            if isinstance(part, ToolCallPart) and part.tool_name == LOAD_CAPABILITY_TOOL_NAME
+        )
+        # Ask for the same capability three times, mirroring the issue's repro.
+        if loads < 3:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name=LOAD_CAPABILITY_TOOL_NAME,
+                        args={'id': 'deferred'},
+                        tool_call_id=f'load-deferred-{loads}',
+                    )
+                ]
+            )
+        return make_text_response('done')
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[deferred], retries={'tools': 1})
+    result = await agent.run('go')
+
+    assert result.output == 'done'
+    history_parts = [part for message in result.all_messages() for part in message.parts]
+    assert not any(isinstance(part, RetryPromptPart) for part in history_parts)
