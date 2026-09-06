@@ -40,8 +40,9 @@ lint: ## Lint the code
 	uv run ruff check
 
 # Worker processes for pyright's check phase, all producing identical output. Unset is pyright's own
-# single-process check; 'auto' is up to one worker per logical core and a positive integer caps them.
-# See docs/contributing.md for when the workers pay for themselves.
+# single-process check, and so is 1; 'auto' is up to one worker per logical core and a positive
+# integer caps them. Anything else pyright cannot read as a positive integer, 0 and 'off' included,
+# means 'auto'. See docs/contributing.md for when the workers pay for themselves.
 PYRIGHT_THREADS ?=
 
 .PHONY: typecheck-pyright
