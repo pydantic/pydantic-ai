@@ -148,7 +148,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             for instruction in normalize_instructions(instructions)
         ]
 
-        self._getting_tools = False
+        self._getting_tools = 0
         self.tools = {}
         for tool in tools:
             if isinstance(tool, Tool):
@@ -633,11 +633,14 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         return parts or None
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
-        self._getting_tools = True
+        # A counter rather than a flag: the same toolset can be iterated concurrently by
+        # multiple agents, and a flag would let the first caller to finish re-enable
+        # registration while another is still iterating.
+        self._getting_tools += 1
         try:
             return await self._get_tools(ctx)
         finally:
-            self._getting_tools = False
+            self._getting_tools -= 1
 
     async def _get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         tools: dict[str, ToolsetTool[AgentDepsT]] = {}
