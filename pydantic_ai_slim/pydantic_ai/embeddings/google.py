@@ -1,5 +1,5 @@
 import warnings
-from collections.abc import Sequence
+from collections.abc import Generator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Literal, cast
@@ -16,11 +16,29 @@ from .settings import EmbeddingSettings
 try:
     from google.genai import Client, errors
     from google.genai.types import Content, ContentListUnion, EmbedContentConfig, EmbedContentResponse, Part
+
 except ImportError as _import_error:
     raise ImportError(
         'Please install `google-genai` to use the Google embeddings model, '
         'you can use the `google` optional group — `pip install "pydantic-ai-slim[google]"`'
     ) from _import_error
+
+
+@contextmanager
+def _map_api_errors(model_name: str) -> Generator[None]:
+    try:
+        yield
+
+    except errors.APIError as e:
+        if (status_code := e.code) >= 400:
+            raise ModelHTTPError(
+                status_code=status_code,
+                model_name=model_name,
+                body=cast(object, e.details),  # pyright: ignore[reportUnknownMemberType]
+                headers=dict(e.response.headers) if e.response is not None else None,  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+            ) from e
+
+        raise
 
 
 LatestGoogleGLAEmbeddingModelNames = Literal['gemini-embedding-001', 'gemini-embedding-2-preview', 'gemini-embedding-2']
@@ -193,21 +211,6 @@ class GoogleEmbeddingModel(EmbeddingModel):
 
         super().__init__(settings=settings)
 
-    @contextmanager
-    def _handle_api_error(self):
-        try:
-            yield
-
-        except errors.APIError as e:
-            if (status_code := e.code) >= 400:
-                raise ModelHTTPError(
-                    status_code=status_code,
-                    model_name=self._model_name,
-                    body=cast(object, e.details),  # pyright: ignore[reportUnknownMemberType]
-                    headers=dict(e.response.headers) if e.response is not None else None,  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
-                ) from e
-            raise
-
     @property
     def _client(self) -> Client:
         return self._provider.client
@@ -286,7 +289,7 @@ class GoogleEmbeddingModel(EmbeddingModel):
 
         contents: ContentListUnion = [Content(parts=[Part(text=text)]) for text in texts]
 
-        with self._handle_api_error():
+        with _map_api_errors(self._model_name):
             response = await self._client.aio.models.embed_content(
                 model=self._model_name,
                 contents=contents,
@@ -310,7 +313,7 @@ class GoogleEmbeddingModel(EmbeddingModel):
     async def count_tokens(self, text: str) -> int:
         check_allow_model_requests()
 
-        with self._handle_api_error():
+        with _map_api_errors(self._model_name):
             response = await self._client.aio.models.count_tokens(
                 model=self._model_name,
                 contents=text,
