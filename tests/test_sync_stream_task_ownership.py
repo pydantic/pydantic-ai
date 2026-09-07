@@ -86,9 +86,8 @@ def test_sync_stream_owner_cancellation_drains_active_source(wait_for_owner: boo
             ready.set()
             await anyio.sleep_forever()
         finally:
-            with anyio.CancelScope(shield=True):
-                await anyio.sleep(0)
-                cleanup_finished = True
+            await anyio.sleep(0)
+            cleanup_finished = True
 
     with pytest.raises(asyncio.CancelledError):
         with model_request_stream_sync(

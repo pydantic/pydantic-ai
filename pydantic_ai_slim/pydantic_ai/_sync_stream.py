@@ -54,12 +54,14 @@ class _StreamTask(Generic[T]):
         assert self.task is not None
         if self.cancel_requested:
             self.task.cancel()
-        try:
-            self.future.set_result(await func())
-        except asyncio.CancelledError:
-            self.future.cancel()
-        except BaseException as exc:
-            self.future.set_exception(exc)
+        # The owner forwards cancellation once so source cleanup can await.
+        with anyio.CancelScope(shield=True):
+            try:
+                self.future.set_result(await func())
+            except asyncio.CancelledError:
+                self.future.cancel()
+            except BaseException as exc:
+                self.future.set_exception(exc)
 
     def cancel(self) -> None:
         # Preserve edge cancellation so existing source cleanup can await without a cancel scope.
@@ -87,6 +89,7 @@ async def _hold_context_manager(
     entered: asyncio.Future[tuple[StreamT, Context, TaskGroup]],
     exit_requested: asyncio.Future[_ExitInfo],
     start_requests: asyncio.Queue[Callable[[], object]],
+    task_cancellations: set[Callable[[], None]],
 ) -> None:
     """Enter and exit `cm` in one task, remaining parked while sync code uses the yielded stream."""
     try:
@@ -105,14 +108,18 @@ async def _hold_context_manager(
     exit_info: _ExitInfo = (None, None, None)
     try:
         async with anyio.create_task_group() as task_group:
-            entered.set_result((stream, copy_context(), task_group))
-            stop = exit_requested.done
-            exit_requested.add_done_callback(lambda _: start_requests.put_nowait(stop))
-            while (start := await start_requests.get()) is not stop:
-                start()
-                del start
-            exit_info = exit_requested.result()
-            task_group.cancel_scope.cancel()
+            try:
+                entered.set_result((stream, copy_context(), task_group))
+                stop = exit_requested.done
+                exit_requested.add_done_callback(lambda _: start_requests.put_nowait(stop))
+                while (start := await start_requests.get()) is not stop:
+                    start()
+                    del start
+                exit_info = exit_requested.result()
+            finally:
+                for cancel in tuple(task_cancellations):
+                    cancel()
+                task_group.cancel_scope.cancel()
     except BaseException as exc:
         if not await cm.__aexit__(type(exc), exc, exc.__traceback__):
             raise
@@ -270,7 +277,10 @@ class SyncStreamBridge(Generic[StreamT]):
         entered: asyncio.Future[tuple[StreamT, Context, TaskGroup]] = loop.create_future()
         exit_requested: asyncio.Future[_ExitInfo] = loop.create_future()
         start_requests: asyncio.Queue[Callable[[], object]] = asyncio.Queue()
-        owner_task = loop.create_task(_hold_context_manager(cm, entered, exit_requested, start_requests))
+        task_cancellations: set[Callable[[], None]] = set()
+        owner_task = loop.create_task(
+            _hold_context_manager(cm, entered, exit_requested, start_requests, task_cancellations)
+        )
         try:
             stream, run_context, task_group = loop.run_until_complete(entered)
         except BaseException:
@@ -292,6 +302,7 @@ class SyncStreamBridge(Generic[StreamT]):
         self._run_context = run_context
         self._task_group = task_group
         self._start_requests = start_requests
+        self._task_cancellations = task_cancellations
         self._owner_thread_id = get_ident()
         self._pump_tasks: set[_StreamTask[None]] = set()
         # Clean up if the caller never uses the `with` block: exit the stream at GC.
@@ -332,6 +343,9 @@ class SyncStreamBridge(Generic[StreamT]):
     def _start_task(self, func: Callable[[], Awaitable[T]]) -> _StreamTask[T]:
         task = _StreamTask[T](self._loop.create_future())
         task_group = self._task_group
+        task_cancellations = self._task_cancellations
+        task_cancellations.add(task.cancel)
+        task.future.add_done_callback(lambda _: task_cancellations.discard(task.cancel))
 
         def start() -> None:
             try:
