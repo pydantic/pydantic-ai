@@ -16757,9 +16757,9 @@ async def test_forced_stream_aggregates_full_completed_output(allow_model_reques
     assert mock.response_kwargs[0]['store'] is False
 
 
-async def test_forced_stream_drops_unsupported_settings(allow_model_requests: None):
+async def test_forced_stream_preserves_explicit_openai_settings(allow_model_requests: None):
     model, mock = _codex_model_with_stream(_codex_stream(slim_completed=True))
-    settings = OpenAIResponsesModelSettings(
+    settings: OpenAIResponsesModelSettings = OpenAIResponsesModelSettings(
         max_tokens=128,
         temperature=0.5,
         top_p=0.9,
@@ -16767,12 +16767,11 @@ async def test_forced_stream_drops_unsupported_settings(allow_model_requests: No
         openai_truncation='auto',
         openai_user='user-1',
         openai_store=True,
+        # Isolate the Codex profile from the standard reasoning-related sampling exclusions.
+        openai_reasoning_effort='none',
     )
 
-    # Unsupported fields (including `openai_store`) are dropped silently; the warning here is the
-    # generic reasoning seam's, about sampling params on GPT-5.6-family models.
-    with pytest.warns(UserWarning):
-        response = await model.request([ModelRequest(parts=[UserPromptPart('hi')])], settings, ModelRequestParameters())
+    response = await model.request([ModelRequest(parts=[UserPromptPart('hi')])], settings, ModelRequestParameters())
 
     assert response == snapshot(
         ModelResponse(
@@ -16790,9 +16789,11 @@ async def test_forced_stream_drops_unsupported_settings(allow_model_requests: No
         )
     )
     kwargs = mock.response_kwargs[0]
-    assert kwargs['store'] is False  # `openai_store=True` is silently overridden
-    for wire_name in ('max_output_tokens', 'temperature', 'top_p', 'top_logprobs', 'user', 'truncation'):
-        assert wire_name not in kwargs  # dropped before anything reached the wire
+    assert {
+        name: kwargs[name]
+        for name in ('max_output_tokens', 'temperature', 'top_p', 'top_logprobs', 'user', 'truncation', 'store')
+        if name in kwargs
+    } == snapshot({'top_logprobs': 3, 'user': 'user-1', 'truncation': 'auto', 'store': False})
 
 
 async def test_forced_stream_without_events_raises(allow_model_requests: None):

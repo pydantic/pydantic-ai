@@ -15,16 +15,12 @@ def openai_codex_model_profile(model_name: str) -> ModelProfile:
     return merge_profile(
         openai_model_profile(model_name),
         OpenAIModelProfile(
-            # Rejected server-side per the live probes on #6433: `max_output_tokens` (the wire name
-            # for the generic `max_tokens` setting), `temperature`, `top_p`, `top_logprobs`, `user`,
-            # and `truncation`. Dropped silently so client code stays portable across providers.
+            # Drop unsupported generic settings for portability. Forward explicit `openai_*`
+            # settings so the API reports incompatibilities instead of silently ignoring them.
             openai_unsupported_model_settings=(
                 'max_tokens',
                 'temperature',
                 'top_p',
-                'openai_top_logprobs',
-                'openai_truncation',
-                'openai_user',
             ),
             openai_responses_requires_streaming=True,
             openai_responses_requires_store_false=True,

@@ -975,9 +975,7 @@ def test_openai_codex_prefix_infers_responses_model(env: TestEnv, tmp_path: Path
     assert model.profile.get('openai_responses_requires_store_false') is True
     assert model.profile.get('openai_supports_input_token_counting') is False
     unsupported = model.profile.get('openai_unsupported_model_settings', ())
-    assert {'max_tokens', 'temperature', 'top_p', 'openai_top_logprobs', 'openai_truncation', 'openai_user'} <= set(
-        unsupported
-    )
+    assert unsupported == ('max_tokens', 'temperature', 'top_p')
 
 
 def test_standard_openai_profile_untouched():

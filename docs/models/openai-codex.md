@@ -104,7 +104,7 @@ The Codex backend keys prompt caching off a stable session identity, sent as the
 ## Limitations
 
 - The Codex backend is streaming-only; for non-streaming runs the library transparently drains a stream, so `agent.run_sync()` and friends work as usual.
-- The backend rejects some request settings, so they are dropped before sending: `max_tokens`, `temperature`, `top_p`, `openai_top_logprobs`, `openai_truncation`, and `openai_user`.
+- Unsupported generic settings (`max_tokens`, `temperature`, and `top_p`) are dropped before sending. Explicit `openai_top_logprobs`, `openai_truncation`, and `openai_user` settings are forwarded, so the backend reports an error if it does not support them.
 - The backend requires `store=false`, so every request is sent with it and an explicit `openai_store=True` is silently overridden: responses are never persisted server-side. Consequently, resuming a suspended run raises [`UserError`][pydantic_ai.exceptions.UserError], since there is no stored response to continue from.
 - `count_tokens()` raises [`UserError`][pydantic_ai.exceptions.UserError]: the input-tokens endpoint is not served under subscription auth.
 - There is no device flow: the browser login above is the only login flow the Codex client supports.

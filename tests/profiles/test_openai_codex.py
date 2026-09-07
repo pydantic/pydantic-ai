@@ -29,9 +29,6 @@ def test_codex_wire_dialect_flags():
         'max_tokens',
         'temperature',
         'top_p',
-        'openai_top_logprobs',
-        'openai_truncation',
-        'openai_user',
     )
 
 
