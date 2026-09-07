@@ -290,6 +290,12 @@ class XaiImageGenerationModel(ImageGenerationModel):
         if not images:
             raise ContentFilterError('xAI flagged all generated images for content moderation')
 
+        # A batch is one `GenerateImage` RPC that answers with one `ImageResponse` proto holding every
+        # image, which `sample_batch` wraps as n views over that single proto — so `usage` and
+        # `cost_usd` are the same batch-wide object on each element, not a per-image share. Reading the
+        # first is therefore the whole batch; summing would multiply it by n. Recorded across
+        # `test_xai_image_generation_vcr` and `test_xai_image_generation_batch_vcr`: one image costs
+        # $0.02 against the $0.04 a two-image batch reports.
         first_response = responses[0]
         provider_details = _response_provider_details(first_response)
         if moderated_indices:

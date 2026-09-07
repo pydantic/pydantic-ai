@@ -202,6 +202,18 @@ class OpenAIImageGenerationModel(ImageGenerationModel):
         resolved = _resolve_openai_settings(openai_settings, is_edit=bool(images), model_name=self.model_name)
         warn_image_generation_settings(self.system, ignored=resolved.ignored, conflicts=resolved.conflicts)
         output_compression = openai_settings.get('openai_output_compression')
+        # `size` and `user` are free-form strings, so they are forwarded on presence rather than on
+        # truthiness: `''` is a value the caller explicitly set, and OpenAI is the authority on whether
+        # it is acceptable. It rejects `size=''` with a 400 naming the parameter — which a truthiness
+        # check would swallow into a silently default-sized, billed image — and accepts `user=''`. That
+        # verdict is only reachable on the JSON `images.generate` body: the SDK's multipart serializer
+        # discards any value stringifying to empty, so on `images.edit` an explicit `''` dies below us
+        # whatever we pass. The edit call stays symmetric so the value survives to the SDK boundary.
+        # The `Literal`-typed settings below have no falsy member, so `or OMIT` already means presence
+        # for them; `openai_n` is an `int`, but `validate_image_count` has rejected anything below 1 by
+        # this point, so its `or OMIT` is safe too.
+        size = resolved.size
+        user = openai_settings.get('openai_user')
 
         try:
             if images:
@@ -210,13 +222,13 @@ class OpenAIImageGenerationModel(ImageGenerationModel):
                     prompt=prompt,
                     model=self.model_name,
                     n=openai_settings.get('openai_n') or OMIT,
-                    size=resolved.size or OMIT,
+                    size=size if size is not None else OMIT,
                     output_format=openai_settings.get('openai_output_format') or OMIT,
                     quality=openai_settings.get('openai_quality') or OMIT,
                     background=openai_settings.get('openai_background') or OMIT,
                     input_fidelity=openai_settings.get('openai_input_fidelity') or OMIT,
                     output_compression=output_compression if output_compression is not None else OMIT,
-                    user=openai_settings.get('openai_user') or OMIT,
+                    user=user if user is not None else OMIT,
                     extra_headers=openai_settings.get('extra_headers'),
                     extra_body=openai_settings.get('extra_body'),
                 )
@@ -225,13 +237,13 @@ class OpenAIImageGenerationModel(ImageGenerationModel):
                     prompt=prompt,
                     model=self.model_name,
                     n=openai_settings.get('openai_n') or OMIT,
-                    size=resolved.size or OMIT,
+                    size=size if size is not None else OMIT,
                     output_format=openai_settings.get('openai_output_format') or OMIT,
                     quality=openai_settings.get('openai_quality') or OMIT,
                     background=openai_settings.get('openai_background') or OMIT,
                     moderation=openai_settings.get('openai_moderation') or OMIT,
                     output_compression=output_compression if output_compression is not None else OMIT,
-                    user=openai_settings.get('openai_user') or OMIT,
+                    user=user if user is not None else OMIT,
                     extra_headers=openai_settings.get('extra_headers'),
                     extra_body=openai_settings.get('extra_body'),
                 )

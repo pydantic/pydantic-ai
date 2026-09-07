@@ -438,7 +438,9 @@ request parameters, not measurements of the returned bytes, so the only geometry
 [`GeneratedImage`][pydantic_ai.images.GeneratedImage] is `output_format`, which is derived from the bytes themselves.
 
 xAI's `provider_details` can contain `cost_usd` reported by xAI. This is provider metadata, not a portable cost
-calculation, and is kept separate from [`cost()`][pydantic_ai.images.ImageGenerationResult.cost].
+calculation, and is kept separate from [`cost()`][pydantic_ai.images.ImageGenerationResult.cost]. With `xai_n` above 1,
+`cost_usd` is the cost of the whole batch, not of one image: xAI answers a batch with a single response carrying one
+batch-wide usage record.
 
 !!! note "Image pricing"
     [`ImageGenerationResult.cost()`][pydantic_ai.images.ImageGenerationResult.cost] covers models priced per token,

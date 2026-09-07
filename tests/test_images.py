@@ -2934,6 +2934,38 @@ def test_xai_image_generation_vcr(xai_provider: XaiProvider):
 
 @pytest.mark.skipif(not xai_imports_successful(), reason='xAI SDK not installed')
 @pytest.mark.vcr
+def test_xai_image_generation_batch_vcr(xai_provider: XaiProvider):
+    """`xai_n > 1` takes the `sample_batch` path, whose cost is batch-wide rather than per image.
+
+    A batch is a single `GenerateImage` RPC answered by one `ImageResponse` proto holding every image;
+    `sample_batch` returns n views over that one proto, so each view's `usage` and `cost_usd` are the
+    same batch-wide object. `_map_response` reads the first view, and this cassette is what proves the
+    figure it reads is already the whole batch: the recorded `cost_usd` is $0.04 for two images against
+    the $0.02 that `test_xai_image_generation_vcr` records for one, so summing across the responses
+    would bill double. xAI reports no token counts for image generation, so `usage` stays empty.
+
+    The request repeats that test's `dimensions=(1024, 1024)` rather than naming the tier directly, so
+    the two prices are visibly for the same shape and resolution and the comparison needs no detour
+    through the geometry table.
+    """
+    model = XaiImageGenerationModel('grok-imagine-image', provider=xai_provider)
+    generator = ImageGenerator(model)
+
+    result = generator.generate_sync(
+        'A cat with a cowboy hat, dancing in Rome.',
+        settings=XaiImageGenerationSettings(xai_n=2, dimensions=(1024, 1024)),
+    )
+
+    assert len(result.images) == 2
+    assert [image.content.media_type for image in result.images] == ['image/jpeg', 'image/jpeg']
+    assert all(len(image.content.data) > 100 for image in result.images)
+    assert result.model_name == 'grok-imagine-image'
+    assert result.usage == RequestUsage()
+    assert result.provider_details == {'cost_in_usd_ticks': 400000000, 'cost_usd': 0.04}
+
+
+@pytest.mark.skipif(not xai_imports_successful(), reason='xAI SDK not installed')
+@pytest.mark.vcr
 def test_xai_image_generation_unlisted_model_vcr(xai_provider: XaiProvider):
     """`ImageGenerator` completes a real generate() when the model id is supplied as a plain `str`.
 
@@ -3019,11 +3051,16 @@ def openai_mock_client() -> AsyncMock:
 
 
 def _openai_sent_kwargs(kwargs: Mapping[str, object]) -> dict[str, object]:
-    """The subset of a recorded call's keyword arguments that actually reaches the wire.
+    """The subset of a recorded call's keyword arguments the adapter asks the SDK to send.
 
-    The adapter hands the SDK its `omit` sentinel for every unset argument, so dropping the sentinels
-    leaves the request. They also cannot be snapshotted: `inline_snapshot` deep-copies the value it
-    stores, and an `Omit` copy does not compare equal to the original.
+    The adapter hands the SDK its `omit` sentinel for every unset request parameter, so dropping the
+    sentinels leaves the request. They also cannot be snapshotted: `inline_snapshot` deep-copies the
+    value it stores, and an `Omit` copy does not compare equal to the original.
+
+    This is the adapter boundary, not the wire. `images.generate` sends the survivors as a JSON body,
+    but `images.edit` sends `multipart/form-data`: the SDK extracts `image` into file parts, and its
+    form serializer drops any value that stringifies to empty, so one surviving here can still be
+    absent from an `images.edit` body.
     """
     return {key: value for key, value in kwargs.items() if not isinstance(value, Omit)}
 
@@ -3739,6 +3776,79 @@ async def test_openai_image_edit_wire_payload():
     assert b'Content-Type: image/webp' in body
     assert body.index(b'first-image') < body.index(b'second-image')
     assert b'name="moderation"' not in body
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
+async def test_openai_empty_string_settings_are_forwarded(openai_mock_client: AsyncMock):
+    """An explicitly empty `openai_size` / `openai_user` is forwarded, not dropped.
+
+    Both are free-form strings, so a truthiness check cannot tell "unset" from "set to `''`" and would
+    drop the value the caller explicitly asked for. Verified live against `gpt-image-2`: OpenAI rejects
+    `size=''` with `400 Invalid size ''. Expected WIDTHxHEIGHT`, so omitting it instead would bill a
+    silently default-sized image where the provider would have said no; `user=''` it accepts. This pins
+    what we send, not what OpenAI does with it — the provider stays the authority on acceptance.
+
+    Generate and edit build their argument lists separately, so each is asserted, at the layer where
+    the claim is meaningful for that endpoint:
+
+    - Generate sends JSON, so the value is pinned on the wire, through `MockTransport` under a real
+      `AsyncOpenAI`. That keeps the SDK's own `OMIT` handling in the path, which is where an omitted
+      argument would actually disappear.
+    - Edit sends multipart, and the SDK's form serializer discards any value that stringifies to empty
+      — `Querystring._stringify_item` returns no items for a falsy `serialised` — so `size=''` cannot
+      reach that wire however the adapter passes it. The SDK call is therefore the last place the value
+      exists, and that boundary is what this leg asserts. Pinning its absence from the multipart body
+      instead would make the SDK's behavior read as our contract.
+
+    Not a VCR test: the claim is about the request we build, and a cassette does not match on the body,
+    so a recording would not pin it. OpenAI also answers `size=''` with a 400, leaving no successful
+    exchange for this pair of settings.
+    """
+    settings = OpenAIImageGenerationSettings(openai_size='', openai_user='')
+
+    openai_mock_client.images.edit.return_value = ImagesResponse.model_construct(
+        created=456, data=[Image.model_construct(b64_json=base64.b64encode(TINY_PNG).decode())]
+    )
+    edit_model = OpenAIImageGenerationModel(
+        'gpt-image-2', provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, openai_mock_client))
+    )
+    await edit_model.generate(
+        'tiny robot', images=[BinaryImage(data=TINY_PNG, media_type='image/png')], settings=settings
+    )
+    assert _openai_sent_kwargs(openai_mock_client.images.edit.await_args.kwargs) == snapshot(
+        {
+            'image': [('image-0.png', IsBytes(), 'image/png')],
+            'prompt': 'tiny robot',
+            'model': 'gpt-image-2',
+            'size': '',
+            'user': '',
+            'extra_headers': None,
+            'extra_body': None,
+        }
+    )
+
+    requests: list[httpx2.Request] = []
+
+    def handle_request(request: httpx2.Request) -> httpx2.Response:
+        requests.append(request)
+        return httpx2.Response(
+            200,
+            json={'created': 456, 'data': [{'b64_json': base64.b64encode(TINY_PNG).decode()}]},
+        )
+
+    http_client = httpx2.AsyncClient(transport=httpx2.MockTransport(handle_request))
+    openai_client = AsyncOpenAI(api_key='test-api-key', base_url='https://example.com/v1', http_client=http_client)
+    model = OpenAIImageGenerationModel('gpt-image-2', provider=OpenAIProvider(openai_client=openai_client))
+
+    try:
+        await model.generate('tiny robot', settings=settings)
+    finally:
+        await http_client.aclose()
+
+    assert [request.url.path for request in requests] == ['/v1/images/generations']
+    assert json.loads(requests[0].content) == snapshot(
+        {'model': 'gpt-image-2', 'prompt': 'tiny robot', 'size': '', 'user': ''}
+    )
 
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
