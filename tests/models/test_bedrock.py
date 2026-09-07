@@ -650,6 +650,7 @@ async def test_bedrock_count_tokens_non_http_error(allow_model_requests: None):
     ids=['read_timeout', 'endpoint_connection'],
 )
 async def test_bedrock_request_transport_error(allow_model_requests: None, error: BotoCoreError, expected_message: str):
+    """Not a VCR test: a cassette replays a recorded response, it cannot make botocore time out or fail to connect."""
     model = _bedrock_model_with_error(error)
     params = ModelRequestParameters()
 
@@ -657,10 +658,12 @@ async def test_bedrock_request_transport_error(allow_model_requests: None, error
         await model.request([ModelRequest.user_text_prompt('hi')], None, params)
 
     assert exc_info.value.message == expected_message
+    assert exc_info.value.model_name == 'us.amazon.nova-micro-v1:0'
     assert exc_info.value.__cause__ is error
 
 
 async def test_bedrock_count_tokens_transport_error(allow_model_requests: None):
+    """Not a VCR test: a cassette replays a recorded response, it cannot make botocore time out or fail to connect."""
     error = ReadTimeoutError(endpoint_url='https://bedrock.stub')
     model = _bedrock_model_with_error(error)
     params = ModelRequestParameters()
@@ -672,7 +675,10 @@ async def test_bedrock_count_tokens_transport_error(allow_model_requests: None):
 
 
 async def test_bedrock_request_param_validation_error_not_wrapped(allow_model_requests: None):
-    """Only transport failures become `ModelAPIError`; client-side botocore errors still surface as themselves."""
+    """Only transport failures become `ModelAPIError`; client-side botocore errors still surface as themselves.
+
+    Not a VCR test: a real request never raises a client-side botocore error on demand.
+    """
     error = ParamValidationError(report='bad params')
     model = _bedrock_model_with_error(error)
 
@@ -815,6 +821,7 @@ async def test_bedrock_stream_non_http_error(allow_model_requests: None):
 
 
 async def test_bedrock_stream_transport_error(allow_model_requests: None):
+    """Not a VCR test: a cassette replays a recorded response, it cannot make botocore time out or fail to connect."""
     error = ReadTimeoutError(endpoint_url='https://bedrock.stub')
     model = _bedrock_model_with_error(error)
     params = ModelRequestParameters()
