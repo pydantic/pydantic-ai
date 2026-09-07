@@ -8,7 +8,7 @@ from __future__ import annotations
 import dataclasses
 import inspect
 import re
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import replace
 from typing import Any, Literal
 
@@ -31,6 +31,7 @@ from pydantic_ai.exceptions import (
 )
 from pydantic_ai.images import (
     ImageGenerationInput,
+    ImageGenerationModel,
     ImageGenerationResult,
     ImageGenerationSettings,
     ImageGenerator,
@@ -70,11 +71,62 @@ def _custom_local_tool(prompt: str) -> str:
 
 
 with try_import() as openai_imports:
+    from pydantic_ai.images.openai import OpenAIImageGenerationModel, OpenAIImageGenerationSettings
     from pydantic_ai.models.openai import OpenAIResponsesModel
     from pydantic_ai.providers.openai import OpenAIProvider
 
+with try_import() as google_imports:
+    from pydantic_ai.images.google import GoogleImageGenerationModel, GoogleImageGenerationSettings
+    from pydantic_ai.providers.google import GoogleProvider
+
+with try_import() as xai_imports:
+    from pydantic_ai.images.xai import XaiImageGenerationModel, XaiImageGenerationSettings
+    from pydantic_ai.providers.xai import XaiProvider
+
 with try_import() as logfire_imports_successful:
     from logfire.testing import CaptureLogfire
+
+
+# Each pair shares one provider instance and one model name, so `settings` is the only thing that
+# differs between its two models — the whole point of the case they parametrize.
+def _openai_models_differing_in_settings() -> tuple[ImageGenerationModel, ImageGenerationModel]:
+    provider = OpenAIProvider(api_key='test-key')
+    return (
+        OpenAIImageGenerationModel(
+            'gpt-image-2', provider=provider, settings=OpenAIImageGenerationSettings(openai_quality='low')
+        ),
+        OpenAIImageGenerationModel(
+            'gpt-image-2', provider=provider, settings=OpenAIImageGenerationSettings(openai_quality='high')
+        ),
+    )
+
+
+def _google_models_differing_in_settings() -> tuple[ImageGenerationModel, ImageGenerationModel]:
+    provider = GoogleProvider(api_key='test-key')
+    return (
+        GoogleImageGenerationModel(
+            'gemini-3.1-flash-image',
+            provider=provider,
+            settings=GoogleImageGenerationSettings(google_image_config={'image_size': '1K'}),
+        ),
+        GoogleImageGenerationModel(
+            'gemini-3.1-flash-image',
+            provider=provider,
+            settings=GoogleImageGenerationSettings(google_image_config={'image_size': '2K'}),
+        ),
+    )
+
+
+def _xai_models_differing_in_settings() -> tuple[ImageGenerationModel, ImageGenerationModel]:
+    provider = XaiProvider(api_key='test-key')
+    return (
+        XaiImageGenerationModel(
+            'grok-imagine-image', provider=provider, settings=XaiImageGenerationSettings(xai_resolution='1k')
+        ),
+        XaiImageGenerationModel(
+            'grok-imagine-image', provider=provider, settings=XaiImageGenerationSettings(xai_resolution='2k')
+        ),
+    )
 
 
 class TestImageGenerationCapability:
@@ -648,9 +700,7 @@ class TestImageGenerationCapability:
         """Two capabilities naming different direct models leave one unused, so the later one wins.
 
         A single value, merged the way the scalar fields are: the pair cannot be reconciled and
-        nothing about a generator makes the earlier one the answer. The two models are given
-        different names to make them different values — two equal ones merge to the first, which is
-        the same generator either way.
+        nothing about a model makes the earlier one the answer.
         """
         first = TestImageGenerationModel('first')
         later = TestImageGenerationModel('later')
@@ -692,6 +742,71 @@ class TestImageGenerationCapability:
 
         assert first_model.last_settings is None
         assert later_model.last_settings == snapshot({'dimensions': (1536, 1024)})
+
+    async def test_image_generation_merged_fallback_image_models_differing_only_in_settings(
+        self, allow_model_requests: None, direct_generation_model: FunctionModel
+    ):
+        """Two models alike but for their default settings are still two models, so the later one runs.
+
+        `_settings` lives on the non-dataclass `ImageGenerationModel` base, outside generated field
+        equality, so field equality would call these two equal, merge them to the first, and send the
+        earlier model's dimensions under the later one's name.
+        """
+        first = TestImageGenerationModel(settings={'dimensions': (512, 512)})
+        later = TestImageGenerationModel(settings={'dimensions': (1024, 1024)})
+        merged = ImageGeneration.combine(
+            [
+                ImageGeneration(native=False, fallback_image_model=first),
+                ImageGeneration(native=False, fallback_image_model=later),
+            ]
+        )
+
+        await Agent(direct_generation_model, capabilities=[merged]).run('Generate an image')
+
+        assert first.last_settings is None
+        assert later.last_settings == snapshot({'dimensions': (1024, 1024)})
+
+    @pytest.mark.parametrize(
+        'build_models',
+        [
+            pytest.param(
+                _openai_models_differing_in_settings,
+                id='openai',
+                marks=pytest.mark.skipif(not openai_imports(), reason='openai not installed'),
+            ),
+            pytest.param(
+                _google_models_differing_in_settings,
+                id='google',
+                marks=pytest.mark.skipif(not google_imports(), reason='Google Gen AI SDK not installed'),
+            ),
+            pytest.param(
+                _xai_models_differing_in_settings,
+                id='xai',
+                marks=pytest.mark.skipif(not xai_imports(), reason='xAI SDK not installed'),
+            ),
+        ],
+    )
+    def test_image_generation_merged_provider_models_differing_only_in_settings(
+        self, build_models: Callable[[], tuple[ImageGenerationModel, ImageGenerationModel]]
+    ):
+        """Every provider model compares by identity, so the merge keeps the pair apart.
+
+        The provider instance and the model name are shared, so `settings` is all that differs, and
+        `settings` is the one thing generated field equality cannot see.
+        """
+        first, later = build_models()
+
+        assert first != later
+
+        merged = ImageGeneration.combine(
+            [
+                ImageGeneration(native=False, fallback_image_model=first),
+                ImageGeneration(native=False, fallback_image_model=later),
+            ]
+        )
+
+        assert isinstance(merged, ImageGeneration)
+        assert merged.fallback_image_model is later
 
     async def test_image_generation_merged_dimensions_take_the_later_pair(
         self, allow_model_requests: None, direct_generation_model: FunctionModel

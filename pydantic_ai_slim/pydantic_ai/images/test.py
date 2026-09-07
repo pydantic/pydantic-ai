@@ -17,7 +17,10 @@ _TINY_PNG = (
 )
 
 
-@dataclass(init=False)
+# `eq=False`: a model that records the last call into itself compares by identity. `_settings` lives
+# on the non-dataclass base, so it is outside generated field equality, which would call two
+# differently configured models equal, merge them to the first, and leave the class unhashable.
+@dataclass(init=False, eq=False)
 class TestImageGenerationModel(ImageGenerationModel):
     """A deterministic image generation model for testing.
 

@@ -87,7 +87,10 @@ class _XaiInputImages:
     image_file_ids: list[str] | None = None
 
 
-@dataclass(init=False)
+# `eq=False`: a model bound to a live provider client compares by identity. `_settings` lives on the
+# non-dataclass base, so it is outside generated field equality, which would call two differently
+# configured models equal, merge them to the first, and leave the class unhashable.
+@dataclass(init=False, eq=False)
 class XaiImageGenerationModel(ImageGenerationModel):
     """xAI image generation model implementation.
 

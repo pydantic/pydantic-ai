@@ -100,7 +100,10 @@ class OpenAIImageGenerationSettings(ImageGenerationSettings, total=False):
     """OpenAI end-user identifier."""
 
 
-@dataclass(init=False)
+# `eq=False`: a model bound to a live provider client compares by identity. `_settings` lives on the
+# non-dataclass base, so it is outside generated field equality, which would call two differently
+# configured models equal, merge them to the first, and leave the class unhashable.
+@dataclass(init=False, eq=False)
 class OpenAIImageGenerationModel(ImageGenerationModel):
     """OpenAI image generation model implementation.
 
