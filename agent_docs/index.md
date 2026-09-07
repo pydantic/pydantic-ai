@@ -118,7 +118,7 @@
 ## General
 
 <!-- rule:449 -->
-- Use `make install` to regenerate lock files (e.g., `uv.lock`) after dependency changes — Ensures reproducible builds and keeps lock file diffs minimal. Update the package manager (uv, npm, pip-tools) to latest first and start from clean state. If diffs are unexpectedly large, reset to base branch and regenerate to isolate actual changes — prevents spurious conflicts and version drift.
+- Update Python dependencies with `uv` so the dependency change also updates `uv.lock`. Use `make sync` to regenerate the lockfile when needed. `make install` installs the existing lockfile and development hooks; it does not regenerate `uv.lock`. Investigate unrelated lockfile changes before committing.
 <!-- rule:717 -->
 - Override profile properties in model/provider classes, not in shared profile functions — Prevents provider-specific logic from leaking into shared utilities like `anthropic_model_profile()` that multiple providers (OpenAI, Bedrock, etc.) depend on — keeps profiles reusable and avoids cross-provider bugs
 <!-- rule:-3 -->

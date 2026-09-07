@@ -103,7 +103,7 @@ git clone git@github.com:<your username>/pydantic-ai.git
 cd pydantic-ai
 ```
 
-Install `uv` (version 0.4.30 or later) and `pre-commit`:
+Install `uv` and `pre-commit`. The minimum supported `uv` version is set by `tool.uv.required-version` in the repository's [`pyproject.toml`](https://github.com/pydantic/pydantic-ai/blob/main/pyproject.toml):
 
 - [`uv` install docs](https://docs.astral.sh/uv/getting-started/installation/)
 - [`pre-commit` install docs](https://pre-commit.com/#install)
