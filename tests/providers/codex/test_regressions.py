@@ -73,8 +73,7 @@ async def test_sdk_does_not_hide_persistence_failure(stale: bool):
         if request.url.host == 'auth.openai.com':
             return httpx2.Response(200, json=TOKEN_RESPONSE)
         requests += 1
-        if request.headers['authorization'] == 'Bearer access-new':
-            return httpx2.Response(200, headers={'content-type': 'text/event-stream'}, content=b'data: [DONE]\n\n')
+        assert request.headers['authorization'] != 'Bearer access-new'
         return httpx2.Response(401)
 
     async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:

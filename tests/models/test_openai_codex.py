@@ -30,14 +30,14 @@ pytestmark = [
 
 @pytest.fixture
 def codex_credentials(vcr: Cassette) -> OpenAICodexCredentials:
-    if vcr.record_mode == RecordMode.NONE:
-        return OpenAICodexCredentials(
-            access_token='codex-playback-access',
-            refresh_token='codex-playback-refresh',
-            account_id='codex-playback-account',
-        )
-    path = Path(os.getenv('CODEX_HOME') or Path.home() / '.codex') / 'auth.json'
-    return OpenAICodexCredentials.from_codex_cli_auth(json.loads(path.read_text()))
+    if vcr.record_mode != RecordMode.NONE:  # pragma: no cover
+        path = Path(os.getenv('CODEX_HOME') or Path.home() / '.codex') / 'auth.json'
+        return OpenAICodexCredentials.from_codex_cli_auth(json.loads(path.read_text()))
+    return OpenAICodexCredentials(
+        access_token='codex-playback-access',
+        refresh_token='codex-playback-refresh',
+        account_id='codex-playback-account',
+    )
 
 
 @pytest.mark.parametrize('stream', [False, True])
