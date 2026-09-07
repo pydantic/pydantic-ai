@@ -123,7 +123,6 @@ async def test_image_generator_with_test_model():
             provider_name='test',
             timestamp=IsDatetime(),
             usage=RequestUsage(input_tokens=2),
-            settings={},
             provider_response_id=IsStr(),
         )
     )
@@ -210,10 +209,9 @@ async def test_image_generator_settings_precedence():
     test_model = TestImageGenerationModel(settings={'dimensions': (1024, 1024), 'extra_body': {'quality': 'high'}})
     generator = ImageGenerator(test_model, settings={'dimensions': (512, 512), 'extra_body': {'quality': 'low'}})
 
-    result = await generator.generate('tiny robot', settings={'extra_body': {'quality': 'auto'}})
+    await generator.generate('tiny robot', settings={'extra_body': {'quality': 'auto'}})
 
     expected_settings: ImageGenerationSettings = {'dimensions': (512, 512), 'extra_body': {'quality': 'auto'}}
-    assert result.settings == expected_settings
     assert test_model.last_settings == expected_settings
 
 
@@ -958,7 +956,6 @@ async def test_google_image_generation_wire_payload_and_response_mapping():
                 input_tool_tokens=4,
                 input_text_tool_tokens=4,
             ),
-            settings=settings,
             provider_details={'finish_reason': 'STOP'},
             provider_response_id='response-123',
             provider_url='https://example.com',
@@ -2247,7 +2244,6 @@ async def test_xai_image_generation_sdk_call_and_response_mapping():
                     'input_image_tokens': 3,
                 },
             ),
-            settings=settings,
             provider_details={'cost_in_usd_ticks': 200000000, 'cost_usd': 0.02},
             provider_url='https://api.x.ai/v1',
         )
@@ -3125,7 +3121,6 @@ async def test_openai_image_generation_response_mapping(openai_mock_client: Asyn
                 output_text_tokens=0,
                 output_image_tokens=5,
             ),
-            settings=settings,
             provider_details={'created': 123, 'size': '1024x1024', 'quality': 'low', 'background': 'opaque'},
             provider_url='https://api.openai.com/v1/',
         )

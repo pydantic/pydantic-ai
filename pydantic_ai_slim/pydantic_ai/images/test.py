@@ -110,6 +110,5 @@ class TestImageGenerationModel(ImageGenerationModel):
             usage=RequestUsage(input_tokens=estimate_string_tokens(prompt)),
             model_name=self.model_name,
             provider_name=self.system,
-            settings=settings,
             provider_response_id=str(uuid.uuid4()),
         )

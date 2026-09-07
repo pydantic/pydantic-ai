@@ -10,8 +10,6 @@ from pydantic_ai._utils import now_utc as _now_utc
 from pydantic_ai.messages import BinaryImage
 from pydantic_ai.usage import RequestUsage
 
-from .settings import ImageGenerationSettings
-
 
 @dataclass
 class GeneratedImage:
@@ -55,9 +53,6 @@ class ImageGenerationResult:
 
     usage: RequestUsage = field(default_factory=RequestUsage)
     """Usage statistics for this request."""
-
-    settings: ImageGenerationSettings | None = None
-    """The normalized settings used for this request, if available."""
 
     provider_details: dict[str, Any] | None = None
     """Provider-specific details from the response."""

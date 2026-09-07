@@ -267,7 +267,7 @@ class OpenAIImageGenerationModel(ImageGenerationModel):
         except APIConnectionError as e:
             raise ModelAPIError(model_name=self.model_name, message=e.message) from e
 
-        return self._map_response(prompt, settings, response)
+        return self._map_response(prompt, response)
 
     async def _map_input_images(self, images: Sequence[ImageGenerationInput]) -> list[tuple[str, bytes, str]]:
         mapped_images: list[tuple[str, bytes, str]] = []
@@ -300,9 +300,7 @@ class OpenAIImageGenerationModel(ImageGenerationModel):
 
         return mapped_images
 
-    def _map_response(
-        self, prompt: str, settings: ImageGenerationSettings, response: ImagesResponse
-    ) -> ImageGenerationResult:
+    def _map_response(self, prompt: str, response: ImagesResponse) -> ImageGenerationResult:
         response_data = response.data
         if not response_data:
             raise UnexpectedModelBehavior('OpenAI image generation response did not contain any images')
@@ -345,7 +343,6 @@ class OpenAIImageGenerationModel(ImageGenerationModel):
             model_name=self.model_name,
             provider_name=self.system,
             provider_url=self.base_url,
-            settings=settings,
             provider_details=_response_provider_details(response),
         )
 

@@ -230,7 +230,7 @@ class GoogleImageGenerationModel(ImageGenerationModel):
                 ) from e
             raise ModelAPIError(model_name=self.model_name, message=str(e)) from e
 
-        return self._map_response(prompt, settings, response)
+        return self._map_response(prompt, response)
 
     async def _map_contents(self, prompt: str, images: Sequence[ImageGenerationInput]) -> list[ContentUnionDict]:
         parts: list[PartDict] = [{'text': prompt}]
@@ -315,7 +315,6 @@ class GoogleImageGenerationModel(ImageGenerationModel):
     def _map_response(
         self,
         prompt: str,
-        settings: ImageGenerationSettings,
         response: GenerateContentResponse,
     ) -> ImageGenerationResult:
         images: list[GeneratedImage] = []
@@ -366,7 +365,6 @@ class GoogleImageGenerationModel(ImageGenerationModel):
             model_name=response.model_version or self.model_name,
             provider_name=self.system,
             provider_url=self.base_url,
-            settings=settings,
             provider_details=provider_details,
             provider_response_id=response.response_id,
         )

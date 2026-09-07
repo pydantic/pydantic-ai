@@ -591,7 +591,6 @@ class MyCustomImageGenerationModel(ImageGenerationModel):
             prompt=prompt,
             model_name=self.model_name,
             provider_name=self.system,
-            settings=settings,
         )
 ```
 

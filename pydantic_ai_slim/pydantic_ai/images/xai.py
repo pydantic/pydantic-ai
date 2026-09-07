@@ -214,7 +214,7 @@ class XaiImageGenerationModel(ImageGenerationModel):
                     )
                 )
 
-        return self._map_response(prompt, settings, responses)
+        return self._map_response(prompt, responses)
 
     async def _map_input_images(self, images: Sequence[ImageGenerationInput]) -> _XaiInputImages:
         image_references: list[str] = []
@@ -258,7 +258,6 @@ class XaiImageGenerationModel(ImageGenerationModel):
     def _map_response(
         self,
         prompt: str,
-        settings: ImageGenerationSettings,
         responses: Sequence[ImageResponse],
     ) -> ImageGenerationResult:
         if not responses:
@@ -307,7 +306,6 @@ class XaiImageGenerationModel(ImageGenerationModel):
             model_name=first_response.model or self.model_name,
             provider_name=self.system,
             provider_url=self.base_url,
-            settings=settings,
             provider_details=provider_details,
         )
 
