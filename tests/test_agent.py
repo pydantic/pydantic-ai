@@ -238,6 +238,7 @@ def test_run_sync_creates_missing_event_loop(missing_event_loop: asyncio.Abstrac
     assert not asyncio.all_tasks(replacement_loop)
 
 
+@pytest.mark.parametrize('anyio_backend', ['asyncio', 'trio'])
 def test_result_tuple():
     def return_tuple(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         assert info.output_tools is not None
