@@ -117,6 +117,8 @@ warnings.filterwarnings('ignore', category=HarnessDeprecationWarning)
 | `add_instructions` | `True` | Emit a short note telling the model the recall tool exists. |
 | `tool_id` | `conversation-search` | Toolset id for the search tool. |
 
+Persisted instruction replacements and withdrawals are searchable as system text. Their displayed excerpts are limited to 200 characters; the search index retains the full text.
+
 ## Limitations
 
 - Search only reaches what was persisted: history inherited from runs that never ran with `StepPersistence` (for example a long `message_history` passed in from an unpersisted session) cannot be recovered if compaction drops it before the first snapshot.

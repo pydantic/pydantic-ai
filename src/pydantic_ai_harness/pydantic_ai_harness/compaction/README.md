@@ -32,6 +32,8 @@ alternative: they work with every model and keep the compaction logic (and its c
 
 ## Triggers
 
+Instruction replacement and withdrawal records contribute their full rendered system text to token estimates. Superseded updates before a new instruction baseline are excluded.
+
 Every size-based strategy triggers on `max_messages`, `max_tokens` (estimated), or `max_fraction`.
 Token counts anchor on the provider-reported usage of the most recent model response when one is
 available: its `input_tokens` measured the whole request that produced it (instructions, tool

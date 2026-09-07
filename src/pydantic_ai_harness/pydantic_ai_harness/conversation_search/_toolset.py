@@ -194,6 +194,10 @@ def _format_request_part(part: ModelRequestPart, *, truncate: bool) -> str | Non
         if truncate:
             content = content[:200]
         return f'System: {content}'
+    # Match the discriminator so this remains importable before the new core part is released.
+    if part.part_kind == 'instruction-delta':  # pyright: ignore[reportUnnecessaryComparison]
+        content = part.render()  # pragma: lax no cover - requires core instruction updates
+        return f'System: {content[:200] if truncate else content}'  # pragma: lax no cover
     if isinstance(part, ToolReturnPart):
         content = str(part.content)
         if truncate and len(content) > 500:

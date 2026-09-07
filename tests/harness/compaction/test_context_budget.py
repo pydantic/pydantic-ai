@@ -7,12 +7,14 @@ from collections.abc import Callable
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
+import pydantic_ai.messages as messages_module
 import pytest
 from opentelemetry.trace import NoOpTracer, Tracer, get_tracer
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     ModelMessage,
+    ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
     SpeechPart,
@@ -1378,6 +1380,45 @@ class TestManualCompactionSemantics:
 # ---------------------------------------------------------------------------
 # Realtime models (#585)
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(not hasattr(messages_module, 'InstructionDeltaPart'), reason='requires core instruction updates')
+class TestInstructionDeltaCounting:
+    def test_superseded_updates_do_not_count(self) -> None:  # pragma: lax no cover
+        history = ModelMessagesTypeAdapter.validate_python(
+            [
+                {
+                    'kind': 'request',
+                    'parts': [{'part_kind': 'instruction-delta', 'id': 'agent:state', 'content': 'B' * 400}],
+                },
+                {'kind': 'response', 'parts': [{'part_kind': 'text', 'content': 'done'}]},
+                {
+                    'kind': 'request',
+                    'parts': [{'part_kind': 'user-prompt', 'content': 'Continue.'}],
+                    'instruction_baseline': {},
+                    'instructions': 'C',
+                },
+            ]
+        )
+        assert estimate_token_count(history, len) == estimate_token_count(TestModel().prepare_messages(history), len)
+
+    @pytest.mark.parametrize(
+        ('content', 'rendered'),
+        [
+            ('New state', "Instruction block 'agent:state' is replaced from this point onward by:\n\nNew state"),
+            (None, "Instruction block 'agent:state' is withdrawn. Its previous instructions no longer apply."),
+        ],
+    )
+    def test_rendered_updates_count(self, content: str | None, rendered: str) -> None:  # pragma: lax no cover
+        history = ModelMessagesTypeAdapter.validate_python(
+            [
+                {
+                    'kind': 'request',
+                    'parts': [{'part_kind': 'instruction-delta', 'id': 'agent:state', 'content': content}],
+                }
+            ]
+        )
+        assert estimate_token_count(history, len) == len(rendered)
 
 
 class TestSpeechPartCounting:
