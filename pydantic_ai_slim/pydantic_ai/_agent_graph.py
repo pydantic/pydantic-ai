@@ -795,6 +795,8 @@ def _apply_instruction_parts(
     """
     if instruction_parts is not None:
         request.instructions = _messages.InstructionPart.join(instruction_parts)
+        # Append-mode requests retain structured prefixes for replay; ordinary rewrite-mode
+        # history continues to record only the rendered instructions.
         if request.instruction_parts is not None:
             request.instruction_parts = instruction_parts
 
