@@ -99,7 +99,7 @@ If `save()` raises, the refreshed credentials stay live in memory and a [`Creden
 
 ## Prompt caching
 
-The Codex backend keys prompt caching off a stable session identity, sent as the `session-id`, `thread-id`, and `x-client-request-id` headers and the `prompt_cache_key` request field. [`OpenAICodexModel`][pydantic_ai.models.openai_codex.OpenAICodexModel] derives all four from the [`conversation_id`](../message-history.md) of the message history, so runs continuing the same conversation share the cache and separate conversations stay isolated. An explicit `openai_prompt_cache_key` model setting or explicitly supplied `extra_headers` always win over the derived values.
+To mirror the official Codex client's prompt-cache affinity, [`OpenAICodexModel`][pydantic_ai.models.openai_codex.OpenAICodexModel] sends the `session-id`, `thread-id`, and `x-client-request-id` headers and the `prompt_cache_key` request field. All four are derived from the [`conversation_id`](../message-history.md) of the message history, so runs continuing the same conversation reuse a stable identity. An explicit `openai_prompt_cache_key` model setting or explicitly supplied `extra_headers` always win over the derived values. This does not guarantee a cache hit.
 
 ## Limitations
 
