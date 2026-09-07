@@ -316,6 +316,7 @@ def test_docs_examples(
     env.set('PYDANTIC_AI_GATEWAY_BASE_URL', 'https://gateway.pydantic.dev/proxy')
     env.set('VOYAGE_API_KEY', 'testing')
     env.set('XAI_API_KEY', 'testing')
+    env.set('ELEVENLABS_API_KEY', 'testing')
     env.set('TAVILY_API_KEY', 'testing')
     env.set('ZAI_API_KEY', 'testing')
     env.set('SNOWFLAKE_ACCOUNT', 'myorg-myaccount')

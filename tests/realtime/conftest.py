@@ -36,6 +36,11 @@ with try_import() as xai_imports_successful:
 with try_import() as azure_imports_successful:
     from pydantic_ai.providers.azure import AzureProvider
 
+with try_import() as elevenlabs_imports_successful:
+    # The provider itself has no optional dependency; the realtime module needs `websockets`.
+    import pydantic_ai.realtime.elevenlabs  # noqa: F401  # pyright: ignore[reportUnusedImport]
+    from pydantic_ai.providers.elevenlabs import ElevenLabsProvider
+
 if TYPE_CHECKING:
     from pydantic_ai.models import AbstractModel
     from pydantic_ai.providers import Provider
@@ -276,6 +281,22 @@ def xai_ws_cassette(request: pytest.FixtureRequest, xai_api_key: str) -> Iterato
         pytest.skip('xai-sdk / websockets not installed')
     with _ws_cassette(request, 'xai', skip_if_missing=True) as cassette:
         yield XaiProvider(api_key=xai_api_key), cassette
+
+
+@pytest.fixture
+def elevenlabs_ws_cassette(
+    request: pytest.FixtureRequest, elevenlabs_api_key: str
+) -> Iterator[tuple[ElevenLabsProvider, RealtimeCassette]]:
+    """An `ElevenLabsProvider` whose agent WebSocket is backed by a cassette.
+
+    The REST preflight around the WebSocket records through ordinary HTTP VCR (`pytest.mark.vcr`),
+    which uses the module-named cassette subdirectory, so the WebSocket cassette lives under its own
+    subdirectory to avoid the filename collision (mirroring the WebRTC sideband fixtures).
+    """
+    if not elevenlabs_imports_successful():  # pragma: no cover
+        pytest.skip('websockets not installed')
+    with _ws_cassette(request, 'elevenlabs', subdir='test_elevenlabs_ws_sideband') as cassette:
+        yield ElevenLabsProvider(api_key=elevenlabs_api_key), cassette
 
 
 def _gateway_realtime_provider(kind: str, api_key: str | None) -> Provider[Any]:

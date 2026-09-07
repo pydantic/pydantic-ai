@@ -8,9 +8,9 @@ shared message/part vocabulary from `pydantic_ai.messages`, building ordinary `M
 history, and running the tool loop. The provider-agnostic layout mirrors the request-response side:
 `model.py` holds the `RealtimeModel` ABC and `infer_realtime_model`, `settings.py` the settings
 vocabulary, `profiles.py` the `RealtimeModelProfile` type (per-provider tables live in
-`pydantic_ai/profiles/{google,openai,grok}.py` as `*_realtime_model_profile` helpers), and
+`pydantic_ai/profiles/{google,openai,grok,elevenlabs}.py` as `*_realtime_model_profile` helpers), and
 `codec.py` the connection layer; concrete providers live in `openai.py` / `azure.py` / `google.py` /
-`xai.py`. The [models/ guidelines](../models/AGENTS.md) apply in spirit throughout.
+`xai.py` / `elevenlabs.py`. The [models/ guidelines](../models/AGENTS.md) apply in spirit throughout.
 
 ## Policy lives in the shared core, never in the session
 

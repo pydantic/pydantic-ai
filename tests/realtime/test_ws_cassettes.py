@@ -292,6 +292,34 @@ async def test_recording_truncates_inbound_audio() -> None:
 
 
 @pytest.mark.anyio
+async def test_recording_truncates_elevenlabs_audio() -> None:
+    """Unit test: both ElevenLabs audio shapes are truncated when recorded.
+
+    The outbound microphone chunk is the one client message without a `type` field, and the inbound
+    `audio` event also drops the per-character `alignment` timing block the session never reads.
+    """
+    long_audio = 'A' * 400  # far longer than the retained byte budget
+    inbound = {
+        'type': 'audio',
+        'audio_event': {'audio_base_64': long_audio, 'event_id': 7, 'alignment': {'chars': ['H', 'i']}},
+    }
+    fake_ws = _FakeWebSocket([json.dumps(inbound)])
+    cassette = RealtimeCassette()
+    recording = RecordingWebSocket(fake_ws, cassette)
+
+    await recording.send(json.dumps({'user_audio_chunk': long_audio}))
+    await recording.recv()
+
+    outbound_stored, inbound_stored = cassette.interactions
+    assert isinstance(outbound_stored, CassetteMessage) and isinstance(inbound_stored, CassetteMessage)
+    assert 0 < len(outbound_stored.data['user_audio_chunk']) < len(long_audio)
+    audio_event = inbound_stored.data['audio_event']
+    assert 0 < len(audio_event['audio_base_64']) < len(long_audio)
+    assert audio_event['event_id'] == 7
+    assert 'alignment' not in audio_event
+
+
+@pytest.mark.anyio
 async def test_recording_records_clean_close_while_iterating() -> None:
     """Unit test: async iteration records inbound frames and persists a clean terminal close."""
     frame = json.dumps({'type': 'server.event'})
