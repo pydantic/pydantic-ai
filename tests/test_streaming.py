@@ -11,7 +11,7 @@ import threading
 import warnings
 import weakref
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Awaitable, Callable, Generator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, nullcontext
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime as _datetime, timezone
@@ -22,6 +22,7 @@ from unittest.mock import MagicMock
 import anyio
 import httpx2
 import pytest
+import sniffio
 from pydantic import BaseModel
 from pydantic_core import ErrorDetails
 
@@ -1345,6 +1346,39 @@ def test_sync_stream_bridge_pump_propagates_base_exception_without_hanging(error
         assert loop.run_until_complete(asyncio.sleep(0)) is None
     finally:
         stop_handle.cancel()
+
+
+@pytest.mark.parametrize('fail', [False, True])
+def test_run_stream_sync_uses_its_own_backend_context(fail: bool) -> None:
+    caller_value: contextvars.ContextVar[str] = contextvars.ContextVar('caller_value', default='caller')
+    closed: list[str] = []
+
+    async def stream_function(_messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+        assert sniffio.current_async_library() == 'asyncio'
+        assert caller_value.get() == 'caller'
+        caller_value.set('run')
+        try:
+            await anyio.sleep(0)
+            yield 'hello '
+            await anyio.sleep(0)
+            if fail:
+                raise ValueError('stream failed')
+            yield 'world'
+        finally:
+            closed.append(sniffio.current_async_library())
+
+    agent = Agent(FunctionModel(stream_function=stream_function))
+    token = sniffio.current_async_library_cvar.set('trio')
+    try:
+        with pytest.raises(ValueError, match='stream failed') if fail else nullcontext():
+            with agent.run_stream_sync('Hello') as result:
+                assert sniffio.current_async_library_cvar.get() == 'trio'
+                assert list(result.stream_text(debounce_by=None)) == ['hello ', 'hello world']
+        assert sniffio.current_async_library_cvar.get() == 'trio'
+        assert caller_value.get() == 'caller'
+        assert closed == ['asyncio']
+    finally:
+        sniffio.current_async_library_cvar.reset(token)
 
 
 def test_run_stream_sync_preserves_capability_contextvars():

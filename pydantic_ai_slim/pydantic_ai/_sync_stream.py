@@ -28,6 +28,8 @@ import anyio
 import anyio.streams.memory
 from typing_extensions import TypeIs, TypeVar, TypeVarTuple, Unpack
 
+from pydantic_graph._utils import get_asyncio_context
+
 from . import _utils
 
 T = TypeVar('T')
@@ -215,7 +217,7 @@ class SyncStreamBridge(Generic[StreamT]):
         caller_context = copy_context()
         entered: asyncio.Future[tuple[StreamT, Context]] = loop.create_future()
         exit_requested: asyncio.Future[_ExitInfo] = loop.create_future()
-        owner_task = loop.create_task(_hold_context_manager(cm, entered, exit_requested))
+        owner_task = get_asyncio_context().run(loop.create_task, _hold_context_manager(cm, entered, exit_requested))
         try:
             stream, run_context = loop.run_until_complete(entered)
         except BaseException:
@@ -244,7 +246,7 @@ class SyncStreamBridge(Generic[StreamT]):
 
     def _task_context(self) -> Context:
         """Merge run-owned context changes into the sync caller's current context."""
-        context = copy_context()
+        context = get_asyncio_context()
         for var in self._run_context:
             value = self._run_context[var]
             if var not in self._caller_context or self._caller_context[var] is not value:

@@ -51,6 +51,7 @@ dependencies = [
     "anyio>=4.7.0",
     "logfire-api>=3.14.1",
     "pydantic>=2.12",
+    "sniffio>=1.3.0",
     "typing-inspection>=0.4.0",
 ]
 

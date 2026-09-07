@@ -5,11 +5,14 @@ import sys
 from collections import defaultdict
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager, nullcontext
+from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar, Union
 
+import anyio
 import pytest
+import sniffio
 from dirty_equals import IsJson
 from pydantic import BaseModel, TypeAdapter, field_validator
 from pydantic_core import ErrorDetails, to_json
@@ -236,6 +239,34 @@ def test_run_sync_creates_missing_event_loop(missing_event_loop: asyncio.Abstrac
     assert replacement_loop is not missing_event_loop
     assert not replacement_loop.is_closed()
     assert not asyncio.all_tasks(replacement_loop)
+
+
+@pytest.mark.parametrize('fail', [False, True])
+def test_run_sync_uses_its_own_backend_context(fail: bool) -> None:
+    caller_value: ContextVar[str] = ContextVar('caller_value', default='caller')
+    loops: list[asyncio.AbstractEventLoop] = []
+
+    async def respond(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        assert sniffio.current_async_library() == 'asyncio'
+        assert caller_value.get() == 'caller'
+        caller_value.set('run')
+        loops.append(asyncio.get_running_loop())
+        await anyio.sleep(0)
+        if fail:
+            raise ValueError('model failed')
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(respond))
+    token = sniffio.current_async_library_cvar.set('trio')
+    try:
+        for _ in range(2):
+            with pytest.raises(ValueError, match='model failed') if fail else nullcontext():
+                assert agent.run_sync('Hello').output == 'done'
+            assert sniffio.current_async_library_cvar.get() == 'trio'
+            assert caller_value.get() == 'caller'
+        assert loops[0] is loops[1]
+    finally:
+        sniffio.current_async_library_cvar.reset(token)
 
 
 def test_result_tuple():

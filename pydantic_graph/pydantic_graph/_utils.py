@@ -6,9 +6,11 @@ import types
 import warnings
 from collections.abc import Awaitable, Generator
 from contextlib import contextmanager, suppress
+from contextvars import Context, copy_context
 from typing import TYPE_CHECKING, Any, TypeAlias, TypeVar, get_args, get_origin
 
 from logfire_api import Logfire, LogfireSpan
+from sniffio import current_async_library_cvar
 from typing_inspection import typing_objects
 from typing_inspection.introspection import is_union_origin
 
@@ -85,6 +87,13 @@ def get_event_loop() -> asyncio.AbstractEventLoop:
 _T = TypeVar('_T')
 
 
+def get_asyncio_context() -> Context:
+    """Copy caller context with backend detection matching the asyncio task that will use it."""
+    context = copy_context()
+    context.run(current_async_library_cvar.set, 'asyncio')
+    return context
+
+
 def run_until_complete(coro: Awaitable[_T]) -> _T:
     """Run `coro` to completion on the event loop, cleaning up after itself if interrupted.
 
@@ -110,7 +119,7 @@ def run_until_complete(coro: Awaitable[_T]) -> _T:
             'Use the asynchronous method instead, e.g. `await agent.run()` rather than `agent.run_sync()`.'
         )
 
-    task = asyncio.ensure_future(coro, loop=loop)
+    task = get_asyncio_context().run(asyncio.ensure_future, coro, loop=loop)
     try:
         return loop.run_until_complete(task)
     except BaseException:
