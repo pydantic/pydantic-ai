@@ -45,12 +45,12 @@ cli = [
 ]
 code-mode = [
     "pydantic-ai-slim[duckduckgo]>=2.38.0",
-    "pydantic-monty>=0.0.19",
+    "pydantic-monty>=0.0.23",
 ]
 # Extras metadata has no native redirect syntax, so aliases are represented as duplicate extras.
 codemode = [
     "pydantic-ai-slim[duckduckgo]>=2.38.0",
-    "pydantic-monty>=0.0.19",
+    "pydantic-monty>=0.0.23",
 ]
 researcher = [
     "pydantic-ai-slim[duckduckgo,web-fetch]>=2.38.0",
@@ -69,7 +69,7 @@ modal = [
     "modal>=1.5.0",
 ]
 dynamic-workflow = [
-    "pydantic-monty>=0.0.19",
+    "pydantic-monty>=0.0.23",
 ]
 acp = [
     # The SDK breaks across minors, so cap per minor.
