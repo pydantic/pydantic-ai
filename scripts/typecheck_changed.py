@@ -7,10 +7,11 @@ one on every commit, so the pre-commit hook runs this instead: it narrows the ru
 files whose content changed since Pyright last passed, plus everything that transitively
 imports them.
 
-Locally that set never holds a file under `tests/` that did not itself change. Tests are two
-thirds of this project's lines and most of them import `pydantic_ai`, so keeping them would put
-the whole project back on the command line for any core edit. CI checks every file, and is the
-gate for a source change that breaks a test file's typing.
+Locally that set never holds a file under `tests/` that did not itself change since Pyright last
+passed. A run with no record of that -- the first one, or one after a record this cannot read --
+checks every file instead. Tests are two thirds of this project's lines and most of them import
+`pydantic_ai`, so keeping them would put the whole project back on the command line for any core
+edit. CI checks every file, and is the gate for a source change that breaks a test file's typing.
 
 What passed is recorded in a checkpoint under the git directory, so it is per-worktree and
 never committed. Anything the checkpoint cannot account for -- a first run, a dependency or
@@ -178,6 +179,7 @@ def main(run: Runner = run_command, clock: Clock = time.monotonic) -> int:
         except ValueError:
             budget = None
         # A misconfigured budget has to be loud, so nothing runs until this one reads as seconds.
+        # `nan` compares false either way, which is why this is `not budget > 0` and not `budget <= 0`.
         if budget is None or not budget > 0:
             print(f'`PYRIGHT_TIME_BUDGET` is `{setting}`, which is not a positive number of seconds.')
             return 2
@@ -234,14 +236,19 @@ def main(run: Runner = run_command, clock: Clock = time.monotonic) -> int:
         print(f'Type-checking {len(affected)} of {len(checkable)} files, reached from {len(changed)} changed.')
     else:
         paths = checkable
-        tests = sum(1 for path in checkable if path.startswith(_TESTS_PREFIX))
-        print(
-            f'Type-checking {len(checkable)} files -- every file outside `{_TESTS_PREFIX}`, '
-            f'and the {tests} changed inside it: {reason}.'
-        )
+        if stored:
+            tests = sum(1 for path in checkable if path.startswith(_TESTS_PREFIX))
+            print(
+                f'Type-checking {len(checkable)} files -- every file outside `{_TESTS_PREFIX}`, '
+                f'and the {tests} changed inside it: {reason}.'
+            )
+        else:
+            # With no record to compare against, every file counts as changed, tests included.
+            print(f'Type-checking every one of the {len(checkable)} files: {reason}.')
     # No `--threads`, even with `PYRIGHT_THREADS` set. A fallback reaches most of the project
     # outside `tests/`, but every worker is a full Node process that redoes the shared parse and
-    # bind, and on a laptop they swap and come out slower than the single process; see #8075.
+    # bind, and on a laptop they swap and come out slower than the single process; see
+    # https://github.com/pydantic/pydantic-ai/pull/8075.
     code = runner([sys.executable, '-m', 'pyright', *options, *paths])
 
     if code != 0:

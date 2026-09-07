@@ -486,14 +486,21 @@ def test_a_run_over_the_time_budget_fails_and_records_nothing(
     assert not _checkpoint(project).exists()
 
 
-def test_a_run_without_a_time_budget_says_nothing_about_time(project: Path, capsys: pytest.CaptureFixture[str]):
+@pytest.mark.parametrize('empty', [True, False], ids=['empty', 'unset'])
+def test_a_run_without_a_time_budget_says_nothing_about_time(
+    project: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], empty: bool
+):
+    # An explicitly empty `PYRIGHT_TIME_BUDGET` means what leaving it unset means.
+    if empty:
+        monkeypatch.setenv('PYRIGHT_TIME_BUDGET', '')
+
     recorder = _typecheck(seconds=99.0)
 
     assert recorder.exit_code == 0
     assert 'PYRIGHT_TIME_BUDGET' not in capsys.readouterr().out
 
 
-@pytest.mark.parametrize('setting', ['soon', '0', '-1'])
+@pytest.mark.parametrize('setting', ['soon', '0', '-1', 'nan'])
 def test_a_time_budget_that_is_not_positive_seconds_runs_nothing(
     project: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], setting: str
 ):

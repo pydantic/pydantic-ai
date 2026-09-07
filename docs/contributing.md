@@ -150,19 +150,21 @@ and on seeing it `make typecheck-changed` narrows nothing and hands the whole pr
 skips the hook outright on a pull request that touches nothing Pyright reads, as it did before.
 
 Locally it follows the imports Pyright resolves statically, and never checks a file under `tests/`
-that did not itself change. Tests are two thirds of the project's lines and most of them import
-`pydantic_ai`, so checking them here would put the whole project back on the command line for any
-change to the library; CI is the gate for a source change that breaks a test file's typing.
+that did not itself change since the run it recorded. Tests are two thirds of the project's lines
+and most of them import `pydantic_ai`, so checking them here would put the whole project back on the
+command line for any change to the library; CI is the gate for a source change that breaks a test
+file's typing.
 
 It gives up on narrowing whenever something could leave that set incomplete: a first run; a new
 Pyright or Python version, including one asked for through `PYRIGHT_PYTHON`; a change to
 `pyproject.toml`, `uv.lock` or the `Makefile`; an import that would now resolve to a different file
 or a new top-level module that could shadow an installed one; or a change reaching more than half the
 project. It then runs Pyright over every tracked file Pyright reports on, minus the `tests/` files
-that did not change. Only three things hand the whole project to `make typecheck-pyright`: `CI`, an
-interpreter older than Python 3.11, which is what it needs to read `pyproject.toml`, and a Pyright
-configuration it cannot reproduce. Every other run considers tracked files only, so run
-`make typecheck` yourself before relying on a green hook for a file you have not added.
+that did not change; a first run has no record to compare them against, so it checks all of them.
+Only three things hand the whole project to `make typecheck-pyright`: `CI`, an interpreter older
+than Python 3.11, which is what it needs to read `pyproject.toml`, and a Pyright configuration it
+cannot reproduce. Every other run considers tracked files only, so run `make typecheck` yourself
+before relying on a green hook for a file you have not added.
 
 A full run is single-process unless `PYRIGHT_THREADS` says otherwise, and CI sets it to `auto`.
 The variable turns on Pyright's parallel check phase, which reaches the same diagnostics in less
