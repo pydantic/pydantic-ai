@@ -291,7 +291,8 @@ class RunContext(Generic[RunContextAgentDepsT]):
     Use [`realtime`][pydantic_ai.tools.RunContext.realtime] to detect a realtime run in those
     stages. Tools and hooks that run during the live session can use it to e.g.
     [`interrupt()`][pydantic_ai.realtime.RealtimeSession.interrupt] playback or
-    [`send()`][pydantic_ai.realtime.RealtimeSession.send] follow-up content.
+    [`send()`][pydantic_ai.realtime.RealtimeSession.send] follow-up content, or call
+    [`close()`][pydantic_ai.realtime.RealtimeSession.close] to hang up.
     """
 
     root_capability: AbstractCapability[RunContextAgentDepsT] | None = None
@@ -746,7 +747,9 @@ class RunContext(Generic[RunContextAgentDepsT]):
                     assistant response is allowed to finish before the content is sent; otherwise it
                     is sent immediately.
                 `'when_idle'` — only when the agent would otherwise end, after `'asap'` messages.
-                    In a realtime session, this means after the next response completes.
+                    In a realtime session, this means after the next response completes. Either way
+                    the model gets a turn on the delivered content, a `SystemPromptPart` included: it
+                    marks provenance, not silence.
 
         Returns:
             The `enqueue_id` of the queued message, echoed on the

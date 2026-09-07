@@ -378,8 +378,8 @@ For immediate dispatch, Pydantic AI buffers the event before invoking listeners,
 |---|---|---|
 | [`WebSearch`][pydantic_ai.capabilities.WebSearch] | `local='duckduckgo'` or `local=True` (DuckDuckGo) | Requires the `duckduckgo` optional group |
 | [`WebFetch`][pydantic_ai.capabilities.WebFetch] | `local=True` (markdownify-based fetch) | Requires the `web-fetch` optional group |
-| [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] | Subagent via `fallback_model=` | Delegates to a model that supports native image generation |
-| [`XSearch`][pydantic_ai.capabilities.XSearch] | Subagent via `fallback_model=` | No default non-xAI fallback; set `fallback_model` to an xAI model that supports [`XSearchTool`][pydantic_ai.native_tools.XSearchTool] |
+| [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] | Subagent via `fallback_subagent_model=` | Delegates to a model that supports native image generation |
+| [`XSearch`][pydantic_ai.capabilities.XSearch] | Subagent via `fallback_subagent_model=` | No default non-xAI fallback; set `fallback_subagent_model` to an xAI model that supports [`XSearchTool`][pydantic_ai.native_tools.XSearchTool] |
 | [`MCP`][pydantic_ai.capabilities.MCP] | Direct connection to the MCP server (the default) | Accepts any [`MCPToolset`][pydantic_ai.mcp.MCPToolset] input; transport is auto-detected from a URL |
 
 Because these capabilities contribute model-facing tools, their `id`, `description`, and `defer_loading` fields are meaningful: set `description` and `defer_loading` when that tool should stay hidden until the model loads the matching workflow with the `load_capability` tool. Each of these covers a single fixed concern, so `id` already defaults to a stable value (`'web_search'`, `'web_fetch'`, `'image_generation'`, `'x_search'`; `MCP` derives one from the server URL) — which is what [durable execution](../durable_execution/overview.md) identifies the toolset they contribute by, so it works unconfigured. Set `id` only to rename it, and see [building custom capabilities](custom.md) for what happens when two share one. This includes [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] when image generation should only be available for an image-specific workflow, whether it resolves to a native image tool or a fallback subagent tool.
@@ -388,8 +388,8 @@ A [`Capability`][pydantic_ai.capabilities.Capability] contributing several [tool
 
 Configure each side via the `native=` and `local=` kwargs. `native=` accepts `True` (use the capability's default [native tool](../native-tools.md) instance), `False` (disable native), an explicit instance like `WebSearchTool(...)` for fine-grained config, or a callable taking [`RunContext`][pydantic_ai.tools.RunContext] that returns a native tool or `None` (see [Dynamic Configuration](../native-tools.md#dynamic-configuration)). A factory that returns `None` omits the native tool for that request. `local=` accepts `True` (the bundled local fallback, on capabilities that have one — `WebSearch` and `WebFetch`), `False` (disable local), a named strategy string where supported, or any callable, [`Tool`][pydantic_ai.tools.Tool], or [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset]. Optional installs needed for the local fallback are opt-in — the capability raises a [`UserError`][pydantic_ai.exceptions.UserError] at construction (with an install hint) when you ask for a local strategy whose extra isn't installed.
 
-!!! note "`None` on a capability with a `fallback_model`"
-    [`XSearch`][pydantic_ai.capabilities.XSearch] and [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] route unsupported models to a subagent instead of a local tool. Once a `fallback_model` is set, a factory returning `None` no longer omits anything: the subagent tool stays offered to the model, even one that supports the native tool, and calling it raises [`UserError`][pydantic_ai.exceptions.UserError] — see [X Search](x-search.md) and [Image Generation](image-generation.md).
+!!! note "`None` on a capability with a `fallback_subagent_model`"
+    [`XSearch`][pydantic_ai.capabilities.XSearch] and [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] route unsupported models to a subagent instead of a local tool. Once a `fallback_subagent_model` is set, a factory returning `None` no longer omits anything: the subagent tool stays offered to the model, even one that supports the native tool, and calling it raises [`UserError`][pydantic_ai.exceptions.UserError] — see [X Search](x-search.md) and [Image Generation](image-generation.md).
 
 ```python {title="provider_adaptive_tools.py" test="skip" lint="skip"}
 from pydantic_ai import Agent
@@ -402,10 +402,10 @@ agent = Agent(
         WebSearch(local='duckduckgo'),
         # Native when supported; markdownify-based fallback on unsupported models
         WebFetch(local=True),
-        # Native when supported; subagent fallback via `fallback_model`
-        ImageGeneration(fallback_model='openai:gpt-5.6-sol'),
+        # Native when supported; subagent fallback via `fallback_subagent_model`
+        ImageGeneration(fallback_subagent_model='openai:gpt-5.6-sol'),
         # Native on xAI; on other models, explicitly delegate to an xAI model
-        XSearch(fallback_model='xai:grok-4.3'),
+        XSearch(fallback_subagent_model='xai:grok-4.3'),
         # Runs the MCP server locally by default; pass `native=True` to also advertise native MCP
         MCP('https://mcp.example.com/api'),
     ],
@@ -414,7 +414,10 @@ agent = Agent(
 
 `MCP` defaults the other way from the others: because MCP carries credentials, it runs locally by default and you opt into native MCP with `native=True`. The others default to native and you opt into local with `local=`.
 
-[`XSearch`][pydantic_ai.capabilities.XSearch] is slightly different from [`WebSearch`][pydantic_ai.capabilities.WebSearch] and [`WebFetch`][pydantic_ai.capabilities.WebFetch]: there is no default non-xAI fallback. If your agent is not running on an xAI model, set `fallback_model` explicitly to an xAI model that supports [`XSearchTool`][pydantic_ai.native_tools.XSearchTool].
+[`XSearch`][pydantic_ai.capabilities.XSearch] is slightly different from [`WebSearch`][pydantic_ai.capabilities.WebSearch] and [`WebFetch`][pydantic_ai.capabilities.WebFetch]: there is no default non-xAI fallback. If your agent is not running on an xAI model, set `fallback_subagent_model` explicitly to an xAI model that supports [`XSearchTool`][pydantic_ai.native_tools.XSearchTool].
+
+!!! note "`fallback_model` is deprecated"
+    On both [`XSearch`][pydantic_ai.capabilities.XSearch] and [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration], `fallback_model` is the former name of `fallback_subagent_model`. It keeps working — in Python and in an [agent spec](../agent-spec.md) — and warns; passing both names is refused: [`UserError`][pydantic_ai.exceptions.UserError] when you construct the capability, and the `ValueError` the spec loader wraps it in when you load a spec. The new name says which fallback it configures: an extra agent run, as against a `local=` tool running in your own process.
 
 Some constraint fields require the native tool (the bundled local fallback can't enforce them) — passing them locks the capability to the native path. If the model doesn't support the native tool, the capability raises a [`UserError`][pydantic_ai.exceptions.UserError].
 

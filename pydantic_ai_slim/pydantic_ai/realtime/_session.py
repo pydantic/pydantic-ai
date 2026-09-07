@@ -20,7 +20,7 @@ from opentelemetry.context import Context
 from typing_extensions import TypeAliasType, assert_never
 
 from .. import _agent_graph
-from .._enqueue import PendingMessage, PendingMessagePriority
+from .._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority
 from .._tool_execution import (
     _reject_unloaded_capability_reveals,  # pyright: ignore[reportPrivateUsage]
     build_tool_return_part,
@@ -91,6 +91,7 @@ from .codec import (
     RealtimeSessionInput,
     ResponseDone,
     SessionUsage,
+    TextContext,
     ToolCall,
     ToolCallCancelled,
     ToolResult,
@@ -472,7 +473,7 @@ def _pending_message_text(pending: PendingMessage) -> str:
     standard run's non-leading system prompts. Anything else can't cross the live input channel.
     """
     error = UserError(
-        '`RunContext.enqueue()` in a realtime session supports plain-text prompts and system-prompt '
+        '`RealtimeSession.enqueue()` and `RunContext.enqueue()` in a realtime session support plain-text prompts and system-prompt '
         'parts only. Multimodal content and model responses cannot be delivered over the live input '
         'channel.'
     )
@@ -509,6 +510,10 @@ class _RealtimePendingMessages(list[PendingMessage]):
             super().append(pending)
         if self._on_append is not None:
             self._on_append(pending.priority)
+
+    def has_priority(self, priority: PendingMessagePriority) -> bool:
+        with self._lock:
+            return any(pending.priority == priority for pending in self)
 
     def pop_priority(self, priority: PendingMessagePriority) -> list[PendingMessage]:
         """Atomically remove and return all messages with `priority`."""
@@ -864,6 +869,10 @@ class RealtimeSession:
         finish cleanly, with any buffered items discarded. The surrounding model context owns the
         underlying connection, so it remains open until that context exits.
 
+        A tool can call this method through
+        [`ctx.realtime_session`][pydantic_ai.tools.RunContext.realtime_session] to hang up. The calling
+        tool does not resume, and its call is recorded as interrupted.
+
         Raises whatever ended the session — a provider hangup, an exceeded `usage_limits`, or a failed
         tool — if the event stream was never iterated, since there was nowhere else for it to surface.
         """
@@ -896,7 +905,16 @@ class RealtimeSession:
         # recorded as interrupted, and every still-running tool call gets a cancelled return. The
         # returned events are discarded — the stream is closing and has no consumer left.
         self._finalize_lost_state()
-        tasks = [*self._background_tasks]
+        # A tool hanging up — `await ctx.realtime_session.close()` from its own tool task — must not
+        # cancel-and-gather itself: the task would become a child of the `gather` it is awaiting, and
+        # CPython's cancel delegation (`Task.cancel` -> `_GatheringFuture.cancel` -> `Task.cancel` ...)
+        # recurses without bound, leaving the tool orphaned and permanently uncancellable. Its call was
+        # settled with a cancelled return above like every other running call (without cancelling the
+        # task, which would interrupt this very method); the task itself is cancelled at the end
+        # instead, once the session is fully closed.
+        current_task = asyncio.current_task()
+        closing_from_own_task = current_task is not None and current_task in self._background_tasks
+        tasks = [task for task in self._background_tasks if task is not current_task]
         if self._pump_task is not None:
             tasks.append(self._pump_task)
         if tasks:
@@ -922,6 +940,17 @@ class RealtimeSession:
             transcript_items_dropped=self._transcript_tap_drops,
         )
         self._loop = None
+
+        if closing_from_own_task:
+            # The tool that closed the session doesn't resume — there is no provider left to send its
+            # result to, and its cancelled return is already in history — mirroring the cancellation
+            # every other running call received from the drain, and what `ctx.cancel()` documents.
+            # `cancel()` on the running task is delivered at its next suspension point, which this
+            # `sleep(0)` is, so it raises `CancelledError` here rather than in the tool body. This also
+            # skips the pump-error re-raise below because there is no caller to receive it.
+            assert current_task is not None
+            current_task.cancel(msg='Realtime session exited')
+            await asyncio.sleep(0)
 
         # A session that was never iterated has nowhere else to learn that it failed: the pump's error is
         # normally raised out of `__aiter__`, so a caller using only `send()` and the
@@ -1142,8 +1171,20 @@ class RealtimeSession:
         fill_run_metadata(request, run_id=self._run_id, conversation_id=self._conversation_id)
         return request
 
-    async def send(self, content: RealtimeSessionInput | Sequence[RealtimeSessionInput]) -> None:
+    async def send(
+        self, content: RealtimeSessionInput | Sequence[RealtimeSessionInput], *, respond: bool | None = None
+    ) -> None:
         """Feed content into the session.
+
+        A `str` is a complete text turn that the model replies to. Do not follow `send('...')` with
+        `create_response()`: that asks for two responses. An image is added as context without
+        soliciting a response, while audio is streamed into the input buffer.
+
+        Set `respond=False` to add text or an image as context without soliciting a response. Set
+        `respond=True` to solicit a response to text or an image; this requires manual turn control
+        for images. `respond=True` cannot be used with audio. For a sequence, an explicit `respond` value
+        adds every item except the last as context and applies that value to the last item. With the
+        default `respond=None`, each item keeps its usual behavior.
 
         Accepts the shared message vocabulary: plain text as a `str`, image/audio
         [`BinaryContent`][pydantic_ai.messages.BinaryContent] (including
@@ -1162,49 +1203,117 @@ class RealtimeSession:
         completes (see `_execute_tool`) — neither is accepted here.
         """
         if isinstance(content, str):
-            self._reserve_response_request()
+            solicits_response = respond is not False
+            if solicits_response:
+                self._reserve_response_request()
             request = self._new_request([UserPromptPart(content=content)])
             self._record_sent_request(request)
             try:
-                await self._send_frame(content)
+                await self._send_frame(content if solicits_response else TextContext(content))
             except BaseException:
-                self._pending_response_requests -= 1
+                if solicits_response:
+                    self._pending_response_requests -= 1
                 self._remove_sent_request(request)
                 raise
         elif isinstance(content, BinaryContent):
             if content.is_image:
-                await self._send_image(content)
-            elif content.media_type == _WAV_MEDIA_TYPE:
-                # Retained `SpeechPart.audio` (from `audio_retention`) is a WAV container; unwrap it to
-                # raw PCM — matching the seeding path — so a natural round-trip (retain a turn's audio,
-                # then `send()` it back) doesn't stream the WAV header into the buffer as noise.
-                await self.send_audio(
-                    seed_pcm_audio(
-                        audio=content,
-                        provider_name=self._provider_name or 'realtime',
-                        sample_rate=self.audio_input_sample_rate,
-                    )
-                )
-            elif content.media_type == 'audio/pcm':
-                await self.send_audio(content.data)
+                await self._send_image(content, respond=respond is True)
             else:
-                raise UserError(
-                    f'Unsupported binary media type {content.media_type!r} for `session.send()`. '
-                    'Send an image, WAV audio, or raw PCM (`audio/pcm`); for a raw PCM byte stream use `send_audio()`.'
-                )
+                if respond is True and content.media_type in (_WAV_MEDIA_TYPE, 'audio/pcm'):
+                    # Audio never solicits a reply on its own (VAD or `commit_audio()` ends the turn), so
+                    # `respond=False` is a no-op for it and only `respond=True` is a mistake.
+                    raise UserError(
+                        '`respond=True` cannot be used with audio sent via `session.send()`: a spoken turn is '
+                        'ended by voice activity detection, or by `commit_audio()` and `create_response()`.'
+                    )
+                await self._send_audio_content(content)
         elif isinstance(content, (bytes, bytearray)):
             # `bytes` is a `Sequence[int]`, so guard it before the sequence branch below — otherwise it
             # iterates into a confusing per-byte error. Raw input audio goes through `send_audio()`.
             raise UserError('Raw audio bytes cannot be sent via `session.send()`; use `session.send_audio(...)`.')
         elif isinstance(content, Sequence):
-            for item in content:
-                await self.send(item)
+            if respond is None:
+                for item in content:
+                    await self.send(item)
+            else:
+                for index, item in enumerate(content):
+                    await self.send(item, respond=respond if index == len(content) - 1 else False)
         else:
             assert_never(content)
 
-    async def _send_image(self, content: BinaryContent) -> None:
+    def enqueue(
+        self,
+        *content: EnqueueContent,
+        priority: PendingMessagePriority = 'asap',
+    ) -> str | None:
+        """Enqueue content to be delivered to the model when the session is ready for it.
+
+        Use this from code driving the session. For tools, use
+        [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue]. Unlike
+        [`send()`][pydantic_ai.realtime.RealtimeSession.send], which is delivered immediately even
+        while the model is speaking, enqueued content waits for the appropriate turn boundary and
+        triggers a model response when delivered.
+
+        Args:
+            *content: One or more [`EnqueueContent`][pydantic_ai.run.EnqueueContent] items. Realtime
+                delivery supports text parts and
+                [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s, which are joined into
+                one user turn. System parts use the `<system>…</system>` convention to indicate that
+                the text is not the person speaking; that marks where it came from, not that it should
+                be handled silently. The model still gets a turn and decides whether to reply, call a
+                tool, or move on. To add context without prompting a turn at all, use
+                [`send(..., respond=False)`][pydantic_ai.realtime.RealtimeSession.send]. The delivered
+                turn is recorded in history as a
+                [`UserPromptPart`][pydantic_ai.messages.UserPromptPart]. Calling with no positional
+                arguments is a no-op.
+            priority: When to deliver:
+                `'asap'` (default) — as soon as no reply is being generated; a reply already in
+                    progress is allowed to finish first.
+                `'when_idle'` — only once the model is idle: no response is in flight and all
+                    `'asap'` items have been delivered.
+
+        Returns:
+            The `enqueue_id` of the queued message, or `None` when there was nothing to enqueue.
+
+        Raises:
+            UserError: If the session has not been entered or is closed, or the content cannot be
+                delivered over the live input channel.
+        """
+        if not self._entered:
+            raise UserError('Enter the realtime session with `async with` before enqueuing content.')
+        self._ensure_not_closed()
+        pending = PendingMessage.from_content(*content, priority=priority)
+        if pending is None:
+            return None
+        self._pending_messages.append(pending)
+        return pending.enqueue_id
+
+    async def _send_audio_content(self, content: BinaryContent) -> None:
+        if content.media_type == _WAV_MEDIA_TYPE:
+            # Retained `SpeechPart.audio` (from `audio_retention`) is a WAV container; unwrap it to
+            # raw PCM — matching the seeding path — so a natural round-trip (retain a turn's audio,
+            # then `send()` it back) doesn't stream the WAV header into the buffer as noise.
+            await self.send_audio(
+                seed_pcm_audio(
+                    audio=content,
+                    provider_name=self._provider_name or 'realtime',
+                    sample_rate=self.audio_input_sample_rate,
+                )
+            )
+        elif content.media_type == 'audio/pcm':
+            await self.send_audio(content.data)
+        else:
+            raise UserError(
+                f'Unsupported binary media type {content.media_type!r} for `session.send()`. '
+                'Send an image, WAV audio, or raw PCM (`audio/pcm`); for a raw PCM byte stream use `send_audio()`.'
+            )
+
+    async def _send_image(self, content: BinaryContent, *, respond: bool) -> None:
         """Forward an image and retain it according to the session's sampling and cap policies."""
         self._require_capability('supports_image_input', method='send', feature='image input')
+        if respond:
+            self._require_capability('supports_manual_turn_control', method='send', feature='manual turn-taking')
+            self._reserve_response_request()
         request: ModelRequest | None = None
         if self._retain_images_max != 0 and self._sent_image_count % self._retain_images_every_n == 0:
             request = self._new_request([UserPromptPart(content=[content])])
@@ -1213,8 +1322,13 @@ class RealtimeSession:
             # Callers guard on `is_image`, so the narrowed type only re-tags a plain `BinaryContent`.
             image = BinaryContent.narrow_type(content)
             assert isinstance(image, BinaryImage)
-            await self._send_frame(image)
+            if respond:
+                await self._send_frame(image, CreateResponse())
+            else:
+                await self._send_frame(image)
         except BaseException:
+            if respond:
+                self._pending_response_requests -= 1
             # `None` when this image wasn't the one retained by the sampling policy: nothing recorded,
             # so nothing to take back.
             if request is not None:
@@ -1320,7 +1434,11 @@ class RealtimeSession:
         self._user_turn_active = False
 
     async def create_response(self) -> None:
-        """Ask the model to respond now (manual turn-taking, after `commit_audio`)."""
+        """Ask the model to respond now (manual turn-taking, after `commit_audio`).
+
+        If a response is already in flight, the request is held until it completes and is dropped if
+        the user barges in. Returning does not mean the model has started speaking.
+        """
         self._require_capability('supports_manual_turn_control', method='create_response', feature='manual turn-taking')
         self._reserve_response_request()
         try:
@@ -1386,11 +1504,16 @@ class RealtimeSession:
         # Truncate before cancelling: cancellation triggers `response.done`, which clears the tracked
         # output item, so a truncate sent afterwards could no-op. Both frames go out under one hold of
         # the send lock, so a tool result completing in between can't start a new response for the
-        # cancel to hit instead.
-        await self._send_frame(
-            *([TruncateOutput(audio_end_ms=played_ms)] if played_ms is not None else []),
-            CancelResponse(),
-        )
+        # cancel to hit instead. The client cancel is skipped while the provider's own turn detection
+        # is already cancelling the response spoken over — the same rule as the `played_bytes` path
+        # and `handle_barge_in=True` — so it can't land on the *next* response instead.
+        frames: list[TruncateOutput | CancelResponse] = []
+        if played_ms is not None:
+            frames.append(TruncateOutput(audio_end_ms=played_ms))
+        if not self._server_cancelled_the_response_on_speech:
+            frames.append(CancelResponse())
+        if frames:
+            await self._send_frame(*frames)
         self._pending_interrupted_at_ms = played_ms
         # Mark the barge-in in the trace. When the caller supplied `played_ms` (the ms of output audio
         # actually played before truncating), record it so a reader can see how far the response got before
@@ -2235,7 +2358,11 @@ class RealtimeSession:
             self._finalize_response(interrupted=True)
         for tool_call_id, (task, call_part) in list(self._pending_tool_calls.items()):
             self._pending_tool_calls.pop(tool_call_id, None)
-            task.cancel()
+            if task is not asyncio.current_task():
+                # A tool closing the session from its own task is cancelled by `close()` once the
+                # session is fully settled; cancelling it here would land at `close()`'s next await
+                # and cut the teardown short. Its call still gets the cancelled return below.
+                task.cancel()
             cancelled_part = ToolReturnPart(
                 tool_name=call_part.tool_name,
                 content=INTERRUPTED_TOOL_RETURN_CONTENT,
@@ -2446,8 +2573,17 @@ class RealtimeSession:
             wire_content.append(user_content)
         elif user_content:
             wire_content.extend(user_content)
+        if self._closed:
+            # The session closed while the tool ran: it hung up with `close()` and then swallowed the
+            # `CancelledError`. Its call already has an interrupted return in history and there is no
+            # provider left to send to, so the result goes nowhere (`_run_tool` drops it too).
+            return result_part, user_content
         if not response_usage_follows:
             await self._drain_pending_messages('asap')
+        await self._send_tool_result(call_part, output, wire_content)
+        return result_part, user_content
+
+    async def _send_tool_result(self, call_part: ToolCallPart, output: str, wire_content: list[UserContent]) -> None:
         self._reserve_response_request()
         try:
             await self._send_frame(
@@ -2460,7 +2596,6 @@ class RealtimeSession:
         except BaseException:
             self._pending_response_requests -= 1
             raise
-        return result_part, user_content
 
     # --- streaming --------------------------------------------------------------------------------
 
@@ -2499,6 +2634,10 @@ class RealtimeSession:
             if response_active:
                 if priority == 'asap':
                     self._asap_drain_deferred = True
+                return
+            if priority == 'when_idle' and self._pending_messages.has_priority('asap'):
+                # `when_idle` follows every queued `asap` item: the `asap` drain delivers those and
+                # starts a reply, and this priority is retried once that reply completes.
                 return
             selected = self._pending_messages.pop_priority(priority)
             for pending in selected:
@@ -2623,6 +2762,11 @@ class RealtimeSession:
             self._tool_completion_events.discard(completion)
             # Settled (completed, failed, or cancelled): no longer cancellable by `ToolCallCancelled`.
             self._pending_tool_calls.pop(call_part.tool_call_id, None)
+        if self._closed:
+            # The session closed while this tool ran, so its call already has an interrupted return
+            # in history. Reached by a tool that hung up with `close()` and then swallowed the
+            # `CancelledError`: recording its result too would leave two returns for one call.
+            return
         events = self._complete_tool_call(call_part, result_part, content)
         if ordered_events:
             # Held until nothing is still running, then released in call order — the graph waits for a

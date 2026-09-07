@@ -196,6 +196,7 @@ openai = "2026-09-03T19:51:09Z"
 [dependency-groups]
 dev = [
     "anyio>=4.7.0",
+    "trio>=0.34.0",
     "asgi-lifespan>=2.1.0",
     "httpx>=0.27",
     "devtools>=0.12.2",

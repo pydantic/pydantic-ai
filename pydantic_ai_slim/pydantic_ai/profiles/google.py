@@ -227,10 +227,13 @@ def google_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
         # a `WebFetch()` or `CodeExecutionTool()` a silent no-op; leaving them out means a `local=`
         # fallback is used instead, or the shared `UserError` points at one.
         'supported_native_tools': frozenset({WebSearchTool}),
-        # Every current Gemini Live model takes a thinking config (verified live for both
+        # The native-audio Live models and 3.x take a thinking config (verified live for
         # `gemini-2.5-flash-native-audio-latest` and `gemini-3.1-flash-live-preview`), which Google
-        # documents as `thinkingBudget` on the 2.5 family and `thinkingLevel` on 3.x.
-        'supports_thinking': True,
+        # documents as `thinkingBudget` on the 2.5 family and `thinkingLevel` on 3.x. The Vertex
+        # half-cascade `gemini-live-2.5-flash` is the exception: it closes the session with `1007
+        # thinking_level is not supported by this model` (and rejects a `thinking_budget` too), so
+        # it reports `False` and the shared `thinking` setting is skipped instead of sent.
+        'supports_thinking': 'native-audio' in model_name or not model_name.startswith('gemini-live-2.5'),
         # Only the native-audio models actually honor `Behavior.NON_BLOCKING`; verified live with
         # a slow tool, where `gemini-2.5-flash-native-audio-latest` keeps speaking throughout and
         # `gemini-3.1-flash-live-preview` accepts the flag but still goes silent until the result

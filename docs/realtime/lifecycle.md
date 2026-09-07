@@ -31,7 +31,7 @@ turn into a model response, which may loop through [tool calls](tools.md) before
 enters the reconnect loop below — emitting
 [`RealtimeSessionReconnectEvent`][pydantic_ai.realtime.RealtimeSessionReconnectEvent] on recovery —
 until [`close()`][pydantic_ai.realtime.RealtimeSession.close] (or leaving the `async with` block)
-ends the session.
+ends the session, including from [a tool that hangs up](tools.md#ending-the-session-from-a-tool).
 
 ## Connection and handshake
 
@@ -91,10 +91,12 @@ reports whether the reconnect carried the conversation through without cutting a
 
 How a reply the drop caught in flight is handled depends on the mechanism. Under native resumption
 (xAI) the recorded response simply stays open: output on the new connection continues it, the turn
-completes with the response terminal as usual, and `state_restored` stays `True`. Gemini also reports
-`True` but closes the cut reply as an interrupted response (keeping any partial transcript in history)
-before the [`RealtimeSessionReconnectEvent`][pydantic_ai.realtime.RealtimeSessionReconnectEvent] and
-stays quiet until the next input.
+completes with the response terminal as usual, and `state_restored` stays `True`. Gemini reports
+`True` once the server has issued a resumption handle (shortly after connect; a drop before that
+reports `False` and cancels running tools) but closes the cut reply as an interrupted response
+(keeping any partial transcript in history) before the
+[`RealtimeSessionReconnectEvent`][pydantic_ai.realtime.RealtimeSessionReconnectEvent] and stays
+quiet until the next input.
 
 Local replay (OpenAI, Azure OpenAI) restores only the finalized turns, so a reply in flight when the
 socket dropped cannot continue. The session settles it before emitting the event — the partial reply

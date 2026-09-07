@@ -2,6 +2,12 @@
 
 ## Testing philosophy
 
+The async backend defaults to asyncio. Use `uv run pytest <test-path> --anyio-backend=trio --record-mode=none`
+to run selected portable tests on Trio without duplicating the default suite. During the Trio migration,
+run affected concurrency tests once per backend. Keep broad Trio runs manual or periodic; do not add a
+second backend to every ordinary CI matrix. The selector does not imply that every test or integration
+already supports Trio.
+
 VCR + public-API tests are the default. We test through the public API the way a user would (`Agent(...)`, `agent.run(...)`) against real provider responses recorded as cassettes — provider APIs are the ultimate judge of whether the code is correct when run as intended, and that user-facing correctness is what we care about, not behavior in isolated units.
 
 Unit tests still earn their place — for internal behavior that is definitory and worth pinning against drift. That includes behavior you can't reach or reliably trigger through the public API (pre-request guards, defensive branches no real model produces), but also behavior a VCR test wouldn't actually protect: our cassette matchers aren't always sensitive to the request body, so a changed internal payload can still match an existing recording and pass green — a unit test asserting the internal shape directly is what catches that regression. Each unit test should still say why it isn't (or can't be) a VCR test.
@@ -261,6 +267,7 @@ Available to every test under `tests/models/`. See "Asserting what goes out on t
 - Test MCP against real `tests.mcp_server` instance, not mocks — extend test server with helper tools to expose runtime context (instructions, client info, session state)
 - Remove stale test docstrings, comments, and historical provider bug notes when behavior changes
 - Prefer `instructions=` over `system_prompt=` when the test doesn't specifically need the system-prompt code path — `instructions=` is the canonical entry point for non-system-prompt-specific behavior (cacheable prefix, persona priming, format guidance), and reserving `system_prompt=` for tests that exercise the system-prompt machinery keeps intent legible
+- Test async behavior directly, following [Async & Concurrency](../agent_docs/concurrency.md) — assert the cancellation, the ordering, or the cleanup itself rather than the output it happens to produce, order steps with `Event`s instead of sleeps, and diff `asyncio.all_tasks()` to prove nothing leaked
 - Never reference line numbers in test docstrings or comments (`lines 872-873`, `L42`, `line 100`) — they go stale on the next edit to the referenced file. Describe the condition or behavior instead
 - When testing prompt caching, assert prefix stability, not just a cache hit — `cache_read_tokens > 0` only proves that some prefix was reused, not that the prefix you intended stayed stable as history grows; pin it by asserting the cacheable region (serialized leading blocks up to the breakpoint) is byte-identical across consecutive requests and/or that the cache read covers the full prior prefix, since a per-request injection or serialization that moves with history length silently busts the cache with no error
 - When you deprecate a public symbol (add `@deprecated`), add a test asserting the warning fires — a `pytest.warns(PydanticAIDeprecationWarning, match=...)` block whose `match` pins both the symbol name and the migration guidance — so the deprecation is protected against accidental removal or a message rewrite, and any executable docstring/doc example that constructs the symbol is marked `{test="skip"}` (it would otherwise fail under `filterwarnings=["error"]`)

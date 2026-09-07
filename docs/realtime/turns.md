@@ -26,6 +26,31 @@ Their accepted values, defaults, and limitations are documented on the
 [OpenAI](openai.md#settings), [Azure OpenAI](azure.md#settings),
 [Google Gemini](gemini.md#settings), and [xAI](xai.md#settings) pages.
 
+## Text turns
+
+Sending a string creates a complete user turn and asks the model to reply:
+
+```python
+from pydantic_ai import BinaryImage
+from pydantic_ai.realtime import RealtimeSession
+
+
+async def send_turns(session: RealtimeSession, image: BinaryImage) -> None:
+    await session.send('Greet the visitor.')
+
+    # Add context for a later voice or text turn without asking for a reply.
+    await session.send('The visitor is called Ada.', respond=False)
+
+    # Show an image and ask for a reply in one operation.
+    await session.send(image, respond=True)
+```
+
+Images are context-only by default. Asking for a response to an image requires a model that supports
+manual turn control.
+
+Do not call `create_response()` after `send('...')`: the text turn already asks for a response, so
+the pair asks twice and can make the model say the same thing twice.
+
 ## Barge-in
 
 With server-side turn detection, providers interrupt the model when they detect new user speech.
@@ -81,16 +106,17 @@ flush-attribute-truncate-cancel treatment as `handle_barge_in=True`:
 
 ```python
 import asyncio
+from collections.abc import AsyncIterator
 
 from pydantic_ai.realtime import RealtimeInputSpeechStartEvent, RealtimeSession
 
 
 async def conversation(session: RealtimeSession) -> None:
-    async def play_audio() -> None:
-        async for chunk in session.stream_audio():
+    async def play_audio(chunks: AsyncIterator[bytes]) -> None:
+        async for chunk in chunks:
             ...  # write the chunk to your speaker, waiting until the device consumed it
 
-    playback = asyncio.create_task(play_audio())
+    playback = asyncio.create_task(play_audio(session.stream_audio()))
     async for event in session:
         if isinstance(event, RealtimeInputSpeechStartEvent):
             await session.interrupt(played_bytes=session.played_audio_bytes)
@@ -102,11 +128,12 @@ count actual device consumption yourself and pass that. This handler covers the 
 report speech onset; on Gemini, which interrupts itself and leaves only the local flush to do,
 prefer `handle_barge_in=True`, which performs that flush for you.
 
-Interrupting while the provider has a speech segment open sends only the truncation on the models
-whose own turn detection cancels the response being spoken over (OpenAI and Azure OpenAI by
-default, and xAI): a second, client-side cancel racing the provider's can be applied to the *next*
-response and silence the reply to the barge-in. An interruption you raise outside a speech segment
-— a stop button, a tool cutting the model off — still cancels, since nothing else is stopping it.
+Interrupting between the provider's speech onset and the start of its next response sends only the
+truncation on the models whose own turn detection cancels the response being spoken over (OpenAI
+and Azure OpenAI by default, and xAI): a second, client-side cancel racing the provider's can be
+applied to the *next* response and silence the reply to the barge-in. This holds for every form of
+`interrupt()`. An interruption you raise outside that window — a stop button, a tool cutting the
+model off — still cancels, since nothing else is stopping it.
 
 Finally, when playback doesn't drain a single session-long `stream_audio()` iterator — several
 consumers, a playback layer that buffers ahead of the device, or a transport where the session
@@ -129,9 +156,9 @@ async def handle_events(session: RealtimeSession, speaker: Speaker):
     async for event in session:
         if isinstance(event, RealtimeInputSpeechStartEvent) and speaker.has_unplayed_audio():
             speaker.flush()
-            if session.profile['supports_output_truncation']:
+            if session.profile.get('supports_output_truncation', False):
                 await session.interrupt(played_ms=speaker.played_ms())
-            elif session.profile['supports_interruption']:
+            elif session.profile.get('supports_interruption', False):
                 await session.interrupt()
 ```
 
@@ -162,7 +189,7 @@ import asyncio
 from collections.abc import AsyncIterator
 
 from pydantic_ai import Agent
-from pydantic_ai.realtime import RealtimeSession
+from pydantic_ai.messages import SpeechPart
 
 agent = Agent(instructions='You are a welcoming museum guide.')
 
@@ -172,8 +199,8 @@ async def play_audio(chunks: AsyncIterator[bytes]) -> None:
         ...  # Write the PCM16 chunk to your speaker or audio output stream.
 
 
-async def wait_for_assistant_speech(session: RealtimeSession) -> None:
-    async for part in session.stream_transcripts():
+async def wait_for_assistant_speech(parts: AsyncIterator[SpeechPart]) -> None:
+    async for part in parts:
         if part.speaker == 'assistant':
             return
 
@@ -181,11 +208,11 @@ async def wait_for_assistant_speech(session: RealtimeSession) -> None:
 async def main():
     async with agent.realtime('openai:gpt-realtime').session() as session:
         playback = asyncio.create_task(play_audio(session.stream_audio()))
-        greeted = asyncio.create_task(wait_for_assistant_speech(session))
+        greeted = asyncio.create_task(wait_for_assistant_speech(session.stream_transcripts()))
         await session.send('Greet the visitor.')
         await greeted
         ...  # wait for the speaker to drain, then open the microphone and start sending audio
-        await playback
+    await playback  # the audio view ends once the session has closed
 ```
 
 With manual turn control, [`create_response()`][pydantic_ai.realtime.RealtimeSession.create_response]
