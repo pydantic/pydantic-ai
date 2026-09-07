@@ -251,8 +251,10 @@ in sequence until one succeeds. Pydantic AI can switch to the next model when th
 raises an exception (like a 4xx/5xx API error) **or** when the response content indicates a semantic
 failure (like a truncated response or a failed native tool call).
 
-By default, fallback triggers on [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] (4xx/5xx API errors),
-so you don't need to configure anything for the most common use case.
+By default, fallback triggers on [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], which covers both
+4xx/5xx responses (raised as [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError]) and transport
+failures such as timeouts and connection errors, so you don't need to configure anything for the most
+common use case.
 
 This behavior is controlled by the `fallback_on` parameter (see
 [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel]), which accepts exception types,
