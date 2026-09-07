@@ -103,18 +103,9 @@ git clone git@github.com:<your username>/pydantic-ai.git
 cd pydantic-ai
 ```
 
-Install `uv` and `pre-commit`. The minimum supported `uv` version is set by `tool.uv.required-version` in the repository's [`pyproject.toml`](https://github.com/pydantic/pydantic-ai/blob/main/pyproject.toml):
+[Install `uv`](https://docs.astral.sh/uv/getting-started/installation/). The minimum supported `uv` version is set by `tool.uv.required-version` in the repository's [`pyproject.toml`](https://github.com/pydantic/pydantic-ai/blob/main/pyproject.toml).
 
-- [`uv` install docs](https://docs.astral.sh/uv/getting-started/installation/)
-- [`pre-commit` install docs](https://pre-commit.com/#install)
-
-To install `pre-commit` you can run the following command:
-
-```bash
-uv tool install pre-commit
-```
-
-Install `pydantic-ai`, all dependencies and pre-commit hooks
+Install `pydantic-ai`, all dependencies, and pre-commit hooks. If `pre-commit` is not available, this also installs it with `uv`:
 
 ```bash
 make install
