@@ -41,6 +41,9 @@ def main() -> int:
     remaining = set(inventory)
     for name in sorted(set(result.stdout.rstrip('\0').split('\0')) - {''}):
         path = root / name
+        if path.is_symlink():
+            failures.append(f'{name}: symlinked source/config files are not supported')
+            continue
         if not path.is_file():
             continue
         if path.suffix == '.toml':

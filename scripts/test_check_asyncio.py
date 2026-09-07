@@ -61,6 +61,10 @@ def native_project(project: Path) -> Path:
         'import asyncio.tasks',
         'from asyncio.tasks import create_task',
         'from asyncio import *',
+        "import importlib\naio = importlib.import_module('asyncio')\naio.sleep(0)",
+        "import importlib as loader\nloader.import_module(name='asyncio.tasks')",
+        "from importlib import import_module as load\nload('asyncio')",
+        "__import__('asyncio')",
         'import asyncio  # noqa: TID251',
         '# ruff: noqa: TID251\nimport asyncio',
         '# noqa\nimport anyio',
@@ -87,10 +91,24 @@ def test_check_tracked_and_untracked_files(project: Path, suffix: str) -> None:
 
 def test_allow_anyio_and_ignore_strings(project: Path) -> None:
     (project / 'ok.py').write_text(
-        'import anyio\ntext = "import asyncio # noqa"\nasync def run():\n    await anyio.sleep(0)\n', encoding='utf-8'
+        'import anyio\nimport importlib\nimportlib.import_module("anyio")\n'
+        'module_name = "anyio"\nimportlib.import_module(module_name)\n'
+        'text = "import asyncio # noqa"\nasync def run():\n    await anyio.sleep(0)\n',
+        encoding='utf-8',
     )
     result = run_check(project)
     assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize('filename', ['new.py', 'ruff.toml'])
+def test_reject_symlinks_without_reading_the_target(project: Path, filename: str) -> None:
+    target = project / 'external.txt'
+    target.write_text('private target contents that are not Python or TOML', encoding='utf-8')
+    (project / filename).symlink_to(target)
+    result = run_check(project)
+    assert result.returncode == 1
+    assert f'{filename}: symlinked source/config files are not supported' in result.stderr
+    assert target.read_text(encoding='utf-8') not in result.stderr
 
 
 def test_allow_documented_native_boundary(native_project: Path) -> None:

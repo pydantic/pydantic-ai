@@ -59,6 +59,27 @@ def asyncio_sites(source: str) -> Counter[str]:
         sites[f'{scope}:{symbol}'] += 1
 
     sites.update(lint_suppressions(source))
+    sites.update(literal_dynamic_imports(tree))
+    return sites
+
+
+def literal_dynamic_imports(tree: ast.AST) -> Counter[str]:
+    """Count literal asyncio imports through the standard dynamic import functions."""
+    import_functions = {'__import__'}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            import_functions.update(
+                f'{alias.asname or alias.name}.import_module' for alias in node.names if alias.name == 'importlib'
+            )
+        elif isinstance(node, ast.ImportFrom) and node.module == 'importlib':
+            import_functions.update(alias.asname or alias.name for alias in node.names if alias.name == 'import_module')
+    sites: Counter[str] = Counter()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and ast.unparse(node.func) in import_functions:
+            module = node.args[0] if node.args else next((kw.value for kw in node.keywords if kw.arg == 'name'), None)
+            if isinstance(module, ast.Constant) and isinstance(module.value, str):
+                if module.value == 'asyncio' or module.value.startswith('asyncio.'):
+                    sites[f'import:{ast.unparse(node)}'] += 1
     return sites
 
 
