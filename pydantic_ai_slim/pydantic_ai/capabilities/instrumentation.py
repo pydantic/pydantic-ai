@@ -129,37 +129,38 @@ class Instrumentation(AbstractCapability[Any]):
     def from_spec(
         cls,
         *,
-        id: str | None = 'instrumentation',
         include_binary_content: bool = True,
         include_content: bool = True,
+        include_model_request_parameters: bool = True,
         version: Literal[2, 3, 4, 5, 6] = DEFAULT_INSTRUMENTATION_VERSION,
         use_aggregated_usage_attribute_names: bool = True,
     ) -> Instrumentation:
         """Build an `Instrumentation` capability from a YAML/JSON spec.
 
-        Accepts an optional `id` plus the serializable subset of
+        Accepts every serializable
         [`InstrumentationSettings`][pydantic_ai.models.instrumented.InstrumentationSettings]
-        options (`include_binary_content`, `include_content`, `version`,
-        `use_aggregated_usage_attribute_names`). The OTel `tracer_provider` and `meter_provider`
-        fields can't be expressed in YAML and default to the global providers (typically configured
-        via `logfire.configure()`).
+        option. The OTel `tracer_provider` and `meter_provider` fields can't be expressed in YAML
+        and default to the global providers (typically configured via `logfire.configure()`).
+
+        `id` is deliberately not accepted. An agent has one instrumentation configuration -- which
+        is what the class-level default `id` says -- so there is nothing for a spec to name, and two
+        `Instrumentation` capabilities resolve to one rather than colliding.
 
         YAML form:
 
             capabilities:
               - Instrumentation: {}                # default settings
               - Instrumentation:
-                  id: monitoring                   # optional; defaults to 'instrumentation'
                   version: 2
                   include_content: false
         """
         from pydantic_ai.models.instrumented import InstrumentationSettings
 
         return cls(
-            id=id,
             settings=InstrumentationSettings(
                 include_binary_content=include_binary_content,
                 include_content=include_content,
+                include_model_request_parameters=include_model_request_parameters,
                 version=version,
                 use_aggregated_usage_attribute_names=use_aggregated_usage_attribute_names,
             ),

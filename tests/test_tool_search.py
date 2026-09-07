@@ -2672,7 +2672,7 @@ async def test_openai_mixed_corpus_keeps_tools_byte_identical(allow_model_reques
 
 @pytest.mark.parametrize(
     ('model_name', 'native_tool_search'),
-    [('gpt-5', False), ('gpt-4.1', False), ('gpt-5.6', True)],
+    [('gpt-5', False), ('gpt-4.1', False), ('gpt-5.6', True), ('gpt-6-astra', True)],
 )
 async def test_openai_local_search_keeps_tools_byte_identical(
     allow_model_requests: None, model_name: str, native_tool_search: bool

@@ -119,6 +119,7 @@ from .codec import (
     RealtimeInput,
     ResponseDone,
     SessionUsage,
+    TextContext,
     ToolCall,
     ToolCallCancelled,
     ToolResult,
@@ -1085,8 +1086,9 @@ class GoogleRealtimeConnection(RealtimeConnection):
     async def send(self, content: RealtimeInput) -> None:
         """Send content to the Gemini Live API.
 
-        Accepts `BinaryAudio` (raw PCM16, 16kHz, mono), a `str` text turn, `BinaryImage` (a live
-        video frame), and `ToolResult`. The manual turn-taking verbs are not supported (Gemini uses
+        Accepts `BinaryAudio` (raw PCM16, 16kHz, mono), a `str` text turn, `TextContext` (text sent
+        with `turn_complete=False`, so it waits for the next turn), `BinaryImage` (a live video
+        frame), and `ToolResult`. The manual turn-taking verbs are not supported (Gemini uses
         automatic VAD).
         """
         # `send_realtime_input` is typed against a PIL.Image union the SDK leaves partially untyped.
@@ -1101,6 +1103,11 @@ class GoogleRealtimeConnection(RealtimeConnection):
             await self._session.send_client_content(
                 turns=genai_types.Content(role='user', parts=[genai_types.Part(text=content)]),
                 turn_complete=True,
+            )
+        elif isinstance(content, TextContext):
+            await self._session.send_client_content(
+                turns=genai_types.Content(role='user', parts=[genai_types.Part(text=content.text)]),
+                turn_complete=False,
             )
         elif isinstance(content, BinaryImage):
             await self._session.send_realtime_input(  # pyright: ignore[reportUnknownMemberType]

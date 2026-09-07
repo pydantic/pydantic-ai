@@ -11,7 +11,7 @@
 </div>
 <div align="center">
   <a href="https://github.com/pydantic/pydantic-ai/actions/workflows/ci.yml?query=branch%3Amain"><img src="https://github.com/pydantic/pydantic-ai/actions/workflows/ci.yml/badge.svg?event=push" alt="CI"></a>
-  <a href="https://coverage-badge.samuelcolvin.workers.dev/redirect/pydantic/pydantic-ai"><img src="https://coverage-badge.samuelcolvin.workers.dev/pydantic/pydantic-ai.svg" alt="Coverage"></a>
+  <a href="https://coverage-badge.samuelcolvin.workers.dev/redirect/pydantic/pydantic-ai"><img src="https://img.shields.io/badge/coverage-100%25-brightgreen.svg" alt="Coverage"></a>
   <a href="https://pypi.python.org/pypi/pydantic-ai"><img src="https://img.shields.io/pypi/v/pydantic-ai.svg" alt="PyPI"></a>
   <a href="https://github.com/pydantic/pydantic-ai"><img src="https://img.shields.io/pypi/pyversions/pydantic-ai.svg" alt="versions"></a>
   <a href="https://github.com/pydantic/pydantic-ai/blob/main/LICENSE"><img src="https://img.shields.io/github/license/pydantic/pydantic-ai.svg?v" alt="license"></a>
@@ -113,6 +113,43 @@ The [`@agent.tool`](https://pydantic.dev/docs/ai/tools-toolsets/tools/) function
 
 **Build this →** [Agents](https://pydantic.dev/docs/ai/core-concepts/agent/), [Function Tools](https://pydantic.dev/docs/ai/tools-toolsets/tools/), and [Structured Output](https://pydantic.dev/docs/ai/core-concepts/output/)
 
+### Durable workflow
+
+Attach [`TemporalDurability`](https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/) and the same agent runs inside a [Temporal](https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/) workflow under [durable execution](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/): every model and tool call becomes a durable activity, so a run working through a background queue survives restarts, failures, and long waits:
+
+```bash
+uv add "pydantic-ai[temporal]"
+```
+
+```python
+from temporalio import workflow
+
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import WebFetch, WebSearch
+from pydantic_ai.durable_exec.temporal import PydanticAIWorkflow, TemporalDurability
+
+agent = Agent(
+    'openai:gpt-5.6-sol',
+    instructions='Research the topic and write a structured brief.',
+    name='researcher',
+    capabilities=[WebSearch(), WebFetch(), TemporalDurability()],
+)
+
+
+@workflow.defn
+class ResearchWorkflow(PydanticAIWorkflow):
+    __pydantic_ai_agents__ = [agent]
+
+    @workflow.run
+    async def run(self, topic: str) -> str:
+        result = await agent.run(f'Write a brief on: {topic}')
+        return result.output
+```
+
+[DBOS](https://pydantic.dev/docs/ai/capabilities/durable_execution/dbos/) and [Prefect](https://pydantic.dev/docs/ai/capabilities/durable_execution/prefect/) attach the same way, first-party and co-maintained, with [Restate, Kitaru, and Airflow](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/) integrations besides.
+
+**Build this →** [Durable Execution](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/)
+
 ### Realtime voice
 
 Put the same agent on a live voice session, [tools](https://pydantic.dev/docs/ai/realtime/tools/) and [capabilities](https://pydantic.dev/docs/ai/realtime/capabilities/) included:
@@ -148,43 +185,6 @@ The model calls your tools mid-conversation while it keeps talking, and every se
 
 **Build this →** [Realtime Voice](https://pydantic.dev/docs/ai/realtime/overview/)
 
-### Durable background agent
-
-Attach [`TemporalDurability`](https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/) and the same agent runs inside a [Temporal](https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/) workflow: every model and tool call becomes a durable activity, so a run working through a background queue survives restarts, failures, and long waits:
-
-```bash
-uv add "pydantic-ai[temporal]"
-```
-
-```python
-from temporalio import workflow
-
-from pydantic_ai import Agent
-from pydantic_ai.capabilities import WebFetch, WebSearch
-from pydantic_ai.durable_exec.temporal import PydanticAIWorkflow, TemporalDurability
-
-agent = Agent(
-    'openai:gpt-5.6-sol',
-    instructions='Research the topic and write a structured brief.',
-    name='researcher',
-    capabilities=[WebSearch(), WebFetch(), TemporalDurability()],
-)
-
-
-@workflow.defn
-class ResearchWorkflow(PydanticAIWorkflow):
-    __pydantic_ai_agents__ = [agent]
-
-    @workflow.run
-    async def run(self, topic: str) -> str:
-        result = await agent.run(f'Write a brief on: {topic}')
-        return result.output
-```
-
-[DBOS](https://pydantic.dev/docs/ai/capabilities/durable_execution/dbos/) and [Prefect](https://pydantic.dev/docs/ai/capabilities/durable_execution/prefect/) attach the same way, first-party and co-maintained, with [Restate, Kitaru, and Airflow](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/) integrations besides.
-
-**Build this →** [Durable Execution](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/)
-
 ### Image generation
 
 Ask for an image and make it the run's typed [output](https://pydantic.dev/docs/ai/core-concepts/output/):
@@ -207,27 +207,6 @@ Path('logo.png').write_bytes(result.output.data)
 
 **Build this →** [Image Generation](https://pydantic.dev/docs/ai/capabilities/image-generation/)
 
-<!-- Embeddings section parked (bd54): restore by removing this comment.
-
-### Embeddings
-
-Embed documents and queries for semantic search or a [RAG pipeline](https://pydantic.dev/docs/ai/examples/data-analytics/rag/):
-
-```python
-from pydantic_ai import Embedder
-
-embedder = Embedder('openai:text-embedding-3-small')
-result = embedder.embed_query_sync('What is machine learning?')
-print(len(result.embeddings[0]))
-#> 1536
-```
-
-Seven providers behind one typed API, [instrumented](https://pydantic.dev/docs/ai/integrations/logfire/) like everything else. It lives next to the agent that will use the results.
-
-**Build this →** [Embeddings](https://pydantic.dev/docs/ai/guides/embeddings/)
-
--->
-
 ## Why Pydantic AI
 
 - **Any model, one Python API.** [Virtually every model and provider](https://pydantic.dev/docs/ai/models/overview/) (OpenAI, Anthropic, Google, Bedrock, Azure AI Foundry, Groq, Mistral, xAI, Ollama, and dozens more), swappable with a string, or through the [Pydantic AI Gateway](https://pydantic.dev/docs/ai/overview/gateway/): one key for all of them, with failover and cost monitoring built in. No flagship feature is locked to one vendor.
@@ -240,7 +219,7 @@ Seven providers behind one typed API, [instrumented](https://pydantic.dev/docs/a
 
 - **[Every interface](https://pydantic.dev/docs/ai/overview/interfaces/).** One agent definition runs as a [CLI](https://pydantic.dev/docs/ai/integrations/cli/), a [built-in web chat](https://pydantic.dev/docs/ai/guides/web/), or [realtime speech](https://pydantic.dev/docs/ai/realtime/overview/) (OpenAI Realtime, Gemini Live, Azure, xAI Grok Voice); [UI event streams](https://pydantic.dev/docs/ai/integrations/ui/overview/) (AG-UI, Vercel AI) connect it to your own frontend or anything else; and [ACP](https://pydantic.dev/docs/ai/harness/acp/) *(experimental)* serves it as an editor agent.
 
-- **Durable execution.** First-party, co-maintained [durable execution](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/) on Temporal, DBOS, or Prefect, with [Restate, Kitaru, and Airflow](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/) integrations and more coming. Agents survive restarts and run for days on the engine you already operate, with [human-in-the-loop approval](https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/#human-in-the-loop-tool-approval) built in.
+- **Durable execution.** First-party, co-maintained [durable execution](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/) on Temporal, DBOS, Prefect, and Restate, plus external SDK integrations for Kitaru and Airflow. Agents survive restarts and run for days on the engine you already operate, with [human-in-the-loop approval](https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/#human-in-the-loop-tool-approval) built in.
 
 Built by the [Pydantic](https://docs.pydantic.dev) team: [Pydantic Validation](https://pydantic.dev/docs/) is the validation layer of the OpenAI SDK, the Anthropic SDK, the Google ADK, LangChain, and most of the AI ecosystem (and the foundation FastAPI was built on). Pydantic AI brings that same feeling to agents.
 
