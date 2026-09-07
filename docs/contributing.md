@@ -185,8 +185,9 @@ All routes in `docs/navigation.yml` are relative to the Pydantic AI documentatio
 page its complete canonical route in `slug`; use `aliases` only for redirect sources. Do not prefix
 either value with `/ai` or a leading slash.
 
-For the rendered site, use the documentation preview attached to a pull request after a maintainer
-adds the `trigger:docs` label.
+To validate navigation changes, ask a maintainer to add the `trigger:docs` label to the pull request.
+This checks the navigation manifest, referenced Markdown files, routes, aliases, and redirects in
+`pydantic/unified-docs` and posts the result on the PR. It does not build a rendered preview.
 
 CI checks that every link between doc pages resolves, anchor included, and fails on `Cannot find
 fragment`. A heading's anchor is generated from its text, so renaming one silently breaks every link
