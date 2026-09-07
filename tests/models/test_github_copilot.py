@@ -358,9 +358,10 @@ def test_github_copilot_reasoning_effort_is_forwarded_for_claude(
 
 @pytest.mark.xfail(
     strict=True,
-    reason='Blocked on https://github.com/pydantic/genai-prices/issues/681 — genai-prices has no '
-    '`github-copilot` provider, so no Copilot model resolves a context window or a price. An XPASS '
-    'means the entry shipped: drop this marker and pin the window in the profile snapshot.',
+    reason='Blocked on a genai-prices release carrying the `github-copilot` provider added in '
+    'https://github.com/pydantic/genai-prices/pull/683; the bundled snapshot has none, so no Copilot '
+    'model resolves a context window or a price. An XPASS means the release landed: drop this marker '
+    'and pin the window in the profile snapshot.',
 )
 def test_github_copilot_context_window_is_known(github_copilot_api_key: str):
     """Not a VCR test: the window is filled from the bundled genai-prices snapshot, not the network."""

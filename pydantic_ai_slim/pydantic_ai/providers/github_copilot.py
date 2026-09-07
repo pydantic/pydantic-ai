@@ -110,9 +110,11 @@ class GitHubCopilotProvider(_OpenAICompatibleProvider):
     """Provider for [GitHub Copilot](https://docs.github.com/en/copilot).
 
     Routes requests through Copilot's OpenAI-compatible Chat Completions API at
-    `https://api.githubcopilot.com/chat/completions`, which serves Anthropic, OpenAI, Google, xAI and
-    MoonshotAI models under a Copilot subscription. Which model ids you can reach depends on your
-    plan; list yours with `GET https://api.githubcopilot.com/models`.
+    `https://api.githubcopilot.com/chat/completions`. Copilot serves Anthropic, OpenAI, Google, xAI and
+    MoonshotAI models under a subscription, but only the ids whose catalog entry lists `/chat/completions`
+    under `supported_endpoints` are reachable here; xAI's Grok ids, for one, are served on the Responses
+    API alone. Which ids you can reach also depends on your plan; list yours with
+    `GET https://api.githubcopilot.com/models`.
 
     This is not [`GitHubProvider`][pydantic_ai.providers.github.GitHubProvider], which served the
     retired GitHub Models API.

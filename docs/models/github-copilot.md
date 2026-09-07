@@ -1,6 +1,6 @@
 # GitHub Copilot
 
-[GitHub Copilot](https://docs.github.com/en/copilot) serves Anthropic, OpenAI, Google, xAI and MoonshotAI models through an OpenAI-compatible Chat Completions API, metered in AI credits drawn from your Copilot subscription at published per-model token rates.
+[GitHub Copilot](https://docs.github.com/en/copilot) serves Anthropic, OpenAI, Google, xAI and MoonshotAI models, metered in AI credits drawn from your Copilot subscription at published per-model token rates. Pydantic AI talks to Copilot's OpenAI-compatible Chat Completions API, which reaches only the ids Copilot exposes there: Claude, Gemini and Kimi ids and `gpt-5.4` at the time of writing, while every xAI Grok id and most other GPT ids are served on the Responses API alone and are out of reach until Pydantic AI speaks it. See [Model ids depend on your plan](#model-ids-depend-on-your-plan) to check yours.
 
 !!! note "This is not GitHub Models"
     [`GitHubProvider`][pydantic_ai.providers.github.GitHubProvider] and the `github:` prefix served [GitHub Models](openai.md#github-models), which was retired in July 2026. Copilot is a different API with a different host, its own model ids, and its own credentials.
@@ -75,14 +75,16 @@ Copilot's catalog varies by subscription and changes often, so Pydantic AI ships
 curl -H "Authorization: Bearer $GITHUB_COPILOT_API_KEY" https://api.githubcopilot.com/models
 ```
 
+Each entry's `supported_endpoints` says which API serves it; Pydantic AI needs `/chat/completions` in that list.
+
 Two `400` responses tell you why an id didn't work:
 
 - `model_not_supported` — your plan doesn't include that model. `claude-sonnet-4.5`, for instance, is unavailable on an Individual plan.
-- `unsupported_api_for_model` — the model exists but isn't served on Chat Completions. Pydantic AI does not yet speak Copilot's Responses API, so these ids are unreachable for now.
+- `unsupported_api_for_model` — the model exists but isn't served on Chat Completions. Pydantic AI does not yet speak Copilot's Responses API, so these ids — every xAI Grok id, at the time of writing — are unreachable for now.
 
 ## Thinking
 
-Reasoning models reachable on Chat Completions — the GPT, Gemini, Grok and Kimi ids whose catalog entry lists `reasoning_effort` — take the unified [`thinking`][pydantic_ai.settings.ModelSettings.thinking] setting:
+Reasoning models reachable on Chat Completions — the ids whose catalog entry lists `reasoning_effort`, such as `gpt-5.4` and `kimi-k3` — take the unified [`thinking`][pydantic_ai.settings.ModelSettings.thinking] setting:
 
 ```python
 from pydantic_ai import Agent
@@ -119,4 +121,4 @@ agent = Agent(model)
 
 ## Not supported
 
-Copilot's Responses (`/responses`) and Messages (`/v1/messages`) APIs and realtime are not implemented. Neither are embeddings, but because `github-copilot` counts as an OpenAI-chat-compatible provider, `Embedder('github-copilot:...')` still builds an [`OpenAIEmbeddingModel`](../embeddings.md) rather than raising — it points at the gateway's `/embeddings`, which answers `400`. Cost and context-window data are also unavailable: [genai-prices](https://github.com/pydantic/genai-prices) has no `github-copilot` entry yet, tracked in [genai-prices#681](https://github.com/pydantic/genai-prices/issues/681).
+Copilot's Responses (`/responses`) and Messages (`/v1/messages`) APIs and realtime are not implemented. Neither are embeddings, but because `github-copilot` counts as an OpenAI-chat-compatible provider, `Embedder('github-copilot:...')` still builds an [`OpenAIEmbeddingModel`](../embeddings.md) rather than raising — it points at the gateway's `/embeddings`, which answers `400`. Cost and context-window data are also unavailable: [genai-prices](https://github.com/pydantic/genai-prices) gained a `github-copilot` entry in [genai-prices#683](https://github.com/pydantic/genai-prices/pull/683), but no published release carries it yet.
