@@ -70,6 +70,7 @@ def test_sync_stream_owner_cancellation_drains_active_source(wait_for_owner: boo
     pump_tasks: list[asyncio.Task[object]] = []
     ready = asyncio.Event()
     cleanup_finished = False
+    cleanup_before_exit: list[tuple[bool, bool]] = []
 
     async def source(_messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
         nonlocal cleanup_finished
@@ -98,14 +99,19 @@ def test_sync_stream_owner_cancellation_drains_active_source(wait_for_owner: boo
             while not isinstance(event, PartDeltaEvent):
                 event = next(stream)
             loop = owner_tasks[0].get_loop()
-            loop.run_until_complete(ready.wait())
-            owner_tasks[0].cancel()
-            if wait_for_owner:
-                with pytest.raises(asyncio.CancelledError):
-                    loop.run_until_complete(owner_tasks[0])
-            with pytest.raises(RuntimeError, match=r'already closed|task group is not active'):
-                result.response
-            with pytest.raises(RuntimeError, match='already closed'):
-                next(iter(result))
-            assert cleanup_finished
-            assert all(task.done() for task in pump_tasks)
+            watchdog = loop.call_later(10, loop.stop)
+            try:
+                loop.run_until_complete(ready.wait())
+                owner_tasks[0].cancel()
+                if wait_for_owner:
+                    with pytest.raises(asyncio.CancelledError):
+                        loop.run_until_complete(owner_tasks[0])
+                with pytest.raises(RuntimeError, match=r'already closed|task group is not active'):
+                    result.response
+                with pytest.raises(RuntimeError, match='already closed'):
+                    next(iter(result))
+                cleanup_before_exit.append((cleanup_finished, all(task.done() for task in pump_tasks)))
+            finally:
+                watchdog.cancel()
+
+    assert cleanup_before_exit == [(True, True)]
