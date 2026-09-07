@@ -1770,7 +1770,15 @@ class TestLoadMCPToolsets:
                 'type': 'stdio',
                 'disabled': False,
                 'command': sys.executable,
-                'args': ['-m', 'tests.mcp_server'],
+                # The SDK v1 test server imports `mcp.server.fastmcp`, removed in SDK v2.
+                'args': [
+                    '-c',
+                    'from fastmcp import FastMCP\n'
+                    "mcp = FastMCP('test_server')\n"
+                    "mcp.tool(name='get_weather_forecast')"
+                    "(lambda location: f'The weather in {location} is sunny and 26 degrees Celsius.')\n"
+                    'mcp.run()',
+                ],
             }
         config_path = tmp_path / 'mcp.json'
         config_path.write_text(json.dumps({'mcpServers': servers}), encoding='utf-8')
