@@ -7,12 +7,21 @@ one on every commit, so the pre-commit hook runs this instead: it narrows the ru
 files whose content changed since Pyright last passed, plus everything that transitively
 imports them.
 
+Locally that set never holds a file under `tests/` that did not itself change. Tests are two
+thirds of this project's lines and most of them import `pydantic_ai`, so keeping them would put
+the whole project back on the command line for any core edit. CI checks every file, and is the
+gate for a source change that breaks a test file's typing.
+
 What passed is recorded in a checkpoint under the git directory, so it is per-worktree and
-never committed. Anything the checkpoint cannot account for falls back to
-`make typecheck-pyright`, the same full run CI performs: a first run, a dependency or
-configuration change, an import that would resolve somewhere new, an interpreter older than
-the 3.11 this needs to read `pyproject.toml`, or a change large enough that narrowing stops
-paying for itself.
+never committed. Anything the checkpoint cannot account for -- a first run, a dependency or
+configuration change, an import that would resolve somewhere new, or a change large enough that
+narrowing stops paying for itself -- falls back to every file Pyright reports on, minus those
+unchanged tests. Only what leaves this script without a file list at all falls back to
+`make typecheck-pyright`, the same full run CI performs: `CI` itself, an interpreter older than
+the 3.11 this needs to read `pyproject.toml`, and a Pyright configuration this cannot reproduce.
+
+`PYRIGHT_TIME_BUDGET` fails a passing run that took longer than that many seconds, so a change
+that makes Pyright itself slow fails its own pull request rather than `main`.
 
 Usage:
     python scripts/typecheck_changed.py
@@ -28,6 +37,7 @@ import platform
 import posixpath
 import subprocess
 import sys
+import time
 from collections import defaultdict, deque
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
@@ -39,6 +49,9 @@ from typing_extensions import TypedDict
 
 Runner = Callable[[Sequence[str]], int]
 """Runs a command, streams its output, and returns its exit code."""
+
+Clock = Callable[[], float]
+"""Reads a monotonic clock, in seconds."""
 
 # The checkpoint lives in the git directory, which is per-worktree and never tracked.
 CHECKPOINT_NAME = 'pyright-checkpoint.json'
@@ -53,6 +66,13 @@ _CONFIGURATION_FILES = ('pyproject.toml', 'uv.lock', 'Makefile')
 _SKIPPED_DIRECTORIES = frozenset({'__pycache__', 'node_modules'})
 
 _GLOB_CHARACTERS = frozenset('*?[')
+
+# Pyright's execution environment for tests is rooted here, so this prefix is the whole set.
+# Tests are 314 of the 739 files Pyright checks but 337k of its 490k lines, and 263 of them
+# import `pydantic_ai`, so a core edit reaches every one of those. Locally they are checked only
+# when they changed themselves, which leaves CI as the gate for the rest; the profile behind
+# that trade is https://github.com/pydantic/pydantic-ai/issues/8182.
+_TESTS_PREFIX = 'tests/'
 
 
 class _FileState(TypedDict):
@@ -125,25 +145,57 @@ def run_command(command: Sequence[str]) -> int:
     return subprocess.run(command, env={**os.environ, 'PYRIGHT_PYTHON_IGNORE_WARNINGS': '1'}).returncode
 
 
-def main(run: Runner = run_command) -> int:
+@dataclass(frozen=True)
+class _BudgetedRunner:
+    """Runs commands, and fails a passing run that took longer than the budget allows."""
+
+    run: Runner
+    clock: Clock
+    budget: float | None
+
+    def __call__(self, command: Sequence[str]) -> int:
+        started = self.clock()
+        code = self.run(command)
+        elapsed = self.clock() - started
+        if code != 0 or self.budget is None or elapsed <= self.budget:
+            return code
+        print(
+            f'Pyright passed in {elapsed:.1f}s, over the {self.budget:.1f}s `PYRIGHT_TIME_BUDGET`.\n'
+            'A jump like this is usually a new generic signature Pyright cannot solve cheaply, as in '
+            'https://github.com/pydantic/pydantic-ai/pull/8177.\n'
+            'https://github.com/pydantic/pydantic-ai/issues/8182 has the profile of where the time goes.'
+        )
+        return 1
+
+
+def main(run: Runner = run_command, clock: Clock = time.monotonic) -> int:
     """Type-check the files the working tree's changes can reach, and return Pyright's exit code."""
+    budget: float | None = None
+    setting = os.environ.get('PYRIGHT_TIME_BUDGET', '')
+    if setting:
+        try:
+            budget = float(setting)
+        except ValueError:
+            budget = None
+        # A misconfigured budget has to be loud, so nothing runs until this one reads as seconds.
+        if budget is None or not budget > 0:
+            print(f'`PYRIGHT_TIME_BUDGET` is `{setting}`, which is not a positive number of seconds.')
+            return 2
+    runner = _BudgetedRunner(run, clock, budget)
+
     if os.environ.get('CI'):
         # CI keeps no checkpoint between runs, so there is nothing to narrow against.
-        return _check_everything(run, 'CI is set')
+        return _check_everything(runner, 'CI is set')
 
     if sys.version_info < (3, 11):
         # Reading Pyright's file list out of pyproject.toml needs `tomllib`, added in 3.11.
-        return _check_everything(run, 'this interpreter is older than Python 3.11')
+        return _check_everything(runner, 'this interpreter is older than Python 3.11')
 
     project = _load_project()
     if project is None:
-        return _check_everything(run, 'the Pyright file list is not one this script can reproduce')
+        return _check_everything(runner, 'the Pyright file list is not one this script can reproduce')
 
     universe = _tracked_files()
-    # `exclude` silences a file's own diagnostics and `include` bounds what Pyright looks
-    # at, but either file is still read for whoever imports it. So both stay in the graph
-    # and neither is ever a check target.
-    checkable = [path for path in universe if _is_checked(path, project)]
     hashes = {path: _file_hash(path) for path in universe}
     # The Makefile turns this into `--pythonversion`, so it decides what Pyright answers.
     requested_version = os.environ.get('PYRIGHT_PYTHON', '')
@@ -151,7 +203,15 @@ def main(run: Runner = run_command) -> int:
     checkpoint_path = Path(_git('rev-parse', '--absolute-git-dir').strip()) / CHECKPOINT_NAME
     checkpoint = _load_checkpoint(checkpoint_path)
     stored: dict[str, _FileState] = checkpoint['files'] if checkpoint is not None else {}
-    changed = [path for path in universe if path not in stored or stored[path]['hash'] != hashes[path]]
+    changed = {path for path in universe if path not in stored or stored[path]['hash'] != hashes[path]}
+    # `exclude` silences a file's own diagnostics and `include` bounds what Pyright looks
+    # at, but either file is still read for whoever imports it. So both stay in the graph
+    # and neither is ever a check target.
+    checkable = [
+        path
+        for path in universe
+        if _is_checked(path, project) and (not path.startswith(_TESTS_PREFIX) or path in changed)
+    ]
 
     reason = _reason_to_check_everything(checkpoint, keys, stored, universe, project)
     imports: dict[str, list[str]] | None = None
@@ -168,15 +228,21 @@ def main(run: Runner = run_command) -> int:
         if len(affected) * 2 > len(checkable):
             reason = f'{len(affected)} of {len(checkable)} files are affected, so a full run costs no more'
 
-    if reason is not None:
-        code = _check_everything(run, reason)
-    else:
-        options = ['--pythonversion', requested_version] if requested_version else []
+    options = ['--pythonversion', requested_version] if requested_version else []
+    if reason is None:
+        paths = affected
         print(f'Type-checking {len(affected)} of {len(checkable)} files, reached from {len(changed)} changed.')
-        # No `--threads`, even with `PYRIGHT_THREADS` set: the narrowed set is at most half the
-        # project, and at that size the workers do not pay for themselves. Measured on this repo,
-        # 31 files take 5 seconds single-process.
-        code = run([sys.executable, '-m', 'pyright', *options, *affected])
+    else:
+        paths = checkable
+        tests = sum(1 for path in checkable if path.startswith(_TESTS_PREFIX))
+        print(
+            f'Type-checking {len(checkable)} files -- every file outside `{_TESTS_PREFIX}`, '
+            f'and the {tests} changed inside it: {reason}.'
+        )
+    # No `--threads`, even with `PYRIGHT_THREADS` set. A fallback reaches most of the project
+    # outside `tests/`, but every worker is a full Node process that redoes the shared parse and
+    # bind, and on a laptop they swap and come out slower than the single process; see #8075.
+    code = runner([sys.executable, '-m', 'pyright', *options, *paths])
 
     if code != 0:
         # The checkpoint records what Pyright accepted, so a failing run leaves it alone.
@@ -187,6 +253,9 @@ def main(run: Runner = run_command) -> int:
         # unchanged file's stored edges can point at a path that no longer answers to that
         # module name. Only the narrowed path has established that they still hold.
         imports = _parse_imports(universe, universe, project.import_roots)
+    # The whole universe is recorded, unchanged test files included, so the next run reaches
+    # only the ones edited after this point. Recording a file this run did not check is the
+    # trade `_TESTS_PREFIX` describes, and CI is what checks it.
     files = {
         path: _FileState(hash=hashes[path], imports=imports[path] if path in imports else stored[path]['imports'])
         for path in universe
@@ -233,7 +302,7 @@ def _reason_to_check_everything(
 
 
 def _affected(
-    changed: Sequence[str],
+    changed: Iterable[str],
     deleted: Sequence[str],
     stored: Mapping[str, _FileState],
     imports: Mapping[str, list[str]],
@@ -258,7 +327,7 @@ def _affected(
     return sorted(reached.intersection(checkable))
 
 
-def _parse_imports(paths: Sequence[str], universe: Sequence[str], roots: Sequence[str]) -> dict[str, list[str]]:
+def _parse_imports(paths: Iterable[str], universe: Sequence[str], roots: Sequence[str]) -> dict[str, list[str]]:
     modules = _module_map(universe, roots)
     return {path: _imports_of(path, modules, roots) for path in paths}
 
