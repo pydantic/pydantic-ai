@@ -36,7 +36,7 @@ Trio stays optional at runtime and becomes an explicit test dependency. Backend-
 - [#6454](https://github.com/pydantic/pydantic-ai/pull/6454) restored same-loop synchronous streaming after a blocking portal broke pooled client reuse. Moving existing sync calls to another thread or loop would repeat that regression.
 - `pydantic-ai-slim` and `pydantic-graph` already require `anyio>=4.7.0`. The lockfile contains AnyIO 4.14.1, but the declared minimum remains part of the support contract.
 - The earlier inventory found 150 direct `asyncio` references in 17 slim-package files, 7 in one graph file, and 10 in three evals files. Tests had 844 references in 51 files. These AST counts include annotations and exclude comments/docstrings; they are an editing footprint, not a count of independent changes. Refresh before implementation, including `.pyi` files and loop/task methods accessed through variables.
-- `tests/conftest.py` selects only the asyncio backend. Ruff already enables `TID251`, but currently bans only `asyncio.Lock`.
+- At the baseline commit, `tests/conftest.py` selected only the asyncio backend and Ruff's `TID251` rule banned only `asyncio.Lock`. C02-C03 add backend selection and the module-wide ban.
 
 | Surface | Target | Release evidence |
 | --- | --- | --- |
@@ -273,6 +273,6 @@ If a newer minimum is necessary, make that an explicit dependency change, check 
 - Ordinary CI retains the existing asyncio/durable checks and static import enforcement, with only the recommended small Trio smoke check added. Broad Trio and minimum-version coverage run manually, periodically and at the release gates above, with no migration expected failures left in advertised surfaces.
 - Unsupported integrations and any deferred surfaces are named explicitly. Full integration parity remains separate from the first core-support milestone.
 
-Planning validation: the proposed module-wide ban was exercised with locked Ruff 0.15.19 in a temporary configuration. All five forbidden forms (direct import, alias, `from` import, submodule import and `from` submodule import) produced `TID251`. An AnyIO import and an explicit import-line exception passed. These seven probes confirm the basic rule behavior; the exception-inventory checker remains planned work.
+Planning validation: the proposed module-wide ban was exercised with locked Ruff 0.15.19 in a temporary configuration. All five forbidden forms (direct import, alias, `from` import, submodule import and `from` submodule import) produced `TID251`. An AnyIO import and an explicit import-line exception passed. C03 implements the exception-inventory checker and its CLI tests, as recorded above.
 
-This planning pass reviews source and existing issue evidence. Runtime compatibility, task ownership prototypes and the full behavioral test matrix are implementation gates, not results already demonstrated by this document.
+C01-C03 establish the baseline, test selection and static policy. Full agent runtime compatibility, task ownership prototypes and the complete behavioral test matrix remain implementation gates.
