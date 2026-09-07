@@ -25,7 +25,9 @@ from pydantic_ai.capabilities import (
     UseThreadExecutor,
 )
 from pydantic_ai.capabilities.abstract import AbstractCapability
+from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.capabilities.hooks import Hooks
+from pydantic_ai.capabilities.wrapper import WrapperCapability
 from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
@@ -146,6 +148,53 @@ class TestRunHooks:
             'wrap_tool_execute',
             'on_tool_execute_error',
         } & set(frame_names)
+
+    async def test_dynamic_hooks_survive_capability_composition(self):
+        hooks = Hooks()
+        calls: list[str] = []
+
+        @hooks.on.tool_execute
+        async def wrap_tool_execute(
+            ctx: RunContext[Any],
+            *,
+            call: ToolCallPart,
+            tool_def: ToolDefinition,
+            args: dict[str, Any],
+            handler: Any,
+        ) -> Any:
+            calls.append('before')
+            result = await handler(args)
+            calls.append('after')
+            return result
+
+        capability = WrapperCapability(wrapped=CombinedCapability([hooks]))
+        agent = Agent(FunctionModel(tool_calling_model), capabilities=[capability])
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            return 'tool result'
+
+        await agent.run('call tool')
+        assert calls == ['before', 'after']
+
+    async def test_dynamic_event_hooks_survive_classic_stream_composition(self):
+        hooks = Hooks()
+        observed: list[AgentStreamEvent] = []
+
+        @hooks.on.event
+        async def observe(ctx: RunContext[Any], event: AgentStreamEvent) -> None:
+            observed.append(event)
+
+        capability = WrapperCapability(wrapped=CombinedCapability([hooks]))
+        agent = Agent(
+            FunctionModel(simple_model_function, stream_function=simple_stream_function),
+            capabilities=[capability],
+        )
+
+        async with agent.run_stream('hello') as stream:
+            await stream.get_output()
+
+        assert any(isinstance(event, PartStartEvent) for event in observed)
 
     async def test_before_run(self):
         cap = LoggingCapability()
