@@ -176,16 +176,16 @@ not, stays single-process.
 export PYRIGHT_THREADS=auto
 ```
 
-Export it rather than setting it per command, so every full run picks it up. Every worker is a full
-Node process, so they pay for themselves only on a machine with the memory to hold them; one already
-near its limit swaps and comes out slower than the default. Unset the variable or set it to `1` to go
-back to a single process: anything Pyright cannot read as a positive integer, `0` and `off` included,
-means `auto`.
+Export it rather than setting it per command, so every `make typecheck` picks it up. Every worker is
+a full Node process, so they pay for themselves only on a machine with the memory to hold them; one
+already near its limit swaps and comes out slower than the default. Unset the variable or set it to
+`1` to go back to a single process: anything Pyright cannot read as a positive integer, `0` and
+`off` included, means `auto`.
 
 `PYRIGHT_TIME_BUDGET` caps how long the check may take: set it to a number of seconds, and a run that
 passes but takes longer than that fails anyway. CI sets it, so a change that makes Pyright itself slow
-fails its own pull request rather than landing on `main`. Anything but a positive number of seconds
-fails the run outright rather than being ignored.
+fails its own pull request rather than landing on `main`. Any value that is not a positive number of
+seconds fails the run outright rather than being ignored; leaving it unset or empty means no budget.
 
 ## Documentation Changes
 

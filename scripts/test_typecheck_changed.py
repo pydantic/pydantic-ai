@@ -134,12 +134,13 @@ def _checkpoint(project: Path) -> Path:
     return project / '.git' / CHECKPOINT_NAME
 
 
-def test_the_first_run_checks_every_tracked_file(project: Path):
+def test_the_first_run_checks_every_tracked_file(project: Path, capsys: pytest.CaptureFixture[str]):
     # Nothing is stored yet, so every test file counts as changed and is checked with the rest.
     recorder = _typecheck()
 
     assert recorder.checked == sorted(_TRACKED)
     assert recorder.exit_code == 0
+    assert f'Type-checking every one of the {len(_TRACKED)} files' in capsys.readouterr().out
     checkpoint = json.loads(_checkpoint(project).read_text(encoding='utf-8'))
     assert sorted(checkpoint['files']) == sorted(_TRACKED)
 
@@ -172,7 +173,7 @@ def test_an_edit_leaves_a_test_file_that_imports_it_alone(project: Path):
     _typecheck()
     _edit(project, 'pkg_src/pkg/leaf.py')
 
-    assert 'tests/test_leaf.py' not in _typecheck().checked
+    assert _typecheck().checked == ['pkg_src/pkg/leaf.py', 'pkg_src/pkg/middle.py', 'pkg_src/pkg/top.py']
 
 
 def test_an_edit_to_a_test_file_checks_it(project: Path):
@@ -318,7 +319,7 @@ def test_a_module_that_moved_still_reaches_its_importers_afterwards(project: Pat
     ]
 
 
-def test_a_new_module_under_an_execution_environment_root_checks_files_outside_tests(project: Path):
+def test_a_new_module_under_an_execution_environment_root_checks_every_file_outside_tests(project: Path):
     # Pyright resolves a file directly under an environment root as a top-level module
     # inside that environment, so `pkg/pytest.py` shadows the installed `pytest` there.
     _write(project, 'pyproject.toml', f'{_PYPROJECT}\n[[tool.pyright.executionEnvironments]]\nroot = "pkg_src/pkg"\n')
@@ -337,6 +338,18 @@ def test_a_configuration_change_checks_every_file_outside_tests(project: Path, n
     assert _typecheck().checked == _EVERY_FILE_OUTSIDE_TESTS
 
 
+def test_a_fallback_checks_the_test_files_that_changed(project: Path, capsys: pytest.CaptureFixture[str]):
+    # A fallback still leaves out the `tests/` files that did not change, so it names both counts.
+    _typecheck()
+    _edit(project, 'uv.lock')
+    _edit(project, 'tests/test_leaf.py')
+
+    recorder = _typecheck()
+
+    assert recorder.checked == sorted([*_EVERY_FILE_OUTSIDE_TESTS, 'tests/test_leaf.py'])
+    assert 'and the 1 changed inside it' in capsys.readouterr().out
+
+
 def test_an_interpreter_without_tomllib_checks_everything(project: Path, monkeypatch: pytest.MonkeyPatch):
     # Reading Pyright's file list out of pyproject.toml needs `tomllib`, added in 3.11.
     monkeypatch.setattr(typecheck_changed.sys, 'version_info', (3, 10, 18))
@@ -351,7 +364,7 @@ def test_a_new_interpreter_checks_every_file_outside_tests(project: Path, monkey
     assert _typecheck().checked == _EVERY_FILE_OUTSIDE_TESTS
 
 
-def test_asking_pyright_for_another_python_version_rechecks_the_files_outside_tests(
+def test_asking_pyright_for_another_python_version_checks_every_file_outside_tests(
     project: Path, monkeypatch: pytest.MonkeyPatch
 ):
     # `PYRIGHT_PYTHON` becomes `--pythonversion`, so what passed under one value says
