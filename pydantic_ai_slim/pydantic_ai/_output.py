@@ -145,21 +145,27 @@ async def run_output_validate_hooks(
         output = await capability.before_output_validate(run_context, output_context=output_context, output=output)
 
         try:
-            validated = await capability.wrap_output_validate(
-                run_context, output_context=output_context, output=output, handler=do_validate
-            )
+            if capability._has_wrap_output_validate:  # pyright: ignore[reportPrivateUsage]
+                validated = await capability.wrap_output_validate(
+                    run_context, output_context=output_context, output=output, handler=do_validate
+                )
+            else:
+                validated = await do_validate(output)
         except (ValidationError, ModelRetry) as e:
             if allow_partial:
                 if wrap_validation_errors and isinstance(e, ValidationError):  # pragma: no cover
                     raise _make_retry_prompt(e, run_context) from e
                 raise
-            try:
-                validated = await capability.on_output_validate_error(
-                    run_context, output_context=output_context, output=output, error=e
-                )
-            except (ValidationError, ModelRetry) as hook_error:
-                if wrap_validation_errors:
-                    raise _make_retry_prompt(hook_error, run_context) from hook_error
+            if capability._has_on_output_validate_error:  # pyright: ignore[reportPrivateUsage]
+                try:
+                    validated = await capability.on_output_validate_error(
+                        run_context, output_context=output_context, output=output, error=e
+                    )
+                except (ValidationError, ModelRetry) as hook_error:
+                    if wrap_validation_errors:
+                        raise _make_retry_prompt(hook_error, run_context) from hook_error
+                    raise
+            else:
                 raise
 
         return await capability.after_output_validate(run_context, output_context=output_context, output=validated)
@@ -195,9 +201,12 @@ async def run_output_process_hooks(
         output = await capability.before_output_process(run_context, output_context=output_context, output=output)
 
         try:
-            result = await capability.wrap_output_process(
-                run_context, output_context=output_context, output=output, handler=do_process
-            )
+            if capability._has_wrap_output_process:  # pyright: ignore[reportPrivateUsage]
+                result = await capability.wrap_output_process(
+                    run_context, output_context=output_context, output=output, handler=do_process
+                )
+            else:
+                result = await do_process(output)
         except ToolRetryError:
             raise  # Control flow, not error
         except ModelRetry:
@@ -205,9 +214,12 @@ async def run_output_process_hooks(
         except Exception as e:
             # If the error hook itself raises ValidationError/ModelRetry, it propagates out
             # to the outer handler below, where it's wrapped as ToolRetryError if needed.
-            result = await capability.on_output_process_error(
-                run_context, output_context=output_context, output=output, error=e
-            )
+            if capability._has_on_output_process_error:  # pyright: ignore[reportPrivateUsage]
+                result = await capability.on_output_process_error(
+                    run_context, output_context=output_context, output=output, error=e
+                )
+            else:
+                raise
 
         return await capability.after_output_process(run_context, output_context=output_context, output=result)
     except ToolRetryError:

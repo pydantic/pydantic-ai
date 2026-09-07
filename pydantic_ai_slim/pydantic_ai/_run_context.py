@@ -126,7 +126,7 @@ class AnchoredEvidence:
 class RunContext(Generic[RunContextAgentDepsT]):
     """Information about the current call."""
 
-    deps: RunContextAgentDepsT
+    deps: RunContextAgentDepsT = field(repr=False)
     """Dependencies for the agent."""
     model: AbstractModel
     """The active model, which is a `RealtimeModel` during a realtime session."""
@@ -150,9 +150,9 @@ class RunContext(Generic[RunContextAgentDepsT]):
     agent: Agent[RunContextAgentDepsT, Any] | None = field(default=None, repr=False)
     """The agent running this context, or `None` if not set."""
 
-    prompt: str | Sequence[_messages.UserContent] | None = None
+    prompt: str | Sequence[_messages.UserContent] | None = field(default=None, repr=False)
     """The original user prompt passed to the run."""
-    messages: list[_messages.ModelMessage] = field(default_factory=list[_messages.ModelMessage])
+    messages: list[_messages.ModelMessage] = field(default_factory=list[_messages.ModelMessage], repr=False)
     """Messages exchanged in the conversation so far."""
     validation_context: Any = None
     """Pydantic [validation context](https://docs.pydantic.dev/latest/concepts/validators/#validation-context) for tool args and run outputs."""

@@ -304,7 +304,9 @@ def resolve_run_id(
 class GraphAgentState:
     """State kept across the execution of the agent graph."""
 
-    message_history: list[_messages.ModelMessage] = dataclasses.field(default_factory=list[_messages.ModelMessage])
+    message_history: list[_messages.ModelMessage] = dataclasses.field(
+        default_factory=list[_messages.ModelMessage], repr=False
+    )
     usage: _usage.RunUsage = dataclasses.field(default_factory=_usage.RunUsage)
     output_retries_used: int = 0
     run_step: int = 0
@@ -385,11 +387,11 @@ class GraphAgentState:
 class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     """Dependencies/config passed to the agent graph."""
 
-    user_deps: DepsT
+    user_deps: DepsT = dataclasses.field(repr=False)
 
-    prompt: str | Sequence[_messages.UserContent] | None
+    prompt: str | Sequence[_messages.UserContent] | None = dataclasses.field(repr=False)
     new_message_index: int
-    resumed_request: _messages.ModelRequest | None
+    resumed_request: _messages.ModelRequest | None = dataclasses.field(repr=False)
     resumed_request_index: int | None
 
     model: models.Model
@@ -1948,9 +1950,9 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
             inner = dispatch_event_stream(
                 run_context, _with_event_stream_buffer(self._run_stream(ctx), ctx.state.event_stream_buffer)
             )
-            self._wrapped_events_iterator = aiter(
-                ctx.deps.root_capability.wrap_run_event_stream(run_context, stream=inner)
-            )
+            if ctx.deps.root_capability.has_wrap_run_event_stream:
+                inner = ctx.deps.root_capability.wrap_run_event_stream(run_context, stream=inner)
+            self._wrapped_events_iterator = aiter(inner)
         return self._wrapped_events_iterator
 
     async def _run_stream(  # noqa: C901

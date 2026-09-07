@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import re
 import threading
+import traceback
 import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -120,6 +121,32 @@ class SingleBaseModelArg(BaseModel):
 
 
 class TestRunHooks:
+    async def test_empty_capabilities_do_not_add_hook_frames_to_tool_errors(self):
+        """Empty capabilities do not wrap or re-raise a tool error just because they are present."""
+        agent = Agent(
+            TestModel(),
+            deps_type=type(None),
+            capabilities=[Hooks(id=f'empty-{i}') for i in range(3)],
+        )
+
+        @agent.tool
+        async def explode(ctx: RunContext[None]) -> str:
+            raise ValueError('small error')
+
+        with pytest.raises(ValueError) as exc_info:
+            await agent.run('go')
+
+        frame_names = [frame.f_code.co_name for frame, _ in traceback.walk_tb(exc_info.value.__traceback__)]
+        assert 'explode' in frame_names
+        assert not {
+            'wrap_run',
+            'on_run_error',
+            'wrap_tool_validate',
+            'on_tool_validate_error',
+            'wrap_tool_execute',
+            'on_tool_execute_error',
+        } & set(frame_names)
+
     async def test_before_run(self):
         cap = LoggingCapability()
         agent = Agent(FunctionModel(simple_model_function), capabilities=[cap])
