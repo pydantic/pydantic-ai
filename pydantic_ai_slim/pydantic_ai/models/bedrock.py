@@ -19,7 +19,12 @@ from typing_extensions import ParamSpec, TypedDict, assert_never
 
 try:
     from botocore.client import BaseClient
-    from botocore.exceptions import BotoCoreError, ClientError
+    from botocore.exceptions import (
+        BotoCoreError,
+        ClientError,
+        ConnectionError as BotocoreConnectionError,
+        HTTPClientError,
+    )
     from botocore.model import StructureShape
 except ImportError as _import_error:
     raise ImportError(
@@ -148,6 +153,9 @@ def _map_api_errors(model_name: str, model_id_namespace: str = 'bedrock') -> Gen
                 headers=metadata.get('HTTPHeaders'),
                 suggested_model_id=suggested_model_id,
             ) from e
+        raise ModelAPIError(model_name=model_name, message=str(e)) from e
+    except (HTTPClientError, BotocoreConnectionError) as e:
+        # botocore raises transport failures (timeouts, connection errors) as `BotoCoreError`, not `ClientError`.
         raise ModelAPIError(model_name=model_name, message=str(e)) from e
 
 

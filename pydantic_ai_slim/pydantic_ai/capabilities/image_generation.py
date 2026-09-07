@@ -4,12 +4,16 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
+from typing_extensions import deprecated
+
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.native_tools import ImageAspectRatio, ImageGenerationModelName, ImageGenerationTool
 from pydantic_ai.tools import AgentDepsT, RunContext, Tool
 from pydantic_ai.toolsets import AbstractToolset
 
+from ._deprecated_fallback_model import resolve_fallback_subagent_model
 from .native_or_local import NativeOrLocalTool
 
 if TYPE_CHECKING:
@@ -21,7 +25,7 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
     """Image generation capability.
 
     Uses the model's native image generation when available. When the model doesn't
-    support it and `fallback_model` is provided, falls back to a local tool that
+    support it and `fallback_subagent_model` is provided, falls back to a local tool that
     delegates to a subagent running the specified image-capable model.
 
     Image generation settings (`quality`, `size`, etc.) are forwarded to the
@@ -31,8 +35,8 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
     fields override any `native` settings.
     """
 
-    fallback_model: ImageGenerationFallbackModel
-    """Model to use for image generation when the agent's model doesn't support it natively.
+    fallback_subagent_model: ImageGenerationFallbackModel
+    """Model for a subagent to run when the agent's model doesn't support image generation natively.
 
     Must be a model that supports image generation via the
     [`ImageGenerationTool`][pydantic_ai.native_tools.ImageGenerationTool] native tool.
@@ -123,7 +127,7 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         | Callable[[RunContext[AgentDepsT]], Awaitable[ImageGenerationTool | None] | ImageGenerationTool | None]
         | bool = True,
         local: Tool[AgentDepsT] | Callable[..., Any] | Literal[False] | None = None,
-        fallback_model: Model
+        fallback_subagent_model: Model
         | KnownModelName
         | str
         | Callable[[RunContext[AgentDepsT]], Awaitable[Model | KnownModelName | str] | Model | KnownModelName | str]
@@ -141,13 +145,23 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         id: str | None = 'image_generation',
         defer_loading: bool = False,
         description: str | None = None,
+        # TODO(v3): remove `fallback_model`, the deprecated spelling of `fallback_subagent_model`.
+        fallback_model: Model
+        | KnownModelName
+        | str
+        | Callable[[RunContext[AgentDepsT]], Awaitable[Model | KnownModelName | str] | Model | KnownModelName | str]
+        | None = None,
     ) -> None:
         self.id = id
         self.description = description
         self.defer_loading = defer_loading
         self.native = native
         self.local = local
-        self.fallback_model = fallback_model
+        self.fallback_subagent_model = resolve_fallback_subagent_model(
+            type(self).__name__,
+            fallback_subagent_model=fallback_subagent_model,
+            fallback_model=fallback_model,
+        )
         self.action = action
         self.background = background
         self.input_fidelity = input_fidelity
@@ -162,16 +176,34 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
 
     def __post_init__(self) -> None:
         # Checked here rather than in `__init__` so a merge is held to it too: `combine` can pair
-        # one instance's `fallback_model` with another's `local`, which no constructor accepts, and
-        # the local tool would then take effect with `fallback_model` silently ignored. Runs before
-        # the base resolves `local`, so it reads what was declared rather than what was
-        # materialized.
-        if self.fallback_model is not None and self.local is not None:
+        # one instance's `fallback_subagent_model` with another's `local`, which no constructor
+        # accepts, and the local tool would then take effect with `fallback_subagent_model` silently
+        # ignored. Runs before the base resolves `local`, so it reads what was declared rather than
+        # what was materialized.
+        if self.fallback_subagent_model is not None and self.local is not None:
             raise UserError(
-                'ImageGeneration: cannot specify both `fallback_model` and `local` — '
-                'use `fallback_model` for the default subagent fallback, or `local` for a custom tool'
+                'ImageGeneration: cannot specify both `fallback_subagent_model` and `local` — '
+                'use `fallback_subagent_model` for the default subagent fallback, or `local` for a custom tool'
             )
         super().__post_init__()
+
+    # TODO(v3): remove the `fallback_model` property, the deprecated spelling of `fallback_subagent_model`.
+    # The message is spelled out rather than shared with the helper that warns at construction:
+    # a type checker only reports a deprecation whose message is a string literal.
+    @property
+    @deprecated(
+        '`fallback_model` is deprecated; use `fallback_subagent_model` instead.', category=PydanticAIDeprecationWarning
+    )
+    def fallback_model(self) -> ImageGenerationFallbackModel:
+        """Deprecated alias for [`fallback_subagent_model`][pydantic_ai.capabilities.ImageGeneration.fallback_subagent_model]."""
+        return self.fallback_subagent_model
+
+    @fallback_model.setter
+    @deprecated(
+        '`fallback_model` is deprecated; use `fallback_subagent_model` instead.', category=PydanticAIDeprecationWarning
+    )
+    def fallback_model(self, value: ImageGenerationFallbackModel) -> None:
+        self.fallback_subagent_model = value
 
     def _image_gen_kwargs(self) -> dict[str, Any]:
         """Collect non-None ImageGenerationTool config fields."""
@@ -209,8 +241,8 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         return self._resolve_native_with_overrides(ImageGenerationTool, self._image_gen_kwargs())
 
     def _default_local(self) -> Tool[AgentDepsT] | AbstractToolset[AgentDepsT] | None:
-        if self.fallback_model is None:
+        if self.fallback_subagent_model is None:
             return None
         from pydantic_ai.common_tools.image_generation import image_generation_tool
 
-        return image_generation_tool(model=self.fallback_model, native_tool=self._resolved_native())
+        return image_generation_tool(model=self.fallback_subagent_model, native_tool=self._resolved_native())

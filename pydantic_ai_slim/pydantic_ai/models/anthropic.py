@@ -3066,7 +3066,7 @@ _COMPACTION_TOKEN_KEYS = ('input_tokens', 'output_tokens', 'cache_creation_input
 
 
 def _extract_usage_details(response_usage: BetaUsage | BetaMessageDeltaUsage) -> dict[str, int]:
-    """Extract Anthropic usage into a flat dict, preserving compaction and advisor iteration totals.
+    """Extract Anthropic usage into a flat dict, preserving the web search count and iteration totals.
 
     Anthropic's top-level `input_tokens`/`output_tokens` exclude both compaction and advisor iteration
     usage (see <https://docs.anthropic.com/en/docs/build-with-claude/compaction#understanding-usage>),
@@ -3088,6 +3088,13 @@ def _extract_usage_details(response_usage: BetaUsage | BetaMessageDeltaUsage) ->
     output_tokens_details = response_usage.output_tokens_details
     if output_tokens_details is not None and (thinking_tokens := output_tokens_details.thinking_tokens):
         details['thinking_tokens'] = thinking_tokens
+
+    # Native web searches are billed per search (see
+    # <https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/web-search-tool#usage-and-pricing>)
+    # and the count is only reported here, not as response parts, as searches can also run inside code execution.
+    server_tool_use = response_usage.server_tool_use
+    if server_tool_use is not None and (web_search_requests := server_tool_use.web_search_requests):
+        details['web_search_requests'] = web_search_requests
 
     iterations = response_usage.iterations
     if not iterations:
@@ -3148,10 +3155,14 @@ def _map_usage(
 
     # Anthropic reports top-level tokens excluding compaction iteration usage; add the
     # compaction totals back in so the extracted `RequestUsage` reflects the real request cost.
-    usage_for_extraction = dict(details)
+    usage_for_extraction: dict[str, Any] = dict(details)
     for key in _COMPACTION_TOKEN_KEYS:
         if compaction_value := details.get(f'compaction_{key}'):
             usage_for_extraction[key] = usage_for_extraction.get(key, 0) + compaction_value
+
+    # genai-prices reads the web search count from Anthropic's nested wire shape and maps it to `web_searches`.
+    if web_search_requests := details.get('web_search_requests'):
+        usage_for_extraction['server_tool_use'] = {'web_search_requests': web_search_requests}
 
     # Note: genai-prices already extracts cache_creation_input_tokens and cache_read_input_tokens
     # from the Anthropic response and maps them to cache_write_tokens and cache_read_tokens

@@ -355,8 +355,10 @@ def env() -> Iterator[TestEnv]:
 
 
 @pytest.fixture(scope='session')
-def anyio_backend():
-    return 'asyncio'
+def anyio_backend(pytestconfig: pytest.Config) -> str:
+    backend = pytestconfig.getoption('--anyio-backend')
+    assert isinstance(backend, str)
+    return backend
 
 
 # Calls that are allowed to block in the event loop, as (blockbuster function, file, functions).
@@ -700,6 +702,12 @@ def pytest_recording_configure(config: Any, vcr: VCR):
 
 
 def pytest_addoption(parser: Any) -> None:
+    parser.addoption(
+        '--anyio-backend',
+        choices=('asyncio', 'trio'),
+        default='asyncio',
+        help='Select the async test backend without duplicating the suite (default: asyncio).',
+    )
     parser.addoption(
         '--xai-proto-include-json',
         action='store_true',
