@@ -76,7 +76,7 @@ async def main():
 1. Define the MCP toolset with the URL used to connect.
 2. Create an agent with the MCP toolset attached.
 
-_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 **What's happening here?**
 
@@ -150,7 +150,7 @@ async def main():
     #> The answer is 12.
 ```
 
-_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 ## Loading MCP toolsets from configuration {#loading-mcp-toolsets-from-configuration}
 
@@ -508,7 +508,7 @@ async def main():
 
 1. `per_run_step=False` builds the toolset once per run instead of ahead of each run step, so the whole run shares a single MCP session.
 
-_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 Because the per-run toolset's session is established inside the run itself, credentials held in a `ContextVar` also resolve correctly with this pattern — but passing them through deps is more explicit and doesn't depend on task-local state.
 

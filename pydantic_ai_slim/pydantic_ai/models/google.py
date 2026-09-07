@@ -42,6 +42,7 @@ from ..messages import (
     UploadedFile,
     UserPromptPart,
     VideoUrl,
+    _tool_result_provenance_tags,  # pyright: ignore[reportPrivateUsage]
 )
 from ..native_tools import (
     AbstractNativeTool,
@@ -158,6 +159,7 @@ LatestGoogleModelNames = Literal[
     'gemini-3.5-flash-lite',
     'gemini-3.6-flash',
     'gemini-3.7-flash',
+    'gemini-3.8-flash',
 ]
 """Latest Gemini models."""
 
@@ -1119,6 +1121,10 @@ class GoogleModel(Model[Client]):
         for m in messages:
             if isinstance(m, ModelRequest):
                 message_parts: list[PartDict] = []
+                # Held back so the split below can't leave framed tool media sharing a `Content` with
+                # a `function_response`, which Gemini reads as model-authored (#4210) — the opposite
+                # of the attribution the framing exists to give it.
+                tool_return_media: list[PartDict] = []
 
                 for part in m.parts:
                     if isinstance(part, SystemPromptPart):
@@ -1126,7 +1132,9 @@ class GoogleModel(Model[Client]):
                     elif isinstance(part, UserPromptPart):
                         message_parts.extend(await self._map_user_prompt(part))
                     elif isinstance(part, ToolReturnPart):
-                        message_parts.extend(await self._map_tool_return(part))
+                        function_response_part, framed_media = await self._map_tool_return(part)
+                        message_parts.append(function_response_part)
+                        tool_return_media.extend(framed_media)
                     elif isinstance(part, RetryPromptPart):
                         if part.tool_name is None:
                             message_parts.append({'text': part.model_response()})
@@ -1147,6 +1155,15 @@ class GoogleModel(Model[Client]):
                         raise _unconverted_speech_part_error()
                     else:
                         assert_never(part)
+
+                if tool_return_media:
+                    # After the last `function_response`, not after every part: a `ToolReturn.content`
+                    # user part trails the tool returns in the same request, and appending to the end
+                    # would put the developer's message between a call and the file it produced.
+                    # Anywhere earlier and the split below would leave media sharing a `Content` with
+                    # a later `function_response`.
+                    after_last_response = max(i for i, p in enumerate(message_parts) if 'function_response' in p) + 1
+                    message_parts[after_last_response:after_last_response] = tool_return_media
 
                 # Work around a Gemini bug where content objects containing functionResponse parts are treated as
                 # role=model even when role=user is explicitly specified.
@@ -1191,12 +1208,15 @@ class GoogleModel(Model[Client]):
 
         return system_instruction, contents
 
-    async def _map_tool_return(self, part: ToolReturnPart) -> list[PartDict]:
+    async def _map_tool_return(self, part: ToolReturnPart) -> tuple[PartDict, list[PartDict]]:
         """Map a `ToolReturnPart` to Google API format, handling multimodal content.
 
-        For Gemini 3+ models with supported MIME types, files are sent inside
-        `function_response.parts` for efficiency. Unsupported types become separate
-        parts after the function_response (fallback strategy).
+        Returns the `function_response` part and, separately, any files this model can't carry
+        inside it. For Gemini 3+ models with supported MIME types, files are sent inside
+        `function_response.parts` for efficiency and the second element is empty. Unsupported types
+        fall back to ordinary parts, each framed by `_tool_result_provenance_tags`; the caller emits
+        those after every `function_response` in the request, which is why they carry the framing
+        rather than relying on sitting next to the call they belong to.
         See: https://ai.google.dev/gemini-api/docs/function-calling?example=meeting#multimodal
         """
         supported_mime_types = self.profile.get('google_supported_mime_types_in_tool_returns', ())
@@ -1211,9 +1231,9 @@ class GoogleModel(Model[Client]):
                 function_response_parts.append(fr_part)
             else:
                 fallback_refs.append(f'See file {file.identifier}.')
-                fallback_parts.append({'text': f'This is file {file.identifier}:'})
+                open_tag, close_tag = _tool_result_provenance_tags(part.tool_name, part.tool_call_id, file.identifier)
                 file_part = await self._map_file_to_part(file)
-                fallback_parts.append(file_part)
+                fallback_parts.extend([{'text': open_tag}, file_part, {'text': close_tag}])
 
         if part.outcome == 'failed':
             # Google's function-response schema prescribes an `error` key (mirroring the `output` key
@@ -1236,10 +1256,7 @@ class GoogleModel(Model[Client]):
         if function_response_parts:
             function_response_dict['parts'] = function_response_parts
 
-        result: list[PartDict] = [{'function_response': function_response_dict}]
-        result.extend(fallback_parts)
-
-        return result
+        return {'function_response': function_response_dict}, fallback_parts
 
     def _validate_uploaded_file(self, file: UploadedFile) -> tuple[str, str]:
         """Validate an `UploadedFile` and return (`file_uri`, `mime_type`).

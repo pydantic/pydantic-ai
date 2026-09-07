@@ -41,7 +41,7 @@ The first known use of "hello, world" was in a 1974 textbook about the C program
 
 ## Quick Start
 
-This section contains instructions on how to set up your account and run your app with Pydantic AI Gateway credentials.
+Set up your account and run your app with Pydantic AI Gateway credentials.
 
 ### Create an account
 

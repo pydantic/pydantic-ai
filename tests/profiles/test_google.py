@@ -226,6 +226,7 @@ def test_model_profile_image_model():
     ('model_name', 'expected'),
     [
         ('gemini-3.7-flash', False),
+        ('gemini-3.8-flash', False),
         ('gemini-3-pro-preview', False),
         ('gemini-3.1-pro-preview', False),
         ('gemini-3-flash-preview', True),

@@ -46,7 +46,9 @@ ImageGenerationModelName = Literal['gpt-image-2', 'gpt-image-1.5', 'gpt-image-1'
 
 AdvisorModelName = (
     Literal[
+        'claude-fable-5-1',
         'claude-fable-5',
+        'claude-mythos-5-1',
         'claude-mythos-5',
         'claude-opus-5',
         'claude-opus-4-8',
@@ -253,7 +255,7 @@ class XSearchTool(AbstractNativeTool):
     See <https://docs.x.ai/developers/tools/x-search> for more details.
 
     When used via the [`XSearch`][pydantic_ai.capabilities.XSearch] capability with a
-    `fallback_model` set, this tool also works with non-xAI models by delegating to a
+    `fallback_subagent_model` set, this tool also works with non-xAI models by delegating to a
     subagent running the specified xAI model.
 
     Supported by:

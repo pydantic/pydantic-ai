@@ -1125,7 +1125,7 @@ class XaiStreamedResponse(StreamedResponse):
                 # Handle text content (property filters for ROLE_ASSISTANT)
                 if chunk.content:
                     for event in self._parts_manager.handle_text_delta(
-                        vendor_part_id='content',
+                        vendor_part_id=None,
                         content=chunk.content,
                     ):
                         yield event

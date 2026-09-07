@@ -77,7 +77,7 @@ class _SignalingModel(RealtimeModel):
 
     @property
     def system(self) -> str:
-        return 'test'  # pragma: no cover - never opens a session, so provider identity is unused
+        return 'test'
 
     def connect(
         self,

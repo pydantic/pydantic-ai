@@ -741,6 +741,38 @@ def dataclasses_no_defaults_repr(self: Any) -> str:
     return f'{self.__class__.__qualname__}({", ".join(kv_pairs)})'
 
 
+def own_annotations(cls: type) -> dict[str, Any]:
+    """The annotations written on `cls` itself, without forcing lazy (PEP 649) evaluation.
+
+    On Python 3.14+ annotations are evaluated lazily, so a field referencing a class defined later in
+    the module must not be evaluated while the class is still being built — `@dataclass` defers it,
+    and anything inspecting a class from `__init_subclass__` has to as well. `Format.FORWARDREF`
+    never raises `NameError`, so an unresolvable annotation comes back as a `ForwardRef` instead.
+    """
+    if sys.version_info >= (3, 14):
+        import annotationlib
+
+        return dict(annotationlib.get_annotations(cls, format=annotationlib.Format.FORWARDREF))
+    return dict(inspect.get_annotations(cls))
+
+
+def declares_dataclass_fields(cls: type) -> bool:
+    """Whether `@dataclass` would give `cls` fields of its own, i.e. it annotates a non-`ClassVar` name.
+
+    Annotations are inspected without being evaluated (see [`own_annotations`][]), so a `ClassVar`
+    that can't be resolved yet is still recognized from the way it was written.
+    """
+    for annotation in own_annotations(cls).values():
+        if typing_objects.is_classvar(get_origin(annotation)) or typing_objects.is_classvar(annotation):
+            continue
+        # An unevaluated annotation arrives as a string or `ForwardRef`; match how it was written.
+        text = annotation if isinstance(annotation, str) else getattr(annotation, '__forward_arg__', None)
+        if text is not None and re.match(r'^(typing\.)?ClassVar\b', text.strip()):
+            continue
+        return True
+    return False
+
+
 def copy_dataclass_fields(src: Any, dst_cls: type, **overrides: Any) -> Any:
     """Shared utility for typed-part narrowers — preserves base fields when promoting to a typed subclass.
 

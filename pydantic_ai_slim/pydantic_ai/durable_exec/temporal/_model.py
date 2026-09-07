@@ -414,6 +414,14 @@ class TemporalModel(WrapperModel):
         return current.profile
 
     @property
+    def context_window(self) -> int | None:
+        """Get the context window of the currently active model, rather than the default one's."""
+        current = self._current_model()
+        if isinstance(current, str):
+            return self.profile.get('context_window')
+        return current.context_window
+
+    @property
     def base_url(self) -> str | None:
         """Get the base URL of the currently active model, rather than the default one's."""
         current = self._current_model()

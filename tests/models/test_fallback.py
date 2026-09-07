@@ -3377,3 +3377,21 @@ def test_fallback_continuation_delay_without_pin_polls_inner_models() -> None:
     # No inner model claims a non-background response, so there's no delay to apply.
     foreground = ModelResponse(parts=[], state='suspended')
     assert fallback.continuation_delay(foreground) is None
+
+
+def test_context_window_is_smallest_known_candidate_window() -> None:
+    """`FallbackModel.context_window` is the minimum over candidates that know theirs, `None` when none does.
+
+    Any candidate may answer, so compacting against the smallest window is the safe choice; a wrapper
+    around the fallback model must forward it because there's no profile to read it from.
+    """
+
+    def windowed(context_window: int | None) -> FunctionModel:
+        return FunctionModel(success_response, profile=ModelProfile(context_window=context_window))
+
+    assert FallbackModel(windowed(200_000), windowed(128_000), windowed(None)).context_window == 128_000
+    assert FallbackModel(windowed(None), windowed(None)).context_window is None
+
+    with pytest.raises(NotImplementedError):
+        FallbackModel(windowed(200_000)).profile
+    assert WrapperModel(FallbackModel(windowed(200_000), windowed(128_000))).context_window == 128_000

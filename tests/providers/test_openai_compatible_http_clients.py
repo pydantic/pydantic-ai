@@ -39,6 +39,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.snowflake import SnowflakeProvider
     from pydantic_ai.providers.together import TogetherProvider
     from pydantic_ai.providers.vercel import VercelProvider
+    from pydantic_ai.providers.vllm import VLLMProvider
     from pydantic_ai.providers.zai import ZaiProvider
 
 
@@ -163,6 +164,11 @@ CASES = [
         lambda http_client: VercelProvider(api_key='test', http_client=http_client),
     ),
     Case(
+        'vllm',
+        lambda: VLLMProvider(base_url='http://localhost:8000/v1', api_key='test'),
+        lambda http_client: VLLMProvider(base_url='http://localhost:8000/v1', api_key='test', http_client=http_client),
+    ),
+    Case(
         'zai',
         lambda: ZaiProvider(api_key='test'),
         lambda http_client: ZaiProvider(api_key='test', http_client=http_client),
@@ -189,6 +195,7 @@ IMPORT_GUARD_CASES = [
     ('snowflake', 'use the Snowflake provider'),
     ('together', 'use the Together AI provider'),
     ('vercel', 'use the Vercel provider'),
+    ('vllm', 'use the vLLM provider'),
     ('zai', 'use the Z.AI provider'),
 ]
 

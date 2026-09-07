@@ -1,15 +1,12 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
-from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol, cast
+from typing import TYPE_CHECKING, Protocol, cast
 
-import httpx2
 import pytest
-from pydantic import TypeAdapter
+from pydantic import JsonValue
 
-from ..conftest import try_import
+from ..conftest import RequestCapture, try_import
 
 if TYPE_CHECKING:
     from vcr.cassette import Cassette
@@ -24,61 +21,6 @@ with try_import() as google_imports:
 
     from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.providers.google_cloud import GoogleCloudProvider
-
-# `validate_json` parses through pydantic-core rather than the stdlib, and types the result without a cast.
-_REQUEST_BODY_ADAPTER = TypeAdapter(dict[str, Any])
-
-
-@dataclass
-class RequestCapture:
-    """Outbound request bodies, as the live code built them.
-
-    A cassette records what was sent when it was recorded, and the default matchers ignore the body,
-    so a request whose payload has since drifted still replays against its recording. httpx event
-    hooks run inside `AsyncClient.send`, above the transport VCR patches, so they fire on replay too
-    and see what is actually going out. Pass `capture.client` as a provider's `http_client` and
-    snapshot a projection of `capture.body(...)` to pin the fields a test's claim rests on.
-    """
-
-    paths: list[str] = field(default_factory=list[str])
-    raw_bodies: list[bytes] = field(default_factory=list[bytes])
-    headers: list[httpx2.Headers] = field(default_factory=list[httpx2.Headers])
-    client: httpx2.AsyncClient = field(init=False)
-
-    def __post_init__(self) -> None:
-        self.client = httpx2.AsyncClient(event_hooks={'request': [self._record]})
-
-    async def _record(self, request: httpx2.Request) -> None:
-        # Only the raw bytes are kept here: the hook runs on every request of every test that asks
-        # for a capture, while a test typically inspects one of them. Parsing happens in `body`.
-        self.paths.append(request.url.path)
-        self.raw_bodies.append(request.read())
-        # The cassette serializer strips `anthropic-*` headers, so the wire is the only place a test
-        # can see beta gating.
-        self.headers.append(request.headers)
-
-    def bodies(self, path_suffix: str = '') -> list[dict[str, Any]]:
-        """Every captured body whose URL path ends with `path_suffix`, parsed on demand."""
-        return [
-            _REQUEST_BODY_ADAPTER.validate_json(raw)
-            for path, raw in zip(self.paths, self.raw_bodies)
-            if path.endswith(path_suffix)
-        ]
-
-    def body(self, path_suffix: str = '', index: int = 0) -> dict[str, Any]:
-        """The `index`th captured body whose URL path ends with `path_suffix`, parsed on demand."""
-        matches = self.bodies(path_suffix)
-        assert matches, f'no captured request matching {path_suffix!r}; saw {self.paths}'
-        return matches[index]
-
-
-@pytest.fixture
-async def request_capture(anyio_backend: str) -> AsyncIterator[RequestCapture]:
-    capture = RequestCapture()
-    yield capture
-    # Built directly rather than through `create_async_httpx2_client`, so the autouse
-    # `close_httpx_clients` tracker never sees it and its pool would otherwise leak per test.
-    await capture.client.aclose()
 
 
 class AnthropicModelFactory(Protocol):
@@ -108,55 +50,95 @@ def anthropic_model(anthropic_api_key: str, request_capture: RequestCapture) -> 
     return _create_model
 
 
-def content_blocks(body: dict[str, Any], block_type: str) -> list[dict[str, Any]]:
+def content_blocks(body: dict[str, JsonValue], block_type: str) -> list[dict[str, JsonValue]]:
     """Every content block of `block_type` a request's messages carry, in order.
 
     A block list is a flatter and more stable projection than the messages themselves: it survives a
     message being split or merged, so it pins how a block renders without churning on unrelated
     conversation-shape changes.
     """
-    return [
-        block
-        for message in body['messages']
-        if isinstance(message['content'], list)
-        for block in message['content']
-        if block.get('type') == block_type
-    ]
+    messages = body.get('messages')
+    assert isinstance(messages, list)
+
+    blocks: list[dict[str, JsonValue]] = []
+    for message in messages:
+        assert isinstance(message, dict)
+        content = message.get('content')
+        if isinstance(content, str):
+            continue
+        for block in json_objects(content):
+            if block.get('type') == block_type:
+                blocks.append(block)
+    return blocks
 
 
-def message_shape(body: dict[str, Any]) -> list[tuple[str, list[str]]]:
+def json_objects(value: JsonValue) -> list[dict[str, JsonValue]]:
+    """Narrow a JSON array to objects, failing if the wire shape differs."""
+    assert isinstance(value, list)
+    objects: list[dict[str, JsonValue]] = []
+    for item in value:
+        assert isinstance(item, dict)
+        objects.append(item)
+    return objects
+
+
+def message_shape(body: dict[str, JsonValue]) -> list[tuple[str, list[str]]]:
     """Each message's role and the types of its content blocks, dropping the payloads.
 
     The digest a history-rewriting test wants: it moves when compaction drops, reorders or re-wraps a
     turn, and stays put when only wording changes.
     """
-    return [
-        (
-            message['role'],
-            [block['type'] for block in message['content']] if isinstance(message['content'], list) else ['<str>'],
-        )
-        for message in body['messages']
-    ]
+    messages = body.get('messages')
+    assert isinstance(messages, list)
+
+    shape: list[tuple[str, list[str]]] = []
+    for message in messages:
+        assert isinstance(message, dict)
+        role = message.get('role')
+        assert isinstance(role, str)
+        content = message.get('content')
+        if isinstance(content, str):
+            shape.append((role, ['<str>']))
+            continue
+
+        block_types: list[str] = []
+        for block in json_objects(content):
+            block_type = block.get('type')
+            assert isinstance(block_type, str)
+            block_types.append(block_type)
+        shape.append((role, block_types))
+    return shape
 
 
-def cache_breakpoints(body: dict[str, Any]) -> tuple[dict[str, Any] | None, list[str]]:
+def cache_breakpoints(body: dict[str, JsonValue]) -> tuple[dict[str, JsonValue] | None, list[str]]:
     """The request-level `cache_control`, plus a path for every block carrying its own breakpoint.
 
     Where the breakpoints sit is the thing a caching test actually depends on: a breakpoint that
     moves silently re-processes the tail instead of reading from cache, with no error to notice.
     """
+    cache_control = body.get('cache_control')
+    assert cache_control is None or isinstance(cache_control, dict)
+
     blocks: list[str] = []
     for section in ('system', 'tools'):
-        section_blocks: list[dict[str, Any]] = body[section] if isinstance(body.get(section), list) else []
-        blocks += [f'{section}[{i}]' for i, block in enumerate(section_blocks) if block.get('cache_control')]
-    blocks += [
-        f'messages[{m}].content[{b}]'
-        for m, message in enumerate(body['messages'])
-        if isinstance(message['content'], list)
-        for b, block in enumerate(message['content'])
-        if block.get('cache_control')
-    ]
-    return body.get('cache_control'), blocks
+        section_blocks = body.get(section)
+        if section_blocks is None:
+            continue
+        for index, block in enumerate(json_objects(section_blocks)):
+            if block.get('cache_control'):
+                blocks.append(f'{section}[{index}]')
+
+    messages = body.get('messages')
+    assert isinstance(messages, list)
+    for message_index, message in enumerate(messages):
+        assert isinstance(message, dict)
+        content = message.get('content')
+        if isinstance(content, str):
+            continue
+        for block_index, block in enumerate(json_objects(content)):
+            if block.get('cache_control'):
+                blocks.append(f'messages[{message_index}].content[{block_index}]')
+    return cache_control, blocks
 
 
 @pytest.fixture(scope='function')

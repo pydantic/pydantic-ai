@@ -1052,6 +1052,27 @@ async def test_session_span_counts_dropped_transcript_items() -> None:
     assert sess.attributes['pydantic_ai.transcript_items_dropped'] == 8
 
 
+async def test_session_span_counts_dropped_transcript_deltas() -> None:
+    # Live captions have their own subscription with the same bounded window; a slow `delta=True`
+    # consumer drops oldest updates and the drops land in the same span attribute as finals.
+    settings, exporter = _settings()
+    transcripts = [str(index) for index in range(520)]
+    session = RealtimeSession(
+        _Connection([InputTranscript(text=transcript, is_final=False) for transcript in transcripts]),
+        _ok_runner,
+        instrumentation=settings,
+        model_name='gpt-realtime',
+    )
+
+    async with session:
+        updates = [update async for update in session.stream_transcripts(delta=True)]
+        assert [update.delta for update in updates] == transcripts[-512:]
+
+    sess = next(s for s in exporter.get_finished_spans() if s.name == 'invoke_agent agent')
+    assert sess.attributes is not None
+    assert sess.attributes['pydantic_ai.transcript_items_dropped'] == 8
+
+
 async def test_session_span_includes_resolved_run_attributes() -> None:
     settings, exporter = _settings()
     agent: Agent[None, str] = Agent(
@@ -1586,3 +1607,27 @@ def test_provider_attributes_degrade_on_malformed_port() -> None:
     assert attributes['gen_ai.provider.name'] == 'openai'
     assert 'server.address' not in attributes
     assert 'server.port' not in attributes
+
+
+async def test_second_agent_level_instrumentation_wins_for_session_spans() -> None:
+    """Two `Instrumentation` capabilities on the agent resolve the same way for a session as for a run.
+
+    `combine` keeps the later of two capabilities sharing an id, so the session has to read the
+    later one too. Selecting the first match instead exported prompts and responses under settings
+    the effective configuration had already turned off.
+    """
+    first_settings, first_exporter = _settings(include_content=True)
+    second_settings, second_exporter = _settings(include_content=False)
+    agent = _weather_agent(
+        name='assistant',
+        capabilities=[
+            Instrumentation(settings=first_settings),
+            Instrumentation(settings=second_settings),
+        ],
+    )
+    conn = _Connection([SessionUsage(usage=RequestUsage(input_tokens=10, output_tokens=4)), ResponseDone()])
+    async with agent.realtime(_Model(conn)).session() as session:
+        _ = [e async for e in session]
+
+    assert not first_exporter.get_finished_spans(), 'the superseded capability must not export'
+    assert second_exporter.get_finished_spans(), 'the capability the run keeps is the one that exports'

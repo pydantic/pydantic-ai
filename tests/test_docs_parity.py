@@ -18,7 +18,6 @@ MIRRORED_EXAMPLE_MARKERS = [
     'class Sentiment(BaseModel):',
     'class ResearchWorkflow(PydanticAIWorkflow):',
     'output_type=BinaryImage',
-    "Embedder('openai:text-embedding-3-small')",
     "agent.realtime('openai:gpt-realtime-2.1')",
     'class SupportDependencies:',
 ]

@@ -68,11 +68,21 @@ class WireCase:
     """Keys that must NOT appear in the request body."""
     expect_warning: str | None = None
     """If set, a `UserWarning` matching this regex must be emitted during the run."""
+    match_body: bool = False
+    """Make the request body part of the cassette match.
+
+    Without it the default matchers ignore the body, so `present`/`absent` assert against the frozen
+    recording and stay green even when the code starts sending something else. With it, a drifted body
+    fails to match its cassette, so the case pins the wire rather than describing it.
+    """
 
     @property
     def marks(self) -> tuple[pytest.MarkDecorator, ...]:
         """Skip mark gating this case on its provider's SDK — derived from `provider`, the single source of truth."""
-        return (_PROVIDER_SKIP_MARKS[self.provider],)
+        marks = (_PROVIDER_SKIP_MARKS[self.provider],)
+        if self.match_body:
+            marks += (pytest.mark.vcr(additional_matchers=['body']),)
+        return marks
 
 
 CASES = [
@@ -221,6 +231,16 @@ CASES = [
         model_name='gemini-2.5-flash',
         thinking=False,
         present={'generationConfig.thinkingConfig.thinking_budget': 0},
+    ),
+    WireCase(
+        id='google-gemini-38-flash-disable',
+        provider='google',
+        model_name='gemini-3.8-flash',
+        thinking=False,
+        # Gemini 3+ takes `thinking_level` rather than a budget, and 3.8 Flash rejects `MINIMAL`,
+        # so the disable signal folds to the lowest level it accepts.
+        present={'generationConfig.thinkingConfig.thinking_level': 'LOW'},
+        match_body=True,
     ),
     # Mistral: adjustable-reasoning models take the binary `reasoning_effort` ('high'/'none');
     # always-on magistral must never receive it (https://docs.mistral.ai/capabilities/reasoning/).

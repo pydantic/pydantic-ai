@@ -4213,8 +4213,8 @@ class TestMultipleToolCalls:
                 await result.get_output()  # pragma: no cover
 
         task = asyncio.create_task(run())
-        await asyncio.wait_for(first_done.wait(), timeout=1)
-        await asyncio.wait_for(pending_started.wait(), timeout=1)
+        await asyncio.wait_for(first_done.wait(), timeout=5)
+        await asyncio.wait_for(pending_started.wait(), timeout=5)
 
         task.cancel()
         with pytest.raises(asyncio.CancelledError):

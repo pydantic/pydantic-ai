@@ -22,7 +22,6 @@ import json
 from collections.abc import Callable, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field
-from decimal import Decimal
 from typing import Any
 
 import httpx2
@@ -74,8 +73,11 @@ def get_temperature(city: str) -> float:
     return 21.0
 
 
-# DeepSeek V4 prices vary by request time. These response-shape cases assert that a cost was
-# calculated without duplicating genai-prices' time-dependent pricing tests.
+# DeepSeek V4 prices vary by request time: genai-prices doubles the rate during 01:00-04:00 and
+# 06:00-10:00 UTC, and a cost is priced from `ModelResponse.timestamp`, which the model stamps with
+# the wall clock rather than replaying it off the cassette. So these response-shape cases assert
+# that a cost was calculated without duplicating genai-prices' time-dependent pricing tests — a
+# literal pin here holds only for the pricing tier and window it was recorded in.
 @dataclass(frozen=True)
 class Case:
     id: str
@@ -836,7 +838,7 @@ CASES = [
                         input_tokens=148,
                         output_reasoning_tokens=26,
                         output_tokens=40,
-                        cost=Decimal('0.00005896'),
+                        cost=IsDecimal(),
                     ),
                     model_name='deepseek-v4-flash',
                     timestamp=IsDatetime(),

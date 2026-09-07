@@ -12,5 +12,3 @@ A Pydantic AI [agent](agent.md) is plain Python with no interface baked in: the 
 | **Voice** | The same agent, tools, and observability over a live audio session; voice is just another frontend | [Realtime](realtime/overview.md) |
 
 Because interfaces are separate from the agent, features work across all of them: [deferred tools and approval](deferred-tools.md#human-in-the-loop-tool-approval) surface wherever the agent runs (approval prompts in the CLI, approval UI events in your frontend), the same deployed agent can serve the web UI for your team and the AG-UI stream for your product at once, and a [realtime session](realtime/overview.md) can hand its history to a text run and back. Complete agents work everywhere too: `clai -a pydantic_ai_harness.coder:coder_agent` runs the [Harness](https://pydantic.dev/docs/ai/harness/)'s [Coder](https://pydantic.dev/docs/ai/harness/coder/) in your terminal.
-
-More surfaces are on the way; follow the [roadmap discussions](https://github.com/pydantic/pydantic-ai/issues) for messaging channels and API endpoints.

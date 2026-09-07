@@ -105,6 +105,7 @@ _OPENAI_CHAT_ONLY_MODEL_NAMES = frozenset(
 UNSUPPORTED_GATEWAY_MODEL_NAMES = frozenset(
     {
         'gateway/anthropic:claude-mythos-5',
+        'gateway/anthropic:claude-mythos-5-1',
         'gateway/anthropic:claude-mythos-preview',
         'gateway/bedrock:amazon.titan-text-express-v1',
         'gateway/bedrock:amazon.titan-text-lite-v1',

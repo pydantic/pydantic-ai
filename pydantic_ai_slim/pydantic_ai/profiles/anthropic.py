@@ -114,10 +114,21 @@ class AnthropicModelProfile(ModelProfile, total=False):
     anthropic_supports_forced_tool_choice: bool
     """Whether the model accepts a forced `tool_choice` (`{'type': 'any'}` or `{'type': 'tool'}`).
 
-    Most Anthropic models only reject forcing alongside extended thinking; Claude Fable 5 and Claude
-    Mythos Preview reject it unconditionally with a 400. When False, a resolved `required` tool choice
+    Most Anthropic models only reject forcing alongside extended thinking; Claude Fable 5.1 and Claude
+    Mythos 5.1 reject it unconditionally with a 400. When False, a resolved `required` tool choice
     falls back to `auto` (filtering tools to the requested set), and an explicit `tool_choice='required'`
     (or an explicit list of tools) raises a `UserError`.
+    """
+
+    anthropic_binds_thinking_blocks: bool
+    """Whether the model binds each thinking block to the conversation prefix that produced it. Default: `False`.
+
+    Claude Fable 5.1 rejects a replayed thinking block once the `system` prompt text changes or a
+    non-deferred tool joins the `tools` array — both of which Pydantic AI causes by design, through
+    dynamic `@agent.instructions` and conditional toolsets. When True, Pydantic AI preserves the
+    account's default behavior on the first request; if Anthropic rejects a stale block, it retries
+    once with `thinking.block_binding.prefix_mismatch_behavior='drop_block'` and warns after the
+    retry succeeds.
     """
 
 
@@ -236,13 +247,18 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         ('claude-fable-5', 'claude-mythos-5', 'claude-opus-4-7', 'claude-opus-4-8', 'claude-opus-5', 'claude-sonnet-5')
     )
 
-    # Claude Fable 5, Claude Mythos 5, and Claude Mythos Preview reject a forced `tool_choice`
-    # (`any`/`tool`) outright, unlike other Anthropic models which only reject forcing with extended
-    # thinking. The forcing-tool-use docs name Mythos Preview explicitly; Mythos 5 is its successor
-    # and the safety-classifier-free twin of Fable 5, both of which reject forcing.
-    supports_forced_tool_choice = not model_name.startswith(
-        ('claude-fable-5', 'claude-mythos-5', 'claude-mythos-preview')
-    )
+    # The 5.1 generation rejects a forced `tool_choice` (`any`/`tool`) outright, unlike other
+    # Anthropic models which only reject forcing alongside extended thinking. Anthropic's
+    # forcing-tool-use table names Claude Fable 5.1 and Claude Mythos 5.1 and nothing else, and
+    # `claude-fable-5` accepts both forcing shapes live (200 on `any` and `tool`, GA and beta
+    # endpoints), so Fable 5, Mythos 5, and Mythos Preview no longer belong here.
+    supports_forced_tool_choice = not model_name.startswith(('claude-fable-5-1', 'claude-mythos-5-1'))
+
+    # Claude Fable 5.1 alone binds thinking blocks to the conversation prefix: Claude Fable 5,
+    # Opus 5, and Sonnet 5 all return 200 for a replayed block under an explicit
+    # `prefix_mismatch_behavior` of `'error'`, and Anthropic documents that Claude Mythos 5.1
+    # "doesn't run this check" — the one capability on which it is not Fable 5.1's mirror.
+    binds_thinking_blocks = model_name.startswith('claude-fable-5-1')
 
     supports_dynamic_filtering = model_name.startswith(
         (
@@ -312,6 +328,7 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         anthropic_supported_code_execution_tool_versions=supported_code_execution_tool_versions,
         anthropic_supports_task_budgets=supports_task_budgets,
         anthropic_supports_forced_tool_choice=supports_forced_tool_choice,
+        anthropic_binds_thinking_blocks=binds_thinking_blocks,
         supported_native_tools=supported_native_tools,
     )
     if supports_tool_search:
