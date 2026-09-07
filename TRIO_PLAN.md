@@ -219,7 +219,7 @@ Existing public behavior tests cover the baseline without adding duplicate frame
 | Public symbol/type compatibility | `tests/test_public_interface_contracts.py` and the existing API compatibility CI check |
 | Durable state and operation-name compatibility | `tests/durable_exec/test_durable_exec_compat.py` and native engine suites |
 
-The first five test modules plus the backend-fixture checks passed on asyncio: 142 passed, one version-specific skip. The remaining entries identify checks to run when the affected production paths change; this is not a claim that every listed integration suite was executed in this baseline pass.
+The first five test modules plus the original backend-fixture checks passed on asyncio: 142 passed, one version-specific skip. The remaining entries identify checks to run when the affected production paths change; this is not a claim that every listed integration suite was executed in this baseline pass.
 
 ### C02 - Opt-in backend execution
 
@@ -228,11 +228,11 @@ uv run pytest tests/test_async_backend.py tests/test_direct.py --record-mode=non
 uv run pytest tests/test_async_backend.py tests/test_direct.py --anyio-backend=trio --record-mode=none
 ```
 
-Both commands pass the same 16 tests. The default remains asyncio; the option selects one backend and rejects unsupported values. Trio 0.34.0 is a development dependency and supports the project's Python 3.10 floor. Production dependencies are unchanged.
+Both commands pass the same 17 tests. The default remains asyncio; the option selects one backend and rejects unsupported values. One synchronous fixture regression explicitly selects the Trio option to verify that it does not start a Trio runner around sync APIs. Trio 0.34.0 is a development dependency and supports the project's Python 3.10 floor. Production dependencies are unchanged.
 
-The new fixture tests verify the active backend for unmarked async tests and a module-scoped producer/consumer lifecycle. The shared HTTP cleanup fixture preserves the existing runner setup for all default asyncio tests. With Trio selected, it opens a runner only for async tests: opening a Trio runner around a synchronous test caused sync streaming to inherit Trio's backend context and fail with `Task got bad yield`. Sync tests selected alongside Trio use the existing synchronous cleanup finalizer.
+The new fixture tests verify the active backend for unmarked async tests and a class-scoped producer/consumer lifecycle. The shared HTTP cleanup fixture preserves the existing runner setup for all default asyncio tests. With Trio selected, it opens a runner only for async tests: opening a Trio runner around a synchronous test caused sync streaming to inherit Trio's backend context and fail with `Task got bad yield`. Sync tests selected alongside Trio use the existing synchronous cleanup finalizer.
 
-No Trio CI job or automatic duplication of the suite was introduced. Full `Agent.run()` support is still pending the ownership migration. The targeted asyncio baseline passed (142 passed, one skip); the selected direct/fixture tests passed on Trio (16 passed), and targeted Ruff and Pyright checks passed.
+No Trio CI job or automatic duplication of the suite was introduced. Full `Agent.run()` support is still pending the ownership migration. The targeted asyncio baseline passed (142 passed, one skip); the selected direct/fixture tests passed with the Trio option (17 passed), and targeted Ruff and Pyright checks passed.
 
 ### C03 - Static asyncio policy
 
@@ -248,7 +248,7 @@ The policy checker scans tracked and unignored Python files, stubs and Ruff conf
 
 `make lint` and pre-commit enforce the policy. Config-only changes trigger lint, and the policy's CLI tests have a dedicated pre-commit hook. Its 50 cases drive the CLI in-process and retain separate subprocess checks for command entry and isolation from a parent Git-hook environment. The suite takes a few seconds locally. Coverage of the policy logic reached 100% of lines and branches across Python 3.10 and 3.13; the import-only branch of the CLI module guard was excluded because these checks execute the command.
 
-The whole-repository Ruff checks pass. The full typecheck hook has two pre-existing failures in `pydantic_evals/pydantic_evals/_online.py`: unnecessary `reportMissingImports` and `reportUnknownMemberType` suppressions. Their source logic is unchanged. The changed tooling and backend-test files are checked separately; commits bypass only that already-failing hook after recording its output. No Trio CI suite or production concurrency migration is included in C01-C03.
+The whole-repository Ruff checks pass. Adding Trio to development dependencies made two existing suppressions in `pydantic_evals/pydantic_evals/_online.py` unnecessary: `reportMissingImports` and `reportUnknownMemberType`. Those comments are removed; the source logic is unchanged. The initial commits bypassed that failing typecheck hook after recording its output; the follow-up removes the cause. No Trio CI suite or production concurrency migration is included in C01-C03.
 
 ## Dependency decision
 

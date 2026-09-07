@@ -7,8 +7,11 @@ import pytest
 import sniffio
 from anyio.streams.memory import MemoryObjectReceiveStream
 
+from pydantic_ai import Agent
+from pydantic_ai.models.test import TestModel
 
-@pytest.fixture(scope='module')
+
+@pytest.fixture(scope='class')
 async def backend_stream(anyio_backend: str) -> AsyncIterator[MemoryObjectReceiveStream[str]]:
     send, receive = anyio.create_memory_object_stream[str](1)
 
@@ -27,7 +30,16 @@ async def test_unmarked_async_test_uses_selected_backend(pytestconfig: pytest.Co
     assert sniffio.current_async_library() == pytestconfig.getoption('--anyio-backend')
 
 
-async def test_backend_fixture_lifecycle(backend_stream: MemoryObjectReceiveStream[str], anyio_backend: str) -> None:
-    assert await backend_stream.receive() == anyio_backend
-    with pytest.raises(anyio.EndOfStream):
-        await backend_stream.receive()
+class TestBackendFixtureLifecycle:
+    async def test_producer_finishes(self, backend_stream: MemoryObjectReceiveStream[str], anyio_backend: str) -> None:
+        assert await backend_stream.receive() == anyio_backend
+        with pytest.raises(anyio.EndOfStream):
+            await backend_stream.receive()
+
+
+@pytest.mark.parametrize('anyio_backend', ['trio'])
+def test_sync_test_does_not_inherit_trio_backend(anyio_backend: str) -> None:
+    assert anyio_backend == 'trio'
+    with pytest.raises(sniffio.AsyncLibraryNotFoundError):
+        sniffio.current_async_library()
+    assert Agent(TestModel(custom_output_text='sync works')).run_sync('Hello').output == 'sync works'
