@@ -926,8 +926,8 @@ def track_httpx_clients(monkeypatch: pytest.MonkeyPatch) -> Iterator[_HttpClient
 
 
 @pytest.fixture(autouse=True)
-def close_httpx_clients(request: pytest.FixtureRequest) -> None:
-    if inspect.iscoroutinefunction(request.function):
+def close_httpx_clients(request: pytest.FixtureRequest, anyio_backend: str) -> None:
+    if anyio_backend == 'asyncio' or inspect.iscoroutinefunction(request.function):
         request.getfixturevalue('close_async_httpx_clients')
 
 

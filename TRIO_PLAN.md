@@ -230,7 +230,7 @@ uv run pytest tests/test_async_backend.py tests/test_direct.py --anyio-backend=t
 
 Both commands pass the same 16 tests. The default remains asyncio; the option selects one backend and rejects unsupported values. Trio 0.34.0 is a development dependency and supports the project's Python 3.10 floor. Production dependencies are unchanged.
 
-The new fixture tests verify the active backend and a module-scoped producer/consumer lifecycle. The shared HTTP cleanup fixture now opens an async runner only for async tests. Opening a Trio runner around a synchronous test caused sync streaming to inherit Trio's backend context and fail with `Task got bad yield`; keeping sync cleanup in its existing synchronous finalizer resolves that test-harness failure without changing production code.
+The new fixture tests verify the active backend for unmarked async tests and a module-scoped producer/consumer lifecycle. The shared HTTP cleanup fixture preserves the existing runner setup for all default asyncio tests. With Trio selected, it opens a runner only for async tests: opening a Trio runner around a synchronous test caused sync streaming to inherit Trio's backend context and fail with `Task got bad yield`. Sync tests selected alongside Trio use the existing synchronous cleanup finalizer.
 
 No Trio CI job or automatic duplication of the suite was introduced. Full `Agent.run()` support is still pending the ownership migration. The targeted asyncio baseline passed (142 passed, one skip); the selected direct/fixture tests passed on Trio (16 passed), and targeted Ruff and Pyright checks passed.
 

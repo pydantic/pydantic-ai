@@ -7,8 +7,6 @@ import pytest
 import sniffio
 from anyio.streams.memory import MemoryObjectReceiveStream
 
-pytestmark = pytest.mark.anyio
-
 
 @pytest.fixture(scope='module')
 async def backend_stream(anyio_backend: str) -> AsyncIterator[MemoryObjectReceiveStream[str]]:
@@ -24,9 +22,9 @@ async def backend_stream(anyio_backend: str) -> AsyncIterator[MemoryObjectReceiv
         assert sniffio.current_async_library() == anyio_backend
 
 
-async def test_selected_backend(anyio_backend: str) -> None:
+async def test_unmarked_async_test_uses_selected_backend(pytestconfig: pytest.Config) -> None:
     await anyio.sleep(0)
-    assert sniffio.current_async_library() == anyio_backend
+    assert sniffio.current_async_library() == pytestconfig.getoption('--anyio-backend')
 
 
 async def test_backend_fixture_lifecycle(backend_stream: MemoryObjectReceiveStream[str], anyio_backend: str) -> None:
