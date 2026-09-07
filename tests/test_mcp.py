@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import os
 import re
 import subprocess
 import sys
@@ -1725,6 +1726,91 @@ class TestResourceMethodErrorPaths:
 
 
 class TestLoadMCPToolsets:
+    @pytest.mark.parametrize(
+        'server,expected_transport',
+        [
+            ({'type': 'sse', 'url': 'https://example.com/mcp'}, 'sse'),
+            ({'type': 'http', 'url': 'https://example.com/sse'}, 'http'),
+            ({'type': 'streamableHttp', 'url': 'https://example.com/sse'}, 'http'),
+            ({'url': 'https://example.com/sse'}, 'sse'),
+            ({'url': 'https://example.com/mcp'}, 'http'),
+        ],
+    )
+    def test_transport_selection(
+        self, tmp_path: Path, server: dict[str, str], expected_transport: Literal['sse', 'http']
+    ):
+        """Inspect selection directly: a successful request alone cannot distinguish the transports."""
+        config_path = tmp_path / 'mcp.json'
+        config_path.write_text(
+            json.dumps({'mcpServers': {'alpha': {**server, 'headers': {'X-Key': 'foo'}}}}), encoding='utf-8'
+        )
+        toolsets = load_mcp_toolsets(config_path)
+        assert len(toolsets) == 1
+        assert isinstance(toolsets[0], PrefixedToolset)
+        wrapped = toolsets[0].wrapped
+        assert isinstance(wrapped, MCPToolset)
+        assert wrapped.id == 'alpha'
+        transport_class = SSETransport if expected_transport == 'sse' else StreamableHttpTransport
+        assert isinstance(wrapped.client.transport, transport_class)
+        assert str(wrapped.client.transport.url) == server['url']
+        assert wrapped.client.transport.headers == {'X-Key': 'foo'}
+
+    @pytest.mark.parametrize('enabled', [False, True])
+    async def test_disabled_entries_are_skipped(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, enabled: bool):
+        """Disabled entries need neither valid transport fields nor environment variables, and never start."""
+        monkeypatch.delenv('MCP_TEST_DISABLED_UNDEFINED', raising=False)
+        servers: dict[str, object] = {
+            'disabled-command': {'disabled': True, 'command': 'nonexistent-disabled-mcp-command'},
+            'disabled-invalid': {'disabled': True, 'type': 'invalid', 'url': 123, 'args': 'invalid'},
+            'disabled-env': {'disabled': True, 'command': '${MCP_TEST_DISABLED_UNDEFINED}'},
+            'disabled-empty': {'disabled': True},
+        }
+        if enabled:
+            servers['alpha'] = {
+                'type': 'stdio',
+                'disabled': False,
+                'command': sys.executable,
+                'args': ['-m', 'tests.mcp_server'],
+            }
+        config_path = tmp_path / 'mcp.json'
+        config_path.write_text(json.dumps({'mcpServers': servers}), encoding='utf-8')
+        toolsets = load_mcp_toolsets(config_path)
+        assert len(toolsets) == int(enabled)
+        if enabled:
+            assert isinstance(toolsets[0], PrefixedToolset)
+            assert isinstance(toolsets[0].wrapped, MCPToolset)
+            # Importing the real test server can exceed the default five seconds on busy CI hosts.
+            monkeypatch.setattr(toolsets[0].wrapped.client, '_init_timeout', 30)
+            agent = Agent(TestModel(call_tools=['alpha_get_weather_forecast']), toolsets=toolsets)
+            result = await agent.run('weather')
+            assert result.output == '{"alpha_get_weather_forecast":"The weather in a is sunny and 26 degrees Celsius."}'
+
+    @pytest.mark.parametrize(
+        'server',
+        [
+            {'type': 'stdio', 'url': 'https://example.com/mcp'},
+            {'type': 'stdio'},
+            {'type': 'stdio', 'command': 'python', 'url': 'https://example.com/mcp'},
+            *[{'type': kind, 'command': 'python'} for kind in ('sse', 'http', 'streamableHttp')],
+            *[{'type': kind} for kind in ('sse', 'http', 'streamableHttp')],
+            *[
+                {'type': kind, 'command': 'python', 'url': 'https://example.com/mcp'}
+                for kind in ('sse', 'http', 'streamableHttp')
+            ],
+            {'type': 'unknown', 'command': 'python'},
+            {'type': None, 'command': 'python'},
+            {'disabled': 'true', 'command': 'python'},
+            {'disabled': 1, 'command': 'python'},
+            {'disabled': None, 'command': 'python'},
+        ],
+    )
+    def test_invalid_explicit_transport_config(self, tmp_path: Path, server: dict[str, object]):
+        """Invalid explicit choices must fail during loading, before any connection is attempted."""
+        config_path = tmp_path / 'mcp.json'
+        config_path.write_text(json.dumps({'mcpServers': {'alpha': server}}), encoding='utf-8')
+        with pytest.raises(ValueError, match='alpha'):
+            load_mcp_toolsets(config_path)
+
     async def test_loads_toolsets_from_config_without_env(self):
         """Stdio entries without an `env` field also produce valid toolsets."""
         config = {
@@ -1738,12 +1824,20 @@ class TestLoadMCPToolsets:
             toolsets = load_mcp_toolsets(config_path)
         assert len(toolsets) == 1
 
-    async def test_loads_toolsets_from_config_with_prefix(self):
-        config = {
-            'mcpServers': {
-                'alpha': {'command': 'python', 'args': ['-m', 'tests.mcp_server'], 'env': {'FOO': 'bar'}},
-            }
+    @pytest.mark.parametrize('transport_type', [None, 'stdio'])
+    async def test_loads_toolsets_from_config_with_prefix(self, transport_type: str | None):
+        server: dict[str, object] = {
+            'command': 'python',
+            'args': ['-m', 'tests.mcp_server'],
+            'env': {'FOO': 'bar'},
+            'cwd': '.',
         }
+        if transport_type is None:
+            # Legacy configurations with both fields retain command precedence.
+            server['url'] = 'https://example.com/mcp'
+        else:
+            server['type'] = transport_type
+        config = {'mcpServers': {'alpha': server}}
         with TemporaryDirectory() as tmp:
             config_path = Path(tmp) / 'mcp.json'
             config_path.write_text(json.dumps(config), encoding='utf-8')
@@ -1753,18 +1847,29 @@ class TestLoadMCPToolsets:
         # The wrapped toolset is a `PrefixedToolset`, not an `MCPToolset` directly.
         assert isinstance(toolsets[0], PrefixedToolset)
         assert isinstance(toolsets[0].wrapped, MCPToolset)
+        transport = toolsets[0].wrapped.client.transport
+        assert isinstance(transport, StdioTransport)
+        assert transport.command == 'python'
+        assert transport.args == ['-m', 'tests.mcp_server']
+        assert transport.env == {'FOO': 'bar'}
+        assert transport.cwd == '.'
 
     async def test_load_mcp_toolsets_missing_file_raises(self):
         with pytest.raises(FileNotFoundError):
             load_mcp_toolsets('/nonexistent/path/to/config.json')
 
-    async def test_load_mcp_toolsets_http_entry(self):
-        """A URL-configured toolset completes a real Streamable HTTP tool call."""
+    @pytest.mark.parametrize(
+        'transport_type,path', [(None, '/mcp'), ('sse', '/mcp'), ('http', '/sse'), ('streamableHttp', '/sse')]
+    )
+    async def test_load_mcp_toolsets_http_entry(self, transport_type: str | None, path: str):
+        """Explicit transport choices override contradictory URL suffixes in real MCP tool calls."""
+        server_transport = 'sse' if transport_type == 'sse' else 'streamable-http'
         process = await anyio.open_process(
             [
                 sys.executable,
                 '-c',
                 (
+                    'import asyncio\n'
                     'import socket\n'
                     'import uvicorn\n'
                     'from fastmcp import FastMCP\n'
@@ -1773,9 +1878,12 @@ class TestLoadMCPToolsets:
                     "(lambda location: f'The weather in {location} is sunny and 26 degrees Celsius.')\n"
                     "server_socket = socket.create_server(('127.0.0.1', 0))\n"
                     'print(server_socket.getsockname()[1], flush=True)\n'
-                    "uvicorn.run(mcp.http_app(), fd=server_socket.fileno(), lifespan='on', log_level='warning')"
+                    f'app = mcp.http_app(transport={server_transport!r}, path={path!r})\n'
+                    "server = uvicorn.Server(uvicorn.Config(app, lifespan='on', log_level='warning'))\n"
+                    'asyncio.run(server.serve(sockets=[server_socket]))'
                 ),
             ],
+            env={k: v for k, v in os.environ.items() if not k.startswith('COVERAGE_')},
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
@@ -1793,11 +1901,10 @@ class TestLoadMCPToolsets:
                 port = int((await process.stdout.receive()).decode().strip())
             except anyio.EndOfStream:  # pragma: no cover
                 raise AssertionError(f'HTTP MCP test server exited during startup: {await read_stderr()}') from None
-            config = {
-                'mcpServers': {
-                    'beta': {'url': f'http://127.0.0.1:{port}/mcp', 'headers': {'X-Key': 'foo'}},
-                }
-            }
+            server: dict[str, object] = {'url': f'http://127.0.0.1:{port}{path}', 'headers': {'X-Key': 'foo'}}
+            if transport_type is not None:
+                server['type'] = transport_type
+            config = {'mcpServers': {'beta': server}}
             with TemporaryDirectory() as tmp:
                 config_path = Path(tmp) / 'mcp.json'
                 config_path.write_text(json.dumps(config), encoding='utf-8')
@@ -1807,7 +1914,8 @@ class TestLoadMCPToolsets:
             assert isinstance(toolsets[0], PrefixedToolset)
             wrapped = toolsets[0].wrapped
             assert isinstance(wrapped, MCPToolset)
-            assert isinstance(wrapped.client.transport, StreamableHttpTransport)
+            transport_class = SSETransport if transport_type == 'sse' else StreamableHttpTransport
+            assert isinstance(wrapped.client.transport, transport_class)
             assert wrapped.client.transport.headers == {'X-Key': 'foo'}
 
             try:
