@@ -159,6 +159,21 @@ project. A narrowed run only ever considers tracked files, so run `make typechec
 relying on a green hook for a file you have not added; a fallback run hands Pyright the whole project
 and picks untracked files up with it.
 
+A full run is single-process unless `PYRIGHT_THREADS` says otherwise, and CI sets it to `auto`.
+The variable turns on Pyright's parallel check phase, which reaches the same diagnostics in less
+wall time: `auto` is up to one worker per logical core, and a positive integer caps them. A narrowed
+run stays single-process either way.
+
+```bash
+export PYRIGHT_THREADS=auto
+```
+
+Export it rather than setting it per command, so a hook run that falls back to the full check picks
+it up too. Every worker is a full Node process, so they pay for themselves only on a machine with
+the memory to hold them; one already near its limit swaps and comes out slower than the default.
+Unset the variable or set it to `1` to go back to a single process: anything Pyright cannot read as
+a positive integer, `0` and `off` included, means `auto`.
+
 ## Documentation Changes
 
 [`docs/navigation.yml`](https://github.com/pydantic/pydantic-ai/blob/main/docs/navigation.yml)

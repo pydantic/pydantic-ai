@@ -39,12 +39,18 @@ lint: ## Lint the code
 	uv run ruff format --check
 	uv run ruff check
 
+# Worker processes for pyright's check phase, all producing identical output. Unset is pyright's own
+# single-process check, and so is 1; 'auto' is up to one worker per logical core and a positive
+# integer caps them. Anything else pyright cannot read as a positive integer, 0 and 'off' included,
+# means 'auto' -- pyright's parseThreadsArgValue: https://github.com/microsoft/pyright/blob/1.1.411/packages/pyright-internal/src/pyright.ts#L1366-L1377
+# See docs/contributing.md for when the workers pay for themselves.
+PYRIGHT_THREADS ?=
+
 .PHONY: typecheck-pyright
 typecheck-pyright:
 	@# To typecheck for a specific version of python, run 'make install-all-python' then set environment variable PYRIGHT_PYTHON=3.10 or similar
 	@# PYRIGHT_PYTHON_IGNORE_WARNINGS avoids the overhead of making a request to github on every invocation
-	@# --threads parallelizes the check phase across logical cores (~2x faster, identical output)
-	PYRIGHT_PYTHON_IGNORE_WARNINGS=1 uv run pyright --threads $(if $(PYRIGHT_PYTHON),--pythonversion $(PYRIGHT_PYTHON))
+	PYRIGHT_PYTHON_IGNORE_WARNINGS=1 uv run pyright $(if $(PYRIGHT_THREADS),--threads $(PYRIGHT_THREADS)) $(if $(PYRIGHT_PYTHON),--pythonversion $(PYRIGHT_PYTHON))
 
 .PHONY: typecheck-changed
 typecheck-changed: ## Run static type checking on the files reached by changes since it last passed

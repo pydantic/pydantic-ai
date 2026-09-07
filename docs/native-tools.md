@@ -114,6 +114,8 @@ print(result.output)
 
 _(This example is complete, it can be run "as is")_
 
+With Anthropic, the number of searches is reported as `web_search_requests` in [`RequestUsage.details`][pydantic_ai.usage.RequestUsage.details] and included in [`RunUsage.cost`][pydantic_ai.usage.RunUsage.cost].
+
 With OpenAI, you must use their Responses API to access the web search tool.
 
 ```py {title="web_search_openai.py"}
