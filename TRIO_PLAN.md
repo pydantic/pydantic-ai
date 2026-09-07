@@ -1,6 +1,6 @@
 # Support Trio through AnyIO without changing the public API
 
-Status: proposed implementation plan, not an implemented compatibility guarantee.
+Status: implementation started. The compatibility baseline is recorded; Trio support is not yet an implemented guarantee.
 
 Baseline: local commit `b61fa91eb`, reviewed on 2026-09-07. The user approved narrowly documented exceptions to the `asyncio` lint ban for compatibility adapters and backend-specific regression tests.
 
@@ -174,7 +174,7 @@ These are workflow changes to implement as part of the checklist, not an automat
 
 Each item is a candidate independently reviewable change, with implementation, relevant tests and necessary docs together. Dependencies describe merge order, not permission to leave broken intermediate commits. Split repeatable integration work by SDK/transport. If the ownership prototype proves two pieces inseparable, combine only those pieces and record why. Do not build an unused abstraction merely to satisfy this order.
 
-- [ ] **C01 - Capture the compatibility baseline.** Refresh the import/public-symbol inventory and map existing cancellation, streaming, sync-affinity and durable tests to the contract. Add only missing asyncio regressions; record the end-to-end Trio reproduction and scope of supported integrations. No production migration. Validation: the added baseline tests pass and the Trio failure is reproduced.
+- [x] **C01 - Capture the compatibility baseline.** Refresh the import/public-symbol inventory and map existing cancellation, streaming, sync-affinity and durable tests to the contract. Add only missing asyncio regressions; record the end-to-end Trio reproduction and scope of supported integrations. No production migration. Validation: the existing targeted baseline passes and the Trio failure is reproduced; see the implementation record below.
 - [ ] **C02 - Add opt-in Trio test execution.** Add the compatible Trio development dependency and a test-only backend selector; keep asyncio as the default. Make selected fixtures close resources on their owning backend and provide reproducible local/manual commands. Depends on C01. Validation: fixture lifecycle works under both backends and default collection does not double.
 - [ ] **C03 - Enforce the static import policy.** Add the Ruff module ban, exact temporary/permanent exception inventory and suppression checks; include config-only changes in lint triggers. No concurrency refactor. Depends on C01. Validation: CLI policy tests reject all banned import forms and unauthorized suppressions while preserving existing typing bans.
 - [ ] **C04 - Isolate synchronous asyncio support.** Restrict existing loop-driving and sync-stream behavior to documented compatibility boundaries in slim and graph; keep public helper locations compatible. Avoid moving code unless needed to establish a real boundary. Depends on C01 and C03. Validation: both sync request/stream orders reuse a pooled client, and interrupt/context tests pass.
@@ -196,6 +196,30 @@ Each item is a candidate independently reviewable change, with implementation, r
 - [ ] **C20 - Finalize the support contract and exception list.** Remove migration exemptions/expected failures for advertised surfaces, publish the verified support matrix, and update docs and agent skills. Depends on the completed scope above. Validation: release-candidate broad Trio testing, existing asyncio/durable CI, API compatibility, coverage and minimum dependencies pass. Remaining native-runtime exceptions have a reason and protecting test.
 
 Start with C01-C03. Prove C05 before committing to the difficult orchestration design. C04 and the initial manual workflow setup can be reviewed independently. The full checklist is an inventory of changes, not a requirement to put every optional integration into the first core-support release.
+
+## Implementation record
+
+### C01 - Compatibility baseline
+
+The target-behavior example was run on Python 3.14.6, AnyIO 4.14.1 and Trio 0.34.0. It fails at the capability wrapper's `asyncio.create_task()` with `RuntimeError: no running event loop`, followed by a warning that `CombinedCapability.wrap_run` was never awaited. No provider request is involved. The earlier count of 21 production files importing asyncio is unchanged; the refreshed tracked-file scan also includes two `.github` Python files that the earlier ordinary `rg` inventory omitted.
+
+The async public surfaces to preserve are `Agent.run`, `Agent.iter`/`AgentRun.next`, `Agent.run_stream`, `Agent.run_stream_events`, the direct model APIs, public cancellation handles and callback/capability signatures. No production symbols, annotations, signatures or serialized types have changed. Private task/event-loop annotations remain implementation work; sync methods retain their current asyncio contracts.
+
+Existing public behavior tests cover the baseline without adding duplicate framework tests:
+
+| Contract | Existing coverage |
+| --- | --- |
+| External/first-party cancellation, races, history and tokens | `tests/test_run_cancellation.py` |
+| Sync client reuse, both request/stream orders | `tests/test_sync_stream_loop_affinity.py` |
+| Direct request and streaming APIs | `tests/test_direct.py` |
+| Cross-task stream consumption and observer teardown | `tests/test_capability_process_event_stream.py` |
+| Stream cleanup, child failure and cancellation shielding | `tests/test_capability_stream_teardown.py` |
+| Capability short-circuit, recovery and hook order | `tests/test_capability_hooks.py` |
+| Context isolation and tracing | `tests/test_otel_context_isolation.py` |
+| Public symbol/type compatibility | `tests/test_public_interface_contracts.py` and the existing API compatibility CI check |
+| Durable state and operation-name compatibility | `tests/durable_exec/test_durable_exec_compat.py` and native engine suites |
+
+The first five test modules plus the backend-fixture checks passed on asyncio: 142 passed, one version-specific skip. The remaining entries identify checks to run when the affected production paths change; this is not a claim that every listed integration suite was executed in this baseline pass.
 
 ## Dependency decision
 
