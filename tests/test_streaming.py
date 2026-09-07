@@ -1349,7 +1349,8 @@ def test_sync_stream_bridge_pump_propagates_base_exception_without_hanging(error
 
 
 @pytest.mark.parametrize('fail', [False, True])
-def test_run_stream_sync_uses_its_own_backend_context(fail: bool) -> None:
+@pytest.mark.parametrize('initial_backend', ['asyncio', 'trio'])
+def test_run_stream_sync_uses_its_own_backend_context(fail: bool, initial_backend: Literal['asyncio', 'trio']) -> None:
     caller_value: contextvars.ContextVar[str] = contextvars.ContextVar('caller_value', default='caller')
     closed: list[str] = []
 
@@ -1368,13 +1369,18 @@ def test_run_stream_sync_uses_its_own_backend_context(fail: bool) -> None:
             closed.append(sniffio.current_async_library())
 
     agent = Agent(FunctionModel(stream_function=stream_function))
-    token = sniffio.current_async_library_cvar.set('trio')
+    token = sniffio.current_async_library_cvar.set(initial_backend)
     try:
         with pytest.raises(ValueError, match='stream failed') if fail else nullcontext():
             with agent.run_stream_sync('Hello') as result:
-                assert sniffio.current_async_library_cvar.get() == 'trio'
-                assert list(result.stream_text(debounce_by=None)) == ['hello ', 'hello world']
-        assert sniffio.current_async_library_cvar.get() == 'trio'
+                assert sniffio.current_async_library_cvar.get() == initial_backend
+                consumption_token = sniffio.current_async_library_cvar.set('trio')
+                try:
+                    assert list(result.stream_text(debounce_by=None)) == ['hello ', 'hello world']
+                finally:
+                    assert sniffio.current_async_library_cvar.get() == 'trio'
+                    sniffio.current_async_library_cvar.reset(consumption_token)
+        assert sniffio.current_async_library_cvar.get() == initial_backend
         assert caller_value.get() == 'caller'
         assert closed == ['asyncio']
     finally:
