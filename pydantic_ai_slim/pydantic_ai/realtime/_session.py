@@ -1100,9 +1100,10 @@ class RealtimeSession:
         Call this after a reply finishes generating, before closing the session or opening the
         microphone, so buffered audio is not cut off. Playback advances with the same one-chunk lag
         as [`played_audio_bytes`][pydantic_ai.realtime.RealtimeSession.played_audio_bytes]: a chunk
-        counts once the consumer requests the next one. Audio discarded by a barge-in, or by the
-        view's buffer overflowing, counts as accounted for rather than played. The wait also ends if
-        the view is closed or abandoned, or the session closes. Requires exactly one active
+        counts once the consumer requests the next one. Audio the view never plays counts as accounted for
+        rather than played: discarded by a barge-in or by the view's buffer overflowing, or emitted before
+        the view subscribed. The wait also ends if the view is closed or abandoned, or the session closes.
+        Requires exactly one active
         [`stream_audio()`][pydantic_ai.realtime.RealtimeSession.stream_audio] iterator.
         """
         tap = self._single_audio_tap('`wait_for_playback()`', 'wait for playback from')
