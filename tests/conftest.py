@@ -3,7 +3,6 @@ from __future__ import annotations as _annotations
 import asyncio
 import dataclasses
 import importlib.util
-import inspect
 import logging
 import os
 import re
@@ -926,14 +925,7 @@ def track_httpx_clients(monkeypatch: pytest.MonkeyPatch) -> Iterator[_HttpClient
 
 
 @pytest.fixture(autouse=True)
-def close_httpx_clients(request: pytest.FixtureRequest, anyio_backend: str) -> None:
-    # Trio sync tests are exercised only in opt-in runs.
-    if anyio_backend == 'asyncio' or inspect.iscoroutinefunction(request.function):  # pragma: no branch
-        request.getfixturevalue('close_async_httpx_clients')
-
-
-@pytest.fixture
-async def close_async_httpx_clients(anyio_backend: str, track_httpx_clients: _HttpClientCache) -> AsyncIterator[None]:
+async def close_httpx_clients(anyio_backend: str, track_httpx_clients: _HttpClientCache) -> AsyncIterator[None]:
     """Close tracked HTTP clients after async tests."""
     yield
     for client in track_httpx_clients.values():
