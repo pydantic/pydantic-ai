@@ -97,6 +97,35 @@ async def main():
 
 If `save()` raises, the refreshed credentials stay live in memory and a [`CredentialsPersistenceError`][pydantic_ai.providers.openai_codex.CredentialsPersistenceError] is raised. Both it and [`CredentialsRefreshError`][pydantic_ai.providers.openai_codex.CredentialsRefreshError] subclass [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], so a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] treats an unusable login like any other provider failure.
 
+## Tracing without exposing credentials
+
+[Logfire instrumentation](../logfire.md) can trace agent runs without capturing OAuth credentials. Leave HTTP body capture disabled unless you need it: `logfire.instrument_httpx(capture_all=True)` captures authorization codes and token responses, which require additional scrubbing patterns.
+
+If you enable full HTTP capture, configure scrubbing before starting the OAuth flow:
+
+```python {title="codex_tracing.py"}
+import logfire
+
+logfire.configure(
+    scrubbing=logfire.ScrubbingOptions(
+        extra_patterns=[
+            'access_token',
+            'refresh_token',
+            'id_token',
+            'code_verifier',
+            '^code$',
+            'chatgpt-account-id',
+            '^account_id$',
+            'safety_identifier',
+        ]
+    ),
+)
+logfire.instrument_pydantic_ai()
+logfire.instrument_httpx(capture_all=True)
+```
+
+The additional patterns redact the OAuth credentials and account identifiers; Logfire's default patterns already redact the authorization header.
+
 ## Prompt caching
 
 To mirror the official Codex client's prompt-cache affinity, [`OpenAICodexModel`][pydantic_ai.models.openai_codex.OpenAICodexModel] sends the `session-id`, `thread-id`, and `x-client-request-id` headers and the `prompt_cache_key` request field. All four are derived from the [`conversation_id`](../message-history.md) of the message history, so runs continuing the same conversation reuse a stable identity. An explicit `openai_prompt_cache_key` model setting or explicitly supplied `extra_headers` always win over the derived values. This does not guarantee a cache hit.

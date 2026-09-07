@@ -60,6 +60,7 @@ else:
 FILTERED_HEADER_PREFIXES = ['anthropic-', 'cf-', 'x-']
 FILTERED_HEADERS = {
     'authorization',
+    'chatgpt-account-id',
     'cookie',
     'date',
     'openai-organization',
@@ -128,7 +129,16 @@ def scrub_form_credentials(data: dict[str, Any], content_type: list[str]) -> Non
     if not _content_type_startswith(content_type, 'application/x-www-form-urlencoded'):
         return
     query_params = urllib.parse.parse_qs(data['body'])
-    for key in ['assertion', 'client_id', 'client_secret', 'refresh_token', 'RoleArn', 'RoleSessionName']:
+    for key in [
+        'assertion',
+        'client_id',
+        'client_secret',
+        'code',
+        'code_verifier',
+        'refresh_token',
+        'RoleArn',
+        'RoleSessionName',
+    ]:
         if key in query_params:
             query_params[key] = ['scrubbed']
             data['body'] = urllib.parse.urlencode(query_params, doseq=True)
@@ -177,6 +187,10 @@ def _store_json_body(
         data['parsed_body']['access_token'] = 'scrubbed'
     if 'id_token' in data['parsed_body']:
         data['parsed_body']['id_token'] = 'scrubbed'
+    if 'refresh_token' in data['parsed_body']:
+        data['parsed_body']['refresh_token'] = 'scrubbed'
+    if 'safety_identifier' in data['parsed_body'] and data['parsed_body']['safety_identifier'] is not None:
+        data['parsed_body']['safety_identifier'] = 'scrubbed'
     del data['body']
     # Update content-length to match the body that will be produced during deserialize.
     # This is necessary because decompression changes the body size, and botocore
@@ -229,6 +243,16 @@ def serialize(cassette_dict: Any):  # pragma: lax no cover
                                 pass
                         body = body.decode('utf-8')
                     _store_json_body(kind, data, body, headers)  # pyright: ignore[reportUnknownArgumentType]
+            elif kind == 'response':
+                # Codex SSE responses can omit the content-type header.
+                body = data.get('body', {}).get('string')
+                if isinstance(body, bytes) and body.startswith((b'event:', b'data:')):
+                    body = body.decode('utf-8')
+                if isinstance(body, str) and body.startswith(('event:', 'data:')):
+                    body = re.sub(r'("safety_identifier"\s*:\s*)"(?:\\.|[^"\\])*"', r'\1"scrubbed"', body)
+                    data['body']['string'] = body
+                    if 'content-length' in headers:
+                        headers['content-length'] = [str(len(body.encode('utf-8')))]
             scrub_form_credentials(data, content_type)
             scrub_xml_credentials(data, headers, content_type)
 

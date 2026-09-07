@@ -31,7 +31,8 @@ from pydantic_ai.exceptions import ModelAPIError, UserError
 from pydantic_ai.models import infer_model, infer_model_profile
 from pydantic_ai.providers import infer_provider_class
 
-from ..conftest import TestEnv, try_import
+from ...conftest import TestEnv, try_import
+from .conftest import CODEX_URL, TOKEN_RESPONSE, FakeCredentialSource, make_credentials, make_jwt
 
 with try_import() as imports_successful:
     from pydantic_ai.models.openai_codex import OpenAICodexModel
@@ -59,18 +60,6 @@ pytestmark = [
 PUBLIC_CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann'
 
 
-def make_jwt(payload: dict[str, Any]) -> str:
-    def encode(part: dict[str, Any]) -> str:
-        return base64.urlsafe_b64encode(json.dumps(part).encode()).rstrip(b'=').decode()
-
-    return f'{encode({"alg": "none"})}.{encode(payload)}.signature'
-
-
-def make_credentials(*, exp: float | None = None, access_token: str = 'access-old') -> OpenAICodexCredentials:
-    token = access_token if exp is None else make_jwt({'exp': exp})
-    return OpenAICodexCredentials(access_token=token, refresh_token='refresh-1', account_id='acc-1')
-
-
 def make_provider(credentials: OpenAICodexCredentials | None = None) -> OpenAICodexProvider:
     return OpenAICodexProvider(credentials=credentials or make_credentials(exp=time.time() + 3600))
 
@@ -91,13 +80,6 @@ class TokenEndpointMock:
         if isinstance(result, Exception):
             raise result
         return _token_response_ta.validate_python(result)
-
-
-TOKEN_RESPONSE: dict[str, Any] = {
-    'access_token': 'access-new',
-    'refresh_token': 'refresh-2',
-    'id_token': make_jwt({'https://api.openai.com/auth': {'chatgpt_account_id': 'acc-9'}}),
-}
 
 
 def authed_client(provider: OpenAICodexProvider, handler: Any) -> httpx2.AsyncClient:
@@ -467,26 +449,6 @@ async def test_stale_refresh_save_error_propagates(monkeypatch: pytest.MonkeyPat
 
 
 # --- Application credential source (multi-replica coordination seam) ---
-
-
-class FakeCredentialSource:
-    """In-memory stand-in for an application's credential store."""
-
-    def __init__(self, credentials: OpenAICodexCredentials | None = None):
-        self.credentials = credentials if credentials is not None else make_credentials(access_token='access-v1')
-        self.loads = 0
-        self.saves: list[str] = []
-
-    async def load(self) -> OpenAICodexCredentials:
-        self.loads += 1
-        return self.credentials
-
-    async def save(self, credentials: OpenAICodexCredentials) -> None:
-        self.credentials = credentials
-        self.saves.append(credentials.access_token)
-
-
-CODEX_URL = 'https://chatgpt.com/backend-api/codex/x'
 
 
 async def test_credential_source_loads_once_and_reuses():

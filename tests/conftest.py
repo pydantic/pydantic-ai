@@ -674,7 +674,10 @@ def pytest_recording_configure(config: Any, vcr: VCR):
     vcr.register_matcher('path', path_matcher)
 
     def scrub_request(request: vcr_request.Request) -> vcr_request.Request | None:
-        if request.host == 'oauth2.googleapis.com' and request.path == '/token':
+        if (request.host, request.path) in {
+            ('oauth2.googleapis.com', '/token'),
+            ('auth.openai.com', '/oauth/token'),
+        }:
             return None
         request.uri = _AWS_ACCOUNT_ID_IN_ARN.sub(_SCRUBBED_AWS_ACCOUNT_ID, request.uri)
         return request

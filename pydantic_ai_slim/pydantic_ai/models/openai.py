@@ -2720,13 +2720,14 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # rather than the create call, so they must honor the unsupported-settings seam here too —
         # `_drop_unsupported_params` runs too late for them (and never runs for `count_tokens`).
         unsupported_settings = profile.get('openai_unsupported_model_settings', ())
+        parallel_tool_calls = OMIT
+        if tools and 'parallel_tool_calls' not in unsupported_settings:
+            parallel_tool_calls = model_settings.get('parallel_tool_calls', OMIT)
         return _ResponsesRequestParams(
             model=self.model_name,
             input=openai_messages,
             instructions=instructions,
-            parallel_tool_calls=OMIT
-            if 'parallel_tool_calls' in unsupported_settings
-            else (model_settings.get('parallel_tool_calls', OMIT) if tools else OMIT),
+            parallel_tool_calls=parallel_tool_calls,
             tools=tools or OMIT,
             tool_choice=tool_choice or OMIT,
             previous_response_id=previous_response_id or OMIT,

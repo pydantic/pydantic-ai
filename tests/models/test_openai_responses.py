@@ -16786,7 +16786,7 @@ async def test_openai_responses_malformed_tool_args_degraded_on_the_wire(allow_m
 
 # --- OpenAI Codex wire dialect through the model's request path ---
 # These pin the request/stream semantics of `OpenAICodexModel` against the shared mock; the
-# OAuth/credential unit tests stay in `tests/providers/test_openai_codex.py`.
+# OAuth/credential unit tests stay in `tests/providers/codex/`.
 
 
 async def test_codex_count_tokens_raises_user_error(allow_model_requests: None):

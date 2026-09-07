@@ -1,5 +1,7 @@
 """Credential boundary and recovery regressions through the real HTTP auth flow."""
 
+from __future__ import annotations
+
 import asyncio
 import traceback
 
@@ -7,17 +9,20 @@ import httpx2
 import pytest
 
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.providers.openai_codex import (
-    CredentialsPersistenceError,
-    CredentialsRefreshError,
-    OpenAICodexCredentials,
-    OpenAICodexProvider,
-    _post_token_request,  # pyright: ignore[reportPrivateUsage]
-)
 
-from .test_openai_codex import CODEX_URL, TOKEN_RESPONSE, FakeCredentialSource, make_credentials
+from ...conftest import try_import
+from .conftest import CODEX_URL, TOKEN_RESPONSE, FakeCredentialSource, make_credentials
 
-pytestmark = pytest.mark.anyio
+with try_import() as imports_successful:
+    from pydantic_ai.providers.openai_codex import (
+        CredentialsPersistenceError,
+        CredentialsRefreshError,
+        OpenAICodexCredentials,
+        OpenAICodexProvider,
+        _post_token_request,  # pyright: ignore[reportPrivateUsage]
+    )
+
+pytestmark = [pytest.mark.anyio, pytest.mark.skipif(not imports_successful(), reason='OpenAI client not installed')]
 
 
 async def test_refresh_failure_shared_then_later_request_recovers():
