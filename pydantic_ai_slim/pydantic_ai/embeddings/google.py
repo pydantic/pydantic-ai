@@ -16,7 +16,6 @@ from .settings import EmbeddingSettings
 try:
     from google.genai import Client, errors
     from google.genai.types import Content, ContentListUnion, EmbedContentConfig, EmbedContentResponse, Part
-
 except ImportError as _import_error:
     raise ImportError(
         'Please install `google-genai` to use the Google embeddings model, '
@@ -254,20 +253,16 @@ class GoogleEmbeddingModel(EmbeddingModel):
             # footgun where `None` would silently fall back to the `'search result'` default.
             if task == 'raw':
                 texts = inputs
-
             elif input_type == 'document' and task not in _SYMMETRIC_TASKS:
                 title = settings.get('google_title') or 'none'
                 texts = [f'title: {title} | text: {text}' for text in inputs]
-
             else:
                 texts = [f'task: {task} | query: {text}' for text in inputs]
-
             config = EmbedContentConfig(
                 task_type=None,
                 output_dimensionality=settings.get('dimensions'),
                 title=None,
             )
-
         else:
             if google_task is not None:
                 warnings.warn(
@@ -276,10 +271,8 @@ class GoogleEmbeddingModel(EmbeddingModel):
                     UserWarning,
                     stacklevel=2,
                 )
-
             if google_task_type is None:
                 google_task_type = 'RETRIEVAL_DOCUMENT' if input_type == 'document' else 'RETRIEVAL_QUERY'
-
             texts = inputs
             config = EmbedContentConfig(
                 task_type=google_task_type,
