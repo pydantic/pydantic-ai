@@ -1,19 +1,14 @@
 """A fictional third-party sandbox library imported by the examples in `docs/sandbox.md`.
 
-`DockerSandbox` conforms to the `pydantic_ai.sandboxes.SandboxBackend` protocol structurally (pinned
-at the bottom), but nothing here runs real containers.
+`DockerSandbox` is a `pydantic_ai.sandboxes.SandboxBackend`, but nothing here runs real containers.
 """
 
 from __future__ import annotations as _annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
-from pydantic_ai.sandboxes import SandboxRef
-
-if TYPE_CHECKING:
-    from pydantic_ai.sandboxes import SandboxBackend
+from pydantic_ai.sandboxes import SandboxBackend, SandboxRef
 
 
 @dataclass(frozen=True)
@@ -23,9 +18,13 @@ class ContainerResult:
     stderr: str = ''
 
 
-class DockerSandbox:
+class DockerSandbox(SandboxBackend):
     def __init__(self, *, sandbox_id: str = 'container-0123456789ab'):
-        self.ref = SandboxRef(sandbox_id=sandbox_id)
+        self._ref = SandboxRef(sandbox_id=sandbox_id)
+
+    @property
+    def ref(self) -> SandboxRef:
+        return self._ref
 
     async def run(
         self,
@@ -57,8 +56,3 @@ class SandboxClient:
 
     async def destroy(self, sandbox_id: str) -> None:
         pass
-
-
-if TYPE_CHECKING:
-    # The docs promise that `DockerSandbox` is a valid `SandboxBackend`; hold this module to it.
-    _conforms: SandboxBackend = DockerSandbox()

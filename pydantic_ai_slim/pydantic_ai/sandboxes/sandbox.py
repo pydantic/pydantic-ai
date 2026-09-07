@@ -85,7 +85,7 @@ class FileWindow:
         return '\n'.join(self.lines)
 
 
-class _ShellFilesystem:
+class _ShellFilesystem(SupportsFilesystem):
     """Derive filesystem operations from a backend's command-execution primitive.
 
     This is the portability floor for command-capable sandboxes. Backends should implement
@@ -223,7 +223,7 @@ class _ShellFilesystem:
         raise SandboxError(message)
 
 
-class Sandbox:
+class Sandbox(SandboxBackend):
     """Rich sandbox interface exposed to tools and capabilities.
 
     `Sandbox` forwards the backend's required methods and adds filesystem access, path
@@ -508,9 +508,3 @@ def _window_from_data(data: bytes, offset: int, limit: int | None) -> FileWindow
 
 def _split_lines(text: str) -> tuple[str, ...]:
     return tuple(line.removesuffix('\r') for line in text.split('\n'))
-
-
-if TYPE_CHECKING:
-    # Pins full structural conformance — signatures included — which `isinstance` cannot check.
-    _conforms: SandboxBackend = Sandbox.__new__(Sandbox)
-    _shell_filesystem_conforms: SupportsFilesystem = _ShellFilesystem.__new__(_ShellFilesystem)

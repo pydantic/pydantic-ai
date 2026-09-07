@@ -17,17 +17,22 @@ from collections.abc import Awaitable, Mapping, Sequence
 from contextlib import suppress
 from pathlib import Path
 from types import TracebackType
-from typing import TYPE_CHECKING
 
 import anyio
 from typing_extensions import Self
 
 from pydantic_ai._utils import cancel_and_drain, run_in_executor
 
-from .protocol import CommandResult, FileEntry, SandboxCommand, SandboxError, SandboxRef, SandboxTimeoutError
-
-if TYPE_CHECKING:
-    from .protocol import SandboxBackend, SupportsFilesystem
+from .protocol import (
+    CommandResult,
+    FileEntry,
+    SandboxBackend,
+    SandboxCommand,
+    SandboxError,
+    SandboxRef,
+    SandboxTimeoutError,
+    SupportsFilesystem,
+)
 
 __all__ = ('LocalSandbox',)
 
@@ -54,7 +59,7 @@ _OUTPUT_DRAIN_GRACE = 2.0
 """How long to keep reading a command's pipes after the direct child has exited."""
 
 
-class LocalSandbox:
+class LocalSandbox(SandboxBackend, SupportsFilesystem):
     """[`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] over host subprocesses and the host filesystem.
 
     Isolates nothing: commands run as host subprocesses with the host process's privileges.
@@ -70,9 +75,8 @@ class LocalSandbox:
     variables explicitly supplied through `env`. This prevents framework credentials from being
     inherited, but is a leak fix rather than an isolation boundary.
 
-    Deliberately no base class: it conforms to the protocol structurally, like any
-    third-party backend would. It is also the in-tree worked example of the lazy pattern every
-    backend follows — see [`root`][pydantic_ai.sandboxes.LocalSandbox.root].
+    It is the in-tree worked example of the lazy pattern every backend follows — see
+    [`root`][pydantic_ai.sandboxes.LocalSandbox.root].
 
     Args:
         root: The working directory commands run in and relative paths resolve against; must
@@ -514,11 +518,3 @@ class LocalSandbox:
                 process.kill()
             finally:
                 raise
-
-
-if TYPE_CHECKING:
-    # Pins full structural conformance — signatures included — which `isinstance` cannot check.
-    # Type-check time only: it never runs, and it is how a backend proves it satisfies the
-    # protocols without inheriting from them.
-    _conforms: SandboxBackend = LocalSandbox()
-    _filesystem_backend_conforms: SupportsFilesystem = LocalSandbox()

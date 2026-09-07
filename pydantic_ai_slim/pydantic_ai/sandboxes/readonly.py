@@ -10,18 +10,13 @@ sandbox that refused `write_bytes` but ran `rm` would not be read-only.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import TYPE_CHECKING
 
 from typing_extensions import Never
 
 from pydantic_ai.exceptions import UserError
 
-from .protocol import SandboxCommand, SandboxRef
+from .protocol import SandboxBackend, SandboxCommand, SandboxFileEntry, SandboxRef, SupportsFilesystem
 from .sandbox import Sandbox
-
-if TYPE_CHECKING:
-    from .protocol import SandboxBackend, SandboxFileEntry, SupportsFilesystem
-    from .unavailable import UnavailableSandbox
 
 __all__ = ('ReadOnlySandbox',)
 
@@ -32,7 +27,7 @@ _READ_ONLY_REASON = (
 )
 
 
-class ReadOnlySandbox:
+class ReadOnlySandbox(SandboxBackend, SupportsFilesystem):
     """A [`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] that forwards reads to a wrapped backend and refuses everything else.
 
     Reads (`working_dir`, `read_bytes`, `stat`, `list_dir`, `exists`) forward to the wrapped
@@ -91,9 +86,3 @@ class ReadOnlySandbox:
         timeout: float | None = None,
     ) -> Never:
         raise UserError(_READ_ONLY_REASON)
-
-
-if TYPE_CHECKING:
-    # Pins full structural conformance — signatures included — which `isinstance` cannot check.
-    _conforms: SandboxBackend = ReadOnlySandbox(UnavailableSandbox(''))
-    _filesystem_conforms: SupportsFilesystem = ReadOnlySandbox(UnavailableSandbox(''))

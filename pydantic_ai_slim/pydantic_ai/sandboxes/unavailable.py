@@ -11,24 +11,17 @@ It implements the flat filesystem opt-in so every operation surfaces the configu
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import TYPE_CHECKING
 
 from typing_extensions import Never
 
 from pydantic_ai.exceptions import UserError
 
-from .protocol import SandboxCommand
-
-if TYPE_CHECKING:
-    from .protocol import (
-        SandboxBackend,
-        SupportsFilesystem,
-    )
+from .protocol import SandboxBackend, SandboxCommand, SupportsFilesystem
 
 __all__ = ('UnavailableSandbox',)
 
 
-class UnavailableSandbox:
+class UnavailableSandbox(SandboxBackend, SupportsFilesystem):
     """A `SandboxBackend` whose every operation raises `UserError` with a configured reason."""
 
     def __init__(self, reason: str):
@@ -73,8 +66,3 @@ class UnavailableSandbox:
 
     async def exists(self, path: str) -> Never:
         raise UserError(self.reason)
-
-
-if TYPE_CHECKING:
-    _backend_conforms: SandboxBackend = UnavailableSandbox('')
-    _filesystem_conforms: SupportsFilesystem = UnavailableSandbox('')

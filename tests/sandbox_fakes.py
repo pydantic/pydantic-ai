@@ -9,7 +9,7 @@ import anyio
 
 from pydantic_ai import RunContext
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.sandboxes import Sandbox, SandboxBackend, SandboxCommand, SandboxRef, SandboxResult
+from pydantic_ai.sandboxes import Sandbox, SandboxBackend, SandboxCommand, SandboxRef, SandboxResult, SupportsFilesystem
 
 
 @dataclass(frozen=True)
@@ -30,7 +30,7 @@ class FakeEntry:
 _SED_WINDOW = re.compile(r'^(\d+),(\d+)p;\2q$')
 
 
-class FakeSandbox:
+class FakeSandbox(SandboxBackend, SupportsFilesystem):
     """A lazy in-memory backend with the optional native filesystem."""
 
     def __init__(
@@ -144,7 +144,7 @@ class FakeSandbox:
         self.cleanup_calls.append('release')
 
 
-class RecordingSandboxBackend:
+class RecordingSandboxBackend(SandboxBackend):
     """The three required backend members, with no `SupportsFilesystem`."""
 
     def __init__(self, sandbox_id: str, *, ref: SandboxRef | None = None) -> None:
@@ -175,7 +175,7 @@ class RecordingSandboxBackend:
         self.cleanup_calls.append(f'close:{terminate}')
 
 
-class RunOnlySandboxBackend:
+class RunOnlySandboxBackend(SandboxBackend):
     """Hide an inner backend's optional methods to exercise the shell portability path."""
 
     def __init__(self, inner: SandboxBackend) -> None:
