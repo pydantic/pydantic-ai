@@ -39,7 +39,9 @@ class ReadOnlySandbox(SandboxBackend, SupportsFilesystem):
 
     The wrapper is a policy boundary for access through the sandbox API, not an isolation
     mechanism. Read-only *with* command execution is only possible when the environment itself
-    enforces it (e.g. a read-only mount).
+    enforces it (e.g. a read-only mount). Over a backend without native file methods, reads run
+    standard utilities such as `base64` inside the environment, so an environment someone has
+    tampered with is not protected by this wrapper.
     """
 
     def __init__(self, wrapped: SandboxBackend):
