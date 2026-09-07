@@ -173,8 +173,8 @@ def main(run: Runner = run_command) -> int:
     else:
         options = ['--pythonversion', requested_version] if requested_version else []
         print(f'Type-checking {len(affected)} of {len(checkable)} files, reached from {len(changed)} changed.')
-        # No `--threads`, unlike the full run: the narrowed set is at most half the project,
-        # and at that size the workers do not pay for themselves. Measured on this repo,
+        # No `--threads`, even with `PYRIGHT_THREADS` set: the narrowed set is at most half the
+        # project, and at that size the workers do not pay for themselves. Measured on this repo,
         # 31 files take 5 seconds single-process.
         code = run([sys.executable, '-m', 'pyright', *options, *affected])
 

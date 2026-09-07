@@ -36,8 +36,8 @@ async def resolve_native_tool(
     if native_tool is None:
         raise UserError(
             f'`{tool_cls.__name__}` native tool factory returned `None`, but the already-invoked '
-            '`fallback_model` subagent cannot omit the tool. '
-            f'Return a `{tool_cls.__name__}` instance, or drop `fallback_model` so that `None` omits the tool.'
+            '`fallback_subagent_model` subagent cannot omit the tool. '
+            f'Return a `{tool_cls.__name__}` instance, or drop `fallback_subagent_model` so that `None` omits the tool.'
         )
     if not isinstance(native_tool, tool_cls):
         raise UserError(f'Native tool must resolve to an instance of `{tool_cls.__name__}`, got {native_tool!r}')
