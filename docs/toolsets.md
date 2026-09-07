@@ -890,9 +890,7 @@ Pydantic AI provides [`MCPToolset`][pydantic_ai.mcp.MCPToolset] for connecting t
 
 ### Agent Skills
 
-Toolsets that implement [Agent Skills](https://agentskills.io) support help agents efficiently discover and perform specific tasks:
-
-* [`pydantic-ai-skills`](https://github.com/DougTrajano/pydantic-ai-skills) - `SkillsToolset` implements Agent Skills support with progressive disclosure (load skills on-demand to reduce tokens). Supports filesystem and programmatic skills; compatible with [agentskills.io](https://agentskills.io).
+[Agent Skills](https://agentskills.io) are loaded as [on-demand capabilities](capabilities/on-demand.md) rather than as toolsets, so each skill can stay collapsed to a catalog entry until the model needs it. See [Agent Skills](capabilities/third-party.md#agent-skills) on the third-party capabilities page.
 
 ### Task Management
 
