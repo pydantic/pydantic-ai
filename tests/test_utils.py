@@ -1167,7 +1167,7 @@ def test_run_and_graph_state_repr_do_not_expand_user_data():
 
     class LargeRepr:
         def __repr__(self) -> str:
-            return 'D' * 4096
+            return 'D' * 4096  # pragma: no cover
 
     deps = LargeRepr()
     messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='H' * 4096)])]
@@ -1192,7 +1192,7 @@ async def test_graph_run_context_repr_does_not_expand_dependencies():
 
     class LargeRepr:
         def __repr__(self) -> str:
-            return 'D' * 4096
+            return 'D' * 4096  # pragma: no cover
 
     deps = LargeRepr()
     agent = Agent(TestModel(), deps_type=LargeRepr)
