@@ -242,6 +242,6 @@ async def buy_tickets(flight_details: FlightDetails, seat: SeatPreference):
 
 
 if __name__ == '__main__':
-    import asyncio
+    import asyncio  # noqa: TID251 - backend compatibility; see scripts/asyncio_exceptions.json
 
     asyncio.run(main())

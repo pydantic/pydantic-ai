@@ -33,7 +33,7 @@ annotations breaks pydantic-ai's `takes_run_context` detection.
 """
 
 import argparse
-import asyncio
+import asyncio  # noqa: TID251 - backend compatibility; see scripts/asyncio_exceptions.json
 import dataclasses
 import json
 import logging

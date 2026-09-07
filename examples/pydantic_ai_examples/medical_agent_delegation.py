@@ -22,7 +22,7 @@ Run with:
     uv run -m pydantic_ai_examples.medical_agent_delegation
 """
 
-import asyncio
+import asyncio  # noqa: TID251 - backend compatibility; see scripts/asyncio_exceptions.json
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum

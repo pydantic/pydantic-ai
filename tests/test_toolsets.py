@@ -2652,7 +2652,7 @@ async def test_dynamic_toolset_per_run_step_false_for_run_evaluates():
 
 async def test_concurrent_runs_dont_share_state():
     """Multiple concurrent runs don't share state on stateful toolsets."""
-    import asyncio
+    import asyncio  # noqa: TID251 - backend compatibility; see scripts/asyncio_exceptions.json
 
     from pydantic_ai import Agent
     from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart

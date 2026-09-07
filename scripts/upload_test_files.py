@@ -5,7 +5,7 @@ Usage: source .env && uv run python scripts/upload_test_files.py
 
 from __future__ import annotations
 
-import asyncio
+import asyncio  # noqa: TID251 - backend compatibility; see scripts/asyncio_exceptions.json
 import os
 import sys
 from pathlib import Path

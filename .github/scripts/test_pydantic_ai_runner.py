@@ -12,7 +12,7 @@ via env: GH_AW_SHIM_LIVE_API_KEY / _BASE_URL / _MODEL.
 Run:  uv run --with pytest pytest .github/scripts/test_pydantic_ai_runner.py
 """
 
-import asyncio
+import asyncio  # noqa: TID251 - backend compatibility; see scripts/asyncio_exceptions.json
 import io
 import json
 import os
@@ -353,7 +353,7 @@ async def _toolset_names(
 
 
 def test_select_claude_code_toolset_no_allowlist_keeps_all():
-    import asyncio
+    import asyncio  # noqa: TID251 - backend compatibility; see scripts/asyncio_exceptions.json
 
     names = asyncio.run(_toolset_names(None, None, task=shim.task))
     # task=shim.task adds "Task" alongside the base callables. Order is
@@ -362,14 +362,14 @@ def test_select_claude_code_toolset_no_allowlist_keeps_all():
 
 
 def test_select_claude_code_toolset_enforces_allowlist():
-    import asyncio
+    import asyncio  # noqa: TID251 - backend compatibility; see scripts/asyncio_exceptions.json
 
     names = asyncio.run(_toolset_names(frozenset({'Bash', 'Read', 'mcp__safeoutputs'}), None))
     assert names == ['Bash', 'Read']
 
 
 def test_plan_mode_withholds_mutating_tools():
-    import asyncio
+    import asyncio  # noqa: TID251 - backend compatibility; see scripts/asyncio_exceptions.json
 
     names = set(asyncio.run(_toolset_names(None, 'plan')))
     assert names.isdisjoint(pkg.MUTATING_TOOLS)
@@ -377,7 +377,7 @@ def test_plan_mode_withholds_mutating_tools():
 
 
 def test_plan_mode_and_allowlist_compose():
-    import asyncio
+    import asyncio  # noqa: TID251 - backend compatibility; see scripts/asyncio_exceptions.json
 
     names = asyncio.run(_toolset_names(frozenset({'Bash', 'Read'}), 'plan'))
     assert names == ['Read']  # Bash dropped by plan mode
@@ -797,7 +797,7 @@ def test_exit_plan_mode_returns_ack():
 
 
 def test_plan_mode_keeps_new_readonly_tools_drops_multiedit():
-    import asyncio
+    import asyncio  # noqa: TID251 - backend compatibility; see scripts/asyncio_exceptions.json
 
     # Note: WebFetch is an Anthropic server-side capability (not in the callable list).
     names = set(asyncio.run(_toolset_names(None, 'plan')))
@@ -824,7 +824,7 @@ def test_instructions_encourage_parallel_tool_calls():
 
 def test_run_routes_workflow_prompt_to_system_instructions(monkeypatch: pytest.MonkeyPatch):
     """Workflow prompt rides in the system instruction; user message is RUN_TRIGGER."""
-    import asyncio
+    import asyncio  # noqa: TID251 - backend compatibility; see scripts/asyncio_exceptions.json
 
     from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, UserPromptPart
     from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -884,7 +884,7 @@ def test_task_registered_via_build_claude_code_toolset():
     appended dynamically by `build_claude_code_toolset(task=...)` only for the
     parent (sub-agents pass `task=None` so they can't recurse).
     """
-    import asyncio
+    import asyncio  # noqa: TID251 - backend compatibility; see scripts/asyncio_exceptions.json
 
     parent_names = asyncio.run(_toolset_names(None, None, task=shim.task))
     sub_names = asyncio.run(_toolset_names(None, None, task=None))
@@ -993,7 +993,7 @@ def test_compiled_workflows_pin_retry_policy():
 def test_task_runs_subagent_with_run_model_and_read_only_tools(monkeypatch: pytest.MonkeyPatch):
     # The Task tool spawns a sub-Agent on ctx.model with the read-only tool
     # set, runs the given prompt, and returns the sub-agent's output.
-    import asyncio
+    import asyncio  # noqa: TID251 - backend compatibility; see scripts/asyncio_exceptions.json
 
     from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, UserPromptPart
     from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -1120,7 +1120,7 @@ def test_history_size_chars_sums_all_part_content():
 
 
 def test_compact_history_no_op_below_char_budget(monkeypatch: pytest.MonkeyPatch):
-    import asyncio
+    import asyncio  # noqa: TID251 - backend compatibility; see scripts/asyncio_exceptions.json
 
     from pydantic_ai.messages import ModelRequest, UserPromptPart
 
@@ -1137,7 +1137,7 @@ def test_compact_history_no_op_below_char_budget(monkeypatch: pytest.MonkeyPatch
 def test_compact_history_summarises_with_fresh_usage_then_merges():
     """Summariser uses a fresh `RunUsage` (so request_limit doesn't trip on the
     parent's running total) and the parent usage absorbs its cost after."""
-    import asyncio
+    import asyncio  # noqa: TID251 - backend compatibility; see scripts/asyncio_exceptions.json
 
     from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, UserPromptPart
     from pydantic_ai.models.function import FunctionModel
@@ -1328,7 +1328,7 @@ def test_trim_logs_substitution_counts_only_when_changes_fired(caplog: LogCaptur
 
 def test_compact_history_uses_trim_alone_when_sufficient(monkeypatch: pytest.MonkeyPatch):
     """Trim alone is enough — the LLM summariser must not fire."""
-    import asyncio
+    import asyncio  # noqa: TID251 - backend compatibility; see scripts/asyncio_exceptions.json
 
     from pydantic_ai.messages import (
         ModelMessage,
@@ -1367,7 +1367,7 @@ def test_compact_history_uses_trim_alone_when_sufficient(monkeypatch: pytest.Mon
 
 
 def test_compact_history_falls_back_to_truncation_on_failure(monkeypatch: pytest.MonkeyPatch):
-    import asyncio
+    import asyncio  # noqa: TID251 - backend compatibility; see scripts/asyncio_exceptions.json
 
     from pydantic_ai.messages import ModelRequest, UserPromptPart
     from pydantic_ai.models.test import TestModel
@@ -1400,7 +1400,7 @@ def test_compact_history_preserves_prior_synthetic_on_fallback(monkeypatch: pyte
     """A second compaction round whose summary fails (or doesn't fit) must
     keep the earlier round's `[compacted history]` block. Dropping it would
     silently forget the entire run's prior work."""
-    import asyncio
+    import asyncio  # noqa: TID251 - backend compatibility; see scripts/asyncio_exceptions.json
 
     from pydantic_ai.messages import ModelRequest, UserPromptPart
     from pydantic_ai.models.test import TestModel
@@ -1434,7 +1434,7 @@ def test_compact_history_preserves_prior_synthetic_on_fallback(monkeypatch: pyte
 
 
 def test_task_surfaces_subagent_failure_as_tool_result(monkeypatch: pytest.MonkeyPatch):
-    import asyncio
+    import asyncio  # noqa: TID251 - backend compatibility; see scripts/asyncio_exceptions.json
 
     from pydantic_ai.models.test import TestModel
 
@@ -1459,7 +1459,7 @@ def test_task_surfaces_subagent_failure_as_tool_result(monkeypatch: pytest.Monke
 
 def test_task_isolates_attach_context_dedupe_set_from_parent(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     """Sub-agents start with a fresh AGENTS.md seen-set, not the parent's."""
-    import asyncio
+    import asyncio  # noqa: TID251 - backend compatibility; see scripts/asyncio_exceptions.json
 
     from pydantic_ai.messages import ModelResponse, TextPart
     from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -1499,7 +1499,7 @@ def test_stream_events_emits_tool_use_and_tool_result_lines():
     """`_stream_events` is the live emitter that turns pydantic-ai events into
     Claude-shape stream-json on stdout — the surface gh-aw's log parser
     reads. Drive it with synthetic events and assert the wire shape."""
-    import asyncio
+    import asyncio  # noqa: TID251 - backend compatibility; see scripts/asyncio_exceptions.json
 
     from pydantic_ai.messages import (
         FunctionToolCallEvent,
@@ -1542,7 +1542,7 @@ def test_stream_events_truncates_long_tool_results():
     """Result content over `MAX_LIVE_TOOL_RESULT_CHARS` is truncated for the
     stream-json view (the model's view is unaffected — this handler is
     observation-only)."""
-    import asyncio
+    import asyncio  # noqa: TID251 - backend compatibility; see scripts/asyncio_exceptions.json
 
     from pydantic_ai.messages import FunctionToolResultEvent, ToolReturnPart
 
@@ -1567,7 +1567,7 @@ def test_stream_events_tags_retry_prompt_as_error():
     """`ToolResultEvent.part` is `ToolReturnPart | RetryPromptPart`. A retry
     means tool-call validation failed — gh-aw must see `is_error=True` so it
     doesn't read it as a successful result."""
-    import asyncio
+    import asyncio  # noqa: TID251 - backend compatibility; see scripts/asyncio_exceptions.json
 
     from pydantic_ai.messages import FunctionToolResultEvent, RetryPromptPart, ToolReturnPart
 

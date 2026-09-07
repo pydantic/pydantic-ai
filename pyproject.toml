@@ -198,6 +198,7 @@ dev = [
     "anyio>=4.7.0",
     "trio>=0.34.0",
     "sniffio>=1.3.1",
+    "tomli>=2.0.1",
     "asgi-lifespan>=2.1.0",
     "httpx>=0.27",
     "devtools>=0.12.2",
@@ -274,6 +275,9 @@ include = [
     "docs/**/*.py",
     "scripts/typecheck_changed.py",
     "scripts/test_typecheck_changed.py",
+    "scripts/check_asyncio.py",
+    "scripts/asyncio_policy.py",
+    "scripts/test_check_asyncio.py",
     ".github/scripts/ci_duration.py",
     ".github/scripts/check_api_compatibility.py",
     ".github/scripts/test_ci_duration.py",
@@ -327,7 +331,7 @@ ignore = [
 
 [tool.ruff.lint.isort]
 combine-as-imports = true
-known-first-party = ["pydantic_ai", "pydantic_evals", "pydantic_graph"]
+known-first-party = ["pydantic_ai", "pydantic_evals", "pydantic_graph", "asyncio_policy"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
@@ -335,7 +339,7 @@ convention = "google"
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
 "typing.TypedDict".msg = "Use typing_extensions.TypedDict instead."
 "typing.assert_never".msg = "Use typing_extensions.assert_never instead."
-"asyncio.Lock".msg = "Use anyio.Lock instead."
+"asyncio".msg = "Use AnyIO. Asyncio is restricted to documented compatibility adapters and backend tests."
 
 [tool.ruff.format]
 # don't format python in docstrings, pytest-examples takes care of it
@@ -343,6 +347,7 @@ docstring-code-format = false
 quote-style = "single"
 
 [tool.ruff.lint.per-file-ignores]
+"scripts/test_check_asyncio.py" = ["D"]
 "examples/**/*.py" = ["D101", "D103"]
 "tests/**/*.py" = ["D"]
 "docs/**/*.py" = ["D"]
@@ -376,6 +381,9 @@ include = [
     "tests",
     "examples",
     "clai",
+    "scripts/check_asyncio.py",
+    "scripts/asyncio_policy.py",
+    "scripts/test_check_asyncio.py",
     "scripts/typecheck_changed.py",
     "scripts/test_typecheck_changed.py",
     ".github/scripts/ci_duration.py",
@@ -398,6 +406,7 @@ venv = ".venv"
 # see https://github.com/microsoft/pyright/issues/7771 - we don't want to error on decorated functions in tests
 # which are not otherwise used
 executionEnvironments = [
+    { root = "scripts/check_asyncio.py", extraPaths = ["scripts"] },
     { root = "tests", extraPaths = ["examples"], reportUnusedFunction = false, reportPrivateImportUsage = false },
     # `extraPaths` lets pyright resolve the shim package (which sits next to
     # the test file, not under the project root) the same way the runtime

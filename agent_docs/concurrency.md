@@ -8,6 +8,19 @@ Most rules name the symbol, file, or test that proves them; a rule with no ancho
 
 Before adding any of this, name the scope that guarantees teardown for every task, scope, lock, stream, span, and connection you create. "The garbage collector" or "the caller remembers" is a bug, not a design.
 
+## Asyncio import policy
+
+Use AnyIO for new portable concurrency code. Ruff's `TID251` rule bans `asyncio` imports. Existing
+native compatibility and migration exceptions are listed in `scripts/asyncio_exceptions.json`, with
+a reason and counted imports/references per containing scope. `make lint` checks this inventory,
+including untracked Python files and lint suppressions, so an existing exception does not permit
+additional direct asyncio references. Remove the matching inventory entries when migrating a file.
+
+Do not add a blanket suppression or a per-file `TID251` ignore. Keep approved exceptions on the
+specific import line. Inventory changes require reviewing the compatibility reason and protecting
+tests; do not regenerate the inventory to make a failing check disappear. The collector checks
+syntax, not inferred task/loop types or dynamic imports; those still need review at native boundaries.
+
 ## Rules
 
 ### Ownership

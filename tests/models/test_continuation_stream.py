@@ -15,7 +15,7 @@ existing recording and pass green. Asserting the stitched indices directly is wh
 
 from __future__ import annotations
 
-import asyncio
+import asyncio  # noqa: TID251 - backend compatibility; see scripts/asyncio_exceptions.json
 import logging
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager, suppress

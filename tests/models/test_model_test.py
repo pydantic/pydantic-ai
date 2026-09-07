@@ -2,7 +2,7 @@
 
 from __future__ import annotations as _annotations
 
-import asyncio
+import asyncio  # noqa: TID251 - backend compatibility; see scripts/asyncio_exceptions.json
 import dataclasses
 import re
 from datetime import timezone

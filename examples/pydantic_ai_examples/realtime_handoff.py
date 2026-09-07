@@ -24,7 +24,7 @@ Run with:
 
 from __future__ import annotations
 
-import asyncio
+import asyncio  # noqa: TID251 - backend compatibility; see scripts/asyncio_exceptions.json
 from typing import Literal
 
 import logfire

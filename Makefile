@@ -38,6 +38,7 @@ format: ## Format the code
 lint: ## Lint the code
 	uv run ruff format --check
 	uv run ruff check
+	uv run python scripts/check_asyncio.py
 
 .PHONY: typecheck-pyright
 typecheck-pyright:

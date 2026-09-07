@@ -77,8 +77,15 @@ repos:
         name: Lint
         entry: make
         args: [lint]
-        types: [python]
+        files: '(\.pyi?$|(^|/)(pyproject|\.?ruff)\.toml$|^scripts/asyncio_exceptions\.json$|^\.pre-commit-config\.yaml$|^Makefile$)'
         language: system
+        pass_filenames: false
+      - id: asyncio-policy-tests
+        name: Asyncio policy tests
+        entry: uv
+        args: [run, pytest, scripts/test_check_asyncio.py, -q, -x, --tb=short]
+        language: system
+        files: '^scripts/(check_asyncio\.py|asyncio_policy\.py|test_check_asyncio\.py|asyncio_exceptions\.json)$'
         pass_filenames: false
       - id: typecheck
         name: Typecheck

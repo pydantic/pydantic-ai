@@ -34,7 +34,7 @@ session, model turns, and tool calls as traces; without a token nothing is sent.
 
 from __future__ import annotations
 
-import asyncio
+import asyncio  # noqa: TID251 - backend compatibility; see scripts/asyncio_exceptions.json
 import os
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field

@@ -15,7 +15,7 @@ the provider modules, not here.
 
 from __future__ import annotations as _annotations
 
-import asyncio
+import asyncio  # noqa: TID251 - backend compatibility; see scripts/asyncio_exceptions.json
 import base64
 import hashlib
 import time

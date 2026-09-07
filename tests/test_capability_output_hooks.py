@@ -3003,7 +3003,7 @@ class TestOutputHookEdgeCases:
         through `ToolManager.validate_output_tool_call` / `execute_output_tool_call`, never
         through the normal toolset path. Calling `call_tool` directly must raise.
         """
-        import asyncio
+        import asyncio  # noqa: TID251 - backend compatibility; see scripts/asyncio_exceptions.json
 
         from pydantic_ai._output import OutputToolset
 

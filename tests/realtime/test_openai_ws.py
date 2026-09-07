@@ -9,7 +9,7 @@ live API with `--record-mode=rewrite`, then replayed offline forever.
 
 from __future__ import annotations as _annotations
 
-import asyncio
+import asyncio  # noqa: TID251 - backend compatibility; see scripts/asyncio_exceptions.json
 import importlib
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager

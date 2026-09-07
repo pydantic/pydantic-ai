@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import asyncio
+import asyncio  # noqa: TID251 - backend compatibility; see scripts/asyncio_exceptions.json
 from collections.abc import AsyncIterable, AsyncIterator
 from dataclasses import dataclass, replace as dataclasses_replace
 from typing import Any

@@ -3112,7 +3112,7 @@ def test_retry_tool_until_last_attempt():
 @pytest.mark.anyio
 async def test_tool_timeout_triggers_retry():
     """Test that a slow tool triggers RetryPromptPart when timeout is exceeded."""
-    import asyncio
+    import asyncio  # noqa: TID251 - backend compatibility; see scripts/asyncio_exceptions.json
 
     call_count = 0
 
@@ -3180,7 +3180,7 @@ async def test_sync_tool_timeout_triggers_retry():
 @pytest.mark.anyio
 async def test_tool_with_timeout_completes_successfully():
     """Test that a tool completes successfully when within its timeout."""
-    import asyncio
+    import asyncio  # noqa: TID251 - backend compatibility; see scripts/asyncio_exceptions.json
 
     from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
     from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -3220,7 +3220,7 @@ async def test_tool_with_timeout_completes_successfully():
 @pytest.mark.anyio
 async def test_no_timeout_by_default():
     """Test that tools run without timeout by default (backward compatible)."""
-    import asyncio
+    import asyncio  # noqa: TID251 - backend compatibility; see scripts/asyncio_exceptions.json
 
     agent = Agent(TestModel())  # No tool_timeout specified
 
@@ -3238,7 +3238,7 @@ async def test_no_timeout_by_default():
 @pytest.mark.anyio
 async def test_tool_timeout_retry_counts_as_failed():
     """Test that timeout counts toward tool retry limit."""
-    import asyncio
+    import asyncio  # noqa: TID251 - backend compatibility; see scripts/asyncio_exceptions.json
 
     agent = Agent(TestModel(), retries={'tools': 2, 'output': 2})
 
@@ -3261,7 +3261,7 @@ async def test_tool_timeout_retry_counts_as_failed():
 @pytest.mark.anyio
 async def test_tool_timeout_message_format():
     """Test the format of the retry prompt message on timeout."""
-    import asyncio
+    import asyncio  # noqa: TID251 - backend compatibility; see scripts/asyncio_exceptions.json
 
     call_count = 0
 
@@ -3322,7 +3322,7 @@ def test_tool_timeout_default_none():
 @pytest.mark.anyio
 async def test_tool_timeout_exceeds_retry_limit():
     """Test that UnexpectedModelBehavior is raised when timeout exceeds retry limit."""
-    import asyncio
+    import asyncio  # noqa: TID251 - backend compatibility; see scripts/asyncio_exceptions.json
 
     from pydantic_ai.exceptions import UnexpectedModelBehavior
     from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
@@ -3346,7 +3346,7 @@ async def test_tool_timeout_exceeds_retry_limit():
 @pytest.mark.anyio
 async def test_agent_level_tool_timeout():
     """Test that agent-level tool_timeout applies to all tools."""
-    import asyncio
+    import asyncio  # noqa: TID251 - backend compatibility; see scripts/asyncio_exceptions.json
 
     call_count = 0
 
@@ -3380,7 +3380,7 @@ async def test_agent_level_tool_timeout():
 @pytest.mark.anyio
 async def test_per_tool_timeout_overrides_agent_timeout():
     """Test that per-tool timeout overrides agent-level timeout."""
-    import asyncio
+    import asyncio  # noqa: TID251 - backend compatibility; see scripts/asyncio_exceptions.json
 
     call_count = 0
 
@@ -3423,7 +3423,7 @@ def test_agent_tool_timeout_passed_to_toolset():
 @pytest.mark.parametrize('is_stream', [True, False])
 async def test_tool_cancelled_when_agent_cancelled(is_stream: bool):
     """Test that tools are cancelled when agent is cancelled."""
-    import asyncio
+    import asyncio  # noqa: TID251 - backend compatibility; see scripts/asyncio_exceptions.json
 
     agent = Agent(TestModel())
     is_called = asyncio.Event()

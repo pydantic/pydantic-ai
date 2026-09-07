@@ -1,6 +1,6 @@
 # Support Trio through AnyIO without changing the public API
 
-Status: implementation started. The compatibility baseline is recorded; Trio support is not yet an implemented guarantee.
+Status: C01-C03 implemented. The baseline, opt-in backend tests and static import policy are in place; agent execution under Trio still needs the ownership migration.
 
 Baseline: local commit `b61fa91eb`, reviewed on 2026-09-07. The user approved narrowly documented exceptions to the `asyncio` lint ban for compatibility adapters and backend-specific regression tests.
 
@@ -176,7 +176,7 @@ Each item is a candidate independently reviewable change, with implementation, r
 
 - [x] **C01 - Capture the compatibility baseline.** Refresh the import/public-symbol inventory and map existing cancellation, streaming, sync-affinity and durable tests to the contract. Add only missing asyncio regressions; record the end-to-end Trio reproduction and scope of supported integrations. No production migration. Validation: the existing targeted baseline passes and the Trio failure is reproduced; see the implementation record below.
 - [x] **C02 - Add opt-in Trio test execution.** Add the compatible Trio development dependency and a test-only backend selector; keep asyncio as the default. Make selected fixtures close resources on their owning backend and provide reproducible local/manual commands. Depends on C01. Validation: fixture lifecycle works under both backends and default collection does not double; see the commands below.
-- [ ] **C03 - Enforce the static import policy.** Add the Ruff module ban, exact temporary/permanent exception inventory and suppression checks; include config-only changes in lint triggers. No concurrency refactor. Depends on C01. Validation: CLI policy tests reject all banned import forms and unauthorized suppressions while preserving existing typing bans.
+- [x] **C03 - Enforce the static import policy.** Add the Ruff module ban, exact temporary/permanent exception inventory and suppression checks; include config-only changes in lint triggers. No concurrency refactor. Depends on C01. Validation: CLI policy tests reject all banned import forms and unauthorized suppressions while preserving existing typing bans; see the implementation record below.
 - [ ] **C04 - Isolate synchronous asyncio support.** Restrict existing loop-driving and sync-stream behavior to documented compatibility boundaries in slim and graph; keep public helper locations compatible. Avoid moving code unless needed to establish a real boundary. Depends on C01 and C03. Validation: both sync request/stream orders reuse a pooled client, and interrupt/context tests pass.
 - [ ] **C05 - Prove portable task ownership.** Prototype capability/model/event handoffs against the existing API and choose the AnyIO minimum using evidence. Deliver the ownership design and passing focused tests before a broad refactor; discard experimental code that is not the chosen implementation. Depends on C01 and C02. Validation: same-task teardown, supported cross-task iteration, context propagation and early exit are demonstrated; unresolved cases remain explicitly unclaimed.
 - [ ] **C06 - Migrate capability run wrapping.** Change the wrapper handoff in `agent/__init__.py`, using the ownership design from C05. Keep short-circuit, recovery and context behavior intact. Validation: targeted capability tests pass on both backends, and the original Trio entry-point failure is eliminated without hiding a later failure.
@@ -233,6 +233,22 @@ Both commands pass the same 16 tests. The default remains asyncio; the option se
 The new fixture tests verify the active backend and a module-scoped producer/consumer lifecycle. The shared HTTP cleanup fixture now opens an async runner only for async tests. Opening a Trio runner around a synchronous test caused sync streaming to inherit Trio's backend context and fail with `Task got bad yield`; keeping sync cleanup in its existing synchronous finalizer resolves that test-harness failure without changing production code.
 
 No Trio CI job or automatic duplication of the suite was introduced. Full `Agent.run()` support is still pending the ownership migration. The targeted asyncio baseline passed (142 passed, one skip); the selected direct/fixture tests passed on Trio (16 passed), and targeted Ruff and Pyright checks passed.
+
+### C03 - Static asyncio policy
+
+```sh
+uv run python scripts/check_asyncio.py
+uv run pytest scripts/test_check_asyncio.py
+make lint
+```
+
+Ruff now bans the `asyncio` module. Import-line exceptions preserve existing behavior while the migration proceeds. The reviewed inventory covers 92 files importing asyncio and two pre-existing typing-related `TID251` suppressions. The source edits to those 92 existing Python files are comments only, verified by comparing their syntax trees with the previous commit.
+
+The policy checker scans tracked and unignored Python files, stubs and Ruff configurations. It rejects unapproved imports, growth in direct imported-name references within a scope, new/broader suppressions, missing reasons and stale entries. It also runs on Python 3.10. This is a conservative syntax inventory, not type inference: indirect task/loop handles and dynamic imports still require review at approved native boundaries.
+
+`make lint` and pre-commit enforce the policy. Config-only changes trigger lint, and the policy's CLI tests have a dedicated pre-commit hook. Its 44 cases drive the CLI in-process and retain separate subprocess checks for command entry and isolation from a parent Git-hook environment. The suite takes a few seconds locally. Coverage of the policy logic reached 100% of lines and branches across Python 3.10 and 3.13; the import-only branch of the CLI module guard was excluded because these checks execute the command.
+
+The whole-repository Ruff checks pass. The full typecheck hook has two pre-existing failures in `pydantic_evals/pydantic_evals/_online.py`: unnecessary `reportMissingImports` and `reportUnknownMemberType` suppressions. Their source logic is unchanged. The changed tooling and backend-test files are checked separately; commits bypass only that already-failing hook after recording its output. No Trio CI suite or production concurrency migration is included in C01-C03.
 
 ## Dependency decision
 

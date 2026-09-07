@@ -1,4 +1,4 @@
-import asyncio
+import asyncio  # noqa: TID251 - backend compatibility; see scripts/asyncio_exceptions.json
 import json
 import re
 import warnings
