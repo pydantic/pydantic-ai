@@ -2,6 +2,12 @@
 
 ## Testing philosophy
 
+The async backend defaults to asyncio. Use `uv run pytest <test-path> --anyio-backend=trio --record-mode=none`
+to run selected portable tests on Trio without duplicating the default suite. During the Trio migration,
+run affected concurrency tests once per backend. Keep broad Trio runs manual or periodic; do not add a
+second backend to every ordinary CI matrix. The selector does not imply that every test or integration
+already supports Trio.
+
 VCR + public-API tests are the default. We test through the public API the way a user would (`Agent(...)`, `agent.run(...)`) against real provider responses recorded as cassettes — provider APIs are the ultimate judge of whether the code is correct when run as intended, and that user-facing correctness is what we care about, not behavior in isolated units.
 
 Unit tests still earn their place — for internal behavior that is definitory and worth pinning against drift. That includes behavior you can't reach or reliably trigger through the public API (pre-request guards, defensive branches no real model produces), but also behavior a VCR test wouldn't actually protect: our cassette matchers aren't always sensitive to the request body, so a changed internal payload can still match an existing recording and pass green — a unit test asserting the internal shape directly is what catches that regression. Each unit test should still say why it isn't (or can't be) a VCR test.

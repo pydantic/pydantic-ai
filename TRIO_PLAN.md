@@ -175,7 +175,7 @@ These are workflow changes to implement as part of the checklist, not an automat
 Each item is a candidate independently reviewable change, with implementation, relevant tests and necessary docs together. Dependencies describe merge order, not permission to leave broken intermediate commits. Split repeatable integration work by SDK/transport. If the ownership prototype proves two pieces inseparable, combine only those pieces and record why. Do not build an unused abstraction merely to satisfy this order.
 
 - [x] **C01 - Capture the compatibility baseline.** Refresh the import/public-symbol inventory and map existing cancellation, streaming, sync-affinity and durable tests to the contract. Add only missing asyncio regressions; record the end-to-end Trio reproduction and scope of supported integrations. No production migration. Validation: the existing targeted baseline passes and the Trio failure is reproduced; see the implementation record below.
-- [ ] **C02 - Add opt-in Trio test execution.** Add the compatible Trio development dependency and a test-only backend selector; keep asyncio as the default. Make selected fixtures close resources on their owning backend and provide reproducible local/manual commands. Depends on C01. Validation: fixture lifecycle works under both backends and default collection does not double.
+- [x] **C02 - Add opt-in Trio test execution.** Add the compatible Trio development dependency and a test-only backend selector; keep asyncio as the default. Make selected fixtures close resources on their owning backend and provide reproducible local/manual commands. Depends on C01. Validation: fixture lifecycle works under both backends and default collection does not double; see the commands below.
 - [ ] **C03 - Enforce the static import policy.** Add the Ruff module ban, exact temporary/permanent exception inventory and suppression checks; include config-only changes in lint triggers. No concurrency refactor. Depends on C01. Validation: CLI policy tests reject all banned import forms and unauthorized suppressions while preserving existing typing bans.
 - [ ] **C04 - Isolate synchronous asyncio support.** Restrict existing loop-driving and sync-stream behavior to documented compatibility boundaries in slim and graph; keep public helper locations compatible. Avoid moving code unless needed to establish a real boundary. Depends on C01 and C03. Validation: both sync request/stream orders reuse a pooled client, and interrupt/context tests pass.
 - [ ] **C05 - Prove portable task ownership.** Prototype capability/model/event handoffs against the existing API and choose the AnyIO minimum using evidence. Deliver the ownership design and passing focused tests before a broad refactor; discard experimental code that is not the chosen implementation. Depends on C01 and C02. Validation: same-task teardown, supported cross-task iteration, context propagation and early exit are demonstrated; unresolved cases remain explicitly unclaimed.
@@ -220,6 +220,19 @@ Existing public behavior tests cover the baseline without adding duplicate frame
 | Durable state and operation-name compatibility | `tests/durable_exec/test_durable_exec_compat.py` and native engine suites |
 
 The first five test modules plus the backend-fixture checks passed on asyncio: 142 passed, one version-specific skip. The remaining entries identify checks to run when the affected production paths change; this is not a claim that every listed integration suite was executed in this baseline pass.
+
+### C02 - Opt-in backend execution
+
+```sh
+uv run pytest tests/test_async_backend.py tests/test_direct.py --record-mode=none
+uv run pytest tests/test_async_backend.py tests/test_direct.py --anyio-backend=trio --record-mode=none
+```
+
+Both commands pass the same 16 tests. The default remains asyncio; the option selects one backend and rejects unsupported values. Trio 0.34.0 is a development dependency and supports the project's Python 3.10 floor. Production dependencies are unchanged.
+
+The new fixture tests verify the active backend and a module-scoped producer/consumer lifecycle. The shared HTTP cleanup fixture now opens an async runner only for async tests. Opening a Trio runner around a synchronous test caused sync streaming to inherit Trio's backend context and fail with `Task got bad yield`; keeping sync cleanup in its existing synchronous finalizer resolves that test-harness failure without changing production code.
+
+No Trio CI job or automatic duplication of the suite was introduced. Full `Agent.run()` support is still pending the ownership migration. The targeted asyncio baseline passed (142 passed, one skip); the selected direct/fixture tests passed on Trio (16 passed), and targeted Ruff and Pyright checks passed.
 
 ## Dependency decision
 
