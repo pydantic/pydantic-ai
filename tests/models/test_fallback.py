@@ -2128,7 +2128,7 @@ async def test_fallback_model_concurrent_entry():
     Regression test for PR #4421 (provider lifecycle management).
     https://github.com/pydantic/pydantic-ai/pull/4421
     """
-    import asyncio  # noqa: TID251 - backend compatibility; see scripts/asyncio_exceptions.json
+    import asyncio
 
     class SlowEnterModel(WrapperModel):
         """Wrapper that yields during __aenter__ to widen the race window."""

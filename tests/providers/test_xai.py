@@ -1,4 +1,4 @@
-import asyncio  # noqa: TID251 - backend compatibility; see scripts/asyncio_exceptions.json
+import asyncio
 import re
 
 import pytest

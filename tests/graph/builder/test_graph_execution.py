@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import asyncio  # noqa: TID251 - backend compatibility; see scripts/asyncio_exceptions.json
+import asyncio
 from dataclasses import dataclass, field
 
 import pytest
@@ -164,7 +164,7 @@ async def test_nested_joins_with_different_fork_stacks():
 
 async def test_reduce_first_value_task_cancellation():
     """Test that ReduceFirstValue properly cancels sibling tasks"""
-    import asyncio  # noqa: TID251 - backend compatibility; see scripts/asyncio_exceptions.json
+    import asyncio
 
     g = GraphBuilder(state_type=ExecutionState, output_type=str)
 

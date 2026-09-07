@@ -1,10 +1,10 @@
 from __future__ import annotations as _annotations
 
-import asyncio  # noqa: TID251 - backend compatibility; see scripts/asyncio_exceptions.json
+import asyncio
 import dataclasses
 import inspect
 import time
-from asyncio import Task  # noqa: TID251 - backend compatibility; see scripts/asyncio_exceptions.json
+from asyncio import Task
 from collections import deque
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Iterable, Sequence
 from contextlib import asynccontextmanager, contextmanager

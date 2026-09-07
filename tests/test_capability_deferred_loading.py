@@ -5,7 +5,7 @@ Split out of `test_capabilities.py` per #7304.
 
 from __future__ import annotations
 
-import asyncio  # noqa: TID251 - backend compatibility; see scripts/asyncio_exceptions.json
+import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import Any, cast

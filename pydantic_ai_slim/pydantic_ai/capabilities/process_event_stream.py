@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import asyncio  # noqa: TID251 - backend compatibility; see scripts/asyncio_exceptions.json
+import asyncio
 from collections.abc import AsyncIterable, AsyncIterator, Coroutine
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast

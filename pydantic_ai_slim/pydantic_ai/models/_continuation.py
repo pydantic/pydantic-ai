@@ -22,7 +22,7 @@ deterministically under durable executors (e.g. Temporal).
 
 from __future__ import annotations
 
-import asyncio  # noqa: TID251 - backend compatibility; see scripts/asyncio_exceptions.json
+import asyncio
 import time
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
 from contextlib import AbstractContextManager, nullcontext, suppress

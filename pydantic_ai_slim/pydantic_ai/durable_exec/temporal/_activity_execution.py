@@ -25,7 +25,7 @@ activity's `ActivityError`, and cancelling the Temporal workflow still ends it a
 
 from __future__ import annotations
 
-import asyncio  # noqa: TID251 - backend compatibility; see scripts/asyncio_exceptions.json
+import asyncio
 from collections.abc import Sequence
 from typing import Any
 

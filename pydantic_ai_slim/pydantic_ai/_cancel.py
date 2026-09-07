@@ -24,7 +24,7 @@ The controller is runtime-only state: it holds a live task reference and is neve
 
 from __future__ import annotations as _annotations
 
-import asyncio  # noqa: TID251 - backend compatibility; see scripts/asyncio_exceptions.json
+import asyncio
 import dataclasses
 import sys
 import threading

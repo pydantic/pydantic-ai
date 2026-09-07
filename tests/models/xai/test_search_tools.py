@@ -819,7 +819,7 @@ async def test_xai_builtin_file_search_tool(
     Re-recording requires `XAI_MANAGEMENT_KEY` in addition to `XAI_API_KEY` — the SDK reads it from env
     when creating the management gRPC channel used by `client.collections.*`.
     """
-    import asyncio  # noqa: TID251 - backend compatibility; see scripts/asyncio_exceptions.json
+    import asyncio
     from datetime import timedelta
     from uuid import uuid4
 

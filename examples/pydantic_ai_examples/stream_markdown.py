@@ -5,7 +5,7 @@ Run with:
     uv run -m pydantic_ai_examples.stream_markdown
 """
 
-import asyncio  # noqa: TID251 - backend compatibility; see scripts/asyncio_exceptions.json
+import asyncio
 import os
 
 import logfire

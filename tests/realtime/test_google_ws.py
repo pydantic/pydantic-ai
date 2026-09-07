@@ -10,7 +10,7 @@ Recorded once against the live API with `--record-mode=rewrite`, then replayed o
 
 from __future__ import annotations as _annotations
 
-import asyncio  # noqa: TID251 - backend compatibility; see scripts/asyncio_exceptions.json
+import asyncio
 from pathlib import Path
 from typing import Any
 

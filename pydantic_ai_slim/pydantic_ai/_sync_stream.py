@@ -14,7 +14,7 @@ loop, preserving the event-loop affinity of async clients and other resources re
 
 from __future__ import annotations
 
-import asyncio  # noqa: TID251 - backend compatibility; see scripts/asyncio_exceptions.json
+import asyncio
 import inspect
 import weakref
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterator

@@ -18,7 +18,7 @@ profile flag, the client-transport gate, and the cache breakpoint that now lands
 
 from __future__ import annotations as _annotations
 
-import asyncio  # noqa: TID251 - backend compatibility; see scripts/asyncio_exceptions.json
+import asyncio
 import json
 import os
 from dataclasses import dataclass

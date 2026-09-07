@@ -3803,7 +3803,7 @@ async def test_request_with_state_with_custom_handler() -> None:
 
 async def test_concurrent_runs() -> None:
     """Test concurrent execution of multiple runs."""
-    import asyncio  # noqa: TID251 - backend compatibility; see scripts/asyncio_exceptions.json
+    import asyncio
 
     agent: Agent[StateDeps[StateInt], str] = Agent(
         model=TestModel(),

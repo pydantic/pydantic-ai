@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import asyncio  # noqa: TID251 - backend compatibility; see scripts/asyncio_exceptions.json
+import asyncio
 
 from pydantic_ai import Agent
 from pydantic_ai.direct import model_request as direct_model_request

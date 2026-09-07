@@ -10,7 +10,7 @@ Run with:
     uv run -m pydantic_ai_examples.sql_gen "show me logs from yesterday, with level 'error'"
 """
 
-import asyncio  # noqa: TID251 - backend compatibility; see scripts/asyncio_exceptions.json
+import asyncio
 import sys
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager

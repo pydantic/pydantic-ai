@@ -10,7 +10,7 @@ capability-function's native tools). Network-free: a fake model records what `co
 
 from __future__ import annotations as _annotations
 
-import asyncio  # noqa: TID251 - backend compatibility; see scripts/asyncio_exceptions.json
+import asyncio
 import contextvars
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Sequence
 from contextlib import asynccontextmanager

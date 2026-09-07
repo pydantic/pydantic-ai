@@ -7,7 +7,7 @@ because both are load-bearing and neither is exercised by simply importing the m
 
 from __future__ import annotations
 
-import asyncio  # noqa: TID251 - backend compatibility; see scripts/asyncio_exceptions.json
+import asyncio
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any

@@ -1,6 +1,6 @@
 from __future__ import annotations as _annotations
 
-import asyncio  # noqa: TID251 - backend compatibility; see scripts/asyncio_exceptions.json
+import asyncio
 import threading
 import time
 from datetime import datetime, timezone

@@ -14,7 +14,7 @@ the server-side job without requesting further segments.
 
 from __future__ import annotations
 
-import asyncio  # noqa: TID251 - backend compatibility; see scripts/asyncio_exceptions.json
+import asyncio
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
