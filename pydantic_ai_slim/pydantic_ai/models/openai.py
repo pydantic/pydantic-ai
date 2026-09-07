@@ -51,6 +51,7 @@ from ..messages import (
     FilePart,
     FinishReason,
     ImageUrl,
+    InstructionDeltaPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -116,6 +117,7 @@ from . import (
     ToolVisibility,
     _suggest_known_model_id_from_provider_error,  # pyright: ignore[reportPrivateUsage]
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
+    _unprojected_instruction_delta_error,  # pyright: ignore[reportPrivateUsage]
     _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
@@ -1758,6 +1760,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                         tool_call_id=_guard_tool_call_id(t=part),
                         content=part.model_response(),
                     )
+            elif isinstance(part, InstructionDeltaPart):
+                raise _unprojected_instruction_delta_error()
             elif isinstance(part, ToolAvailabilityDeltaPart):  # pragma: no cover
                 raise _unsynthesized_tool_availability_delta_error()
             elif isinstance(part, SpeechPart):
@@ -3292,6 +3296,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                         )
                     elif isinstance(part, UserPromptPart):
                         openai_messages.append(await self._map_user_prompt(part))
+                    elif isinstance(part, InstructionDeltaPart):
+                        raise _unprojected_instruction_delta_error()
                     elif isinstance(part, ToolAvailabilityDeltaPart):
                         if self.tool_addition_mode != 'with_definitions':
                             # `prepare_messages` projects the delta onto the local tool-search exchange

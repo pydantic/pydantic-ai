@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass
 from typing import Any
 
@@ -90,6 +91,14 @@ class DeferredCapabilityLoaderToolset(WrapperToolset[AgentDepsT]):
         )
 
         parts.extend(await self._collect_owned_toolset_instructions(capability_id, ctx))
+
+        if any(part.on_change == 'append' for part in parts):
+            warnings.warn(
+                "`on_change='append'` is not supported for deferred capability instructions. "
+                'These instructions are delivered when the capability loads and are not tracked for later changes.',
+                UserWarning,
+                stacklevel=2,
+            )
 
         instructions_text = InstructionPart.join(parts)
 

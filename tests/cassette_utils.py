@@ -254,27 +254,52 @@ def iter_cassette_prefix_violations(cassette_path: Path) -> Iterator[CassettePre
     # model or deployment carried in the path, or any other sibling endpoint on the same host would be
     # pooled with generation requests and compared as if consecutive -- a spurious divergence.
     requests_by_endpoint: dict[tuple[str, str, str], list[tuple[list[PrefixBlock], list[str]]]] = defaultdict(list)
+    response_inputs: dict[tuple[str, str], list[PrefixBlock]] = {}
 
     raw_interactions = cassette.get('interactions')
     if not _is_list(raw_interactions):
         return
     interactions = raw_interactions
     for interaction in interactions:
-        if not is_str_dict(interaction) or not is_str_dict(request := interaction.get('request')):
-            continue
-        method = request.get('method')
-        if not isinstance(method, str) or method.upper() != 'POST':
-            continue
-        body = request.get('parsed_body')
-        if not is_str_dict(body):
-            continue
-        uri = request.get('uri')
-        if not isinstance(uri, str):
-            continue
-        canonical = canonical_prefix_blocks(body, uri)
-        if canonical is None:
+        if not (
+            is_str_dict(interaction)
+            and is_str_dict(request := interaction.get('request'))
+            and isinstance(method := request.get('method'), str)
+            and method.upper() == 'POST'
+            and is_str_dict(body := request.get('parsed_body'))
+            and isinstance(uri := request.get('uri'), str)
+            and (canonical := canonical_prefix_blocks(body, uri)) is not None
+        ):
             continue
         shape, blocks = canonical
+        if shape == 'openai-responses':
+            # Continuations append to server-stored input. Compare the reconstructed input prefix,
+            # while still checking the tools/instructions resent on this request. Server-generated
+            # output is immutable under its response id, so only the input blocks need reconstruction.
+            previous_id = body.get('previous_response_id')
+            if isinstance(previous_id, str) and (uri, previous_id) in response_inputs:
+                blocks = (
+                    [block for block in blocks if block[0] != 'messages']
+                    + response_inputs[(uri, previous_id)]
+                    + [block for block in blocks if block[0] == 'messages']
+                )
+            response = interaction.get('response')
+            if is_str_dict(response):
+                response_body = response.get('parsed_body')
+                if not is_str_dict(response_body) and is_str_dict(raw_body := response.get('body')):
+                    stream = raw_body.get('string')
+                    if isinstance(stream, str):
+                        events = [json.loads(line[6:]) for line in stream.splitlines() if line.startswith('data: {')]
+                        response_body = next(
+                            (
+                                event.get('response')
+                                for event in events
+                                if is_str_dict(event) and event.get('type') == 'response.completed'
+                            ),
+                            None,
+                        )
+                if is_str_dict(response_body) and isinstance(response_id := response_body.get('id'), str):
+                    response_inputs[(uri, response_id)] = [block for block in blocks if block[0] == 'messages']
         deferred_tools = anthropic_deferred_tool_blocks(body) if shape == 'anthropic' else []
         parsed_uri = urlparse(uri)
         requests_by_endpoint[(parsed_uri.hostname or '', parsed_uri.path, shape)].append((blocks, deferred_tools))

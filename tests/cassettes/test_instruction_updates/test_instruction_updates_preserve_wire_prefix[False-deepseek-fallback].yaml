@@ -1,0 +1,531 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '586'
+      content-type:
+      - application/json
+      host:
+      - api.deepseek.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no
+          warehouse is assigned, reply UNASSIGNED.
+        role: system
+      - content: |-
+          Instruction block 'capability:memory:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.
+
+          Send parcels to warehouse A.
+        role: system
+      - content: Where should this parcel go?
+        role: user
+      model: deepseek-chat
+      stream: false
+    uri: https://api.deepseek.com/chat/completions
+  response:
+    headers:
+      access-control-allow-credentials:
+      - 'true'
+      connection:
+      - keep-alive
+      content-length:
+      - '491'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - origin, access-control-request-method, access-control-request-headers
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          content: A
+          role: assistant
+      created: 1788808108
+      id: 67874a74-b740-494a-a314-7332394841c9
+      model: deepseek-v4-flash
+      object: chat.completion
+      system_fingerprint: a26a7955944dc5c60445bff77fac9c8e
+      usage:
+        completion_tokens: 1
+        prompt_cache_hit_tokens: 0
+        prompt_cache_miss_tokens: 88
+        prompt_tokens: 88
+        prompt_tokens_details:
+          cached_tokens: 0
+        total_tokens: 89
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '850'
+      content-type:
+      - application/json
+      host:
+      - api.deepseek.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no
+          warehouse is assigned, reply UNASSIGNED.
+        role: system
+      - content: |-
+          Instruction block 'capability:memory:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.
+
+          Send parcels to warehouse A.
+        role: system
+      - content: Where should this parcel go?
+        role: user
+      - content: A
+        role: assistant
+      - content: Where should this parcel go?
+        role: user
+      - content: |-
+          <system>Instruction block 'capability:memory:state' is replaced from this point onward by:
+
+          Send parcels to warehouse B.</system>
+        role: user
+      model: deepseek-chat
+      stream: false
+    uri: https://api.deepseek.com/chat/completions
+  response:
+    headers:
+      access-control-allow-credentials:
+      - 'true'
+      connection:
+      - keep-alive
+      content-length:
+      - '494'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - origin, access-control-request-method, access-control-request-headers
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          content: B
+          role: assistant
+      created: 1788808109
+      id: b995f303-3eeb-4e13-a076-462cf1233e43
+      model: deepseek-v4-flash
+      object: chat.completion
+      system_fingerprint: a26a7955944dc5c60445bff77fac9c8e
+      usage:
+        completion_tokens: 1
+        prompt_cache_hit_tokens: 0
+        prompt_cache_miss_tokens: 128
+        prompt_tokens: 128
+        prompt_tokens_details:
+          cached_tokens: 0
+        total_tokens: 129
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '950'
+      content-type:
+      - application/json
+      host:
+      - api.deepseek.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no
+          warehouse is assigned, reply UNASSIGNED.
+        role: system
+      - content: |-
+          Instruction block 'capability:memory:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.
+
+          Send parcels to warehouse A.
+        role: system
+      - content: Where should this parcel go?
+        role: user
+      - content: A
+        role: assistant
+      - content: Where should this parcel go?
+        role: user
+      - content: |-
+          <system>Instruction block 'capability:memory:state' is replaced from this point onward by:
+
+          Send parcels to warehouse B.</system>
+        role: user
+      - content: B
+        role: assistant
+      - content: Where should this parcel go?
+        role: user
+      model: deepseek-chat
+      stream: false
+    uri: https://api.deepseek.com/chat/completions
+  response:
+    headers:
+      access-control-allow-credentials:
+      - 'true'
+      connection:
+      - keep-alive
+      content-length:
+      - '494'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - origin, access-control-request-method, access-control-request-headers
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          content: B
+          role: assistant
+      created: 1788808109
+      id: 9c655c37-22cc-4e73-8415-01ab045f7a3d
+      model: deepseek-v4-flash
+      object: chat.completion
+      system_fingerprint: a26a7955944dc5c60445bff77fac9c8e
+      usage:
+        completion_tokens: 1
+        prompt_cache_hit_tokens: 0
+        prompt_cache_miss_tokens: 139
+        prompt_tokens: 139
+        prompt_tokens_details:
+          cached_tokens: 0
+        total_tokens: 140
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1214'
+      content-type:
+      - application/json
+      host:
+      - api.deepseek.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no
+          warehouse is assigned, reply UNASSIGNED.
+        role: system
+      - content: |-
+          Instruction block 'capability:memory:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.
+
+          Send parcels to warehouse A.
+        role: system
+      - content: Where should this parcel go?
+        role: user
+      - content: A
+        role: assistant
+      - content: Where should this parcel go?
+        role: user
+      - content: |-
+          <system>Instruction block 'capability:memory:state' is replaced from this point onward by:
+
+          Send parcels to warehouse B.</system>
+        role: user
+      - content: B
+        role: assistant
+      - content: Where should this parcel go?
+        role: user
+      - content: B
+        role: assistant
+      - content: Where should this parcel go?
+        role: user
+      - content: |-
+          <system>Instruction block 'capability:memory:state' is replaced from this point onward by:
+
+          Send parcels to warehouse A.</system>
+        role: user
+      model: deepseek-chat
+      stream: false
+    uri: https://api.deepseek.com/chat/completions
+  response:
+    headers:
+      access-control-allow-credentials:
+      - 'true'
+      connection:
+      - keep-alive
+      content-length:
+      - '497'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - origin, access-control-request-method, access-control-request-headers
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          content: A
+          role: assistant
+      created: 1788808110
+      id: dbdd1023-4b33-4333-82fb-2d954e57ce57
+      model: deepseek-v4-flash
+      object: chat.completion
+      system_fingerprint: a26a7955944dc5c60445bff77fac9c8e
+      usage:
+        completion_tokens: 1
+        prompt_cache_hit_tokens: 128
+        prompt_cache_miss_tokens: 51
+        prompt_tokens: 179
+        prompt_tokens_details:
+          cached_tokens: 128
+        total_tokens: 180
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1464'
+      content-type:
+      - application/json
+      host:
+      - api.deepseek.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no
+          warehouse is assigned, reply UNASSIGNED.
+        role: system
+      - content: |-
+          Instruction block 'capability:memory:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.
+
+          Send parcels to warehouse A.
+        role: system
+      - content: Where should this parcel go?
+        role: user
+      - content: A
+        role: assistant
+      - content: Where should this parcel go?
+        role: user
+      - content: |-
+          <system>Instruction block 'capability:memory:state' is replaced from this point onward by:
+
+          Send parcels to warehouse B.</system>
+        role: user
+      - content: B
+        role: assistant
+      - content: Where should this parcel go?
+        role: user
+      - content: B
+        role: assistant
+      - content: Where should this parcel go?
+        role: user
+      - content: |-
+          <system>Instruction block 'capability:memory:state' is replaced from this point onward by:
+
+          Send parcels to warehouse A.</system>
+        role: user
+      - content: A
+        role: assistant
+      - content: Where should this parcel go?
+        role: user
+      - content: <system>Instruction block 'capability:memory:state' is withdrawn. Its previous instructions no longer apply.</system>
+        role: user
+      model: deepseek-chat
+      stream: false
+    uri: https://api.deepseek.com/chat/completions
+  response:
+    headers:
+      access-control-allow-credentials:
+      - 'true'
+      connection:
+      - keep-alive
+      content-length:
+      - '506'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - origin, access-control-request-method, access-control-request-headers
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          content: UNASSIGNED
+          role: assistant
+      created: 1788808111
+      id: 2895de91-98ce-4e4d-954d-78df1fd8fb05
+      model: deepseek-v4-flash
+      object: chat.completion
+      system_fingerprint: a26a7955944dc5c60445bff77fac9c8e
+      usage:
+        completion_tokens: 4
+        prompt_cache_hit_tokens: 128
+        prompt_cache_miss_tokens: 87
+        prompt_tokens: 215
+        prompt_tokens_details:
+          cached_tokens: 128
+        total_tokens: 219
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1737'
+      content-type:
+      - application/json
+      host:
+      - api.deepseek.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no
+          warehouse is assigned, reply UNASSIGNED.
+        role: system
+      - content: |-
+          Instruction block 'capability:memory:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.
+
+          Send parcels to warehouse A.
+        role: system
+      - content: Where should this parcel go?
+        role: user
+      - content: A
+        role: assistant
+      - content: Where should this parcel go?
+        role: user
+      - content: |-
+          <system>Instruction block 'capability:memory:state' is replaced from this point onward by:
+
+          Send parcels to warehouse B.</system>
+        role: user
+      - content: B
+        role: assistant
+      - content: Where should this parcel go?
+        role: user
+      - content: B
+        role: assistant
+      - content: Where should this parcel go?
+        role: user
+      - content: |-
+          <system>Instruction block 'capability:memory:state' is replaced from this point onward by:
+
+          Send parcels to warehouse A.</system>
+        role: user
+      - content: A
+        role: assistant
+      - content: Where should this parcel go?
+        role: user
+      - content: <system>Instruction block 'capability:memory:state' is withdrawn. Its previous instructions no longer apply.</system>
+        role: user
+      - content: UNASSIGNED
+        role: assistant
+      - content: Where should this parcel go?
+        role: user
+      - content: |-
+          <system>Instruction block 'capability:memory:state' is replaced from this point onward by:
+
+          Send parcels to warehouse C.</system>
+        role: user
+      model: deepseek-chat
+      stream: false
+    uri: https://api.deepseek.com/chat/completions
+  response:
+    headers:
+      access-control-allow-credentials:
+      - 'true'
+      connection:
+      - keep-alive
+      content-length:
+      - '498'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - origin, access-control-request-method, access-control-request-headers
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          content: C
+          role: assistant
+      created: 1788808111
+      id: cccb8476-919f-411d-bbeb-64f2fcff520f
+      model: deepseek-v4-flash
+      object: chat.completion
+      system_fingerprint: a26a7955944dc5c60445bff77fac9c8e
+      usage:
+        completion_tokens: 1
+        prompt_cache_hit_tokens: 128
+        prompt_cache_miss_tokens: 130
+        prompt_tokens: 258
+        prompt_tokens_details:
+          cached_tokens: 128
+        total_tokens: 259
+    status:
+      code: 200
+      message: OK
+version: 1

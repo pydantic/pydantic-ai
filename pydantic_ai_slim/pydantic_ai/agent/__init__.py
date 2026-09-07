@@ -2170,7 +2170,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
     @overload
     def instructions(
-        self, /, *, name: str | None = None
+        self, /, *, name: str | None = None, on_change: Literal['rewrite', 'append'] = 'rewrite'
     ) -> Callable[[SystemPromptFunc[AgentDepsT]], SystemPromptFunc[AgentDepsT]]: ...
 
     def instructions(
@@ -2179,6 +2179,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         /,
         *,
         name: str | None = None,
+        on_change: Literal['rewrite', 'append'] = 'rewrite',
     ) -> Callable[[SystemPromptFunc[AgentDepsT]], SystemPromptFunc[AgentDepsT]] | SystemPromptFunc[AgentDepsT]:
         """Decorator to register an instructions function.
 
@@ -2207,6 +2208,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         Args:
             func: The instructions function to register.
+            on_change: Whether to rewrite the instruction prefix (the default) or append full
+                replacements when this block changes. Appending requires an addressable instruction
+                identity; otherwise it warns and rewrites. The function still runs on every request.
             name: An optional name for the instruction part this function produces, keyed as
                 `'agent:<name>'` on [`InstructionPart.id`][pydantic_ai.messages.InstructionPart.id] so an
                 application can address this part specifically, where the bare `'agent'` key addresses
@@ -2222,7 +2226,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             func_: SystemPromptFunc[AgentDepsT],
         ) -> SystemPromptFunc[AgentDepsT]:
             self._instructions.append(
-                _instructions.SourcedInstruction(func_, name=name, id=instruction_id, dynamic=True)
+                _instructions.SourcedInstruction(func_, name=name, id=instruction_id, dynamic=True, on_change=on_change)
             )
             return func_
 
@@ -3633,6 +3637,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             # KEEP IN SYNC with the graph's `_get_instructions` / `ModelRequestNode`.
             instruction_parts = await _instructions.resolve_sourced_instructions(sourced_instructions, run_context)
             instruction_parts.extend(await collect_toolset_instructions(tool_manager.toolset, run_context))
+            if any(part.on_change == 'append' for part in instruction_parts):
+                warnings.warn(
+                    "`on_change='append'` is not supported by realtime sessions; instructions use session resolution.",
+                    UserWarning,
+                    stacklevel=2,
+                )
             resolved_instructions = _messages.InstructionPart.join(_messages.InstructionPart.sorted(instruction_parts))
             request_messages = [
                 *(message_history or ()),

@@ -316,6 +316,37 @@ def test_iter_cassette_prefix_violations_skips_malformed_cassettes(tmp_path: Pat
     assert list(iter_cassette_prefix_violations(skipped_requests)) == []
 
 
+@pytest.mark.parametrize('stream', [False, True])
+@pytest.mark.parametrize('rewrite_prefix', [False, True])
+def test_responses_continuation_reconstructs_stored_input(tmp_path: Path, stream: bool, rewrite_prefix: bool) -> None:
+    interactions: list[dict[str, object]] = []
+    for index, value in enumerate(['A', 'B', None, 'C']):
+        input_messages: list[dict[str, str]] = [{'role': 'user', 'content': 'Continue.'}]
+        if value is not None:
+            input_messages.append({'role': 'system', 'content': value})
+        body: dict[str, object] = {
+            'instructions': 'Changed' if rewrite_prefix and index == 1 else 'Stable',
+            'input': input_messages,
+        }
+        if index:
+            body['previous_response_id'] = f'resp_{index - 1}'
+        response: dict[str, object] = {'parsed_body': {'id': f'resp_{index}'}}
+        if stream:
+            response = {
+                'body': {'string': f'data: {{"type":"response.completed","response":{{"id":"resp_{index}"}}}}\n'}
+            }
+        interactions.append(
+            {
+                'request': {'method': 'POST', 'uri': 'https://api.openai.com/v1/responses', 'parsed_body': body},
+                'response': response,
+            }
+        )
+    cassette = tmp_path / 'continuation.yaml'
+    cassette.write_text(yaml.safe_dump({'interactions': interactions}))
+    violations = list(iter_cassette_prefix_violations(cassette))
+    assert [violation.level for violation in violations] == (['system', 'system'] if rewrite_prefix else [])
+
+
 def _anthropic_cassette(tmp_path: Path, name: str, bodies: list[dict[str, Any]]) -> Path:
     cassette_path = tmp_path / name
     cassette = {

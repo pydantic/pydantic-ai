@@ -1,0 +1,1050 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '647'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Where should this parcel go?
+        role: user
+      instructions: |-
+        You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
+
+        Instruction block 'capability:memory:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.
+
+        Send parcels to warehouse A.
+      model: gpt-5.6
+      reasoning:
+        context: all_turns
+        effort: none
+      store: true
+      stream: false
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '2014'
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - '2933'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1788808130
+      created_at: 1788808128
+      error: null
+      frequency_penalty: 0.0
+      id: resp_095d6157125d76bb006a9f0bc03d4487d2a63a514d9fa9a922
+      incomplete_details: null
+      instructions: |-
+        You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
+
+        Instruction block 'capability:memory:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.
+
+        Send parcels to warehouse A.
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5.6-sol
+      moderation: null
+      object: response
+      output:
+      - content:
+        - annotations: []
+          logprobs: []
+          text: A
+          type: output_text
+        id: msg_095d6157125d76bb006a9f0bc248dc87d28108fb880b9f51e8
+        phase: final_answer
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: 24h
+      reasoning:
+        context: all_turns
+        effort: none
+        mode: standard
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          input_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          total_tokens: 0
+        web_search:
+          num_requests: 0
+      tools: []
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage:
+        input_tokens: 93
+        input_tokens_details:
+          cache_write_tokens: 0
+          cached_tokens: 0
+        output_tokens: 5
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 98
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1081'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Where should this parcel go?
+        role: user
+      - content:
+        - annotations: []
+          text: A
+          type: output_text
+        id: msg_095d6157125d76bb006a9f0bc248dc87d28108fb880b9f51e8
+        phase: final_answer
+        role: assistant
+        status: completed
+        type: message
+      - content: Where should this parcel go?
+        role: user
+      - content: |-
+          Instruction block 'capability:memory:state' is replaced from this point onward by:
+
+          Send parcels to warehouse B.
+        role: system
+      instructions: |-
+        You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
+
+        Instruction block 'capability:memory:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.
+
+        Send parcels to warehouse A.
+      model: gpt-5.6
+      reasoning:
+        context: all_turns
+        effort: none
+      store: true
+      stream: false
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '2016'
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - '987'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1788808131
+      created_at: 1788808130
+      error: null
+      frequency_penalty: 0.0
+      id: resp_095d6157125d76bb006a9f0bc2d03487d2a910feb64e7bc689
+      incomplete_details: null
+      instructions: |-
+        You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
+
+        Instruction block 'capability:memory:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.
+
+        Send parcels to warehouse A.
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5.6-sol
+      moderation: null
+      object: response
+      output:
+      - content:
+        - annotations: []
+          logprobs: []
+          text: B
+          type: output_text
+        id: msg_095d6157125d76bb006a9f0bc39ba087d2b52c413530d3e9eb
+        phase: final_answer
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: 24h
+      reasoning:
+        context: all_turns
+        effort: none
+        mode: standard
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          input_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          total_tokens: 0
+        web_search:
+          num_requests: 0
+      tools: []
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage:
+        input_tokens: 138
+        input_tokens_details:
+          cache_write_tokens: 0
+          cached_tokens: 0
+        output_tokens: 5
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 143
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1366'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Where should this parcel go?
+        role: user
+      - content:
+        - annotations: []
+          text: A
+          type: output_text
+        id: msg_095d6157125d76bb006a9f0bc248dc87d28108fb880b9f51e8
+        phase: final_answer
+        role: assistant
+        status: completed
+        type: message
+      - content: Where should this parcel go?
+        role: user
+      - content: |-
+          Instruction block 'capability:memory:state' is replaced from this point onward by:
+
+          Send parcels to warehouse B.
+        role: system
+      - content:
+        - annotations: []
+          text: B
+          type: output_text
+        id: msg_095d6157125d76bb006a9f0bc39ba087d2b52c413530d3e9eb
+        phase: final_answer
+        role: assistant
+        status: completed
+        type: message
+      - content: Where should this parcel go?
+        role: user
+      instructions: |-
+        You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
+
+        Instruction block 'capability:memory:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.
+
+        Send parcels to warehouse A.
+      model: gpt-5.6
+      reasoning:
+        context: all_turns
+        effort: none
+      store: true
+      stream: false
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '2016'
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - '837'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1788808132
+      created_at: 1788808132
+      error: null
+      frequency_penalty: 0.0
+      id: resp_095d6157125d76bb006a9f0bc3fe0887d2a59211cf55735aee
+      incomplete_details: null
+      instructions: |-
+        You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
+
+        Instruction block 'capability:memory:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.
+
+        Send parcels to warehouse A.
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5.6-sol
+      moderation: null
+      object: response
+      output:
+      - content:
+        - annotations: []
+          logprobs: []
+          text: B
+          type: output_text
+        id: msg_095d6157125d76bb006a9f0bc4a02087d2b23f24a09e963a90
+        phase: final_answer
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: 24h
+      reasoning:
+        context: all_turns
+        effort: none
+        mode: standard
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          input_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          total_tokens: 0
+        web_search:
+          num_requests: 0
+      tools: []
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage:
+        input_tokens: 155
+        input_tokens_details:
+          cache_write_tokens: 0
+          cached_tokens: 0
+        output_tokens: 5
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 160
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1800'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Where should this parcel go?
+        role: user
+      - content:
+        - annotations: []
+          text: A
+          type: output_text
+        id: msg_095d6157125d76bb006a9f0bc248dc87d28108fb880b9f51e8
+        phase: final_answer
+        role: assistant
+        status: completed
+        type: message
+      - content: Where should this parcel go?
+        role: user
+      - content: |-
+          Instruction block 'capability:memory:state' is replaced from this point onward by:
+
+          Send parcels to warehouse B.
+        role: system
+      - content:
+        - annotations: []
+          text: B
+          type: output_text
+        id: msg_095d6157125d76bb006a9f0bc39ba087d2b52c413530d3e9eb
+        phase: final_answer
+        role: assistant
+        status: completed
+        type: message
+      - content: Where should this parcel go?
+        role: user
+      - content:
+        - annotations: []
+          text: B
+          type: output_text
+        id: msg_095d6157125d76bb006a9f0bc4a02087d2b23f24a09e963a90
+        phase: final_answer
+        role: assistant
+        status: completed
+        type: message
+      - content: Where should this parcel go?
+        role: user
+      - content: |-
+          Instruction block 'capability:memory:state' is replaced from this point onward by:
+
+          Send parcels to warehouse A.
+        role: system
+      instructions: |-
+        You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
+
+        Instruction block 'capability:memory:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.
+
+        Send parcels to warehouse A.
+      model: gpt-5.6
+      reasoning:
+        context: all_turns
+        effort: none
+      store: true
+      stream: false
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '2016'
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - '2284'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1788808133
+      created_at: 1788808133
+      error: null
+      frequency_penalty: 0.0
+      id: resp_095d6157125d76bb006a9f0bc5032c87d2b5a11487322f8aea
+      incomplete_details: null
+      instructions: |-
+        You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
+
+        Instruction block 'capability:memory:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.
+
+        Send parcels to warehouse A.
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5.6-sol
+      moderation: null
+      object: response
+      output:
+      - content:
+        - annotations: []
+          logprobs: []
+          text: A
+          type: output_text
+        id: msg_095d6157125d76bb006a9f0bc5e6fc87d29faab99486d91d6c
+        phase: final_answer
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: 24h
+      reasoning:
+        context: all_turns
+        effort: none
+        mode: standard
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          input_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          total_tokens: 0
+        web_search:
+          num_requests: 0
+      tools: []
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage:
+        input_tokens: 200
+        input_tokens_details:
+          cache_write_tokens: 0
+          cached_tokens: 0
+        output_tokens: 5
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 205
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '2220'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Where should this parcel go?
+        role: user
+      - content:
+        - annotations: []
+          text: A
+          type: output_text
+        id: msg_095d6157125d76bb006a9f0bc248dc87d28108fb880b9f51e8
+        phase: final_answer
+        role: assistant
+        status: completed
+        type: message
+      - content: Where should this parcel go?
+        role: user
+      - content: |-
+          Instruction block 'capability:memory:state' is replaced from this point onward by:
+
+          Send parcels to warehouse B.
+        role: system
+      - content:
+        - annotations: []
+          text: B
+          type: output_text
+        id: msg_095d6157125d76bb006a9f0bc39ba087d2b52c413530d3e9eb
+        phase: final_answer
+        role: assistant
+        status: completed
+        type: message
+      - content: Where should this parcel go?
+        role: user
+      - content:
+        - annotations: []
+          text: B
+          type: output_text
+        id: msg_095d6157125d76bb006a9f0bc4a02087d2b23f24a09e963a90
+        phase: final_answer
+        role: assistant
+        status: completed
+        type: message
+      - content: Where should this parcel go?
+        role: user
+      - content: |-
+          Instruction block 'capability:memory:state' is replaced from this point onward by:
+
+          Send parcels to warehouse A.
+        role: system
+      - content:
+        - annotations: []
+          text: A
+          type: output_text
+        id: msg_095d6157125d76bb006a9f0bc5e6fc87d29faab99486d91d6c
+        phase: final_answer
+        role: assistant
+        status: completed
+        type: message
+      - content: Where should this parcel go?
+        role: user
+      - content: Instruction block 'capability:memory:state' is withdrawn. Its previous instructions no longer apply.
+        role: system
+      instructions: |-
+        You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
+
+        Instruction block 'capability:memory:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.
+
+        Send parcels to warehouse A.
+      model: gpt-5.6
+      reasoning:
+        context: all_turns
+        effort: none
+      store: true
+      stream: false
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '2025'
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - '1096'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1788808136
+      created_at: 1788808135
+      error: null
+      frequency_penalty: 0.0
+      id: resp_095d6157125d76bb006a9f0bc77e6487d2bc94222e1c7f21b7
+      incomplete_details: null
+      instructions: |-
+        You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
+
+        Instruction block 'capability:memory:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.
+
+        Send parcels to warehouse A.
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5.6-sol
+      moderation: null
+      object: response
+      output:
+      - content:
+        - annotations: []
+          logprobs: []
+          text: UNASSIGNED
+          type: output_text
+        id: msg_095d6157125d76bb006a9f0bc8527087d2aeb4315553e81bf9
+        phase: final_answer
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: 24h
+      reasoning:
+        context: all_turns
+        effort: none
+        mode: standard
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          input_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          total_tokens: 0
+        web_search:
+          num_requests: 0
+      tools: []
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage:
+        input_tokens: 241
+        input_tokens_details:
+          cache_write_tokens: 0
+          cached_tokens: 0
+        output_tokens: 7
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 248
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '2663'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Where should this parcel go?
+        role: user
+      - content:
+        - annotations: []
+          text: A
+          type: output_text
+        id: msg_095d6157125d76bb006a9f0bc248dc87d28108fb880b9f51e8
+        phase: final_answer
+        role: assistant
+        status: completed
+        type: message
+      - content: Where should this parcel go?
+        role: user
+      - content: |-
+          Instruction block 'capability:memory:state' is replaced from this point onward by:
+
+          Send parcels to warehouse B.
+        role: system
+      - content:
+        - annotations: []
+          text: B
+          type: output_text
+        id: msg_095d6157125d76bb006a9f0bc39ba087d2b52c413530d3e9eb
+        phase: final_answer
+        role: assistant
+        status: completed
+        type: message
+      - content: Where should this parcel go?
+        role: user
+      - content:
+        - annotations: []
+          text: B
+          type: output_text
+        id: msg_095d6157125d76bb006a9f0bc4a02087d2b23f24a09e963a90
+        phase: final_answer
+        role: assistant
+        status: completed
+        type: message
+      - content: Where should this parcel go?
+        role: user
+      - content: |-
+          Instruction block 'capability:memory:state' is replaced from this point onward by:
+
+          Send parcels to warehouse A.
+        role: system
+      - content:
+        - annotations: []
+          text: A
+          type: output_text
+        id: msg_095d6157125d76bb006a9f0bc5e6fc87d29faab99486d91d6c
+        phase: final_answer
+        role: assistant
+        status: completed
+        type: message
+      - content: Where should this parcel go?
+        role: user
+      - content: Instruction block 'capability:memory:state' is withdrawn. Its previous instructions no longer apply.
+        role: system
+      - content:
+        - annotations: []
+          text: UNASSIGNED
+          type: output_text
+        id: msg_095d6157125d76bb006a9f0bc8527087d2aeb4315553e81bf9
+        phase: final_answer
+        role: assistant
+        status: completed
+        type: message
+      - content: Where should this parcel go?
+        role: user
+      - content: |-
+          Instruction block 'capability:memory:state' is replaced from this point onward by:
+
+          Send parcels to warehouse C.
+        role: system
+      instructions: |-
+        You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
+
+        Instruction block 'capability:memory:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.
+
+        Send parcels to warehouse A.
+      model: gpt-5.6
+      reasoning:
+        context: all_turns
+        effort: none
+      store: true
+      stream: false
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '2016'
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - '972'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1788808137
+      created_at: 1788808136
+      error: null
+      frequency_penalty: 0.0
+      id: resp_095d6157125d76bb006a9f0bc8c95087d28c77a798e05197c3
+      incomplete_details: null
+      instructions: |-
+        You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
+
+        Instruction block 'capability:memory:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.
+
+        Send parcels to warehouse A.
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5.6-sol
+      moderation: null
+      object: response
+      output:
+      - content:
+        - annotations: []
+          logprobs: []
+          text: C
+          type: output_text
+        id: msg_095d6157125d76bb006a9f0bc9625c87d284bb20ff166eae05
+        phase: final_answer
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: 24h
+      reasoning:
+        context: all_turns
+        effort: none
+        mode: standard
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          input_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          total_tokens: 0
+        web_search:
+          num_requests: 0
+      tools: []
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage:
+        input_tokens: 288
+        input_tokens_details:
+          cache_write_tokens: 0
+          cached_tokens: 0
+        output_tokens: 5
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 293
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

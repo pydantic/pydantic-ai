@@ -1,0 +1,321 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '780'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Process the todo.
+        role: user
+      instructions: |-
+        When the todo is pending, call finish_todo once. When it is done, reply DONE.
+
+        Instruction block 'capability:todos:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.
+
+        Todo status: pending.
+      model: gpt-5.6
+      reasoning:
+        context: all_turns
+        effort: none
+      store: true
+      stream: false
+      tool_choice: auto
+      tools:
+      - description: Finish the pending todo.
+        name: finish_todo
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
+        strict: false
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '2107'
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - '1209'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1788808454
+      created_at: 1788808453
+      error: null
+      frequency_penalty: 0.0
+      id: resp_033a86258a07c4da006a9f0d05594c87d288db9f551a69aa71
+      incomplete_details: null
+      instructions: |-
+        When the todo is pending, call finish_todo once. When it is done, reply DONE.
+
+        Instruction block 'capability:todos:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.
+
+        Todo status: pending.
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5.6-sol
+      moderation: null
+      object: response
+      output:
+      - arguments: '{}'
+        call_id: call_Bq2ei3Nzl0YsIW6gtMLE0wzQ
+        id: fc_033a86258a07c4da006a9f0d064eb487d2a1caed7910285dbf
+        name: finish_todo
+        status: completed
+        type: function_call
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: 24h
+      reasoning:
+        context: all_turns
+        effort: none
+        mode: standard
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          input_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          total_tokens: 0
+        web_search:
+          num_requests: 0
+      tools:
+      - description: Finish the pending todo.
+        name: finish_todo
+        output_schema: null
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
+        strict: false
+        type: function
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage:
+        input_tokens: 111
+        input_tokens_details:
+          cache_write_tokens: 0
+          cached_tokens: 0
+        output_tokens: 15
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 126
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1049'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - call_id: call_Bq2ei3Nzl0YsIW6gtMLE0wzQ
+        output: Saved.
+        type: function_call_output
+      - content: |-
+          Instruction block 'capability:todos:state' is replaced from this point onward by:
+
+          Todo status: done.
+        role: system
+      instructions: |-
+        When the todo is pending, call finish_todo once. When it is done, reply DONE.
+
+        Instruction block 'capability:todos:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.
+
+        Todo status: pending.
+      model: gpt-5.6
+      previous_response_id: resp_033a86258a07c4da006a9f0d05594c87d288db9f551a69aa71
+      reasoning:
+        context: all_turns
+        effort: none
+      store: true
+      stream: false
+      tool_choice: auto
+      tools:
+      - description: Finish the pending todo.
+        name: finish_todo
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
+        strict: false
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '2203'
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - '1142'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1788808455
+      created_at: 1788808454
+      error: null
+      frequency_penalty: 0.0
+      id: resp_033a86258a07c4da006a9f0d06c35887d28651327d9ccda231
+      incomplete_details: null
+      instructions: |-
+        When the todo is pending, call finish_todo once. When it is done, reply DONE.
+
+        Instruction block 'capability:todos:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.
+
+        Todo status: pending.
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5.6-sol
+      moderation: null
+      object: response
+      output:
+      - content:
+        - annotations: []
+          logprobs: []
+          text: DONE
+          type: output_text
+        id: msg_033a86258a07c4da006a9f0d079fd087d2b1d1d8af9693d399
+        phase: final_answer
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: resp_033a86258a07c4da006a9f0d05594c87d288db9f551a69aa71
+      prompt_cache_key: null
+      prompt_cache_retention: 24h
+      reasoning:
+        context: all_turns
+        effort: none
+        mode: standard
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          input_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          total_tokens: 0
+        web_search:
+          num_requests: 0
+      tools:
+      - description: Finish the pending todo.
+        name: finish_todo
+        output_schema: null
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
+        strict: false
+        type: function
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage:
+        input_tokens: 167
+        input_tokens_details:
+          cache_write_tokens: 0
+          cached_tokens: 0
+        output_tokens: 5
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 172
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

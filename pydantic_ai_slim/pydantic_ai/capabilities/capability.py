@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import KW_ONLY, dataclass, field
-from typing import Any, overload
+from typing import Any, Literal, overload
 
 from pydantic.json_schema import GenerateJsonSchema
 
@@ -328,7 +328,7 @@ class Capability(AbstractCapability[AgentDepsT]):
 
     @overload
     def instructions(
-        self, /, *, name: str | None = None
+        self, /, *, name: str | None = None, on_change: Literal['rewrite', 'append'] = 'rewrite'
     ) -> Callable[[SystemPromptFunc[AgentDepsT]], SystemPromptFunc[AgentDepsT]]: ...
 
     def instructions(
@@ -337,6 +337,7 @@ class Capability(AbstractCapability[AgentDepsT]):
         /,
         *,
         name: str | None = None,
+        on_change: Literal['rewrite', 'append'] = 'rewrite',
     ) -> Callable[[SystemPromptFunc[AgentDepsT]], SystemPromptFunc[AgentDepsT]] | SystemPromptFunc[AgentDepsT]:
         """Decorator to register an instructions function on this capability.
 
@@ -358,6 +359,9 @@ class Capability(AbstractCapability[AgentDepsT]):
 
         Args:
             func: The instructions function to register.
+            on_change: Whether to rewrite the instruction prefix (the default) or append full
+                replacements when this block changes. Appending requires an addressable instruction
+                identity; otherwise it warns and rewrites. The function still runs on every request.
             name: An optional name for the instruction part this function produces, keyed as
                 `'capability:<capability id>:<name>'` on
                 [`InstructionPart.id`][pydantic_ai.messages.InstructionPart.id] so an application can
@@ -380,6 +384,7 @@ class Capability(AbstractCapability[AgentDepsT]):
                     name=name,
                     id=InstructionId(source, name=name) if source is not None else None,
                     dynamic=True,
+                    on_change=on_change,
                 )
             )
             return func_

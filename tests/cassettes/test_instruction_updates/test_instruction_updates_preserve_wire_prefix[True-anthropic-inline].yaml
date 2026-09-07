@@ -1,0 +1,181 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '635'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Where should this parcel go?
+          type: text
+        role: user
+      model: claude-opus-5
+      stream: true
+      system:
+      - text: You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse
+          is assigned, reply UNASSIGNED.
+        type: text
+      - text: |-
+          Instruction block 'capability:memory:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.
+
+          Send parcels to warehouse A.
+        type: text
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    body:
+      string: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-opus-5","id":"msg_011Cepc7LnSwsxkShsHC5QRb","type":"message","role":"assistant","content":[],"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":139,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":2,"service_tier":"standard","inference_geo":"global"}}         }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}             }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"CAISwgIKjgEIERgCKkCeV4kW9HAkHbbUzfRHOCrRaTMSkedo2TeKNnyElmzbGdvGHy4rEYJWUaZjJdnqbYqMtfyVRXHRvDpI+yH/pwAsMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTGoAeCX/NQGEgwHsRyMFzjKwHR7dQsaDLgih1Mq74YHBbKr5CIwIbPGQ8ar+egQOhgFsbdNiFR+wpeQw7BhJ89S93oLSj8FMY2HTsn6UrlCBtuQF50FKmGNZfok5H5qusyZtLZ5d5cuBiE6qyDkCJ/Vh5XNqBCujgcn+7EqxAQCHe3ZyasDTtRUAXpH16P1vufyvi04SggaB3Zl0js3GWFMX39Bb08uy3gSnwjkmL9wIuoWpHLUtqPsGAE="}              }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0       }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"A"}              }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1             }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null},"usage":{"input_tokens":139,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":30,"output_tokens_details":{"thinking_tokens":27}}         }
+
+        event: message_stop
+        data: {"type":"message_stop"  }
+
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-length:
+      - '2145'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-d84a7b61fcf15f9c8b2fc1defe3dbeb2-3864883c13b2bfd3-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1463'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Where should this parcel go?
+          type: text
+        role: user
+      - content:
+        - signature: CAISwgIKjgEIERgCKkCeV4kW9HAkHbbUzfRHOCrRaTMSkedo2TeKNnyElmzbGdvGHy4rEYJWUaZjJdnqbYqMtfyVRXHRvDpI+yH/pwAsMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTGoAeCX/NQGEgwHsRyMFzjKwHR7dQsaDLgih1Mq74YHBbKr5CIwIbPGQ8ar+egQOhgFsbdNiFR+wpeQw7BhJ89S93oLSj8FMY2HTsn6UrlCBtuQF50FKmGNZfok5H5qusyZtLZ5d5cuBiE6qyDkCJ/Vh5XNqBCujgcn+7EqxAQCHe3ZyasDTtRUAXpH16P1vufyvi04SggaB3Zl0js3GWFMX39Bb08uy3gSnwjkmL9wIuoWpHLUtqPsGAE=
+          thinking: ''
+          type: thinking
+        - text: A
+          type: text
+        role: assistant
+      - content:
+        - text: Where should this parcel go?
+          type: text
+        role: user
+      - content:
+        - text: |-
+            Instruction block 'capability:memory:state' is replaced from this point onward by:
+
+            Send parcels to warehouse B.
+          type: text
+        role: system
+      model: claude-opus-5
+      stream: true
+      system:
+      - text: You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse
+          is assigned, reply UNASSIGNED.
+        type: text
+      - text: |-
+          Instruction block 'capability:memory:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.
+
+          Send parcels to warehouse A.
+        type: text
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    body:
+      string: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-opus-5","id":"msg_011Cepc7X8o9JoKYEQjSZho4","type":"message","role":"assistant","content":[],"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":263,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":0,"inference_geo":"not_available"}}             }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"refusal","stop_sequence":null,"stop_details":{"type":"refusal","category":"reasoning_extraction","explanation":"This request was blocked as it seems to violate Anthropic's Terms of Service restrictions on reverse engineering or duplicating model outputs. To learn more, visit https://www.anthropic.com/legal/commercial-terms. API integrators: you can reduce refusals for your users by configuring a fallback model — see https://platform.claude.com/docs/en/build-with-claude/refusals-and-fallback"}},"usage":{"input_tokens":263,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":0}   }
+
+        event: message_stop
+        data: {"type":"message_stop"          }
+
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-length:
+      - '1214'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-166288a3a814ab0ed1e790a3c1a74fac-3be5d6d43c7f73e2-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    status:
+      code: 200
+      message: OK
+version: 1
+...
