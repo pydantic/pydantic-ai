@@ -35,13 +35,13 @@ By default, Pydantic AI only raises [`ContentFilterError`][pydantic_ai.exception
 
 ## Per-provider behavior {#per-provider-behavior}
 
-Whether a refusal arrives as an error or as ordinary output therefore depends on whether the adapter keeps the provider's text. The adapters differ:
+Whether a refusal arrives as an error or as ordinary output therefore depends on whether the response ends up with any text: the OpenAI adapters drop the parts, while the Anthropic and Google adapters keep whatever text the provider sent, and an empty `content_filter` response raises for every provider. The adapters differ:
 
 | Provider | Refusal / safety wire event | Adapter behavior | Default outcome |
 |---|---|---|---|
 | OpenAI (Chat Completions, streaming and not) | `choice.message.refusal` / refusal delta | Response parts are emptied, `finish_reason='content_filter'` is set, the refusal string is kept in `provider_details['refusal']` | Response is empty, so [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError] is raised |
 | OpenAI Responses | refusal output item | Same as above | [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError] is raised |
-| Anthropic | `stop_reason='refusal'` | `finish_reason='content_filter'` is set and the stop explanation is kept in `provider_details['refusal']`, but the text block is preserved as a part | Refusal text is returned as ordinary output, no error |
-| Google | Safety-family `finishReason` values (`SAFETY`, `RECITATION`, `BLOCKLIST`, `PROHIBITED_CONTENT`, `SPII`, `IMAGE_SAFETY`, `IMAGE_PROHIBITED_CONTENT`, `MODEL_ARMOR`) | `finish_reason='content_filter'` is set, but any text parts are preserved | Refusal text is returned as ordinary output, no error |
+| Anthropic | `stop_reason='refusal'` | `finish_reason='content_filter'` is set and the stop explanation is kept in `provider_details['refusal']`, but any text block is preserved as a part | Responses with text parts are returned as ordinary output; empty responses raise [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError] |
+| Google | Safety-family `finishReason` values (`SAFETY`, `RECITATION`, `BLOCKLIST`, `PROHIBITED_CONTENT`, `SPII`, `IMAGE_SAFETY`, `IMAGE_PROHIBITED_CONTENT`, `MODEL_ARMOR`) | `finish_reason='content_filter'` is set, and any text parts are preserved | Responses with text parts are returned as ordinary output; empty responses raise [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError] |
 
 Adding [`RaiseContentFilterError`][pydantic_ai.capabilities.RaiseContentFilterError] makes all providers behave the same way: every response with `finish_reason='content_filter'` raises, including Anthropic and Google responses that would otherwise flow the refusal text through as output.
