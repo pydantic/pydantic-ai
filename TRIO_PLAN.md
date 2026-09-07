@@ -4,6 +4,8 @@ Status: proposed implementation plan, not an implemented compatibility guarantee
 
 Baseline: local commit `b61fa91eb`, reviewed on 2026-09-07. The user approved narrowly documented exceptions to the `asyncio` lint ban for compatibility adapters and backend-specific regression tests.
 
+CI direction: do not run the full Trio suite on every pull request or every push to `main`. Use targeted dual-backend validation during migration, then manual and periodic broad Trio runs. A small, measured Trio smoke check is recommended for ordinary CI.
+
 ## Target behavior
 
 ```python
@@ -83,9 +85,11 @@ Keep this a design gate: if an existing lifetime cannot host structured concurre
 
 **Gate:** normal completion, wrapper short-circuit/recovery, child failure, early exit, cross-task consumption, cancellation during startup/teardown and context restoration pass. No stream ownership regression or orphan tasks.
 
-### 3. Migrate cancellation and tool execution together
+### 3. Coordinate cancellation and tool execution
 
 Work through `_cancel.py`, `_tool_execution.py`, `_run_context.py`, `run.py`, the relevant agent/graph paths, `_utils.py` and `models/_continuation.py`.
+
+Use separate changes for cancellation delivery, tool scheduling and suspended-job cleanup, each with its own regression tests. Agree on their shared cancellation contract before landing any of them; do not turn this stage into one large rewrite.
 
 Replace portable sleeps, events and timeout contexts with AnyIO equivalents. Replace `wait(FIRST_COMPLETED)` and task-type inspection with task-group workers publishing typed outcomes to memory streams. Preserve result ordering separately from completion order. Audit capacity and checkpoint differences: a zero-buffer memory stream is not a behavior-preserving replacement for an unbounded queue.
 
@@ -134,9 +138,9 @@ Add a small policy check to reject new or broadened `TID251` suppressions and pe
 
 Wire enforcement into `make lint`, pre-commit and required CI. The current lint hook is Python-only, so also trigger it for `pyproject.toml`, the exception inventory and policy-check configuration changes.
 
-Once the core passes, parameterize shared async tests for asyncio and Trio using [AnyIO's pytest backend fixture](https://anyio.readthedocs.io/en/stable/testing.html). Separate backend-specific tests explicitly. Audit higher-scoped fixtures, pooled clients and sync finalizers so a resource is closed on the backend that created it.
+Keep the shared test suite on asyncio by default. Add an opt-in backend selector using [AnyIO's pytest backend fixture](https://anyio.readthedocs.io/en/stable/testing.html), so the same portable tests can run under Trio without duplicating the default test run. Separate backend-specific tests explicitly. Audit higher-scoped fixtures, pooled clients and sync finalizers so a resource is closed on the backend that created it.
 
-Add a required Trio CI job initially; expand it across the supported Python and minimum/current dependency combinations without unnecessarily duplicating asyncio-only integrations. Preserve the existing asyncio and durable jobs. Make the aggregate required CI check depend on the new job. Run recorded traffic with `--record-mode=none`, and verify that cassette playback itself works under Trio.
+Use the execution policy below instead of adding Trio to every existing CI matrix. Preserve the existing asyncio and durable jobs. Run recorded traffic with `--record-mode=none`, and verify that cassette playback itself works under Trio.
 
 ### 7. Document and release only the verified support
 
@@ -144,7 +148,54 @@ Update agent, streaming, cancellation, dependency and relevant integration docs 
 
 Update the packaged `building-pydantic-ai-agents` skill and repository concurrency guidance with ownership rules, supported backend mechanics and the import exception policy. Follow directory-specific docs instructions when writing those changes.
 
-Run the static API compatibility check, required pre-commit checks, both backend contract suites, supported integration suites, minimum-dependency tests and the existing coverage gates. Compare representative single-request, concurrent-tool and streaming workloads against the baseline for extra buffering, thread creation, scheduling overhead and cancellation latency.
+At the release gate, run the static API compatibility check, required pre-commit checks, both backend contract suites, supported integration suites, minimum-dependency tests and the existing coverage gates. Compare representative single-request, concurrent-tool and streaming workloads against the baseline for extra buffering, thread creation, scheduling overhead and cancellation latency.
+
+## Test execution policy
+
+Running both backends adds test work, but its effect on CI duration has not been measured. Measure smoke duration, runner minutes and critical-path impact before making it required. Static import checks remain mandatory on every change, but cannot detect all task-lifetime or third-party backend regressions.
+
+| When | Trio coverage | Blocking behavior |
+| --- | --- | --- |
+| Ordinary pull request or push to `main` | Recommended: three focused, network-free smoke cases on one Python/dependency combination, outside the full test matrix | Keep existing required CI; add only the small smoke check and static policy checks |
+| A migration change or a later concurrency-sensitive change | Affected public-API tests on both backends, including cancellation and teardown | Passing targeted tests are required evidence for that change; run locally or manually in CI |
+| Manual dispatch | Full portable Trio suite, with selectable targeted subsets for diagnosis | Available on the proposed branch before merging; no automatic full-suite run on every push |
+| Periodic maintenance | Full portable Trio suite against default-branch HEAD; proposed cadence: weekly | Reports failures for triage without extending unrelated pull-request CI |
+| Before publishing Trio support or a release changing concurrency/dependency compatibility | Full portable Trio suite and the relevant minimum/current dependency and supported Python combinations | Passing results for the exact release candidate are a release gate |
+
+The three smoke cases cover: an agent run with capability wrapping and a tool; a stream closed early with observable cleanup; and cancellation of a blocked run. Drive them through public APIs with `TestModel`/`FunctionModel`, use events for ordering and bounded deadlines for hang detection, and assert teardown. They do not exercise provider SDK matrices or external services. Add them to normal CI only as the corresponding behavior becomes supported; do not add permanently failing smoke tests.
+
+Do not globally parameterize `anyio_backend` over both backends in default CI. Do not add Trio as another axis to every Python/extras/dependency job. Keep minimum-version and broad integration testing in manual, periodic and release runs. Preserve existing asyncio-only tests rather than claiming the entire repository can run under Trio.
+
+The periodic workflow must retain its tested commit, dependency versions and test report. Assign failure triage to the existing maintainer workflow; record a regression with an owner and add a focused regression test when fixing it. Periodic runs knowingly allow a gap between introducing and discovering regressions. Keep the smoke check small instead of gradually growing it into a second full suite.
+
+These are workflow changes to implement as part of the checklist, not an automation created by this planning document.
+
+## Checklist of isolated changes
+
+Each item is a candidate independently reviewable change, with implementation, relevant tests and necessary docs together. Dependencies describe merge order, not permission to leave broken intermediate commits. Split repeatable integration work by SDK/transport. If the ownership prototype proves two pieces inseparable, combine only those pieces and record why. Do not build an unused abstraction merely to satisfy this order.
+
+- [ ] **C01 - Capture the compatibility baseline.** Refresh the import/public-symbol inventory and map existing cancellation, streaming, sync-affinity and durable tests to the contract. Add only missing asyncio regressions; record the end-to-end Trio reproduction and scope of supported integrations. No production migration. Validation: the added baseline tests pass and the Trio failure is reproduced.
+- [ ] **C02 - Add opt-in Trio test execution.** Add the compatible Trio development dependency and a test-only backend selector; keep asyncio as the default. Make selected fixtures close resources on their owning backend and provide reproducible local/manual commands. Depends on C01. Validation: fixture lifecycle works under both backends and default collection does not double.
+- [ ] **C03 - Enforce the static import policy.** Add the Ruff module ban, exact temporary/permanent exception inventory and suppression checks; include config-only changes in lint triggers. No concurrency refactor. Depends on C01. Validation: CLI policy tests reject all banned import forms and unauthorized suppressions while preserving existing typing bans.
+- [ ] **C04 - Isolate synchronous asyncio support.** Restrict existing loop-driving and sync-stream behavior to documented compatibility boundaries in slim and graph; keep public helper locations compatible. Avoid moving code unless needed to establish a real boundary. Depends on C01 and C03. Validation: both sync request/stream orders reuse a pooled client, and interrupt/context tests pass.
+- [ ] **C05 - Prove portable task ownership.** Prototype capability/model/event handoffs against the existing API and choose the AnyIO minimum using evidence. Deliver the ownership design and passing focused tests before a broad refactor; discard experimental code that is not the chosen implementation. Depends on C01 and C02. Validation: same-task teardown, supported cross-task iteration, context propagation and early exit are demonstrated; unresolved cases remain explicitly unclaimed.
+- [ ] **C06 - Migrate capability run wrapping.** Change the wrapper handoff in `agent/__init__.py`, using the ownership design from C05. Keep short-circuit, recovery and context behavior intact. Validation: targeted capability tests pass on both backends, and the original Trio entry-point failure is eliminated without hiding a later failure.
+- [ ] **C07 - Implement portable run cancellation.** Change `_cancel.py` and its agent/run entry and exit boundaries; retain narrowly isolated asyncio arbitration where required. Depends on C05 and C06. Validation: first-party/external races, blocked-run cancellation, history recovery and foreign-thread token cancellation pass with existing asyncio behavior intact.
+- [ ] **C08 - Migrate tool scheduling and event coordination.** Change `_tool_execution.py` and the necessary `_run_context.py` coordination together. Depends on C06 and C07. Validation: parallel and sequential calls, completion/order guarantees, immediate events, retries, completed sibling history and cancellation drain pass on both backends.
+- [ ] **C09 - Migrate model-stream ownership.** Change the streaming handoff in `_agent_graph.py` and its immediate caller only. Depends on C05-C08. Validation: public `run_stream` behavior, stream failure, partial messages, early exit, cancellation and context restoration pass on both backends.
+- [ ] **C10 - Migrate event-stream handles.** Change `agent/abstract.py` and `capabilities/process_event_stream.py` where their lifetimes require a coordinated change. Split them if each can stay green independently. Depends on C09. Validation: `run_stream_events`, observer errors, abandoned consumption and supported task handoffs leave no running work on either backend.
+- [ ] **C11 - Migrate suspended-job cleanup.** Change `models/_continuation.py` without changing cancellation or resumability policy. Depends on C07 and C09. Validation: blocked cleanup, external cancellation, provider cleanup failure and Temporal activity-wrapped cancellation preserve the original outcome and stored history.
+- [ ] **C12 - Remove remaining portable primitives.** Replace remaining sleeps/events/timeouts and narrow `_utils.py` usage only after their callers' ownership is settled. Split by independent module or behavior; preserve graph sleep overrides. Depends on C06-C11. Validation: targeted public tests and a shrinking lint baseline, with no unrelated cleanup.
+- [ ] **C13 - Qualify each provider and embeddings transport.** Repeat one change per SDK/transport: dual-backend recorded streaming/non-streaming tests, only necessary migration, and its support-matrix entry. Depends on the relevant core items through C12. Validation: real recordings replay under Trio; unsupported asyncio-native transports retain explicit boundaries.
+- [ ] **C14 - Qualify MCP and UI adapters separately.** Use separate changes for MCP subprocess/HTTP lifecycle and each UI adapter's stream/disconnect behavior. Depends on C08-C10. Validation: protocol-level lifecycle and cancellation tests pass on both applicable backends.
+- [ ] **C15 - Migrate realtime orchestration.** Isolate session queues/pump/tool ownership from transport replacement; qualify or migrate each WebSocket transport in a subsequent change. Depends on C05 and C07. Validation: bounded taps, audio interruption, pending tool barriers and disconnect cleanup; no Trio support claim until its transport passes too.
+- [ ] **C16 - Qualify graph and preserve durable engines.** Add missing graph fan-out/join coverage under Trio and address each confirmed gap separately. Keep durable-runtime adjustments separate per engine. Validation: graph tests pass on both backends and existing workflow/replay/serialization/cancellation tests pass on their native runtimes. Run affected durable tests throughout C06-C12, not only at this final qualification step.
+- [ ] **C17 - Migrate evals separately.** Use one change for offline evaluation and a separate ownership design/change for online background evaluation and shutdown. Depends on C05 and the relevant core changes. Validation: evaluation results, concurrency bounds, sink failures and shutdown preserve existing behavior on asyncio and pass on Trio where advertised.
+- [ ] **C18 - Add the small Trio smoke check.** Introduce the three public-API cases described above as they become green; record their measured cost before requiring the job. Depends on C06-C10. Validation: each case catches its demonstrated failure, has a bounded runtime and adds no full-suite/matrix duplication.
+- [ ] **C19 - Add manual and periodic broad Trio runs.** Configure manual subset/full-suite dispatch and the proposed weekly workflow, including artifacts and failure triage. Depends on C02; enable available subsets during migration and expand as integrations qualify. Validation: a manually triggered run selects the intended tests/backends, records exact revisions and dependencies, and a failed run is visible to maintainers.
+- [ ] **C20 - Finalize the support contract and exception list.** Remove migration exemptions/expected failures for advertised surfaces, publish the verified support matrix, and update docs and agent skills. Depends on the completed scope above. Validation: release-candidate broad Trio testing, existing asyncio/durable CI, API compatibility, coverage and minimum dependencies pass. Remaining native-runtime exceptions have a reason and protecting test.
+
+Start with C01-C03. Prove C05 before committing to the difficult orchestration design. C04 and the initial manual workflow setup can be reviewed independently. The full checklist is an inventory of changes, not a requirement to put every optional integration into the first core-support release.
 
 ## Dependency decision
 
@@ -166,7 +217,7 @@ If a newer minimum is necessary, make that an explicit dependency change, check 
 - No signature, serialized-data, context, error or lifecycle changes are required of existing users.
 - The original end-to-end Trio reproduction passes without a backend-specific user workaround.
 - Only documented compatibility boundaries and targeted tests/examples retain `asyncio`; static checks reject new usage elsewhere.
-- Required CI includes Trio, the existing asyncio/durable suites and minimum-version coverage, with no migration expected failures left in advertised surfaces.
+- Ordinary CI retains the existing asyncio/durable checks and static import enforcement, with only the recommended small Trio smoke check added. Broad Trio and minimum-version coverage run manually, periodically and at the release gates above, with no migration expected failures left in advertised surfaces.
 - Unsupported integrations and any deferred surfaces are named explicitly. Full integration parity remains separate from the first core-support milestone.
 
 Planning validation: the proposed module-wide ban was exercised with locked Ruff 0.15.19 in a temporary configuration. All five forbidden forms (direct import, alias, `from` import, submodule import and `from` submodule import) produced `TID251`. An AnyIO import and an explicit import-line exception passed. These seven probes confirm the basic rule behavior; the exception-inventory checker remains planned work.
