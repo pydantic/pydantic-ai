@@ -639,21 +639,24 @@ async def test_bedrock_count_tokens_non_http_error(allow_model_requests: None):
 
 
 @pytest.mark.parametrize(
-    'error',
+    ('error', 'expected_message'),
     [
-        ReadTimeoutError(endpoint_url='https://bedrock.stub'),
-        EndpointConnectionError(endpoint_url='https://bedrock.stub'),
+        (ReadTimeoutError(endpoint_url='https://bedrock.stub'), 'Read timeout on endpoint URL: "https://bedrock.stub"'),
+        (
+            EndpointConnectionError(endpoint_url='https://bedrock.stub'),
+            'Could not connect to the endpoint URL: "https://bedrock.stub"',
+        ),
     ],
     ids=['read_timeout', 'endpoint_connection'],
 )
-async def test_bedrock_request_transport_error(allow_model_requests: None, error: BotoCoreError):
+async def test_bedrock_request_transport_error(allow_model_requests: None, error: BotoCoreError, expected_message: str):
     model = _bedrock_model_with_error(error)
     params = ModelRequestParameters()
 
     with pytest.raises(ModelAPIError) as exc_info:
         await model.request([ModelRequest.user_text_prompt('hi')], None, params)
 
-    assert exc_info.value.message == str(error)
+    assert exc_info.value.message == expected_message
     assert exc_info.value.__cause__ is error
 
 
@@ -668,7 +671,7 @@ async def test_bedrock_count_tokens_transport_error(allow_model_requests: None):
     assert exc_info.value.message == snapshot('Read timeout on endpoint URL: "https://bedrock.stub"')
 
 
-async def test_bedrock_request_config_error_not_wrapped(allow_model_requests: None):
+async def test_bedrock_request_param_validation_error_not_wrapped(allow_model_requests: None):
     """Only transport failures become `ModelAPIError`; client-side botocore errors still surface as themselves."""
     error = ParamValidationError(report='bad params')
     model = _bedrock_model_with_error(error)
