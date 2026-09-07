@@ -1,0 +1,739 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '646'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Where should this parcel go?
+        role: user
+      instructions: |-
+        You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
+
+        Instruction block 'capability:memory:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.
+
+        Send parcels to warehouse A.
+      model: gpt-5.6
+      reasoning:
+        context: all_turns
+        effort: none
+      store: true
+      stream: true
+    uri: https://api.openai.com/v1/responses
+  response:
+    body:
+      string: |+
+        event: response.created
+        data: {"type":"response.created","response":{"id":"resp_060c09d2ae3cb3fc006a9f0be13e7c87d28d817a9525fa503a","object":"response","created_at":1788808161,"status":"in_progress","background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":"You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.\n\nInstruction block 'capability:memory:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.\n\nSend parcels to warehouse A.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.6-sol","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"none","mode":"standard","summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":0}
+
+        event: response.in_progress
+        data: {"type":"response.in_progress","response":{"id":"resp_060c09d2ae3cb3fc006a9f0be13e7c87d28d817a9525fa503a","object":"response","created_at":1788808161,"status":"in_progress","background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":"You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.\n\nInstruction block 'capability:memory:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.\n\nSend parcels to warehouse A.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.6-sol","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"none","mode":"standard","summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":1}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","item":{"id":"msg_060c09d2ae3cb3fc006a9f0be203a887d2958bd5c2cebd89c5","type":"message","status":"in_progress","content":[],"phase":"final_answer","role":"assistant"},"output_index":0,"sequence_number":2}
+
+        event: response.content_part.added
+        data: {"type":"response.content_part.added","content_index":0,"item_id":"msg_060c09d2ae3cb3fc006a9f0be203a887d2958bd5c2cebd89c5","output_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":""},"sequence_number":3}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"A","item_id":"msg_060c09d2ae3cb3fc006a9f0be203a887d2958bd5c2cebd89c5","logprobs":[],"obfuscation":"PDYc3aUN2qKS5Qy","output_index":0,"sequence_number":4}
+
+        event: response.output_text.done
+        data: {"type":"response.output_text.done","content_index":0,"item_id":"msg_060c09d2ae3cb3fc006a9f0be203a887d2958bd5c2cebd89c5","logprobs":[],"output_index":0,"sequence_number":5,"text":"A"}
+
+        event: response.content_part.done
+        data: {"type":"response.content_part.done","content_index":0,"item_id":"msg_060c09d2ae3cb3fc006a9f0be203a887d2958bd5c2cebd89c5","output_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":"A"},"sequence_number":6}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","item":{"id":"msg_060c09d2ae3cb3fc006a9f0be203a887d2958bd5c2cebd89c5","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"A"}],"phase":"final_answer","role":"assistant"},"output_index":0,"sequence_number":7}
+
+        event: response.completed
+        data: {"type":"response.completed","response":{"id":"resp_060c09d2ae3cb3fc006a9f0be13e7c87d28d817a9525fa503a","object":"response","created_at":1788808161,"status":"completed","background":false,"completed_at":1788808162,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":"You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.\n\nInstruction block 'capability:memory:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.\n\nSend parcels to warehouse A.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.6-sol","moderation":null,"output":[{"id":"msg_060c09d2ae3cb3fc006a9f0be203a887d2958bd5c2cebd89c5","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"A"}],"phase":"final_answer","role":"assistant"}],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"none","mode":"standard","summary":null},"safety_identifier":null,"service_tier":"default","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":{"input_tokens":93,"input_tokens_details":{"cache_write_tokens":0,"cached_tokens":0},"output_tokens":5,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":98},"user":null,"metadata":{}},"sequence_number":8}
+
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+      openai-processing-ms:
+      - '195'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1080'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Where should this parcel go?
+        role: user
+      - content:
+        - annotations: []
+          text: A
+          type: output_text
+        id: msg_060c09d2ae3cb3fc006a9f0be203a887d2958bd5c2cebd89c5
+        phase: final_answer
+        role: assistant
+        status: completed
+        type: message
+      - content: Where should this parcel go?
+        role: user
+      - content: |-
+          Instruction block 'capability:memory:state' is replaced from this point onward by:
+
+          Send parcels to warehouse B.
+        role: system
+      instructions: |-
+        You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
+
+        Instruction block 'capability:memory:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.
+
+        Send parcels to warehouse A.
+      model: gpt-5.6
+      reasoning:
+        context: all_turns
+        effort: none
+      store: true
+      stream: true
+    uri: https://api.openai.com/v1/responses
+  response:
+    body:
+      string: |+
+        event: response.created
+        data: {"type":"response.created","response":{"id":"resp_060c09d2ae3cb3fc006a9f0be27fc887d28b8ee27a6a757d1e","object":"response","created_at":1788808162,"status":"in_progress","background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":"You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.\n\nInstruction block 'capability:memory:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.\n\nSend parcels to warehouse A.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.6-sol","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"none","mode":"standard","summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":0}
+
+        event: response.in_progress
+        data: {"type":"response.in_progress","response":{"id":"resp_060c09d2ae3cb3fc006a9f0be27fc887d28b8ee27a6a757d1e","object":"response","created_at":1788808162,"status":"in_progress","background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":"You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.\n\nInstruction block 'capability:memory:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.\n\nSend parcels to warehouse A.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.6-sol","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"none","mode":"standard","summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":1}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","item":{"id":"msg_060c09d2ae3cb3fc006a9f0be336a487d291c4e97c8e2b851b","type":"message","status":"in_progress","content":[],"phase":"final_answer","role":"assistant"},"output_index":0,"sequence_number":2}
+
+        event: response.content_part.added
+        data: {"type":"response.content_part.added","content_index":0,"item_id":"msg_060c09d2ae3cb3fc006a9f0be336a487d291c4e97c8e2b851b","output_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":""},"sequence_number":3}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"B","item_id":"msg_060c09d2ae3cb3fc006a9f0be336a487d291c4e97c8e2b851b","logprobs":[],"obfuscation":"uNxhHvmDYKO8wAy","output_index":0,"sequence_number":4}
+
+        event: response.output_text.done
+        data: {"type":"response.output_text.done","content_index":0,"item_id":"msg_060c09d2ae3cb3fc006a9f0be336a487d291c4e97c8e2b851b","logprobs":[],"output_index":0,"sequence_number":5,"text":"B"}
+
+        event: response.content_part.done
+        data: {"type":"response.content_part.done","content_index":0,"item_id":"msg_060c09d2ae3cb3fc006a9f0be336a487d291c4e97c8e2b851b","output_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":"B"},"sequence_number":6}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","item":{"id":"msg_060c09d2ae3cb3fc006a9f0be336a487d291c4e97c8e2b851b","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"B"}],"phase":"final_answer","role":"assistant"},"output_index":0,"sequence_number":7}
+
+        event: response.completed
+        data: {"type":"response.completed","response":{"id":"resp_060c09d2ae3cb3fc006a9f0be27fc887d28b8ee27a6a757d1e","object":"response","created_at":1788808162,"status":"completed","background":false,"completed_at":1788808163,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":"You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.\n\nInstruction block 'capability:memory:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.\n\nSend parcels to warehouse A.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.6-sol","moderation":null,"output":[{"id":"msg_060c09d2ae3cb3fc006a9f0be336a487d291c4e97c8e2b851b","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"B"}],"phase":"final_answer","role":"assistant"}],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"none","mode":"standard","summary":null},"safety_identifier":null,"service_tier":"default","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":{"input_tokens":138,"input_tokens_details":{"cache_write_tokens":0,"cached_tokens":0},"output_tokens":5,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":143},"user":null,"metadata":{}},"sequence_number":8}
+
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+      openai-processing-ms:
+      - '388'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1365'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Where should this parcel go?
+        role: user
+      - content:
+        - annotations: []
+          text: A
+          type: output_text
+        id: msg_060c09d2ae3cb3fc006a9f0be203a887d2958bd5c2cebd89c5
+        phase: final_answer
+        role: assistant
+        status: completed
+        type: message
+      - content: Where should this parcel go?
+        role: user
+      - content: |-
+          Instruction block 'capability:memory:state' is replaced from this point onward by:
+
+          Send parcels to warehouse B.
+        role: system
+      - content:
+        - annotations: []
+          text: B
+          type: output_text
+        id: msg_060c09d2ae3cb3fc006a9f0be336a487d291c4e97c8e2b851b
+        phase: final_answer
+        role: assistant
+        status: completed
+        type: message
+      - content: Where should this parcel go?
+        role: user
+      instructions: |-
+        You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
+
+        Instruction block 'capability:memory:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.
+
+        Send parcels to warehouse A.
+      model: gpt-5.6
+      reasoning:
+        context: all_turns
+        effort: none
+      store: true
+      stream: true
+    uri: https://api.openai.com/v1/responses
+  response:
+    body:
+      string: |+
+        event: response.created
+        data: {"type":"response.created","response":{"id":"resp_060c09d2ae3cb3fc006a9f0be3b53887d2b25dd782fdcd8f6f","object":"response","created_at":1788808163,"status":"in_progress","background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":"You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.\n\nInstruction block 'capability:memory:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.\n\nSend parcels to warehouse A.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.6-sol","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"none","mode":"standard","summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":0}
+
+        event: response.in_progress
+        data: {"type":"response.in_progress","response":{"id":"resp_060c09d2ae3cb3fc006a9f0be3b53887d2b25dd782fdcd8f6f","object":"response","created_at":1788808163,"status":"in_progress","background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":"You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.\n\nInstruction block 'capability:memory:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.\n\nSend parcels to warehouse A.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.6-sol","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"none","mode":"standard","summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":1}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","item":{"id":"msg_060c09d2ae3cb3fc006a9f0be48acc87d296daec35bda16f89","type":"message","status":"in_progress","content":[],"phase":"final_answer","role":"assistant"},"output_index":0,"sequence_number":2}
+
+        event: response.content_part.added
+        data: {"type":"response.content_part.added","content_index":0,"item_id":"msg_060c09d2ae3cb3fc006a9f0be48acc87d296daec35bda16f89","output_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":""},"sequence_number":3}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"B","item_id":"msg_060c09d2ae3cb3fc006a9f0be48acc87d296daec35bda16f89","logprobs":[],"obfuscation":"uL01Gl5cKsQuCxU","output_index":0,"sequence_number":4}
+
+        event: response.output_text.done
+        data: {"type":"response.output_text.done","content_index":0,"item_id":"msg_060c09d2ae3cb3fc006a9f0be48acc87d296daec35bda16f89","logprobs":[],"output_index":0,"sequence_number":5,"text":"B"}
+
+        event: response.content_part.done
+        data: {"type":"response.content_part.done","content_index":0,"item_id":"msg_060c09d2ae3cb3fc006a9f0be48acc87d296daec35bda16f89","output_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":"B"},"sequence_number":6}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","item":{"id":"msg_060c09d2ae3cb3fc006a9f0be48acc87d296daec35bda16f89","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"B"}],"phase":"final_answer","role":"assistant"},"output_index":0,"sequence_number":7}
+
+        event: response.completed
+        data: {"type":"response.completed","response":{"id":"resp_060c09d2ae3cb3fc006a9f0be3b53887d2b25dd782fdcd8f6f","object":"response","created_at":1788808163,"status":"completed","background":false,"completed_at":1788808164,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":"You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.\n\nInstruction block 'capability:memory:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.\n\nSend parcels to warehouse A.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.6-sol","moderation":null,"output":[{"id":"msg_060c09d2ae3cb3fc006a9f0be48acc87d296daec35bda16f89","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"B"}],"phase":"final_answer","role":"assistant"}],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"none","mode":"standard","summary":null},"safety_identifier":null,"service_tier":"default","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":{"input_tokens":155,"input_tokens_details":{"cache_write_tokens":0,"cached_tokens":0},"output_tokens":5,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":160},"user":null,"metadata":{}},"sequence_number":8}
+
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+      openai-processing-ms:
+      - '249'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1799'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Where should this parcel go?
+        role: user
+      - content:
+        - annotations: []
+          text: A
+          type: output_text
+        id: msg_060c09d2ae3cb3fc006a9f0be203a887d2958bd5c2cebd89c5
+        phase: final_answer
+        role: assistant
+        status: completed
+        type: message
+      - content: Where should this parcel go?
+        role: user
+      - content: |-
+          Instruction block 'capability:memory:state' is replaced from this point onward by:
+
+          Send parcels to warehouse B.
+        role: system
+      - content:
+        - annotations: []
+          text: B
+          type: output_text
+        id: msg_060c09d2ae3cb3fc006a9f0be336a487d291c4e97c8e2b851b
+        phase: final_answer
+        role: assistant
+        status: completed
+        type: message
+      - content: Where should this parcel go?
+        role: user
+      - content:
+        - annotations: []
+          text: B
+          type: output_text
+        id: msg_060c09d2ae3cb3fc006a9f0be48acc87d296daec35bda16f89
+        phase: final_answer
+        role: assistant
+        status: completed
+        type: message
+      - content: Where should this parcel go?
+        role: user
+      - content: |-
+          Instruction block 'capability:memory:state' is replaced from this point onward by:
+
+          Send parcels to warehouse A.
+        role: system
+      instructions: |-
+        You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
+
+        Instruction block 'capability:memory:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.
+
+        Send parcels to warehouse A.
+      model: gpt-5.6
+      reasoning:
+        context: all_turns
+        effort: none
+      store: true
+      stream: true
+    uri: https://api.openai.com/v1/responses
+  response:
+    body:
+      string: |+
+        event: response.created
+        data: {"type":"response.created","response":{"id":"resp_060c09d2ae3cb3fc006a9f0be53d3887d2b0bb40c075a75e24","object":"response","created_at":1788808165,"status":"in_progress","background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":"You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.\n\nInstruction block 'capability:memory:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.\n\nSend parcels to warehouse A.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.6-sol","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"none","mode":"standard","summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":0}
+
+        event: response.in_progress
+        data: {"type":"response.in_progress","response":{"id":"resp_060c09d2ae3cb3fc006a9f0be53d3887d2b0bb40c075a75e24","object":"response","created_at":1788808165,"status":"in_progress","background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":"You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.\n\nInstruction block 'capability:memory:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.\n\nSend parcels to warehouse A.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.6-sol","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"none","mode":"standard","summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":1}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","item":{"id":"msg_060c09d2ae3cb3fc006a9f0be63be487d2931bc34612b27644","type":"message","status":"in_progress","content":[],"phase":"final_answer","role":"assistant"},"output_index":0,"sequence_number":2}
+
+        event: response.content_part.added
+        data: {"type":"response.content_part.added","content_index":0,"item_id":"msg_060c09d2ae3cb3fc006a9f0be63be487d2931bc34612b27644","output_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":""},"sequence_number":3}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"A","item_id":"msg_060c09d2ae3cb3fc006a9f0be63be487d2931bc34612b27644","logprobs":[],"obfuscation":"bo2iivxrNxkKXCy","output_index":0,"sequence_number":4}
+
+        event: response.output_text.done
+        data: {"type":"response.output_text.done","content_index":0,"item_id":"msg_060c09d2ae3cb3fc006a9f0be63be487d2931bc34612b27644","logprobs":[],"output_index":0,"sequence_number":5,"text":"A"}
+
+        event: response.content_part.done
+        data: {"type":"response.content_part.done","content_index":0,"item_id":"msg_060c09d2ae3cb3fc006a9f0be63be487d2931bc34612b27644","output_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":"A"},"sequence_number":6}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","item":{"id":"msg_060c09d2ae3cb3fc006a9f0be63be487d2931bc34612b27644","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"A"}],"phase":"final_answer","role":"assistant"},"output_index":0,"sequence_number":7}
+
+        event: response.completed
+        data: {"type":"response.completed","response":{"id":"resp_060c09d2ae3cb3fc006a9f0be53d3887d2b0bb40c075a75e24","object":"response","created_at":1788808165,"status":"completed","background":false,"completed_at":1788808166,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":"You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.\n\nInstruction block 'capability:memory:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.\n\nSend parcels to warehouse A.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.6-sol","moderation":null,"output":[{"id":"msg_060c09d2ae3cb3fc006a9f0be63be487d2931bc34612b27644","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"A"}],"phase":"final_answer","role":"assistant"}],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"none","mode":"standard","summary":null},"safety_identifier":null,"service_tier":"default","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":{"input_tokens":200,"input_tokens_details":{"cache_write_tokens":0,"cached_tokens":0},"output_tokens":5,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":205},"user":null,"metadata":{}},"sequence_number":8}
+
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+      openai-processing-ms:
+      - '787'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '2219'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Where should this parcel go?
+        role: user
+      - content:
+        - annotations: []
+          text: A
+          type: output_text
+        id: msg_060c09d2ae3cb3fc006a9f0be203a887d2958bd5c2cebd89c5
+        phase: final_answer
+        role: assistant
+        status: completed
+        type: message
+      - content: Where should this parcel go?
+        role: user
+      - content: |-
+          Instruction block 'capability:memory:state' is replaced from this point onward by:
+
+          Send parcels to warehouse B.
+        role: system
+      - content:
+        - annotations: []
+          text: B
+          type: output_text
+        id: msg_060c09d2ae3cb3fc006a9f0be336a487d291c4e97c8e2b851b
+        phase: final_answer
+        role: assistant
+        status: completed
+        type: message
+      - content: Where should this parcel go?
+        role: user
+      - content:
+        - annotations: []
+          text: B
+          type: output_text
+        id: msg_060c09d2ae3cb3fc006a9f0be48acc87d296daec35bda16f89
+        phase: final_answer
+        role: assistant
+        status: completed
+        type: message
+      - content: Where should this parcel go?
+        role: user
+      - content: |-
+          Instruction block 'capability:memory:state' is replaced from this point onward by:
+
+          Send parcels to warehouse A.
+        role: system
+      - content:
+        - annotations: []
+          text: A
+          type: output_text
+        id: msg_060c09d2ae3cb3fc006a9f0be63be487d2931bc34612b27644
+        phase: final_answer
+        role: assistant
+        status: completed
+        type: message
+      - content: Where should this parcel go?
+        role: user
+      - content: Instruction block 'capability:memory:state' is withdrawn. Its previous instructions no longer apply.
+        role: system
+      instructions: |-
+        You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
+
+        Instruction block 'capability:memory:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.
+
+        Send parcels to warehouse A.
+      model: gpt-5.6
+      reasoning:
+        context: all_turns
+        effort: none
+      store: true
+      stream: true
+    uri: https://api.openai.com/v1/responses
+  response:
+    body:
+      string: |+
+        event: response.created
+        data: {"type":"response.created","response":{"id":"resp_060c09d2ae3cb3fc006a9f0be730a087d2bc80f5d611ef581e","object":"response","created_at":1788808167,"status":"in_progress","background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":"You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.\n\nInstruction block 'capability:memory:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.\n\nSend parcels to warehouse A.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.6-sol","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"none","mode":"standard","summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":0}
+
+        event: response.in_progress
+        data: {"type":"response.in_progress","response":{"id":"resp_060c09d2ae3cb3fc006a9f0be730a087d2bc80f5d611ef581e","object":"response","created_at":1788808167,"status":"in_progress","background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":"You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.\n\nInstruction block 'capability:memory:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.\n\nSend parcels to warehouse A.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.6-sol","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"none","mode":"standard","summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":1}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","item":{"id":"msg_060c09d2ae3cb3fc006a9f0be7f99c87d29d9e7cb69d21c2b9","type":"message","status":"in_progress","content":[],"phase":"final_answer","role":"assistant"},"output_index":0,"sequence_number":2}
+
+        event: response.content_part.added
+        data: {"type":"response.content_part.added","content_index":0,"item_id":"msg_060c09d2ae3cb3fc006a9f0be7f99c87d29d9e7cb69d21c2b9","output_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":""},"sequence_number":3}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"UN","item_id":"msg_060c09d2ae3cb3fc006a9f0be7f99c87d29d9e7cb69d21c2b9","logprobs":[],"obfuscation":"WAe9O2brlPapCx","output_index":0,"sequence_number":4}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"ASS","item_id":"msg_060c09d2ae3cb3fc006a9f0be7f99c87d29d9e7cb69d21c2b9","logprobs":[],"obfuscation":"Ldyp6oAdhPdGD","output_index":0,"sequence_number":5}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"IGNED","item_id":"msg_060c09d2ae3cb3fc006a9f0be7f99c87d29d9e7cb69d21c2b9","logprobs":[],"obfuscation":"kTRAw8cptQi","output_index":0,"sequence_number":6}
+
+        event: response.output_text.done
+        data: {"type":"response.output_text.done","content_index":0,"item_id":"msg_060c09d2ae3cb3fc006a9f0be7f99c87d29d9e7cb69d21c2b9","logprobs":[],"output_index":0,"sequence_number":7,"text":"UNASSIGNED"}
+
+        event: response.content_part.done
+        data: {"type":"response.content_part.done","content_index":0,"item_id":"msg_060c09d2ae3cb3fc006a9f0be7f99c87d29d9e7cb69d21c2b9","output_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":"UNASSIGNED"},"sequence_number":8}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","item":{"id":"msg_060c09d2ae3cb3fc006a9f0be7f99c87d29d9e7cb69d21c2b9","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"UNASSIGNED"}],"phase":"final_answer","role":"assistant"},"output_index":0,"sequence_number":9}
+
+        event: response.completed
+        data: {"type":"response.completed","response":{"id":"resp_060c09d2ae3cb3fc006a9f0be730a087d2bc80f5d611ef581e","object":"response","created_at":1788808167,"status":"completed","background":false,"completed_at":1788808168,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":"You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.\n\nInstruction block 'capability:memory:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.\n\nSend parcels to warehouse A.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.6-sol","moderation":null,"output":[{"id":"msg_060c09d2ae3cb3fc006a9f0be7f99c87d29d9e7cb69d21c2b9","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"UNASSIGNED"}],"phase":"final_answer","role":"assistant"}],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"none","mode":"standard","summary":null},"safety_identifier":null,"service_tier":"default","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":{"input_tokens":241,"input_tokens_details":{"cache_write_tokens":0,"cached_tokens":0},"output_tokens":7,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":248},"user":null,"metadata":{}},"sequence_number":10}
+
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+      openai-processing-ms:
+      - '272'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '2662'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Where should this parcel go?
+        role: user
+      - content:
+        - annotations: []
+          text: A
+          type: output_text
+        id: msg_060c09d2ae3cb3fc006a9f0be203a887d2958bd5c2cebd89c5
+        phase: final_answer
+        role: assistant
+        status: completed
+        type: message
+      - content: Where should this parcel go?
+        role: user
+      - content: |-
+          Instruction block 'capability:memory:state' is replaced from this point onward by:
+
+          Send parcels to warehouse B.
+        role: system
+      - content:
+        - annotations: []
+          text: B
+          type: output_text
+        id: msg_060c09d2ae3cb3fc006a9f0be336a487d291c4e97c8e2b851b
+        phase: final_answer
+        role: assistant
+        status: completed
+        type: message
+      - content: Where should this parcel go?
+        role: user
+      - content:
+        - annotations: []
+          text: B
+          type: output_text
+        id: msg_060c09d2ae3cb3fc006a9f0be48acc87d296daec35bda16f89
+        phase: final_answer
+        role: assistant
+        status: completed
+        type: message
+      - content: Where should this parcel go?
+        role: user
+      - content: |-
+          Instruction block 'capability:memory:state' is replaced from this point onward by:
+
+          Send parcels to warehouse A.
+        role: system
+      - content:
+        - annotations: []
+          text: A
+          type: output_text
+        id: msg_060c09d2ae3cb3fc006a9f0be63be487d2931bc34612b27644
+        phase: final_answer
+        role: assistant
+        status: completed
+        type: message
+      - content: Where should this parcel go?
+        role: user
+      - content: Instruction block 'capability:memory:state' is withdrawn. Its previous instructions no longer apply.
+        role: system
+      - content:
+        - annotations: []
+          text: UNASSIGNED
+          type: output_text
+        id: msg_060c09d2ae3cb3fc006a9f0be7f99c87d29d9e7cb69d21c2b9
+        phase: final_answer
+        role: assistant
+        status: completed
+        type: message
+      - content: Where should this parcel go?
+        role: user
+      - content: |-
+          Instruction block 'capability:memory:state' is replaced from this point onward by:
+
+          Send parcels to warehouse C.
+        role: system
+      instructions: |-
+        You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
+
+        Instruction block 'capability:memory:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.
+
+        Send parcels to warehouse A.
+      model: gpt-5.6
+      reasoning:
+        context: all_turns
+        effort: none
+      store: true
+      stream: true
+    uri: https://api.openai.com/v1/responses
+  response:
+    body:
+      string: |+
+        event: response.created
+        data: {"type":"response.created","response":{"id":"resp_060c09d2ae3cb3fc006a9f0be85b8887d2aa70fda102c1dfb6","object":"response","created_at":1788808168,"status":"in_progress","background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":"You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.\n\nInstruction block 'capability:memory:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.\n\nSend parcels to warehouse A.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.6-sol","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"none","mode":"standard","summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":0}
+
+        event: response.in_progress
+        data: {"type":"response.in_progress","response":{"id":"resp_060c09d2ae3cb3fc006a9f0be85b8887d2aa70fda102c1dfb6","object":"response","created_at":1788808168,"status":"in_progress","background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":"You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.\n\nInstruction block 'capability:memory:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.\n\nSend parcels to warehouse A.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.6-sol","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"none","mode":"standard","summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":1}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","item":{"id":"msg_060c09d2ae3cb3fc006a9f0be9791887d29e18ee6e0f1f560b","type":"message","status":"in_progress","content":[],"phase":"final_answer","role":"assistant"},"output_index":0,"sequence_number":2}
+
+        event: response.content_part.added
+        data: {"type":"response.content_part.added","content_index":0,"item_id":"msg_060c09d2ae3cb3fc006a9f0be9791887d29e18ee6e0f1f560b","output_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":""},"sequence_number":3}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"C","item_id":"msg_060c09d2ae3cb3fc006a9f0be9791887d29e18ee6e0f1f560b","logprobs":[],"obfuscation":"UMXLM6H7yzWSWE3","output_index":0,"sequence_number":4}
+
+        event: response.output_text.done
+        data: {"type":"response.output_text.done","content_index":0,"item_id":"msg_060c09d2ae3cb3fc006a9f0be9791887d29e18ee6e0f1f560b","logprobs":[],"output_index":0,"sequence_number":5,"text":"C"}
+
+        event: response.content_part.done
+        data: {"type":"response.content_part.done","content_index":0,"item_id":"msg_060c09d2ae3cb3fc006a9f0be9791887d29e18ee6e0f1f560b","output_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":"C"},"sequence_number":6}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","item":{"id":"msg_060c09d2ae3cb3fc006a9f0be9791887d29e18ee6e0f1f560b","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"C"}],"phase":"final_answer","role":"assistant"},"output_index":0,"sequence_number":7}
+
+        event: response.completed
+        data: {"type":"response.completed","response":{"id":"resp_060c09d2ae3cb3fc006a9f0be85b8887d2aa70fda102c1dfb6","object":"response","created_at":1788808168,"status":"completed","background":false,"completed_at":1788808169,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":"You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.\n\nInstruction block 'capability:memory:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.\n\nSend parcels to warehouse A.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.6-sol","moderation":null,"output":[{"id":"msg_060c09d2ae3cb3fc006a9f0be9791887d29e18ee6e0f1f560b","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"C"}],"phase":"final_answer","role":"assistant"}],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"none","mode":"standard","summary":null},"safety_identifier":null,"service_tier":"default","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":{"input_tokens":288,"input_tokens_details":{"cache_write_tokens":0,"cached_tokens":0},"output_tokens":5,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":293},"user":null,"metadata":{}},"sequence_number":8}
+
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+      openai-processing-ms:
+      - '313'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    status:
+      code: 200
+      message: OK
+version: 1
+...

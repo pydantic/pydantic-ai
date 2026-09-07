@@ -1,0 +1,189 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '758'
+      content-type:
+      - application/json
+      host:
+      - api.deepseek.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: When the todo is pending, call finish_todo once. When it is done, reply DONE.
+        role: system
+      - content: |-
+          Instruction block 'capability:todos:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.
+
+          Todo status: pending.
+        role: system
+      - content: Process the todo.
+        role: user
+      model: deepseek-chat
+      stream: true
+      stream_options:
+        include_usage: true
+      tool_choice: auto
+      tools:
+      - function:
+          description: Finish the pending todo.
+          name: finish_todo
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+    uri: https://api.deepseek.com/chat/completions
+  response:
+    body:
+      string: |+
+        data: {"id":"2765e3b9-36f7-429b-904d-87b351d58d82","object":"chat.completion.chunk","created":1788808456,"model":"deepseek-v4-flash","system_fingerprint":"a26a7955944dc5c60445bff77fac9c8e","choices":[{"index":0,"delta":{"role":"assistant","content":""},"logprobs":null,"finish_reason":null}],"usage":null}
+
+        data: {"id":"2765e3b9-36f7-429b-904d-87b351d58d82","object":"chat.completion.chunk","created":1788808456,"model":"deepseek-v4-flash","system_fingerprint":"a26a7955944dc5c60445bff77fac9c8e","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_00_eJdTTTBhghEJ3NS63kQJ9055","type":"function","function":{"name":"finish_todo","arguments":""}}]},"logprobs":null,"finish_reason":null}],"usage":null}
+
+        data: {"id":"2765e3b9-36f7-429b-904d-87b351d58d82","object":"chat.completion.chunk","created":1788808456,"model":"deepseek-v4-flash","system_fingerprint":"a26a7955944dc5c60445bff77fac9c8e","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{}"}}]},"logprobs":null,"finish_reason":null}],"usage":null}
+
+        data: {"id":"2765e3b9-36f7-429b-904d-87b351d58d82","object":"chat.completion.chunk","created":1788808456,"model":"deepseek-v4-flash","system_fingerprint":"a26a7955944dc5c60445bff77fac9c8e","choices":[{"index":0,"delta":{"content":""},"logprobs":null,"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":335,"completion_tokens":29,"total_tokens":364,"prompt_tokens_details":{"cached_tokens":256},"prompt_cache_hit_tokens":256,"prompt_cache_miss_tokens":79}}
+
+        data: [DONE]
+
+    headers:
+      access-control-allow-credentials:
+      - 'true'
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - origin, access-control-request-method, access-control-request-headers
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1178'
+      content-type:
+      - application/json
+      host:
+      - api.deepseek.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: When the todo is pending, call finish_todo once. When it is done, reply DONE.
+        role: system
+      - content: |-
+          Instruction block 'capability:todos:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.
+
+          Todo status: pending.
+        role: system
+      - content: Process the todo.
+        role: user
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{}'
+            name: finish_todo
+          id: call_00_eJdTTTBhghEJ3NS63kQJ9055
+          type: function
+      - content: Saved.
+        role: tool
+        tool_call_id: call_00_eJdTTTBhghEJ3NS63kQJ9055
+      - content: |-
+          <system>Instruction block 'capability:todos:state' is replaced from this point onward by:
+
+          Todo status: done.</system>
+        role: user
+      model: deepseek-chat
+      stream: true
+      stream_options:
+        include_usage: true
+      tool_choice: auto
+      tools:
+      - function:
+          description: Finish the pending todo.
+          name: finish_todo
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+    uri: https://api.deepseek.com/chat/completions
+  response:
+    body:
+      string: |+
+        data: {"id":"1c80c7de-b068-45d1-93f1-1d147d35e8b9","object":"chat.completion.chunk","created":1788808457,"model":"deepseek-v4-flash","system_fingerprint":"a26a7955944dc5c60445bff77fac9c8e","choices":[{"index":0,"delta":{"role":"assistant","content":""},"logprobs":null,"finish_reason":null}],"usage":null}
+
+        data: {"id":"1c80c7de-b068-45d1-93f1-1d147d35e8b9","object":"chat.completion.chunk","created":1788808457,"model":"deepseek-v4-flash","system_fingerprint":"a26a7955944dc5c60445bff77fac9c8e","choices":[{"index":0,"delta":{"content":"The"},"logprobs":null,"finish_reason":null}],"usage":null}
+
+        data: {"id":"1c80c7de-b068-45d1-93f1-1d147d35e8b9","object":"chat.completion.chunk","created":1788808457,"model":"deepseek-v4-flash","system_fingerprint":"a26a7955944dc5c60445bff77fac9c8e","choices":[{"index":0,"delta":{"content":" todo"},"logprobs":null,"finish_reason":null}],"usage":null}
+
+        data: {"id":"1c80c7de-b068-45d1-93f1-1d147d35e8b9","object":"chat.completion.chunk","created":1788808457,"model":"deepseek-v4-flash","system_fingerprint":"a26a7955944dc5c60445bff77fac9c8e","choices":[{"index":0,"delta":{"content":" has"},"logprobs":null,"finish_reason":null}],"usage":null}
+
+        data: {"id":"1c80c7de-b068-45d1-93f1-1d147d35e8b9","object":"chat.completion.chunk","created":1788808457,"model":"deepseek-v4-flash","system_fingerprint":"a26a7955944dc5c60445bff77fac9c8e","choices":[{"index":0,"delta":{"content":" been"},"logprobs":null,"finish_reason":null}],"usage":null}
+
+        data: {"id":"1c80c7de-b068-45d1-93f1-1d147d35e8b9","object":"chat.completion.chunk","created":1788808457,"model":"deepseek-v4-flash","system_fingerprint":"a26a7955944dc5c60445bff77fac9c8e","choices":[{"index":0,"delta":{"content":" completed"},"logprobs":null,"finish_reason":null}],"usage":null}
+
+        data: {"id":"1c80c7de-b068-45d1-93f1-1d147d35e8b9","object":"chat.completion.chunk","created":1788808457,"model":"deepseek-v4-flash","system_fingerprint":"a26a7955944dc5c60445bff77fac9c8e","choices":[{"index":0,"delta":{"content":"."},"logprobs":null,"finish_reason":null}],"usage":null}
+
+        data: {"id":"1c80c7de-b068-45d1-93f1-1d147d35e8b9","object":"chat.completion.chunk","created":1788808457,"model":"deepseek-v4-flash","system_fingerprint":"a26a7955944dc5c60445bff77fac9c8e","choices":[{"index":0,"delta":{"content":" Is"},"logprobs":null,"finish_reason":null}],"usage":null}
+
+        data: {"id":"1c80c7de-b068-45d1-93f1-1d147d35e8b9","object":"chat.completion.chunk","created":1788808457,"model":"deepseek-v4-flash","system_fingerprint":"a26a7955944dc5c60445bff77fac9c8e","choices":[{"index":0,"delta":{"content":" there"},"logprobs":null,"finish_reason":null}],"usage":null}
+
+        data: {"id":"1c80c7de-b068-45d1-93f1-1d147d35e8b9","object":"chat.completion.chunk","created":1788808457,"model":"deepseek-v4-flash","system_fingerprint":"a26a7955944dc5c60445bff77fac9c8e","choices":[{"index":0,"delta":{"content":" anything"},"logprobs":null,"finish_reason":null}],"usage":null}
+
+        data: {"id":"1c80c7de-b068-45d1-93f1-1d147d35e8b9","object":"chat.completion.chunk","created":1788808457,"model":"deepseek-v4-flash","system_fingerprint":"a26a7955944dc5c60445bff77fac9c8e","choices":[{"index":0,"delta":{"content":" else"},"logprobs":null,"finish_reason":null}],"usage":null}
+
+        data: {"id":"1c80c7de-b068-45d1-93f1-1d147d35e8b9","object":"chat.completion.chunk","created":1788808457,"model":"deepseek-v4-flash","system_fingerprint":"a26a7955944dc5c60445bff77fac9c8e","choices":[{"index":0,"delta":{"content":" you"},"logprobs":null,"finish_reason":null}],"usage":null}
+
+        data: {"id":"1c80c7de-b068-45d1-93f1-1d147d35e8b9","object":"chat.completion.chunk","created":1788808457,"model":"deepseek-v4-flash","system_fingerprint":"a26a7955944dc5c60445bff77fac9c8e","choices":[{"index":0,"delta":{"content":" need"},"logprobs":null,"finish_reason":null}],"usage":null}
+
+        data: {"id":"1c80c7de-b068-45d1-93f1-1d147d35e8b9","object":"chat.completion.chunk","created":1788808457,"model":"deepseek-v4-flash","system_fingerprint":"a26a7955944dc5c60445bff77fac9c8e","choices":[{"index":0,"delta":{"content":" help"},"logprobs":null,"finish_reason":null}],"usage":null}
+
+        data: {"id":"1c80c7de-b068-45d1-93f1-1d147d35e8b9","object":"chat.completion.chunk","created":1788808457,"model":"deepseek-v4-flash","system_fingerprint":"a26a7955944dc5c60445bff77fac9c8e","choices":[{"index":0,"delta":{"content":" with"},"logprobs":null,"finish_reason":null}],"usage":null}
+
+        data: {"id":"1c80c7de-b068-45d1-93f1-1d147d35e8b9","object":"chat.completion.chunk","created":1788808457,"model":"deepseek-v4-flash","system_fingerprint":"a26a7955944dc5c60445bff77fac9c8e","choices":[{"index":0,"delta":{"content":"?"},"logprobs":null,"finish_reason":null}],"usage":null}
+
+        data: {"id":"1c80c7de-b068-45d1-93f1-1d147d35e8b9","object":"chat.completion.chunk","created":1788808457,"model":"deepseek-v4-flash","system_fingerprint":"a26a7955944dc5c60445bff77fac9c8e","choices":[{"index":0,"delta":{"content":""},"logprobs":null,"finish_reason":"stop"}],"usage":{"prompt_tokens":405,"completion_tokens":15,"total_tokens":420,"prompt_tokens_details":{"cached_tokens":384},"prompt_cache_hit_tokens":384,"prompt_cache_miss_tokens":21}}
+
+        data: [DONE]
+
+    headers:
+      access-control-allow-credentials:
+      - 'true'
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - origin, access-control-request-method, access-control-request-headers
+    status:
+      code: 200
+      message: OK
+version: 1
+...

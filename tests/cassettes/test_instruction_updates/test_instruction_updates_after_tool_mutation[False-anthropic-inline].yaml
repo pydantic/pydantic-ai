@@ -1,0 +1,203 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '744'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Process the todo.
+          type: text
+        role: user
+      model: claude-opus-5
+      stream: false
+      system:
+      - text: When the todo is pending, call finish_todo once. When it is done, reply DONE.
+        type: text
+      - text: |-
+          Instruction block 'capability:todos:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.
+
+          Todo status: pending.
+        type: text
+      tool_choice:
+        type: auto
+      tools:
+      - description: Finish the pending todo.
+        input_schema:
+          additionalProperties: false
+          properties: {}
+          type: object
+        name: finish_todo
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '682'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-bee268c3d90d6f2b455f7740aac16e94-35a86be079a3c40f-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      content:
+      - text: I'll process the pending todo.
+        type: text
+      - caller:
+          type: direct
+        id: toolu_01E1Ht4kD1zcUo8Eq3NgQnV3
+        input: {}
+        name: finish_todo
+        type: tool_use
+      id: msg_011CepcUerUqxjTGk2ppwMjM
+      model: claude-opus-5
+      role: assistant
+      stop_details: null
+      stop_reason: tool_use
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: global
+        input_tokens: 458
+        output_tokens: 39
+        output_tokens_details:
+          thinking_tokens: 0
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1277'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Process the todo.
+          type: text
+        role: user
+      - content:
+        - text: I'll process the pending todo.
+          type: text
+        - id: toolu_01E1Ht4kD1zcUo8Eq3NgQnV3
+          input: {}
+          name: finish_todo
+          type: tool_use
+        role: assistant
+      - content:
+        - content:
+          - text: Saved.
+            type: text
+          is_error: false
+          tool_use_id: toolu_01E1Ht4kD1zcUo8Eq3NgQnV3
+          type: tool_result
+        role: user
+      - content:
+        - text: |-
+            Instruction block 'capability:todos:state' is replaced from this point onward by:
+
+            Todo status: done.
+          type: text
+        role: system
+      model: claude-opus-5
+      stream: false
+      system:
+      - text: When the todo is pending, call finish_todo once. When it is done, reply DONE.
+        type: text
+      - text: |-
+          Instruction block 'capability:todos:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.
+
+          Todo status: pending.
+        type: text
+      tool_choice:
+        type: auto
+      tools:
+      - description: Finish the pending todo.
+        input_schema:
+          additionalProperties: false
+          properties: {}
+          type: object
+        name: finish_todo
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '878'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-1abf1a072ac989a5a745215e4d63c9aa-6691b976a8871eee-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      content: []
+      id: msg_011CepcUoNwLj5na9uXypbpu
+      model: claude-opus-5
+      role: assistant
+      stop_details:
+        category: reasoning_extraction
+        explanation: 'This request was blocked as it seems to violate Anthropic''s Terms of Service restrictions on reverse
+          engineering or duplicating model outputs. To learn more, visit https://www.anthropic.com/legal/commercial-terms.
+          API integrators: you can reduce refusals for your users by configuring a fallback model -- see https://platform.claude.com/docs/en/build-with-claude/refusals-and-fallback'
+        type: refusal
+      stop_reason: refusal
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: not_available
+        input_tokens: 573
+        output_tokens: 0
+    status:
+      code: 200
+      message: OK
+version: 1

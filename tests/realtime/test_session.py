@@ -6895,6 +6895,20 @@ async def test_agent_realtime_session_dynamic_instructions() -> None:
     assert model.last_instructions == 'Base\n\nDynamic'
 
 
+async def test_agent_realtime_session_append_instructions_warn() -> None:
+    agent: Agent[None, str] = Agent(instructions='Base')
+
+    @agent.instructions(name='state', on_change='append')
+    def state() -> str:
+        return 'Current state'
+
+    model = FakeRealtimeModel(FakeRealtimeConnection([ResponseDone()]))
+    with pytest.warns(UserWarning, match='not supported by realtime sessions'):
+        async with agent.realtime(model).session() as session:
+            _ = [event async for event in session]
+    assert model.last_instructions == 'Base\n\nCurrent state'
+
+
 async def test_agent_realtime_session_sorts_static_instructions_before_dynamic() -> None:
     """A static toolset `InstructionPart` sorts before dynamic agent instructions, like `run`/`iter`.
 

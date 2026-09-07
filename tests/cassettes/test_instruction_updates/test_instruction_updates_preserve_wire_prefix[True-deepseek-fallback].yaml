@@ -1,0 +1,484 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '628'
+      content-type:
+      - application/json
+      host:
+      - api.deepseek.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no
+          warehouse is assigned, reply UNASSIGNED.
+        role: system
+      - content: |-
+          Instruction block 'capability:memory:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.
+
+          Send parcels to warehouse A.
+        role: system
+      - content: Where should this parcel go?
+        role: user
+      model: deepseek-chat
+      stream: true
+      stream_options:
+        include_usage: true
+    uri: https://api.deepseek.com/chat/completions
+  response:
+    body:
+      string: |+
+        data: {"id":"9aeb8ef3-df5b-484a-bb6f-a26733c64b00","object":"chat.completion.chunk","created":1788808144,"model":"deepseek-v4-flash","system_fingerprint":"a26a7955944dc5c60445bff77fac9c8e","choices":[{"index":0,"delta":{"role":"assistant","content":""},"logprobs":null,"finish_reason":null}],"usage":null}
+
+        data: {"id":"9aeb8ef3-df5b-484a-bb6f-a26733c64b00","object":"chat.completion.chunk","created":1788808144,"model":"deepseek-v4-flash","system_fingerprint":"a26a7955944dc5c60445bff77fac9c8e","choices":[{"index":0,"delta":{"content":"A"},"logprobs":null,"finish_reason":null}],"usage":null}
+
+        data: {"id":"9aeb8ef3-df5b-484a-bb6f-a26733c64b00","object":"chat.completion.chunk","created":1788808144,"model":"deepseek-v4-flash","system_fingerprint":"a26a7955944dc5c60445bff77fac9c8e","choices":[{"index":0,"delta":{"content":""},"logprobs":null,"finish_reason":"stop"}],"usage":{"prompt_tokens":88,"completion_tokens":1,"total_tokens":89,"prompt_tokens_details":{"cached_tokens":0},"prompt_cache_hit_tokens":0,"prompt_cache_miss_tokens":88}}
+
+        data: [DONE]
+
+    headers:
+      access-control-allow-credentials:
+      - 'true'
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - origin, access-control-request-method, access-control-request-headers
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '892'
+      content-type:
+      - application/json
+      host:
+      - api.deepseek.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no
+          warehouse is assigned, reply UNASSIGNED.
+        role: system
+      - content: |-
+          Instruction block 'capability:memory:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.
+
+          Send parcels to warehouse A.
+        role: system
+      - content: Where should this parcel go?
+        role: user
+      - content: A
+        role: assistant
+      - content: Where should this parcel go?
+        role: user
+      - content: |-
+          <system>Instruction block 'capability:memory:state' is replaced from this point onward by:
+
+          Send parcels to warehouse B.</system>
+        role: user
+      model: deepseek-chat
+      stream: true
+      stream_options:
+        include_usage: true
+    uri: https://api.deepseek.com/chat/completions
+  response:
+    body:
+      string: |+
+        data: {"id":"7f3b32e6-05d9-431d-b3b0-d881059af4ca","object":"chat.completion.chunk","created":1788808145,"model":"deepseek-v4-flash","system_fingerprint":"a26a7955944dc5c60445bff77fac9c8e","choices":[{"index":0,"delta":{"role":"assistant","content":""},"logprobs":null,"finish_reason":null}],"usage":null}
+
+        data: {"id":"7f3b32e6-05d9-431d-b3b0-d881059af4ca","object":"chat.completion.chunk","created":1788808145,"model":"deepseek-v4-flash","system_fingerprint":"a26a7955944dc5c60445bff77fac9c8e","choices":[{"index":0,"delta":{"content":"B"},"logprobs":null,"finish_reason":null}],"usage":null}
+
+        data: {"id":"7f3b32e6-05d9-431d-b3b0-d881059af4ca","object":"chat.completion.chunk","created":1788808145,"model":"deepseek-v4-flash","system_fingerprint":"a26a7955944dc5c60445bff77fac9c8e","choices":[{"index":0,"delta":{"content":""},"logprobs":null,"finish_reason":"stop"}],"usage":{"prompt_tokens":128,"completion_tokens":1,"total_tokens":129,"prompt_tokens_details":{"cached_tokens":0},"prompt_cache_hit_tokens":0,"prompt_cache_miss_tokens":128}}
+
+        data: [DONE]
+
+    headers:
+      access-control-allow-credentials:
+      - 'true'
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - origin, access-control-request-method, access-control-request-headers
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '992'
+      content-type:
+      - application/json
+      host:
+      - api.deepseek.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no
+          warehouse is assigned, reply UNASSIGNED.
+        role: system
+      - content: |-
+          Instruction block 'capability:memory:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.
+
+          Send parcels to warehouse A.
+        role: system
+      - content: Where should this parcel go?
+        role: user
+      - content: A
+        role: assistant
+      - content: Where should this parcel go?
+        role: user
+      - content: |-
+          <system>Instruction block 'capability:memory:state' is replaced from this point onward by:
+
+          Send parcels to warehouse B.</system>
+        role: user
+      - content: B
+        role: assistant
+      - content: Where should this parcel go?
+        role: user
+      model: deepseek-chat
+      stream: true
+      stream_options:
+        include_usage: true
+    uri: https://api.deepseek.com/chat/completions
+  response:
+    body:
+      string: |+
+        data: {"id":"73597465-ac8c-4393-9993-30a0a46545ea","object":"chat.completion.chunk","created":1788808146,"model":"deepseek-v4-flash","system_fingerprint":"a26a7955944dc5c60445bff77fac9c8e","choices":[{"index":0,"delta":{"role":"assistant","content":""},"logprobs":null,"finish_reason":null}],"usage":null}
+
+        data: {"id":"73597465-ac8c-4393-9993-30a0a46545ea","object":"chat.completion.chunk","created":1788808146,"model":"deepseek-v4-flash","system_fingerprint":"a26a7955944dc5c60445bff77fac9c8e","choices":[{"index":0,"delta":{"content":"B"},"logprobs":null,"finish_reason":null}],"usage":null}
+
+        data: {"id":"73597465-ac8c-4393-9993-30a0a46545ea","object":"chat.completion.chunk","created":1788808146,"model":"deepseek-v4-flash","system_fingerprint":"a26a7955944dc5c60445bff77fac9c8e","choices":[{"index":0,"delta":{"content":""},"logprobs":null,"finish_reason":"stop"}],"usage":{"prompt_tokens":139,"completion_tokens":1,"total_tokens":140,"prompt_tokens_details":{"cached_tokens":128},"prompt_cache_hit_tokens":128,"prompt_cache_miss_tokens":11}}
+
+        data: [DONE]
+
+    headers:
+      access-control-allow-credentials:
+      - 'true'
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - origin, access-control-request-method, access-control-request-headers
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1256'
+      content-type:
+      - application/json
+      host:
+      - api.deepseek.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no
+          warehouse is assigned, reply UNASSIGNED.
+        role: system
+      - content: |-
+          Instruction block 'capability:memory:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.
+
+          Send parcels to warehouse A.
+        role: system
+      - content: Where should this parcel go?
+        role: user
+      - content: A
+        role: assistant
+      - content: Where should this parcel go?
+        role: user
+      - content: |-
+          <system>Instruction block 'capability:memory:state' is replaced from this point onward by:
+
+          Send parcels to warehouse B.</system>
+        role: user
+      - content: B
+        role: assistant
+      - content: Where should this parcel go?
+        role: user
+      - content: B
+        role: assistant
+      - content: Where should this parcel go?
+        role: user
+      - content: |-
+          <system>Instruction block 'capability:memory:state' is replaced from this point onward by:
+
+          Send parcels to warehouse A.</system>
+        role: user
+      model: deepseek-chat
+      stream: true
+      stream_options:
+        include_usage: true
+    uri: https://api.deepseek.com/chat/completions
+  response:
+    body:
+      string: |+
+        data: {"id":"568c9cad-69fd-4373-9a27-d8c2f76142ec","object":"chat.completion.chunk","created":1788808146,"model":"deepseek-v4-flash","system_fingerprint":"a26a7955944dc5c60445bff77fac9c8e","choices":[{"index":0,"delta":{"role":"assistant","content":""},"logprobs":null,"finish_reason":null}],"usage":null}
+
+        data: {"id":"568c9cad-69fd-4373-9a27-d8c2f76142ec","object":"chat.completion.chunk","created":1788808146,"model":"deepseek-v4-flash","system_fingerprint":"a26a7955944dc5c60445bff77fac9c8e","choices":[{"index":0,"delta":{"content":"A"},"logprobs":null,"finish_reason":null}],"usage":null}
+
+        data: {"id":"568c9cad-69fd-4373-9a27-d8c2f76142ec","object":"chat.completion.chunk","created":1788808146,"model":"deepseek-v4-flash","system_fingerprint":"a26a7955944dc5c60445bff77fac9c8e","choices":[{"index":0,"delta":{"content":""},"logprobs":null,"finish_reason":"stop"}],"usage":{"prompt_tokens":179,"completion_tokens":1,"total_tokens":180,"prompt_tokens_details":{"cached_tokens":128},"prompt_cache_hit_tokens":128,"prompt_cache_miss_tokens":51}}
+
+        data: [DONE]
+
+    headers:
+      access-control-allow-credentials:
+      - 'true'
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - origin, access-control-request-method, access-control-request-headers
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1506'
+      content-type:
+      - application/json
+      host:
+      - api.deepseek.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no
+          warehouse is assigned, reply UNASSIGNED.
+        role: system
+      - content: |-
+          Instruction block 'capability:memory:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.
+
+          Send parcels to warehouse A.
+        role: system
+      - content: Where should this parcel go?
+        role: user
+      - content: A
+        role: assistant
+      - content: Where should this parcel go?
+        role: user
+      - content: |-
+          <system>Instruction block 'capability:memory:state' is replaced from this point onward by:
+
+          Send parcels to warehouse B.</system>
+        role: user
+      - content: B
+        role: assistant
+      - content: Where should this parcel go?
+        role: user
+      - content: B
+        role: assistant
+      - content: Where should this parcel go?
+        role: user
+      - content: |-
+          <system>Instruction block 'capability:memory:state' is replaced from this point onward by:
+
+          Send parcels to warehouse A.</system>
+        role: user
+      - content: A
+        role: assistant
+      - content: Where should this parcel go?
+        role: user
+      - content: <system>Instruction block 'capability:memory:state' is withdrawn. Its previous instructions no longer apply.</system>
+        role: user
+      model: deepseek-chat
+      stream: true
+      stream_options:
+        include_usage: true
+    uri: https://api.deepseek.com/chat/completions
+  response:
+    body:
+      string: |+
+        data: {"id":"587952f7-e7f3-4077-bfb8-56e4c8700a22","object":"chat.completion.chunk","created":1788808147,"model":"deepseek-v4-flash","system_fingerprint":"a26a7955944dc5c60445bff77fac9c8e","choices":[{"index":0,"delta":{"role":"assistant","content":""},"logprobs":null,"finish_reason":null}],"usage":null}
+
+        data: {"id":"587952f7-e7f3-4077-bfb8-56e4c8700a22","object":"chat.completion.chunk","created":1788808147,"model":"deepseek-v4-flash","system_fingerprint":"a26a7955944dc5c60445bff77fac9c8e","choices":[{"index":0,"delta":{"content":"UN"},"logprobs":null,"finish_reason":null}],"usage":null}
+
+        data: {"id":"587952f7-e7f3-4077-bfb8-56e4c8700a22","object":"chat.completion.chunk","created":1788808147,"model":"deepseek-v4-flash","system_fingerprint":"a26a7955944dc5c60445bff77fac9c8e","choices":[{"index":0,"delta":{"content":"ASS"},"logprobs":null,"finish_reason":null}],"usage":null}
+
+        data: {"id":"587952f7-e7f3-4077-bfb8-56e4c8700a22","object":"chat.completion.chunk","created":1788808147,"model":"deepseek-v4-flash","system_fingerprint":"a26a7955944dc5c60445bff77fac9c8e","choices":[{"index":0,"delta":{"content":"IGN"},"logprobs":null,"finish_reason":null}],"usage":null}
+
+        data: {"id":"587952f7-e7f3-4077-bfb8-56e4c8700a22","object":"chat.completion.chunk","created":1788808147,"model":"deepseek-v4-flash","system_fingerprint":"a26a7955944dc5c60445bff77fac9c8e","choices":[{"index":0,"delta":{"content":"ED"},"logprobs":null,"finish_reason":null}],"usage":null}
+
+        data: {"id":"587952f7-e7f3-4077-bfb8-56e4c8700a22","object":"chat.completion.chunk","created":1788808147,"model":"deepseek-v4-flash","system_fingerprint":"a26a7955944dc5c60445bff77fac9c8e","choices":[{"index":0,"delta":{"content":""},"logprobs":null,"finish_reason":"stop"}],"usage":{"prompt_tokens":215,"completion_tokens":4,"total_tokens":219,"prompt_tokens_details":{"cached_tokens":128},"prompt_cache_hit_tokens":128,"prompt_cache_miss_tokens":87}}
+
+        data: [DONE]
+
+    headers:
+      access-control-allow-credentials:
+      - 'true'
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - origin, access-control-request-method, access-control-request-headers
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1779'
+      content-type:
+      - application/json
+      host:
+      - api.deepseek.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no
+          warehouse is assigned, reply UNASSIGNED.
+        role: system
+      - content: |-
+          Instruction block 'capability:memory:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.
+
+          Send parcels to warehouse A.
+        role: system
+      - content: Where should this parcel go?
+        role: user
+      - content: A
+        role: assistant
+      - content: Where should this parcel go?
+        role: user
+      - content: |-
+          <system>Instruction block 'capability:memory:state' is replaced from this point onward by:
+
+          Send parcels to warehouse B.</system>
+        role: user
+      - content: B
+        role: assistant
+      - content: Where should this parcel go?
+        role: user
+      - content: B
+        role: assistant
+      - content: Where should this parcel go?
+        role: user
+      - content: |-
+          <system>Instruction block 'capability:memory:state' is replaced from this point onward by:
+
+          Send parcels to warehouse A.</system>
+        role: user
+      - content: A
+        role: assistant
+      - content: Where should this parcel go?
+        role: user
+      - content: <system>Instruction block 'capability:memory:state' is withdrawn. Its previous instructions no longer apply.</system>
+        role: user
+      - content: UNASSIGNED
+        role: assistant
+      - content: Where should this parcel go?
+        role: user
+      - content: |-
+          <system>Instruction block 'capability:memory:state' is replaced from this point onward by:
+
+          Send parcels to warehouse C.</system>
+        role: user
+      model: deepseek-chat
+      stream: true
+      stream_options:
+        include_usage: true
+    uri: https://api.deepseek.com/chat/completions
+  response:
+    body:
+      string: |+
+        data: {"id":"15c6a589-e1e4-4acb-a46d-a4375abbd175","object":"chat.completion.chunk","created":1788808148,"model":"deepseek-v4-flash","system_fingerprint":"a26a7955944dc5c60445bff77fac9c8e","choices":[{"index":0,"delta":{"role":"assistant","content":""},"logprobs":null,"finish_reason":null}],"usage":null}
+
+        data: {"id":"15c6a589-e1e4-4acb-a46d-a4375abbd175","object":"chat.completion.chunk","created":1788808148,"model":"deepseek-v4-flash","system_fingerprint":"a26a7955944dc5c60445bff77fac9c8e","choices":[{"index":0,"delta":{"content":"C"},"logprobs":null,"finish_reason":null}],"usage":null}
+
+        data: {"id":"15c6a589-e1e4-4acb-a46d-a4375abbd175","object":"chat.completion.chunk","created":1788808148,"model":"deepseek-v4-flash","system_fingerprint":"a26a7955944dc5c60445bff77fac9c8e","choices":[{"index":0,"delta":{"content":""},"logprobs":null,"finish_reason":"stop"}],"usage":{"prompt_tokens":258,"completion_tokens":1,"total_tokens":259,"prompt_tokens_details":{"cached_tokens":256},"prompt_cache_hit_tokens":256,"prompt_cache_miss_tokens":2}}
+
+        data: [DONE]
+
+    headers:
+      access-control-allow-credentials:
+      - 'true'
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - origin, access-control-request-method, access-control-request-headers
+    status:
+      code: 200
+      message: OK
+version: 1
+...

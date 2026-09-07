@@ -14,7 +14,9 @@ from pydantic_ai import (
     UserPromptPart,
 )
 from pydantic_ai.agent import Agent
-from pydantic_ai.exceptions import UnexpectedModelBehavior
+from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
+from pydantic_ai.messages import InstructionDeltaPart
+from pydantic_ai.models import ModelRequestParameters
 
 from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsNow, IsStr, try_import
@@ -41,6 +43,19 @@ def test_mcp_sampling_model():
     model = MCPSamplingModel(fake_session(AsyncMock()))
     assert model.model_name == 'mcp-sampling'
     assert model.system == 'MCP'
+
+
+@pytest.mark.anyio
+async def test_unprojected_instruction_delta_raises():
+    create_message = AsyncMock()
+    model = MCPSamplingModel(fake_session(create_message))
+    with pytest.raises(UserError, match='prepare_messages'):
+        await model.request(
+            [ModelRequest(parts=[InstructionDeltaPart(id='agent', content='State')])],
+            None,
+            ModelRequestParameters(),
+        )
+    create_message.assert_not_called()
 
 
 def test_assistant_text():

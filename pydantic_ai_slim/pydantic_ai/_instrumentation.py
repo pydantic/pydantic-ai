@@ -648,7 +648,7 @@ def get_instructions_source(messages: Sequence[ModelMessage]) -> ModelRequest | 
             last_two_requests.append(message)
             if len(last_two_requests) == 2:
                 break
-            if message.instructions is not None:
+            if message.instructions is not None or message.instruction_parts is not None:
                 return message
 
     # If we don't have two requests, and we didn't already return one, there are definitely no instructions:

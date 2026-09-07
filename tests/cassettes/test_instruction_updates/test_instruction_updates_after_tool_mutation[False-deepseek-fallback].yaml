@@ -1,0 +1,183 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '716'
+      content-type:
+      - application/json
+      host:
+      - api.deepseek.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: When the todo is pending, call finish_todo once. When it is done, reply DONE.
+        role: system
+      - content: |-
+          Instruction block 'capability:todos:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.
+
+          Todo status: pending.
+        role: system
+      - content: Process the todo.
+        role: user
+      model: deepseek-chat
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: Finish the pending todo.
+          name: finish_todo
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+    uri: https://api.deepseek.com/chat/completions
+  response:
+    headers:
+      access-control-allow-credentials:
+      - 'true'
+      connection:
+      - keep-alive
+      content-length:
+      - '648'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - origin, access-control-request-method, access-control-request-headers
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        logprobs: null
+        message:
+          content: ''
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{}'
+              name: finish_todo
+            id: call_00_ZtEYl82RungzopDJhkOX7275
+            index: 0
+            type: function
+      created: 1788808442
+      id: 14b887e8-04a7-41ce-bae5-7d92b804989b
+      model: deepseek-v4-flash
+      object: chat.completion
+      system_fingerprint: a26a7955944dc5c60445bff77fac9c8e
+      usage:
+        completion_tokens: 29
+        prompt_cache_hit_tokens: 0
+        prompt_cache_miss_tokens: 335
+        prompt_tokens: 335
+        prompt_tokens_details:
+          cached_tokens: 0
+        total_tokens: 364
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1136'
+      content-type:
+      - application/json
+      host:
+      - api.deepseek.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: When the todo is pending, call finish_todo once. When it is done, reply DONE.
+        role: system
+      - content: |-
+          Instruction block 'capability:todos:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.
+
+          Todo status: pending.
+        role: system
+      - content: Process the todo.
+        role: user
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{}'
+            name: finish_todo
+          id: call_00_ZtEYl82RungzopDJhkOX7275
+          type: function
+      - content: Saved.
+        role: tool
+        tool_call_id: call_00_ZtEYl82RungzopDJhkOX7275
+      - content: |-
+          <system>Instruction block 'capability:todos:state' is replaced from this point onward by:
+
+          Todo status: done.</system>
+        role: user
+      model: deepseek-chat
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: Finish the pending todo.
+          name: finish_todo
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+    uri: https://api.deepseek.com/chat/completions
+  response:
+    headers:
+      access-control-allow-credentials:
+      - 'true'
+      connection:
+      - keep-alive
+      content-length:
+      - '501'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - origin, access-control-request-method, access-control-request-headers
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          content: DONE
+          role: assistant
+      created: 1788808443
+      id: cd938eb1-0151-48a3-82b6-e90cacbe9e3d
+      model: deepseek-v4-flash
+      object: chat.completion
+      system_fingerprint: a26a7955944dc5c60445bff77fac9c8e
+      usage:
+        completion_tokens: 2
+        prompt_cache_hit_tokens: 256
+        prompt_cache_miss_tokens: 149
+        prompt_tokens: 405
+        prompt_tokens_details:
+          cached_tokens: 256
+        total_tokens: 407
+    status:
+      code: 200
+      message: OK
+version: 1

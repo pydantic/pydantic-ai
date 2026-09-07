@@ -50,6 +50,7 @@ from ._deferred_capabilities import (
     registered_loaded_capability_ids,
 )
 from ._genai_prices import best_effort_price, fill_response_cost
+from ._instructions import update_instruction_history
 from ._run_context import AnchoredEvidence, EventStreamBuffer, dispatch_event_stream, set_current_run_context
 from .exceptions import ToolRetryError
 
@@ -794,6 +795,10 @@ def _apply_instruction_parts(
     """
     if instruction_parts is not None:
         request.instructions = _messages.InstructionPart.join(instruction_parts)
+        # Append-mode requests retain structured prefixes for replay; ordinary rewrite-mode
+        # history continues to record only the rendered instructions.
+        if request.instruction_parts is not None:
+            request.instruction_parts = instruction_parts
 
 
 async def _prepare_request_parameters(
@@ -1538,6 +1543,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         if instruction_parts:
             instruction_parts = _messages.InstructionPart.sorted(instruction_parts) or None
         self.request.instructions = _messages.InstructionPart.join(instruction_parts) if instruction_parts else None
+        if instruction_parts is None and any(
+            isinstance(message, _messages.ModelRequest) and message.instruction_baseline is not None
+            for message in _messages.post_compaction_window(ctx.state.message_history)
+        ):
+            # An empty source set withdraws tracked blocks; hooks can still explicitly unset parts.
+            instruction_parts = []
 
         # Validate after instructions are resolved; self.request was appended above so [:-1] is prior history
         if not ctx.state.message_history[:-1] and not self.request.parts and not self.request.instructions:
@@ -1580,6 +1591,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # the request that records them back in step. It's the request this step created and set
         # instructions on above, which is not necessarily the last message anymore: a hook can append
         # further messages (e.g. `ToolSearch`'s auto-load synthesizes a call/return pair).
+        model_request_parameters = replace(
+            model_request_parameters,
+            instruction_parts=update_instruction_history(messages, model_request_parameters.instruction_parts),
+        )
         _apply_instruction_parts(self.request, model_request_parameters.instruction_parts)
 
         if self.is_resuming_without_prompt:
@@ -1711,7 +1726,14 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
 
         instructions = _get_history_instructions(ctx.state.message_history)
-        instruction_parts = [_messages.InstructionPart(content=instructions)] if instructions else None
+        instruction_source = _get_history_instructions_source(ctx.state.message_history)
+        instruction_parts = (
+            instruction_source.instruction_parts
+            if instruction_source is not None and instruction_source.instruction_parts is not None
+            else [_messages.InstructionPart(content=instructions)]
+            if instructions
+            else None
+        )
 
         model_request_parameters = await _prepare_request_parameters(ctx, instruction_parts)
         model_settings = ctx.deps.get_model_settings(run_context) or ModelSettings()
@@ -1782,6 +1804,14 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         ctx.state.last_max_tokens = model_settings.get('max_tokens') if model_settings else None
         ctx.state.last_model_request_parameters = model_request_parameters
         ctx.deps.usage_limits.check_before_request(ctx.state.usage)
+
+        if any(
+            isinstance(part, _messages.InstructionDeltaPart)
+            for message in messages
+            if isinstance(message, _messages.ModelRequest)
+            for part in message.parts
+        ):
+            messages = model.prepare_messages(messages, model_request_parameters)
 
         return model, model_settings or None, model_request_parameters, messages, run_context
 
@@ -3010,6 +3040,16 @@ def _merge_consecutive_messages(messages: list[_messages.ModelMessage]) -> list[
                 merged_message = _messages.ModelRequest(
                     parts=parts,
                     instructions=last_message.instructions or message.instructions,
+                    instruction_baseline=(
+                        message.instruction_baseline
+                        if message.instruction_baseline is not None
+                        else last_message.instruction_baseline
+                    ),
+                    instruction_parts=(
+                        message.instruction_parts
+                        if message.instruction_parts is not None
+                        else last_message.instruction_parts
+                    ),
                     timestamp=message.timestamp or last_message.timestamp,
                 )
                 clean_messages[-1] = merged_message

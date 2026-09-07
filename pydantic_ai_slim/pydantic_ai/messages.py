@@ -1921,6 +1921,16 @@ class InstructionPart:
     or toolset `get_instructions()` methods.
     """
 
+    on_change: Literal['rewrite', 'append'] = 'rewrite'
+    """How changes to this part are delivered.
+
+    `'rewrite'` replaces the instruction prefix on each request. `'append'` preserves the initial
+    prefix and appends full replacements to trusted message history when this block changes,
+    including withdrawal when it stops contributing content. Requires an addressable `id`;
+    otherwise a warning is emitted and the part uses `'rewrite'`. Evaluation frequency and
+    `dynamic` cache placement are unchanged. Compaction starts a new baseline.
+    """
+
     name: str | None = None
     """What the author calls this part, relative to whatever contributes it.
 
@@ -1965,6 +1975,36 @@ class InstructionPart:
     def sorted(parts: Sequence[InstructionPart]) -> list[InstructionPart]:
         """Sort instruction parts with static (`dynamic=False`) before dynamic, preserving relative order."""
         return sorted(parts, key=lambda p: p.dynamic)
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False, kw_only=True)
+class InstructionDeltaPart:
+    """Replace or withdraw one operator-authored instruction from this point in history onward.
+
+    Earlier statements remain in history; the latest statement for an id is effective. This is
+    trusted operator content, so `sanitize_messages(strip_system_prompts=True)` strips it.
+    """
+
+    id: Annotated[str, pydantic.Field(min_length=1)]
+    """The serialized instruction address being replaced, preserved even for unknown source namespaces."""
+
+    content: str | None
+    """The complete replacement text, or `None` to withdraw the block."""
+
+    part_kind: Literal['instruction-delta'] = 'instruction-delta'
+    """Part type identifier, used as a discriminator for deserialization."""
+
+    def render(self) -> str:
+        """Render a full replacement for the provider's inline system instruction channel."""
+        if self.content is None:
+            return f'Instruction block {str(self.id)!r} is withdrawn. Its previous instructions no longer apply.'
+        return f'Instruction block {str(self.id)!r} is replaced from this point onward by:\n\n{self.content}'
+
+    def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
+        """Render the replacement in traces only when content capture is enabled."""
+        return [_otel_messages.TextPart(type='text', content=self.render())] if settings.include_content else []
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -2026,6 +2066,24 @@ class ModelRequest:
 
     instructions: str | None = None
     """The instructions string for this request, rendered from structured instruction parts."""
+
+    instruction_baseline: dict[str, tuple[int, InstructionPart]] | None = None
+    """Append-mode blocks at the start of a history window, keyed by their serialized instruction addresses.
+
+    Each value contains the block's original prefix position and instruction part. The address stays
+    lossless even when loading a source namespace this version does not understand.
+
+    Persist with trusted history to continue the same prefix after a restart. Losing this baseline
+    or compacting the history starts a fresh window from current server-owned instructions.
+    Client-provided baselines are stripped with system prompts by `sanitize_messages`.
+    """
+
+    instruction_parts: list[InstructionPart] | None = None
+    """The rendered prefix parts for an append-on-change request, retained for suspended-turn resume.
+
+    Preserves ordering and cache treatment that the flattened `instructions` string cannot express.
+    Stripped with system prompts by `sanitize_messages`.
+    """
 
     kind: Literal['request'] = 'request'
     """Message type identifier, this is available on all parts as a discriminator."""
@@ -2658,7 +2716,8 @@ ModelRequestPart = Annotated[
     | Annotated[LoadCapabilityReturnPart, pydantic.Tag('capability-load-return')]
     | Annotated[ToolReturnPart, pydantic.Tag('tool-return')]
     | Annotated[RetryPromptPart, pydantic.Tag('retry-prompt')]
-    | Annotated[ToolAvailabilityDeltaPart, pydantic.Tag('tool-availability-delta')],
+    | Annotated[ToolAvailabilityDeltaPart, pydantic.Tag('tool-availability-delta')]
+    | Annotated[InstructionDeltaPart, pydantic.Tag('instruction-delta')],
     pydantic.Discriminator(_model_request_part_discriminator),
 ]
 """A message part sent by Pydantic AI to a model."""
@@ -3190,7 +3249,11 @@ def sanitize_messages(
     Args:
         messages: Messages to sanitize.
         strip_system_prompts: Whether to strip
-            [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s.
+            [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s,
+            [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart]s, rendered
+            [`ModelRequest.instructions`][pydantic_ai.messages.ModelRequest.instructions], and
+            [`ModelRequest.instruction_baseline`][pydantic_ai.messages.ModelRequest.instruction_baseline] and
+            [`ModelRequest.instruction_parts`][pydantic_ai.messages.ModelRequest.instruction_parts].
         strip_compaction_parts: Whether to drop
             [`CompactionPart`][pydantic_ai.messages.CompactionPart]s entirely. Off by default, for
             when the untrusted input is the entire conversation; pass `True` when the sanitized
@@ -3233,9 +3296,28 @@ def sanitize_messages(
                 reset_force_download_values=reset_force_download_values,
                 dropped_uploaded_file_providers=dropped_uploaded_file_providers,
             )
-            stripped_system_prompt = stripped_system_prompt or request_stripped_system_prompt
+            stripped_system_prompt = (
+                stripped_system_prompt
+                or request_stripped_system_prompt
+                or (
+                    strip_system_prompts
+                    and (
+                        message.instructions is not None
+                        or message.instruction_baseline is not None
+                        or message.instruction_parts is not None
+                    )
+                )
+            )
             if new_request_parts:
-                sanitized.append(replace(message, parts=new_request_parts))
+                sanitized.append(
+                    replace(
+                        message,
+                        parts=new_request_parts,
+                        instructions=None if strip_system_prompts else message.instructions,
+                        instruction_baseline=None if strip_system_prompts else message.instruction_baseline,
+                        instruction_parts=None if strip_system_prompts else message.instruction_parts,
+                    )
+                )
             # Otherwise drop the request entirely so we don't leave an empty
             # `ModelRequest(parts=[])` in history.
         elif isinstance(message, ModelResponse):
@@ -3378,7 +3460,7 @@ def _sanitize_request_parts(
     stripped_system_prompt = False
     new_parts: list[ModelRequestPart] = []
     for part in parts:
-        if strip_system_prompts and isinstance(part, SystemPromptPart):
+        if strip_system_prompts and isinstance(part, (SystemPromptPart, InstructionDeltaPart)):
             stripped_system_prompt = True
             continue
         if isinstance(part, UserPromptPart) and not isinstance(part.content, str):

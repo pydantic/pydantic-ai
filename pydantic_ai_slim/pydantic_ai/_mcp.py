@@ -8,6 +8,7 @@ from typing_extensions import assert_never
 
 from . import exceptions, messages
 from ._mcp_compat import mcp_field, mcp_optional_field
+from .models import _unprojected_instruction_delta_error  # pyright: ignore[reportPrivateUsage]
 
 try:
     # `mcp.types` serves either SDK generation: v2 keeps it as an exact re-export of `mcp_types`.
@@ -92,6 +93,8 @@ def map_from_pai_messages(pai_messages: list[messages.ModelMessage]) -> tuple[st
                 system_prompt.append(pai_message.instructions)
 
             for part in pai_message.parts:
+                if isinstance(part, messages.InstructionDeltaPart):
+                    raise _unprojected_instruction_delta_error()
                 if isinstance(part, messages.SystemPromptPart):
                     system_prompt.append(part.content)
                 if isinstance(part, messages.UserPromptPart):

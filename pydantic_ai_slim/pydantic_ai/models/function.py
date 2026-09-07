@@ -18,6 +18,7 @@ from ..messages import (
     BinaryContent,
     CompactionPart,
     FilePart,
+    InstructionDeltaPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -44,6 +45,7 @@ from . import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
+    _unprojected_instruction_delta_error,  # pyright: ignore[reportPrivateUsage]
     _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
 )
 
@@ -439,6 +441,8 @@ def _estimate_usage(  # noqa: C901
                     request_tokens += _estimate_string_tokens(part.model_response_str())
                 elif isinstance(part, RetryPromptPart):
                     request_tokens += _estimate_string_tokens(part.model_response())
+                elif isinstance(part, InstructionDeltaPart):
+                    raise _unprojected_instruction_delta_error()
                 elif isinstance(part, ToolAvailabilityDeltaPart):
                     if not allow_tool_availability_deltas:
                         raise _unsynthesized_tool_availability_delta_error()

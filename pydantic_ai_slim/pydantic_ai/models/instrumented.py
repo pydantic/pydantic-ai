@@ -32,6 +32,7 @@ from .._run_context import RunContext
 from .._warnings import PydanticAIDeprecationWarning
 from ..messages import (
     BaseToolReturnPart,
+    InstructionDeltaPart,
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
@@ -427,7 +428,7 @@ def _otel_message_role(part: ModelRequestPart, version: int) -> _otel_messages.R
     withheld. `tool` is the one role that would actively mislead, being paired with
     `tool_call_response`.
     """
-    if isinstance(part, SystemPromptPart | ToolAvailabilityDeltaPart):
+    if isinstance(part, SystemPromptPart | ToolAvailabilityDeltaPart | InstructionDeltaPart):
         return 'system'
     elif version >= 6 and (
         isinstance(part, BaseToolReturnPart) or (isinstance(part, RetryPromptPart) and part.tool_name is not None)

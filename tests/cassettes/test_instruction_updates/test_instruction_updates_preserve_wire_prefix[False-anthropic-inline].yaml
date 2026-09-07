@@ -1,0 +1,181 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '636'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Where should this parcel go?
+          type: text
+        role: user
+      model: claude-opus-5
+      stream: false
+      system:
+      - text: You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse
+          is assigned, reply UNASSIGNED.
+        type: text
+      - text: |-
+          Instruction block 'capability:memory:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.
+
+          Send parcels to warehouse A.
+        type: text
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '1037'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-227726e4577d5fb344762ecaa5adff73-d8a059f976b73590-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      content:
+      - signature: CAISzQIKjgEIERgCKkBIaBgGTdeQqqt92V/Rx6NFg6nP2WPNPl4iEIOXydqc0NXsXhFt2NBu8LIdgxHa9B5XPSBe/rqttH5WGIFuc57BMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTGoAb2X/NQGEgwK/6UT2dM2owGXRhAaDPUivAPu8a/B/nv49SIw4hZShz07ubf0OASS6np1Up9IhcRAkXH88x8X3hclZH0IfwtwNbbVYOJd3qMdLxNnKmz8vIKJ6c2NvuCtcUj45BZ4ygCbs+Qbc0P30dyWikmlHX0iltT8JI9HngvlqLcbxsK5JBtDYU/HOPHLcdviyi6kjiZATamDMxnAgQ5stJ0I3cqfRpWQsIRSuNZOJwQ/RDr4392auwCb5YvFBjgYAQ==
+        thinking: ''
+        type: thinking
+      - text: A
+        type: text
+      id: msg_011Cepc4kVtJmghikVPdQ2DS
+      model: claude-opus-5
+      role: assistant
+      stop_details: null
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: global
+        input_tokens: 139
+        output_tokens: 34
+        output_tokens_details:
+          thinking_tokens: 31
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1480'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Where should this parcel go?
+          type: text
+        role: user
+      - content:
+        - signature: CAISzQIKjgEIERgCKkBIaBgGTdeQqqt92V/Rx6NFg6nP2WPNPl4iEIOXydqc0NXsXhFt2NBu8LIdgxHa9B5XPSBe/rqttH5WGIFuc57BMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTGoAb2X/NQGEgwK/6UT2dM2owGXRhAaDPUivAPu8a/B/nv49SIw4hZShz07ubf0OASS6np1Up9IhcRAkXH88x8X3hclZH0IfwtwNbbVYOJd3qMdLxNnKmz8vIKJ6c2NvuCtcUj45BZ4ygCbs+Qbc0P30dyWikmlHX0iltT8JI9HngvlqLcbxsK5JBtDYU/HOPHLcdviyi6kjiZATamDMxnAgQ5stJ0I3cqfRpWQsIRSuNZOJwQ/RDr4392auwCb5YvFBjgYAQ==
+          thinking: ''
+          type: thinking
+        - text: A
+          type: text
+        role: assistant
+      - content:
+        - text: Where should this parcel go?
+          type: text
+        role: user
+      - content:
+        - text: |-
+            Instruction block 'capability:memory:state' is replaced from this point onward by:
+
+            Send parcels to warehouse B.
+          type: text
+        role: system
+      model: claude-opus-5
+      stream: false
+      system:
+      - text: You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse
+          is assigned, reply UNASSIGNED.
+        type: text
+      - text: |-
+          Instruction block 'capability:memory:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.
+
+          Send parcels to warehouse A.
+        type: text
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '927'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-e1d8887f2dddb8b1f114efce1ff33862-5d7a1bfa76451b31-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      content: []
+      id: msg_011Cepc4wp2rKUseemCnX1AV
+      model: claude-opus-5
+      role: assistant
+      stop_details:
+        category: reasoning_extraction
+        explanation: 'This request was blocked as it seems to violate Anthropic''s Terms of Service restrictions on reverse
+          engineering or duplicating model outputs. To learn more, visit https://www.anthropic.com/legal/commercial-terms.
+          API integrators: you can reduce refusals for your users by configuring a fallback model -- see https://platform.claude.com/docs/en/build-with-claude/refusals-and-fallback'
+        type: refusal
+      stop_reason: refusal
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: not_available
+        input_tokens: 267
+        output_tokens: 0
+        output_tokens_details:
+          thinking_tokens: 0
+    status:
+      code: 200
+      message: OK
+version: 1

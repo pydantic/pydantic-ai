@@ -1,0 +1,212 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '747'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Process the todo.
+          type: text
+        role: user
+      model: claude-sonnet-4-5
+      stream: true
+      system:
+      - text: When the todo is pending, call finish_todo once. When it is done, reply DONE.
+        type: text
+      - text: |-
+          Instruction block 'capability:todos:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.
+
+          Todo status: pending.
+        type: text
+      tool_choice:
+        type: auto
+      tools:
+      - description: Finish the pending todo.
+        input_schema:
+          additionalProperties: false
+          properties: {}
+          type: object
+        name: finish_todo
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    body:
+      string: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CepcVUCoQQ1dESSYehWf4","type":"message","role":"assistant","content":[],"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":624,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":5,"service_tier":"standard","inference_geo":"not_available"}}    }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}      }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"I'll process the pending"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" todo for you."}           }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0        }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_01DMHGS3aTRF3UU2Q387xDLY","name":"finish_todo","input":{},"caller":{"type":"direct"}}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""}}
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1               }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null},"usage":{"input_tokens":624,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":46}               }
+
+        event: message_stop
+        data: {"type":"message_stop"             }
+
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-length:
+      - '1759'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-b129b0e1976c06f1de264eb8d7c794b4-6855a155636c1969-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1272'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Process the todo.
+          type: text
+        role: user
+      - content:
+        - text: I'll process the pending todo for you.
+          type: text
+        - id: toolu_01DMHGS3aTRF3UU2Q387xDLY
+          input: {}
+          name: finish_todo
+          type: tool_use
+        role: assistant
+      - content:
+        - content:
+          - text: Saved.
+            type: text
+          is_error: false
+          tool_use_id: toolu_01DMHGS3aTRF3UU2Q387xDLY
+          type: tool_result
+        - text: |-
+            <system>Instruction block 'capability:todos:state' is replaced from this point onward by:
+
+            Todo status: done.</system>
+          type: text
+        role: user
+      model: claude-sonnet-4-5
+      stream: true
+      system:
+      - text: When the todo is pending, call finish_todo once. When it is done, reply DONE.
+        type: text
+      - text: |-
+          Instruction block 'capability:todos:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.
+
+          Todo status: pending.
+        type: text
+      tool_choice:
+        type: auto
+      tools:
+      - description: Finish the pending todo.
+        input_schema:
+          additionalProperties: false
+          properties: {}
+          type: object
+        name: finish_todo
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    body:
+      string: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CepcVaP8G1g7XQ8HvCRZj","type":"message","role":"assistant","content":[],"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":720,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":4,"service_tier":"standard","inference_geo":"not_available"}}        }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}           }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"DONE"}               }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0            }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null},"usage":{"input_tokens":720,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":5}              }
+
+        event: message_stop
+        data: {"type":"message_stop"       }
+
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-length:
+      - '1190'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-ae761f5194516d6c76ce3042fa5fb2c8-ca76ceb5a8d29f8d-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    status:
+      code: 200
+      message: OK
+version: 1
+...

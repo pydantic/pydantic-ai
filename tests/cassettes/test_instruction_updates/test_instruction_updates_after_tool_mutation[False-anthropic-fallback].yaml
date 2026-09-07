@@ -1,0 +1,197 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '748'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Process the todo.
+          type: text
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+      system:
+      - text: When the todo is pending, call finish_todo once. When it is done, reply DONE.
+        type: text
+      - text: |-
+          Instruction block 'capability:todos:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.
+
+          Todo status: pending.
+        type: text
+      tool_choice:
+        type: auto
+      tools:
+      - description: Finish the pending todo.
+        input_schema:
+          additionalProperties: false
+          properties: {}
+          type: object
+        name: finish_todo
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '679'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-addb836e4df581418590946663941a20-3076f465648d9a83-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      content:
+      - text: I'll process the pending todo by marking it as complete.
+        type: text
+      - caller:
+          type: direct
+        id: toolu_01VWnp8rVsxxYpDqZMmpEBKe
+        input: {}
+        name: finish_todo
+        type: tool_use
+      id: msg_011CepcUTGDbrSXTT9X6a6Pd
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_details: null
+      stop_reason: tool_use
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: not_available
+        input_tokens: 624
+        output_tokens: 49
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1291'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Process the todo.
+          type: text
+        role: user
+      - content:
+        - text: I'll process the pending todo by marking it as complete.
+          type: text
+        - id: toolu_01VWnp8rVsxxYpDqZMmpEBKe
+          input: {}
+          name: finish_todo
+          type: tool_use
+        role: assistant
+      - content:
+        - content:
+          - text: Saved.
+            type: text
+          is_error: false
+          tool_use_id: toolu_01VWnp8rVsxxYpDqZMmpEBKe
+          type: tool_result
+        - text: |-
+            <system>Instruction block 'capability:todos:state' is replaced from this point onward by:
+
+            Todo status: done.</system>
+          type: text
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+      system:
+      - text: When the todo is pending, call finish_todo once. When it is done, reply DONE.
+        type: text
+      - text: |-
+          Instruction block 'capability:todos:state' has the following initial value. Later system updates to this block replace its entire value; follow the latest update, including a withdrawal, rather than this initial value.
+
+          Todo status: pending.
+        type: text
+      tool_choice:
+        type: auto
+      tools:
+      - description: Finish the pending todo.
+        input_schema:
+          additionalProperties: false
+          properties: {}
+          type: object
+        name: finish_todo
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '498'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-5312750a7cda4c380bf10dad7521eb1e-8e060b15dc63d0ef-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      content:
+      - text: DONE
+        type: text
+      id: msg_011CepcUZjQMJGtyRRPX2QRh
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_details: null
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: not_available
+        input_tokens: 723
+        output_tokens: 5
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1

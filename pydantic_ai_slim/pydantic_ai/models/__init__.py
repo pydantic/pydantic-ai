@@ -44,6 +44,7 @@ from ..messages import (
     FileUrl,
     FinalResultEvent,
     FinishReason,
+    InstructionDeltaPart,
     InstructionPart,
     ModelMessage,
     ModelRequest,
@@ -743,6 +744,36 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 which differs only for a corpus mixing capability-gated and standalone deferred tools.
                 Framework callers pass it.
         """
+        if any(
+            isinstance(part, InstructionDeltaPart)
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+        ):
+            baseline_index = max(
+                (
+                    index
+                    for index, message in enumerate(messages)
+                    if isinstance(message, ModelRequest) and message.instruction_baseline is not None
+                ),
+                default=0,
+            )
+            messages = [
+                replace(
+                    message,
+                    parts=[
+                        SystemPromptPart(content=part.render(), timestamp=message.timestamp or _utils.now_utc())
+                        if isinstance(part, InstructionDeltaPart)
+                        else part
+                        for part in message.parts
+                        if not isinstance(part, InstructionDeltaPart) or index >= baseline_index
+                    ],
+                )
+                if isinstance(message, ModelRequest)
+                else message
+                for index, message in enumerate(messages)
+            ]
+
         messages = _convert_speech_parts(messages, include_audio=self.profile.get('supports_audio_input', False))
 
         supports_tool_addition = self.tool_addition_mode is not None
@@ -2250,6 +2281,14 @@ def _wrap_non_leading_system_prompts(messages: list[ModelMessage]) -> list[Model
             new_messages.append(msg)
 
     return new_messages if changed else messages
+
+
+def _unprojected_instruction_delta_error() -> UserError:  # pyright: ignore[reportUnusedFunction]
+    """Explain how direct model callers can project canonical instruction changes."""
+    return UserError(
+        '`InstructionDeltaPart` must be projected before calling this model. '
+        'Call `model.prepare_messages(messages)` first and pass the result. `Agent` does this for you.'
+    )
 
 
 def _unsynthesized_tool_availability_delta_error() -> UserError:  # pyright: ignore[reportUnusedFunction]

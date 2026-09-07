@@ -1099,6 +1099,7 @@ def test_resolved_id_serialization_round_trip(id: InstructionId, serialized: str
     assert payload == {
         'content': 'Instructions.',
         'dynamic': True,
+        'on_change': 'rewrite',
         'name': id.name,
         'id': serialized,
         'part_kind': 'instruction',
