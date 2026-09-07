@@ -135,6 +135,55 @@ async def test_instruction_updates_hook_unset_preserves_recorded_text():
     ] == ['C']
 
 
+async def test_instruction_updates_hook_appended_request_preserves_history():
+    """Pin history merging and projected prefixes independently of provider response matching."""
+    prefixes: list[str | None] = []
+    captured: list[list[bytes]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        prefixes.append(info.instructions)
+        captured.append([ModelMessagesTypeAdapter.dump_json([message]) for message in messages])
+        request = messages[-1]
+        assert isinstance(request, ModelRequest)
+        assert request.instruction_parts == info.model_request_parameters.instruction_parts
+        assert [part.content for part in request.parts if isinstance(part, UserPromptPart)][:2] == [
+            'Continue.',
+            'Hook context.',
+        ]
+        return ModelResponse(parts=[TextPart('done')])
+
+    def append_request(ctx: RunContext[str], request: ModelRequestContext) -> ModelRequestContext:
+        request.messages.append(ModelRequest(parts=[UserPromptPart('Hook context.')]))
+        return request
+
+    history: list[ModelMessage] = []
+    updates: list[list[str | None]] = []
+    for value in ['A', 'B', 'B', 'C']:
+        agent = Agent(FunctionModel(model_fn), deps_type=str, capabilities=[Hooks(before_model_request=append_request)])
+
+        @agent.instructions(name='state', on_change='append')
+        def state(ctx: RunContext[str]) -> str:
+            return ctx.deps
+
+        result = await agent.run('Continue.', deps=value, message_history=history)
+        history = ModelMessagesTypeAdapter.validate_json(result.all_messages_json())
+        updates.append(
+            [
+                part.content
+                for message in history
+                if isinstance(message, ModelRequest)
+                for part in message.parts
+                if isinstance(part, InstructionDeltaPart)
+            ]
+        )
+
+    assert updates == snapshot([[], ['B'], ['B'], ['B', 'C']])
+    assert prefixes[0] is not None and prefixes[0].endswith('\n\nA')
+    assert prefixes == [prefixes[0]] * 4
+    for previous, current in zip(captured, captured[1:]):
+        assert current[: len(previous)] == previous
+
+
 @pytest.mark.parametrize('case', SOURCE_CASES, ids=lambda case: case.source)
 @pytest.mark.parametrize('stream', [False, True])
 async def test_instruction_updates_survive_fresh_agent_and_serialized_history(case: SourceCase, stream: bool):

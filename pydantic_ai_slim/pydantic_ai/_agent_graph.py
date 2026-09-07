@@ -3040,6 +3040,16 @@ def _merge_consecutive_messages(messages: list[_messages.ModelMessage]) -> list[
                 merged_message = _messages.ModelRequest(
                     parts=parts,
                     instructions=last_message.instructions or message.instructions,
+                    instruction_baseline=(
+                        message.instruction_baseline
+                        if message.instruction_baseline is not None
+                        else last_message.instruction_baseline
+                    ),
+                    instruction_parts=(
+                        message.instruction_parts
+                        if message.instruction_parts is not None
+                        else last_message.instruction_parts
+                    ),
                     timestamp=message.timestamp or last_message.timestamp,
                 )
                 clean_messages[-1] = merged_message
