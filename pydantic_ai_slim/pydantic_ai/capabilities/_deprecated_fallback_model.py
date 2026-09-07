@@ -12,35 +12,36 @@ from __future__ import annotations
 
 import inspect
 import warnings
-from typing import TypeVar
 
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.exceptions import UserError
 
-FallbackSubagentModelT = TypeVar('FallbackSubagentModelT')
 
-
-def resolve_fallback_subagent_model(
+def check_deprecated_fallback_model(
     cls_name: str,
     *,
-    # Keyword-only because the two share a type variable, so swapping them would make the new name
-    # warn and the deprecated one win, with nothing for a type checker to catch.
-    fallback_subagent_model: FallbackSubagentModelT,
-    fallback_model: FallbackSubagentModelT,
-) -> FallbackSubagentModelT:
-    """Map the deprecated `fallback_model` argument onto `fallback_subagent_model`.
+    # Keyword-only so the two can't be swapped by position, which would make the new name warn
+    # and the deprecated one win.
+    fallback_subagent_model: object,
+    fallback_model: object,
+) -> None:
+    """Warn on the deprecated `fallback_model` argument and refuse when both spellings are passed.
 
-    Returns `fallback_subagent_model` unchanged when `fallback_model` is omitted (`None`). When
-    `fallback_model` is passed, emits a
-    [`PydanticAIDeprecationWarning`][pydantic_ai.exceptions.PydanticAIDeprecationWarning] and returns
-    its value; passing both refuses rather than picking one silently. The exception depends on the
-    entry path: direct construction raises [`UserError`][pydantic_ai.exceptions.UserError], while
-    through [`Agent.from_spec`][pydantic_ai.agent.Agent.from_spec] the same refusal surfaces
-    as a `ValueError` carrying that `UserError` as its `__cause__`, because `_spec.load_from_registry`
+    Does nothing when `fallback_model` is omitted (`None`). When it is passed, emits a
+    [`PydanticAIDeprecationWarning`][pydantic_ai.exceptions.PydanticAIDeprecationWarning]; passing
+    both refuses rather than picking one silently. The exception depends on the entry path: direct
+    construction raises [`UserError`][pydantic_ai.exceptions.UserError], while through
+    [`Agent.from_spec`][pydantic_ai.agent.Agent.from_spec] the same refusal surfaces as a
+    `ValueError` carrying that `UserError` as its `__cause__`, because `_spec.load_from_registry`
     wraps every capability-constructor error.
+
+    The caller picks the value itself (`fallback_model if fallback_model is not None else
+    fallback_subagent_model`). This deliberately takes `object` rather than a `TypeVar`: solving a
+    type variable from two arguments of the callers' large `Model | KnownModelName | str | Callable
+    | None` union cost pyright ~100s per call site and doubled the CI type check.
     """
     if fallback_model is None:
-        return fallback_subagent_model
+        return
     if fallback_subagent_model is not None:
         raise UserError(
             f'{cls_name}: cannot specify both `fallback_model` and `fallback_subagent_model` — '
@@ -59,4 +60,3 @@ def resolve_fallback_subagent_model(
         PydanticAIDeprecationWarning,
         stacklevel=stacklevel,
     )
-    return fallback_model
