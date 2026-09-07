@@ -3143,7 +3143,28 @@ async def test_bedrock_unified_thinking_with_tool_forcing_raises(
 
     settings: BedrockModelSettings = {'thinking': True, 'tool_choice': 'required'}
 
-    with pytest.raises(UserError, match='forced tool choice with extended thinking'):
+    with pytest.raises(UserError, match="tool_choice='required' with extended thinking"):
+        await model.request([ModelRequest.user_text_prompt('hi')], settings, mrp)
+
+
+async def test_bedrock_extended_thinking_with_tool_forcing_suggests_adaptive(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """On a model that supports adaptive thinking, the extended-thinking forcing error names the alternative."""
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-6', provider=bedrock_provider)
+    tool_def = ToolDefinition(name='get_weather', parameters_json_schema={'type': 'object', 'properties': {}})
+    mrp = ModelRequestParameters(function_tools=[tool_def], allow_text_output=True)
+
+    settings: BedrockModelSettings = {
+        'bedrock_additional_model_requests_fields': {'thinking': {'type': 'enabled', 'budget_tokens': 1024}},
+        'tool_choice': ['get_weather'],
+    }
+
+    with pytest.raises(
+        UserError,
+        match=r"forcing specific tools with extended thinking\. Disable thinking or use `tool_choice='auto'`\. "
+        r"Alternatively, `bedrock_additional_model_requests_fields=\{'thinking': \{'type': 'adaptive'\}\}` supports forcing\.$",
+    ):
         await model.request([ModelRequest.user_text_prompt('hi')], settings, mrp)
 
 
@@ -6992,7 +7013,7 @@ def test_bedrock_anthropic_model_without_tool_forcing_uses_auto(allow_model_requ
         pytest.param(
             'anthropic.claude-sonnet-4-6',
             {'bedrock_additional_model_requests_fields': {'thinking': {'type': 'enabled', 'budget_tokens': 1024}}},
-            'extended thinking and output tools',
+            'extended thinking and output tools.*Alternatively, `bedrock_additional_model_requests_fields',
             id='manual-extended-thinking',
         ),
         pytest.param(

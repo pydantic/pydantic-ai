@@ -460,7 +460,7 @@ async def test_thinking_with_forced_tool_choice_raises(
             'bedrock_additional_model_requests_fields': {'thinking': {'type': 'enabled', 'budget_tokens': 1024}},
             'tool_choice': tool_choice,
         }
-        match = 'Bedrock does not support forced tool choice with extended thinking'
+        match = 'Bedrock does not support .* with extended thinking'
 
     params = ModelRequestParameters(function_tools=[make_tool('my_tool')], allow_text_output=True)
     with pytest.raises(UserError, match=match):
