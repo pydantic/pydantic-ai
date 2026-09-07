@@ -981,9 +981,11 @@ class RealtimeSession:
 
     def _trim_queue_deltas(self) -> None:
         while self._queue_delta_count > _SESSION_DELTA_QUEUE_SIZE:
-            # Deltas make up the bulk of a backed-up queue, so the oldest one is normally near the head.
-            # The scan only crosses the structural events retained ahead of it — a handful per turn, so
-            # negligible next to the audio frame that triggered it even after hundreds of turns.
+            # Deltas make up the bulk of a backed-up queue, so the oldest one is close to the head: the
+            # scan and the deque deletion are linear only in the structural events kept ahead of it,
+            # some five per turn, which do accumulate over a session nothing iterates. That stays under
+            # a tenth of a millisecond per delta until one session has run thousands of turns, which is
+            # negligible against the audio frame that triggered it.
             oldest = next(index for index, queued in enumerate(self._queue) if isinstance(queued, PartDeltaEvent))
             del self._queue[oldest]
             self._queue_delta_count -= 1
