@@ -468,14 +468,7 @@ def test_openai_codex_gpt_5_6():
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, ToolSearchTool, WebSearchTool}
             ),
-            'openai_unsupported_model_settings': (
-                'max_tokens',
-                'temperature',
-                'top_p',
-                'openai_top_logprobs',
-                'openai_truncation',
-                'openai_user',
-            ),
+            'openai_unsupported_model_settings': ('max_tokens', 'temperature', 'top_p'),
             'openai_responses_requires_streaming': True,
             'openai_responses_requires_store_false': True,
             'openai_supports_input_token_counting': False,
