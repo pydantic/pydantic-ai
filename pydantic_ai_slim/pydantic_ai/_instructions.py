@@ -217,6 +217,10 @@ def update_instruction_history(
 
     target = messages[-1]
     assert isinstance(target, ModelRequest)
+    if instructions is None:
+        # Unset parts preserve the recorded request text and end the structured append window.
+        target.instruction_baseline = {} if baseline is not None else None
+        return None
     if any(str(part.id) in effective and part.on_change != 'append' for part in normalized):
         # A changed policy or ambiguous identity can no longer address the old block safely.
         # Rebaseline the window so its old deltas cannot override the rewritten prefix.

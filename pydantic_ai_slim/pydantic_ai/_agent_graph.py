@@ -1541,6 +1541,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         if instruction_parts:
             instruction_parts = _messages.InstructionPart.sorted(instruction_parts) or None
         self.request.instructions = _messages.InstructionPart.join(instruction_parts) if instruction_parts else None
+        if instruction_parts is None and any(
+            isinstance(message, _messages.ModelRequest) and message.instruction_baseline is not None
+            for message in _messages.post_compaction_window(ctx.state.message_history)
+        ):
+            # An empty source set withdraws tracked blocks; hooks can still explicitly unset parts.
+            instruction_parts = []
 
         # Validate after instructions are resolved; self.request was appended above so [:-1] is prior history
         if not ctx.state.message_history[:-1] and not self.request.parts and not self.request.instructions:

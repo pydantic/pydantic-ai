@@ -93,6 +93,48 @@ class StateToolset(FunctionToolset[State]):
         return [InstructionPart(content=ctx.deps.value or '', name='state', on_change='append', dynamic=True)]
 
 
+async def test_instruction_updates_hook_unset_preserves_recorded_text():
+    captured: list[tuple[str | None, list[InstructionPart] | None]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        captured.append((info.instructions, info.model_request_parameters.instruction_parts))
+        return ModelResponse(parts=[TextPart('done')])
+
+    def clear_parts(ctx: RunContext[State], request: ModelRequestContext) -> ModelRequestContext:
+        request.model_request_parameters.instruction_parts = None
+        return request
+
+    agent = Agent(FunctionModel(model_fn), deps_type=State)
+
+    @agent.instructions(name='state', on_change='append')
+    def state(ctx: RunContext[State]) -> str | None:
+        return ctx.deps.value
+
+    first = await agent.run('Continue.', deps=State('A'))
+    second = await agent.run(
+        'Continue.',
+        deps=State('B'),
+        message_history=first.all_messages(),
+        capabilities=[Hooks(before_model_request=clear_parts)],
+    )
+    assert captured[-1] == ('B', None)
+    request = second.new_messages()[0]
+    assert isinstance(request, ModelRequest)
+    assert request.instruction_baseline == {}
+    assert not any(isinstance(part, InstructionDeltaPart) for part in request.parts)
+    third = await agent.run(
+        'Continue.', deps=State('C'), message_history=ModelMessagesTypeAdapter.validate_json(second.all_messages_json())
+    )
+    assert captured[-1] == (None, [])
+    assert [
+        part.content
+        for message in third.new_messages()
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, InstructionDeltaPart)
+    ] == ['C']
+
+
 @pytest.mark.parametrize('case', SOURCE_CASES, ids=lambda case: case.source)
 @pytest.mark.parametrize('stream', [False, True])
 async def test_instruction_updates_survive_fresh_agent_and_serialized_history(case: SourceCase, stream: bool):
