@@ -638,26 +638,16 @@ async def test_bedrock_count_tokens_non_http_error(allow_model_requests: None):
     )
 
 
-@pytest.mark.parametrize(
-    ('error', 'expected_message'),
-    [
-        (ReadTimeoutError(endpoint_url='https://bedrock.stub'), 'Read timeout on endpoint URL: "https://bedrock.stub"'),
-        (
-            EndpointConnectionError(endpoint_url='https://bedrock.stub'),
-            'Could not connect to the endpoint URL: "https://bedrock.stub"',
-        ),
-    ],
-    ids=['read_timeout', 'endpoint_connection'],
-)
-async def test_bedrock_request_transport_error(allow_model_requests: None, error: BotoCoreError, expected_message: str):
+async def test_bedrock_request_transport_error(allow_model_requests: None):
     """Not a VCR test: a cassette replays a recorded response, it cannot make botocore time out or fail to connect."""
+    error = ReadTimeoutError(endpoint_url='https://bedrock.stub')
     model = _bedrock_model_with_error(error)
     params = ModelRequestParameters()
 
     with pytest.raises(ModelAPIError) as exc_info:
         await model.request([ModelRequest.user_text_prompt('hi')], None, params)
 
-    assert exc_info.value.message == expected_message
+    assert exc_info.value.message == snapshot('Read timeout on endpoint URL: "https://bedrock.stub"')
     assert exc_info.value.model_name == 'us.amazon.nova-micro-v1:0'
     assert exc_info.value.__cause__ is error
 
@@ -822,7 +812,7 @@ async def test_bedrock_stream_non_http_error(allow_model_requests: None):
 
 async def test_bedrock_stream_transport_error(allow_model_requests: None):
     """Not a VCR test: a cassette replays a recorded response, it cannot make botocore time out or fail to connect."""
-    error = ReadTimeoutError(endpoint_url='https://bedrock.stub')
+    error = EndpointConnectionError(endpoint_url='https://bedrock.stub')
     model = _bedrock_model_with_error(error)
     params = ModelRequestParameters()
 
@@ -831,7 +821,7 @@ async def test_bedrock_stream_transport_error(allow_model_requests: None):
             async for _ in stream:
                 pass
 
-    assert exc_info.value.message == snapshot('Read timeout on endpoint URL: "https://bedrock.stub"')
+    assert exc_info.value.message == snapshot('Could not connect to the endpoint URL: "https://bedrock.stub"')
 
 
 async def test_stub_provider_properties():
