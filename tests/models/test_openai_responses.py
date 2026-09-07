@@ -17159,3 +17159,35 @@ async def test_unsupported_settings_cover_request_param_fields(allow_model_reque
         assert kwargs['parallel_tool_calls'] is True
         assert kwargs['truncation'] == 'auto'
         assert kwargs['context_management'] == [{'type': 'compaction'}]
+
+
+@pytest.mark.parametrize('stream', [False, True])
+@pytest.mark.parametrize('reason', ['max_output_tokens', 'content_filter'])
+async def test_codex_incomplete_response(allow_model_requests: None, stream: bool, reason: str):
+    events = _codex_stream(slim_completed=True)
+    response = resp.Response.model_validate(
+        {**_MINIMAL_RESPONSE, 'status': 'incomplete', 'incomplete_details': {'reason': reason}, 'output': []}
+    )
+    events[-1] = resp.ResponseIncompleteEvent(type='response.incomplete', response=response, sequence_number=8)
+    model, mock = _codex_model_with_stream(events)
+    messages: list[ModelRequest | ModelResponse] = [_turn('conv-test', 'run-test')]
+    settings = OpenAIResponsesModelSettings(temperature=0.5, top_p=0.8, openai_reasoning_effort='none')
+    if stream:
+        async with model.request_stream(messages, settings, ModelRequestParameters()) as streamed:
+            async for _ in streamed:
+                pass
+            result = streamed.get()
+    else:
+        result = await model.request(messages, settings, ModelRequestParameters())
+    assert result.finish_reason == ('length' if reason == 'max_output_tokens' else 'content_filter')
+    assert result.provider_details is not None
+    assert result.provider_details['finish_reason'] == reason
+    assert result.parts == [TextPart(content='hi there', id='m1', provider_name='openai-codex')]
+    kwargs = mock.response_kwargs[0]
+    assert kwargs['store'] is False
+    assert kwargs['extra_headers']['session-id'] == 'conv-test'
+    assert kwargs['extra_headers']['thread-id'] == 'conv-test'
+    assert kwargs['extra_headers']['x-client-request-id'] == 'conv-test'
+    assert kwargs['prompt_cache_key'] == 'conv-test'
+    assert 'temperature' not in kwargs
+    assert 'top_p' not in kwargs

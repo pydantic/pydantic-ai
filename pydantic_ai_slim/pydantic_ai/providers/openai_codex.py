@@ -45,7 +45,7 @@ if TYPE_CHECKING:
     from openai import AsyncOpenAI
 
 try:
-    from openai import AsyncOpenAI
+    from openai import AsyncOpenAI, OpenAIError
 except ImportError as _import_error:  # pragma: no cover
     raise ImportError(
         'Please install the `openai` package to use the OpenAI Codex provider, '
@@ -98,7 +98,8 @@ class CredentialsRefreshError(_CredentialsError):
     """
 
 
-class CredentialsPersistenceError(_CredentialsError):
+# The OpenAI SDK retries arbitrary transport exceptions, but propagates `OpenAIError` unchanged.
+class CredentialsPersistenceError(_CredentialsError, OpenAIError):
     """Rotated credentials were updated in memory but the persistence callback raised.
 
     The in-memory credentials are current and were handed to the callback before it failed; the
@@ -124,7 +125,9 @@ class OpenAICodexCredentials:
         try:
             tokens = _codex_cli_auth_ta.validate_python(data).tokens
         except ValidationError as e:
-            raise UserError(f'Malformed Codex CLI credentials. Run `codex login` to regenerate them.\n\n{e}') from None
+            raise UserError(
+                f'Malformed Codex CLI credentials. Run `codex login` to regenerate them.\n\n{e.json(include_input=False)}'
+            ) from None
         return cls(
             access_token=tokens.access_token,
             refresh_token=tokens.refresh_token,
@@ -140,9 +143,9 @@ class OpenAICodexCredentials:
 class _CodexCliTokens:
     """The `tokens` entry of the Codex CLI's `auth.json`."""
 
-    access_token: str
-    refresh_token: str
-    account_id: str
+    access_token: Annotated[str, Field(min_length=1)]
+    refresh_token: Annotated[str, Field(min_length=1)]
+    account_id: Annotated[str, Field(min_length=1)]
 
 
 @dataclass
@@ -179,8 +182,8 @@ class _TokenResponse:
     credentials without it could not survive their first expiry.
     """
 
-    access_token: str
-    refresh_token: str
+    access_token: Annotated[str, Field(min_length=1)]
+    refresh_token: Annotated[str, Field(min_length=1)]
     id_token: str | None = None
     account_id: str | None = None
 
@@ -272,7 +275,8 @@ async def _post_token_request(
     try:
         return _token_response_ta.validate_python(response.json())
     except ValueError as e:
-        raise CredentialsRefreshError(f'Token endpoint {url} returned an unexpected response.\n\n{e}') from None
+        detail = e.json(include_input=False) if isinstance(e, ValidationError) else str(e)
+        raise CredentialsRefreshError(f'Token endpoint {url} returned an unexpected response.\n\n{detail}') from None
 
 
 async def _refresh_credentials(
@@ -532,6 +536,7 @@ class OpenAICodexProvider(_OpenAICompatibleProvider):
         else:
             self._credentials = credentials if credentials is not None else _read_codex_cli_credentials()
         self._revision = 0
+        self._refresh_failures = 0
         self._last_refresh_error: tuple[int, Exception] | None = None
         self._auth = _OpenAICodexAuth(self)
         if http_client is None:
@@ -576,9 +581,11 @@ class OpenAICodexProvider(_OpenAICompatibleProvider):
         await self._load_if_needed()
         await self._refresh_if_stale()
         revision_used = self._revision
+        # Only share failures that happen after this request starts, not failures from earlier requests.
+        refresh_failures = self._refresh_failures
 
         async def replay() -> OpenAICodexCredentials:
-            await self._refresh_for_401(revision_used)
+            await self._refresh_for_401(revision_used, refresh_failures=refresh_failures)
             return self.credentials
 
         return self.credentials, replay
@@ -617,7 +624,7 @@ class OpenAICodexProvider(_OpenAICompatibleProvider):
             # retries with the still-current token and surfaces real errors.
             pass
 
-    async def _refresh_for_401(self, revision_used: int) -> None:
+    async def _refresh_for_401(self, revision_used: int, *, refresh_failures: int) -> None:
         """Single-flight refresh after a 401 carrying `revision_used`.
 
         If another task already replaced the credentials since the failed request was sent, no
@@ -628,11 +635,16 @@ class OpenAICodexProvider(_OpenAICompatibleProvider):
         async with self._refresh_lock:
             if self._revision != revision_used:  # recheck after acquiring
                 return
-            if (last := self._last_refresh_error) is not None and last[0] == revision_used:
+            if (
+                (last := self._last_refresh_error) is not None
+                and last[0] == revision_used
+                and self._refresh_failures != refresh_failures
+            ):
                 raise last[1]  # share the single-flight failure instead of re-running it per waiter
             try:
                 await self._refresh_locked()
             except Exception as e:
+                self._refresh_failures += 1
                 self._last_refresh_error = (revision_used, e)
                 raise
 

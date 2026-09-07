@@ -399,7 +399,7 @@ async def test_401_after_inflight_rotation_replays_without_second_refresh(monkey
         if calls == 1:
             # Another task rotates the credentials while this request is in flight, so its 401
             # must replay with the fresh set directly instead of refreshing a second time.
-            await provider._refresh_for_401(0)  # pyright: ignore[reportPrivateUsage]
+            await provider._refresh_for_401(0, refresh_failures=0)  # pyright: ignore[reportPrivateUsage]
             return httpx2.Response(401)
         return httpx2.Response(200)
 
