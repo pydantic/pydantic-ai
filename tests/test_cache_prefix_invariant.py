@@ -347,6 +347,36 @@ def test_responses_continuation_reconstructs_stored_input(tmp_path: Path, stream
     assert [violation.level for violation in violations] == (['system', 'system'] if rewrite_prefix else [])
 
 
+@pytest.mark.parametrize('response', [None, {'body': {'string': None}}])
+def test_responses_continuation_ignores_unusable_response_metadata(tmp_path: Path, response: object) -> None:
+    """A continuation with no usable response id cannot reconstruct stored input, but remains checkable."""
+    interactions = [
+        {
+            'request': {
+                'method': 'POST',
+                'uri': 'https://api.openai.com/v1/responses',
+                'parsed_body': {'instructions': 'Stable', 'input': [{'role': 'user', 'content': 'Continue.'}]},
+            },
+            'response': response,
+        },
+        {
+            'request': {
+                'method': 'POST',
+                'uri': 'https://api.openai.com/v1/responses',
+                'parsed_body': {
+                    'instructions': 'Stable',
+                    'input': [{'role': 'user', 'content': 'Continue.'}],
+                    'previous_response_id': 'missing',
+                },
+            },
+        },
+    ]
+    cassette = tmp_path / 'unusable-response.yaml'
+    cassette.write_text(yaml.safe_dump({'interactions': interactions}))
+
+    assert list(iter_cassette_prefix_violations(cassette)) == []
+
+
 def _anthropic_cassette(tmp_path: Path, name: str, bodies: list[dict[str, Any]]) -> Path:
     cassette_path = tmp_path / name
     cassette = {
