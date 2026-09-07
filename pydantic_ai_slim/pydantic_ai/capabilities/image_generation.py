@@ -13,7 +13,7 @@ from pydantic_ai.native_tools import ImageAspectRatio, ImageGenerationModelName,
 from pydantic_ai.tools import AgentDepsT, RunContext, Tool
 from pydantic_ai.toolsets import AbstractToolset
 
-from ._deprecated_fallback_model import resolve_fallback_subagent_model
+from ._deprecated_fallback_model import check_deprecated_fallback_model
 from .native_or_local import NativeOrLocalTool
 
 if TYPE_CHECKING:
@@ -157,11 +157,12 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         self.defer_loading = defer_loading
         self.native = native
         self.local = local
-        self.fallback_subagent_model = resolve_fallback_subagent_model(
+        check_deprecated_fallback_model(
             type(self).__name__,
-            fallback_subagent_model=fallback_subagent_model,
-            fallback_model=fallback_model,
+            fallback_subagent_model_passed=fallback_subagent_model is not None,
+            fallback_model_passed=fallback_model is not None,
         )
+        self.fallback_subagent_model = fallback_model if fallback_model is not None else fallback_subagent_model
         self.action = action
         self.background = background
         self.input_fidelity = input_fidelity
