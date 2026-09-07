@@ -20,29 +20,26 @@ from pydantic_ai.exceptions import UserError
 def check_deprecated_fallback_model(
     cls_name: str,
     *,
-    # Keyword-only so the two can't be swapped by position, which would make the new name warn
-    # and the deprecated one win.
-    fallback_subagent_model: object,
-    fallback_model: object,
+    # Keyword-only: two booleans swapped by position would make the new name warn and the
+    # deprecated one win, with nothing for a type checker to catch.
+    fallback_subagent_model_passed: bool,
+    fallback_model_passed: bool,
 ) -> None:
     """Warn on the deprecated `fallback_model` argument and refuse when both spellings are passed.
 
-    Does nothing when `fallback_model` is omitted (`None`). When it is passed, emits a
-    [`PydanticAIDeprecationWarning`][pydantic_ai.exceptions.PydanticAIDeprecationWarning]; passing
-    both refuses rather than picking one silently. The exception depends on the entry path: direct
-    construction raises [`UserError`][pydantic_ai.exceptions.UserError], while through
+    Takes only whether each argument was supplied, not the values: the caller keeps the value it
+    wants (`fallback_model if fallback_model is not None else fallback_subagent_model`) and this
+    only decides whether to warn or raise. Does nothing when `fallback_model` is omitted. When it is
+    passed, emits a [`PydanticAIDeprecationWarning`][pydantic_ai.exceptions.PydanticAIDeprecationWarning];
+    passing both refuses rather than picking one silently. The exception depends on the entry path:
+    direct construction raises [`UserError`][pydantic_ai.exceptions.UserError], while through
     [`Agent.from_spec`][pydantic_ai.agent.Agent.from_spec] the same refusal surfaces as a
     `ValueError` carrying that `UserError` as its `__cause__`, because `_spec.load_from_registry`
     wraps every capability-constructor error.
-
-    The caller picks the value itself (`fallback_model if fallback_model is not None else
-    fallback_subagent_model`). This deliberately takes `object` rather than a `TypeVar`: solving a
-    type variable from two arguments of the callers' large `Model | KnownModelName | str | Callable
-    | None` union cost pyright ~100s per call site and doubled the CI type check.
     """
-    if fallback_model is None:
+    if not fallback_model_passed:
         return
-    if fallback_subagent_model is not None:
+    if fallback_subagent_model_passed:
         raise UserError(
             f'{cls_name}: cannot specify both `fallback_model` and `fallback_subagent_model` — '
             '`fallback_model` is the deprecated spelling of `fallback_subagent_model`, so pass only the latter'

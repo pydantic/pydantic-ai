@@ -159,8 +159,8 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         self.local = local
         check_deprecated_fallback_model(
             type(self).__name__,
-            fallback_subagent_model=fallback_subagent_model,
-            fallback_model=fallback_model,
+            fallback_subagent_model_passed=fallback_subagent_model is not None,
+            fallback_model_passed=fallback_model is not None,
         )
         self.fallback_subagent_model = fallback_model if fallback_model is not None else fallback_subagent_model
         self.action = action
