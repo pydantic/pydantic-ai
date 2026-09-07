@@ -75,7 +75,13 @@ from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, TestEnv, try_import
 
 with try_import() as imports_successful:
     from botocore.client import BaseClient
-    from botocore.exceptions import BotoCoreError, ClientError, ReadTimeoutError
+    from botocore.exceptions import (
+        BotoCoreError,
+        ClientError,
+        EndpointConnectionError,
+        ParamValidationError,
+        ReadTimeoutError,
+    )
     from botocore.hooks import HierarchicalEmitter
     from mypy_boto3_bedrock_runtime import BedrockRuntimeClient
     from mypy_boto3_bedrock_runtime.type_defs import MessageUnionTypeDef, SystemContentBlockTypeDef, ToolTypeDef
@@ -149,7 +155,7 @@ async def test_bedrock_client_property_can_be_reassigned(bedrock_provider: Bedro
 
 
 async def test_bedrock_model_blocks_requests_when_disabled():
-    model = _bedrock_model_with_client_error(ClientError({'Error': {'Code': 'TestError'}}, 'Converse'))
+    model = _bedrock_model_with_error(ClientError({'Error': {'Code': 'TestError'}}, 'Converse'))
     messages: list[ModelMessage] = [ModelRequest.user_text_prompt('hello')]
     model_request_parameters = ModelRequestParameters()
 
@@ -164,7 +170,7 @@ async def test_bedrock_model_blocks_requests_when_disabled():
         await model.count_tokens(messages, None, model_request_parameters)
 
 
-def _bedrock_model_with_client_error(error: ClientError | BotoCoreError) -> BedrockConverseModel:
+def _bedrock_model_with_error(error: ClientError | BotoCoreError) -> BedrockConverseModel:
     """Instantiate a BedrockConverseModel wired to always raise the given error."""
     return BedrockConverseModel(
         'us.amazon.nova-micro-v1:0',
@@ -608,7 +614,7 @@ async def test_bedrock_count_tokens_error(allow_model_requests: None, bedrock_pr
 
 async def test_bedrock_request_non_http_error(allow_model_requests: None):
     error = ClientError({'Error': {'Code': 'TestException', 'Message': 'broken connection'}}, 'converse')
-    model = _bedrock_model_with_client_error(error)
+    model = _bedrock_model_with_error(error)
     params = ModelRequestParameters()
 
     with pytest.raises(ModelAPIError) as exc_info:
@@ -621,7 +627,7 @@ async def test_bedrock_request_non_http_error(allow_model_requests: None):
 
 async def test_bedrock_count_tokens_non_http_error(allow_model_requests: None):
     error = ClientError({'Error': {'Code': 'TestException', 'Message': 'broken connection'}}, 'count_tokens')
-    model = _bedrock_model_with_client_error(error)
+    model = _bedrock_model_with_error(error)
     params = ModelRequestParameters()
 
     with pytest.raises(ModelAPIError) as exc_info:
@@ -632,30 +638,43 @@ async def test_bedrock_count_tokens_non_http_error(allow_model_requests: None):
     )
 
 
-async def test_bedrock_botocore_error(allow_model_requests: None):
-    """Transport errors raised by botocore itself (`ReadTimeoutError`, `EndpointConnectionError`, ...) derive from
-    `BotoCoreError`, not `ClientError`, so they need their own `ModelAPIError` mapping for `FallbackModel` and
-    `except ModelAPIError` handlers to see them.
-
-    Not a VCR test: a cassette replays a recorded HTTP response, it can't make botocore time out or fail to connect.
-    """
-    error = ReadTimeoutError(endpoint_url='https://bedrock.stub')
-    model = _bedrock_model_with_client_error(error)
+@pytest.mark.parametrize(
+    'error',
+    [
+        ReadTimeoutError(endpoint_url='https://bedrock.stub'),
+        EndpointConnectionError(endpoint_url='https://bedrock.stub'),
+    ],
+    ids=['read_timeout', 'endpoint_connection'],
+)
+async def test_bedrock_request_transport_error(allow_model_requests: None, error: BotoCoreError):
+    model = _bedrock_model_with_error(error)
     params = ModelRequestParameters()
 
     with pytest.raises(ModelAPIError) as exc_info:
         await model.request([ModelRequest.user_text_prompt('hi')], None, params)
 
-    assert exc_info.value.message == snapshot('Read timeout on endpoint URL: "https://bedrock.stub"')
+    assert exc_info.value.message == str(error)
     assert exc_info.value.__cause__ is error
 
-    with pytest.raises(ModelAPIError):
-        async with model.request_stream([ModelRequest.user_text_prompt('hi')], None, params) as stream:
-            async for _ in stream:
-                pass
 
-    with pytest.raises(ModelAPIError):
+async def test_bedrock_count_tokens_transport_error(allow_model_requests: None):
+    error = ReadTimeoutError(endpoint_url='https://bedrock.stub')
+    model = _bedrock_model_with_error(error)
+    params = ModelRequestParameters()
+
+    with pytest.raises(ModelAPIError) as exc_info:
         await model.count_tokens([ModelRequest.user_text_prompt('hi')], None, params)
+
+    assert exc_info.value.message == snapshot('Read timeout on endpoint URL: "https://bedrock.stub"')
+
+
+async def test_bedrock_request_config_error_not_wrapped(allow_model_requests: None):
+    """Only transport failures become `ModelAPIError`; client-side botocore errors still surface as themselves."""
+    error = ParamValidationError(report='bad params')
+    model = _bedrock_model_with_error(error)
+
+    with pytest.raises(ParamValidationError):
+        await model.request([ModelRequest.user_text_prompt('hi')], None, ModelRequestParameters())
 
 
 def _bedrock_arn(resource: str) -> str:
@@ -781,7 +800,7 @@ async def test_bedrock_count_tokens_tool_config(
 
 async def test_bedrock_stream_non_http_error(allow_model_requests: None):
     error = ClientError({'Error': {'Code': 'TestException', 'Message': 'broken connection'}}, 'converse_stream')
-    model = _bedrock_model_with_client_error(error)
+    model = _bedrock_model_with_error(error)
     params = ModelRequestParameters()
 
     with pytest.raises(ModelAPIError) as exc_info:
@@ -792,10 +811,23 @@ async def test_bedrock_stream_non_http_error(allow_model_requests: None):
     assert 'broken connection' in exc_info.value.message
 
 
+async def test_bedrock_stream_transport_error(allow_model_requests: None):
+    error = ReadTimeoutError(endpoint_url='https://bedrock.stub')
+    model = _bedrock_model_with_error(error)
+    params = ModelRequestParameters()
+
+    with pytest.raises(ModelAPIError) as exc_info:
+        async with model.request_stream([ModelRequest.user_text_prompt('hi')], None, params) as stream:
+            async for _ in stream:
+                pass
+
+    assert exc_info.value.message == snapshot('Read timeout on endpoint URL: "https://bedrock.stub"')
+
+
 async def test_stub_provider_properties():
     # tests the test utility itself...
     error = ClientError({'Error': {'Code': 'TestException', 'Message': 'test'}}, 'converse')
-    model = _bedrock_model_with_client_error(error)
+    model = _bedrock_model_with_error(error)
     provider = model._provider  # pyright: ignore[reportPrivateUsage]
 
     assert provider.name == 'bedrock-stub'
