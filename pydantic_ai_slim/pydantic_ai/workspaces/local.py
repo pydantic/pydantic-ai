@@ -133,13 +133,18 @@ class LocalWorkspace(WorkspaceBackend, SupportsFilesystem):
             # Always the canonical spelling (symlinks resolved, no `..`), set on first use: the
             # kernel resolves a cwd like `link/..` through the symlink while lexical joins collapse
             # it as text, so a non-canonical root would point `run()` and `fs` at different
-            # directories, breaking the protocol's one-environment contract.
-            if self._given_root is None:
-                root = await run_in_executor(lambda: Path(tempfile.mkdtemp(prefix='pydantic-ai-workspace-')).resolve())
-            else:
-                root = await run_in_executor(self._given_root.resolve)
-            self._live = root
-            return root
+            # directories, breaking the protocol's one-environment contract. Keep cancellation
+            # from abandoning the filesystem operation before its result is recorded: otherwise
+            # a created temporary directory has no owner and can never be cleaned up.
+            with anyio.CancelScope(shield=True):
+                if self._given_root is None:
+                    self._live = await run_in_executor(
+                        lambda: Path(tempfile.mkdtemp(prefix='pydantic-ai-workspace-')).resolve()
+                    )
+                else:
+                    self._live = await run_in_executor(self._given_root.resolve)
+            assert self._live is not None
+            return self._live
 
     async def __aenter__(self) -> Self:
         return self
@@ -150,17 +155,17 @@ class LocalWorkspace(WorkspaceBackend, SupportsFilesystem):
         # Under the acquisition lock: an unlocked clear would race acquisition — a first use
         # blocked on the lock could otherwise recreate a root mid-teardown that nothing
         # would ever remove.
-        async with self._lock:
-            if self._owns_root and self._live is not None:
-                # Reset first so a reused workspace lazily creates a fresh root instead of
-                # resurrecting the deleted path.
-                root, self._live = self._live, None
-                try:
-                    await run_in_executor(shutil.rmtree, root)
-                except FileNotFoundError:
-                    # A command or `fs.remove()` may have deleted the root already; exiting
-                    # must not raise (it would mask the exception that ended the block).
-                    pass
+        with anyio.CancelScope(shield=True):
+            async with self._lock:
+                if self._owns_root and self._live is not None:
+                    root = self._live
+                    try:
+                        await run_in_executor(shutil.rmtree, root)
+                    except FileNotFoundError:
+                        # A command or `fs.remove()` may have deleted the root already; exiting
+                        # must not raise (it would mask the exception that ended the block).
+                        pass
+                    self._live = None
 
     async def working_dir(self) -> str:
         return str(await self.root)

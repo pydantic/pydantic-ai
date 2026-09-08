@@ -5,18 +5,22 @@ from __future__ import annotations
 import asyncio
 import os
 import shlex
+import shutil
 import signal
 import sys
 import tempfile
+import threading
 import time
 from collections.abc import Callable
 from contextlib import suppress
 from pathlib import Path
 from typing import Any, cast
 
+import anyio
 import pytest
 
 from pydantic_ai import Agent, RunContext
+from pydantic_ai._utils import abandon_threads_on_cancel
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.workspaces import (
@@ -53,6 +57,82 @@ async def test_local_workspace_concurrent_first_use_creates_one_root(monkeypatch
         root = Path(paths[0])
         assert root.exists()
     assert not root.exists()
+
+
+async def test_cancelled_context_exit_removes_owned_root() -> None:
+    workspace = LocalWorkspace()
+    root: Path | None = None
+    try:
+        async with anyio.create_task_group() as tg:
+            async with workspace:
+                root = Path(await workspace.root)
+                assert root.exists()
+                tg.cancel_scope.cancel()
+            assert root is not None
+            assert not root.exists()
+    finally:
+        if root is not None:
+            shutil.rmtree(root, ignore_errors=True)
+
+
+async def test_cancelled_root_acquisition_keeps_ownership_with_abandoned_thread(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    real_mkdtemp: Callable[..., str] = tempfile.mkdtemp
+    started = threading.Event()
+    release = threading.Event()
+    created: list[Path] = []
+
+    def held_mkdtemp(*args: Any, **kwargs: Any) -> str:
+        root = Path(cast(str, real_mkdtemp(*args, **kwargs)))
+        created.append(root)
+        started.set()
+        release.wait()
+        return str(root)
+
+    monkeypatch.setattr('pydantic_ai.workspaces.local.tempfile.mkdtemp', held_mkdtemp)
+    workspace = LocalWorkspace()
+    acquisition_scope: anyio.CancelScope | None = None
+    acquisition_finished = anyio.Event()
+
+    async def acquire_root() -> None:
+        nonlocal acquisition_scope
+        with anyio.CancelScope() as scope:
+            acquisition_scope = scope
+            try:
+                with abandon_threads_on_cancel():
+                    await workspace.root
+            finally:
+                acquisition_finished.set()
+
+    roots: set[Path] = set()
+    try:
+        async with anyio.create_task_group() as tg:
+            try:
+                tg.start_soon(acquire_root)
+                while not started.is_set():
+                    await anyio.sleep(0)
+                assert acquisition_scope is not None
+                acquisition_scope.cancel()
+                await anyio.sleep(0)
+                release.set()
+                await acquisition_finished.wait()
+                root = Path(await workspace.root)
+                roots.update(created)
+                roots.add(root)
+
+                assert len(created) == 1
+                assert created[0].resolve() == root
+                assert root.exists()
+                async with workspace:
+                    assert Path(await workspace.root) == root
+                assert not root.exists()
+            finally:
+                release.set()
+    finally:
+        release.set()
+        for root in roots | set(created):
+            shutil.rmtree(root, ignore_errors=True)
 
 
 _HAS_PROCFS = Path('/proc/self').exists()
@@ -223,7 +303,9 @@ async def test_timeout_keeps_output_printed_before_the_deadline(tmp_path: Path):
 
 async def test_stdin_is_devnull(tmp_path: Path):
     workspace = LocalWorkspace(tmp_path)
-    result = await workspace.run([sys.executable, '-c', 'import sys; print("eof" if sys.stdin.read() == "" else "data")'])
+    result = await workspace.run(
+        [sys.executable, '-c', 'import sys; print("eof" if sys.stdin.read() == "" else "data")']
+    )
 
     assert result.stdout == 'eof\n'
 
@@ -560,6 +642,42 @@ async def test_temp_root_already_deleted_on_exit_does_not_raise():
         root = Path(await workspace.working_dir())
         await workspace.remove(str(root))  # a command or tool may delete the root itself
     assert not root.exists()
+
+
+async def test_failed_owned_root_cleanup_retains_root_for_retry(monkeypatch: pytest.MonkeyPatch) -> None:
+    workspace = LocalWorkspace()
+    real_rmtree = shutil.rmtree
+    calls = 0
+    roots: set[Path] = set()
+
+    def fail_once(path: str | Path) -> None:
+        nonlocal calls
+        root = Path(path)
+        roots.add(root)
+        calls += 1
+        if calls == 1:
+            raise PermissionError('cleanup denied')
+        real_rmtree(root)
+
+    monkeypatch.setattr('pydantic_ai.workspaces.local.shutil.rmtree', fail_once)
+    root: Path | None = None
+    try:
+        with pytest.raises(PermissionError, match='cleanup denied'):
+            async with workspace:
+                root = Path(await workspace.root)
+                roots.add(root)
+
+        assert root is not None
+        assert root.exists()
+        assert Path(await workspace.root) == root
+
+        async with workspace:
+            assert Path(await workspace.root) == root
+
+        assert not root.exists()
+    finally:
+        for path in roots:
+            real_rmtree(path, ignore_errors=True)
 
 
 async def test_caller_supplied_root_is_never_removed(tmp_path: Path):
