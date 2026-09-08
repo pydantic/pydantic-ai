@@ -30,16 +30,38 @@ jobs:
             auth_name="$1"
             auth_header="$2"
             response_file="$RUNNER_TEMP/claude-gateway-$auth_name.json"
-            status=$(curl --silent --show-error --output "$response_file" --write-out '%{http_code}' \
+            curl_args=()
+            if [ -n "$auth_header" ]; then
+              curl_args+=(--header "$auth_header")
+            fi
+            metadata=$(curl --silent --show-error --output "$response_file" --write-out '%{http_code}|%{content_type}|%{size_download}' \
               --request POST "$ANTHROPIC_BASE_URL/v1/messages" \
-              --header "$auth_header" \
+              "${curl_args[@]}" \
               --header 'anthropic-version: 2023-06-01' \
               --header 'content-type: application/json' \
-              --data "$request_body") || status=000
-            response_type=$(jq -r '.error.type // .type // "non-json"' "$response_file" 2>/dev/null || echo 'non-json')
-            echo "$auth_name: HTTP $status ($response_type)"
+              --data "$request_body") || metadata='000|none|0'
+            IFS='|' read -r status content_type size_download <<< "$metadata"
+            response_type=$(jq -r '.error.type // .type // "json-other"' "$response_file" 2>/dev/null || true)
+            if [ -z "$response_type" ]; then
+              if rg --ignore-case --quiet 'cloudflare|cf-ray|web application firewall|waf' "$response_file"; then
+                response_type=edge-firewall
+              elif rg --ignore-case --quiet 'api.?key|token|credential|unauthori[sz]ed|revoked' "$response_file"; then
+                response_type=credential
+              elif rg --ignore-case --quiet 'quota|billing|credit|spend|rate.?limit' "$response_file"; then
+                response_type=quota
+              elif rg --ignore-case --quiet 'forbidden|access denied|permission|blocked' "$response_file"; then
+                response_type=access-policy
+              elif rg --ignore-case --quiet 'model|route|deployment' "$response_file"; then
+                response_type=model-route
+              else
+                response_type=unclassified
+              fi
+            fi
+            response_hash=$(sha256sum "$response_file" | cut -c1-12)
+            echo "$auth_name: HTTP $status; content-type $content_type; bytes $size_download; class $response_type; fingerprint $response_hash"
           }
 
+          probe no-auth ''
           probe x-api-key "x-api-key: $GATEWAY_KEY"
           probe bearer "Authorization: Bearer $GATEWAY_KEY"
 
