@@ -14,7 +14,7 @@ from pydantic_ai.tools import RunContext
 from pydantic_graph import End
 
 if TYPE_CHECKING:
-    from pydantic_ai import _agent_graph
+    from pydantic_ai._agent_graph import graph as _graph
     from pydantic_ai.models import ModelRequestContext
     from pydantic_ai.result import FinalResult
 
@@ -114,9 +114,9 @@ class PendingMessageDrainCapability(AbstractCapability[Any]):
         self,
         ctx: RunContext[Any],
         *,
-        node: _agent_graph.AgentNode[Any, Any],
-        result: _agent_graph.AgentNode[Any, Any] | End[FinalResult[Any]],
-    ) -> _agent_graph.AgentNode[Any, Any] | End[FinalResult[Any]]:
+        node: _graph.AgentNode[Any, Any],
+        result: _graph.AgentNode[Any, Any] | End[FinalResult[Any]],
+    ) -> _graph.AgentNode[Any, Any] | End[FinalResult[Any]]:
         """Drain remaining `'asap'` and `'when_idle'` messages if the agent would terminate.
 
         If the run is about to end, drain `'asap'` messages first (anything that arrived

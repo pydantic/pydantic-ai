@@ -10,7 +10,7 @@ from pydantic_core import PydanticSerializationError
 from temporalio import workflow
 from temporalio.workflow import ActivityConfig
 
-from pydantic_ai._agent_graph import set_agent_graph_sleep
+from pydantic_ai._agent_graph.state import set_agent_graph_sleep
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities.abstract import WrapRunHandler

@@ -17,6 +17,7 @@ from . import (
     messages as _messages,
     usage as _usage,
 )
+from ._agent_graph import graph as _graph
 from ._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority
 from ._instrumentation import current_otel_traceparent
 from ._run_context import CustomEventT
@@ -102,7 +103,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
     _result_override: AgentRunResult[OutputDataT] | None = dataclasses.field(default=None, repr=False, init=False)
     _node_error: BaseException | None = dataclasses.field(default=None, repr=False, init=False)
     """Stores the original exception from node execution, before context manager __aexit__ may transform it."""
-    _last_yielded_node: _agent_graph.AgentNode[AgentDepsT, OutputDataT] | End[FinalResult[OutputDataT]] | None = (
+    _last_yielded_node: _graph.AgentNode[AgentDepsT, OutputDataT] | End[FinalResult[OutputDataT]] | None = (
         dataclasses.field(default=None, repr=False, init=False)
     )
     """The node most recently yielded by `__anext__`, run on the following iteration."""
@@ -131,7 +132,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
     @property
     def next_node(
         self,
-    ) -> _agent_graph.AgentNode[AgentDepsT, OutputDataT] | End[FinalResult[OutputDataT]]:
+    ) -> _graph.AgentNode[AgentDepsT, OutputDataT] | End[FinalResult[OutputDataT]]:
         """The next node that will be run in the agent graph.
 
         This is the next node that will be used during async iteration, or if a node is not passed to `self.next(...)`.
@@ -193,13 +194,13 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
 
     def __aiter__(
         self,
-    ) -> AsyncIterator[_agent_graph.AgentNode[AgentDepsT, OutputDataT] | End[FinalResult[OutputDataT]]]:
+    ) -> AsyncIterator[_graph.AgentNode[AgentDepsT, OutputDataT] | End[FinalResult[OutputDataT]]]:
         """Provide async-iteration over the nodes in the agent run."""
         return self
 
     async def __anext__(
         self,
-    ) -> _agent_graph.AgentNode[AgentDepsT, OutputDataT] | End[FinalResult[OutputDataT]]:
+    ) -> _graph.AgentNode[AgentDepsT, OutputDataT] | End[FinalResult[OutputDataT]]:
         """Advance to the next node automatically based on the last returned node.
 
         Yields each node before it runs, ending with the [`End`][pydantic_graph.basenode.End] node.
@@ -248,7 +249,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
 
     def _task_to_node(
         self, task: EndMarker[FinalResult[OutputDataT]] | JoinItem | Sequence[GraphTaskRequest]
-    ) -> _agent_graph.AgentNode[AgentDepsT, OutputDataT] | End[FinalResult[OutputDataT]]:
+    ) -> _graph.AgentNode[AgentDepsT, OutputDataT] | End[FinalResult[OutputDataT]]:
         if isinstance(task, Sequence) and len(task) == 1:
             first_task = task[0]
             if isinstance(first_task.inputs, BaseNode):  # pragma: no branch
@@ -257,16 +258,16 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                     _agent_graph.GraphAgentDeps[AgentDepsT, OutputDataT],
                     FinalResult[OutputDataT],
                 ] = first_task.inputs  # pyright: ignore[reportUnknownMemberType]
-                if _agent_graph.is_agent_node(node=base_node):  # pragma: no branch
+                if _graph.is_agent_node(node=base_node):  # pragma: no branch
                     return base_node
         if isinstance(task, EndMarker):
             return End(task.value)
         raise exceptions.AgentRunError(f'Unexpected node: {task}')  # pragma: no cover
 
-    def _node_to_task(self, node: _agent_graph.AgentNode[AgentDepsT, OutputDataT]) -> GraphTaskRequest:
+    def _node_to_task(self, node: _graph.AgentNode[AgentDepsT, OutputDataT]) -> GraphTaskRequest:
         return GraphTaskRequest(NodeStep(type(node)).id, inputs=node, fork_stack=())
 
-    def _sync_graph_state(self, result: _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]) -> None:
+    def _sync_graph_state(self, result: _graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]) -> None:
         """Synchronize the graph runner's state to match a hook-modified result.
 
         After a capability hook changes the result (e.g. `on_node_run_error` recovering,
@@ -278,7 +279,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         else:
             self._graph_run.override_next([self._node_to_task(result)])
 
-    def _graph_pending_node(self) -> _agent_graph.AgentNode[AgentDepsT, Any] | None:
+    def _graph_pending_node(self) -> _graph.AgentNode[AgentDepsT, Any] | None:
         """The node the graph runner is pending on, or `None` if it isn't pointing at one.
 
         Unlike `next_node` and `_task_to_node`, this never raises: an `ErrorMarker`, an `EndMarker`
@@ -293,11 +294,11 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                     _agent_graph.GraphAgentDeps[AgentDepsT, Any],
                     FinalResult[Any],
                 ] = node
-                if _agent_graph.is_agent_node(base_node):  # pragma: no branch
+                if _graph.is_agent_node(base_node):  # pragma: no branch
                     return base_node
         return None
 
-    def _graph_reflects(self, result: _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]) -> bool:
+    def _graph_reflects(self, result: _graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]) -> bool:
         """Whether the graph runner's own state already records `result` as the step's outcome.
 
         False whenever the two have diverged, whatever the cause: the graph is still pending on the
@@ -311,8 +312,8 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
 
     async def _advance_graph(
         self,
-        node: _agent_graph.AgentNode[AgentDepsT, Any],
-    ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
+        node: _graph.AgentNode[AgentDepsT, Any],
+    ) -> _graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
         """Execute a single graph step without firing capability hooks."""
         task = [self._node_to_task(node)]
         try:
@@ -324,12 +325,12 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
     async def _wrap_and_advance(
         self,
         run_context: RunContext[AgentDepsT],
-        node: _agent_graph.AgentNode[AgentDepsT, Any],
+        node: _graph.AgentNode[AgentDepsT, Any],
         step_fn: Callable[
-            [_agent_graph.AgentNode[AgentDepsT, Any]],
-            Awaitable[_agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]],
+            [_graph.AgentNode[AgentDepsT, Any]],
+            Awaitable[_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]],
         ],
-    ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
+    ) -> _graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
         """Execute `wrap_node_run(step_fn)` → `on_node_run_error` → `after_node_run`.
 
         This is the portion of the hook lifecycle after `before_node_run` has already fired.
@@ -373,12 +374,12 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
 
     async def _run_node_with_hooks(
         self,
-        node: _agent_graph.AgentNode[AgentDepsT, Any],
+        node: _graph.AgentNode[AgentDepsT, Any],
         step_fn: Callable[
-            [_agent_graph.AgentNode[AgentDepsT, Any]],
-            Awaitable[_agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]],
+            [_graph.AgentNode[AgentDepsT, Any]],
+            Awaitable[_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]],
         ],
-    ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
+    ) -> _graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
         """Run a node through the full capability hook lifecycle with a custom step function.
 
         Fires hooks in order: `before_node_run` → `wrap_node_run(step_fn)` → `after_node_run`,
@@ -399,8 +400,8 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
 
     async def next(
         self,
-        node: _agent_graph.AgentNode[AgentDepsT, OutputDataT],
-    ) -> _agent_graph.AgentNode[AgentDepsT, OutputDataT] | End[FinalResult[OutputDataT]]:
+        node: _graph.AgentNode[AgentDepsT, OutputDataT],
+    ) -> _graph.AgentNode[AgentDepsT, OutputDataT] | End[FinalResult[OutputDataT]]:
         """Manually drive the agent run by passing in the node you want to run next.
 
         This lets you inspect or mutate the node before continuing execution, or skip certain nodes
@@ -477,8 +478,8 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
 
     async def _stream_and_advance(
         self,
-        node: _agent_graph.AgentNode[AgentDepsT, Any],
-    ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
+        node: _graph.AgentNode[AgentDepsT, Any],
+    ) -> _graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
         """Execute a single graph step, streaming the node first if capabilities need its events.
 
         A capability that overrides `wrap_run_event_stream` only sees events if the node is
@@ -486,7 +487,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         `node.stream()` applies the capability chain itself, so draining it is all that's needed.
         """
         if self.ctx.deps.root_capability.has_wrap_run_event_stream or self.ctx.deps.root_capability.has_on_event:
-            await _agent_graph.drain_node_event_stream(node, self.ctx)
+            await _graph.drain_node_event_stream(node, self.ctx)
         return await self._advance_graph(node)
 
     @property
