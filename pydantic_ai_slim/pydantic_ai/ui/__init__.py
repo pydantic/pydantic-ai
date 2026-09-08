@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from ._adapter import StateDeps, StateHandler, UIAdapter
-from ._event_stream import SSE_CONTENT_TYPE, NativeEvent, OnCancelFunc, OnCompleteFunc, UIEventStream
+from ._event_stream import SSE_CONTENT_TYPE, NativeEvent, OnCancelFunc, OnCompleteFunc, OnErrorFunc, UIEventStream
 from ._messages_builder import BuilderCheckpoint, MessagesBuilder
 
 if TYPE_CHECKING:
@@ -18,6 +18,7 @@ __all__ = [
     'NativeEvent',
     'OnCompleteFunc',
     'OnCancelFunc',
+    'OnErrorFunc',
     'MessagesBuilder',
     'BuilderCheckpoint',
     'DEFAULT_HTML_URL',

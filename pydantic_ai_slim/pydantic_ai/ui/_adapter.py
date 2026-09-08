@@ -41,7 +41,7 @@ from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
 
-from ._event_stream import NativeEvent, OnCancelFunc, OnCompleteFunc, UIEventStream
+from ._event_stream import NativeEvent, OnCancelFunc, OnCompleteFunc, OnErrorFunc, UIEventStream
 
 if TYPE_CHECKING:
     from starlette.requests import Request
@@ -442,6 +442,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         stream: AsyncIterator[NativeEvent],
         on_complete: OnCompleteFunc[EventT] | None = None,
         on_cancel: OnCancelFunc[EventT] | None = None,
+        on_error: OnErrorFunc[EventT] | None = None,
     ) -> AsyncIterator[EventT]:
         """Transform a stream of Pydantic AI events into protocol-specific events.
 
@@ -451,8 +452,12 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 The callback receives the completed [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] and can optionally yield additional protocol-specific events.
             on_cancel: Optional callback function called when the agent run ends in first-party cancellation.
                 The callback receives the [`RunCancelled`][pydantic_ai.exceptions.RunCancelled] and can optionally yield additional protocol-specific events.
+            on_error: Optional callback function called when the agent run ends in error.
+                The callback receives the exception and can optionally yield additional protocol-specific events.
         """
-        return self.build_event_stream().transform_stream(stream, on_complete=on_complete, on_cancel=on_cancel)
+        return self.build_event_stream().transform_stream(
+            stream, on_complete=on_complete, on_cancel=on_cancel, on_error=on_error
+        )
 
     def encode_stream(self, stream: AsyncIterator[EventT]) -> AsyncIterator[str]:
         """Encode a stream of protocol-specific events as strings according to the `Accept` header value.
@@ -601,6 +606,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         capabilities: Sequence[AbstractCapability[AgentDepsT]] | None = None,
         on_complete: OnCompleteFunc[EventT] | None = None,
         on_cancel: OnCancelFunc[EventT] | None = None,
+        on_error: OnErrorFunc[EventT] | None = None,
     ) -> AsyncIterator[EventT]:
         """Run the agent with the protocol-specific run input and stream protocol-specific events.
 
@@ -628,6 +634,8 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 The callback receives the completed [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] and can optionally yield additional protocol-specific events.
             on_cancel: Optional callback function called when the agent run ends in first-party cancellation.
                 The callback receives the [`RunCancelled`][pydantic_ai.exceptions.RunCancelled] and can optionally yield additional protocol-specific events.
+            on_error: Optional callback function called when the agent run ends in error.
+                The callback receives the exception and can optionally yield additional protocol-specific events.
         """
         return self.transform_stream(
             self.run_stream_native(
@@ -650,6 +658,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             ),
             on_complete=on_complete,
             on_cancel=on_cancel,
+            on_error=on_error,
         )
 
     @classmethod
@@ -676,6 +685,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         capabilities: Sequence[AbstractCapability[DispatchDepsT]] | None = None,
         on_complete: OnCompleteFunc[EventT] | None = None,
         on_cancel: OnCancelFunc[EventT] | None = None,
+        on_error: OnErrorFunc[EventT] | None = None,
         manage_system_prompt: Literal['server', 'client'] = 'server',
         allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
         allowed_file_url_force_download: frozenset[ForceDownloadMode] = frozenset(),
@@ -713,6 +723,8 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 The callback receives the completed [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] and can optionally yield additional protocol-specific events.
             on_cancel: Optional callback function called when the agent run ends in first-party cancellation.
                 The callback receives the [`RunCancelled`][pydantic_ai.exceptions.RunCancelled] and can optionally yield additional protocol-specific events.
+            on_error: Optional callback function called when the agent run ends in error.
+                The callback receives the exception and can optionally yield additional protocol-specific events.
             manage_system_prompt: Who owns the system prompt. See
                 [`UIAdapter.manage_system_prompt`][pydantic_ai.ui.UIAdapter.manage_system_prompt].
             allowed_file_url_schemes: URL schemes allowed for file URL parts from the client. See
@@ -783,5 +795,6 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 capabilities=capabilities,
                 on_complete=on_complete,
                 on_cancel=on_cancel,
+                on_error=on_error,
             ),
         )

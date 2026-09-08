@@ -1097,6 +1097,74 @@ async def test_run_stream_on_cancel_not_called_for_success_or_error():
     assert success_stream.cancelled is None
 
 
+async def test_run_stream_on_error() -> None:
+    errors: list[Exception] = []
+
+    async def stream_error(messages: list[ModelMessage], agent_info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+        raise ValueError('plain error')
+        yield  # pragma: no cover
+
+    agent = Agent(model=FunctionModel(stream_function=stream_error))
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+    adapter = DummyUIAdapter(agent, request)
+
+    async def on_error(exc: Exception) -> AsyncIterator[str]:
+        errors.append(exc)
+        yield '<error-callback>'
+
+    events = [event async for event in adapter.run_stream(on_error=on_error)]
+
+    assert len(errors) == 1
+    assert isinstance(errors[0], ValueError)
+    assert str(errors[0]) == 'plain error'
+    # Callback events are yielded before the default error output.
+    assert '<error-callback>' in events
+    assert "<error type='ValueError'>plain error</error>" in events
+    assert events.index('<error-callback>') < events.index("<error type='ValueError'>plain error</error>")
+
+
+async def test_run_stream_on_error_sync_callback() -> None:
+    """A sync on_error callback that returns None is still dispatched (records the exception)."""
+    errors: list[Exception] = []
+
+    async def stream_error(messages: list[ModelMessage], agent_info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+        raise ValueError('plain error')
+        yield  # pragma: no cover
+
+    agent = Agent(model=FunctionModel(stream_function=stream_error))
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+    adapter = DummyUIAdapter(agent, request)
+
+    events = [event async for event in adapter.run_stream(on_error=errors.append)]
+
+    assert len(errors) == 1
+    assert isinstance(errors[0], ValueError)
+    assert "<error type='ValueError'>plain error</error>" in events
+
+
+async def test_run_stream_on_error_not_called_for_success_or_cancellation() -> None:
+    errors: list[Exception] = []
+
+    success_adapter = DummyUIAdapter(
+        Agent(model=TestModel()), DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+    )
+    async for _ in success_adapter.run_stream(on_error=errors.append):
+        pass
+
+    cancel_agent = Agent(model=TestModel())
+
+    @cancel_agent.tool
+    async def cancel_tool(ctx: RunContext, query: str) -> str:
+        ctx.cancel()
+        return ''
+
+    cancel_adapter = DummyUIAdapter(cancel_agent, DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')]))
+    async for _ in cancel_adapter.run_stream(on_error=errors.append):
+        pass
+
+    assert errors == []
+
+
 async def test_run_stream_error_wrapping_nested_cancellation_reported_as_error():
     """An ordinary error raised while a nested `RunCancelled` is being handled carries that
     `RunCancelled` in its implicit `__context__`. It must be reported to the client as an error,
