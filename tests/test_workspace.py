@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -947,6 +948,53 @@ async def test_streamed_responses_keep_the_workspace_ref() -> None:
 
     assert responses
     assert all(response.workspace_ref == ref for response in responses)
+
+
+async def test_streamed_result_keeps_the_workspace_identity() -> None:
+    backend = FakeWorkspace('streamed-result')
+    workspace = ReadOnlyWorkspace(Workspace(backend))
+    agent = Agent(TestModel(custom_output_text='streamed'))
+
+    async with agent.run_stream('go', workspace=workspace) as result:
+        await result.get_output()
+        assert result.workspace is workspace
+
+
+def test_sync_streamed_result_keeps_the_workspace_identity() -> None:
+    workspace = ReadOnlyWorkspace(Workspace(FakeWorkspace('sync-streamed-result')))
+    agent = Agent(TestModel(custom_output_text='streamed'))
+
+    with agent.run_stream_sync('go', workspace=workspace) as result:
+        result.get_output()
+        assert result.workspace is workspace
+
+
+async def test_result_workspace_survives_after_run_replacement() -> None:
+    workspace = ReadOnlyWorkspace(Workspace(FakeWorkspace('after-run')))
+
+    class ReplaceResult(AbstractCapability[Any]):
+        async def after_run(self, ctx: RunContext[Any], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
+            return replace(result, output='replaced')
+
+    agent = Agent(TestModel(custom_output_text='original'), capabilities=[ReplaceResult()])
+    result = await agent.run('go', workspace=workspace)
+
+    assert result.output == 'replaced'
+    assert result.workspace is workspace
+
+
+async def test_streamed_short_circuit_result_keeps_the_workspace_identity() -> None:
+    workspace = ReadOnlyWorkspace(Workspace(FakeWorkspace('short-circuit')))
+
+    class ShortCircuit(AbstractCapability[Any]):
+        async def wrap_run(self, ctx: RunContext[Any], *, handler: Any) -> AgentRunResult[str]:
+            return AgentRunResult('short-circuited')
+
+    agent = Agent(TestModel(), capabilities=[ShortCircuit()])
+
+    async with agent.run_stream('go', workspace=workspace) as result:
+        assert await result.get_output() == 'short-circuited'
+        assert result.workspace is workspace
 
 
 async def test_interrupted_stream_history_keeps_the_workspace_ref() -> None:
