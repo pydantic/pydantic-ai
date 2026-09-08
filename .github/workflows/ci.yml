@@ -169,6 +169,15 @@ jobs:
           .github/scripts/test_docs_navigation_workflow.py
           .github/scripts/test_protect_github_dir.py
 
+      # The pre-commit `typecheck` hook narrows Pyright to the files a change reaches, so
+      # a wrong answer here silently stops type errors reaching a developer's terminal.
+      # It lives outside `testpaths`, in the job that installs Pyright, because one of its
+      # tests runs Pyright for real.
+      - name: Test the incremental typecheck script
+        env:
+          UV_NO_SYNC: "1"
+        run: uv run pytest scripts/test_typecheck_changed.py
+
       # The tests above import the shim inside this job's workspace venv, which is not
       # the environment it runs in: gh-aw executes it via `uv run --script` against the
       # runner's own locked dependency set. Run it there, with no argv, so it reaches
@@ -190,10 +199,18 @@ jobs:
       # classic case being one that bumps the gh-aw compiler while another adds a lock
       # at the old version — and without this the drift first surfaces as a red `quality checks`
       # on whichever contributor next opens a PR, about workflows they never touched.
+      - name: Fetch gh-aw compatibility policy
+        run: >-
+          curl --fail --silent --show-error --location --retry 3 --retry-all-errors
+          https://raw.githubusercontent.com/github/gh-aw/main/.github/aw/compat.json
+          --output /tmp/gh-aw-compat.json
+
       - name: Check agentic workflow policy
         env:
           UV_NO_SYNC: "1"
-        run: uv run python .github/scripts/agentic_workflow_guard.py check
+        run: >-
+          uv run python .github/scripts/agentic_workflow_guard.py check
+          --compatibility-file /tmp/gh-aw-compat.json
 
       # Actions runs the `*.lock.yml`, never the `*.md`, so a source edited without
       # its recompiled lock is a silent no-op. The checkout is shallow, so feed the
@@ -231,6 +248,10 @@ jobs:
           extra_args: --all-files --verbose
         env:
           SKIP: ${{ needs.classify.outputs.pyright_changed == 'true' && 'no-commit-to-branch' || 'no-commit-to-branch,typecheck' }}
+          # The `Makefile` leaves pyright single-process by default, for laptops where a worker
+          # per core swaps. A runner has the memory, and this step is the longest in the job, so
+          # CI opts back in.
+          PYRIGHT_THREADS: auto
           # pre-commit hooks shell out via `uv run`; without this they would
           # re-sync the venv and drop the out-of-band harness install above.
           UV_NO_SYNC: "1"
@@ -916,19 +937,23 @@ jobs:
         uses: re-actors/alls-green@05ac9388f0aebcb5727afa17fcccfecd6f8ec5fe # release/v1
         with:
           # The canary runs on tag refs only, and `docs-only` runs only for Markdown-only PRs.
-          # Full CI jobs may skip only when the classifier selected that reduced PR path.
+          # On tags only `docs-only` may skip; full CI jobs may skip only on the reduced PR path.
           allowed-skips: >-
             ${{
               needs.classify.outputs.docs_only == 'true'
               && 'quality,mypy,test,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,latest-versions-canary,coverage'
+              || github.ref_type == 'tag'
+              && 'docs-only'
               || 'docs-only,latest-versions-canary'
             }}
           jobs: ${{ toJSON(needs) }}
 
+  # `check` may succeed with intentionally skipped ancestors, so downstream jobs must override
+  # GitHub's default success check and inspect the result of their direct dependency.
   # Note: this should match the `deploy-docs-manual` job in manually-deploy-docs.yml
   deploy-docs:
     needs: [check]
-    if: success() && startsWith(github.ref, 'refs/tags/')
+    if: ${{ !cancelled() && github.ref_type == 'tag' && needs.check.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - name: Generate app token
@@ -956,7 +981,7 @@ jobs:
   release-build:
     name: build release artifacts
     needs: [check]
-    if: success() && startsWith(github.ref, 'refs/tags/')
+    if: ${{ !cancelled() && github.ref_type == 'tag' && needs.check.result == 'success' }}
     runs-on: ubuntu-latest
 
     outputs:
@@ -998,7 +1023,7 @@ jobs:
   release:
     name: publish to PyPI
     needs: [release-build]
-    if: success() && startsWith(github.ref, 'refs/tags/')
+    if: ${{ !cancelled() && github.ref_type == 'tag' && needs.release-build.result == 'success' }}
     runs-on: ubuntu-latest
 
     environment:
@@ -1026,7 +1051,7 @@ jobs:
   send-tweet:
     name: Send tweet
     needs: [release]
-    if: needs.release.result == 'success'
+    if: ${{ !cancelled() && needs.release.result == 'success' }}
     runs-on: ubuntu-latest
 
     steps:

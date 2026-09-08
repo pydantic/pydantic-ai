@@ -1000,6 +1000,18 @@ def turn_detection_config(turn_detection: ServerVAD | SemanticVAD | None) -> dic
     }
 
 
+def config_interrupts_response_on_speech(session_config: dict[str, Any]) -> bool:
+    """Whether the session's configured VAD makes the server cancel the active response on speech onset.
+
+    Reads the `turn_detection` payload from either place an OpenAI-protocol session config carries
+    it: nested under `audio.input` (OpenAI GA, Azure) or at the top level (xAI, Azure Voice Live).
+    """
+    turn_detection = session_config.get('turn_detection') or session_config.get('audio', {}).get('input', {}).get(
+        'turn_detection'
+    )
+    return turn_detection is not None and bool(turn_detection.get('interrupt_response'))
+
+
 def tool_choice_config(tool_choice: ResolvedToolChoice) -> str | dict[str, Any]:
     """Map a resolved `tool_choice` to the OpenAI realtime `tool_choice` field.
 

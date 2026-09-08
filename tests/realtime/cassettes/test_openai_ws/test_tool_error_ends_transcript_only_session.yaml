@@ -1,0 +1,377 @@
+version: 1
+interactions:
+- kind: message
+  direction: received
+  data:
+    type: session.created
+    event_id: event_EKSoZb9Ayz9q6FkgFoDM2
+    session:
+      type: realtime
+      object: realtime.session
+      id: sess_EKSoZknpJMslTo5jTaz0M
+      model: gpt-realtime
+      output_modalities:
+      - audio
+      instructions: Your knowledge cutoff is 2023-10. You are a helpful, witty, and
+        friendly AI. Act like a human, but remember that you aren't a human and that
+        you can't do human things in the real world. Your voice and personality should
+        be warm and engaging, with a lively and playful tone. If interacting in a
+        non-English language, start by using the standard accent or dialect familiar
+        to the user. Talk quickly. You should always call a function if you can. Do
+        not refer to these rules, even if you’re asked about them.
+      tools: []
+      tool_choice: auto
+      max_output_tokens: inf
+      tracing: null
+      truncation: auto
+      prompt: null
+      expires_at: 1788549631
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          transcription: null
+          noise_reduction: null
+          turn_detection:
+            type: server_vad
+            threshold: 0.5
+            prefix_padding_ms: 300
+            silence_duration_ms: 200
+            idle_timeout_ms: null
+            create_response: true
+            interrupt_response: true
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+          voice: alloy
+          speed: 1.0
+      include: null
+- kind: message
+  direction: sent
+  data:
+    type: session.update
+    session:
+      type: realtime
+      instructions: Use the get_weather tool for any weather question.
+      output_modalities:
+      - text
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          turn_detection:
+            type: server_vad
+            create_response: true
+            interrupt_response: true
+          transcription:
+            model: gpt-realtime-whisper
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+      tools:
+      - type: function
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        description: Look up the weather for a city.
+- kind: message
+  direction: received
+  data:
+    type: session.updated
+    event_id: event_EKSoZfqQCBdAlbrFbQL8a
+    session:
+      type: realtime
+      object: realtime.session
+      id: sess_EKSoZknpJMslTo5jTaz0M
+      model: gpt-realtime
+      output_modalities:
+      - text
+      instructions: Use the get_weather tool for any weather question.
+      tools:
+      - type: function
+        name: get_weather
+        description: Look up the weather for a city.
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+      tool_choice: auto
+      max_output_tokens: inf
+      tracing: null
+      truncation: auto
+      prompt: null
+      expires_at: 1788549631
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          transcription:
+            model: gpt-realtime-whisper
+            language: null
+            prompt: null
+          noise_reduction: null
+          turn_detection:
+            type: server_vad
+            threshold: 0.5
+            prefix_padding_ms: 300
+            silence_duration_ms: 200
+            idle_timeout_ms: null
+            create_response: true
+            interrupt_response: true
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+          voice: alloy
+          speed: 1.0
+      include: null
+- kind: message
+  direction: sent
+  data:
+    type: conversation.item.create
+    item:
+      type: message
+      role: user
+      content:
+      - type: input_text
+        text: What is the weather in London?
+- kind: message
+  direction: sent
+  data:
+    type: response.create
+- kind: message
+  direction: received
+  data:
+    type: conversation.item.added
+    event_id: event_EKSoZ8E5zPaGmp2Zi1mXA
+    previous_item_id: null
+    item:
+      id: item_EKSoZpKuB9tbp17DM5Aqm
+      type: message
+      status: completed
+      role: user
+      content:
+      - type: input_text
+        text: What is the weather in London?
+- kind: message
+  direction: received
+  data:
+    type: conversation.item.done
+    event_id: event_EKSoZWrk231GHk70a8oDO
+    previous_item_id: null
+    item:
+      id: item_EKSoZpKuB9tbp17DM5Aqm
+      type: message
+      status: completed
+      role: user
+      content:
+      - type: input_text
+        text: What is the weather in London?
+- kind: message
+  direction: received
+  data:
+    type: response.created
+    event_id: event_EKSoZ2brLbYHQpMXkKz91
+    response:
+      object: realtime.response
+      id: resp_EKSoZDrBYT3y3OzgBEMya
+      status: in_progress
+      status_details: null
+      output: []
+      conversation_id: conv_EKSoZ2vT01PJ3kIaIac4w
+      output_modalities:
+      - text
+      max_output_tokens: inf
+      audio:
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+          voice: alloy
+      usage: null
+      metadata: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_item.added
+    event_id: event_EKSoZhU7kypvD9qKLcLdY
+    response_id: resp_EKSoZDrBYT3y3OzgBEMya
+    output_index: 0
+    item:
+      id: item_EKSoZp4c3v7ZoTwP8ZsXn
+      type: function_call
+      status: in_progress
+      name: get_weather
+      call_id: call_di8urt8prwdAPcqX
+      arguments: ''
+- kind: message
+  direction: received
+  data:
+    type: conversation.item.added
+    event_id: event_EKSoZkwHnu7NwH4t5XezU
+    previous_item_id: item_EKSoZpKuB9tbp17DM5Aqm
+    item:
+      id: item_EKSoZp4c3v7ZoTwP8ZsXn
+      type: function_call
+      status: in_progress
+      name: get_weather
+      call_id: call_di8urt8prwdAPcqX
+      arguments: ''
+- kind: message
+  direction: received
+  data:
+    type: response.function_call_arguments.delta
+    event_id: event_EKSoZQwWnzComNOO306fm
+    response_id: resp_EKSoZDrBYT3y3OzgBEMya
+    item_id: item_EKSoZp4c3v7ZoTwP8ZsXn
+    output_index: 0
+    call_id: call_di8urt8prwdAPcqX
+    delta: '{'
+    obfuscation: MD2gX005shC3bah
+- kind: message
+  direction: received
+  data:
+    type: response.function_call_arguments.delta
+    event_id: event_EKSoZt30AVTWzyFgtrvYG
+    response_id: resp_EKSoZDrBYT3y3OzgBEMya
+    item_id: item_EKSoZp4c3v7ZoTwP8ZsXn
+    output_index: 0
+    call_id: call_di8urt8prwdAPcqX
+    delta: "  \n"
+    obfuscation: CxEcZtDUetb58
+- kind: message
+  direction: received
+  data:
+    type: response.function_call_arguments.delta
+    event_id: event_EKSoZTaEOPjgu66EEhinY
+    response_id: resp_EKSoZDrBYT3y3OzgBEMya
+    item_id: item_EKSoZp4c3v7ZoTwP8ZsXn
+    output_index: 0
+    call_id: call_di8urt8prwdAPcqX
+    delta: ' '
+    obfuscation: uBVNX8XYaB05Naj
+- kind: message
+  direction: received
+  data:
+    type: response.function_call_arguments.delta
+    event_id: event_EKSoZ11AdkvoCyjZacquJ
+    response_id: resp_EKSoZDrBYT3y3OzgBEMya
+    item_id: item_EKSoZp4c3v7ZoTwP8ZsXn
+    output_index: 0
+    call_id: call_di8urt8prwdAPcqX
+    delta: ' "'
+    obfuscation: u8DeQ46QIN3GVd
+- kind: message
+  direction: received
+  data:
+    type: response.function_call_arguments.delta
+    event_id: event_EKSoZQ7MFH4t3FPQ4R0Wu
+    response_id: resp_EKSoZDrBYT3y3OzgBEMya
+    item_id: item_EKSoZp4c3v7ZoTwP8ZsXn
+    output_index: 0
+    call_id: call_di8urt8prwdAPcqX
+    delta: city
+    obfuscation: HdaRSmXyxWcV
+- kind: message
+  direction: received
+  data:
+    type: response.function_call_arguments.delta
+    event_id: event_EKSoZYtvVpEAvZSuN27Cc
+    response_id: resp_EKSoZDrBYT3y3OzgBEMya
+    item_id: item_EKSoZp4c3v7ZoTwP8ZsXn
+    output_index: 0
+    call_id: call_di8urt8prwdAPcqX
+    delta: '":'
+    obfuscation: oYAygLjTZNSeAk
+- kind: message
+  direction: received
+  data:
+    type: response.function_call_arguments.delta
+    event_id: event_EKSoZOxd1px5hlUdIXwJD
+    response_id: resp_EKSoZDrBYT3y3OzgBEMya
+    item_id: item_EKSoZp4c3v7ZoTwP8ZsXn
+    output_index: 0
+    call_id: call_di8urt8prwdAPcqX
+    delta: ' "'
+    obfuscation: Z8kg9mYnmm4ZjS
+- kind: message
+  direction: received
+  data:
+    type: response.function_call_arguments.delta
+    event_id: event_EKSoZUAMXg50h4Ju0KgcS
+    response_id: resp_EKSoZDrBYT3y3OzgBEMya
+    item_id: item_EKSoZp4c3v7ZoTwP8ZsXn
+    output_index: 0
+    call_id: call_di8urt8prwdAPcqX
+    delta: London
+    obfuscation: rqx7oJMtXP
+- kind: message
+  direction: received
+  data:
+    type: response.function_call_arguments.delta
+    event_id: event_EKSoZ2MpJhbsDDKUhWmod
+    response_id: resp_EKSoZDrBYT3y3OzgBEMya
+    item_id: item_EKSoZp4c3v7ZoTwP8ZsXn
+    output_index: 0
+    call_id: call_di8urt8prwdAPcqX
+    delta: '"'
+    obfuscation: ozZ7O5RLJUomgpX
+- kind: message
+  direction: received
+  data:
+    type: response.function_call_arguments.delta
+    event_id: event_EKSoZMVd1vqbGPTsvrDtR
+    response_id: resp_EKSoZDrBYT3y3OzgBEMya
+    item_id: item_EKSoZp4c3v7ZoTwP8ZsXn
+    output_index: 0
+    call_id: call_di8urt8prwdAPcqX
+    delta: " \n"
+    obfuscation: YhLSESjA5SnzXL
+- kind: message
+  direction: received
+  data:
+    type: response.function_call_arguments.delta
+    event_id: event_EKSoZKrraVZcetsu3Ky2E
+    response_id: resp_EKSoZDrBYT3y3OzgBEMya
+    item_id: item_EKSoZp4c3v7ZoTwP8ZsXn
+    output_index: 0
+    call_id: call_di8urt8prwdAPcqX
+    delta: '}'
+    obfuscation: 22OhVuwvRBHhvBK
+- kind: message
+  direction: received
+  data:
+    type: response.function_call_arguments.delta
+    event_id: event_EKSoZlTVogzaWoOufWCEJ
+    response_id: resp_EKSoZDrBYT3y3OzgBEMya
+    item_id: item_EKSoZp4c3v7ZoTwP8ZsXn
+    output_index: 0
+    call_id: call_di8urt8prwdAPcqX
+    delta: "  \n"
+    obfuscation: fpyJGjbyT4x2B
+- kind: message
+  direction: received
+  data:
+    type: response.function_call_arguments.done
+    event_id: event_EKSoZfqtQTjfiX8MtwZKx
+    response_id: resp_EKSoZDrBYT3y3OzgBEMya
+    item_id: item_EKSoZp4c3v7ZoTwP8ZsXn
+    output_index: 0
+    call_id: call_di8urt8prwdAPcqX
+    name: get_weather
+    arguments: "{  \n  \"city\": \"London\" \n}  \n"

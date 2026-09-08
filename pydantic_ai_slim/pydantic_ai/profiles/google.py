@@ -1,6 +1,6 @@
 from __future__ import annotations as _annotations
 
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast
 
 from .._json_schema import JsonSchema, JsonSchemaTransformer
 from ..exceptions import UserError
@@ -9,6 +9,16 @@ from . import ModelProfile
 
 if TYPE_CHECKING:
     from ..realtime.profiles import RealtimeModelProfile
+
+
+GoogleThinkingLevel: TypeAlias = Literal['MINIMAL', 'LOW', 'MEDIUM', 'HIGH']
+"""Native Gemini `thinking_level` values."""
+
+GOOGLE_THINKING_LEVEL_SCALE: tuple[GoogleThinkingLevel, ...] = ('MINIMAL', 'LOW', 'MEDIUM', 'HIGH')
+"""The full thinking-level scale, cheapest first. The resolver's order map derives from this."""
+
+GOOGLE_THINKING_LEVELS: frozenset[GoogleThinkingLevel] = frozenset(GOOGLE_THINKING_LEVEL_SCALE)
+"""The full thinking-level scale as a set."""
 
 # MIME types supported in native FunctionResponseDict.parts for Gemini 3+.
 # See https://ai.google.dev/gemini-api/docs/function-calling?example=meeting#multimodal
@@ -134,8 +144,17 @@ class GoogleModelProfile(ModelProfile, total=False):
     google_supports_minimal_thinking_level: bool
     """Whether the model accepts `thinking_level='MINIMAL'`. Default: `True`.
 
-    When disabled, unified `thinking='minimal'` and `thinking=False` fall back to
-    `thinking_level='LOW'`.
+    Derived from [`google_thinking_levels`][pydantic_ai.profiles.google.GoogleModelProfile.google_thinking_levels]
+    when that is set. Sparse profiles without the level set fall back to this flag: when disabled,
+    unified `thinking='minimal'` and `thinking=False` resolve to `thinking_level='LOW'`.
+    See https://ai.google.dev/gemini-api/docs/thinking.
+    """
+
+    google_thinking_levels: frozenset[GoogleThinkingLevel]
+    """Thinking levels the model supports, from Google's per-model thinking table. Default: unset.
+
+    Unset means the full [`GOOGLE_THINKING_LEVELS`][pydantic_ai.profiles.google.GOOGLE_THINKING_LEVELS]
+    scale is assumed. Unified thinking efforts snap to the nearest supported level.
     See https://ai.google.dev/gemini-api/docs/thinking.
     """
 
@@ -154,13 +173,19 @@ class GoogleModelProfile(ModelProfile, total=False):
     """
 
 
-_MODELS_WITHOUT_MINIMAL_THINKING_LEVEL = (
-    'gemini-3.7-flash',
-    'gemini-3.8-flash',
-    'gemini-3-pro-preview',
-    'gemini-3.1-pro-preview',
+_MODEL_THINKING_LEVELS: tuple[tuple[str, frozenset[GoogleThinkingLevel]], ...] = (
+    # Documented per-model thinking levels, most specific prefix first. Gemini 3+ models not
+    # listed support the full `GOOGLE_THINKING_LEVELS` scale.
+    # https://ai.google.dev/gemini-api/docs/thinking
+    ('gemini-3.1-flash-lite-image', frozenset(('MINIMAL', 'HIGH'))),
+    ('gemini-3.7-flash', frozenset(('LOW', 'MEDIUM', 'HIGH'))),
+    ('gemini-3.8-flash', frozenset(('LOW', 'MEDIUM', 'HIGH'))),
+    ('gemini-3.1-pro-preview', frozenset(('LOW', 'MEDIUM', 'HIGH'))),
+    # Verified live 2026-09-06: the Developer API 404s this id toward `gemini-3.1-pro-preview`.
+    # The level set is from Google's documented thinking table.
+    ('gemini-3-pro-preview', frozenset(('LOW', 'HIGH'))),
 )
-"""Model name prefixes whose documented thinking levels start at `low`."""
+"""Model name prefixes mapped to their documented thinking levels."""
 
 
 def google_model_profile(model_name: str) -> ModelProfile | None:
@@ -175,7 +200,11 @@ def google_model_profile(model_name: str) -> ModelProfile | None:
     # Pro models have always-on thinking: Gemini 2.5 Pro rejects budget=0, Gemini 3+ Pro rejects MINIMAL
     is_pro = 'pro' in model_name and 'flash' not in model_name
     thinking_always_enabled = is_thinking_model and is_pro
-    return GoogleModelProfile(
+    thinking_levels = next(
+        (levels for prefix, levels in _MODEL_THINKING_LEVELS if model_name.startswith(prefix)),
+        None,
+    )
+    profile = GoogleModelProfile(
         json_schema_transformer=GoogleJsonSchemaTransformer,
         supports_image_output=is_image_model,
         supports_json_schema_output=is_3_or_newer or not is_image_model,
@@ -188,9 +217,12 @@ def google_model_profile(model_name: str) -> ModelProfile | None:
         google_supports_server_side_tool_invocations=is_3_or_newer,
         google_supported_mime_types_in_tool_returns=_GOOGLE_NATIVE_TOOL_RETURN_MIME_TYPES if is_3_or_newer else (),
         google_supports_thinking_level=is_3_or_newer,
-        google_supports_minimal_thinking_level=not model_name.startswith(_MODELS_WITHOUT_MINIMAL_THINKING_LEVEL),
+        google_supports_minimal_thinking_level=thinking_levels is None or 'MINIMAL' in thinking_levels,
         google_supports_strict_tool_definition=supports_strict_tool_definition,
     )
+    if thinking_levels is not None:
+        profile['google_thinking_levels'] = thinking_levels
+    return profile
 
 
 def google_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
@@ -227,10 +259,13 @@ def google_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
         # a `WebFetch()` or `CodeExecutionTool()` a silent no-op; leaving them out means a `local=`
         # fallback is used instead, or the shared `UserError` points at one.
         'supported_native_tools': frozenset({WebSearchTool}),
-        # Every current Gemini Live model takes a thinking config (verified live for both
+        # The native-audio Live models and 3.x take a thinking config (verified live for
         # `gemini-2.5-flash-native-audio-latest` and `gemini-3.1-flash-live-preview`), which Google
-        # documents as `thinkingBudget` on the 2.5 family and `thinkingLevel` on 3.x.
-        'supports_thinking': True,
+        # documents as `thinkingBudget` on the 2.5 family and `thinkingLevel` on 3.x. The Vertex
+        # half-cascade `gemini-live-2.5-flash` is the exception: it closes the session with `1007
+        # thinking_level is not supported by this model` (and rejects a `thinking_budget` too), so
+        # it reports `False` and the shared `thinking` setting is skipped instead of sent.
+        'supports_thinking': 'native-audio' in model_name or not model_name.startswith('gemini-live-2.5'),
         # Only the native-audio models actually honor `Behavior.NON_BLOCKING`; verified live with
         # a slow tool, where `gemini-2.5-flash-native-audio-latest` keeps speaking throughout and
         # `gemini-3.1-flash-live-preview` accepts the flag but still goes silent until the result

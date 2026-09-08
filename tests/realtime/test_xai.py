@@ -1016,6 +1016,7 @@ def test_non_xai_provider_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(UserError, match='requires an `XaiProvider`'):
         XaiRealtimeModel('grok-voice-latest', provider='openai')
     with pytest.raises(UserError, match='requires an `XaiProvider`'):
+        # Deliberately a foreign provider, so the cast is what lets the runtime guard be exercised.
         XaiRealtimeModel('grok-voice-latest', provider=cast('Any', OpenAIProvider(api_key='x')))
 
 

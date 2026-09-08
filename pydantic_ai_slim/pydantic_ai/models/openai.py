@@ -130,6 +130,7 @@ try:
         NOT_GIVEN,
         APIConnectionError,
         APIStatusError,
+        AsyncAzureOpenAI,
         AsyncOpenAI,
         AsyncStream,
         NotGiven,
@@ -311,7 +312,9 @@ _CHAT_FINISH_REASON_MAP: dict[
     'function_call': 'tool_call',
 }
 
-_RESPONSES_FINISH_REASON_MAP: dict[Literal['max_output_tokens', 'content_filter'] | ResponseStatus, FinishReason] = {
+_RESPONSES_FINISH_REASON_MAP: dict[
+    Literal['max_output_tokens', 'max_messages', 'content_filter', 'steered'] | ResponseStatus, FinishReason
+] = {
     'max_output_tokens': 'length',
     'content_filter': 'content_filter',
     'completed': 'stop',
@@ -394,10 +397,6 @@ class _AzureError(BaseModel):
     innererror: _AzureInnerError | None = None
 
 
-class _AzureErrorResponse(BaseModel):
-    error: _AzureError
-
-
 def _resolve_openai_image_generation_size(
     tool: ImageGenerationTool,
 ) -> _OPENAI_IMAGE_SIZE:
@@ -449,21 +448,27 @@ def _map_openai_image_generation_tool(tool: ImageGenerationTool) -> responses.to
     return image_generation_tool
 
 
-def _check_azure_content_filter(e: APIStatusError, system: str, model_name: str) -> ModelResponse | None:
+def _is_azure(client: AsyncOpenAI, system: str) -> bool:
+    return system == 'azure' or isinstance(client, AsyncAzureOpenAI)
+
+
+def _check_azure_content_filter(
+    e: APIStatusError, client: AsyncOpenAI, system: str, model_name: str
+) -> ModelResponse | None:
     """Check if the error is an Azure content filter error."""
     # Assign to Any to avoid 'dict[Unknown, Unknown]' inference in strict mode
     body_any: Any = e.body
 
-    if system == 'azure' and e.status_code == 400 and isinstance(body_any, dict):
+    if _is_azure(client, system) and e.status_code == 400 and _is_str_dict(body_any):
         try:
-            error_data = _AzureErrorResponse.model_validate(body_any)
+            error_data = _AzureError.model_validate(body_any.get('error', body_any))
 
-            if error_data.error.code == 'content_filter':
+            if error_data.code == 'content_filter':
                 provider_details: dict[str, Any] = {'finish_reason': 'content_filter'}
 
-                if error_data.error.innererror:
-                    provider_details['content_filter_result'] = (
-                        error_data.error.innererror.content_filter_result.model_dump(exclude_none=True)
+                if error_data.innererror:
+                    provider_details['content_filter_result'] = error_data.innererror.content_filter_result.model_dump(
+                        exclude_none=True
                     )
 
                 return ModelResponse(
@@ -1016,6 +1021,10 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         WebSearchTool is only supported if openai_chat_supports_web_search is True.
         """
         _profile = super().profile
+        if (provider := self.provider) is not None and _is_azure(provider.client, provider.name):
+            user = self._profile
+            if user is None or (not callable(user) and 'openai_chat_supports_document_input' not in user):
+                _profile = merge_profile(_profile, OpenAIModelProfile(openai_chat_supports_document_input=False))
         if not _profile.get('openai_chat_supports_web_search', False):
             new_tools = _profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) - {WebSearchTool}
             _profile = merge_profile(_profile, ModelProfile(supported_native_tools=new_tools))
@@ -1186,7 +1195,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     extra_body=model_settings.get('extra_body'),
                 )
             except APIStatusError as e:
-                if model_response := _check_azure_content_filter(e, self.system, self.model_name):
+                if model_response := _check_azure_content_filter(e, self.client, self.system, self.model_name):
                     return model_response
                 raise
 
@@ -1926,7 +1935,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         return chat.ChatCompletionUserMessageParam(role='user', content=content)
 
     def _raise_document_input_not_supported_error(self) -> Never:
-        if self._provider.name == 'azure':
+        if _is_azure(self.client, self.system):
             raise UserError(
                 "Azure's Chat Completions API does not support document input. "
                 'Use `OpenAIResponsesModel` with `AzureProvider` instead.'
@@ -2167,7 +2176,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 previous_response_id=previous_response_id or OMIT,
             )
         except APIStatusError as e:  # pragma: no cover
-            if model_response := _check_azure_content_filter(e, self.system, self.model_name):
+            if model_response := _check_azure_content_filter(e, self.client, self.system, self.model_name):
                 return model_response
             if (status_code := e.status_code) >= 400:
                 raise ModelHTTPError(
@@ -2194,10 +2203,30 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         settings = cast(OpenAIResponsesModelSettings, model_settings or {})
 
         if info := self._get_continuation_info(messages, settings):
+            # Non-streaming retrieve: on `store=false` backends (Codex, which is also stream-only)
+            # `_get_continuation_info` already rejected the continuation with `UserError`.
             response_id, _, _ = info
             response = await self._responses_retrieve(response_id, settings)
+        elif self.profile.get('openai_responses_requires_streaming', False):
+            # Stream-only backend (e.g. Codex subscription auth): drain a forced stream via the
+            # streamed-response path, which handles `response.completed` arriving with an empty `output`.
+            # Note: if a higher-level path to enforce streaming is ever added, this branch belongs there instead.
+            stream = await self._responses_create(
+                messages, stream=True, model_settings=settings, model_request_parameters=model_request_parameters
+            )
+            if isinstance(stream, ModelResponse):
+                # A handled rejection (e.g. an Azure content filter) arrives as a finished
+                # response, not a stream; same guard as `request_stream` below.
+                return stream
+            async with stream:
+                streamed_response = await self._process_streamed_response(stream, settings, model_request_parameters)
+                async for _ in streamed_response:
+                    pass
+            return streamed_response.get()
         else:
-            response = await self._responses_create(messages, False, settings, model_request_parameters)
+            response = await self._responses_create(
+                messages, stream=False, model_settings=settings, model_request_parameters=model_request_parameters
+            )
 
         if isinstance(response, ModelResponse):
             return response
@@ -2211,6 +2240,11 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         model_request_parameters: ModelRequestParameters,
     ) -> usage.RequestUsage:
         check_allow_model_requests()
+        if not self.profile.get('openai_supports_input_token_counting', True):
+            raise UserError(
+                f'Server-side token counting is not available for {self.system} models '
+                f'({self.model_name!r}); the provider does not expose the input-tokens endpoint.'
+            )
         model_settings, model_request_parameters = self.prepare_request(
             model_settings,
             model_request_parameters,
@@ -2291,7 +2325,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         else:
             previous_model_name = None
             expected_response_id = None
-            response = await self._responses_create(messages, True, settings, model_request_parameters)
+            response = await self._responses_create(
+                messages, stream=True, model_settings=settings, model_request_parameters=model_request_parameters
+            )
         if isinstance(response, ModelResponse):
             yield _ModelResponseStreamedResponse(
                 model_request_parameters=model_request_parameters,
@@ -2527,7 +2563,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         ] = _utils.PeekableAsyncStream(response)
         with _map_api_errors(self.model_name, self._provider.model_id_namespace):
             first_chunk = await peekable_response.peek()
-        if isinstance(first_chunk, _utils.Unset):  # pragma: no cover
+        if isinstance(first_chunk, _utils.Unset):
+            # Covered by the Codex forced-stream path, which drains empty streams through here.
             raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')
 
         if isinstance(first_chunk, responses.ResponseCreatedEvent):
@@ -2679,19 +2716,30 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 )
             )
 
+        # `parallel_tool_calls`, `truncation`, and `context_management` ride on the request params
+        # rather than the create call, so they must honor the unsupported-settings seam here too —
+        # `_drop_unsupported_params` runs too late for them (and never runs for `count_tokens`).
+        unsupported_settings = profile.get('openai_unsupported_model_settings', ())
+        parallel_tool_calls = OMIT
+        if tools and 'parallel_tool_calls' not in unsupported_settings:
+            parallel_tool_calls = model_settings.get('parallel_tool_calls', OMIT)
         return _ResponsesRequestParams(
             model=self.model_name,
             input=openai_messages,
             instructions=instructions,
-            parallel_tool_calls=model_settings.get('parallel_tool_calls', OMIT) if tools else OMIT,
+            parallel_tool_calls=parallel_tool_calls,
             tools=tools or OMIT,
             tool_choice=tool_choice or OMIT,
             previous_response_id=previous_response_id or OMIT,
             conversation=conversation_id or OMIT,
             reasoning=reasoning,
             text=text,
-            truncation=model_settings.get('openai_truncation', OMIT),
-            context_management=model_settings.get('openai_context_management', OMIT),
+            truncation=OMIT
+            if 'openai_truncation' in unsupported_settings
+            else model_settings.get('openai_truncation', OMIT),
+            context_management=OMIT
+            if 'openai_context_management' in unsupported_settings
+            else model_settings.get('openai_context_management', OMIT),
         )
 
     @staticmethod
@@ -2702,6 +2750,14 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         extra_headers.setdefault('User-Agent', get_user_agent())
         timeout = to_httpx2_timeout(model_settings.get('timeout', NOT_GIVEN))
         return extra_headers, timeout
+
+    def _prepare_responses_settings(
+        self,
+        messages: list[ModelRequest | ModelResponse],
+        model_settings: OpenAIResponsesModelSettings,
+    ) -> OpenAIResponsesModelSettings:
+        """Adjust the settings of a single request; subclasses override this to derive settings from the messages."""
+        return model_settings
 
     @overload
     async def _responses_create(
@@ -2739,9 +2795,12 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             profile,
         )
         # Both helpers mutate the settings they receive.
-        model_settings = OpenAIResponsesModelSettings(**model_settings)
+        model_settings = self._prepare_responses_settings(messages, OpenAIResponsesModelSettings(**model_settings))
         _drop_sampling_params_for_reasoning(profile, model_settings, model_request_parameters)
         _drop_unsupported_params(profile, model_settings)
+        store: bool | Omit | None = model_settings.get('openai_store', OMIT)
+        if profile.get('openai_responses_requires_store_false', False):
+            store = False
         extra_headers, timeout = self._build_request_options(model_settings)
 
         # OpenAI SDK type stubs incorrectly use 'in-memory' but API requires 'in_memory', so we have to use `Any` to not hit type errors
@@ -2768,7 +2827,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     service_tier=_resolve_openai_service_tier(model_settings),
                     conversation=request_params.conversation,
                     top_logprobs=model_settings.get('openai_top_logprobs', OMIT),
-                    store=model_settings.get('openai_store', OMIT),
+                    store=store,
                     user=model_settings.get('openai_user', OMIT),
                     include=include or OMIT,
                     prompt_cache_key=model_settings.get('openai_prompt_cache_key', OMIT),
@@ -2781,7 +2840,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     extra_body=model_settings.get('extra_body'),
                 )
             except APIStatusError as e:
-                if model_response := _check_azure_content_filter(e, self.system, self.model_name):
+                if model_response := _check_azure_content_filter(e, self.client, self.system, self.model_name):
                     return model_response
                 raise
 
@@ -2798,6 +2857,15 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             return None
         if not (last.state == 'suspended' and last.provider_response_id):  # pragma: lax no cover
             return None
+        if self.profile.get('openai_responses_requires_store_false', False):
+            # Continuation retrieves the suspended response server-side, but a `store=false`
+            # backend (e.g. Codex subscription auth) never persisted it; without this guard the
+            # retrieve fails at resume time as a misleading `SuspendedResponseExpired` on 404.
+            raise UserError(
+                f'Resuming a suspended run is not supported for {self.system} models '
+                f'({self.model_name!r}): the backend requires `store=false`, so the suspended '
+                'response was never persisted server-side.'
+            )
         details: _OpenAIResponsesContinuationDetails = cast(
             _OpenAIResponsesContinuationDetails, last.provider_details or {}
         )
@@ -4277,6 +4345,10 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
                 elif isinstance(chunk, responses.ResponseFailedEvent):
                     self._usage += self._map_usage(chunk.response)
+                    # Parity with the non-streaming `_process_response`: a `failed` status maps to 'error'.
+                    if not self._has_refusal:
+                        self.provider_details = {**(self.provider_details or {}), 'finish_reason': 'failed'}
+                        self.finish_reason = _RESPONSES_FINISH_REASON_MAP.get('failed')
                     self._set_state(chunk.response.status)
 
                 elif isinstance(chunk, responses.ResponseFunctionCallArgumentsDeltaEvent):
@@ -4296,6 +4368,12 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
                 elif isinstance(chunk, responses.ResponseIncompleteEvent):
                     self._usage += self._map_usage(chunk.response)
+                    # Parity with the non-streaming `_process_response`: map the incomplete
+                    # reason when the provider sends one, leave the finish reason unset otherwise.
+                    raw_finish_reason = details.reason if (details := chunk.response.incomplete_details) else None
+                    if raw_finish_reason and not self._has_refusal:
+                        self.provider_details = {**(self.provider_details or {}), 'finish_reason': raw_finish_reason}
+                        self.finish_reason = _RESPONSES_FINISH_REASON_MAP.get(raw_finish_reason)
                     self._set_state(chunk.response.status)
 
                 elif isinstance(chunk, responses.ResponseOutputItemAddedEvent):

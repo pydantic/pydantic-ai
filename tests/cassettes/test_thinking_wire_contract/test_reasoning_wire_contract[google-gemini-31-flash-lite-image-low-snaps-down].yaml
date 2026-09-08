@@ -1,0 +1,68 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '235'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What is 2+2? Reply with just the number.
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+        - IMAGE
+        thinkingConfig:
+          include_thoughts: true
+          thinking_level: MINIMAL
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite-image:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '519'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=438
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - text: '4'
+            thoughtSignature: ElAKTgERTTIPiTrmD2i9wQCSzktPZReQW+I0g3glBu/OMLCM/pdoPw3MYphLkRrhYyJHUvzMn3z7htpl2PAdlQRcJgCswd4s17fKr/E2RWVfRA==
+          role: model
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-3.1-flash-lite-image
+      responseId: vtKdavjtNKelmtkP_ti3gAM
+      usageMetadata:
+        candidatesTokenCount: 1
+        promptTokenCount: 14
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 14
+        serviceTier: standard
+        totalTokenCount: 15
+    status:
+      code: 200
+      message: OK
+version: 1

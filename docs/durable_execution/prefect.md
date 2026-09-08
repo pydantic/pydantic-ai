@@ -298,7 +298,7 @@ _(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())
 
 Pydantic AI and provider API clients have their own retry logic. When using Prefect, you may want to:
 
-* Disable [HTTP Request Retries](../models/http-request-retries.md) in Pydantic AI
+* Disable [transport retries](../retries.md#transport-retries) in Pydantic AI
 * Turn off your provider API client's retry logic (e.g., `max_retries=0` on a [custom OpenAI client](../models/openai.md#custom-openai-client))
 * Rely on Prefect's task-level retry configuration for consistency
 

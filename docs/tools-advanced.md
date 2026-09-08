@@ -64,6 +64,28 @@ _(This example is complete, it can be run "as is")_
 
 Some models (e.g. Gemini) natively support semi-structured return values, while some expect text (OpenAI) but seem to be just as good at extracting meaning from the data. If a Python object is returned and the model expects a string, the value will be serialized to JSON.
 
+### Where a returned file is sent {#tool-return-file-provenance}
+
+Whether a file can travel inside the tool result depends on the model **and** the file's media type:
+
+- **Inside the tool result**, where the API and the media type both allow it: Anthropic and OpenAI Responses for images and documents, Gemini 3 for the types listed in its [`GoogleModelProfile`][pydantic_ai.profiles.google.GoogleModelProfile]'s `google_supported_mime_types_in_tool_returns`, and Bedrock for the media kinds a model family supports.
+- **On the user channel** — the same channel the person talking to your agent uploads on — for everything else: OpenAI Chat Completions, Groq, Mistral, xAI, Hugging Face and Gemini 2.5 and earlier accept only text in a tool result, and Gemini 3 and Bedrock fall back here for a media type they can't carry (audio and video on Gemini 3, or a kind outside a Bedrock family's set). Anthropic and OpenAI Responses have no fallback: a tool returning audio or video raises `NotImplementedError` rather than sending it.
+- **Nowhere**: Cohere drops a file returned from a tool without an error — see [#7646](https://github.com/pydantic/pydantic-ai/issues/7646).
+
+To keep the model from reading a tool's output as something the user attached, a file taking the user channel is framed with the call it came from:
+
+```text
+<tool_result tool_name="get_photo" tool_call_id="call_9cQx" file_id="d9a13f">
+[the image]
+</tool_result>
+```
+
+The tool result itself carries `See file d9a13f.` in place of the file, and each file gets its own tags, so the model can match every file to the call that produced it even when several tools return media in the same step. A failed Gemini tool return is the one exception: its result is Gemini's native `error` string, which takes no file references, so there the tags alone carry the attribution. Realtime sessions frame tool-produced files the same way. This mirrors how a mid-conversation [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] is framed as `<system>...</system>` for a model whose API has no place to put one.
+
+The framing is applied while the request is built and is never stored: the file stays on the [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] in your message history, so the same history replayed against a model that takes files natively puts them in the tool result with no framing at all.
+
+Because it is ordinary prompt text, the framing tells the model where content came from rather than proving it — see [the trust boundary](message-history.md#trust-boundary-for-client-supplied-history).
+
 ### Advanced Tool Returns
 
 For scenarios where you need more control over both the tool's return value and the content sent to the model, you can use [`ToolReturn`][pydantic_ai.messages.ToolReturn]. This is particularly useful when you want to:
@@ -110,7 +132,7 @@ print(result.output)
 
 - **`return_value`**: The actual return value used in the tool response. This is what gets serialized and sent back to the model as the tool's result. Can include multimodal content directly (see [Tool Output](#function-tool-output) above).
 - **`tools`**: Names of tools marked with `defer_loading=True` that this call made available. Pydantic AI records them in a [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart] immediately after this call's [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart], in the same [`ModelRequest`][pydantic_ai.messages.ModelRequest]. The names remain revealed when history is resumed, while the current tool definitions still come from the agent.
-- **`content`**: Content sent as a **separate user message** after the tool result. Use this when you explicitly want content to appear outside the tool result, or when combining structured return values with rich content.
+- **`content`**: Content sent as a **separate user message** after the tool result. Use this when you explicitly want content to appear outside the tool result, or when combining structured return values with rich content. It is sent as you wrote it — this is you adding user content deliberately, so it is not framed the way a file the model API couldn't take is (see [Where a returned file is sent](#tool-return-file-provenance)).
 - **`metadata`**: Optional metadata that your application can access but is not sent to the LLM. Useful for logging, debugging, or additional processing. Some other AI frameworks call this feature 'artifacts'.
 
 This separation allows you to provide rich context to the model while maintaining clean, structured return values for your application logic. For multimodal content that should be sent natively in the tool result (when supported by the model), return it directly from the tool function or include it in `return_value` (see [Tool Output](#function-tool-output) above).

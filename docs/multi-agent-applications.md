@@ -3,7 +3,7 @@
 There are roughly five levels of complexity when building applications with Pydantic AI:
 
 1. Single agent workflows — what most of the `pydantic_ai` documentation covers
-2. [Agent delegation](#agent-delegation) — agents using another agent via tools
+2. [Agent delegation](#agent-delegation) — agents using another agent via tools, either wired up by hand or with the Harness's [`SubAgents`](https://pydantic.dev/docs/ai/harness/subagents/) capability
 3. [Programmatic agent hand-off](#programmatic-agent-hand-off) — one agent runs, then application code calls another agent
 4. [Graph based control flow](graph.md) — for the most complex cases, a graph-based state machine can be used to control the execution of multiple agents
 5. [Deep Agents](#deep-agents) — autonomous agents with planning, file operations, task delegation, and sandboxed code execution
@@ -14,6 +14,11 @@ Of course, you can combine multiple strategies in a single application.
 
 "Agent delegation" refers to the scenario where an agent delegates work to another agent, then takes back control when the delegate agent (the agent called from within a tool) finishes.
 If you want to hand off control to another agent completely, without coming back to the first agent, you can use an [output function](output.md#output-functions).
+
+!!! tip "`SubAgents` does this for you"
+    [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) ships a [`SubAgents`](https://pydantic.dev/docs/ai/harness/subagents/) capability that is the most convenient way to delegate: you hand it a list of named agents and it exposes a single `delegate_task(agent_name, task)` tool, forwards dependencies, threads usage limits, and lists the available delegates in the system prompt as a static instruction so the listing stays in the cacheable prefix (see [prompt caching](models/anthropic.md#prompt-caching)). Each delegation runs in its own run with its own message history, so a delegate never sees the parent conversation.
+
+    Write the delegation tool by hand, as below, when you need control `SubAgents` doesn't give you — a bespoke tool schema, per-delegate argument validation, or passing the parent's message history through.
 
 Since agents are stateless and designed to be global, you do not need to include the agent itself in agent [dependencies](dependencies.md).
 
