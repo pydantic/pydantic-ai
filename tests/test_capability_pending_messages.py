@@ -150,7 +150,7 @@ async def test_agent_run_enqueue_after_run_ends_raises(finish_run: bool):
 
 
 async def test_enqueue_rejected_before_wrap_run_cleanup():
-    enqueue_errors: list[UserError] = []
+    enqueue_errors: list[str] = []
 
     class CleanupCapability(AbstractCapability[object]):
         async def wrap_run(self, ctx: RunContext[object], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
@@ -160,7 +160,7 @@ async def test_enqueue_rejected_before_wrap_run_cleanup():
                 try:
                     ctx.enqueue('too late')
                 except UserError as error:
-                    enqueue_errors.append(error)
+                    enqueue_errors.append(str(error))
 
     def fail_model(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         raise RuntimeError('model failed')
@@ -169,8 +169,7 @@ async def test_enqueue_rejected_before_wrap_run_cleanup():
     with pytest.raises(RuntimeError, match='model failed'):
         await agent.run('hello')
 
-    assert len(enqueue_errors) == 1
-    assert 'run has ended' in str(enqueue_errors[0])
+    assert enqueue_errors == ['`enqueue` is not available because the agent run has ended.']
 
 
 async def test_enqueue_after_metadata_setup_fails_raises():

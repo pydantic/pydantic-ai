@@ -1829,24 +1829,16 @@ class TestGetModelHook:
         assert (await Agent(None, deps_type=NoneType, capabilities=[Bootstrap()]).run('hello')).output == 'replacement'
 
     async def test_for_run_cannot_remove_only_bootstrap_model(self):
-        captured_ctx: RunContext[None] | None = None
-
         @dataclass
         class Bootstrap(AbstractCapability[None]):
             def get_model(self) -> Model:
                 return _text_model('bootstrap')
 
             async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
-                nonlocal captured_ctx
-                captured_ctx = ctx
                 return AbstractCapability()
 
         with pytest.raises(UserError, match='removed the bootstrap model'):
             await Agent(None, deps_type=NoneType, capabilities=[Bootstrap()]).run('hello')
-
-        assert captured_ctx is not None
-        with pytest.raises(UserError, match='run has ended'):
-            captured_ctx.enqueue('too late')
 
     async def test_for_run_can_remove_capability_model_when_constructor_model_exists(self):
         @dataclass
