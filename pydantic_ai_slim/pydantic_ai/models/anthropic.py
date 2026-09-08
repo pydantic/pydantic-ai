@@ -1114,10 +1114,14 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if anthropic_thinking := model_settings.get('anthropic_thinking'):
             return anthropic_thinking
         thinking = model_request_parameters.thinking
-        if thinking is None or thinking is False:
+        if thinking is None:
             return OMIT  # type: ignore[return-value]
         if self.profile.get('anthropic_supports_adaptive_thinking', False):
+            if thinking is False:
+                return {'type': 'disabled'}
             return {'type': 'adaptive'}
+        if thinking is False:
+            return OMIT  # type: ignore[return-value]
         return {'type': 'enabled', 'budget_tokens': ANTHROPIC_THINKING_BUDGET_MAP[thinking]}
 
     @overload

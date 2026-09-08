@@ -228,11 +228,18 @@ class TestAnthropicThinkingTranslation:
         result = AnthropicModel._translate_thinking(non_adaptive_model, settings, params)
         assert result == snapshot({'type': 'enabled', 'budget_tokens': 2048})
 
-    def test_thinking_false_returns_omit(self, adaptive_model: FunctionModel):
-        """thinking=False -> OMIT (not sent to API)."""
+    def test_thinking_false_adaptive_returns_disabled(self, adaptive_model: FunctionModel):
+        """thinking=False with adaptive model -> {'type': 'disabled'}."""
         params = ModelRequestParameters(thinking=False)
         settings: ModelSettings = {}
         result = AnthropicModel._translate_thinking(adaptive_model, settings, params)
+        assert result == snapshot({'type': 'disabled'})
+
+    def test_thinking_false_non_adaptive_returns_omit(self, non_adaptive_model: FunctionModel):
+        """thinking=False with non-adaptive model -> OMIT (silently ignored)."""
+        params = ModelRequestParameters(thinking=False)
+        settings: ModelSettings = {}
+        result = AnthropicModel._translate_thinking(non_adaptive_model, settings, params)
         assert result is anthropic_omit
 
     def test_thinking_none_returns_omit(self, adaptive_model: FunctionModel):
