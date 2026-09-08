@@ -5,6 +5,8 @@
       members:
         - ModelProfile
         - ModelProfileSpec
+        - ToolAdditionMode
+        - ToolDeferralMode
         - JsonSchemaTransformer
         - InlineDefsJsonSchemaTransformer
         - merge_profile
