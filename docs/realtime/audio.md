@@ -122,7 +122,8 @@ transcription its user turns contain no spoken text.
 Beyond audio and text, a session accepts the same image content as
 [multimodal input](../input.md#image-input) to a standard run. Send an image as context with
 [`send()`][pydantic_ai.realtime.RealtimeSession.send]. An image does not trigger a response by
-itself; the model uses it on the next voice, text, or manually-created turn.
+itself; the model uses it on the next voice, text, or manually-created turn. Pass `respond=True` to
+ask for a response to the image; see [Text turns](turns.md#text-turns) for the `respond` behavior.
 
 ```python
 from pydantic_ai import BinaryContent
@@ -144,5 +145,7 @@ bound local history; they do not change which frames the provider receives. See
 
 - Audio and transcript iterators deliberately drop old buffered items when consumers fall behind.
   [Logfire attributes](observability.md#logfire-instrumentation) report those drops.
+- Session failures have different propagation paths when only these views are consumed; see
+  [Errors](lifecycle.md#errors).
 - Provider speech/interruption signals differ. Use the profile flags and the
   [turns guide](turns.md#barge-in) rather than branching on provider names.

@@ -221,6 +221,7 @@ class ModelSettings(TypedDict, total=False):
     Supported by:
 
     * OpenAI
+    * OpenAI Codex
     * Anthropic
     * Google (numeric seconds only, not `httpx.Timeout`)
     * Groq
@@ -241,6 +242,7 @@ class ModelSettings(TypedDict, total=False):
     Supported by:
 
     * OpenAI (some models, not o1)
+    * OpenAI Codex
     * Anthropic
     * Groq
     * Mistral
@@ -412,6 +414,7 @@ class ModelSettings(TypedDict, total=False):
     Supported by:
 
     * OpenAI
+    * OpenAI Codex
     * Anthropic
     * Google
     * Groq
@@ -477,6 +480,7 @@ class ModelSettings(TypedDict, total=False):
     Supported by:
 
     * OpenAI
+    * OpenAI Codex
     * Anthropic
     * Google (Gemini API and Google Cloud)
     * Bedrock
@@ -500,6 +504,7 @@ class ModelSettings(TypedDict, total=False):
     Supported by:
 
     * OpenAI
+    * OpenAI Codex
     * Anthropic
     * Groq
     * HuggingFace

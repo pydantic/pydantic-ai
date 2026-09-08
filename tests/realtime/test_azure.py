@@ -167,6 +167,9 @@ def test_azure_realtime_apis_default_absent_for_unknown_model() -> None:
         ('gpt-4o-mini', frozenset({'voice_live'})),
         # A GA-only `-realtime` variant is matched before the bare cascade name it also starts with.
         ('gpt-4o-realtime-preview', frozenset({'azure_openai'})),
+        # The data-zone `gpt-realtime` deployments exist only on Voice Live.
+        ('gpt-realtime-datazone', frozenset({'voice_live'})),
+        ('gpt-realtime-1.5-datazone', frozenset({'voice_live'})),
     ],
 )
 def test_azure_realtime_apis_name_boundary_matching(model_name: str, expected: frozenset[str] | None) -> None:
