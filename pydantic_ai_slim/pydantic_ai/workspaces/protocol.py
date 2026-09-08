@@ -26,6 +26,8 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Protocol, TypeAlias, runtime_checkable
 
+from pydantic_ai.messages import WorkspaceRef
+
 # These protocols are frozen once released: conformance is structural, so adding a member
 # would silently break every existing backend. New operations go on concrete types or on new
 # optional `Supports*` protocols. Data carriers declare read-only properties so that plain
@@ -52,19 +54,6 @@ string (`'echo $HOME | wc -c'`). Passing a `str` without `shell=True` is invalid
 an argv sequence with `shell=True`: implementations must reject either mismatch with a
 `TypeError`, forcing callers to be explicit about shell interpretation.
 """
-
-
-@dataclass(frozen=True, kw_only=True)
-class WorkspaceRef:
-    """Serializable identity of a workspace environment, as the backend spells it.
-
-    The string is whatever that backend needs to find its environment again: a provider-issued
-    id for Modal, Daytona or E2B, a caller-chosen name for platforms that cannot reattach by id.
-    Pydantic AI never interprets it, and it must never carry credentials.
-    """
-
-    workspace_id: str
-    """The backend's own identifier for the environment."""
 
 
 class WorkspaceError(RuntimeError):
@@ -243,10 +232,9 @@ class WorkspaceBackend(Protocol):
     def ref(self) -> WorkspaceRef | None:
         """Identity of the environment this backend is bound to, or `None` before it has one.
 
-        A backend built to attach to an existing environment reports its ref straight away. One
-        built to create a fresh environment reports `None` until its first operation has run,
-        because only the provider can say what the new environment is called. Once an operation
-        has succeeded, this must not be `None`.
+        A backend built to attach to an existing remote environment reports its ref straight away.
+        A backend that creates a fresh environment reports `None` until its provider assigns an
+        identity. Local and other non-reconnectable backends may remain `None` for their lifetime.
         """
         ...
 

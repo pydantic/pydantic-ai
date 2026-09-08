@@ -2718,6 +2718,17 @@ ModelResponsePart = Annotated[
 """A message part returned by a model."""
 
 
+@dataclass(frozen=True, kw_only=True)
+class WorkspaceRef:
+    """Serializable identity of a workspace environment, without credentials."""
+
+    provider: str
+    """Provider that owns the environment."""
+
+    id: str
+    """Provider-specific identifier for the environment."""
+
+
 @dataclass(repr=False)
 class ModelResponse:
     """A response from a model, e.g. a message from the model to the Pydantic AI app."""

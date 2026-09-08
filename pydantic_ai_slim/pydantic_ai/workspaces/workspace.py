@@ -32,7 +32,7 @@ from .protocol import (
     WorkspaceTimeoutError,
 )
 
-__all__ = ('FileWindow', 'Workspace')
+__all__ = ('FileWindow', 'Workspace', 'WrapperWorkspace')
 
 _SHELL_SLICE_TIMEOUT = 10
 """Deadline in seconds for the `sed` fast path in `read_file`.
@@ -236,10 +236,7 @@ class Workspace(WorkspaceBackend):
 
     @property
     def ref(self) -> WorkspaceRef | None:
-        """Identity of the environment, once the backend has one.
-
-        `None` until a backend built to create a fresh environment has run its first operation.
-        """
+        """Identity of the environment when the backend has a reconnectable identity; otherwise `None`."""
         return self._backend.ref
 
     @property
@@ -354,7 +351,6 @@ class Workspace(WorkspaceBackend):
         if limit is not None and limit < 1:
             raise ValueError('`limit` must be at least 1')
         resolved_path = await self.resolve(path)
-        filesystem: SupportsFilesystem
         if limit is not None:
             # Before the filesystem lookup: a backend with only `run()` can still serve
             # windowed reads through the slice, and command-capable remote backends avoid
@@ -365,11 +361,7 @@ class Workspace(WorkspaceBackend):
                 return window
 
             await self._validate_bounded_read_path(resolved_path)
-            filesystem = self._filesystem
-        else:
-            filesystem = self._filesystem
-
-        data = await filesystem.read_bytes(resolved_path)
+        data = await self.read_bytes(path)
         return _window_from_data(data, offset, limit)
 
     async def _read_file_via_shell(self, path: str, offset: int, limit: int) -> FileWindow | None:
@@ -381,11 +373,10 @@ class Workspace(WorkspaceBackend):
         """
         end = offset + limit  # one extra line, to learn whether more exist
         try:
-            backend = self._backend
             # argv, never shell=True: the path is an argument, not shell-interpreted text.
             # `{end}q` stops `sed` at the window instead of scanning to EOF, and the timeout
             # bounds the optimization on paths that never finish.
-            result = await backend.run(['sed', '-n', f'{offset},{end}p;{end}q', path], timeout=_SHELL_SLICE_TIMEOUT)
+            result = await self.run(['sed', '-n', f'{offset},{end}p;{end}q', path], timeout=_SHELL_SLICE_TIMEOUT)
         except (NotImplementedError, OSError, WorkspaceTimeoutError, UserError):
             return None
         if result.exit_code != 0 or result.stderr:
@@ -406,11 +397,27 @@ class Workspace(WorkspaceBackend):
     async def _validate_bounded_read_path(self, path: str) -> None:
         """Surface filesystem policy, missing-path, and directory errors without reading content."""
         try:
-            entry = await (self._filesystem).stat(path)
+            entry = await self.stat(path)
         except NotImplementedError:
             return
         if entry.is_dir:
             raise IsADirectoryError(path)
+
+
+class WrapperWorkspace(Workspace):
+    """A workspace facade that composes another workspace."""
+
+    _backend: Workspace
+
+    def __init__(self, wrapped: Workspace):
+        super().__init__(wrapped)
+
+    @property
+    def wrapped(self) -> Workspace:
+        return self._backend
+
+    async def _read_file_via_shell(self, path: str, offset: int, limit: int) -> FileWindow | None:
+        return None
 
 
 def _window_from_data(data: bytes, offset: int, limit: int | None) -> FileWindow:

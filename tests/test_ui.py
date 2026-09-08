@@ -1342,7 +1342,7 @@ async def test_adapter_dispatch_request(monkeypatch: pytest.MonkeyPatch):
     # supply is a `UserError`, and this test is about the forwarding, not that failure.
     agent = Agent(model=TestModel(), capabilities=[ConnectOnlyWorkspaceCapability()])
     request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
-    workspace = WorkspaceRef(workspace_id='test')
+    workspace = WorkspaceRef(provider='fake', id='test')
     captured_workspace: list[object] = []
 
     run_stream_events = agent.run_stream_events

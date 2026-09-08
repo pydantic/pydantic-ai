@@ -20,7 +20,7 @@ class ContainerResult:
 
 class DockerWorkspace(WorkspaceBackend):
     def __init__(self, *, workspace_id: str = 'container-0123456789ab'):
-        self._ref = WorkspaceRef(workspace_id=workspace_id)
+        self._ref = WorkspaceRef(provider='fake', id=workspace_id)
 
     @property
     def ref(self) -> WorkspaceRef:

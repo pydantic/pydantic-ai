@@ -1,4 +1,4 @@
-"""The default local implementation of the [workspace backend protocol][pydantic_ai.workspaces.WorkspaceBackend].
+"""A local implementation of the [workspace backend protocol][pydantic_ai.workspaces.WorkspaceBackend].
 
 [`LocalWorkspace`][pydantic_ai.workspaces.LocalWorkspace] runs commands as plain host subprocesses —
 it **isolates nothing** — and doubles as the reference implementation of the protocol.
@@ -12,9 +12,9 @@ import shutil
 import signal
 import tempfile
 import time
-import uuid
 from collections.abc import Awaitable, Mapping, Sequence
 from contextlib import suppress
+from functools import cached_property
 from pathlib import Path
 from types import TracebackType
 
@@ -23,7 +23,6 @@ from typing_extensions import Self
 
 from pydantic_ai._utils import cancel_and_drain, run_in_executor
 
-from ._lazy import LazyWorkspace
 from .protocol import (
     CommandResult,
     FileEntry,
@@ -31,7 +30,6 @@ from .protocol import (
     WorkspaceBackend,
     WorkspaceCommand,
     WorkspaceError,
-    WorkspaceRef,
     WorkspaceTimeoutError,
 )
 
@@ -60,7 +58,7 @@ _OUTPUT_DRAIN_GRACE = 2.0
 """How long to keep reading a command's pipes after the direct child has exited."""
 
 
-class LocalWorkspace(LazyWorkspace[Path], WorkspaceBackend, SupportsFilesystem):
+class LocalWorkspace(WorkspaceBackend, SupportsFilesystem):
     """[`WorkspaceBackend`][pydantic_ai.workspaces.WorkspaceBackend] over host subprocesses and the host filesystem.
 
     Isolates nothing: commands run as host subprocesses with the host process's privileges.
@@ -104,12 +102,15 @@ class LocalWorkspace(LazyWorkspace[Path], WorkspaceBackend, SupportsFilesystem):
             )
         self._owns_root = root is None
         self._given_root = None if root is None else Path(root)
-        super().__init__()
-        self._ref: WorkspaceRef | None = None
+        self._live: Path | None = None
+
+    @cached_property
+    def _lock(self) -> anyio.Lock:
+        return anyio.Lock()
 
     @property
-    def ref(self) -> WorkspaceRef | None:
-        return self._ref
+    def ref(self) -> None:
+        return None
 
     @property
     def root(self) -> Awaitable[Path]:
@@ -120,22 +121,25 @@ class LocalWorkspace(LazyWorkspace[Path], WorkspaceBackend, SupportsFilesystem):
         shape for their provider handle, so create-or-attach happens on first use and no method
         can skip it.
         """
-        return self.workspace
+        return self._get_root()
 
-    async def create_or_attach(self) -> Path:
+    async def _get_root(self) -> Path:
         """Create or canonicalize the working directory on first acquisition."""
-        # Blocking filesystem calls run off the event loop. LazyWorkspace serializes
-        # acquisition so concurrent first uses cannot create separate directories.
-        # Always the canonical spelling (symlinks resolved, no `..`), set on first use: the
-        # kernel resolves a cwd like `link/..` through the symlink while lexical joins collapse
-        # it as text, so a non-canonical root would point `run()` and `fs` at different
-        # directories, breaking the protocol's one-environment contract.
-        if self._given_root is None:
-            root = await run_in_executor(lambda: Path(tempfile.mkdtemp(prefix='pydantic-ai-workspace-')).resolve())
-        else:
-            root = await run_in_executor(self._given_root.resolve)
-        self._ref = WorkspaceRef(workspace_id=f'local-{uuid.uuid4().hex}')
-        return root
+        async with self._lock:
+            if self._live is not None:
+                return self._live
+            # Blocking filesystem calls run off the event loop. The lock serializes
+            # acquisition so concurrent first uses cannot create separate directories.
+            # Always the canonical spelling (symlinks resolved, no `..`), set on first use: the
+            # kernel resolves a cwd like `link/..` through the symlink while lexical joins collapse
+            # it as text, so a non-canonical root would point `run()` and `fs` at different
+            # directories, breaking the protocol's one-environment contract.
+            if self._given_root is None:
+                root = await run_in_executor(lambda: Path(tempfile.mkdtemp(prefix='pydantic-ai-workspace-')).resolve())
+            else:
+                root = await run_in_executor(self._given_root.resolve)
+            self._live = root
+            return root
 
     async def __aenter__(self) -> Self:
         return self
@@ -150,7 +154,7 @@ class LocalWorkspace(LazyWorkspace[Path], WorkspaceBackend, SupportsFilesystem):
             if self._owns_root and self._live is not None:
                 # Reset first so a reused workspace lazily creates a fresh root instead of
                 # resurrecting the deleted path.
-                root, self._live, self._ref = self._live, None, None
+                root, self._live = self._live, None
                 try:
                     await run_in_executor(shutil.rmtree, root)
                 except FileNotFoundError:

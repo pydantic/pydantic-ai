@@ -15,9 +15,9 @@ pytestmark = pytest.mark.anyio
 
 
 async def test_read_only_workspace_forwards_reads_and_refuses_run_and_writes() -> None:
-    ref = WorkspaceRef(workspace_id='existing')
+    ref = WorkspaceRef(provider='fake', id='existing')
     backend = FakeWorkspace('read-only', {'/workspace/data.txt': b'original'}, ref=ref)
-    workspace = Workspace(ReadOnlyWorkspace(backend))
+    workspace = Workspace(ReadOnlyWorkspace(Workspace(backend)))
 
     assert await workspace.read_text('data.txt') == 'original'
     assert workspace.ref == ref
@@ -32,7 +32,7 @@ async def test_read_only_workspace_forwards_reads_and_refuses_run_and_writes() -
 
 async def test_read_only_workspace_forwards_every_read_and_refuses_every_write() -> None:
     backend = FakeWorkspace('read-only', {'/workspace/data.txt': b'original'})
-    workspace = Workspace(ReadOnlyWorkspace(backend))
+    workspace = Workspace(ReadOnlyWorkspace(Workspace(backend)))
 
     assert (await workspace.stat('data.txt')).name == 'data.txt'
     assert [entry.name for entry in await workspace.list_dir('/workspace')] == ['data.txt']
@@ -51,7 +51,7 @@ async def test_read_only_workspace_over_a_run_only_backend_uses_the_shell_fallba
     """The wrapper can read through the inner shell fallback without exposing command execution."""
     (tmp_path / 'data.txt').write_text('hello')
     backend = RunOnlyWorkspaceBackend(LocalWorkspace(tmp_path))
-    workspace = Workspace(ReadOnlyWorkspace(backend))
+    workspace = Workspace(ReadOnlyWorkspace(Workspace(backend)))
 
     assert await workspace.read_text('data.txt') == 'hello'
     assert any(isinstance(command, str) and command.startswith('base64 <') for command in backend.commands)

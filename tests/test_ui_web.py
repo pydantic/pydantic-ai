@@ -1009,7 +1009,7 @@ def test_agent_to_web_with_instructions():
 async def test_agent_to_web_passes_instructions_and_workspace_to_dispatch(monkeypatch: pytest.MonkeyPatch):
     """Test that `Agent.to_web()` passes instructions and workspace to `dispatch_request`."""
     agent = Agent(TestModel(custom_output_text='Hello'))
-    workspace = WorkspaceRef(workspace_id='test')
+    workspace = WorkspaceRef(provider='fake', id='test')
     app = agent.to_web(instructions='Always respond in Spanish', workspace=workspace)
 
     # Mock dispatch_request to capture the instructions parameter

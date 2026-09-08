@@ -1752,7 +1752,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             if selection is None:
                 if isinstance(workspace, WorkspaceRef):
                     raise exceptions.UserError(
-                        f'No capability can supply workspace {workspace.workspace_id!r}: every `get_workspace` returned '
+                        f'No capability can supply workspace {workspace.id!r}: every `get_workspace` returned '
                         '`None`. Attach a capability whose `get_workspace` recognizes it.'
                     )
             else:

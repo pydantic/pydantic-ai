@@ -99,10 +99,10 @@ class MyBackend:
         async with self._lock:
             if self._workspace is None:
                 if self.ref is not None:
-                    self._workspace = await self.client.connect(self.ref.workspace_id)
+                    self._workspace = await self.client.connect(self.ref.id)
                 else:
                     self._workspace = await self.client.create(name=self.name)
-                    self.ref = WorkspaceRef(workspace_id=self._workspace.id)
+                    self.ref = WorkspaceRef(provider='my-provider', id=self._workspace.id)
         return self._workspace
 
     async def run(self, command: WorkspaceCommand, **kwargs: Any) -> CommandResult:
@@ -142,10 +142,10 @@ blocking commands and file changes. When a capability manages the backend, apply
 The live backend never crosses a durable boundary; its `WorkspaceRef`, method arguments, and the
 serializable run context do. Tools and capability hooks still call `ctx.workspace` normally; configure
 workspace use inside the durable tool or capability activity that owns the provider boundary. Reconnection
-goes through the exact supplying capability. Give the workspace a stable reference, and do not access
+goes through the configured capability. Give the workspace a stable reference, and do not access
 `workspace.backend` from workflow code.
 
-Pass `WorkspaceRef(workspace_id=...)` through `workspace=` when the environment is provisioned elsewhere
+Pass `WorkspaceRef(provider=..., id=...)` through `workspace=` when the environment is provisioned elsewhere
 and outlives the run. The agent must have a capability whose `get_workspace` connects it. Do not pass
 a live backend or `LocalWorkspace` into a durable run.
 

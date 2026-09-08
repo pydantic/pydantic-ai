@@ -259,7 +259,7 @@ class TemporalRunContext(RunContext[AgentDepsT]):
         }
         workspace = ctx.__dict__.get('workspace')
         if isinstance(workspace, Workspace) and (workspace_ref := workspace.ref) is not None:
-            serialized['_workspace_state'] = {'workspace_id': workspace_ref.workspace_id}
+            serialized['_workspace_state'] = {'provider': workspace_ref.provider, 'id': workspace_ref.id}
         return serialized
 
     @classmethod
@@ -302,14 +302,15 @@ async def prepare_workspace(ctx: RunContext[Any]) -> None:
     if isinstance(ctx.__dict__.get('workspace'), Workspace):
         return
     state = ctx.__dict__.get('_workspace_state')
-    workspace_id = state.get('workspace_id') if is_str_dict(state) else None
-    if not isinstance(workspace_id, str):
+    provider = state.get('provider') if is_str_dict(state) else None
+    workspace_id = state.get('id') if is_str_dict(state) else None
+    if not isinstance(provider, str) or not isinstance(workspace_id, str):
         return
     agent = ctx.__dict__.get('agent')
     if agent is None:
         ctx.__dict__['_workspace_unavailable_reason'] = TEMPORAL_WORKSPACE_UNAVAILABLE_REASON
         return
-    ref = WorkspaceRef(workspace_id=workspace_id)
+    ref = WorkspaceRef(provider=provider, id=workspace_id)
     run_capability = await agent.root_capability.for_run(ctx)
     backend = get_run_workspace(run_capability, ctx, ref)
     if backend is None:

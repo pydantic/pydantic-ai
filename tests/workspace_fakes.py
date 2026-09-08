@@ -66,7 +66,7 @@ class FakeWorkspace(WorkspaceBackend, SupportsFilesystem):
             await anyio.sleep(0)
             if self._ref is None:
                 self.create_calls += 1
-                self._ref = WorkspaceRef(workspace_id=f'fake-{self.name}')
+                self._ref = WorkspaceRef(provider='fake', id=f'fake-{self.name}')
             else:
                 self.attach_calls += 1
             self._ready = True
@@ -155,7 +155,7 @@ class RecordingWorkspaceBackend(WorkspaceBackend):
     """The three required backend members, with no `SupportsFilesystem`."""
 
     def __init__(self, workspace_id: str, *, ref: WorkspaceRef | None = None) -> None:
-        self._ref = ref or WorkspaceRef(workspace_id=workspace_id)
+        self._ref = ref or WorkspaceRef(provider='fake', id=workspace_id)
         self.commands: list[str | Sequence[str]] = []
         self.cleanup_calls: list[str] = []
 
@@ -211,7 +211,7 @@ class RunOnlyWorkspaceBackend(WorkspaceBackend):
 
 def ref_workspace(ref: WorkspaceRef, supplier: AbstractCapability[Any] | None = None) -> Workspace:
     del supplier
-    return Workspace(RecordingWorkspaceBackend(ref.workspace_id, ref=ref))
+    return Workspace(RecordingWorkspaceBackend(ref.id, ref=ref))
 
 
 class ConnectOnlyWorkspaceCapability(AbstractCapability[Any]):
@@ -220,14 +220,14 @@ class ConnectOnlyWorkspaceCapability(AbstractCapability[Any]):
     id = 'connect_only_workspace'
 
     def __init__(self) -> None:
-        self.workspace_ids: list[str] = []
+        self.ids: list[str] = []
         self.backends: list[RecordingWorkspaceBackend] = []
 
     def get_workspace(self, ctx: RunContext[Any], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
         if ref is None:
             return None
-        self.workspace_ids.append(ref.workspace_id)
-        backend = RecordingWorkspaceBackend(ref.workspace_id, ref=ref)
+        self.ids.append(ref.id)
+        backend = RecordingWorkspaceBackend(ref.id, ref=ref)
         self.backends.append(backend)
         return backend
 

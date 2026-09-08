@@ -1,6 +1,5 @@
 """Workspace API, backend protocols, and implementations."""
 
-from ._lazy import LazyWorkspace
 from .local import LocalWorkspace
 from .protocol import (
     CommandResult,
@@ -17,16 +16,16 @@ from .protocol import (
 )
 from .readonly import ReadOnlyWorkspace
 from .unavailable import UnavailableWorkspace
-from .workspace import FileWindow, Workspace
+from .workspace import FileWindow, Workspace, WrapperWorkspace
 
 __all__ = (
     'CommandResult',
     'FileEntry',
     'FileWindow',
-    'LazyWorkspace',
     'LocalWorkspace',
     'ReadOnlyWorkspace',
     'Workspace',
+    'WrapperWorkspace',
     'WorkspaceBackend',
     'WorkspaceCommand',
     'WorkspaceError',

@@ -12,7 +12,7 @@
             - WorkspaceTimeoutError
             - WorkspaceUnavailableError
             - SupportsFilesystem
-            - LazyWorkspace
+            - WrapperWorkspace
             - LocalWorkspace
             - ReadOnlyWorkspace
             - UnavailableWorkspace

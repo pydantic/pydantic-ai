@@ -2721,7 +2721,7 @@ def test_temporal_run_context_serializes_only_a_concrete_workspace_ref():
     workspace = Workspace(RecordingWorkspaceBackend('preprovisioned'))
     serialized = TemporalRunContext.serialize_run_context(_workspace_context(workspace))
 
-    assert serialized['_workspace_state'] == {'workspace_id': 'preprovisioned'}
+    assert serialized['_workspace_state'] == {'provider': 'fake', 'id': 'preprovisioned'}
 
     # Decoding is pure payload work. It does not reconnect a backend or invoke a capability.
     decoded = deserialize_run_context(TemporalRunContext, serialized, deps=None, agent=None)
@@ -2739,7 +2739,7 @@ async def test_temporal_activity_prepares_workspace_before_calling_tool(monkeypa
             return self
 
         def get_workspace(self, ctx: RunContext[None], *, ref: WorkspaceRef | None) -> WorkspaceBackend:
-            assert ref == WorkspaceRef(workspace_id='activity-ref')
+            assert ref == WorkspaceRef(provider='fake', id='activity-ref')
             return backend
 
     provider = Provider(id='activity-provider')
@@ -2792,7 +2792,7 @@ async def test_temporal_prepare_workspace_preserves_read_only_for_replaced_conte
             return self
 
         def get_workspace(self, ctx: RunContext[None], *, ref: WorkspaceRef | None) -> WorkspaceBackend:
-            return ReadOnlyWorkspace(backend)
+            return ReadOnlyWorkspace(Workspace(backend))
 
     agent = Agent(TestModel(), deps_type=type(None), capabilities=[Provider(id='readonly-provider')])
     serialized = TemporalRunContext.serialize_run_context(_workspace_context(Workspace(backend)))
@@ -2808,7 +2808,7 @@ async def test_temporal_prepare_workspace_preserves_read_only_for_replaced_conte
 
 
 async def test_temporal_prepare_workspace_without_agent_reports_provisioning_guidance():
-    serialized = {'_workspace_state': {'workspace_id': 'missing-provider'}}
+    serialized = {'_workspace_state': {'provider': 'fake', 'id': 'missing-provider'}}
     restored = deserialize_run_context(TemporalRunContext, serialized, deps=None, agent=None)
 
     await prepare_workspace(restored)

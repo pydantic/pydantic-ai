@@ -1,7 +1,7 @@
 """A policy wrapper that makes an existing workspace backend read-only.
 
 [`ReadOnlyWorkspace`][pydantic_ai.workspaces.ReadOnlyWorkspace] wraps any
-[`WorkspaceBackend`][pydantic_ai.workspaces.WorkspaceBackend]: file reads pass through unchanged,
+[`Workspace`][pydantic_ai.workspaces.Workspace] facade: file reads pass through unchanged,
 while command execution and file mutation raise `UserError`. Commands are blocked along with
 writes because they execute against the same filesystem (the one-environment contract): a
 workspace that refused `write_bytes` but ran `rm` would not be read-only.
@@ -9,14 +9,14 @@ workspace that refused `write_bytes` but ran `rm` would not be read-only.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 
 from typing_extensions import Never
 
 from pydantic_ai.exceptions import UserError
 
-from .protocol import SupportsFilesystem, WorkspaceBackend, WorkspaceCommand, WorkspaceFileEntry, WorkspaceRef
-from .workspace import Workspace
+from .protocol import WorkspaceCommand
+from .workspace import WrapperWorkspace
 
 __all__ = ('ReadOnlyWorkspace',)
 
@@ -27,8 +27,8 @@ _READ_ONLY_REASON = (
 )
 
 
-class ReadOnlyWorkspace(WorkspaceBackend, SupportsFilesystem):
-    """A [`WorkspaceBackend`][pydantic_ai.workspaces.WorkspaceBackend] that forwards reads to a wrapped backend and refuses everything else.
+class ReadOnlyWorkspace(WrapperWorkspace):
+    """A [`Workspace`][pydantic_ai.workspaces.Workspace] facade that forwards reads and refuses mutations.
 
     Reads (`working_dir`, `read_bytes`, `stat`, `list_dir`, `exists`) forward to the wrapped
     backend, using its native filesystem methods or the shell fallback; `run` and file mutations raise
@@ -43,31 +43,6 @@ class ReadOnlyWorkspace(WorkspaceBackend, SupportsFilesystem):
     standard utilities such as `base64` inside the environment, so an environment someone has
     tampered with is not protected by this wrapper.
     """
-
-    def __init__(self, wrapped: WorkspaceBackend):
-        self._wrapped = wrapped
-        # Use the ordinary wrapper internally so a run-only backend retains the same shell read
-        # fallback without exposing command execution through this policy wrapper.
-        self._workspace = Workspace(wrapped)
-
-    @property
-    def ref(self) -> WorkspaceRef | None:
-        return self._wrapped.ref
-
-    async def working_dir(self) -> str:
-        return await self._wrapped.working_dir()
-
-    async def read_bytes(self, path: str) -> bytes:
-        return await self._workspace.read_bytes(path)
-
-    async def stat(self, path: str) -> WorkspaceFileEntry:
-        return await self._workspace.stat(path)
-
-    async def list_dir(self, path: str) -> Sequence[WorkspaceFileEntry]:
-        return await self._workspace.list_dir(path)
-
-    async def exists(self, path: str) -> bool:
-        return await self._workspace.exists(path)
 
     async def write_bytes(self, path: str, data: bytes) -> Never:
         raise UserError(_READ_ONLY_REASON)

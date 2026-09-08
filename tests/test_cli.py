@@ -585,7 +585,7 @@ async def test_chat_holds_toolsets_open_for_the_session(mocker: MockerFixture, e
 
 @pytest.mark.anyio
 async def test_run_chat_forwards_workspace(mocker: MockerFixture, tmp_path: Path):
-    workspace = WorkspaceRef(workspace_id='test')
+    workspace = WorkspaceRef(provider='fake', id='test')
     with create_pipe_input() as inp:
         inp.send_text('hello\n')
         inp.send_text('/exit\n')
@@ -1368,7 +1368,7 @@ def test_agent_to_cli_sync_with_args(mocker: MockerFixture, env: TestEnv):
 def test_agent_to_cli_sync_with_model(mocker: MockerFixture, env: TestEnv):
     env.set('OPENAI_API_KEY', 'test')
     mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
-    workspace = WorkspaceRef(workspace_id='test')
+    workspace = WorkspaceRef(provider='fake', id='test')
 
     cli_agent.to_cli_sync(model='test', workspace=workspace)
 
@@ -1416,7 +1416,7 @@ async def test_agent_to_cli_async_with_args(mocker: MockerFixture, env: TestEnv)
 async def test_agent_to_cli_async_with_model(mocker: MockerFixture, env: TestEnv):
     env.set('OPENAI_API_KEY', 'test')
     mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
-    workspace = WorkspaceRef(workspace_id='test')
+    workspace = WorkspaceRef(provider='fake', id='test')
 
     await cli_agent.to_cli(model='test', workspace=workspace)
 

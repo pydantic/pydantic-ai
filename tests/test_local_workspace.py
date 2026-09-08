@@ -7,10 +7,12 @@ import os
 import shlex
 import signal
 import sys
+import tempfile
 import time
+from collections.abc import Callable
 from contextlib import suppress
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -30,6 +32,27 @@ pytestmark = [
     pytest.mark.anyio,
     pytest.mark.skipif(os.name != 'posix', reason='LocalWorkspace tests drive POSIX shell commands'),
 ]
+
+
+async def test_local_workspace_concurrent_first_use_creates_one_root(monkeypatch: pytest.MonkeyPatch) -> None:
+    created: list[str] = []
+    real_mkdtemp: Callable[..., str] = tempfile.mkdtemp
+
+    def counted_mkdtemp(*args: Any, **kwargs: Any) -> str:
+        root = cast(str, real_mkdtemp(*args, **kwargs))
+        created.append(root)
+        return root
+
+    monkeypatch.setattr('pydantic_ai.workspaces.local.tempfile.mkdtemp', counted_mkdtemp)
+    workspace = LocalWorkspace()
+    assert workspace.ref is None
+    async with workspace:
+        paths = await asyncio.gather(workspace.working_dir(), workspace.working_dir())
+        assert paths[0] == paths[1]
+        assert len(created) == 1
+        root = Path(paths[0])
+        assert root.exists()
+    assert not root.exists()
 
 
 _HAS_PROCFS = Path('/proc/self').exists()
@@ -92,19 +115,7 @@ async def test_local_workspace_conforms_to_the_protocol(tmp_path: Path):
     typed: WorkspaceBackend = workspace  # static conformance, checked because tests are type-checked
     assert typed.ref is None
     await typed.working_dir()
-    assert typed.ref is not None and typed.ref.workspace_id.startswith('local-')
-
-
-@pytest.mark.parametrize('operation', ['native', 'explicit-cwd'])
-async def test_every_successful_operation_assigns_a_ref(tmp_path: Path, operation: str) -> None:
-    workspace = LocalWorkspace(tmp_path)
-
-    if operation == 'native':
-        assert await workspace.exists(str(tmp_path))
-    else:
-        assert (await workspace.run(['pwd'], cwd=str(tmp_path))).exit_code == 0
-
-    assert workspace.ref is not None
+    assert typed.ref is None
 
 
 @pytest.mark.parametrize('operation', ['root', 'cwd', 'fs'])
@@ -342,7 +353,6 @@ async def test_owned_root_context_manager_reuse_creates_a_fresh_root():
     workspace = LocalWorkspace()
     async with workspace:
         first = Path(await workspace.working_dir())
-        first_ref = workspace.ref
         assert first.exists()
     assert not first.exists()
     assert workspace.ref is None
@@ -350,7 +360,7 @@ async def test_owned_root_context_manager_reuse_creates_a_fresh_root():
         second = Path(await workspace.working_dir())
         assert second.exists()
         assert second != first
-        assert workspace.ref is not None and workspace.ref != first_ref
+        assert workspace.ref is None
     assert not second.exists()
 
 

@@ -122,73 +122,36 @@ Pydantic AI does not infer workspace identity from message history; pass `result
 run to reuse its live backend, or pass its `ref` when the next run should reconnect through a
 capability.
 
-The backend holds your settings and, if the run is continuing an environment, its identity. Keep
-the environment behind a property so no method can use it without connecting first:
-
-```python {title="my_backend.py"}
-from typing import Any
-
-from pydantic_ai.workspaces import CommandResult, LazyWorkspace, WorkspaceCommand, WorkspaceRef
-
-
-class MyBackend(LazyWorkspace[Any]):
-    def __init__(self, *, client: Any, ref: WorkspaceRef | None, name: str | None):
-        super().__init__()
-        self.client, self.ref, self.name = client, ref, name
-
-    async def create_or_attach(self) -> Any:
-        if self.ref is not None:
-            return await self.client.connect(self.ref.workspace_id)
-        workspace = await self.client.create(name=self.name)
-        self.ref = WorkspaceRef(workspace_id=workspace.id)
-        return workspace
-
-    async def run(self, command: WorkspaceCommand, **kwargs: Any) -> CommandResult:
-        workspace = await self.workspace
-        return await workspace.exec(command, **kwargs)
-
-    async def working_dir(self) -> str:
-        workspace = await self.workspace
-        return workspace.working_dir
-```
-
-[`LazyWorkspace`][pydantic_ai.workspaces.LazyWorkspace] is optional authoring support; the backend
-protocol remains structural. Parameterize it with your SDK's native workspace type instead of
-`Any` in a real integration. Each operation awaits `self.workspace`; the helper serializes
-acquisition per backend instance and caches a successful handle. The lock is released before
-the operation, so independent commands can run concurrently.
-
-Failed or cancelled acquisition is not cached; a waiting or later caller may retry.
-Cancelling a waiting caller does not cancel the acquisition already in progress. Providers own
-partial-resource cleanup, identity updates, and SDK error translation in `create_or_attach`.
-The helper does not coordinate separate instances or processes, check remote liveness, or
-manage teardown. Callers await the property rather than calling the acquisition hook directly.
+The backend holds your settings and, if the run is continuing an environment, its identity. Remote
+providers should keep their typed native workspace behind a property, acquire it lazily in a private
+`_get_workspace()` method, and implement `_create_or_attach(ref)` with provider-specific locking,
+caching, cleanup, and reconnect behavior. [`LocalWorkspace`][pydantic_ai.workspaces.LocalWorkspace]
+shows the lazy acquisition pattern for a host directory; provider integrations show the corresponding
+typed native SDK implementation.
 
 The capability then just builds one:
 
-```python {title="workspace_capability.py" requires="my_backend.py"}
+```python {title="workspace_capability.py"}
 from dataclasses import dataclass
 from typing import Any
-
-from my_backend import MyBackend
-from my_workspaces import WorkspaceClient
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
+from pydantic_ai.workspaces import LocalWorkspace
 
 
 @dataclass
 class MyWorkspaceCapability(AbstractCapability[Any]):
-    client: WorkspaceClient  # credentials stay here, never in the ref
+    root: str
 
     def get_workspace(self, ctx: RunContext[Any], *, ref: WorkspaceRef | None) -> WorkspaceBackend:
-        return MyBackend(client=self.client, ref=ref, name=ctx.conversation_id)
+        return LocalWorkspace(self.root)
 
 
 agent = Agent(
     'anthropic:claude-sonnet-5',
-    capabilities=[MyWorkspaceCapability(client=WorkspaceClient.from_environment(), id='my_workspace')],
+    capabilities=[MyWorkspaceCapability(root='/tmp/my-workspace', id='my_workspace')],
 )
 ```
 
@@ -214,8 +177,7 @@ If you want something to happen around a run, use the ordinary hooks:
 | Clean up even when the run fails or is cancelled | `wrap_run`, with `try`/`finally` |
 | Destroy it for good | your own code, after the run, through `result.workspace` |
 
-Most providers stop charging for an idle environment on their own, so doing nothing is usually the
-right answer.
+Environment lifetime and idle cleanup are provider and application configuration.
 
 #### Carrying on where a run left off
 
@@ -350,7 +312,7 @@ agent pick the workspace. If the environment is made elsewhere, pass its referen
 ```python
 from pydantic_ai import WorkspaceRef
 
-workspace = WorkspaceRef(workspace_id='workspace-123')
+workspace = WorkspaceRef(provider='my-provider', id='workspace-123')
 ```
 
 Pass that value through `workspace=`. The agent must also have a capability whose `get_workspace`

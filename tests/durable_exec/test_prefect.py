@@ -2218,7 +2218,7 @@ def test_cache_policy_keys_deferred_workspace_identity():
     mock_task_ctx = MagicMock()
 
     def key_for(workspace_id: str) -> str | None:
-        workspace = ref_workspace(WorkspaceRef(workspace_id=workspace_id))
+        workspace = ref_workspace(WorkspaceRef(provider='fake', id=workspace_id))
         ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), workspace=workspace)
         return cache_policy.compute_key(task_ctx=mock_task_ctx, inputs={'ctx': ctx}, flow_parameters={})
 

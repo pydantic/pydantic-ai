@@ -28,6 +28,7 @@ from pydantic_ai.workspaces import (
     WorkspaceError,
     WorkspaceRef,
     WorkspaceTimeoutError,
+    WrapperWorkspace,
 )
 
 from .workspace_fakes import (
@@ -41,6 +42,63 @@ from .workspace_fakes import (
 )
 
 pytestmark = pytest.mark.anyio
+
+
+async def test_wrapper_overrides_apply_to_text_and_window_reads():
+    backend = FakeWorkspace('wrapper', {'/workspace/file.txt': b'inner'})
+
+    class ReadingWrapper(WrapperWorkspace):
+        async def read_bytes(self, path: str) -> bytes:
+            return b'outer\nvalue\n'
+
+    workspace = ReadingWrapper(Workspace(backend))
+    assert await workspace.read_text('file.txt') == 'outer\nvalue\n'
+    assert (await workspace.read_file('file.txt', limit=1)).lines == ('outer',)
+
+
+async def test_wrapper_overrides_apply_to_text_writes():
+    backend = FakeWorkspace('wrapper')
+    writes: list[tuple[str, bytes]] = []
+
+    class WritingWrapper(WrapperWorkspace):
+        async def write_bytes(self, path: str, data: bytes) -> None:
+            writes.append((path, data))
+
+    workspace = WritingWrapper(Workspace(backend))
+    await workspace.write_text('file.txt', 'outer')
+    assert writes == [('file.txt', b'outer')]
+    assert backend.files == {}
+
+
+async def test_stacked_wrappers_preserve_delegation_identity_and_refs():
+    ref = WorkspaceRef(provider='fake', id='stacked')
+    backend = FakeWorkspace('wrapper', {'/workspace/file.txt': b'inner'}, ref=ref)
+    inner = WrapperWorkspace(Workspace(backend))
+    outer = WrapperWorkspace(inner)
+
+    assert outer.wrapped is inner
+    assert inner.wrapped.backend is backend
+    assert outer.backend is inner
+    assert outer.ref == ref
+
+    events: list[str] = []
+
+    class LoggedWorkspace(WrapperWorkspace):
+        def __init__(self, wrapped: Workspace, name: str):
+            super().__init__(wrapped)
+            self.name = name
+
+        async def read_bytes(self, path: str) -> bytes:
+            events.append(f'{self.name} before')
+            data = await self.wrapped.read_bytes(path)
+            events.append(f'{self.name} after')
+            return data
+
+    inner_logged = LoggedWorkspace(Workspace(backend), 'inner')
+    outer_logged = LoggedWorkspace(inner_logged, 'outer')
+    assert events == []
+    assert await outer_logged.read_text('file.txt') == 'inner'
+    assert events == ['outer before', 'inner before', 'inner after', 'outer after']
 
 
 def _tool_call_model(tool_name: str = 'probe') -> FunctionModel:
@@ -414,7 +472,7 @@ async def test_full_read_uses_filesystem_and_preserves_decoding_contracts() -> N
 
 async def test_bounded_read_through_read_only_workspace_uses_filesystem() -> None:
     backend = FakeWorkspace('read-only', {'/workspace/data.txt': b'one\ntwo\nthree\n'})
-    workspace = Workspace(ReadOnlyWorkspace(backend))
+    workspace = Workspace(ReadOnlyWorkspace(Workspace(backend)))
 
     window = await workspace.read_file('data.txt', offset=2, limit=1)
 
@@ -524,7 +582,7 @@ async def test_the_result_carries_the_workspace_the_run_used() -> None:
     result = await agent.run('go')
 
     assert result.workspace is observed[0]
-    assert result.workspace.ref == WorkspaceRef(workspace_id='fake-capability')
+    assert result.workspace.ref == WorkspaceRef(provider='fake', id='fake-capability')
 
     # Handing it to a second run continues in the same environment rather than making a new one.
     second = await agent.run('again', workspace=result.workspace)
@@ -622,7 +680,7 @@ async def test_create_backend_ref_is_set_after_its_first_operation() -> None:
 
     await backend.run(['true'])
 
-    assert backend.ref == WorkspaceRef(workspace_id='fake-identity')
+    assert backend.ref == WorkspaceRef(provider='fake', id='fake-identity')
 
 
 async def test_workspace_ref_forwards_backend_identity() -> None:
@@ -632,7 +690,7 @@ async def test_workspace_ref_forwards_backend_identity() -> None:
     assert workspace.ref is None
     await workspace.run(['true'])
 
-    assert workspace.ref == WorkspaceRef(workspace_id='fake-ref')
+    assert workspace.ref == WorkspaceRef(provider='fake', id='fake-ref')
 
 
 def test_workspace_wrap_is_idempotent() -> None:
@@ -683,7 +741,7 @@ async def test_unrecognized_workspace_ref_is_rejected() -> None:
     agent = Agent(_tool_call_model(), capabilities=[DecliningWorkspaceCapability()])
 
     with pytest.raises(UserError, match="No capability can supply workspace 'missing'"):
-        await agent.run('go', workspace=WorkspaceRef(workspace_id='missing'))
+        await agent.run('go', workspace=WorkspaceRef(provider='fake', id='missing'))
 
 
 async def test_capability_backend_is_available_without_connecting_during_run_setup() -> None:
@@ -756,7 +814,7 @@ async def test_cancelled_run_never_cleans_up_the_workspace() -> None:
 
 
 async def test_guard_workflow_workspace_only_rejects_a_live_handle() -> None:
-    ref = WorkspaceRef(workspace_id='existing')
+    ref = WorkspaceRef(provider='fake', id='existing')
 
     assert guard_workflow_workspace(ref, live_error='live workspace') is ref
     assert guard_workflow_workspace(None, live_error='live workspace') is None
@@ -774,15 +832,15 @@ async def test_capability_can_supply_a_backend_for_an_explicit_ref() -> None:
     async def probe(ctx: RunContext[Any]) -> str:
         return (await ctx.workspace.run(['true'])).stdout
 
-    result: AgentRunResult[Any] = await agent.run('go', workspace=WorkspaceRef(workspace_id='existing'))
+    result: AgentRunResult[Any] = await agent.run('go', workspace=WorkspaceRef(provider='fake', id='existing'))
 
     assert result.output == 'done'
-    assert capability.workspace_ids == ['existing']
-    assert result.workspace.ref == WorkspaceRef(workspace_id='existing')
+    assert capability.ids == ['existing']
+    assert result.workspace.ref == WorkspaceRef(provider='fake', id='existing')
     assert await result.workspace.working_dir() == '/workspace'
 
     # This capability only attaches: with no ref it declines and the run gets the unavailable default.
     without_ref: AgentRunResult[Any] = await Agent(TestModel(), capabilities=[capability]).run('go')
 
     assert isinstance(without_ref.workspace.backend, UnavailableWorkspace)
-    assert capability.workspace_ids == ['existing']
+    assert capability.ids == ['existing']
