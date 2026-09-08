@@ -36,7 +36,7 @@ from ._durability import (
     IMAGE_OUTPUT_UNSUPPORTED_MESSAGE,
     _RequestParams,  # pyright: ignore[reportPrivateUsage]
 )
-from ._run_context import TemporalRunContext, deserialize_run_context
+from ._run_context import TemporalRunContext, deserialize_run_context, prepare_workspace
 from ._toolset import model_response_payload_errors
 
 if TYPE_CHECKING:
@@ -106,6 +106,7 @@ class TemporalModel(WrapperModel):
                 deps=deps,
                 agent=self._agent,
             )
+            await prepare_workspace(run_context)
             model_for_request = self._resolve_model_id(params.model_id, run_context)
             async with managed_model_scope(
                 model_for_request, owned=not self._is_registered_model(model_for_request)
@@ -132,6 +133,7 @@ class TemporalModel(WrapperModel):
                 deps=deps,
                 agent=self._agent,
             )
+            await prepare_workspace(run_context)
             model_for_request = self._resolve_model_id(params.model_id, run_context)
             async with managed_model_scope(
                 model_for_request, owned=not self._is_registered_model(model_for_request)
@@ -178,6 +180,7 @@ class TemporalModel(WrapperModel):
                     deps=deps,
                     agent=self._agent,
                 )
+                await prepare_workspace(run_context)
             model_for_request = self._resolve_model_id(params.model_id, run_context)
             async with managed_model_scope(
                 model_for_request, owned=not self._is_registered_model(model_for_request)

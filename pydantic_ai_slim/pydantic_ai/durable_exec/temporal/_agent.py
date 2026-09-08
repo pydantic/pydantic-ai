@@ -62,6 +62,7 @@ from ._run_context import (
     TEMPORAL_WORKSPACE_UNAVAILABLE_REASON,
     TemporalRunContext,
     deserialize_run_context,
+    prepare_workspace,
 )
 from ._toolset import (
     temporalize_toolset,
@@ -100,8 +101,8 @@ _LIVE_WORKSPACE_ERROR = live_workspace_error(
 )
 _WORKSPACE_REF_UNSUPPORTED_ERROR = (
     '`TemporalAgent` cannot use a workspace inside a workflow. Migrate to a regular `Agent` with '
-    '`TemporalDurability` and a construction-time workspace capability; that path routes every workspace method '
-    'through a Temporal activity.'
+    '`TemporalDurability` and a construction-time workspace capability; configure workspace use inside '
+    'your durable tool or capability activity.'
 )
 
 
@@ -126,7 +127,7 @@ class _EventStreamHandlerParams:
 - `tool_activity_config=` → use per-tool `metadata={'temporal': ...}` or a `SetToolMetadata` capability.
 - `run_context_type=` → set `run_context_type=` on `TemporalDurability`.
 - `temporalize_toolset_func=` → not supported on the capability path; open an issue if you need it.
-- `workspace=` → use a construction-time workspace capability with an explicit stable `id`; workspace methods then run as Temporal activities.
+- `workspace=` → use a construction-time workspace capability with an explicit stable reference; use the workspace inside your durable tool or capability activity.
 Workflows started under `TemporalAgent` replay correctly after migrating when agent name, toolset IDs, and model registry keys are kept and `event_stream_handler=` stays on `TemporalDurability`; no draining is needed.""",
     category=PydanticAIDeprecationWarning,
 )
@@ -230,6 +231,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 deps=deps,
                 agent=self.wrapped,
             )
+            await prepare_workspace(run_context)
 
             async def streamed_response():
                 yield params.event

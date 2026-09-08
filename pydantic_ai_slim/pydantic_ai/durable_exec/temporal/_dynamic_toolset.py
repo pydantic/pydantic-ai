@@ -23,7 +23,7 @@ from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
 from ._activity_execution import execute_activity
-from ._run_context import TemporalRunContext, deserialize_run_context
+from ._run_context import TemporalRunContext, deserialize_run_context, prepare_workspace
 from ._toolset import (
     CallToolParams,
     GetToolsParams,
@@ -55,6 +55,7 @@ def temporalize_dynamic_toolset(
     async def get_tools_activity(params: GetToolsParams, deps: AgentDepsT) -> DynamicToolsResult:
         async with heartbeating():
             ctx = deserialize_run_context(run_context_type, params.serialized_run_context, deps=deps, agent=agent)
+            await prepare_workspace(ctx)
             return await get_dynamic_tools(toolset, ctx)
 
     get_tools_activity.__annotations__['deps'] = deps_type
@@ -65,6 +66,7 @@ def temporalize_dynamic_toolset(
     async def call_tool_activity(params: CallToolParams, deps: AgentDepsT) -> CallToolResult:
         async with heartbeating():
             ctx = deserialize_run_context(run_context_type, params.serialized_run_context, deps=deps, agent=agent)
+            await prepare_workspace(ctx)
             return await wrap_tool_call_result(call_dynamic_tool(toolset, params.name, params.tool_args, ctx))
 
     call_tool_activity.__annotations__['deps'] = deps_type
@@ -75,6 +77,7 @@ def temporalize_dynamic_toolset(
     async def validate_args_activity(params: CallToolParams, deps: AgentDepsT) -> CallToolResult:
         async with heartbeating():
             ctx = deserialize_run_context(run_context_type, params.serialized_run_context, deps=deps, agent=agent)
+            await prepare_workspace(ctx)
             return await wrap_tool_call_result(
                 validate_dynamic_tool_args(toolset, params.name, params.tool_args, ctx, tool_def=params.tool_def)
             )

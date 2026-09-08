@@ -5,20 +5,17 @@ import gc
 import re
 import uuid
 import weakref
-from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Callable, Generator, Mapping, Sequence
+from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Callable, Generator, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, cast
 
-import anyio
 import pytest
 
 from pydantic_ai import Agent, AgentStreamEvent, ModelMessage, ModelSettings
-from pydantic_ai._run_context import set_current_run_context
 from pydantic_ai.capabilities import (
     AbstractCapability,
-    CombinedCapability,
     ProcessEventStream,
     ResolveModelId,
     WrapperCapability,
@@ -40,14 +37,6 @@ from pydantic_ai.durable_exec._operation import CapabilityOperationId, DurableOp
 from pydantic_ai.durable_exec._operation_backend import CallableOperationBackend
 from pydantic_ai.durable_exec._operation_names import JournalOperationNamer
 from pydantic_ai.durable_exec._toolset import ToolConfig
-from pydantic_ai.durable_exec._workspace import (
-    DurableWorkspaceDispatcher,
-    WorkspaceOperationError,
-    WorkspaceOperationParams,
-    WorkspaceOperationResult,
-    normalize_workspace_value,
-    workspace_operation_error,
-)
 from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import CapabilityEvent, ModelRequest, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.models import (
@@ -59,20 +48,8 @@ from pydantic_ai.models import (
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
-from pydantic_ai.workspaces import (
-    CommandResult,
-    FileEntry,
-    ReadOnlyWorkspace,
-    Workspace,
-    WorkspaceBackend,
-    WorkspaceError,
-    WorkspaceRef,
-    WorkspaceTimeoutError,
-    WorkspaceUnavailableError,
-)
 
 from ..model_lifecycle_utils import LifecycleTrackingModel
-from ..workspace_fakes import WorkspaceCapability
 
 if TYPE_CHECKING:
     from dbos import DBOS, DBOSConfig, SetWorkflowID
@@ -190,415 +167,6 @@ class RecordingDurability(BaseDurabilityCapability[Any]):
 
 class ReplayingDurability(RecordingDurability):
     replay_capability_operations = True
-
-
-async def test_durability_rejects_live_workspace_in_durable_context() -> None:
-    from ..workspace_fakes import RecordingWorkspaceBackend
-
-    agent = Agent(TestModel(), name='live_workspace', capabilities=[RecordingDurability()])
-
-    with pytest.raises(UserError, match=r'live workspace backend.*Pass a `WorkspaceRef`'):
-        await agent.run('go', workspace=RecordingWorkspaceBackend('live'))
-
-
-async def test_durability_routes_workspace_calls_from_durable_context() -> None:
-    """Contextual workspace calls become durable units without changing tool code."""
-    from ..workspace_fakes import ConnectOnlyWorkspaceCapability
-
-    durability = RecordingDurability()
-    agent = Agent(TestModel(), name='ref_workspace', capabilities=[ConnectOnlyWorkspaceCapability(), durability])
-
-    @agent.tool
-    async def probe(ctx: RunContext[Any]) -> str:
-        return (await ctx.workspace.run(['true'])).stdout
-
-    result = await agent.run('go', workspace=WorkspaceRef(workspace_id='outside'))
-
-    assert result.output == '{"probe":"connected"}'
-    bound = RecordingDurability.from_agent(agent)
-    assert bound is not None
-    assert [name for name, _ in bound.calls if '__workspace__' in name] == [
-        'ref_workspace__workspace__connect_only_workspace.run'
-    ]
-
-
-async def test_failed_first_durable_workspace_call_preserves_created_environment() -> None:
-    """A semantic error after lazy creation must not make the next call create another workspace."""
-    from ..workspace_fakes import FakeWorkspace
-
-    backends: list[FakeWorkspace] = []
-
-    class FreshWorkspace(AbstractCapability[Any]):
-        id = 'fresh_workspace'
-
-        def get_workspace(self, ctx: RunContext[Any], *, ref: WorkspaceRef | None) -> FakeWorkspace:
-            backend = FakeWorkspace('failed-first-call', ref=ref)
-            backends.append(backend)
-            return backend
-
-        async def before_run(self, ctx: RunContext[Any]) -> None:
-            with pytest.raises(FileNotFoundError):
-                await ctx.workspace.read_text('missing.txt')
-            await ctx.workspace.write_text('created.txt', 'same environment')
-
-    result = await Agent(
-        TestModel(), name='failed_first_workspace_call', capabilities=[FreshWorkspace(), RecordingDurability()]
-    ).run('go')
-
-    assert result.workspace.ref == WorkspaceRef(workspace_id='fake-failed-first-call')
-    assert sum(backend.create_calls for backend in backends) == 1
-    assert {backend.ref for backend in backends if backend.ref is not None} == {result.workspace.ref}
-
-
-async def test_durable_workspace_is_available_in_hooks_and_after_the_run() -> None:
-    """One high-level method is one durable unit, and the returned workspace remains usable."""
-    from ..workspace_fakes import FakeWorkspace
-
-    state = [True]
-    backend = FakeWorkspace('hooks')
-
-    class HookWorkspace(AbstractCapability[Any]):
-        id = 'hook_workspace'
-
-        def get_workspace(self, ctx: RunContext[Any], *, ref: WorkspaceRef | None) -> FakeWorkspace:
-            return backend
-
-        async def before_run(self, ctx: RunContext[Any]) -> None:
-            await ctx.workspace.write_text('note.txt', 'from hook')
-
-        async def after_run(self, ctx: RunContext[Any], *, result: Any) -> Any:
-            assert await ctx.workspace.read_text('note.txt') == 'from hook'
-            return result
-
-    class ToggleDurability(RecordingDurability):
-        @property
-        def in_durable_context(self) -> bool:
-            return state[0]
-
-    agent = Agent(TestModel(), name='hook_workspace_agent', capabilities=[HookWorkspace(), ToggleDurability()])
-    result = await agent.run('go')
-
-    durability = ToggleDurability.from_agent(agent)
-    assert durability is not None
-    assert [name for name, _ in durability.calls if '__workspace__' in name] == [
-        'hook_workspace_agent__workspace__hook_workspace.write_text',
-        'hook_workspace_agent__workspace__hook_workspace.read_text',
-    ]
-
-    second = await agent.run('again', workspace=result.workspace)
-    assert second.workspace is result.workspace
-    assert [name for name, _ in durability.calls if '__workspace__' in name] == [
-        'hook_workspace_agent__workspace__hook_workspace.write_text',
-        'hook_workspace_agent__workspace__hook_workspace.read_text',
-        'hook_workspace_agent__workspace__hook_workspace.write_text',
-        'hook_workspace_agent__workspace__hook_workspace.read_text',
-    ]
-
-    state[0] = False
-    assert await second.workspace.read_text('note.txt') == 'from hook'
-
-
-async def test_concurrent_first_durable_workspace_calls_create_one_environment() -> None:
-    from ..workspace_fakes import FakeWorkspace
-
-    backends: list[FakeWorkspace] = []
-
-    class FreshWorkspace(AbstractCapability[Any]):
-        id = 'fresh_workspace'
-
-        def get_workspace(self, ctx: RunContext[Any], *, ref: WorkspaceRef | None) -> FakeWorkspace:
-            backend = FakeWorkspace('concurrent', ref=ref)
-            backends.append(backend)
-            return backend
-
-        async def before_run(self, ctx: RunContext[Any]) -> None:
-            async with anyio.create_task_group() as task_group:
-                task_group.start_soon(ctx.workspace.working_dir)
-                task_group.start_soon(ctx.workspace.exists, '/workspace/missing')
-
-    agent = Agent(TestModel(), name='concurrent_workspace', capabilities=[FreshWorkspace(), RecordingDurability()])
-    await agent.run('go')
-
-    assert sum(backend.create_calls for backend in backends) == 1
-
-
-async def test_durability_allows_live_workspace_outside_durable_context() -> None:
-    from ..workspace_fakes import RecordingWorkspaceBackend
-
-    class OutsideDurability(RecordingDurability):
-        @property
-        def in_durable_context(self) -> bool:
-            return False
-
-    result = await Agent(TestModel(), name='live_workspace', capabilities=[OutsideDurability()]).run(
-        'go', workspace=RecordingWorkspaceBackend('live')
-    )
-
-    assert result.output == 'success (no tool calls)'
-
-
-async def test_durable_workspace_dispatcher_requires_a_stable_supplier_id() -> None:
-    class UnnamedSupplier(AbstractCapability[Any]):
-        def get_workspace(  # pragma: no cover - construction rejects the missing id before supplying
-            self, ctx: RunContext[Any], *, ref: WorkspaceRef | None
-        ) -> WorkspaceBackend:
-            from ..workspace_fakes import FakeWorkspace
-
-            return FakeWorkspace('unnamed', ref=ref)
-
-    from ..workspace_fakes import FakeWorkspace
-
-    with pytest.raises(UserError, match='needs an explicit `id`'):
-        DurableWorkspaceDispatcher(
-            Workspace(FakeWorkspace('raw')),
-            supplier=UnnamedSupplier(),
-            operations={},
-            in_durable_context=lambda: True,
-        )
-
-
-async def test_durable_workspace_dispatcher_guards_backend_and_context() -> None:
-    from ..workspace_fakes import FakeWorkspace
-
-    raw = FakeWorkspace('raw')
-    supplier = WorkspaceCapability(raw)
-    durable = True
-    dispatcher = DurableWorkspaceDispatcher(
-        Workspace(raw), supplier=supplier, operations={}, in_durable_context=lambda: durable
-    )
-
-    with pytest.raises(UserError, match='not available in durable workflow code'):
-        _ = dispatcher.backend
-    with pytest.raises(RuntimeError, match='requires the current agent run context'):
-        await dispatcher('run', {'command': ['true']})
-
-    durable = False
-    assert dispatcher.backend is raw
-    assert await dispatcher('working_dir', {}) == '/workspace'
-
-
-async def test_durable_workspace_dispatcher_rejects_an_unregistered_method() -> None:
-    from ..workspace_fakes import FakeWorkspace
-
-    raw = FakeWorkspace('raw')
-    dispatcher = DurableWorkspaceDispatcher(
-        Workspace(raw), supplier=WorkspaceCapability(raw), operations={}, in_durable_context=lambda: True
-    )
-    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
-
-    with set_current_run_context(ctx), pytest.raises(UserError, match="method 'run' was not registered"):
-        await dispatcher('run', {'command': ['true']})
-
-
-@pytest.mark.parametrize(
-    ('error', 'error_type'),
-    [
-        (WorkspaceOperationError(kind='timeout', message='timed out', timeout=1), WorkspaceTimeoutError),
-        (WorkspaceOperationError(kind='unavailable', message='gone'), WorkspaceUnavailableError),
-        (WorkspaceOperationError(kind='workspace', message='failed'), WorkspaceError),
-        (WorkspaceOperationError(kind='not_found', message='missing'), FileNotFoundError),
-        (WorkspaceOperationError(kind='not_a_directory', message='not dir'), NotADirectoryError),
-        (WorkspaceOperationError(kind='is_a_directory', message='is dir'), IsADirectoryError),
-        (WorkspaceOperationError(kind='not_implemented', message='unsupported'), NotImplementedError),
-    ],
-)
-async def test_durable_workspace_dispatcher_reconstructs_operation_errors(
-    error: WorkspaceOperationError, error_type: type[Exception]
-) -> None:
-    from ..workspace_fakes import FakeWorkspace
-
-    async def operation(params: WorkspaceOperationParams, *, config: object | None = None) -> WorkspaceOperationResult:
-        return WorkspaceOperationResult(error=error, ref=WorkspaceRef(workspace_id='raw'))
-
-    raw = FakeWorkspace('raw', ref=WorkspaceRef(workspace_id='raw'))
-    dispatcher = DurableWorkspaceDispatcher(
-        Workspace(raw),
-        supplier=WorkspaceCapability(raw),
-        operations=cast(Any, {'run': operation}),
-        in_durable_context=lambda: True,
-    )
-    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
-
-    with set_current_run_context(ctx), pytest.raises(error_type, match=error.message):
-        await dispatcher('run', {'command': ['true']})
-
-
-async def test_durable_workspace_dispatcher_validates_and_reconnects_returned_refs() -> None:
-    from ..workspace_fakes import FakeWorkspace
-
-    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
-
-    async def without_ref(params: WorkspaceOperationParams, *, config: object | None = None) -> WorkspaceOperationResult:
-        return WorkspaceOperationResult(value='value')
-
-    raw = FakeWorkspace('raw')
-    supplier = WorkspaceCapability(raw)
-    missing_ref = DurableWorkspaceDispatcher(
-        Workspace(raw),
-        supplier=supplier,
-        operations=cast(Any, {'working_dir': without_ref}),
-        in_durable_context=lambda: True,
-    )
-    with set_current_run_context(ctx), pytest.raises(RuntimeError, match='without assigning a `WorkspaceRef`'):
-        await missing_ref('working_dir', {})
-
-    async def with_ref(params: WorkspaceOperationParams, *, config: object | None = None) -> WorkspaceOperationResult:
-        return WorkspaceOperationResult(value='/workspace', ref=WorkspaceRef(workspace_id='created'))
-
-    class DecliningSupplier(AbstractCapability[Any]):
-        id = 'declining'
-
-        def get_workspace(self, ctx: RunContext[Any], *, ref: WorkspaceRef | None) -> None:
-            return None
-
-    declined = DurableWorkspaceDispatcher(
-        Workspace(FakeWorkspace('fresh')),
-        supplier=DecliningSupplier(),
-        operations=cast(Any, {'working_dir': with_ref}),
-        in_durable_context=lambda: True,
-    )
-    with set_current_run_context(ctx), pytest.raises(RuntimeError, match='declined the environment it just created'):
-        await declined('working_dir', {})
-
-
-def test_durable_workspace_value_and_error_normalization() -> None:
-    entry = FileEntry(name='file.txt', path='/file.txt', is_dir=False, size=4)
-
-    assert normalize_workspace_value('run', CommandResult(exit_code=1, stdout='out', stderr='err')) == CommandResult(
-        exit_code=1, stdout='out', stderr='err'
-    )
-    assert normalize_workspace_value('stat', entry) == entry
-    assert normalize_workspace_value('list_dir', [entry]) == [entry]
-    assert normalize_workspace_value('working_dir', '/workspace') == '/workspace'
-
-    errors: list[BaseException] = [
-        WorkspaceTimeoutError('timed out', stdout='out', stderr='err', timeout=1),
-        WorkspaceUnavailableError('gone'),
-        WorkspaceError('failed'),
-        FileNotFoundError('missing'),
-        NotADirectoryError('not dir'),
-        IsADirectoryError('is dir'),
-        NotImplementedError('unsupported'),
-    ]
-    outcomes = [workspace_operation_error(error) for error in errors]
-    assert all(outcome is not None for outcome in outcomes)
-    assert [cast(WorkspaceOperationError, outcome).kind for outcome in outcomes] == [
-        'timeout',
-        'unavailable',
-        'workspace',
-        'not_found',
-        'not_a_directory',
-        'is_a_directory',
-        'not_implemented',
-    ]
-    assert workspace_operation_error(ValueError('unexpected')) is None
-
-
-async def test_bound_workspace_operation_validates_supplier_and_backend_contracts() -> None:
-    from ..workspace_fakes import FakeWorkspace, FakeWorkspaceResult
-
-    class DecliningSupplier(AbstractCapability[Any]):
-        id = 'declining'
-
-        def get_workspace(self, ctx: RunContext[Any], *, ref: WorkspaceRef | None) -> None:
-            return None
-
-    declining = DecliningSupplier()
-    declining_agent = Agent(TestModel(), name='declining_workspace', capabilities=[declining, RecordingDurability()])
-    declining_durability = RecordingDurability.from_agent(declining_agent)
-    assert declining_durability is not None
-    declining_ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), agent=declining_agent)
-    declining_operation = declining_durability._bound_workspace_operations['declining']['run']  # pyright: ignore[reportPrivateUsage]
-    with pytest.raises(UserError, match='declined a reference it previously supplied'):
-        await declining_operation(
-            WorkspaceOperationParams(
-                run_context=declining_ctx,
-                supplier_id='declining',
-                ref=WorkspaceRef(workspace_id='existing'),
-                arguments={'command': ['true']},
-            )
-        )
-
-    class UnexpectedBackend(FakeWorkspace):
-        async def run(
-            self,
-            command: str | Sequence[str],
-            *,
-            shell: bool = False,
-            cwd: str | None = None,
-            env: Mapping[str, str] | None = None,
-            timeout: float | None = None,
-        ) -> FakeWorkspaceResult:
-            raise ValueError('unexpected')
-
-    unexpected_supplier = WorkspaceCapability(UnexpectedBackend('unexpected'))
-    unexpected_agent = Agent(
-        TestModel(), name='unexpected_workspace', capabilities=[unexpected_supplier, RecordingDurability()]
-    )
-    unexpected_durability = RecordingDurability.from_agent(unexpected_agent)
-    assert unexpected_durability is not None
-    unexpected_ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), agent=unexpected_agent)
-    unexpected_operation = unexpected_durability._bound_workspace_operations['workspace']['run']  # pyright: ignore[reportPrivateUsage]
-    with pytest.raises(ValueError, match='unexpected'):
-        await unexpected_operation(
-            WorkspaceOperationParams(
-                run_context=unexpected_ctx,
-                supplier_id='workspace',
-                ref=None,
-                arguments={'command': ['true']},
-            )
-        )
-
-    class RefusingBackend(FakeWorkspace):
-        @property
-        def ref(self) -> None:
-            return None
-
-    refusing_supplier = WorkspaceCapability(RefusingBackend('refusing'))
-    refusing_agent = Agent(
-        TestModel(), name='refusing_workspace', capabilities=[refusing_supplier, RecordingDurability()]
-    )
-    refusing_durability = RecordingDurability.from_agent(refusing_agent)
-    assert refusing_durability is not None
-    refusing_ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), agent=refusing_agent)
-    refusing_operation = refusing_durability._bound_workspace_operations['workspace']['run']  # pyright: ignore[reportPrivateUsage]
-    with pytest.raises(RuntimeError, match='without assigning a `WorkspaceRef`'):
-        await refusing_operation(
-            WorkspaceOperationParams(
-                run_context=refusing_ctx,
-                supplier_id='workspace',
-                ref=None,
-                arguments={'command': ['true']},
-            )
-        )
-
-
-def test_wrap_workspace_rejects_unstable_or_runtime_only_suppliers() -> None:
-    from ..workspace_fakes import FakeWorkspace
-
-    class UnnamedSupplier(AbstractCapability[Any]):
-        def get_workspace(  # pragma: no cover - wrapping rejects the missing id before supplying
-            self, ctx: RunContext[Any], *, ref: WorkspaceRef | None
-        ) -> WorkspaceBackend:
-            return FakeWorkspace('unnamed', ref=ref)
-
-    class LateSupplier(AbstractCapability[Any]):
-        id = 'late'
-
-        def get_workspace(  # pragma: no cover - wrapping rejects the unregistered id before supplying
-            self, ctx: RunContext[Any], *, ref: WorkspaceRef | None
-        ) -> WorkspaceBackend:
-            return FakeWorkspace('late', ref=ref)
-
-    agent = Agent(TestModel(), name='runtime_supplier', capabilities=[RecordingDurability()])
-    durability = RecordingDurability.from_agent(agent)
-    assert durability is not None
-    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), agent=agent)
-
-    with pytest.raises(UserError, match='needs an explicit `id`'):
-        durability._wrap_workspace(ctx, Workspace(FakeWorkspace('unnamed')), supplier=UnnamedSupplier())  # pyright: ignore[reportPrivateUsage]
-    with pytest.raises(UserError, match='added at run time'):
-        durability._wrap_workspace(ctx, Workspace(FakeWorkspace('late')), supplier=LateSupplier())  # pyright: ignore[reportPrivateUsage]
 
 
 class TransparentDurability(RecordingDurability):
@@ -790,7 +358,6 @@ async def test_repeated_capability_operation_model_id_swaps_close_each_model() -
         ['enter', 'exit:none'],
         ['enter', 'request', 'exit:none'],
     ]
-
 
 @pytest.mark.parametrize(
     ('stream', 'fail', 'expected_events'),
@@ -2075,36 +1642,3 @@ async def test_prefect_capability_operation_cache_identity_includes_context_and_
         ('tenant-b', 'test'),
         ('tenant-b', 'alternative'),
     ]
-
-
-async def test_bound_workspace_operation_preserves_parent_policy() -> None:
-    from ..workspace_fakes import FakeWorkspace
-
-    backend = FakeWorkspace('policy', ref=WorkspaceRef(workspace_id='policy'))
-
-    class Protected(AbstractCapability[Any]):
-        id = 'workspace'
-
-        def get_workspace(self, ctx: RunContext[Any], *, ref: WorkspaceRef | None) -> WorkspaceBackend:
-            return ReadOnlyWorkspace(backend)
-
-    class ParentPolicy(WrapperCapability[Any]):
-        async def for_run(self, ctx: RunContext[Any]) -> WrapperCapability[Any]:
-            return WrapperCapability(CombinedCapability([Protected()]), id=self.id)
-
-    policy = ParentPolicy(CombinedCapability([WorkspaceCapability(backend)]), id='policy')
-    agent = Agent(TestModel(), name='parent_policy', capabilities=[policy, RecordingDurability()])
-    durability = RecordingDurability.from_agent(agent)
-    assert durability is not None
-    operation = durability._bound_workspace_operations['workspace']['run']  # pyright: ignore[reportPrivateUsage]
-    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), agent=agent)
-    with pytest.raises(UserError, match='read-only'):
-        await operation(
-            WorkspaceOperationParams(
-                run_context=ctx,
-                supplier_id='workspace',
-                ref=backend.ref,
-                arguments={'command': ['touch', '/workspace/private']},
-            )
-        )
-    assert backend.commands == []

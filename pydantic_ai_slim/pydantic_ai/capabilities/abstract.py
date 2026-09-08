@@ -38,7 +38,7 @@ from pydantic_ai.tools import (
     ToolDefinition,
 )
 from pydantic_ai.toolsets import AbstractToolset, AgentToolset
-from pydantic_ai.workspaces import Workspace, WorkspaceBackend, WorkspaceRef
+from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 
 from ._merge import merge_capability_fields
 from ._on_event import collect_on_event_methods, marked_listens_to
@@ -472,16 +472,6 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         therefore cannot be implemented as a `before_run` hook itself. It stays private pending the
         capability surface decisions tracked in #5477.
         """
-
-    def _wrap_workspace(
-        self,
-        ctx: RunContext[AgentDepsT],
-        workspace: Workspace,
-        *,
-        supplier: AbstractCapability[AgentDepsT] | None,
-    ) -> Workspace:
-        """Apply private cross-cutting behavior to the selected run workspace."""
-        return workspace
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
         """Return the capability instance to use for this agent run.

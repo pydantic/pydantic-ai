@@ -19,7 +19,6 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import (
-    FileEntry,
     FileWindow,
     LocalWorkspace,
     ReadOnlyWorkspace,
@@ -643,72 +642,6 @@ def test_workspace_wrap_is_idempotent() -> None:
     assert isinstance(workspace, Workspace)
     assert workspace.backend is backend
     assert Workspace.wrap(workspace) is workspace
-
-
-async def test_workspace_routes_every_operation_through_an_installed_dispatcher() -> None:
-    raw_backend = FakeWorkspace('raw')
-    routed_backend = FakeWorkspace('routed')
-
-    class RecordingDispatcher:
-        backend = routed_backend
-        ref = WorkspaceRef(workspace_id='routed-ref')
-
-        def __init__(self) -> None:
-            self.calls: list[tuple[str, Mapping[str, Any]]] = []
-
-        async def __call__(self, method: str, arguments: Mapping[str, Any]) -> Any:
-            self.calls.append((method, arguments))
-            return {
-                'run': FakeWorkspaceResult(stdout='routed'),
-                'working_dir': '/routed',
-                'resolve': '/routed/file.txt',
-                'read_bytes': b'data',
-                'write_bytes': None,
-                'stat': FileEntry(name='file.txt', path='/routed/file.txt', is_dir=False, size=4),
-                'list_dir': (FileEntry(name='file.txt', path='/routed/file.txt', is_dir=False, size=4),),
-                'make_dir': None,
-                'remove': None,
-                'exists': True,
-                'read_text': 'data',
-                'write_text': None,
-                'read_file': FileWindow(lines=('data',), start_line=1, has_more=False, total_lines=1),
-            }[method]
-
-    dispatcher = RecordingDispatcher()
-    workspace = Workspace(raw_backend)
-    workspace._install_operation_dispatcher(dispatcher)  # pyright: ignore[reportPrivateUsage]
-
-    assert workspace.backend is routed_backend
-    assert workspace.ref == dispatcher.ref
-    assert (await workspace.run(['true'])).stdout == 'routed'
-    assert await workspace.working_dir() == '/routed'
-    assert await workspace.resolve('file.txt') == '/routed/file.txt'
-    assert await workspace.read_bytes('file.txt') == b'data'
-    await workspace.write_bytes('file.txt', b'data')
-    assert (await workspace.stat('file.txt')).size == 4
-    assert len(await workspace.list_dir('.')) == 1
-    await workspace.make_dir('dir')
-    await workspace.remove('file.txt')
-    assert await workspace.exists('file.txt') is True
-    assert await workspace.read_text('file.txt') == 'data'
-    await workspace.write_text('file.txt', 'data')
-    assert (await workspace.read_file('file.txt')).lines == ('data',)
-
-    assert [method for method, _ in dispatcher.calls] == [
-        'run',
-        'working_dir',
-        'resolve',
-        'read_bytes',
-        'write_bytes',
-        'stat',
-        'list_dir',
-        'make_dir',
-        'remove',
-        'exists',
-        'read_text',
-        'write_text',
-        'read_file',
-    ]
 
 
 async def test_run_rejects_relative_cwd() -> None:

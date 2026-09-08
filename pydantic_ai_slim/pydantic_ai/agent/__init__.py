@@ -1707,13 +1707,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # supplied by a capability is selected from the final per-run capability tree below, so a
         # capability that replaces itself in `for_run` cannot leave behind the bootstrap backend.
         run_workspace = initial_ctx.workspace
-        workspace_supplier: AbstractCapability[AgentDepsT] | None = None
         if workspace is not None and not isinstance(workspace, WorkspaceRef):
             # An explicit backend, or an existing `Workspace` passed straight through from a
             # parent run or a previous result.
-            run_workspace = workspace if isinstance(workspace, Workspace) else Workspace(workspace)
-            if isinstance(workspace, Workspace):
-                _, workspace_supplier = workspace._supplier_details()  # pyright: ignore[reportPrivateUsage]
+            run_workspace = Workspace.wrap(workspace)
             initial_ctx.workspace = run_workspace
 
         # Resolve run metadata up front so capability and toolset `for_run` hooks
@@ -1759,22 +1756,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                         '`None`. Attach a capability whose `get_workspace` recognizes it.'
                     )
             else:
-                workspace_supplier = selection.supplier
-                run_workspace = Workspace(
-                    selection.backend, _supplier_id=selection.supplier.id, _supplier=selection.supplier
-                )
-        elif isinstance(workspace, Workspace):
-            # A workspace returned by an earlier run carries the old per-run supplier instance.
-            # Keep the environment handle, but dispatch through this run's replacement instance.
-            supplier_id, _ = workspace._supplier_details()  # pyright: ignore[reportPrivateUsage]
-            if supplier_id is not None:
-                workspace_supplier = next(
-                    (capability for capability in leaf_capabilities(run_capability) if capability.id == supplier_id),
-                    workspace_supplier,
-                )
-        run_workspace = run_capability._wrap_workspace(  # pyright: ignore[reportPrivateUsage]
-            initial_ctx, run_workspace, supplier=workspace_supplier
-        )
+                run_workspace = Workspace.wrap(selection)
         initial_ctx.workspace = run_workspace
 
         # Whether any capability's `for_run` swapped a model-layer contribution during resolution; the

@@ -36,7 +36,6 @@ from pydantic_ai.durable_exec import (
     ToolsetGetInstructionsId,
     ToolsetGetToolsId,
     ToolsetValidateToolArgumentsId,
-    WorkspaceOperationId,
 )
 from pydantic_ai.durable_exec._capability_operation import (
     CapabilityOperationResult,
@@ -91,8 +90,6 @@ def test_public_engine_builder_exports() -> None:
         'OperationConfigRole',
         'RegisteredOperationBackend',
         'RoleBasedOperationConfig',
-        'WorkspaceMethod',
-        'WorkspaceOperationId',
         'ToolsetKind',
         'ToolsetValidateToolArgumentsId',
     ]
@@ -118,7 +115,6 @@ JOURNAL_OPERATION_NAMES = {
     'compat__dynamic_toolset__dynamic.call_tool:dynamic_tool',
     'compat__dynamic_toolset__dynamic.validate_args',
     'compat__capability__compat.operation',
-    'compat__workspace__compat.run',
 }
 
 PREFECT_OPERATION_NAMES = {
@@ -136,7 +132,6 @@ PREFECT_OPERATION_NAMES = {
     'Call Tool: dynamic_tool',
     'Validate Tool Args: dynamic_tool',
     'Capability: compat.operation',
-    'Workspace: compat.run',
 }
 
 TEMPORAL_ACTIVITY_NAMES = {
@@ -156,7 +151,6 @@ TEMPORAL_ACTIVITY_NAMES = {
     'agent__compat__dynamic_toolset__dynamic__call_tool',
     'agent__compat__dynamic_toolset__dynamic__validate_args',
     'agent__compat__capability__compat__operation',
-    'agent__compat__workspace__compat__run',
 }
 
 DBOS_OPERATION_NAMES = {
@@ -172,7 +166,6 @@ DBOS_OPERATION_NAMES = {
     'compat__dynamic_toolset__dynamic.call_tool',
     'compat__dynamic_toolset__dynamic.validate_args',
     'compat__capability__compat.operation',
-    'compat__workspace__compat.run',
 }
 
 
@@ -196,7 +189,6 @@ def _operation_ids() -> list[DurableOperationId]:
         ToolsetCallToolId('dynamic', toolset_id='dynamic'),
         ToolsetValidateToolArgumentsId('dynamic', toolset_id='dynamic'),
         CapabilityOperationId('compat', operation='operation'),
-        WorkspaceOperationId('compat', method='run'),
     ]
 
 
@@ -366,7 +358,7 @@ def test_dbos_operation_name_matrix_and_assembly_completeness() -> None:
     backend = durability._operation_backend  # pyright: ignore[reportPrivateUsage]
     assert backend is not None
     registered_names = {cast(Any, registration).dbos_function_name for registration in backend.registrations()}
-    assert registered_names == DBOS_OPERATION_NAMES - {'compat__workspace__compat.run'}
+    assert registered_names == DBOS_OPERATION_NAMES
 
 
 def _synthetic_toolsets() -> tuple[FunctionToolset[Any], DynamicToolset[Any], Any]:
@@ -408,7 +400,7 @@ def test_temporal_activity_name_matrix_and_assembly_completeness() -> None:
         ActivityDefinition.must_from_callable(item).name  # pyright: ignore[reportUnknownMemberType]
         for item in durability.temporal_activities
     }
-    assert names == TEMPORAL_ACTIVITY_NAMES - {'agent__compat__workspace__compat__run'}
+    assert names == TEMPORAL_ACTIVITY_NAMES
 
 
 @pytest.mark.parametrize(

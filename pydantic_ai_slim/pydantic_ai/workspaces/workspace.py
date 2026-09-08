@@ -13,16 +13,12 @@ import base64
 import posixpath
 import shlex
 import uuid
-from collections.abc import Awaitable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Protocol, cast
 
 import anyio
 
 from pydantic_ai.exceptions import UserError
-
-if TYPE_CHECKING:
-    from pydantic_ai.capabilities import AbstractCapability
 
 from .protocol import (
     FileEntry,
@@ -53,16 +49,6 @@ that for quoting and the command template keeps fallback writes below the lower 
 
 _SHELL_CLEANUP_TIMEOUT = 10
 """Maximum time spent removing an interrupted fallback write's temporary files."""
-
-
-class _WorkspaceOperationDispatcher(Protocol):
-    @property
-    def ref(self) -> WorkspaceRef | None: ...
-
-    @property
-    def backend(self) -> WorkspaceBackend: ...
-
-    def __call__(self, method: str, arguments: Mapping[str, Any]) -> Awaitable[Any]: ...
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -235,41 +221,17 @@ class Workspace(WorkspaceBackend):
     def __init__(
         self,
         backend: WorkspaceBackend,
-        *,
-        _supplier_id: str | None = None,
-        _supplier: AbstractCapability[Any] | None = None,
     ):
         self._backend = backend
-        self._supplier_id = _supplier_id
-        self._supplier = _supplier
-        self._operation_dispatcher: _WorkspaceOperationDispatcher | None = None
-
-    def _supplier_details(self) -> tuple[str | None, AbstractCapability[Any] | None]:
-        """Return private routing metadata for durable execution."""
-        return self._supplier_id, self._supplier
 
     @classmethod
     def wrap(cls, value: WorkspaceBackend) -> Workspace:
         """Wrap `value`, returning an existing `Workspace` unchanged."""
         return value if isinstance(value, Workspace) else cls(value)
 
-    def _install_operation_dispatcher(self, dispatcher: _WorkspaceOperationDispatcher) -> None:
-        """Route user-facing methods without replacing this `Workspace` object."""
-        self._operation_dispatcher = dispatcher
-
-    def _raw_backend(self) -> WorkspaceBackend:
-        """Return the provider backend for framework-internal serialization and routing."""
-        return self._backend
-
-    def _replace_raw_backend(self, backend: WorkspaceBackend) -> None:
-        """Reconnect the direct-use view after a durable operation learns its identity."""
-        self._backend = backend
-
     @property
     def backend(self) -> WorkspaceBackend:
         """The wrapped backend, for access to provider-specific functionality."""
-        if dispatcher := self._operation_dispatcher:
-            return dispatcher.backend
         return self._backend
 
     @property
@@ -278,8 +240,6 @@ class Workspace(WorkspaceBackend):
 
         `None` until a backend built to create a fresh environment has run its first operation.
         """
-        if dispatcher := self._operation_dispatcher:
-            return dispatcher.ref
         return self._backend.ref
 
     @property
@@ -287,7 +247,7 @@ class Workspace(WorkspaceBackend):
         backend = self._backend
         if isinstance(backend, SupportsFilesystem):
             return backend
-        # Do not cache this adapter: durable execution may reconnect and replace `_backend`.
+        # Do not cache this adapter: the backend may provide native filesystem methods later.
         return _ShellFilesystem(backend)
 
     async def run(
@@ -311,13 +271,6 @@ class Workspace(WorkspaceBackend):
             raise ValueError(
                 f'cwd must be an absolute POSIX path, got {cwd!r}; resolve relative paths with `workspace.resolve()` first'
             )
-        if dispatcher := self._operation_dispatcher:
-            return cast(
-                WorkspaceResult,
-                await dispatcher(
-                    'run', {'command': command, 'shell': shell, 'cwd': cwd, 'env': env, 'timeout': timeout}
-                ),
-            )
         return await self._backend.run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
 
     async def working_dir(self) -> str:
@@ -326,8 +279,6 @@ class Workspace(WorkspaceBackend):
         The canonicality contract is documented on
         [`WorkspaceBackend.working_dir`][pydantic_ai.workspaces.WorkspaceBackend.working_dir].
         """
-        if dispatcher := self._operation_dispatcher:
-            return cast(str, await dispatcher('working_dir', {}))
         return await self._backend.working_dir()
 
     async def resolve(self, path: str, *, base: str | None = None) -> str:
@@ -340,55 +291,36 @@ class Workspace(WorkspaceBackend):
         """
         if base is not None and not posixpath.isabs(base):
             raise ValueError(f'base must be an absolute path, got {base!r}')
-        if dispatcher := self._operation_dispatcher:
-            return cast(str, await dispatcher('resolve', {'path': path, 'base': base}))
         if posixpath.isabs(path):
             return posixpath.normpath(path)
         return posixpath.normpath(posixpath.join(base or await self.working_dir(), path))
 
     async def read_bytes(self, path: str) -> bytes:
         """Read a file's contents as bytes."""
-        if dispatcher := self._operation_dispatcher:
-            return cast(bytes, await dispatcher('read_bytes', {'path': path}))
         return await self._filesystem.read_bytes(await self.resolve(path))
 
     async def write_bytes(self, path: str, data: bytes) -> None:
         """Write bytes to a file, creating missing parents and replacing existing contents."""
-        if dispatcher := self._operation_dispatcher:
-            await dispatcher('write_bytes', {'path': path, 'data': data})
-            return
         await self._filesystem.write_bytes(await self.resolve(path), data)
 
     async def stat(self, path: str) -> WorkspaceFileEntry:
         """Return metadata for a file or directory."""
-        if dispatcher := self._operation_dispatcher:
-            return cast(WorkspaceFileEntry, await dispatcher('stat', {'path': path}))
         return await self._filesystem.stat(await self.resolve(path))
 
     async def list_dir(self, path: str) -> Sequence[WorkspaceFileEntry]:
         """List the entries of a directory (non-recursive)."""
-        if dispatcher := self._operation_dispatcher:
-            return cast(Sequence[WorkspaceFileEntry], await dispatcher('list_dir', {'path': path}))
         return await self._filesystem.list_dir(await self.resolve(path))
 
     async def make_dir(self, path: str) -> None:
         """Create a directory, including missing parents."""
-        if dispatcher := self._operation_dispatcher:
-            await dispatcher('make_dir', {'path': path})
-            return
         await self._filesystem.make_dir(await self.resolve(path))
 
     async def remove(self, path: str) -> None:
         """Remove a file, or a directory and its contents."""
-        if dispatcher := self._operation_dispatcher:
-            await dispatcher('remove', {'path': path})
-            return
         await self._filesystem.remove(await self.resolve(path))
 
     async def exists(self, path: str) -> bool:
         """Whether a file or directory exists at the path."""
-        if dispatcher := self._operation_dispatcher:
-            return cast(bool, await dispatcher('exists', {'path': path}))
         return await self._filesystem.exists(await self.resolve(path))
 
     async def read_text(self, path: str, *, encoding: str = 'utf-8') -> str:
@@ -397,15 +329,10 @@ class Workspace(WorkspaceBackend):
         Decoding is strict: undecodable bytes raise `UnicodeDecodeError`. For a lossy,
         model-facing view use [`read_file`][pydantic_ai.workspaces.Workspace.read_file].
         """
-        if dispatcher := self._operation_dispatcher:
-            return cast(str, await dispatcher('read_text', {'path': path, 'encoding': encoding}))
         return (await self.read_bytes(path)).decode(encoding)
 
     async def write_text(self, path: str, content: str, *, encoding: str = 'utf-8') -> None:
         """Write text to `path`, resolving relative paths through the backend first."""
-        if dispatcher := self._operation_dispatcher:
-            await dispatcher('write_text', {'path': path, 'content': content, 'encoding': encoding})
-            return
         await self.write_bytes(path, content.encode(encoding))
 
     async def read_file(self, path: str, *, offset: int = 1, limit: int | None = None) -> FileWindow:
@@ -426,9 +353,6 @@ class Workspace(WorkspaceBackend):
             raise ValueError('`offset` must be at least 1')
         if limit is not None and limit < 1:
             raise ValueError('`limit` must be at least 1')
-        if dispatcher := self._operation_dispatcher:
-            return cast(FileWindow, await dispatcher('read_file', {'path': path, 'offset': offset, 'limit': limit}))
-
         resolved_path = await self.resolve(path)
         filesystem: SupportsFilesystem
         if limit is not None:

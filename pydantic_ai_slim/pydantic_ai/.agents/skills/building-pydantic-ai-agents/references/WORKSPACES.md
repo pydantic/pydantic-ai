@@ -140,12 +140,10 @@ blocking commands and file changes. When a capability manages the backend, apply
 ## Durable execution
 
 The live backend never crosses a durable boundary; its `WorkspaceRef`, method arguments, and the
-serializable run context do. Tools and capability hooks still call `ctx.workspace` normally; each
-method called from replayed workflow code becomes one durable unit, while code already inside a
-durable tool or capability unit uses that unit's reconnected backend. Reconnection goes through
-the exact supplying capability. Construct the supplier with an explicit stable `id`, for example
-`MyWorkspaceCapability(client=client, id='my_workspace')`. Do not access `workspace.backend` from workflow
-code, because that would bypass durable routing.
+serializable run context do. Tools and capability hooks still call `ctx.workspace` normally; configure
+workspace use inside the durable tool or capability activity that owns the provider boundary. Reconnection
+goes through the exact supplying capability. Give the workspace a stable reference, and do not access
+`workspace.backend` from workflow code.
 
 Pass `WorkspaceRef(workspace_id=...)` through `workspace=` when the environment is provisioned elsewhere
 and outlives the run. The agent must have a capability whose `get_workspace` connects it. Do not pass

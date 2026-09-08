@@ -61,7 +61,6 @@ from ._transports import (
     _ModelRequestTransport,
     _RequestParams as _RequestParams,
     _StreamedActivityPayload,
-    _WorkspaceOperationTransport,
 )
 
 _DEFAULT_MODEL_HEARTBEAT_TIMEOUT = timedelta(seconds=30)
@@ -493,9 +492,6 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
 
     def _event_stream_handler_parameter_transport(self) -> _EventStreamHandlerTransport:
         return _EventStreamHandlerTransport(self)
-
-    def _workspace_operation_parameter_transport(self) -> _WorkspaceOperationTransport:
-        return _WorkspaceOperationTransport(self)
 
     async def _load_streamed_activity_result(
         self, result: object, model_request_parameters: ModelRequestParameters

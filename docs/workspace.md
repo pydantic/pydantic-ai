@@ -337,16 +337,14 @@ backend works without registration when it implements the relevant protocols.
 Tools and capability hooks still use `ctx.workspace` unchanged under
 [Temporal](durable_execution/temporal.md), [DBOS](durable_execution/dbos.md), and
 [Prefect](durable_execution/prefect.md). A `Workspace` method called directly from replayed workflow
-code is routed through one durable activity, step, or task. Code already executing inside a
-durable tool or capability unit uses the backend reconnected for that unit. The live backend never
+code executes inside the durable tool or capability activity you configure. The live backend never
 crosses the boundary; its
 [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef], the method arguments, and the serializable run
 context do. The worker reconnects through the exact capability that supplied the workspace.
 Accessing `workspace.backend` in workflow code is rejected because calling a provider-specific
 method directly would bypass durable execution.
 
-The supplying capability needs an explicit stable `id`, because it becomes part of the persisted
-operation name. Use the capability [shown above](#supply-a-workspace-from-a-capability) to have the
+The supplying capability needs an explicit stable reference. Use the capability [shown above](#supply-a-workspace-from-a-capability) to have the
 agent pick the workspace. If the environment is made elsewhere, pass its reference instead:
 
 ```python

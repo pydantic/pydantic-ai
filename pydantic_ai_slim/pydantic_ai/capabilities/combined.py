@@ -28,7 +28,6 @@ from pydantic_ai.tools import (
 from pydantic_ai.toolsets import AbstractToolset, AgentToolset, CombinedToolset
 from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
-from pydantic_ai.workspaces import Workspace
 
 from ._on_event import collect_on_event_methods, marked_listens_to
 from ._ordering import collect_leaves, is_innermost, sort_capabilities
@@ -255,17 +254,6 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     def _validate_runtime_capabilities(self, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> None:
         for capability in self.capabilities:
             capability._validate_runtime_capabilities(capabilities)
-
-    def _wrap_workspace(
-        self,
-        ctx: RunContext[AgentDepsT],
-        workspace: Workspace,
-        *,
-        supplier: AbstractCapability[AgentDepsT] | None,
-    ) -> Workspace:
-        for capability in self.capabilities:
-            workspace = capability._wrap_workspace(ctx, workspace, supplier=supplier)
-        return workspace
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
         # The children's contributions, not `_collect_instructions`: that asks whether a subclass

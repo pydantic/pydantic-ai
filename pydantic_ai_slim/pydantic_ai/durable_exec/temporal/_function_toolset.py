@@ -18,7 +18,7 @@ from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets.function import FunctionToolsetTool
 
 from ._activity_execution import execute_activity
-from ._run_context import TemporalRunContext, deserialize_run_context
+from ._run_context import TemporalRunContext, deserialize_run_context, prepare_workspace
 from ._toolset import (
     CallToolParams,
     call_tool_in_activity,
@@ -44,6 +44,7 @@ def temporalize_function_toolset(
     async def call_tool_activity(params: CallToolParams, deps: AgentDepsT) -> CallToolResult:
         async with heartbeating():
             ctx = deserialize_run_context(run_context_type, params.serialized_run_context, deps=deps, agent=agent)
+            await prepare_workspace(ctx)
             try:
                 if params.tool_def is not None:
                     # Rebuild the tool from the definition the workflow prepared, so a tool's `prepare`

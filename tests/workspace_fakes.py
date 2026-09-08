@@ -210,11 +210,8 @@ class RunOnlyWorkspaceBackend(WorkspaceBackend):
 
 
 def ref_workspace(ref: WorkspaceRef, supplier: AbstractCapability[Any] | None = None) -> Workspace:
-    return Workspace(
-        RecordingWorkspaceBackend(ref.workspace_id, ref=ref),
-        _supplier_id=supplier.id if supplier is not None else None,
-        _supplier=supplier,
-    )
+    del supplier
+    return Workspace(RecordingWorkspaceBackend(ref.workspace_id, ref=ref))
 
 
 class ConnectOnlyWorkspaceCapability(AbstractCapability[Any]):

@@ -22,7 +22,6 @@ from pydantic_ai.durable_exec._operation import (
 )
 from pydantic_ai.durable_exec._toolset import CallToolResult, DynamicToolsResult
 from pydantic_ai.durable_exec._utils import StreamedActivityResult
-from pydantic_ai.durable_exec._workspace import WorkspaceOperationParams, WorkspaceOperationResult
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import AgentStreamEvent, ModelMessage, ModelResponse
 from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
@@ -30,7 +29,6 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.toolsets.function import FunctionToolsetTool
-from pydantic_ai.workspaces import WorkspaceRef
 
 from ._operation_backend import TemporalParameterTransport
 from ._toolset import CallToolParams, GetToolsParams
@@ -53,7 +51,6 @@ __all__ = (
     '_MCPCallTransport',
     '_ModelRequestTransport',
     '_RequestParams',
-    '_WorkspaceOperationTransport',
     '_StreamedActivityPayload',
 )
 
@@ -220,43 +217,6 @@ class _CapabilityOperationTransport(
         params, deps = payload
         ctx = self._durability.deserialize_operation_run_context(params.serialized_run_context, deps)
         return CapabilityOperationParams(ctx, arguments=params.arguments, model_id=params.model_id)
-
-
-@dataclass(kw_only=True)
-class _WorkspaceOperationWire:
-    arguments: dict[str, Any]
-    supplier_id: str
-    ref: WorkspaceRef | None
-    serialized_run_context: Any
-
-
-class _WorkspaceOperationTransport(TemporalParameterTransport[WorkspaceOperationParams, tuple[_WorkspaceOperationWire, Any]]):
-    wire_type = _WorkspaceOperationWire
-    result_type = WorkspaceOperationResult
-
-    def __init__(self, durability: TemporalDurability[Any]) -> None:
-        self._durability = durability
-
-    def dump(self, params: WorkspaceOperationParams) -> tuple[_WorkspaceOperationWire, Any]:
-        return (
-            _WorkspaceOperationWire(
-                arguments=params.arguments,
-                supplier_id=params.supplier_id,
-                ref=params.ref,
-                serialized_run_context=self._durability.run_context_type.serialize_run_context(params.run_context),
-            ),
-            params.run_context.deps,
-        )
-
-    def load(self, payload: tuple[_WorkspaceOperationWire, Any], *, runtime: object) -> WorkspaceOperationParams:
-        params, deps = payload
-        ctx = self._durability.deserialize_operation_run_context(params.serialized_run_context, deps)
-        return WorkspaceOperationParams(
-            run_context=ctx,
-            supplier_id=params.supplier_id,
-            ref=params.ref,
-            arguments=params.arguments,
-        )
 
 
 @dataclass(kw_only=True)

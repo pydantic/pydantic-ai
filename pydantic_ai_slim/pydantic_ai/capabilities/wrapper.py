@@ -19,7 +19,7 @@ from pydantic_ai.tools import (
     ToolDefinition,
 )
 from pydantic_ai.toolsets import AbstractToolset, AgentToolset
-from pydantic_ai.workspaces import Workspace, WorkspaceBackend, WorkspaceRef
+from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 
 from ._on_event import collect_on_event_methods, marked_listens_to
 from .abstract import (
@@ -211,15 +211,6 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
 
     def _validate_runtime_capabilities(self, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> None:
         self.wrapped._validate_runtime_capabilities(capabilities)
-
-    def _wrap_workspace(
-        self,
-        ctx: RunContext[AgentDepsT],
-        workspace: Workspace,
-        *,
-        supplier: AbstractCapability[AgentDepsT] | None,
-    ) -> Workspace:
-        return self.wrapped._wrap_workspace(ctx, workspace, supplier=supplier)
 
     # --- Get methods ---
 

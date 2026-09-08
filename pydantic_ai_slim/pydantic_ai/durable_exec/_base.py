@@ -14,7 +14,7 @@ from collections.abc import (
 )
 from contextlib import asynccontextmanager, contextmanager
 from functools import partial
-from typing import Any, ClassVar, Literal, NamedTuple, Protocol, TypeVar, cast, get_args, runtime_checkable
+from typing import Any, ClassVar, Literal, NamedTuple, Protocol, TypeVar, cast, runtime_checkable
 from weakref import ReferenceType, ref
 
 from pydantic_core import PydanticSerializationError
@@ -27,7 +27,6 @@ from pydantic_ai.agent import Agent, EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.agent.wrapper import WrapperAgent
 from pydantic_ai.capabilities import ProcessEventStream
-from pydantic_ai.capabilities._workspace import get_run_workspace, workspace_supplier_scope
 from pydantic_ai.capabilities.abstract import (
     AbstractCapability,
     CapabilityOrdering,
@@ -52,7 +51,6 @@ from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
 from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
-from pydantic_ai.workspaces import UnavailableWorkspace, Workspace
 
 from ._capability_operation import (
     CapabilityBoundOperation,
@@ -93,8 +91,6 @@ from ._operation import (
     ToolsetKind,
     ToolsetValidateToolArgumentsId,
     TypedResultCodec,
-    WorkspaceMethod,
-    WorkspaceOperationId,
 )
 from ._operation_backend import BoundDurableOperation, DurableOperationBackend, RegisteredOperationBackend
 from ._runtime_toolsets import (
@@ -121,14 +117,6 @@ from ._toolset import (
     wrap_tool_call_result,
 )
 from ._utils import DurableModel, StreamedActivityResult, capture_event_stream, managed_model_scope, unwrap_model
-from ._workspace import (
-    DurableWorkspaceDispatcher,
-    WorkspaceOperationCacheIdentity,
-    WorkspaceOperationParams,
-    WorkspaceOperationResult,
-    normalize_workspace_value,
-    workspace_operation_error,
-)
 
 _T = TypeVar('_T')
 
@@ -307,9 +295,6 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         self._bound_event_operation: BoundDurableOperation[EventStreamHandlerParams, Any, None] | None = None
         self._bound_capability_operations: dict[tuple[str, str], CapabilityBoundOperation] = {}
         self._capability_declarations: dict[tuple[str, str], CapabilityMethodDeclaration] = {}
-        self._bound_workspace_operations: dict[
-            str, dict[WorkspaceMethod, BoundDurableOperation[WorkspaceOperationParams, Any, WorkspaceOperationResult]]
-        ] = {}
         self._resolved_request_models: dict[int, _ResolvedRequestModel] = {}
 
     def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> Self:
@@ -335,74 +320,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         if isinstance(backend, RegisteredOperationBackend) and bound._bound_model_operations is None:
             bound._bound_model_operations = bound._bind_model_operations(backend, model_id=None, model_name='default')
         bound._bind_capability_operations(agent)
-        bound._bind_workspace_operations(agent)
         return bound
-
-    def _bind_workspace_operations(self, agent: AbstractAgent[AgentDepsT, Any]) -> None:
-        """Register every user-facing workspace method for construction-time suppliers."""
-        self._bound_workspace_operations = {}
-        backend = self.get_durable_operation_backend()
-        supplier_ids: set[str] = set()
-        for capability in leaf_capabilities(agent.root_capability):
-            if (
-                capability.id is not None
-                and type(capability).get_workspace is not AbstractCapability.get_workspace
-                and capability is not self
-            ):
-                supplier_ids.add(capability.id)
-        for supplier_id in supplier_ids:
-            operations: dict[
-                WorkspaceMethod, BoundDurableOperation[WorkspaceOperationParams, Any, WorkspaceOperationResult]
-            ] = {}
-            for method in cast(tuple[WorkspaceMethod, ...], get_args(WorkspaceMethod)):
-
-                async def handler(
-                    params: WorkspaceOperationParams,
-                    *,
-                    method: WorkspaceMethod = method,
-                    supplier_id: str = supplier_id,
-                ) -> WorkspaceOperationResult:
-                    ctx = params.run_context
-                    supplier = (ctx._run_capabilities_by_id or {}).get(supplier_id)  # pyright: ignore[reportPrivateUsage]
-                    if supplier is None:
-                        original = next(
-                            cap for cap in leaf_capabilities(agent.root_capability) if cap.id == supplier_id
-                        )
-                        scope = workspace_supplier_scope(agent.root_capability, original)
-                        supplier = await scope.for_run(ctx)
-                    selection = get_run_workspace(supplier, ctx, params.ref)
-                    if selection is None:
-                        raise UserError(
-                            f'Workspace capability {supplier_id!r} declined a reference it previously supplied.'
-                        )
-                    raw_backend = selection.backend
-                    workspace = Workspace(raw_backend)
-                    try:
-                        value = await cast(Callable[..., Any], getattr(workspace, method))(**params.arguments)
-                    except BaseException as error:
-                        if outcome := workspace_operation_error(error):
-                            # A failed first operation may still have created the environment. Carry
-                            # that identity back so the next call reconnects instead of creating and
-                            # leaking a second environment.
-                            return WorkspaceOperationResult(error=outcome, ref=raw_backend.ref)
-                        raise
-                    ref = raw_backend.ref
-                    if ref is None:
-                        raise RuntimeError(
-                            f'Workspace capability {supplier_id!r} completed {method!r} without assigning a `WorkspaceRef`.'
-                        )
-                    return WorkspaceOperationResult(value=normalize_workspace_value(method, value), ref=ref)
-
-                operation = DurableOperation(
-                    operation_id=WorkspaceOperationId(supplier_id, method=method),
-                    handler=handler,
-                    parameter_transport=self._workspace_operation_parameter_transport(),
-                    cache_identity=WorkspaceOperationCacheIdentity(),
-                    result_codec=self._typed_result_codec(WorkspaceOperationResult),
-                    config_role='capability',
-                )
-                operations[method] = backend.bind(operation)
-            self._bound_workspace_operations[supplier_id] = operations
 
     def _bind_capability_operations(self, agent: AbstractAgent[AgentDepsT, Any]) -> None:
         self._bound_capability_operations = {}
@@ -591,48 +509,6 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         self, declaration: CapabilityMethodDeclaration
     ) -> ParameterTransport[CapabilityOperationParams, Any]:
         return IdentityParameterTransport[CapabilityOperationParams]()
-
-    def _workspace_operation_parameter_transport(self) -> ParameterTransport[WorkspaceOperationParams, Any]:
-        return IdentityParameterTransport[WorkspaceOperationParams]()
-
-    def _wrap_workspace(
-        self,
-        ctx: RunContext[AgentDepsT],
-        workspace: Workspace,
-        *,
-        supplier: AbstractCapability[AgentDepsT] | None,
-    ) -> Workspace:
-        if not self.in_durable_context or isinstance(workspace._raw_backend(), UnavailableWorkspace):  # pyright: ignore[reportPrivateUsage]
-            return workspace
-        if supplier is None:
-            raise UserError(
-                f'A live workspace backend cannot be passed to an agent run inside {self.engine_name} durable '
-                f'{self.durable_container_noun}, because it cannot be rebuilt inside a durable '
-                f'{self.durable_unit_noun}. Pass a `WorkspaceRef` instead, and attach a capability whose '
-                '`get_workspace` recognizes it.'
-            )
-        if supplier.id is None:
-            name = type(supplier).__name__
-            raise UserError(
-                f'Workspace capability {name!r} needs an explicit `id` when used with {self.engine_name} durable '
-                'execution so its method calls have stable persisted identities.'
-            )
-        operations = self._bound_workspace_operations.get(supplier.id)
-        if operations is None:
-            raise UserError(
-                f'Workspace capability {supplier.id!r} was added at run time inside {self.engine_name} durable '
-                f'{self.durable_container_noun}. Attach it when constructing the agent so its durable '
-                f'{self.durable_unit_plural} can be registered.'
-            )
-        workspace._install_operation_dispatcher(  # pyright: ignore[reportPrivateUsage]
-            DurableWorkspaceDispatcher(
-                workspace,
-                supplier=supplier,
-                operations=operations,
-                in_durable_context=lambda: self.in_durable_context,
-            )
-        )
-        return workspace
 
     def _check_bindable(self) -> None:
         """Validate that the capability can be bound in the current context."""

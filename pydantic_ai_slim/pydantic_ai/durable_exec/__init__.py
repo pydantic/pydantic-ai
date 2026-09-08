@@ -29,8 +29,6 @@ if TYPE_CHECKING:
         ToolsetGetToolsId,
         ToolsetKind,
         ToolsetValidateToolArgumentsId,
-        WorkspaceMethod,
-        WorkspaceOperationId,
     )
     from ._operation_backend import (
         CallableOperationBackend,
@@ -65,8 +63,6 @@ __all__ = [
     'OperationConfigRole',
     'RegisteredOperationBackend',
     'RoleBasedOperationConfig',
-    'WorkspaceMethod',
-    'WorkspaceOperationId',
     'ToolsetKind',
     'ToolsetValidateToolArgumentsId',
 ]
@@ -87,8 +83,6 @@ _exports = {
     'ToolsetGetToolsId': ('._operation', 'ToolsetGetToolsId'),
     'ModelRequestId': ('._operation', 'ModelRequestId'),
     'OperationConfigRole': ('._operation', 'OperationConfigRole'),
-    'WorkspaceMethod': ('._operation', 'WorkspaceMethod'),
-    'WorkspaceOperationId': ('._operation', 'WorkspaceOperationId'),
     'ToolsetKind': ('._operation', 'ToolsetKind'),
     'ToolsetValidateToolArgumentsId': ('._operation', 'ToolsetValidateToolArgumentsId'),
     'CallableOperationBackend': ('._operation_backend', 'CallableOperationBackend'),
