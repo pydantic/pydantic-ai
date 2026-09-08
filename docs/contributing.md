@@ -169,8 +169,9 @@ before relying on a green hook for a file you have not added.
 A full run is single-process unless `PYRIGHT_THREADS` says otherwise, and CI sets it to `auto`.
 The variable turns on Pyright's parallel check phase, which reaches the same diagnostics in less
 wall time: `auto` is up to one worker per logical core, and a positive integer caps them. Only
-`make typecheck-pyright` reads it; every run `make typecheck-changed` decides for itself, narrowed or
-not, stays single-process.
+`make typecheck-pyright` reads it, so the hook picks it up only on a run that hands the whole
+project over: `CI`, an interpreter older than Python 3.11, or a Pyright configuration it cannot
+reproduce. A run it narrows, or runs itself over the reduced set, stays single-process.
 
 ```bash
 export PYRIGHT_THREADS=auto
@@ -184,8 +185,9 @@ already near its limit swaps and comes out slower than the default. Unset the va
 
 `PYRIGHT_TIME_BUDGET` caps how long the check may take: set it to a number of seconds, and a run that
 passes but takes longer than that fails anyway. CI sets it, so a change that makes Pyright itself slow
-fails its own pull request rather than landing on `main`. Any value that is not a positive number of
-seconds fails the run outright rather than being ignored; leaving it unset or empty means no budget.
+fails its own pull request rather than landing on `main`. Any value that is not a finite positive
+number of seconds fails the run outright rather than being ignored; leaving it unset or empty means
+no budget.
 
 ## Documentation Changes
 

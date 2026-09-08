@@ -513,8 +513,8 @@ def test_a_run_without_a_time_budget_says_nothing_about_time(
     assert 'PYRIGHT_TIME_BUDGET' not in capsys.readouterr().out
 
 
-@pytest.mark.parametrize('setting', ['soon', '0', '-1', 'nan'])
-def test_a_time_budget_that_is_not_positive_seconds_runs_nothing(
+@pytest.mark.parametrize('setting', ['soon', '0', '-1', 'nan', 'inf', '-inf'])
+def test_a_time_budget_that_is_not_finite_positive_seconds_runs_nothing(
     project: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], setting: str
 ):
     monkeypatch.setenv('PYRIGHT_TIME_BUDGET', setting)
@@ -523,5 +523,5 @@ def test_a_time_budget_that_is_not_positive_seconds_runs_nothing(
 
     assert recorder.exit_code == 2
     assert recorder.commands == []
-    message = f'`PYRIGHT_TIME_BUDGET` is `{setting}`, which is not a positive number of seconds.'
+    message = f'`PYRIGHT_TIME_BUDGET` is `{setting}`, which is not a finite positive number of seconds.'
     assert message in capsys.readouterr().out

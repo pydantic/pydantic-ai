@@ -33,6 +33,7 @@ from __future__ import annotations
 import ast
 import hashlib
 import importlib.metadata
+import math
 import os
 import platform
 import posixpath
@@ -179,9 +180,9 @@ def main(run: Runner = run_command, clock: Clock = time.monotonic) -> int:
         except ValueError:
             budget = None
         # A misconfigured budget has to be loud, so nothing runs until this one reads as seconds.
-        # `nan` compares false either way, which is why this is `not budget > 0` and not `budget <= 0`.
-        if budget is None or not budget > 0:
-            print(f'`PYRIGHT_TIME_BUDGET` is `{setting}`, which is not a positive number of seconds.')
+        # `nan` and `inf` are rejected here because neither is a budget a run can be measured against.
+        if budget is None or not (math.isfinite(budget) and budget > 0):
+            print(f'`PYRIGHT_TIME_BUDGET` is `{setting}`, which is not a finite positive number of seconds.')
             return 2
     runner = _BudgetedRunner(run, clock, budget)
 
