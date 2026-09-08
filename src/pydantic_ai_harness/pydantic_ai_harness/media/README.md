@@ -15,9 +15,9 @@
 >
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://github.com/pydantic/pydantic-ai-harness#version-policy).
 
-Content-addressed stores and walker helpers that move large binary and text payloads out of message history and put them back on demand.
+The storage plumbing that [`StepPersistence`](../step_persistence/) uses to keep run snapshots small: content-addressed stores and walker helpers that move large binary and text payloads out of message history and put them back on demand.
 
-These are building blocks, not a capability. There is no class you add to `Agent(capabilities=[...])` yet. [`StepPersistence`](../step_persistence/) uses them to keep snapshots small when messages carry `BinaryContent` or large text (e.g. a big tool-return string). A forthcoming `MediaExternalizer` capability ([#254](https://github.com/pydantic/pydantic-ai-harness/issues/254)) will reuse the same stores to rewrite `BinaryContent` into URL parts before the model sees them.
+This package does not define an agent capability.
 
 [Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/media/)
 

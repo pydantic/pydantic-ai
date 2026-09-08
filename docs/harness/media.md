@@ -1,11 +1,13 @@
 ---
 title: Media Externalization
-description: Content-addressed stores and walker helpers that move large binary and text payloads out of message history into deduplicated storage and put them back on demand.
+description: The storage plumbing behind Step Persistence, content-addressed stores and walker helpers that move large binary and text payloads out of message history and put them back on demand.
 ---
 
 # Media Externalization
 
-A conversation that carries images, audio, or other `BinaryContent` inlines those bytes into every message, and a large text part (a big tool-return string, say) is just as heavy. Persist that history and each snapshot re-serializes the payloads; the same image referenced by ten messages is ten copies of the bytes. Media externalization solves that: content-addressed stores write each payload once, keyed by its own hash, and leave a short `media+sha256://` URI in its place. Reach for it whenever large binary or text payloads would otherwise balloon what you store or send.
+The storage plumbing that [Step Persistence](step-persistence.md) uses to keep run snapshots small. This is supporting infrastructure, not a capability: nothing on this page mounts on `Agent(capabilities=[...])`. If you want snapshots that externalize large payloads automatically, start with [Step Persistence](step-persistence.md); read this page when you configure a store yourself or call the walker helpers directly.
+
+Why it exists: a conversation that carries images, audio, or other `BinaryContent` inlines those bytes into every message, and a large text part (a big tool-return string, say) is just as heavy. Persist that history and each snapshot re-serializes the payloads; the same image referenced by ten messages is ten copies of the bytes. Content-addressed stores write each payload once, keyed by its own hash, and leave a short `media+sha256://` URI in its place.
 
 !!! note "Import path"
     Import these helpers from their submodule -- there is no top-level `pydantic_ai_harness` re-export:
@@ -22,9 +24,9 @@ A conversation that carries images, audio, or other `BinaryContent` inlines thos
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
-## Building blocks, not a capability
+## Consumers
 
-These are building blocks. There is no class you add to `Agent(capabilities=[...])` yet. [`StepPersistence`](step-persistence.md) already uses them to keep snapshots small when messages carry `BinaryContent` or large text (e.g. a big tool-return string), and a forthcoming `MediaExternalizer` capability ([#254](https://github.com/pydantic/pydantic-ai-harness/issues/254)) will reuse the same stores to rewrite `BinaryContent` into URL parts before the model sees them.
+[`StepPersistence`](step-persistence.md) uses these stores to externalize large `BinaryContent` and text parts in run snapshots through its file, sqlite, and mongo backends (see [Persisting media](step-persistence.md#persisting-media)).
 
 ## Why content-addressing
 
@@ -112,8 +114,6 @@ async def presign(uri: str, ctx: MediaContext) -> str:
 
 store = S3MediaStore(..., public_url=presign)
 ```
-
-This is what the forthcoming `MediaExternalizer` will use to swap `BinaryContent` parts for `ImageUrl` / `AudioUrl` / other URL parts before the model sees the message, letting providers fetch big media over the wire without re-encoding bytes into the request body. Emitting a URL is always safe: pydantic-ai providers transparently download the bytes when the target model does not natively accept that URL type, so you only ever lose wire savings, never correctness.
 
 ## `MediaContext`
 

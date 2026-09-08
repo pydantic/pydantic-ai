@@ -35,8 +35,8 @@ def _is_deprecation_shim(package: Path) -> bool:
 
 # Packages that are supporting infrastructure rather than capabilities, kept out of the README
 # capability tables per review. `media` exports the content-addressed stores Step Persistence
-# uses; its docs placement is being reworked in
-# https://github.com/pydantic/pydantic-ai-harness/issues/625.
+# uses; its docs page and README are framed as Step Persistence supporting infrastructure, not
+# as a capability (https://github.com/pydantic/pydantic-ai-harness/issues/625).
 _NOT_A_CAPABILITY = frozenset({'media'})
 
 
@@ -97,7 +97,9 @@ def test_capability_linked_from_top_readme(package: Path) -> None:
 # ACP is the one page that stays experimental.
 
 _DOCS_DIR = _ROOT / 'docs'
-_NON_CAPABILITY_PAGES = {'examples.md', 'index.md', 'mutation-testing.md'}
+# `media.md` documents Step Persistence's storage plumbing (see `_NOT_A_CAPABILITY` above),
+# so the capability-page checks do not apply to it.
+_NON_CAPABILITY_PAGES = {'examples.md', 'index.md', 'media.md', 'mutation-testing.md'}
 _ACP_PAGE = 'acp.md'
 
 _SOURCE_LINK = 'github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/'
@@ -144,7 +146,6 @@ _CAPABILITY_PAGE_META = {
     'warn-on-cache-busts.md': ('warn_on_cache_busts', 'Warn On Cache Busts'),
     'step-persistence.md': ('step_persistence', 'Step Persistence'),
     'conversation-search.md': ('conversation_search', 'Conversation Search'),
-    'media.md': ('media', 'Media Externalization'),
     'subagents.md': ('subagents', 'Subagents'),
     'dynamic-workflow.md': ('dynamic_workflow', 'Dynamic Workflow'),
     'planning.md': ('planning', 'Planning'),
