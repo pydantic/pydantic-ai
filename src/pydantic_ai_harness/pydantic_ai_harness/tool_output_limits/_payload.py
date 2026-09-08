@@ -15,6 +15,7 @@ from typing import TypeGuard
 from pydantic_ai.messages import ModelMessage, ModelRequest, SystemPromptPart
 from pydantic_core import to_json
 
+from pydantic_ai_harness._output import truncate_tail
 from pydantic_ai_harness.compaction._shared import estimate_token_count
 
 
@@ -147,25 +148,35 @@ def _sketch_sequence(items: Sequence[object]) -> str:
 
 
 def truncate_text(text: str, max_chars: int, strategy: TruncationStrategy) -> str:
-    """Cut `text` down to roughly `max_chars`, annotating what was removed.
+    """Limit `text` to `max_chars`, including the truncation marker.
 
-    Returns `text` unchanged when it already fits.
+    If the budget cannot fit both retained content and a complete marker, return the
+    selected slice without a marker.
     """
+    if max_chars <= 0:
+        return ''
     total = len(text)
     if total <= max_chars:
         return text
+    if strategy is TruncationStrategy.tail:
+        return truncate_tail(text, max_chars)
+
+    # Check each count: digit and thousands-separator changes can shorten the marker.
+    for retained in range(max_chars, 0, -1):
+        if strategy is TruncationStrategy.head:
+            marker = f'\n\n[truncated: showing first {retained:,} of {total:,} chars]'
+        else:
+            head_chars = retained * 2 // 5
+            marker = (
+                f'\n\n[truncated: {total - retained:,} chars omitted from the middle; '
+                f'showing first {head_chars:,} + last {retained - head_chars:,} of {total:,} chars]\n\n'
+            )
+        if retained + len(marker) <= max_chars:
+            break
+    else:
+        retained, marker = max_chars, ''
 
     if strategy is TruncationStrategy.head:
-        return f'{text[:max_chars]}\n\n[truncated: showing first {max_chars:,} of {total:,} chars]'
-    if strategy is TruncationStrategy.tail:
-        return f'[truncated: showing last {max_chars:,} of {total:,} chars]\n\n{text[-max_chars:]}'
-
-    head_chars = max_chars * 2 // 5
-    tail_chars = max_chars - head_chars
-    omitted = total - head_chars - tail_chars
-    return (
-        f'{text[:head_chars]}\n\n'
-        f'[truncated: {omitted:,} chars omitted from the middle; '
-        f'showing first {head_chars:,} + last {tail_chars:,} of {total:,} chars]\n\n'
-        f'{text[-tail_chars:]}'
-    )
+        return text[:retained] + marker
+    head_chars = retained * 2 // 5
+    return text[:head_chars] + marker + text[-(retained - head_chars) :]

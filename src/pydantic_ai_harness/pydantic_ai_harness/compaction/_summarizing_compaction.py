@@ -524,13 +524,9 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
         return out
 
     def _truncate(self, text: str, max_chars: int | None = None) -> str:
-        from pydantic_ai_harness.tool_output_limits import TruncationStrategy
-        from pydantic_ai_harness.tool_output_limits._payload import truncate_text
-
         limit = self.keep_user_messages_max_chars if max_chars is None else max_chars
-        truncated = truncate_text(text, limit, TruncationStrategy.head)
-        if len(truncated) <= limit:
-            return truncated
+        if len(text) <= limit:
+            return text
         marker = '[...]'
         if limit <= len(marker):
             return marker[:limit]

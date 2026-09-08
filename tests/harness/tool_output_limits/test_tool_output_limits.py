@@ -21,6 +21,7 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolReturn,
     ToolReturnPart,
+    UserPromptPart,
 )
 from pydantic_ai.models import AbstractModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -58,7 +59,6 @@ from pydantic_ai_harness.tool_output_limits._payload import (
     strip_ansi,
     to_bytes,
     to_text,
-    truncate_text,
 )
 from pydantic_ai_harness.tool_output_limits._store import _safe_segment
 from tests._recording_durability import RecordingDurability  # pyright: ignore[reportMissingTypeStubs]
@@ -195,23 +195,6 @@ class TestPayloadHelpers:
     def test_json_sketch_scalar(self):
         assert json_sketch(42) == ''
         assert json_sketch('plain') == ''
-
-    def test_truncate_under_limit(self):
-        assert truncate_text('short', 100, TruncationStrategy.head_tail) == 'short'
-
-    def test_truncate_head(self):
-        out = truncate_text('a' * 100, 10, TruncationStrategy.head)
-        assert out.startswith('aaaaaaaaaa')
-        assert 'showing first 10' in out
-
-    def test_truncate_tail(self):
-        out = truncate_text('a' * 100, 10, TruncationStrategy.tail)
-        assert out.endswith('aaaaaaaaaa')
-        assert 'showing last 10' in out
-
-    def test_truncate_head_tail(self):
-        out = truncate_text('a' * 100, 10, TruncationStrategy.head_tail)
-        assert 'omitted from the middle' in out
 
 
 # ---------------------------------------------------------------------------
@@ -376,7 +359,7 @@ class TestPassthrough:
 
     async def test_callable_filter(self):
         cap: ToolOutputLimits[object] = ToolOutputLimits(
-            bands=[Band(over=1, action=Truncate(max_chars=2))],
+            bands=[Band(over=1, action=Truncate(max_chars=95))],
             tool_filter=lambda ctx, td: td.name == 'big_tool',
         )
         out = await _run(cap, 'x' * 100)
@@ -406,12 +389,106 @@ class TestPassthrough:
 
 
 class TestTruncate:
-    async def test_truncates_text(self):
+    @pytest.mark.parametrize('strategy', TruncationStrategy)
+    @pytest.mark.parametrize(
+        'total,kept',
+        [(1000, 1), (1000, 9), (1000, 10), (1000, 99), (1000, 100), (10000, 999), (10000, 1000), (1001, 2)],
+    )
+    async def test_marker_counts_toward_budget(self, strategy: TruncationStrategy, total: int, kept: int):
+        text = ''.join(chr(0x4E00 + i) for i in range(total))
+        if strategy is TruncationStrategy.head:
+            expected = text[:kept] + f'\n\n[truncated: showing first {kept:,} of {total:,} chars]'
+        elif strategy is TruncationStrategy.tail:
+            expected = f'[... output truncated, showing last {kept} chars]\n' + text[-kept:]
+        else:
+            head = kept * 2 // 5
+            tail = kept - head
+            expected = (
+                f'{text[:head]}\n\n[truncated: {total - kept:,} chars omitted from the middle; '
+                f'showing first {head:,} + last {tail:,} of {total:,} chars]\n\n{text[-tail:]}'
+            )
+        max_chars = len(expected)
         cap: ToolOutputLimits[object] = ToolOutputLimits(
-            bands=[Band(over=10, action=Truncate(max_chars=20, strategy=TruncationStrategy.head))]
+            bands=[Band(over=0, action=Truncate(max_chars=max_chars, strategy=strategy))]
         )
-        out = await _run(cap, 'a' * 100)
-        assert isinstance(out, str) and out.startswith('a' * 20)
+        agent = Agent(TestModel(call_tools=['big_tool']), capabilities=[cap])
+
+        @agent.tool_plain
+        def big_tool() -> str:
+            return text
+
+        result = await agent.run('go')
+        returns = [p for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)]
+        assert len(returns) == 1
+        assert returns[0].content == expected
+
+    @pytest.mark.parametrize(
+        'strategy,max_chars',
+        [(strategy, cap) for strategy in TruncationStrategy for cap in [-1, 0, 1, 2, 10]]
+        + [(TruncationStrategy.head, 45), (TruncationStrategy.tail, 45), (TruncationStrategy.head_tail, 91)],
+    )
+    async def test_budget_too_small_for_marker(self, strategy: TruncationStrategy, max_chars: int):
+        text = ''.join(chr(0x4E00 + i) for i in range(1000))
+        kept = max(0, max_chars)
+        if strategy is TruncationStrategy.head:
+            expected = text[:kept]
+        elif strategy is TruncationStrategy.tail:
+            expected = text[len(text) - kept :]
+        else:
+            head = kept * 2 // 5
+            expected = text[:head] + text[len(text) - (kept - head) :]
+        cap: ToolOutputLimits[object] = ToolOutputLimits(
+            bands=[Band(over=0, action=Truncate(max_chars=max_chars, strategy=strategy))]
+        )
+        agent = Agent(TestModel(call_tools=['big_tool']), capabilities=[cap])
+
+        @agent.tool_plain
+        def big_tool() -> str:
+            return text
+
+        result = await agent.run('go')
+        returns = [p for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)]
+        assert len(returns) == 1
+        assert returns[0].content == expected
+
+    @pytest.mark.parametrize('strategy', TruncationStrategy)
+    @pytest.mark.parametrize('max_chars', [5, 6])
+    async def test_output_that_fits_is_unchanged(self, strategy: TruncationStrategy, max_chars: int):
+        cap: ToolOutputLimits[object] = ToolOutputLimits(
+            bands=[Band(over=0, action=Truncate(max_chars=max_chars, strategy=strategy))]
+        )
+        agent = Agent(TestModel(call_tools=['small_tool']), capabilities=[cap])
+
+        @agent.tool_plain
+        def small_tool() -> str:
+            return 'short'
+
+        result = await agent.run('go')
+        returns = [p for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)]
+        assert len(returns) == 1
+        assert returns[0].content == 'short'
+
+    @pytest.mark.parametrize('strategy', TruncationStrategy)
+    async def test_tool_return_value_and_content_are_bounded(self, strategy: TruncationStrategy):
+        cap: ToolOutputLimits[object] = ToolOutputLimits(
+            bands=[Band(over=0, action=Truncate(max_chars=200, strategy=strategy))]
+        )
+        agent = Agent(TestModel(call_tools=['big_tool']), capabilities=[cap])
+
+        @agent.tool_plain
+        def big_tool() -> ToolReturn:
+            return ToolReturn(return_value='v' * 1000, content='c' * 2000, metadata={'k': 1})
+
+        result = await agent.run('go')
+        returns = [p for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)]
+        assert len(returns) == 1
+        assert returns[0].metadata == {'k': 1}
+        value = returns[0].content
+        assert isinstance(value, str) and len(value) <= 200 and 'truncated' in value
+        prompts = [p for m in result.all_messages() for p in m.parts if isinstance(p, UserPromptPart)]
+        assert len(prompts) == 2
+        content = prompts[-1].content
+        assert isinstance(content, str) and len(content) <= 200 and 'truncated' in content
 
     async def test_strip_ansi_applied(self):
         cap: ToolOutputLimits[object] = ToolOutputLimits(
@@ -538,7 +615,7 @@ class TestSpill:
 
     async def test_spill_failure_falls_back_to_truncate(self):
         cap: ToolOutputLimits[object] = ToolOutputLimits(
-            bands=[Band(over=10, action=Spill(then=Truncate(max_chars=15)))], store=_BrokenStore()
+            bands=[Band(over=10, action=Spill(then=Truncate(max_chars=95)))], store=_BrokenStore()
         )
         out = await _run(cap, 'a' * 100)
         assert isinstance(out, str) and 'truncated' in out
@@ -593,7 +670,7 @@ class TestContentReduction:
         assert await store.read(handle) == ('C' * 5000).encode('utf-8')
 
     async def test_large_content_truncated(self):
-        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=10, action=Truncate(max_chars=20))])
+        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=10, action=Truncate(max_chars=95))])
         out = await _run(cap, ToolReturn(return_value='small', content='C' * 200))
         assert isinstance(out, ToolReturn)
         assert isinstance(out.content, str) and 'truncated' in out.content
@@ -796,7 +873,7 @@ class TestSummarize:
             raise RuntimeError('model down')
 
         cap: ToolOutputLimits[object] = ToolOutputLimits(
-            bands=[Band(over=5, action=Summarize(summarize=boom, then=Truncate(max_chars=10)))]
+            bands=[Band(over=5, action=Summarize(summarize=boom, then=Truncate(max_chars=95)))]
         )
         out = await _run(cap, 'a' * 100)
         assert isinstance(out, str) and 'truncated' in out

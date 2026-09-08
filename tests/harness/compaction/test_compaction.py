@@ -3961,7 +3961,11 @@ class TestStructuralFeaturesThroughAgent:
         )
 
     @pytest.mark.anyio
-    async def test_keep_user_messages_reaches_the_model_truncated(self):
+    @pytest.mark.parametrize(
+        'max_chars,expected',
+        [(3, '[..'), (5, '[...]'), (10, 'v' * 5 + '[...]'), (200, 'v' * 195 + '[...]'), (1000, 'v' * 1000)],
+    )
+    async def test_keep_user_messages_reaches_the_model_truncated(self, max_chars: int, expected: str):
         seen: list[list[ModelMessage]] = []
         prompts: list[str] = []
         agent = Agent(
@@ -3972,15 +3976,15 @@ class TestStructuralFeaturesThroughAgent:
                     max_messages=3,
                     keep_messages=2,
                     keep_user_messages=True,
-                    keep_user_messages_max_chars=10,
+                    keep_user_messages_max_chars=max_chars,
                 )
             ],
         )
-        await agent.run('go', message_history=[_user('u' * 40), _assistant('b'), _user('v' * 40), _assistant('d')])
+        await agent.run('go', message_history=[_user('u' * 40), _assistant('b'), _user('v' * 1000), _assistant('d')])
 
         assert len(prompts) == 1
         texts = _user_texts(seen[0])
-        assert any(text.startswith('vvvvv') and text.endswith('[...]') for text in texts)
+        assert expected in texts
 
     @pytest.mark.anyio
     async def test_retained_user_turns_arrive_as_a_single_request(self):
