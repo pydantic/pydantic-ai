@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import anyio
+import anyio.to_thread
 import pytest
 
 from pydantic_ai import Agent, RunContext
