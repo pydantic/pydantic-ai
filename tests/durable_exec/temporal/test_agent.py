@@ -87,9 +87,9 @@ from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDef
 from pydantic_ai.toolsets.prepared import PreparedToolset
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai.workspaces import (
+    LocalWorkspace,
     ReadOnlyWorkspace,
     Workspace,
-    WorkspaceBackend,
     WorkspaceRef,
 )
 
@@ -110,7 +110,6 @@ try:
     from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
     from temporalio.workflow import ActivityCancellationType, ActivityConfig
 
-    from pydantic_ai.durable_exec._toolset import unwrap_tool_call_result
     from pydantic_ai.durable_exec._utils import StreamedActivityResult
     from pydantic_ai.durable_exec.temporal import (
         AgentPlugin,
@@ -127,14 +126,12 @@ try:
     )
     from pydantic_ai.durable_exec.temporal._function_toolset import (
         TemporalFunctionToolset,
-        temporalize_function_toolset,
     )
     from pydantic_ai.durable_exec.temporal._mcp_toolset import TemporalMCPToolset
     from pydantic_ai.durable_exec.temporal._model import TemporalModel
     from pydantic_ai.durable_exec.temporal._run_context import (
         TemporalRunContext,
         deserialize_run_context,
-        prepare_workspace,
     )
     from pydantic_ai.durable_exec.temporal._toolset import CallToolParams
 
@@ -147,7 +144,7 @@ except ImportError:  # pragma: lax no cover
 if sys.version_info >= (3, 14):  # pragma: lax no cover
     pytest.skip(
         'temporalio sandbox is incompatible with Python 3.14: '
-        'workspace module state accumulates across validation cycles causing import failures after ~22 workflows '
+        'sandbox module state accumulates across validation cycles causing import failures after ~22 workflows '
         '(remove when https://github.com/temporalio/sdk-python/issues/1326 closes)',
         allow_module_level=True,
     )
@@ -184,7 +181,7 @@ with workflow.unsafe.imports_passed_through():
     # Loads `vcr`, which Temporal doesn't like without passing through the import
     from ...conftest import IsDatetime, IsStr
 
-    # `_shared` loads the same workspace-sensitive modules, so import it passed-through as well.
+    # `_shared` loads the same sandbox-sensitive modules, so import it passed-through as well.
     from ._shared import (
         BASE_ACTIVITY_CONFIG,
         TASK_QUEUE,
@@ -2704,116 +2701,42 @@ def _workspace_context(workspace: Workspace) -> RunContext[None]:
     return RunContext(deps=None, model=TestModel(), usage=RunUsage(), workspace=workspace)
 
 
-def test_temporal_run_context_does_not_serialize_a_live_backend():
-    """An explicit live backend has no capability on the worker that could rebuild it.
-
-    Its identity would name an environment nothing in the activity can reach, so it does not
-    cross the boundary at all.
-    """
-    live_workspace = Workspace(RecordingWorkspaceBackend('live'))
-
-    serialized = TemporalRunContext.serialize_run_context(_workspace_context(live_workspace))
-
-    assert '_workspace_state' not in serialized
+def test_temporal_run_context_omits_ref_for_local_workspace():
+    workspace = Workspace(LocalWorkspace())
+    serialized = TemporalRunContext.serialize_run_context(_workspace_context(workspace))
+    assert 'workspace_ref' not in serialized
 
 
 def test_temporal_run_context_serializes_only_a_concrete_workspace_ref():
     workspace = Workspace(RecordingWorkspaceBackend('preprovisioned'))
     serialized = TemporalRunContext.serialize_run_context(_workspace_context(workspace))
+    assert serialized['workspace_ref'] == WorkspaceRef(provider='fake', id='preprovisioned')
 
-    assert serialized['_workspace_state'] == {'provider': 'fake', 'id': 'preprovisioned'}
-
-    # Decoding is pure payload work. It does not reconnect a backend or invoke a capability.
     decoded = deserialize_run_context(TemporalRunContext, serialized, deps=None, agent=None)
     assert 'workspace' not in decoded.__dict__
+    with pytest.raises(UserError, match=r'custom .*deserialize_run_context'):
+        _ = decoded.workspace
 
 
-async def test_temporal_activity_prepares_workspace_before_calling_tool(monkeypatch: pytest.MonkeyPatch):
-    backend = RecordingWorkspaceBackend('activity-ref')
-    for_run_calls = 0
+async def test_temporal_application_deserializer_restores_validated_workspace_ref():
+    class ApplicationTemporalRunContext(TemporalRunContext[None]):
+        @classmethod
+        def deserialize_run_context(cls, ctx: dict[str, Any], deps: None) -> TemporalRunContext[None]:
+            ref = TypeAdapter(WorkspaceRef).validate_python(ctx['workspace_ref'])
+            workspace = ReadOnlyWorkspace(Workspace(RecordingWorkspaceBackend(ref.id, ref=ref)))
+            return cls(**{**ctx, 'workspace': workspace}, deps=deps)
 
-    class Provider(Capability[None]):
-        async def for_run(self, ctx: RunContext[None]) -> Capability[None]:
-            nonlocal for_run_calls
-            for_run_calls += 1
-            return self
-
-        def get_workspace(self, ctx: RunContext[None], *, ref: WorkspaceRef | None) -> WorkspaceBackend:
-            assert ref == WorkspaceRef(provider='fake', id='activity-ref')
-            return backend
-
-    provider = Provider(id='activity-provider')
-    agent = Agent(TestModel(), deps_type=type(None), capabilities=[provider])
-
-    async def use_workspace(ctx: RunContext[None]) -> str:
-        return (await ctx.workspace.run(['echo', 'ok'])).stdout
-
-    toolset = FunctionToolset[None](tools=[use_workspace], id='workspace-toolset')
-    temporal_toolset = temporalize_function_toolset(
-        toolset,
-        activity_name_prefix='test__workspace',
-        activity_config=BASE_ACTIVITY_CONFIG,
-        tool_activity_config={},
-        deps_type=type(None),
-        agent=agent,
+    restored = deserialize_run_context(
+        ApplicationTemporalRunContext,
+        {'workspace_ref': {'provider': 'fake', 'id': 'readonly-ref'}},
+        deps=None,
+        agent=None,
     )
-    (call_tool_activity,) = temporal_toolset.durable_registrations
-    workspace = Workspace(backend)
-    ctx = _workspace_context(workspace)
-
-    async def run_activity(activity_fn: Callable[..., object], *, args: Sequence[object], **config: object) -> object:
-        return await cast(Any, activity_fn)(*args)
-
-    monkeypatch.setattr('pydantic_ai.durable_exec.temporal._function_toolset.execute_activity', run_activity)
-    with (
-        patch('temporalio.activity.info', return_value=type('Info', (), {'heartbeat_timeout': None})()),
-        patch('temporalio.activity.heartbeat'),
-    ):
-        result = await call_tool_activity(
-            CallToolParams(
-                name='use_workspace',
-                tool_args={},
-                serialized_run_context=TemporalRunContext.serialize_run_context(ctx),
-                tool_def=toolset.tools['use_workspace'].tool_def,
-            ),
-            None,
-        )
-
-    assert unwrap_tool_call_result(result) == 'connected'
-    assert for_run_calls == 1
-    assert backend.commands == [['echo', 'ok']]
-
-
-async def test_temporal_prepare_workspace_preserves_read_only_for_replaced_context():
-    backend = RecordingWorkspaceBackend('readonly-ref')
-
-    class Provider(Capability[None]):
-        async def for_run(self, ctx: RunContext[None]) -> Capability[None]:
-            return self
-
-        def get_workspace(self, ctx: RunContext[None], *, ref: WorkspaceRef | None) -> WorkspaceBackend:
-            return ReadOnlyWorkspace(Workspace(backend))
-
-    agent = Agent(TestModel(), deps_type=type(None), capabilities=[Provider(id='readonly-provider')])
-    serialized = TemporalRunContext.serialize_run_context(_workspace_context(Workspace(backend)))
-    restored = deserialize_run_context(TemporalRunContext, serialized, deps=None, agent=agent)
-    await prepare_workspace(restored)
-
     copied = replace(restored, run_id='copy')
     assert copied.workspace is restored.workspace
-    assert await copied.workspace.working_dir() == '/workspace'
+    assert copied.workspace.ref == WorkspaceRef(provider='fake', id='readonly-ref')
     with pytest.raises(UserError, match='read-only'):
         await copied.workspace.run(['touch', 'blocked'])
-    assert backend.commands == []
-
-
-async def test_temporal_prepare_workspace_without_agent_reports_provisioning_guidance():
-    serialized = {'_workspace_state': {'provider': 'fake', 'id': 'missing-provider'}}
-    restored = deserialize_run_context(TemporalRunContext, serialized, deps=None, agent=None)
-
-    await prepare_workspace(restored)
-    with pytest.raises(UserError, match='concrete `WorkspaceRef`'):
-        await restored.workspace.run(['true'])
 
 
 def test_temporal_run_context_context_window_used_is_none_without_messages():

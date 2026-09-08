@@ -11,7 +11,7 @@ import pytest
 from pydantic import TypeAdapter
 
 from pydantic_ai import Agent, RunContext, UserError, capture_run_messages
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, CombinedCapability, WrapperCapability
 from pydantic_ai.durable_exec._workspace import guard_workflow_workspace
 from pydantic_ai.exceptions import ApprovalRequired
 from pydantic_ai.messages import (
@@ -751,6 +751,28 @@ async def test_deferred_capability_never_contributes_a_backend() -> None:
 
     assert isinstance(observed[0].backend, UnavailableWorkspace)
     assert capability.refs == []
+
+
+async def test_wrapper_composes_workspace_policy_over_combined_capability() -> None:
+    provider = WorkspaceCapability()
+    other = DecliningWorkspaceCapability()
+
+    class Policy(WrapperCapability[Any]):
+        def get_workspace(self, ctx: RunContext[Any], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
+            backend = super().get_workspace(ctx, ref=ref)
+            return ReadOnlyWorkspace(Workspace(backend)) if backend is not None else None
+
+    capability = Policy(CombinedCapability([provider, other]))
+    agent = Agent(TestModel(call_tools=['probe']), capabilities=[capability])
+
+    @agent.tool
+    async def probe(ctx: RunContext[Any]) -> str:
+        await ctx.workspace.write_text('blocked.txt', 'nope')
+        return 'unreachable'
+
+    with pytest.raises(UserError, match='read-only'):
+        await agent.run('go')
+    assert provider.refs == [None]
 
 
 async def test_workspace_ref_forwards_backend_identity() -> None:

@@ -76,11 +76,8 @@ from ..capabilities import (
     ToolSearch as ToolSearchCap,
 )
 from ..capabilities._dynamic import wrap_capability_funcs
-from ..capabilities._ordering import find_capability, has_capability_type
+from ..capabilities._ordering import has_capability_type
 from ..capabilities._pending_messages import PendingMessageDrainCapability
-from ..capabilities._workspace import (
-    get_run_workspace,
-)
 from ..capabilities.abstract import (
     _combine_duplicate_capabilities,  # pyright: ignore[reportPrivateUsage]
     _declares_default_id,  # pyright: ignore[reportPrivateUsage]
@@ -188,7 +185,6 @@ __all__ = (
     'ToolsPrepareFunc',
     'ToolDenied',
     'RealtimeEvent',
-    'find_capability',
 )
 
 
@@ -526,7 +522,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     def _enter_lock(self) -> anyio.Lock:
         # We use a cached_property for this because `anyio.Lock` binds to the event loop on which
         # it's first used; deferring creation until first access ensures it binds to the correct
-        # running loop and avoids issues with Temporal's workflow workspace.
+        # running loop and avoids issues with Temporal's workflow sandbox.
         return anyio.Lock()
 
     # `__init__` keeps an overload pair purely so Pyright resolves a class-union `output_type`
@@ -1530,7 +1526,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if resolved is not None and resolved.capability is not None:
             extra_capabilities.append(resolved.capability)
         extra_capabilities.extend(wrap_capability_funcs(capabilities))
-        extra_capabilities = self._bind_run_capabilities(base_capability, extra_capabilities)
+        extra_capabilities = self._bind_run_capabilities(extra_capabilities)
         model_layers: list[AbstractCapability[AgentDepsT]] = [base_capability, *extra_capabilities]
         bootstrap_capability: AbstractCapability[AgentDepsT]
         if len(model_layers) > 1:
@@ -1753,7 +1749,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # hooks and durable operations this run will actually use.
         if workspace is None or isinstance(workspace, WorkspaceRef):
             selection_ref = workspace if isinstance(workspace, WorkspaceRef) else historical_workspace_ref
-            selection = get_run_workspace(run_capability, initial_ctx, selection_ref)
+            selection = run_capability.get_workspace(initial_ctx, ref=selection_ref)
             if selection is None:
                 if isinstance(workspace, WorkspaceRef):
                     raise exceptions.UserError(
@@ -2920,9 +2916,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         return base, override_cap is not None
 
     def _bind_run_capabilities(
-        self,
-        base_capability: AbstractCapability[AgentDepsT],
-        extra_capabilities: list[AbstractCapability[AgentDepsT]],
+        self, extra_capabilities: list[AbstractCapability[AgentDepsT]]
     ) -> list[AbstractCapability[AgentDepsT]]:
         """Bind per-run capabilities to this agent via `for_agent` before capability resolution.
 
@@ -2930,15 +2924,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         `for_agent` is the caller's responsibility. `iter` and `realtime_session` both MUST call this —
         skipping it uses a capability that overrides `for_agent` (e.g. the durability capabilities)
         unbound, a silent divergence. KEEP the two call sites in sync.
-
-        The base capability vets the bound layer here, before any hook fires on it. This lets a
-        durability capability reject per-run capabilities it has no registered durable units for.
         """
-        bound = [capability.for_agent(self) for capability in extra_capabilities]
-        base_capability._validate_runtime_capabilities(  # pyright: ignore[reportPrivateUsage]
-            [capability for extra in bound for capability in leaf_capabilities(extra)]
-        )
-        return bound
+        return [capability.for_agent(self) for capability in extra_capabilities]
 
     async def _resolve_model_selection(
         self,
@@ -3085,6 +3072,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # The extras are the tail of `run_layers` (instrumentation, if added, is at the front). Slicing
         # from the front avoids the `[-0:]` full-list pitfall when there are no extras.
         resolved_extras = resolved_layers[len(resolved_layers) - len(extra_capabilities) :]
+        base_capability._validate_runtime_capabilities(  # pyright: ignore[reportPrivateUsage]
+            ctx,
+            [capability for extra in resolved_extras for capability in leaf_capabilities(extra)],
+        )
         # Two capabilities under one `id` name the same thing, so the tree is resolved down to one
         # each before anything reads it. Duplicates *within* a layer are one configuration stated
         # twice and `combine` settles them; they are combined here, exactly once, and the merged
@@ -3441,8 +3432,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # a `RealtimeModel`, never an `InstrumentedModel`, so there's no wrapped model to unwrap; the
         # settings come straight from `_resolve_instrumentation_settings()`. The helper skips injection if
         # the user already supplied an `Instrumentation` capability (agent- or call-level).
-        base_capability, base_is_override = self._base_run_capability()
-        extra_capabilities = self._bind_run_capabilities(base_capability, wrap_capability_funcs(capabilities))
+        extra_capabilities = self._bind_run_capabilities(wrap_capability_funcs(capabilities))
         instrumentation_settings = self._resolve_instrumentation_settings()
         instrumentation_cap = (
             InstrumentationCap(settings=instrumentation_settings) if instrumentation_settings is not None else None
@@ -3491,6 +3481,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # Realtime keeps its own surroundings: no `InstrumentedModel` unwrap, once-only model settings
         # (below), and the `_keep_native` drop plus the shared native ↔ local-tool swap (below). Keep
         # this in sync with the `iter` call site.
+        base_capability, base_is_override = self._base_run_capability()
         resolved_caps = await self._resolve_run_capabilities(
             run_context,
             base_capability=base_capability,

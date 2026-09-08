@@ -359,6 +359,7 @@ async def test_repeated_capability_operation_model_id_swaps_close_each_model() -
         ['enter', 'request', 'exit:none'],
     ]
 
+
 @pytest.mark.parametrize(
     ('stream', 'fail', 'expected_events'),
     [

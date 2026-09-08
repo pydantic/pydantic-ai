@@ -14,7 +14,7 @@ from pydantic_ai._instructions import (
     validate_instruction_id_segment,
 )
 from pydantic_ai._utils import aclose_all, gather, replace_no_init
-from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
 from pydantic_ai.settings import ModelSettings, merge_model_settings
 from pydantic_ai.tools import (
@@ -28,6 +28,7 @@ from pydantic_ai.tools import (
 from pydantic_ai.toolsets import AbstractToolset, AgentToolset, CombinedToolset
 from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
+from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 
 from ._on_event import collect_on_event_methods, marked_listens_to
 from ._ordering import collect_leaves, is_innermost, sort_capabilities
@@ -251,9 +252,11 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
             return self
         return self._rebound(new_caps)
 
-    def _validate_runtime_capabilities(self, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> None:
+    def _validate_runtime_capabilities(
+        self, ctx: RunContext[AgentDepsT], capabilities: Sequence[AbstractCapability[AgentDepsT]]
+    ) -> None:
         for capability in self.capabilities:
-            capability._validate_runtime_capabilities(capabilities)
+            capability._validate_runtime_capabilities(ctx, capabilities)
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
         # The children's contributions, not `_collect_instructions`: that asks whether a subclass
@@ -438,6 +441,24 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
 
                 native_tools.append(deferred_native_tool)
         return native_tools
+
+    def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
+        workspace: WorkspaceBackend | None = None
+        supplier: AbstractCapability[AgentDepsT] | None = None
+        for capability in self.capabilities:
+            if capability.defer_loading is True:
+                continue
+            contribution = capability.get_workspace(ctx, ref=ref)
+            if contribution is None:
+                continue
+            if supplier is not None:
+                raise UserError(
+                    'Exactly one capability may supply the run workspace; '
+                    f'{type(supplier).__name__} and {type(capability).__name__} both did.'
+                )
+            workspace = contribution
+            supplier = capability
+        return workspace
 
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
         wrapped = toolset

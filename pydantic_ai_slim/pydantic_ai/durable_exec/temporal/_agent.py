@@ -62,7 +62,6 @@ from ._run_context import (
     TEMPORAL_WORKSPACE_UNAVAILABLE_REASON,
     TemporalRunContext,
     deserialize_run_context,
-    prepare_workspace,
 )
 from ._toolset import (
     temporalize_toolset,
@@ -231,8 +230,6 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 deps=deps,
                 agent=self.wrapped,
             )
-            await prepare_workspace(run_context)
-
             async def streamed_response():
                 yield params.event
 

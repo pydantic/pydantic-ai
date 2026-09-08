@@ -7,32 +7,23 @@ from typing import Any, Generic, Literal, Protocol, TypeVar, cast
 from temporalio import activity
 from temporalio.workflow import ActivityConfig
 
-from pydantic_ai.durable_exec._capability_operation import CapabilityOperationParams
 from pydantic_ai.durable_exec._operation import (
     CapabilityOperationId,
     DurableOperation,
     DurableOperationConfig,
     DurableOperationId,
-    DynamicToolsetCallToolParams,
     EventStreamHandlerId,
-    EventStreamHandlerParams,
     ModelCancelSuspendedResponseId,
-    ModelCancelSuspendedResponseParams,
     ModelCompactMessagesId,
-    ModelCompactMessagesParams,
     ModelRequestId,
-    ModelRequestParams,
     OperationConfigRole,
     ParameterTransport,
     ToolsetCallToolId,
-    ToolsetCallToolParams,
     ToolsetGetInstructionsId,
     ToolsetGetToolsId,
-    ToolsetGetToolsParams,
     ToolsetValidateToolArgumentsId,
 )
 from pydantic_ai.durable_exec._operation_backend import BoundDurableOperation, RegisteredOperationBackend
-from pydantic_ai.durable_exec.temporal._run_context import prepare_workspace
 
 from ._activity_execution import execute_activity
 from ._operation_names import TemporalOperationNamer
@@ -191,28 +182,8 @@ class TemporalOperationBackend(RegisteredOperationBackend[ActivityConfig]):
         transport = cast(TemporalParameterTransport[ParamsT, WireT], operation.parameter_transport)
 
         async def activity_handler(params: Any, deps: Any = None) -> ResultT:
+            semantic_params = transport.load(cast(WireT, (params, deps)), runtime=self._runtime)
             async with heartbeating():
-                semantic_params = transport.load(cast(WireT, (params, deps)), runtime=self._runtime)
-                if isinstance(
-                    semantic_params,
-                    (ToolsetCallToolParams, DynamicToolsetCallToolParams, ToolsetGetToolsParams),
-                ):
-                    ctx = semantic_params.ctx
-                elif isinstance(
-                    semantic_params,
-                    (
-                        ModelRequestParams,
-                        ModelCompactMessagesParams,
-                        ModelCancelSuspendedResponseParams,
-                        EventStreamHandlerParams,
-                        CapabilityOperationParams,
-                    ),
-                ):
-                    ctx = semantic_params.run_context
-                else:
-                    ctx = None
-                if ctx is not None:
-                    await prepare_workspace(ctx)
                 return await operation.handler(semantic_params)
 
         # Existing operation transports retain their shipped wire dataclasses and activity

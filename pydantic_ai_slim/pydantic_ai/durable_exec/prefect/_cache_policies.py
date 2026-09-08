@@ -87,7 +87,7 @@ def _replace_run_context(
         if _is_container(value):
             inputs[key] = _map_container(value, lambda item: _replace_run_context({'_': item})['_'])
         elif _is_run_context(value):
-            projected: dict[str, Any] = {
+            inputs[key] = {
                 'deps': _cacheable_value(value.deps),
                 'agent': value.agent.name if value.agent is not None else None,
                 'model': value.model.model_id,
@@ -138,12 +138,8 @@ def _replace_run_context(
                 # entry. `_strip_cache_excluded_fields` recurses into the `UsageLimits` dataclass to
                 # hash it by value; `None` (bare/synthetic context) hashes distinctly.
                 'usage_limits': value.usage_limits,
+                'workspace': value.workspace.ref,
             }
-            # Workspace identity forks the key because tools can produce environment-specific
-            # results. Reading `ref` does no I/O: it is `None` until the backend has created or
-            # attached an environment, and `None` is itself a distinct key.
-            projected['workspace'] = value.workspace.ref
-            inputs[key] = projected
 
     return inputs
 

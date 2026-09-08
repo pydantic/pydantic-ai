@@ -123,7 +123,7 @@ except ImportError:  # pragma: lax no cover
 if sys.version_info >= (3, 14):  # pragma: lax no cover
     pytest.skip(
         'temporalio sandbox is incompatible with Python 3.14: '
-        'workspace module state accumulates across validation cycles causing import failures after ~22 workflows '
+        'sandbox module state accumulates across validation cycles causing import failures after ~22 workflows '
         '(remove when https://github.com/temporalio/sdk-python/issues/1326 closes)',
         allow_module_level=True,
     )
@@ -163,7 +163,7 @@ with workflow.unsafe.imports_passed_through():
     # Loads `vcr`, which Temporal doesn't like without passing through the import
     from ...conftest import IsDatetime, IsStr, try_import
 
-    # `_shared` loads the same workspace-sensitive modules, so import it passed-through as well.
+    # `_shared` loads the same sandbox-sensitive modules, so import it passed-through as well.
     from ._shared import (
         BASE_ACTIVITY_CONFIG,
         TASK_QUEUE,
@@ -208,12 +208,12 @@ pytestmark = [
 ]
 
 
-# Regression test for the workflow-workspace passthrough list (`_workflow_runner` in
+# Regression test for the workflow-sandbox passthrough list (`_workflow_runner` in
 # `durable_exec/temporal/__init__.py`). A `gateway/` model named by string is constructed lazily via
 # `infer_model` *inside* the workflow, so the provider's SDK is imported and its client built under
 # the `SandboxedWorkflowRunner`. Provider SDKs touch the filesystem/env at construction time, which
-# the workspace forbids unless the SDK module is passed through. Every other test builds its model at
-# module scope (outside the workspace), so this seam was previously uncovered. Construction-only (no
+# the sandbox forbids unless the SDK module is passed through. Every other test builds its model at
+# module scope (outside the sandbox), so this seam was previously uncovered. Construction-only (no
 # model request) keeps it deterministic.
 @workflow.defn
 class ConstructModelInWorkflow:
@@ -226,7 +226,7 @@ class ConstructModelInWorkflow:
 @pytest.mark.parametrize(
     ('model_name', 'expected_model_class'),
     [
-        # Only `gateway/` providers exercise the workspace: they import their SDK lazily inside
+        # Only `gateway/` providers exercise the sandbox: they import their SDK lazily inside
         # `gateway_provider()`, so the import and client construction run *inside* the workflow. Direct
         # providers (e.g. `anthropic:`) import their SDK at module level, which rides Temporal's
         # transitive passthrough of `pydantic_ai` and never trips — so they give no regression coverage.
@@ -238,11 +238,11 @@ class ConstructModelInWorkflow:
         # future SDK release makes a restricted call (e.g. reads `~/...`) during construction.
         pytest.param('gateway/openai-chat:gpt-5', 'OpenAIChatModel', id='gateway-openai'),
         # Positive coverage of the `google.auth` (+`certifi`) passthrough: `google-genai` lazily
-        # imports `google.auth` during construction, which the workspace flags without it.
+        # imports `google.auth` during construction, which the sandbox flags without it.
         pytest.param('gateway/google-cloud:gemini-2.5-pro', 'GoogleModel', id='gateway-google'),
     ],
 )
-async def test_model_construction_in_workflow_passes_workspace(
+async def test_model_construction_in_workflow_passes_sandbox(
     model_name: str,
     expected_model_class: str,
     client: Client,
@@ -256,7 +256,7 @@ async def test_model_construction_in_workflow_passes_workspace(
         client,
         task_queue=TASK_QUEUE,
         workflows=[ConstructModelInWorkflow],
-        # A workspace violation surfaces as a workflow *task* failure, which Temporal retries forever
+        # A sandbox violation surfaces as a workflow *task* failure, which Temporal retries forever
         # by default — so a regression would hang rather than fail. Promote any in-workflow exception
         # (e.g. `RestrictedWorkflowAccessError`) to a workflow failure so it surfaces immediately.
         workflow_failure_exception_types=[Exception],
@@ -275,7 +275,7 @@ async def test_model_construction_in_workflow_passes_workspace(
 
 # Regression test for the `httpx2` stack passthrough entries in `_workflow_runner`.
 # `ModelResponse.cost()` lazily imports genai-prices on first call; inside a workflow that trips the
-# workspace unless those modules are passed through (see #6215).
+# sandbox unless those modules are passed through (see #6215).
 @workflow.defn
 class CalculateCostInWorkflow:
     @workflow.run
@@ -289,7 +289,7 @@ class CalculateCostInWorkflow:
         return float(response.cost().total_price)
 
 
-async def test_response_cost_in_workflow_passes_workspace(client: Client):
+async def test_response_cost_in_workflow_passes_sandbox(client: Client):
     async with Worker(
         client,
         task_queue=TASK_QUEUE,
@@ -773,7 +773,7 @@ def test_temporal_run_context_serialization_is_exhaustive():
         '_cancellation',  # runtime-only controller holding a live asyncio task reference; cannot cross the activity boundary
         '_durable_operations',  # workflow-side callables cannot cross the activity boundary; worker dispatch is pre-registered
         '_run_capabilities_by_id',  # live per-run capability instances are recovered from the worker agent instead
-        'workspace',  # live facade is rebuilt from the separately serialized `_workspace_state` identity
+        'workspace',  # live facade cannot cross the activity boundary; only a concrete ref is optionally carried
     }
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
     serialized = set(TemporalRunContext.serialize_run_context(ctx))
@@ -1725,7 +1725,7 @@ class CancelSuspendedResponseWorkflow:
     @workflow.run
     async def run(self, response: ModelResponse) -> None:
         # In-workflow, `cancel_suspended_response` must dispatch the provider teardown to the
-        # `model_cancel_suspended_response` activity rather than make the raw HTTP call in the workspace.
+        # `model_cancel_suspended_response` activity rather than make the raw HTTP call in the sandbox.
         await cancel_temporal_model.cancel_suspended_response(response)
 
 
@@ -1970,7 +1970,7 @@ def test_pydantic_ai_plugin_no_converter_uses_memoizing_converter() -> None:
     assert result['data_converter'].payload_converter_class is PydanticAIPayloadConverter
 
 
-def test_pydantic_ai_plugin_passes_pydantic_monty_through_workspace() -> None:
+def test_pydantic_ai_plugin_passes_pydantic_monty_through_sandbox() -> None:
     runner = SandboxedWorkflowRunner()
     config: dict[str, Any] = {'workflow_runner': runner}
 
@@ -1982,7 +1982,7 @@ def test_pydantic_ai_plugin_passes_pydantic_monty_through_workspace() -> None:
     assert 'pydantic_monty' in configured_runner.restrictions.passthrough_modules
 
 
-async def test_pydantic_ai_plugin_runs_workflow_in_workspace(temporal_target: str) -> None:
+async def test_pydantic_ai_plugin_runs_workflow_in_sandbox(temporal_target: str) -> None:
     client = await Client.connect(temporal_target)
     async with Worker(
         client,
@@ -1997,7 +1997,7 @@ async def test_pydantic_ai_plugin_runs_workflow_in_workspace(temporal_target: st
             task_queue=TASK_QUEUE,
         )
 
-    assert result == 'workspaceed'
+    assert result == 'sandboxed'
 
 
 def test_pydantic_ai_plugin_with_stock_pydantic_payload_converter_upgraded() -> None:

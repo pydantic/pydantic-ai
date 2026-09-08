@@ -128,7 +128,7 @@ except ImportError:  # pragma: lax no cover
 if sys.version_info >= (3, 14):  # pragma: lax no cover
     pytest.skip(
         'temporalio sandbox is incompatible with Python 3.14: '
-        'workspace module state accumulates across validation cycles causing import failures after ~22 workflows '
+        'sandbox module state accumulates across validation cycles causing import failures after ~22 workflows '
         '(remove when https://github.com/temporalio/sdk-python/issues/1326 closes)',
         allow_module_level=True,
     )
@@ -167,7 +167,7 @@ with workflow.unsafe.imports_passed_through():
     # Loads `vcr`, which Temporal doesn't like without passing through the import
     from ...conftest import IsDatetime, IsInt, IsList, IsStr
 
-    # `_shared` loads the same workspace-sensitive modules, so import it passed-through as well.
+    # `_shared` loads the same sandbox-sensitive modules, so import it passed-through as well.
     from ._shared import (
         BASE_ACTIVITY_CONFIG,
         TASK_QUEUE,
@@ -1156,8 +1156,7 @@ async def test_durability_validates_only_resolved_runtime_capability_layers():
         return CombinedCapability([_BaseOne(), _BaseTwo(), _SkipRequest()])
 
     def extra_factory(ctx: RunContext[None]) -> AbstractCapability[None]:
-        # Never called: the per-run layer is rejected before its factory runs, which is the point.
-        return CombinedCapability([_ExtraOne(), _ExtraTwo()])  # pragma: no cover
+        return CombinedCapability([_ExtraOne(), _ExtraTwo()])
 
     agent = Agent(
         TestModel(),
@@ -1595,7 +1594,7 @@ _emitted_handler_events: list[tuple[str, str, bool]] = []
 
 async def _capability_event_handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
     async for event in stream:
-        # `isinstance` against the class this module imported, which is the point: the workspace
+        # `isinstance` against the class this module imported, which is the point: the sandbox
         # re-executes application modules, and the payload still validates into the host's class.
         if isinstance(event, DurableCheckpointEvent):
             _emitted_handler_events.append((type(event).__name__, event.label, activity.in_activity()))
@@ -1625,7 +1624,7 @@ async def test_durability_capability_event_reaches_event_stream_handler_activity
     reaches the run's event stream and is dispatched to the durability handler in its own activity,
     where it has to survive the payload round trip rather than degrading to `UnknownCapabilityEvent`.
 
-    Class identity survives too. The workspace re-executes application modules, so the workflow side
+    Class identity survives too. The sandbox re-executes application modules, so the workflow side
     holds its own copy of the event class, but `set_replay_isolation_guard` keeps the host's class
     registered and the family schema canonicalizes the copy on the way out. The handler's own
     `isinstance` check is what asserts it.
@@ -2624,7 +2623,7 @@ class DurabilityMCPDynamicToolsetAgentWorkflow:
 
 @pytest.mark.skip(
     reason=(
-        'Pending: replays of this MCP toolset workflow trip the Temporal workspace with '
+        'Pending: replays of this MCP toolset workflow trip the Temporal sandbox with '
         '`Module certifi was imported after initial workflow load`. Issue tracked.'
     )
 )
@@ -2671,7 +2670,7 @@ class DurabilityMCPToolsetAgentWorkflow:
 
 @pytest.mark.skip(
     reason=(
-        'Pending: replays of this MCP toolset workflow trip the Temporal workspace with '
+        'Pending: replays of this MCP toolset workflow trip the Temporal sandbox with '
         '`Module certifi was imported after initial workflow load`. Issue tracked.'
     )
 )
@@ -4575,7 +4574,7 @@ async def test_durability_prepare_renamed_tool_runs_in_activity(client: Client):
 
     The activity looks the tool up by the name the toolset holds it under, which the workflow sends
     alongside the prepared `tool_def`; looking it up by the model-visible name would raise the
-    tool-removal error for a tool that is still right there. Runs workspaceed, so the workflow's
+    tool-removal error for a tool that is still right there. Runs sandboxed, so the workflow's
     `prepare` result reaches the activity over the wire rather than through shared module state.
     """
     _renamed_tool_names.clear()
