@@ -83,12 +83,13 @@ def display_banner(**overrides: Any) -> None:
     _display.display_agent_banner(**kwargs)
 
 
-def find_nothing(name: str) -> None:
-    return None
-
-
 def find_anything(name: str) -> object:
     return object()
+
+
+def summarize(text: str) -> str:  # pragma: no cover
+    """An output function, which the banner names without ever calling."""
+    return text
 
 
 def test_render_banner(render: Callable[..., str]):
@@ -167,7 +168,7 @@ def test_render_banner_colors_the_logo_and_identity(monkeypatch: pytest.MonkeyPa
         pytest.param(int, 'output: int', id='class'),
         pytest.param(list[str], 'output: list[str]', id='parameterized'),
         pytest.param([int, str], 'output: int | str', id='list-of-types'),
-        pytest.param(find_nothing, 'output: find_nothing', id='output-function'),
+        pytest.param(summarize, 'output: summarize', id='output-function'),
         pytest.param(
             list[dict[str, list[tuple[int, str, bytes, float, complex, bool]]]],
             'output: list[dict[str, list[tuple[int, str, byt…',
