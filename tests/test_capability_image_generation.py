@@ -1456,12 +1456,12 @@ class TestImageGenerationCapability:
         result = await agent.run('Generate a test image')
 
         assert result.output == 'gave up'
-        retry_prompts = [
+        retry_parts = [
             part
             for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
             if part.outcome == 'retried'
         ]
-        assert [part.content for part in retry_prompts] == snapshot(
+        assert [part.content for part in retry_parts] == snapshot(
             ['image generation was blocked for content moderation']
         )
 
