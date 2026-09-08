@@ -4,7 +4,7 @@ These are unit tests rather than VCR tests because what they assert —
 `info.model_request_parameters.native_tools`, the native-tool objects the subagent hands its model —
 is internal to the request build and never reaches the wire, so a cassette could not pin it. The
 end-to-end wire proof for this feature is
-`tests/test_capability_native_or_local.py::TestImageGenerationCapability::test_image_generation_local_fallback`,
+`tests/test_capability_image_generation.py::TestImageGenerationCapability::test_image_generation_local_fallback`,
 which records a real OpenAI image-generation call and snapshots the outgoing `tools` payload.
 """
 

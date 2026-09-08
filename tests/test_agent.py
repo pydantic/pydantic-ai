@@ -10926,7 +10926,8 @@ async def test_thinking_only_response_after_tool_call_retries():
     )
 
 
-async def test_hitl_tool_approval():
+@pytest.mark.parametrize('serialize_history', [False, True])
+async def test_hitl_tool_approval(serialize_history: bool):
     def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
             return ModelResponse(
@@ -10950,9 +10951,11 @@ async def test_hitl_tool_approval():
     model = FunctionModel(model_function)
 
     agent = Agent(model, output_type=[str, DeferredToolRequests])
+    deleted_files: list[str] = []
 
     @agent.tool_plain(requires_approval=True)
     def delete_file(path: str) -> str:
+        deleted_files.append(path)
         return f'File {path!r} deleted'
 
     @agent.tool_plain
@@ -10960,6 +10963,7 @@ async def test_hitl_tool_approval():
         return f'File {path!r} created with content: {content}'
 
     result = await agent.run('Create new_file.py and delete ok_to_delete.py and never_delete.py')
+    assert deleted_files == []
     messages = result.all_messages()
     assert messages == snapshot(
         [
@@ -11018,12 +11022,17 @@ async def test_hitl_tool_approval():
         )
     )
 
+    if serialize_history:
+        messages = ModelMessagesTypeAdapter.validate_json(result.all_messages_json())
+        assert messages == result.all_messages()
+
     result = await agent.run(
         message_history=messages,
         deferred_tool_results=DeferredToolResults(
             approvals={'ok_to_delete': True, 'never_delete': ToolDenied('File cannot be deleted')},
         ),
     )
+    assert deleted_files == ['ok_to_delete.py']
     assert result.all_messages() == snapshot(
         [
             ModelRequest(

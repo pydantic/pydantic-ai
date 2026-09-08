@@ -5,7 +5,7 @@ import re
 import sys
 import uuid
 import warnings
-from collections.abc import AsyncIterable
+from collections.abc import AsyncIterable, Sequence
 from dataclasses import dataclass, replace
 from datetime import timedelta
 from decimal import Decimal
@@ -23,6 +23,7 @@ from pydantic_ai import (
     DocumentUrl,
     ExternalToolset,
     FunctionToolset,
+    ImageGenerator,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -52,6 +53,7 @@ from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import (
     Capability,
     DynamicCapability,
+    ImageGeneration,
     Instrumentation,
     NativeTool,
     ProcessEventStream,
@@ -68,6 +70,12 @@ from pydantic_ai.exceptions import (
     UnexpectedModelBehavior,
     UsageLimitExceeded,
     UserError,
+)
+from pydantic_ai.images import (
+    ImageGenerationInput,
+    ImageGenerationResult,
+    ImageGenerationSettings,
+    TestImageGenerationModel,
 )
 from pydantic_ai.messages import UploadedFile
 from pydantic_ai.models import (
@@ -2880,6 +2888,90 @@ async def test_durability_dynamic_capability_transparent_outside_workflow():
     result = await agent.run('Call the tool')
     assert result.output == '{"dynamic_tool":"inline result"}'
     assert in_activity_flags == [False]
+
+
+# --- ImageGeneration through a durable run ---
+
+
+class _DurabilityImageGenerationModel(TestImageGenerationModel):
+    """Fails the activity unless the direct generator ran inside one."""
+
+    async def generate(
+        self,
+        prompt: str,
+        *,
+        images: Sequence[ImageGenerationInput] | None = None,
+        settings: ImageGenerationSettings | None = None,
+    ) -> ImageGenerationResult:
+        assert activity.in_activity()
+        return await super().generate(prompt, images=images, settings=settings)
+
+
+def _durability_image_generation_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if len(messages) == 1:
+        return ModelResponse(parts=[ToolCallPart('generate_image', {'prompt': 'A tiny test image'})])
+    image = next(
+        part.content
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, ToolReturnPart)
+    )
+    assert isinstance(image, BinaryImage), image
+    return ModelResponse(parts=[TextPart(f'{image.media_type} {len(image.data)}')])
+
+
+_durability_image_generation_agent = Agent(
+    FunctionModel(_durability_image_generation_fn),
+    name='durability_image_generation_agent',
+    capabilities=[
+        ImageGeneration(
+            native=False,
+            local=ImageGenerator(_DurabilityImageGenerationModel()),
+            id='images',
+        ),
+        TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
+    ],
+)
+
+
+@workflow.defn
+class TemporalImageGenerationWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        return (await _durability_image_generation_agent.run('Generate an image')).output
+
+
+async def test_durability_image_generation_capability_runs_in_activity(client: Client):
+    """An `ImageGeneration` capability generates inside an activity, and the bytes cross back.
+
+    The pieces are pinned separately elsewhere — a `BinaryImage` as an activity result payload, the
+    capability toolset resolving activity-side — but not the combination this exercises: an agent
+    carrying `ImageGeneration(id=...)` registering its `generate_image` toolset with the worker and
+    running it in a durable workflow, with the generated image returned as the tool-result payload.
+
+    The tool return is only observable inside `_durability_image_generation_fn`, which is where the
+    `BinaryImage` check lives; the workflow hands back the agent's `str` output, so the projection is
+    how that observation gets out. `67` is the length of the fixed 1x1 PNG `TestImageGenerationModel`
+    returns, so the pair pins that a 67-byte `image/png` crossed the activity boundary intact.
+
+    A generator that ran in workflow code instead trips the `activity.in_activity()` assert above,
+    where an `AssertionError` is a workflow-*task* failure that Temporal retries forever — hence the
+    short `execution_timeout`, so that regression fails the test instead of hanging it.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[TemporalImageGenerationWorkflow],
+        plugins=[AgentPlugin(_durability_image_generation_agent)],
+    ):
+        output = await client.execute_workflow(
+            TemporalImageGenerationWorkflow.run,
+            id='test_temporal_image_generation',
+            task_queue=TASK_QUEUE,
+            execution_timeout=timedelta(seconds=30),
+        )
+    assert output == snapshot('image/png 67')
 
 
 # --- ToolReturn metadata round-trip ---
