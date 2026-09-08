@@ -16,6 +16,7 @@ import sniffio
 from pydantic import JsonValue
 from pytest import CaptureFixture
 from pytest_mock import MockerFixture
+from rich.cells import cell_len
 from rich.console import Console, RenderableType
 from rich.live import Live
 from rich.live_render import LiveRender
@@ -390,7 +391,8 @@ async def test_streaming_with_tool_calls(show_tool_calls: bool, live_frames: lis
 
 
 @pytest.mark.anyio
-async def test_tool_call_spacing_across_model_requests():
+@pytest.mark.parametrize('multiline', [False, True])
+async def test_tool_call_spacing_across_model_requests(multiline: bool):
     async def run_code_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
         count = sum(isinstance(part, ToolReturnPart) for message in messages for part in message.parts)
         if count == 3:
@@ -402,7 +404,9 @@ async def test_tool_call_spacing_across_model_requests():
                 yield '   '
             yield {
                 0: DeltaToolCall(
-                    name='run_code', json_args=json.dumps({'code': f'print({count})'}), tool_call_id=f'call_{count}'
+                    name='run_code',
+                    json_args=json.dumps({'code': f'print({count})' + ('\n# end' if multiline else '')}),
+                    tool_call_id=f'call_{count}',
                 )
             }
 
@@ -414,15 +418,16 @@ async def test_tool_call_spacing_across_model_requests():
 
     output = StringIO()
     await ask_agent(agent, 'go', stream=True, console=Console(file=output, width=80), code_theme='monokai')
-    assert [line.rstrip() for line in output.getvalue().splitlines()] == [
-        'Checking.',
-        '',
-        "▌ Called tool run_code(code='print(0)').",
-        "▌ Called tool run_code(code='print(1)').",
-        "▌ Called tool run_code(code='print(2)').",
-        '',
-        'Done.',
-    ]
+    expected = ['Checking.', '']
+    for count in range(3):
+        if multiline:
+            expected.extend(
+                ['▌ Called tool run_code(code=<2 lines>).', '▌   code:', f'▌     print({count})', '▌     # end']
+            )
+        else:
+            expected.append(f"▌ Called tool run_code(code='print({count})').")
+    expected.extend(['', 'Done.'])
+    assert [line.rstrip() for line in output.getvalue().splitlines()] == expected
 
 
 def _distinct_frames(frames: list[str]) -> list[str]:
@@ -1566,7 +1571,7 @@ def test_cli_no_tool_calls(
     calls: list[str] = []
 
     @agent.tool_plain
-    def run_code(token: Literal['private-preview-marker']) -> str:
+    def run_code(token: Literal['private-preview-marker\nline 2\nline 3\nline 4\nline 5\nline 6']) -> str:
         calls.append(token)
         print('Saved chart.')
         return 'saved'
@@ -1583,7 +1588,7 @@ def test_cli_no_tool_calls(
         assert cli(args) == 0
 
     output = capfd.readouterr().out
-    assert calls == ['private-preview-marker']
+    assert calls == ['private-preview-marker\nline 2\nline 3\nline 4\nline 5\nline 6']
     assert 'private-preview-marker' not in output
     assert 'Saved chart.' in output
     assert 'Finished.' in output
@@ -1598,12 +1603,19 @@ def test_cli_no_tool_calls(
     [
         pytest.param(
             {'code': "print(`[red]hello[/red]`)\nprint('  spaced  ')"},
-            snapshot('▌ Called tool run_code(code=<2 lines>).'),
+            snapshot("""\
+▌ Called tool run_code(code=<2 lines>).
+▌   code:
+▌     print(`[red]hello[/red]`)
+▌     print('  spaced  ')\
+"""),
             id='literal-code',
         ),
         pytest.param(
             {'code': 'x' * 1000},
-            snapshot('▌ Called tool run_code(code=<1,000 chars>).'),
+            snapshot(
+                "▌ Called tool run_code(code='xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'…)."
+            ),
             id='long-code',
         ),
         pytest.param(
@@ -1611,13 +1623,94 @@ def test_cli_no_tool_calls(
         ),
         pytest.param(
             {'first': 'x' * 1000, 'second': 'y' * 1000, 'third': 'useful'},
-            snapshot("▌ Called tool run_code(third='useful', first=<1,000 chars>, second=<1,000 chars>)."),
+            snapshot(
+                "▌ Called tool run_code(first='xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'…, second='yyyyyyyyyyy…."
+            ),
             id='many-arguments',
         ),
         pytest.param(
-            {'code': 'import pandas as pd\n' + 'print("data")\n' * 21, 'description': 'Plot quarterly revenue'},
-            snapshot("▌ Called tool run_code(description='Plot quarterly revenue', code=<22 lines>)."),
-            id='script-with-purpose',
+            {'code': 'import json\n\nvalues = [1, 2, 3]\nfor value in values:\n    print(value)'},
+            snapshot("""\
+▌ Called tool run_code(code=<5 lines>).
+▌   code:
+▌     import json
+▌
+▌     values = [1, 2, 3]
+▌     for value in values:
+▌         print(value)\
+"""),
+            id='5-line-script',
+        ),
+        pytest.param(
+            {'code': 'import json\n\nvalues = [1, 2, 3]\nfor value in values:\n    print(value)\nprint("done")'},
+            snapshot("""\
+▌ Called tool run_code(code=<6 lines>).
+▌   code:
+▌     import json
+▌
+▌     values = [1, 2, 3]
+▌     for value in values:
+▌         print(value)
+▌     … 1 more line\
+"""),
+            id='6-line-script',
+        ),
+        pytest.param(
+            {'code': 'import json\n' + 'print("data")\n' * 21},
+            snapshot("""\
+▌ Called tool run_code(code=<22 lines>).
+▌   code:
+▌     import json
+▌     print("data")
+▌     print("data")
+▌     print("data")
+▌     print("data")
+▌     … 17 more lines\
+"""),
+            id='large-script',
+        ),
+        pytest.param(
+            {'first': 'one\ntwo', 'second': 'three\nfour'},
+            snapshot("""\
+▌ Called tool run_code(first=<2 lines>, second=<2 lines>).
+▌   first:
+▌     one
+▌     two
+▌   second:
+▌     three
+▌     four\
+"""),
+            id='multiple-multiline-arguments',
+        ),
+        pytest.param(
+            {'code': 'x' * 300 + '\nlast line'},
+            snapshot("""\
+▌ Called tool run_code(code=<2 lines>).
+▌   code:
+▌     xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…
+▌     last line\
+"""),
+            id='wide-source-line',
+        ),
+        pytest.param(
+            {'code': "if True:\n\tprint('\x1b[2J')"},
+            snapshot("""\
+▌ Called tool run_code(code=<2 lines>).
+▌   code:
+▌     if True:
+▌         print('\\x1b[2J')\
+"""),
+            id='tabs-and-terminal-escapes',
+        ),
+        pytest.param(
+            {'code': 'e\u0301' * 100 + '\nend'},
+            snapshot("""\
+▌ Called tool run_code(code=<2 lines>).
+▌   code:
+▌     éééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé…
+▌     end\
+"""),
+            id='combining-characters',
         ),
         pytest.param(
             {'code': 'print(`[red]hello[/red]`)'},
@@ -1626,12 +1719,16 @@ def test_cli_no_tool_calls(
         ),
         pytest.param(
             {'code': 'print(1)\r\n'},
-            snapshot('▌ Called tool run_code(code=<1 line>).'),
+            snapshot("""\
+▌ Called tool run_code(code=<1 line>).
+▌   code:
+▌     print(1)\
+"""),
             id='one-line-with-ending',
         ),
         pytest.param(
             {'data': [1, 2, 3], 'options': {'private': 'hidden'}, 'limit': 5},
-            snapshot('▌ Called tool run_code(limit=5, data=<3 items>, options=<1 key>).'),
+            snapshot("▌ Called tool run_code(data=[1, 2, 3], options={'private': 'hidden'}, limit=5)."),
             id='collections',
         ),
         pytest.param(
@@ -1665,13 +1762,14 @@ async def test_tool_argument_preview(
     lines = [line.rstrip() for line in output.getvalue().splitlines()]
     assert executed == [arguments]
     assert lines[0] == ''
-    assert lines[2:] == ['', 'Done.']
+    assert lines[-2:] == ['', 'Done.']
+    notice = '\n'.join(lines[1:-2])
     if width == 1000:
-        assert lines[1] == expected
-        assert len(lines[1]) <= 135
+        assert notice == expected
+        assert all(cell_len(line) <= 135 for line in lines[1:-2])
     else:
         assert lines[1].startswith('▌ Called tool run_code(')
-        assert len(lines[1]) <= width
+        assert all(cell_len(line) <= width for line in lines[1:-2])
     assert any('Calling tool run_code(' in frame for frame in live_frames)
 
 

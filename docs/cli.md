@@ -46,22 +46,24 @@ Then running `clai` will start an interactive session where you can chat with th
 - `/cp`: Copy the last response to clipboard
 - `/usage`: Show cumulative token usage for the session (turns, input, output, requests, tool calls); add `--json` for a single-line JSON object
 
-When streaming (the default), function-tool calls show their name and a compact argument summary
-while running and when completed. Short arguments appear first; multiline strings show a line
-count, long single-line strings show a character count, and lists and dictionaries show item or
-key counts. For example, a tool receiving a script and a short description displays:
+When streaming (the default), function-tool calls show their name and bounded argument previews
+while running and when completed. Short arguments appear inline. Multiline strings display the
+first five lines, preserving indentation and blank lines, followed by the number of omitted lines:
 
 ```text
-Called tool run_code(description='Plot quarterly revenue', code=<22 lines>).
+Called tool run_code(code=<8 lines>).
+  code:
+    import json
+
+    values = [1, 2, 3]
+    for value in values:
+        print(value)
+    … 3 more lines
 ```
 
-The description in this example is an ordinary tool argument supplied by the model. To provide
-this context, your tool can accept a `description: str` argument and document that it should
-briefly explain the purpose of this call. The CLI does not infer a description from code. A call
-with only the script displays `Called tool run_code(code=<22 lines>).`.
-
-Each notice fits on one terminal line, with long summaries truncated. Consecutive calls appear
-together, separated from assistant text by a blank line.
+Each preview line is truncated to fit the terminal. Consecutive calls appear together, separated
+from assistant text by a blank line. Previews show actual argument contents, which may include
+sensitive data.
 
 Pass `--no-tool-calls` to hide these notices while keeping streamed responses, for example when
 Logfire already displays tool activity. This also hides argument previews if you do not want tool

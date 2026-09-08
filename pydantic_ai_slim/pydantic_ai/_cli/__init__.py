@@ -5,12 +5,13 @@ import functools
 import json
 import re
 import sys
-from collections.abc import Sequence, Sized
+from collections.abc import Sequence
 from contextlib import AsyncExitStack, ExitStack
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from reprlib import Repr
-from typing import Any, cast
+from typing import Any
 
 import anyio
 from pydantic import ImportString, TypeAdapter, ValidationError
@@ -531,7 +532,7 @@ async def ask_agent(
                 content_pieces: list[str | Text] = []
                 # Tool calls run concurrently and can return out of order, so in-flight calls are
                 # keyed by call id — rendering only the latest would erase the others' indicators.
-                pending_calls: dict[str, str] = {}
+                pending_calls: dict[str, _ToolCallPreview] = {}
                 updated_content = ''
                 live_started = False
 
@@ -576,13 +577,14 @@ async def ask_agent(
                         async with node.stream(agent_run.ctx) as handle_stream:
                             async for event in handle_stream:
                                 if isinstance(event, FunctionToolCallEvent):
-                                    pending_calls[event.tool_call_id] = _tool_call_summary(event.part)
+                                    pending_calls[event.tool_call_id] = _tool_call_preview(event.part)
                                 elif isinstance(event, FunctionToolResultEvent):
                                     # Retry results must also clear the running indicator.
-                                    summary = pending_calls.pop(event.tool_call_id, event.part.tool_name)
+                                    preview = pending_calls.pop(event.tool_call_id, None)
                                     if isinstance(event.part, ToolReturnPart):
-                                        content_pieces.append(Text(f'Called tool {summary}.'))
-                                calling = [Text(f'Calling tool {summary}…') for summary in pending_calls.values()]
+                                        preview = preview or _ToolCallPreview(event.part.tool_name)
+                                        content_pieces.append(preview.render(completed=True))
+                                calling = [preview.render(completed=False) for preview in pending_calls.values()]
                                 live.update(_cli_output([*content_pieces, *calling], console.width, code_theme))
 
             assert agent_run.result is not None
@@ -594,41 +596,59 @@ async def ask_agent(
 
 _TOOL_ARG_REPR = Repr()
 _TOOL_ARG_REPR.maxstring = _TOOL_ARG_REPR.maxother = 80
+_TOOL_ARG_REPR.maxlevel = 2
+_TOOL_ARG_REPR.maxdict = _TOOL_ARG_REPR.maxlist = 3
 _TOOL_PREVIEW_WIDTH = 120
 _NEWLINE = re.compile(r'\r\n?|\n')
+_CONTROL_CHARACTERS = re.compile(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]')
 
 
-def _tool_call_summary(part: ToolCallPart) -> str:
-    """Show short arguments first, keeping large inputs recognizable without retaining their contents."""
+@dataclass
+class _ToolCallPreview:
+    signature: str
+    details: str = ''
 
-    def is_large(value: object) -> bool:
-        return isinstance(value, (dict, list)) or (
-            isinstance(value, str) and (len(value) > 80 or '\n' in value or '\r' in value)
-        )
+    def render(self, *, completed: bool) -> Text:
+        heading = f'Called tool {self.signature}.' if completed else f'Calling tool {self.signature}…'
+        return Text(f'{heading}\n{self.details}' if self.details else heading)
 
-    preview = Text(f'{part.tool_name}(')
-    arguments = sorted(part.args_as_dict().items(), key=lambda item: is_large(item[1]))
-    for index, (key, value) in enumerate(arguments):
+
+def _tool_call_preview(part: ToolCallPart) -> _ToolCallPreview:
+    """Retain bounded argument previews, including the first five lines of multiline strings."""
+    signature = Text(f'{part.tool_name}(')
+    details: list[str] = []
+    for index, (key, value) in enumerate(part.args_as_dict().items()):
         if index:
-            preview.append(', ')
+            signature.append(', ')
         name = key if key.isidentifier() and len(key) <= 80 else _TOOL_ARG_REPR.repr(key)
         if isinstance(value, str) and ('\n' in value or '\r' in value):
             lines = sum(1 for _ in _NEWLINE.finditer(value)) + (not value.endswith(('\n', '\r')))
             summary = f'<{lines:,} line{"s" if lines != 1 else ""}>'
+            details.append(f'  {name}:')
+            start = 0
+            for _ in range(min(lines, 5)):
+                ending = _NEWLINE.search(value, start)
+                end = ending.start() if ending else len(value)
+                # Slice before constructing Text so long source lines are never retained in full.
+                source = value[start : min(end, start + _TOOL_PREVIEW_WIDTH)].expandtabs(4)
+                if end - start > _TOOL_PREVIEW_WIDTH:
+                    source += '…'
+                line = Text(_CONTROL_CHARACTERS.sub(lambda match: repr(match[0])[1:-1], source))
+                line.truncate(_TOOL_PREVIEW_WIDTH, overflow='ellipsis')
+                details.append(f'    {line.plain}')
+                start = ending.end() if ending else end
+            if lines > 5:
+                details.append(f'    … {lines - 5:,} more line{"s" if lines != 6 else ""}')
         elif isinstance(value, str) and len(value) > 80:
-            summary = f'<{len(value):,} chars>'
-        elif isinstance(value, (dict, list)):
-            size = len(cast(Sized, value))
-            unit = 'key' if isinstance(value, dict) else 'item'
-            summary = f'<{size:,} {unit}{"s" if size != 1 else ""}>'
+            summary = f'{value[:80]!r}…'
         else:
             summary = _TOOL_ARG_REPR.repr(value)
-        preview.append(f'{name}={summary}')
-        if preview.cell_len >= _TOOL_PREVIEW_WIDTH:
+        signature.append(f'{name}={summary}')
+        if signature.cell_len >= _TOOL_PREVIEW_WIDTH:
             break
-    preview.append(')')
-    preview.truncate(_TOOL_PREVIEW_WIDTH, overflow='ellipsis')
-    return preview.plain
+    signature.append(')')
+    signature.truncate(_TOOL_PREVIEW_WIDTH, overflow='ellipsis')
+    return _ToolCallPreview(signature.plain, '\n'.join(details))
 
 
 _BACKTICK_RUN = re.compile(r'`+')
@@ -643,12 +663,14 @@ def _cli_output(pieces: Sequence[str | Text], width: int, code_theme: str) -> Ma
         if markup:
             markup.append('  \n' if previous_tool and is_tool else '\n\n')
         if isinstance(piece, Text):
-            preview = piece.copy()
-            # Leave room for the blockquote border and padding.
-            preview.truncate(max(1, width - 4), overflow='ellipsis')
-            # A delimiter longer than any backtick run keeps code and markup in arguments literal.
-            delimiter = '`' * (max((len(run) for run in _BACKTICK_RUN.findall(preview.plain)), default=0) + 1)
-            markup.append(f'> {delimiter} {preview.plain} {delimiter}')
+            lines: list[str] = []
+            for preview in piece.split('\n', allow_blank=True):
+                # Leave room for the blockquote border and padding.
+                preview.truncate(max(1, width - 4), overflow='ellipsis')
+                # A delimiter longer than any backtick run keeps source code and arguments literal.
+                delimiter = '`' * (max((len(run) for run in _BACKTICK_RUN.findall(preview.plain)), default=0) + 1)
+                lines.append(f'> {delimiter} {preview.plain} {delimiter}')
+            markup.append('  \n'.join(lines))
         else:
             markup.append(piece)
         previous_tool = is_tool
