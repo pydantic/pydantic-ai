@@ -1238,12 +1238,7 @@ class ToolManager(Generic[AgentDepsT]):
             return await self.execute_tool_call(validated, wrap_validation_errors=wrap_validation_errors)
         if isinstance(tool_call_result, ModelRetry):
             raise ToolRetryError(
-                _messages.ToolReturnPart(
-                    content=tool_call_result.message,
-                    tool_name=call.tool_name,
-                    tool_call_id=call.tool_call_id,
-                    outcome='retried',
-                )
+                build_retried_tool_return(tool_call_result, tool_name=call.tool_name, tool_call_id=call.tool_call_id)
             )
         # TODO(v3): remove `RetryPromptPart`
         if isinstance(tool_call_result, _messages.RetryPromptPart):  # pyright: ignore[reportDeprecated]

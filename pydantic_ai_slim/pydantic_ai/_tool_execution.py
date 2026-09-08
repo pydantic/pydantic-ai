@@ -758,13 +758,11 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                 )
                 raise ToolFailedError(m)
             elif isinstance(tool_call_result, exceptions.ModelRetry):
-                m = _messages.ToolReturnPart(
-                    content=tool_call_result.message,
-                    tool_name=call.tool_name,
-                    tool_call_id=call.tool_call_id,
-                    outcome='retried',
+                raise ToolRetryError(
+                    _output.build_retried_tool_return(
+                        tool_call_result, tool_name=call.tool_name, tool_call_id=call.tool_call_id
+                    )
                 )
-                raise ToolRetryError(m)
             # TODO(v3): remove `RetryPromptPart`
             elif isinstance(tool_call_result, _messages.RetryPromptPart):  # pyright: ignore[reportDeprecated]
                 # A handler answering a deferred call with the deprecated part means what a
