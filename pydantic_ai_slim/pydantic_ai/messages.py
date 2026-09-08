@@ -1717,7 +1717,7 @@ error_details_ta = pydantic.TypeAdapter(list[pydantic_core.ErrorDetails], config
 
 
 _CLOSE_TAG_OPENERS = {
-    tag: re.compile(rf'<(?=\s*/\s*{tag}\s*>)', re.IGNORECASE) for tag in ('system', 'validation_errors')
+    tag: re.compile(rf'<(?=\s*/\s*{tag}(?=[\s/>]))', re.IGNORECASE) for tag in ('system', 'validation_errors')
 }
 """Per-tag patterns matching only the `<` of a closing tag, in every spelling a model might reach for.
 
