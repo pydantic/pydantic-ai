@@ -13,6 +13,7 @@ Pydantic AI is model-agnostic and has built-in support for multiple model provid
 * [Groq](groq.md)
 * [Hugging Face](huggingface.md)
 * [Mistral](mistral.md)
+* [OpenAI Codex](openai-codex.md) (via your ChatGPT/Codex subscription)
 * [OpenRouter](openrouter.md)
 * [Snowflake Cortex](snowflake.md)
 * [Z.AI](zai.md)

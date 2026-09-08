@@ -103,18 +103,9 @@ git clone git@github.com:<your username>/pydantic-ai.git
 cd pydantic-ai
 ```
 
-Install `uv` (version 0.4.30 or later) and `pre-commit`:
+[Install `uv`](https://docs.astral.sh/uv/getting-started/installation/). The minimum supported `uv` version is set by `tool.uv.required-version` in the repository's [`pyproject.toml`](https://github.com/pydantic/pydantic-ai/blob/main/pyproject.toml).
 
-- [`uv` install docs](https://docs.astral.sh/uv/getting-started/installation/)
-- [`pre-commit` install docs](https://pre-commit.com/#install)
-
-To install `pre-commit` you can run the following command:
-
-```bash
-uv tool install pre-commit
-```
-
-Install `pydantic-ai`, all dependencies and pre-commit hooks
+Install `pydantic-ai`, all dependencies, and pre-commit hooks. If `pre-commit` is not available, this also installs it with `uv`:
 
 ```bash
 make install
@@ -159,6 +150,21 @@ project. A narrowed run only ever considers tracked files, so run `make typechec
 relying on a green hook for a file you have not added; a fallback run hands Pyright the whole project
 and picks untracked files up with it.
 
+A full run is single-process unless `PYRIGHT_THREADS` says otherwise, and CI sets it to `auto`.
+The variable turns on Pyright's parallel check phase, which reaches the same diagnostics in less
+wall time: `auto` is up to one worker per logical core, and a positive integer caps them. A narrowed
+run stays single-process either way.
+
+```bash
+export PYRIGHT_THREADS=auto
+```
+
+Export it rather than setting it per command, so a hook run that falls back to the full check picks
+it up too. Every worker is a full Node process, so they pay for themselves only on a machine with
+the memory to hold them; one already near its limit swaps and comes out slower than the default.
+Unset the variable or set it to `1` to go back to a single process: anything Pyright cannot read as
+a positive integer, `0` and `off` included, means `auto`.
+
 ## Documentation Changes
 
 [`docs/navigation.yml`](https://github.com/pydantic/pydantic-ai/blob/main/docs/navigation.yml)
@@ -170,8 +176,9 @@ All routes in `docs/navigation.yml` are relative to the Pydantic AI documentatio
 page its complete canonical route in `slug`; use `aliases` only for redirect sources. Do not prefix
 either value with `/ai` or a leading slash.
 
-For the rendered site, use the documentation preview attached to a pull request after a maintainer
-adds the `trigger:docs` label.
+To validate navigation changes, ask a maintainer to add the `trigger:docs` label to the pull request.
+This checks the navigation manifest, referenced Markdown files, routes, aliases, and redirects in
+`pydantic/unified-docs` and posts the result on the PR. It does not build a rendered preview.
 
 CI checks that every link between doc pages resolves, anchor included, and fails on `Cannot find
 fragment`. A heading's anchor is generated from its text, so renaming one silently breaks every link

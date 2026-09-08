@@ -282,26 +282,37 @@ def has_stale_message_json(
     return False
 
 
-def provider_attributes(system: str, base_url: str | None = None) -> dict[str, AttributeValue]:
-    """Build the provider and server attributes shared by classic and realtime `chat` spans."""
-    attributes: dict[str, AttributeValue] = {
-        GEN_AI_PROVIDER_NAME_ATTRIBUTE: system,  # New OTel standard attribute
-        GEN_AI_SYSTEM_ATTRIBUTE: system,  # Preserved for backward compatibility (deprecated)
-    }
+def server_attributes(base_url: str | None) -> dict[str, AttributeValue]:
+    """Map a model's `base_url` to the OTel `server.*` attributes, omitting what it doesn't carry.
+
+    `base_url` is an overridable property returning an arbitrary string, and `urlparse` defers
+    authority validation to `hostname`/`port`, so a non-numeric port parses fine and only raises
+    when the port is read. Attributes are best-effort telemetry, so an uninterpretable authority
+    yields no attributes rather than failing the request.
+    """
+    attributes: dict[str, AttributeValue] = {}
     if base_url:
         try:
             parsed = urlparse(base_url)
-            # `urlparse` defers port validation to `.port`, so a malformed port raises on the read, not the parse.
             hostname, port = parsed.hostname, parsed.port
         except ValueError:
             pass
         else:
-            if hostname:  # pragma: no branch
+            if hostname:
                 attributes['server.address'] = hostname
-            if port:  # pragma: no branch
+            if port:
                 attributes['server.port'] = port
 
     return attributes
+
+
+def provider_attributes(system: str, base_url: str | None = None) -> dict[str, AttributeValue]:
+    """Build the provider and server attributes shared by classic and realtime `chat` spans."""
+    return {
+        GEN_AI_PROVIDER_NAME_ATTRIBUTE: system,  # New OTel standard attribute
+        GEN_AI_SYSTEM_ATTRIBUTE: system,  # Preserved for backward compatibility (deprecated)
+        **server_attributes(base_url),
+    }
 
 
 def model_attributes(model: AbstractModel) -> dict[str, AttributeValue]:
