@@ -50,13 +50,14 @@ def _blocking_stat() -> None:
     os.stat(__file__)
 
 
-def test_pytest_recording_configure_drops_google_oauth_token_requests() -> None:
+@pytest.mark.parametrize('url', ['https://oauth2.googleapis.com/token', 'https://auth.openai.com/oauth/token'])
+def test_pytest_recording_configure_drops_oauth_token_requests(url: str) -> None:
     vcr = RecordingVCR()
     pytest_recording_configure(None, vcr)  # pyright: ignore[reportArgumentType]
 
     before_record_request = vcr.before_record_request
     assert before_record_request is not None
-    request = Request('POST', 'https://oauth2.googleapis.com/token', None, dict[str, str]())
+    request = Request('POST', url, None, dict[str, str]())
 
     assert before_record_request(request) is None
 
