@@ -6,6 +6,7 @@ import asyncio
 import dataclasses
 from typing import Any
 
+import anyio
 import pytest
 from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
@@ -513,10 +514,10 @@ class TestInputGuardrailParallel:
         """If the caller cancels the run mid-flight, the `finally` block must still drain
         guard and handler tasks instead of leaking them.
 
-        Regression guard for a reviewed concern about whether `asyncio.shield` was needed
-        around the cleanup `gather`. It isn't — the outer cancel is consumed by the
-        `asyncio.wait` above, so the subsequent `cancel()` + `gather()` in `finally`
-        complete without being re-cancelled.
+        A single raw cancel is consumed by the `asyncio.wait` above the `finally`, so the
+        `cancel()` + `gather()` drain completes even without a shield. The shield matters
+        when the cancellation arrives through an already-cancelled anyio scope, covered by
+        `test_teardown_survives_cancelled_scope`.
         """
         run_ctx, req_ctx = _build_ctx_and_req()
 
@@ -547,6 +548,57 @@ class TestInputGuardrailParallel:
 
         leftover = {t for t in asyncio.all_tasks() if t is not current and not t.done()} - before
         assert leftover == set(), f'guard/handler tasks must be drained on outer cancel, got: {leftover}'
+
+    async def test_teardown_survives_cancelled_scope(self):
+        """The `finally` drain is shielded, so cancellation delivered through an
+        already-cancelled anyio scope (run cancellation, `anyio.fail_after`) cannot
+        abandon the guard and handler tasks mid-unwind (#559).
+
+        In a cancelled anyio scope every unshielded await is re-cancelled, so without the
+        shield `wrap_model_request` returns while the guard is still unwinding. Sequencing
+        is event-driven: the runner must stay blocked in the drain until the guard's
+        cancellation handler is released, and the handler must have fully unwound by the
+        time the runner completes.
+        """
+        run_ctx, req_ctx = _build_ctx_and_req()
+        started = asyncio.Event()
+        cancel_seen = asyncio.Event()
+        release = asyncio.Event()
+        unwound = asyncio.Event()
+
+        async def slow_handler(_: Any) -> ModelResponse:
+            started.set()
+            await asyncio.Event().wait()
+            return ModelResponse(parts=[TextPart(content='never')])  # pragma: no cover
+
+        async def slow_guard(_: str) -> bool:
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                cancel_seen.set()
+                await release.wait()
+                unwound.set()
+                raise
+            return True  # pragma: no cover
+
+        ig = InputGuardrail(guard=slow_guard, parallel=True)
+        scope = anyio.CancelScope()
+
+        async def runner() -> None:
+            with scope:
+                await ig.wrap_model_request(run_ctx, request_context=req_ctx, handler=slow_handler)
+
+        task = asyncio.create_task(runner())
+        await started.wait()
+        scope.cancel()
+        await cancel_seen.wait()
+        for _ in range(5):
+            await asyncio.sleep(0)
+        assert not task.done(), 'the drain must wait for the guard to finish unwinding'
+        release.set()
+        await task
+        assert scope.cancelled_caught
+        assert unwound.is_set()
 
 
 class TestInputGuardrailTracing:

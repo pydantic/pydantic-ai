@@ -22,6 +22,8 @@ from collections.abc import Callable, Container, Coroutine
 from dataclasses import dataclass, field
 from typing import Any
 
+import anyio
+
 try:
     from pydantic_monty import (
         CollectString,
@@ -131,8 +133,15 @@ class MontyExecutor:
                 # point; await them so dispatched work (e.g. sub-agent runs mutating shared
                 # usage) has fully unwound before this returns. `return_exceptions=True` keeps
                 # one task's teardown error from masking the original exception, and the
-                # results are deliberately discarded.
-                await asyncio.gather(*cancelled, return_exceptions=True)
+                # results are deliberately discarded. Shielded: run cancellation can land here
+                # with an enclosing anyio scope already cancelled, and that scope re-cancels
+                # its tasks on every event-loop cycle -- each delivery either aborts this await
+                # outright (abandoning the tasks mid-unwind) or is forwarded through the
+                # `gather` into every task, breaking any await their cleanup performs. The
+                # shield holds for anyio-scope cancellation; a raw second `Task.cancel()` can
+                # still pierce it.
+                with anyio.CancelScope(shield=True):
+                    await asyncio.gather(*cancelled, return_exceptions=True)
         return state
 
     async def _handle_function(self, snapshot: FunctionSnapshot) -> MontyState:

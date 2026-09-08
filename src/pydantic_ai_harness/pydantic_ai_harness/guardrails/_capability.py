@@ -34,6 +34,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+import anyio
 from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, Instrumentation, WrapModelRequestHandler
 from pydantic_ai.exceptions import ModelRetry, SkipModelRequest, UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, UserPromptPart
@@ -301,7 +302,26 @@ class InputGuardrail(AbstractCapability[AgentDepsT]):
                 if not task.done():
                     task.cancel()
 
-            await asyncio.gather(guard_task, handler_task, return_exceptions=True)
+            # Run cancellation (`cancel_run()`, `anyio.fail_after`) can land here with an
+            # enclosing anyio scope already cancelled, and that scope re-cancels its tasks on
+            # every event-loop cycle -- each delivery either aborts the drain below outright
+            # (abandoning the guard and handler tasks mid-unwind) or is forwarded through the
+            # `gather` into both tasks, breaking any await their cleanup performs. Shield the
+            # drain so both tasks fully unwind before the cancellation propagates. The shield
+            # holds for anyio-scope cancellation; a raw second `Task.cancel()` can still
+            # pierce it.
+            #
+            # Not an anyio task group, deliberately. The children being raw asyncio tasks is
+            # what confines the re-delivery to this host task: anyio only re-cancels tasks its
+            # scopes track, so each child sees exactly one `.cancel()` and unwinds cleanly. As
+            # task-group children they would be re-cancelled inside their own cleanup on every
+            # cycle -- the failure above, one level down. A task group also cannot shield only
+            # its drain (`tg.cancel_scope.shield = True` covers the whole race, blocking
+            # `cancel_run()` outright), and anyio >= 4 wraps child exceptions in
+            # `BaseExceptionGroup`, which would keep the guard's `SkipModelRequest` from
+            # reaching pydantic-ai unwrapped.
+            with anyio.CancelScope(shield=True):
+                await asyncio.gather(guard_task, handler_task, return_exceptions=True)
 
 
 @dataclass

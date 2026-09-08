@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, Literal, TypeVar
 from unittest.mock import MagicMock
 
+import anyio
 import pytest
 from pydantic_ai import (
     AbstractToolset,
@@ -2516,6 +2517,102 @@ class TestCodeMode:
         assert unwound.is_set()
         with pytest.raises(ModelRetry, match='Type error in code'):
             await wrapper.call_tool('run_code', {'code': 'x'}, ctx, tools['run_code'])
+
+    async def test_cancelled_scope_teardown_awaits_dispatched_work(self) -> None:
+        """The executor's cleanup `gather` is shielded from an already-cancelled anyio
+        scope, so still-pending dispatched work unwinds gracefully before `run_code`
+        returns (#559).
+
+        The sandbox defers `blocker()` and `cleanup_tool()`, then calls the sequential
+        `barrier()`. The barrier awaits `blocker` first, leaving `cleanup_tool`'s task
+        in `_pending`; cancelling the scope kills `blocker` at the barrier await, so
+        the executor's cleanup owns a still-running dispatched task while the enclosing
+        scope stays cancelled. Without the shield, that scope re-cancels the host every
+        event-loop cycle: either the cleanup `gather` is abandoned outright (the pending
+        task outlives `run_code`) or each re-cancel is forwarded through the `gather` to
+        the pending task, breaking every await of its cancellation handler. With the
+        shield the task sees exactly one cancellation, its handler's awaits survive, and
+        the runner stays blocked in the cleanup until the handler is released. Sequencing
+        is event-driven; the yield loop only gives an unshielded cleanup cycles to
+        misbehave.
+        """
+        blocker_started = asyncio.Event()
+        cleanup_started = asyncio.Event()
+        cancel_seen = asyncio.Event()
+        release = asyncio.Event()
+        unwound = asyncio.Event()
+        extra_cancels = 0
+
+        async def blocker() -> str:
+            blocker_started.set()
+            await asyncio.Event().wait()
+            return 'unreachable'  # pragma: no cover
+
+        async def cleanup_tool() -> str:
+            nonlocal extra_cancels
+            cleanup_started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                cancel_seen.set()
+                while not release.is_set():
+                    try:
+                        await release.wait()
+                    except asyncio.CancelledError:  # pragma: no cover - regression path without the teardown shield
+                        extra_cancels += 1
+                unwound.set()
+                raise
+            return 'unreachable'  # pragma: no cover
+
+        def barrier() -> str:
+            return 'unreachable'  # pragma: no cover - cancelled at the barrier, never dispatched
+
+        class _SeqToolset(AbstractToolset[object]):
+            """Marks `barrier` as sequential; the other tools stay parallel."""
+
+            def __init__(self) -> None:
+                self._inner = _build_function_toolset(blocker, cleanup_tool, barrier)
+
+            @property
+            def id(self) -> str | None:
+                return None  # pragma: no cover
+
+            async def get_tools(self, ctx: RunContext[object]) -> dict[str, ToolsetTool[object]]:
+                tools = await self._inner.get_tools(ctx)
+                return {
+                    n: dc_replace(t, tool_def=dc_replace(t.tool_def, sequential=True)) if n == 'barrier' else t
+                    for n, t in tools.items()
+                }
+
+            async def call_tool(
+                self, name: str, tool_args: dict[str, Any], ctx: RunContext[object], tool: ToolsetTool[object]
+            ) -> Any:
+                return await self._inner.call_tool(name, tool_args, ctx, tool)
+
+        wrapper = CodeModeToolset[object](wrapped=_SeqToolset(), tool_selector='all')
+        ctx = await build_ctx(None, wrapper)
+        tools = await wrapper.get_tools(ctx)
+
+        scope = anyio.CancelScope()
+
+        async def runner() -> None:
+            with scope:
+                code = 'a = blocker()\nb = cleanup_tool()\nbarrier()'
+                await wrapper.call_tool('run_code', {'code': code}, ctx, tools['run_code'])
+
+        task = asyncio.create_task(runner())
+        await blocker_started.wait()
+        await cleanup_started.wait()
+        scope.cancel()
+        await cancel_seen.wait()
+        for _ in range(5):
+            await asyncio.sleep(0)
+        assert not task.done(), 'cleanup must wait for dispatched work to finish unwinding'
+        release.set()
+        await task
+        assert scope.cancelled_caught
+        assert unwound.is_set()
+        assert extra_cancels == 0, f'cancelled scope must not re-cancel dispatched work, got {extra_cancels} re-cancels'
 
     async def test_worker_crash_becomes_model_retry_and_resets_state(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """A `MontyCrashedError` (worker death) becomes a retry with the session reset.
