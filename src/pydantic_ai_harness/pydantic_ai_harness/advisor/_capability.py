@@ -143,6 +143,7 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
                 settings = ModelSettings(max_tokens=max_tokens) if max_tokens is not None else None
                 advisor_agent = Agent(
                     model,
+                    name='advisor',
                     output_type=str,
                     instructions=(
                         'You are an expert advisor. Give concise, actionable advice to the executor model '

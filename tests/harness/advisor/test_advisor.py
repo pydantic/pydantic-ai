@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
 import pytest
 from inline_snapshot import snapshot
@@ -24,6 +25,10 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import UsageLimits
 
 from pydantic_ai_harness.advisor import Advisor
+from tests.conftest import agent_run_names  # pyright: ignore[reportMissingTypeStubs]
+
+if TYPE_CHECKING:
+    from logfire.testing import CaptureLogfire
 
 pytestmark = pytest.mark.anyio
 
@@ -117,6 +122,27 @@ class TestAdvisor:
 
         assert advisor_prompts == ['How should I deploy this?']
         assert advisor_settings == [ModelSettings(max_tokens=2048)]
+
+    @pytest.mark.usefixtures('instrument_all_agents')
+    async def test_local_advisor_run_is_named_after_the_capability(self, capfire: CaptureLogfire) -> None:
+        def advisor_model(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[TextPart('Use a staged rollout.')])
+
+        def executor(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+            if not _has_tool_return(messages):
+                return ModelResponse(parts=[ToolCallPart('advisor', {'prompt': 'How?'}, tool_call_id='advisor-1')])
+            return ModelResponse(parts=[TextPart('done')])
+
+        advisor = _ProviderFunctionModel('anthropic', advisor_model)
+        agent = Agent(
+            _ProviderFunctionModel('anthropic', executor, supports_advisor=True),
+            name='outer',
+            capabilities=[Advisor(advisor)],
+        )
+
+        await agent.run('Plan the deployment.')
+
+        assert 'advisor' in agent_run_names(capfire)
 
     async def test_unsupported_native_profile_exposes_local_tool(self) -> None:
         seen: list[ModelRequestParameters] = []

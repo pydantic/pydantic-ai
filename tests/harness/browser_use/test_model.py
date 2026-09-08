@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+from typing import TYPE_CHECKING
 
 import pytest
 from browser_use.llm.messages import (
@@ -29,6 +30,10 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 
 from pydantic_ai_harness.browser_use import PydanticAIChatModel, resolve_chat_model
+from tests.conftest import agent_run_names  # pyright: ignore[reportMissingTypeStubs]
+
+if TYPE_CHECKING:
+    from logfire.testing import CaptureLogfire
 
 
 class _Facts(BaseModel):
@@ -152,6 +157,13 @@ class TestPydanticAIChatModel:
         assert isinstance(facts.completion, _Facts)
         assert isinstance(text.completion, str)
         assert isinstance(other.completion, _Other)
+
+    @pytest.mark.usefixtures('instrument_all_agents')
+    async def test_run_is_named_after_the_capability(self, capfire: CaptureLogfire) -> None:
+        model = PydanticAIChatModel(TestModel())
+        await model.ainvoke([UserMessage(content='hello')])
+
+        assert agent_run_names(capfire) == ['browser_use']
 
     def test_identity_properties(self) -> None:
         model = PydanticAIChatModel('test')

@@ -7,7 +7,7 @@ import os
 import time
 from datetime import timedelta
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -62,6 +62,10 @@ from pydantic_ai_harness.tool_output_limits._payload import (
 )
 from pydantic_ai_harness.tool_output_limits._store import _safe_segment
 from tests._recording_durability import RecordingDurability  # pyright: ignore[reportMissingTypeStubs]
+from tests.conftest import agent_run_names  # pyright: ignore[reportMissingTypeStubs]
+
+if TYPE_CHECKING:
+    from logfire.testing import CaptureLogfire
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -639,6 +643,21 @@ class TestSummarize:
 
         assert out == 'THE SUMMARY'
 
+    @pytest.mark.usefixtures('instrument_all_agents')
+    async def test_summarizer_run_is_named_after_the_capability(self, capfire: CaptureLogfire):
+        def large_output() -> str:
+            return 'x' * 100
+
+        agent = Agent(
+            TestModel(call_tools='all'),
+            name='outer',
+            capabilities=[ToolOutputLimits(bands=[Band(over=5, action=Summarize(model=_fixed_model('THE SUMMARY')))])],
+            toolsets=[FunctionToolset(tools=[large_output], id='large-output')],
+        )
+        await agent.run('call the tool')
+
+        assert 'tool_output_limits' in agent_run_names(capfire)
+
     async def test_model_summarizer_dispatches_as_durable_operation(self):
         def large_output() -> str:
             return 'x' * 100
@@ -742,7 +761,9 @@ class TestSummarize:
         with patch('pydantic_ai.Agent', return_value=mock_agent) as agent_type:
             assert await _run(cap, 'x' * 100, ctx=ctx) == 'FROM NAMED MODEL'
 
-        agent_type.assert_called_once_with('test:summary', instructions='You summarize oversized tool output.')
+        agent_type.assert_called_once_with(
+            'test:summary', name='tool_output_limits', instructions='You summarize oversized tool output.'
+        )
 
     async def test_realtime_run_without_a_model_raises(self):
         """A realtime run has no request-response model to summarize with; ask for one (#585)."""

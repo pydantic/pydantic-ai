@@ -338,7 +338,7 @@ class LLMReminder(Generic[AgentDepsT]):
     async def _generate_from_transcript(self, ctx: RunContext[AgentDepsT], transcript: str) -> str | None:
         agent = self._agent
         if agent is None:
-            agent = Agent(self.model, instructions=self.instructions, output_type=str)
+            agent = Agent(self.model, name='system_reminders', instructions=self.instructions, output_type=str)
             self._agent = agent
         result = await agent.run(transcript, usage=ctx.usage, usage_limits=reserved_usage_limits(ctx.usage_limits))
         text = result.output.strip()

@@ -474,6 +474,11 @@ harness-specific. Token counts use the strategy's `tokenizer` when set, otherwis
 ~4-chars-per-token heuristic.
 Raw message content is not recorded.
 
+`SummarizingCompaction` runs its summarizer as a nested `Agent` named `summarizing_compaction`,
+so under `Agent.instrument_all()` (or `logfire.instrument_pydantic_ai()`) its runs carry
+`agent_name = summarizing_compaction`. Filter on that to track summarization usage and cost
+separately from the parent agent.
+
 ## Compaction receipts
 
 Compaction is a memory wipe the model cannot veto and often cannot detect, which invites

@@ -675,6 +675,7 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
         # `Model[Any]`, mirroring core's own `reinject_system_prompt` idiom.
         agent: Agent[None, str] = Agent(
             cast('Model[Any] | str', model),
+            name='summarizing_compaction',
             instructions=self.instructions,
             model_settings=self.model_settings,
         )

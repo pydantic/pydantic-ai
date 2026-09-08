@@ -153,7 +153,7 @@ class PydanticAIChatModel(BaseChatModel):
     def __init__(self, model: Model | KnownModelName | str) -> None:
         self._model = infer_model(model)
         self.model: str = self._model.model_name
-        self._agent = Agent(self._model)
+        self._agent = Agent(self._model, name='browser_use')
 
     @property
     def provider(self) -> str:

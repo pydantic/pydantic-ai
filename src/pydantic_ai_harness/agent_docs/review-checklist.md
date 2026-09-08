@@ -97,6 +97,9 @@ README, or source code.
 ## Tests
 
 - Tests cover the public `Agent(..., capabilities=[...])` path where possible.
+- Every `Agent` the capability constructs internally passes `name=` (the
+  capability's snake_case name) and a test asserts it on the run span. See
+  `capability-authoring.md` "Internal Agents Carry The Capability's Name".
 - Lower-level tests cover lifecycle, schemas, retries, and metadata when needed.
 - Error paths and important option combinations are covered.
 - For a stateful capability, or one that overrides `for_run`, require a public

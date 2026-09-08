@@ -129,6 +129,24 @@ warnings where practical.
   editors, and stack traces (`modal_sandbox` is the reference; `filesystem` is
   0-based pending migration).
 
+### Internal Agents Carry The Capability's Name
+
+A capability that constructs its own `Agent` (a summarizer, an advisor, a
+reminder generator) passes `name=` explicitly, set to the capability's
+snake_case name: `Agent(model, name='summarizing_compaction', ...)`. That name
+is the `agent_name` on the run span, which is what Logfire groups runs and
+costs by.
+
+Without it, core infers the name from the caller's frame locals. Inside a
+capability method that lands on `agent`, `self`, or whatever a durability
+wrapper happened to bind, so the run is unattributable in tracing. Matching
+the capability name lets a reader trace spend straight back to the
+capability without knowing its internals.
+
+Test it through `instrument_all_agents` + `agent_run_names(capfire)` from
+`tests/conftest.py`; per-agent `instrument=` on the outer agent does not reach
+the inner one.
+
 ### Policy Lives In The Pluggable Component
 
 When a capability takes a dependency behind a `Protocol` -- `PlanStore`,
