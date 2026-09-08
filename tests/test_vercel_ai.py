@@ -5319,6 +5319,32 @@ async def test_adapter_load_tool_return_non_multimodal_binary_kind_dict_preserve
     assert tool_returns[0].content == snapshot({'kind': 'binary', 'data': {'0': 104, '1': 105}, 'label': 'foo'})
 
 
+async def test_adapter_load_tool_return_binary_mapping_without_data_preserved():
+    """A `kind: 'binary'` user mapping without `data` must not gain a `data: None` key."""
+    output = {'kind': 'binary', 'media_type': 'application/json', 'rows': [1, 2]}
+    ui_messages: list[UIMessage] = [
+        UIMessage(id='m1', role='user', parts=[TextUIPart(text='go')]),
+        UIMessage(
+            id='m2',
+            role='assistant',
+            parts=[
+                ToolOutputAvailablePart(
+                    type='tool-get_rows',
+                    tool_call_id='tc-1',
+                    state='output-available',
+                    input={},
+                    output=output,
+                )
+            ],
+        ),
+    ]
+
+    reloaded = VercelAIAdapter.load_messages(ui_messages)
+    tool_returns = list(iter_message_parts(reloaded, ModelRequest, ToolReturnPart))
+    assert len(tool_returns) == 1
+    assert tool_returns[0].content == output
+
+
 async def test_adapter_tool_return_text_only_unchanged():
     """Text-only tool returns serialize as the literal string and round-trip unchanged."""
     messages = [
