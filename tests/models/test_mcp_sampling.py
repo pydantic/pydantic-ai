@@ -11,10 +11,12 @@ from pydantic_ai import (
     ModelResponse,
     SystemPromptPart,
     TextPart,
+    ToolReturnPart,
     UserPromptPart,
 )
 from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import UnexpectedModelBehavior
+from pydantic_ai.messages import RetryPromptPart, ToolCallPart
 
 from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsNow, IsStr, try_import
@@ -180,4 +182,75 @@ def test_assistant_text_history_complex():
     assert any(
         isinstance(message.content, TextContent) and message.content.text == '<system>system content</system>'
         for message in sampling_messages
+    )
+
+
+def test_tool_history_rendered_as_text():
+    """A history containing a tool call/return is rendered as text instead of raising.
+
+    The MCP sampling protocol only carries text/image/audio content, so a conversation that used
+    tools on another model can't round-trip natively — but it should map to readable text rather
+    than crash with `UnexpectedModelBehavior` (or silently drop the tool result).
+    """
+    result = CreateMessageResult(
+        role='assistant', content=TextContent(type='text', text='text content'), model='test-model'
+    )
+    create_message = AsyncMock(return_value=result)
+    agent = Agent(model=MCPSamplingModel(fake_session(create_message)))
+
+    tool_call_id = 'pyd_ai_test_12345'
+    history = [
+        ModelRequest(parts=[UserPromptPart(content='what time is it')]),
+        ModelResponse(
+            parts=[ToolCallPart(tool_name='get_time', args={'tz': 'UTC'}, tool_call_id=tool_call_id)],
+            model_name='test-model',
+        ),
+        ModelRequest(parts=[ToolReturnPart(tool_name='get_time', content='12:00', tool_call_id=tool_call_id)]),
+    ]
+
+    result = agent.run_sync('thanks', message_history=history)
+    assert result.output == snapshot('text content')
+
+    sampling_messages = create_message.call_args.args[0]
+    assert [(m.role, m.content.text) for m in sampling_messages] == snapshot(
+        [
+            ('user', 'what time is it'),
+            ('assistant', '[Tool pyd_ai_test_12345: get_time({"tz":"UTC"})]'),
+            ('user', '[Tool pyd_ai_test_12345: get_time returned: 12:00]'),
+            ('user', 'thanks'),
+        ]
+    )
+
+
+def test_retry_prompt_history_rendered_as_text():
+    """A `RetryPromptPart` from a prior turn is rendered as text instead of being dropped."""
+    result = CreateMessageResult(
+        role='assistant', content=TextContent(type='text', text='text content'), model='test-model'
+    )
+    create_message = AsyncMock(return_value=result)
+    agent = Agent(model=MCPSamplingModel(fake_session(create_message)))
+
+    tool_call_id = 'pyd_ai_test_67890'
+    history = [
+        ModelRequest(parts=[UserPromptPart(content='what time is it')]),
+        ModelResponse(
+            parts=[ToolCallPart(tool_name='get_time', args={}, tool_call_id=tool_call_id)],
+            model_name='test-model',
+        ),
+        ModelRequest(
+            parts=[RetryPromptPart(content='wrong arguments', tool_name='get_time', tool_call_id=tool_call_id)]
+        ),
+    ]
+
+    result = agent.run_sync('try again', message_history=history)
+    assert result.output == snapshot('text content')
+
+    sampling_messages = create_message.call_args.args[0]
+    assert [(m.role, m.content.text) for m in sampling_messages] == snapshot(
+        [
+            ('user', 'what time is it'),
+            ('assistant', '[Tool pyd_ai_test_67890: get_time({})]'),
+            ('user', '[Tool pyd_ai_test_67890: get_time error: wrong arguments\n\nFix the errors and try again.]'),
+            ('user', 'try again'),
+        ]
     )
