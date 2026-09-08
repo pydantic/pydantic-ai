@@ -4723,10 +4723,11 @@ async def test_anthropic_opus_47_dedups_sampling_warning_across_settings_and_ext
     with pytest.warns(UserWarning) as recorded:
         await agent.run('What is 2+2?')
 
-    sampling_warnings = [str(w.message) for w in recorded if 'Sampling parameters' in str(w.message)]
-    assert sampling_warnings == [
+    sampling_warnings = [w for w in recorded if 'Sampling parameters' in str(w.message)]
+    assert [str(w.message) for w in sampling_warnings] == [
         f"Sampling parameters ['temperature', 'top_k'] are not supported by '{model_name}'. These settings will be ignored."
     ]
+    assert all(w.filename.endswith('/pydantic_ai/models/anthropic.py') for w in sampling_warnings)
 
 
 @pytest.mark.parametrize('model_name', ['claude-opus-4-7', 'claude-opus-4-8'])

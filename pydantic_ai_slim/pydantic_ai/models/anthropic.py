@@ -1078,12 +1078,17 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 model_request_parameters, output_object=replace(model_request_parameters.output_object, strict=True)
             )
 
-        prepared_settings, model_request_parameters = super().prepare_request(model_settings, model_request_parameters)
-        if profile.get('anthropic_disallows_sampling_settings', False):
-            prepared_settings = self._apply_model_settings_filter(
-                prepared_settings, self._drop_unsupported_sampling_settings
-            )
-        return prepared_settings, model_request_parameters
+        return super().prepare_request(model_settings, model_request_parameters)
+
+    def _prepare_model_settings(
+        self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
+    ) -> ModelSettings | None:
+        del model_request_parameters
+        if self.profile.get('anthropic_disallows_sampling_settings', False) and model_settings:
+            filtered: ModelSettings = {**model_settings}
+            self._drop_unsupported_sampling_settings(filtered)
+            return filtered or None
+        return model_settings
 
     def _drop_unsupported_sampling_settings(self, model_settings: ModelSettings) -> None:
         dropped = {setting for setting in ANTHROPIC_SAMPLING_PARAMS if setting in model_settings}
@@ -1102,7 +1107,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             warnings.warn(
                 f'Sampling parameters {ordered} are not supported by {self.model_name!r}. These settings will be ignored.',
                 UserWarning,
-                stacklevel=3,
+                stacklevel=4,
             )
 
     def _translate_thinking(

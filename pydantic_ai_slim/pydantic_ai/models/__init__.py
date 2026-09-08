@@ -614,17 +614,11 @@ class Model(AbstractModel, Generic[InterfaceClient]):
 
         return model_request_parameters
 
-    @staticmethod
-    def _apply_model_settings_filter(
-        model_settings: ModelSettings | None, filter_settings: Callable[[ModelSettings], None]
+    def _prepare_model_settings(
+        self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
     ) -> ModelSettings | None:
-        """Apply an in-place filter to a copy of model settings, preserving the caller's input."""
-        if not model_settings:
-            return model_settings
-
-        filtered: ModelSettings = {**model_settings}
-        filter_settings(filtered)
-        return filtered or None
+        """Customize merged model settings after generic request preparation."""
+        return model_settings
 
     def prepare_request(
         self,
@@ -719,6 +713,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 tool_visibility={t.name: 'visible' for t in params.function_tools},
             )
 
+        model_settings = self._prepare_model_settings(model_settings, params)
         return model_settings, params
 
     def prepare_messages(
