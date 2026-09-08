@@ -3952,7 +3952,7 @@ class OpenAIStreamedResponse(StreamedResponse):
     _provider_timestamp: datetime | None = None
     _timestamp: datetime = field(default_factory=_now_utc)
     _model_settings: OpenAIChatModelSettings | None = None
-    _text_vendor_part_id: str = field(default='content', init=False)
+    _vendor_part_id: str = field(default='content', init=False)
     _has_refusal: bool = field(default=False, init=False)
     _refusal_text: str = field(default='', init=False)
     _has_finish_reason: bool = field(default=False, init=False)
@@ -4100,7 +4100,7 @@ class OpenAIStreamedResponse(StreamedResponse):
         content = choice.delta.content
         if content:
             for event in self._parts_manager.handle_text_delta(
-                vendor_part_id=self._text_vendor_part_id,
+                vendor_part_id=self._vendor_part_id,
                 content=content,
                 thinking_tags=self._model_profile.get('thinking_tags', DEFAULT_THINKING_TAGS),
                 ignore_leading_whitespace=self._model_profile.get('ignore_streamed_leading_whitespace', False),
@@ -4124,7 +4124,7 @@ class OpenAIStreamedResponse(StreamedResponse):
             )
             if maybe_event is not None:
                 if isinstance(maybe_event, PartStartEvent):
-                    self._text_vendor_part_id = f'content-after-tool-{maybe_event.index}'
+                    self._vendor_part_id = f'{self._vendor_part_id}-{maybe_event.index}'
                 yield maybe_event
 
     def _map_provider_details(self, chunk: ChatCompletionChunk) -> dict[str, Any] | None:
