@@ -236,6 +236,16 @@ A `prepare` method can be registered via the `prepare` kwarg to any of the tool 
 
 The `prepare` method has type [`ToolPrepareFunc`][pydantic_ai.tools.ToolPrepareFunc]. It receives [`RunContext`][pydantic_ai.tools.RunContext] and a pre-built [`ToolDefinition`][pydantic_ai.tools.ToolDefinition]. It can return that definition unchanged or modified, return a new definition, or return `None` to omit the tool for that step.
 
+!!! warning "Don't register tools from inside `prepare`"
+
+    A `prepare` method runs while the toolset is iterating its registered tools to build the step's tool
+    definitions, so registering a new tool on the same toolset from within a `prepare` callback (for
+    example via [`FunctionToolset.add_function`][pydantic_ai.toolsets.function.FunctionToolset.add_function])
+    is not supported and raises an error. To make tools available dynamically during a run, build a
+    [dynamic toolset](toolsets.md#dynamically-building-a-toolset), filter or extend the definitions with
+    the agent-wide `prepare_tools` hook (see [Agent-wide Dynamic Tools](#prepare-tools)), or mark tools
+    for [deferred loading](toolsets.md#deferred-loading).
+
 Here's a simple `prepare` method that only includes the tool if the value of the dependency is `42`.
 
 As with the previous example, we use [`TestModel`][pydantic_ai.models.test.TestModel] to demonstrate the behavior without calling a real model.
