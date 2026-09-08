@@ -72,12 +72,14 @@ agent = Agent(model)
 Copilot's catalog varies by subscription and changes often, so Pydantic AI ships no fixed list — any id is accepted and sent to Copilot exactly as you wrote it, dots included. List the ids your own plan serves with:
 
 ```bash
-curl -H "Authorization: Bearer $GITHUB_COPILOT_API_KEY" https://api.githubcopilot.com/models
+curl -H "Authorization: Bearer $GITHUB_COPILOT_API_KEY" \
+     -H "Copilot-Integration-Id: vscode-chat" \
+     https://api.githubcopilot.com/models
 ```
 
 Each entry's `supported_endpoints` says which API serves it; Pydantic AI needs `/chat/completions` in that list.
 
-The listing is a floor rather than the full set, so an id missing from it is worth trying anyway: at the time of writing `gemini-3.7-flash` and `gemini-3.8-flash` are served on Chat Completions while appearing nowhere in the response.
+The listing depends on the `Copilot-Integration-Id` header, which `GitHubCopilotProvider` sends on every request, so an `Authorization`-only call returns fewer ids than the provider can actually reach — the Gemini ids, at the time of writing.
 
 Two `400` responses tell you why an id didn't work:
 

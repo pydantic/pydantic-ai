@@ -83,9 +83,9 @@ def _github_copilot_overlay(model_name: str, family_profile: ModelProfile | None
         # names `OpenAIChatModel` falls back to, so without this the reasoning is dropped — the exact
         # defect this provider exists to fix. Probed live 2026-09-07 on `claude-sonnet-5`,
         # `gemini-3.7-flash` and `gemini-3.8-flash`: all three return `reasoning_text` alongside
-        # `content`, on the streamed deltas as well as the non-streamed message. Note the Gemini ids
-        # are absent from `GET /models` while `/chat/completions` serves them, so the catalog is a
-        # floor, not the reachable set.
+        # `content`, on the streamed deltas as well as the non-streamed message. The Gemini ids are
+        # only listed by `GET /models` when the request carries the `copilot-integration-id` header
+        # this provider always sends; without it the listing is shorter and hides them.
         #
         # The other reachable families are deliberately left without a field name, because the same
         # probes found they emit none: `gpt-5.4` and `kimi-k3` answer with `content`/`padding`/`role`
