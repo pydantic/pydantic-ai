@@ -4,6 +4,7 @@ import json
 import sys
 import types
 from collections.abc import AsyncIterator, Callable, Iterator
+from contextlib import nullcontext
 from dataclasses import dataclass
 from io import StringIO
 from pathlib import Path
@@ -16,6 +17,7 @@ from pytest import CaptureFixture
 from pytest_mock import MockerFixture
 from rich.console import Console, RenderableType
 from rich.live import Live
+from rich.live_render import LiveRender
 
 from pydantic_ai import Agent, ModelMessage, ModelResponse, ModelRetry, TextPart, ToolCallPart
 from pydantic_ai.capabilities import NativeTool
@@ -435,7 +437,9 @@ def live_frames(monkeypatch: pytest.MonkeyPatch) -> list[str]:
 
     def capture_update(self: Live, renderable: RenderableType, *, refresh: bool = False) -> None:
         output = StringIO()
-        Console(file=output, width=100).print(renderable)
+        Console(file=output, width=self.console.width, height=self.console.height).print(
+            LiveRender(renderable, vertical_overflow='ellipsis')
+        )
         frames.append('\n'.join(line.rstrip() for line in output.getvalue().splitlines()).rstrip())
         return original_update(self, renderable, refresh=refresh)
 
@@ -1587,19 +1591,40 @@ def test_cli_no_tool_calls(
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize('width', [40, 1000])
 @pytest.mark.parametrize(
-    ('argument_name', 'code'),
-    [('code', "print(`[red]hello[/red]`)\nprint('  spaced  ')"), ('code', 'x' * 1000), ('bad\nkey', 'hello')],
-    ids=['literal-code', 'long-code', 'multiline-key'],
+    ('arguments', 'expected'),
+    [
+        pytest.param(
+            {'code': "print(`[red]hello[/red]`)\nprint('  spaced  ')"},
+            snapshot('▌ Called tool run_code(code="print(`[red]hello[/red]`)\\nprint(\'  spaced  \')").'),
+            id='literal-code',
+        ),
+        pytest.param(
+            {'code': 'x' * 1000},
+            snapshot(
+                "▌ Called tool run_code(code='xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx...xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx')."
+            ),
+            id='long-code',
+        ),
+        pytest.param(
+            {'bad\nkey': 'hello'}, snapshot("▌ Called tool run_code('bad\\nkey'='hello')."), id='multiline-key'
+        ),
+        pytest.param(
+            {'first': 'x' * 1000, 'second': 'y' * 1000, 'third': 'not shown'},
+            snapshot(
+                "▌ Called tool run_code(first='xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx...xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', second='yyyyyyyyyyyyyy…."
+            ),
+            id='many-arguments',
+        ),
+    ],
 )
-async def test_tool_argument_preview(argument_name: str, code: str, live_frames: list[str]):
+async def test_tool_argument_preview(arguments: dict[str, str], expected: str, width: int, live_frames: list[str]):
     async def code_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
         if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
             yield 'Done.'
         else:
-            yield {
-                0: DeltaToolCall(name='run_code', json_args=json.dumps({argument_name: code}), tool_call_id='call_1')
-            }
+            yield {0: DeltaToolCall(name='run_code', json_args=json.dumps(arguments), tool_call_id='call_1')}
 
     agent = Agent(FunctionModel(stream_function=code_stream))
     executed: list[dict[str, str]] = []
@@ -1610,19 +1635,18 @@ async def test_tool_argument_preview(argument_name: str, code: str, live_frames:
         return 'ok'
 
     output = StringIO()
-    await ask_agent(agent, 'go', True, Console(file=output, width=100), 'monokai')
+    await ask_agent(agent, 'go', True, Console(file=output, width=width), 'monokai')
     lines = [line.rstrip() for line in output.getvalue().splitlines()]
-    assert executed == [{argument_name: code}]
+    assert executed == [arguments]
     assert lines[0] == ''
     assert lines[2:] == ['', 'Done.']
-    if len(code) > 100:
-        assert lines[1].startswith("▌ Called tool run_code(code='")
-        assert lines[1].endswith('…')
-        assert len(lines[1]) <= 100
+    if width == 1000:
+        assert lines[1] == expected
+        assert len(lines[1]) <= 135
     else:
-        key = argument_name if argument_name.isidentifier() else repr(argument_name)
-        assert lines[1] == f'▌ Called tool run_code({key}={code!r}).'
-        assert any(f'Calling tool run_code({key}={code!r})…' in frame for frame in live_frames)
+        assert lines[1].startswith('▌ Called tool run_code(')
+        assert len(lines[1]) <= width
+    assert any('Calling tool run_code(' in frame for frame in live_frames)
 
 
 @pytest.mark.anyio
@@ -1647,3 +1671,33 @@ async def test_streaming_preserves_markdown_references(show_tool_calls: bool):
     assert 'Checking the docs.' in rendered
     assert '[the docs][docs]' not in rendered
     assert 'Confirmed.' in rendered
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize('fail', [False, True])
+async def test_hidden_tool_calls_keep_working_indicator(live_frames: list[str], fail: bool):
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+            yield 'Done.'
+        else:
+            yield '\n\n'.join(f'Checking item {index}.' for index in range(10))
+            yield {0: DeltaToolCall(name='slow_tool', json_args='{}', tool_call_id='call_1')}
+
+    agent = Agent(FunctionModel(stream_function=stream))
+    during_tool: list[str] = []
+
+    @agent.tool_plain
+    async def slow_tool() -> str:
+        during_tool.append(live_frames[-1] if live_frames else '')
+        if fail:
+            raise RuntimeError('tool failed')
+        return 'ok'
+
+    output = StringIO()
+    with pytest.raises(RuntimeError, match='tool failed') if fail else nullcontext():
+        await ask_agent(agent, 'go', True, Console(file=output, width=80, height=5), 'monokai', show_tool_calls=False)
+    assert len(during_tool[0].splitlines()) == 5
+    assert 'Working on it' in during_tool[0]
+    assert 'slow_tool' not in during_tool[0]
+    assert 'Working on it' not in output.getvalue()
+    assert ('Done.' in output.getvalue()) is not fail

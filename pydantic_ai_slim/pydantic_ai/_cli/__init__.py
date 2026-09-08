@@ -9,6 +9,7 @@ from collections.abc import Sequence
 from contextlib import AsyncExitStack, ExitStack
 from datetime import datetime, timezone
 from pathlib import Path
+from reprlib import Repr
 from typing import Any
 
 import anyio
@@ -18,7 +19,14 @@ from .. import __version__, models, usage as _usage
 from .._run_context import AgentDepsT
 from ..agent import AbstractAgent, Agent
 from ..exceptions import UserError
-from ..messages import FunctionToolCallEvent, FunctionToolResultEvent, ModelMessage, ModelResponse, ToolReturnPart
+from ..messages import (
+    FunctionToolCallEvent,
+    FunctionToolResultEvent,
+    ModelMessage,
+    ModelResponse,
+    ToolCallPart,
+    ToolReturnPart,
+)
 from ..models import infer_model, known_model_names
 from ..native_tools import NATIVE_TOOLS_REQUIRING_CONFIG, SUPPORTED_NATIVE_TOOLS
 from ..output import OutputDataT
@@ -33,7 +41,7 @@ try:
     from prompt_toolkit.buffer import Buffer
     from prompt_toolkit.document import Document
     from prompt_toolkit.history import FileHistory
-    from rich.console import Console, ConsoleOptions, RenderResult
+    from rich.console import Console, ConsoleOptions, Group, RenderResult
     from rich.live import Live
     from rich.markdown import CodeBlock, Heading, Markdown
     from rich.status import Status
@@ -554,20 +562,23 @@ async def ask_agent(
                             content_pieces.append(updated_content)
                         updated_content = ''
 
+                        if not show_tool_calls:
+                            output = _cli_output(content_pieces, console.width, code_theme)
+                            live.update(Group(status.renderable, output))
+                            try:
+                                # Exiting the stream context drains its events and executes the tools.
+                                async with node.stream(agent_run.ctx):
+                                    pass
+                            finally:
+                                live.update(output)
+                            continue
+
                         async with node.stream(agent_run.ctx) as handle_stream:
                             async for event in handle_stream:
-                                if not show_tool_calls:
-                                    continue
                                 if isinstance(event, FunctionToolCallEvent):
-                                    args = ', '.join(
-                                        f'{key if key.isidentifier() else repr(key)}={value!r}'
-                                        for key, value in event.part.args_as_dict().items()
-                                    )
-                                    pending_calls[event.tool_call_id] = f'{event.part.tool_name}({args})'
+                                    pending_calls[event.tool_call_id] = _tool_call_summary(event.part)
                                 elif isinstance(event, FunctionToolResultEvent):
-                                    # Pop on any result, not just a `ToolReturnPart`: a call that
-                                    # comes back as a `RetryPromptPart` would otherwise stay pending
-                                    # and pin its indicator for the rest of the run.
+                                    # Retry results must also clear the running indicator.
                                     summary = pending_calls.pop(event.tool_call_id, event.part.tool_name)
                                     if isinstance(event.part, ToolReturnPart):
                                         content_pieces.append(Text(f'Called tool {summary}.'))
@@ -579,6 +590,28 @@ async def ask_agent(
     finally:
         if usage is not None:
             usage.incr(turn_usage)
+
+
+_TOOL_ARG_REPR = Repr()
+_TOOL_ARG_REPR.maxstring = _TOOL_ARG_REPR.maxother = 80
+_TOOL_ARG_REPR.maxlevel = 2
+_TOOL_ARG_REPR.maxdict = _TOOL_ARG_REPR.maxlist = 3
+_TOOL_PREVIEW_WIDTH = 120
+
+
+def _tool_call_summary(part: ToolCallPart) -> str:
+    """Bound representations before retaining them or repeatedly rendering streamed output."""
+    preview = Text(f'{part.tool_name}(')
+    for index, (key, value) in enumerate(part.args_as_dict().items()):
+        if index:
+            preview.append(', ')
+        name = key if key.isidentifier() and len(key) <= 80 else _TOOL_ARG_REPR.repr(key)
+        preview.append(f'{name}={_TOOL_ARG_REPR.repr(value)}')
+        if preview.cell_len >= _TOOL_PREVIEW_WIDTH:
+            break
+    preview.append(')')
+    preview.truncate(_TOOL_PREVIEW_WIDTH, overflow='ellipsis')
+    return preview.plain
 
 
 _BACKTICK_RUN = re.compile(r'`+')
