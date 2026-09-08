@@ -169,11 +169,13 @@ def test_an_edit_checks_everything_that_imports_it(project: Path):
 
 
 def test_an_edit_leaves_a_test_file_that_imports_it_alone(project: Path):
-    # `tests/test_leaf.py` imports `leaf.py`, and waits for CI rather than being checked here.
+    # The recorded edge proves `tests/test_leaf.py` reaches `leaf.py`, and it waits for CI anyway.
     _typecheck()
     _edit(project, 'pkg_src/pkg/leaf.py')
 
     assert _typecheck().checked == ['pkg_src/pkg/leaf.py', 'pkg_src/pkg/middle.py', 'pkg_src/pkg/top.py']
+    checkpoint = json.loads(_checkpoint(project).read_text(encoding='utf-8'))
+    assert 'pkg_src/pkg/leaf.py' in checkpoint['files']['tests/test_leaf.py']['imports']
 
 
 def test_an_edit_to_a_test_file_checks_it(project: Path):
@@ -495,6 +497,35 @@ def test_a_run_over_the_time_budget_fails_and_records_nothing(
     recorder = _typecheck(seconds=10.5)
 
     assert recorder.exit_code == 1
+    assert 'Pyright passed in 10.5s, over the 10.0s `PYRIGHT_TIME_BUDGET`.' in capsys.readouterr().out
+    assert not _checkpoint(project).exists()
+
+
+def test_a_failing_run_over_the_time_budget_reports_the_failure_not_the_time(
+    project: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+):
+    # Pyright's own exit code is the answer; how long it took to reach it says nothing more.
+    monkeypatch.setenv('PYRIGHT_TIME_BUDGET', '10')
+
+    recorder = _typecheck(fails=True, seconds=10.5)
+
+    assert recorder.exit_code == 1
+    assert 'PYRIGHT_TIME_BUDGET' not in capsys.readouterr().out
+    assert not _checkpoint(project).exists()
+
+
+def test_ci_over_the_time_budget_fails_and_records_nothing(
+    project: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+):
+    # The pre-commit step that sets `PYRIGHT_TIME_BUDGET` sets `CI` too, so the full run handed
+    # to the Makefile is the only one production measures.
+    monkeypatch.setenv('CI', 'true')
+    monkeypatch.setenv('PYRIGHT_TIME_BUDGET', '10')
+
+    recorder = _typecheck(seconds=10.5)
+
+    assert recorder.exit_code == 1
+    assert recorder.commands == _FULL_RUN
     assert 'Pyright passed in 10.5s, over the 10.0s `PYRIGHT_TIME_BUDGET`.' in capsys.readouterr().out
     assert not _checkpoint(project).exists()
 

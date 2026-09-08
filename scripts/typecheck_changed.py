@@ -171,17 +171,23 @@ class _BudgetedRunner:
 
 
 def main(run: Runner = run_command, clock: Clock = time.monotonic) -> int:
-    """Type-check the files the working tree's changes can reach, and return Pyright's exit code."""
+    """Type-check the files the working tree's changes can reach, and return an exit code.
+
+    Pyright's own, or `0` when no change reaches a file it reports on; `1` for a run that passed
+    but outlasted `PYRIGHT_TIME_BUDGET`; `2` for a budget that does not read as seconds, which
+    runs nothing.
+    """
     budget: float | None = None
     setting = os.environ.get('PYRIGHT_TIME_BUDGET', '')
     if setting:
         try:
             budget = float(setting)
         except ValueError:
-            budget = None
+            budget = math.nan
         # A misconfigured budget has to be loud, so nothing runs until this one reads as seconds.
-        # `nan` and `inf` are rejected here because neither is a budget a run can be measured against.
-        if budget is None or not (math.isfinite(budget) and budget > 0):
+        # A value that is not a number at all becomes `nan`, and `nan` and `inf` are both rejected
+        # here because neither is a budget a run can be measured against.
+        if not (math.isfinite(budget) and budget > 0):
             print(f'`PYRIGHT_TIME_BUDGET` is `{setting}`, which is not a finite positive number of seconds.')
             return 2
     runner = _BudgetedRunner(run, clock, budget)
@@ -476,8 +482,11 @@ def _tracked_files() -> list[str]:
 
     The import graph is a property of the source tree, not of Pyright's file list: a file
     Pyright reports nothing about is still read for whoever imports it, so it belongs in the
-    graph even though it never belongs on the command line. A narrowed run never sees an
-    untracked file; a fallback run does, because Pyright walks the project itself.
+    graph even though it never belongs on the command line. Neither a narrowed run nor a fallback
+    this script decides for itself ever sees an untracked file, because both hand Pyright a file
+    list built from this one. Only the runs handed to `make typecheck-pyright` -- `CI`, an
+    interpreter older than 3.11, and a Pyright configuration this cannot reproduce -- walk the
+    project themselves and pick untracked files up.
     """
     listed = _git('ls-files', '-z').split('\0')
     # A file removed from the working tree but not yet from the index is still listed, and
