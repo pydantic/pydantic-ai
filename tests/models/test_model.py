@@ -5,6 +5,7 @@ from importlib import import_module
 from unittest.mock import patch
 
 import pytest
+from genai_prices.data_snapshot import get_snapshot
 
 from pydantic_ai import Agent, UserError
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
@@ -227,6 +228,14 @@ TEST_CASES = [
         'openrouter',
         OpenRouterModel,
     ),
+    pytest.param(
+        {'VLLM_BASE_URL': 'http://localhost:8000/v1/'},
+        'vllm:Qwen/Qwen3-32B',
+        'Qwen/Qwen3-32B',
+        'vllm',
+        'openai',
+        OpenAIChatModel,
+    ),
 ]
 
 
@@ -397,14 +406,56 @@ def test_infer_model_profile(model_id: str, is_default: bool):
     ],
 )
 def test_infer_model_profile_matches_provider(model_id: str, provider_path: str, model_name: str):
-    """Verify infer_model_profile returns the same profile as the provider's model_profile."""
+    """Verify provider profile values are preserved when model metadata is added."""
     module_path, class_name = provider_path.rsplit('.', 1)
     module = import_module(module_path)
     provider_class = getattr(module, class_name)
 
     profile = infer_model_profile(model_id)
     provider_profile = provider_class.model_profile(model_name)
-    assert profile == provider_profile
+    assert provider_profile is not None
+    assert {key: value for key, value in profile.items() if key != 'context_window'} == provider_profile
+
+
+@pytest.mark.parametrize(
+    ('gateway_model_id', 'direct_model_id'),
+    [
+        ('gateway/openai:gpt-5', 'openai:gpt-5'),
+        ('gateway/chat:gpt-5', 'openai:gpt-5'),
+        ('gateway/responses:gpt-5', 'openai:gpt-5'),
+        ('gateway/anthropic:claude-sonnet-4-5', 'anthropic:claude-sonnet-4-5'),
+        (
+            'gateway/converse:anthropic.claude-sonnet-4-5-20250929-v1:0',
+            'bedrock:anthropic.claude-sonnet-4-5-20250929-v1:0',
+        ),
+        ('gateway/google:gemini-2.5-flash', 'google-cloud:gemini-2.5-flash'),
+    ],
+)
+def test_infer_model_profile_context_window_through_gateway(gateway_model_id: str, direct_model_id: str):
+    """A gateway model ID gets the same `context_window` as the provider it routes to, aliases included."""
+    direct = infer_model_profile(direct_model_id).get('context_window')
+    assert direct is not None
+    assert infer_model_profile(gateway_model_id).get('context_window') == direct
+
+
+def test_infer_model_profile_respects_explicit_unknown_context_window():
+    """An explicit provider value suppresses the genai-prices lookup for raw model IDs."""
+    with patch(
+        'pydantic_ai.providers.openai.OpenAIProvider.model_profile',
+        return_value=ModelProfile(context_window=None),
+    ):
+        assert infer_model_profile('openai:gpt-5').get('context_window') is None
+
+
+def test_infer_model_profile_fills_default_profile_with_context_window():
+    """Metadata inferred for a model without a provider profile preserves the default profile."""
+    with (
+        patch('pydantic_ai.providers.openai.OpenAIProvider.model_profile', return_value=None),
+        patch('pydantic_ai.models.lookup_context_window', return_value=123),
+    ):
+        profile = infer_model_profile('openai:gpt-5')
+
+    assert profile == {**DEFAULT_PROFILE, 'context_window': 123}
 
 
 def test_custom_provider_instance_method_model_profile():
@@ -557,3 +608,64 @@ def test_prepare_messages_system_prompt_wrapping(
 async def test_model_default_async_context_returns_model() -> None:
     model = TestModel()
     assert await AbstractModel.__aenter__(model) is model
+
+
+def test_profile_context_window_from_genai_prices():
+    """`Model.profile` fills `context_window` from genai-prices when no profile layer sets it."""
+    with patch.dict(os.environ, {'OPENAI_API_KEY': 'x'}):
+        context_window = infer_model('openai:gpt-5').profile.get('context_window')
+
+    assert context_window is not None
+    # Compare against a direct genai-prices query so the test doesn't pin a data value.
+    _, model_info = get_snapshot().find_provider_model(
+        'gpt-5', provider=None, provider_id='openai', provider_api_url=None
+    )
+    assert context_window == model_info.context_window
+
+
+def test_context_window_reads_profile():
+    """`Model.context_window` is the profile's `context_window`, `None` when the profile doesn't know it."""
+    assert TestModel(profile=ModelProfile(context_window=1234)).context_window == 1234
+    assert TestModel().context_window is None
+
+
+def test_profile_context_window_unknown_model():
+    """A model genai-prices doesn't know keeps `context_window` as `None`."""
+    with patch.dict(os.environ, {'OPENAI_API_KEY': 'x'}):
+        assert infer_model('openai:potato-gpt').profile.get('context_window') is None
+
+
+def test_profile_context_window_explicit_override():
+    """An explicit `profile=` value wins over the genai-prices lookup."""
+    with patch.dict(os.environ, {'OPENAI_API_KEY': 'x'}):
+        model = OpenAIChatModel('gpt-5', profile=ModelProfile(context_window=1234))
+    assert model.profile.get('context_window') == 1234
+
+
+def test_profile_context_window_partial_override():
+    """A partial user profile keeps inferred fields alongside its explicit overrides."""
+    with patch.dict(os.environ, {'OPENAI_API_KEY': 'x'}):
+        model = OpenAIChatModel('gpt-5', profile=ModelProfile(supports_tools=False))
+    assert model.profile.get('context_window') is not None
+    assert model.profile.get('supports_tools') is False
+
+
+def test_profile_context_window_explicit_unknown():
+    """An explicit `None` remains authoritative instead of being replaced from genai-prices."""
+    with patch.dict(os.environ, {'OPENAI_API_KEY': 'x'}):
+        model = OpenAIChatModel('gpt-5', profile=ModelProfile(context_window=None))
+    assert model.profile.get('context_window') is None
+
+
+def test_profile_context_window_callable_override():
+    """A full-control profile callable receives the inferred default and can clear it."""
+    inferred_context_windows: list[int | None] = []
+
+    def profile(default: ModelProfile) -> ModelProfile:
+        inferred_context_windows.append(default.get('context_window'))
+        return ModelProfile(context_window=None)
+
+    with patch.dict(os.environ, {'OPENAI_API_KEY': 'x'}):
+        model = OpenAIChatModel('gpt-5', profile=profile)
+    assert model.profile.get('context_window') is None
+    assert inferred_context_windows[0] is not None

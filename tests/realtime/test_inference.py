@@ -9,6 +9,10 @@ import pytest
 
 from pydantic_ai import Agent, messages as messages_module, realtime as realtime_module
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.providers import Provider
+from pydantic_ai.providers.azure import AzureProvider
+from pydantic_ai.providers.gateway import gateway_provider
+from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.realtime import codec as realtime_codec, infer_realtime_model
 from pydantic_ai.realtime.azure import AzureRealtimeModel
 from pydantic_ai.realtime.openai import OpenAIRealtimeModel
@@ -21,6 +25,8 @@ with try_import() as imports_successful:
     import google.genai  # noqa: F401  # pyright: ignore[reportUnusedImport]
     import xai_sdk  # noqa: F401  # pyright: ignore[reportUnusedImport]
 
+    from pydantic_ai.providers.google import GoogleProvider
+    from pydantic_ai.providers.xai import XaiProvider
     from pydantic_ai.realtime.azure import (
         LatestAzureRealtimeModelNames,
         LatestAzureRealtimeTranscriptionModelNames,
@@ -171,6 +177,77 @@ def test_infer_realtime_model_gateway_google(env: TestEnv) -> None:
         # Both shorthands collapse onto the gateway's Google Cloud (Vertex) route, so the handshake
         # connects through the gateway rather than directly to Vertex.
         assert getattr(model, '_provider').base_url == 'https://gateway.pydantic.dev/proxy/google-vertex'
+
+
+@pytest.mark.skipif(not imports_successful(), reason='xai-sdk / google-genai not installed')
+def test_infer_realtime_model_provider_factory(env: TestEnv) -> None:
+    # The realtime counterpart of `infer_model(..., provider_factory)`: the factory is called with the
+    # `provider:` prefix exactly as written (gateway routes un-normalized), and every branch — not just
+    # `openai` — uses the provider it returns. Nothing is read from the environment, so credentials
+    # can come from the application (e.g. per-user keys) rather than `*_API_KEY` variables.
+    for name in ('OPENAI_API_KEY', 'AZURE_OPENAI_ENDPOINT', 'AZURE_OPENAI_API_KEY', 'XAI_API_KEY', 'GOOGLE_API_KEY'):
+        env.remove(name)
+    providers: dict[str, Provider[Any]] = {
+        'openai': OpenAIProvider(api_key='factory-key'),
+        'azure': AzureProvider.for_realtime(azure_endpoint='https://factory.openai.azure.com', api_key='factory-key'),
+        'xai': XaiProvider(api_key='factory-key'),
+        'google': GoogleProvider(api_key='factory-key'),
+        'gateway/openai': gateway_provider(
+            'openai', api_key='factory-key', base_url='https://gateway.pydantic.dev/proxy'
+        ),
+        'gateway/google': gateway_provider(
+            'google-cloud', api_key='factory-key', base_url='https://gateway.pydantic.dev/proxy'
+        ),
+    }
+    seen: list[str] = []
+
+    def provider_factory(provider_name: str) -> Provider[Any]:
+        seen.append(provider_name)
+        return providers[provider_name]
+
+    for model_id, expected_class in [
+        ('openai:gpt-realtime', 'OpenAIRealtimeModel'),
+        ('azure:gpt-realtime', 'AzureRealtimeModel'),
+        ('xai:grok-voice-latest', 'XaiRealtimeModel'),
+        ('google:gemini-live-2.5-flash', 'GoogleRealtimeModel'),
+        ('gateway/openai:gpt-realtime', 'OpenAIRealtimeModel'),
+        ('gateway/google:gemini-live-2.5-flash', 'GoogleRealtimeModel'),
+    ]:
+        model = infer_realtime_model(model_id, provider_factory)
+        assert type(model).__name__ == expected_class, model_id
+        # Identity: the factory's provider is used as-is, not re-inferred from its name.
+        assert getattr(model, '_provider') is providers[model_id.partition(':')[0]], model_id
+    assert seen == ['openai', 'azure', 'xai', 'google', 'gateway/openai', 'gateway/google']
+
+    # The Azure realtime URL comes from the factory's endpoint, with no `AZURE_OPENAI_ENDPOINT` set.
+    azure_model = infer_realtime_model('azure:gpt-realtime', provider_factory)
+    assert isinstance(azure_model, AzureRealtimeModel)
+    assert azure_model._realtime_url() == (  # pyright: ignore[reportPrivateUsage]
+        'wss://factory.openai.azure.com/openai/v1/realtime?model=gpt-realtime'
+    )
+
+
+def test_infer_realtime_model_preserves_custom_provider_factory_error() -> None:
+    def provider_factory(_provider_name: str) -> Provider[Any]:
+        raise ValueError('custom provider error')
+
+    with pytest.raises(ValueError, match='custom provider error'):
+        infer_realtime_model('openai:gpt-realtime', provider_factory)
+
+
+def test_infer_realtime_model_provider_factory_unknown_provider() -> None:
+    # A provider with no realtime model is still rejected, whatever the factory returns for it.
+    seen: list[str] = []
+
+    def provider_factory(provider_name: str) -> Provider[Any]:
+        seen.append(provider_name)
+        return OpenAIProvider(api_key='factory-key')
+
+    with pytest.raises(UserError, match='Unknown realtime model provider'):
+        infer_realtime_model('anthropic:voice', provider_factory)
+    with pytest.raises(UserError, match='cannot be routed through the Pydantic AI Gateway'):
+        infer_realtime_model('gateway/groq:whisper-voice', provider_factory)
+    assert seen == ['anthropic', 'gateway/groq']
 
 
 def test_azure_rejects_non_azure_provider(env: TestEnv) -> None:

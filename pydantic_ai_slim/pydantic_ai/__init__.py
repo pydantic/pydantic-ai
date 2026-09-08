@@ -52,6 +52,13 @@ from .exceptions import (
     UserError,
 )
 from .format_prompt import format_as_xml
+from .images import (
+    GeneratedImage,
+    ImageGenerationModel,
+    ImageGenerationResult,
+    ImageGenerationSettings,
+    ImageGenerator,
+)
 from .messages import (
     AgentInstructionSource,
     AgentStreamEvent,
@@ -64,8 +71,10 @@ from .messages import (
     BinaryContent,
     BinaryImage,
     CachePoint,
+    CapabilityEvent,
     CapabilityInstructionSource,
     CompactionPart,
+    CustomEvent,
     DeferredToolRequestsEvent,
     DeferredToolResultsEvent,
     DocumentFormat,
@@ -121,6 +130,8 @@ from .messages import (
     ToolReturn,
     ToolReturnPart,
     ToolsetInstructionSource,
+    UnknownCapabilityEvent,
+    UnknownCustomEvent,
     UploadedFile,
     UserContent,
     UserPromptPart,
@@ -202,6 +213,12 @@ __all__ = (
     'EmbeddingModel',
     'EmbeddingSettings',
     'EmbeddingResult',
+    # images
+    'ImageGenerator',
+    'ImageGenerationModel',
+    'ImageGenerationSettings',
+    'ImageGenerationResult',
+    'GeneratedImage',
     # concurrency
     'AbstractConcurrencyLimiter',
     'AnyConcurrencyLimit',
@@ -248,6 +265,10 @@ __all__ = (
     'NativeToolReturnPart',
     'CachePoint',
     'CompactionPart',
+    'CapabilityEvent',
+    'CustomEvent',
+    'UnknownCapabilityEvent',
+    'UnknownCustomEvent',
     'DocumentFormat',
     'DocumentMediaType',
     'DocumentUrl',

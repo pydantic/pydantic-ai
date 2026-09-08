@@ -193,6 +193,20 @@ async def test_test_embedding_model_is_exempt_from_request_guard():
     assert result.embeddings == snapshot([[1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]])
 
 
+async def test_test_embedding_model_counts_blank_input_as_zero_tokens():
+    """Blank input reports no tokens on both methods.
+
+    The estimator behind them is shared with the other test models, and it counts blank text as one
+    token; `TestEmbeddingModel` guards that, so a blank input contributes nothing to the reported
+    usage instead of one phantom token per empty string in the batch.
+    """
+    model = TestEmbeddingModel()
+
+    assert await model.count_tokens('') == snapshot(0)
+    result = await model.embed(['', 'hi there'], input_type='document')
+    assert result.usage.input_tokens == snapshot(2)
+
+
 STSB_BERT_TINY_MODEL = 'sentence-transformers-testing/stsb-bert-tiny-safetensors'
 # Pinned so a warm HF cache is served without revalidating files against the Hub.
 # Keep in sync with the HF cache keys and warmup commands in .github/workflows/ci.yml;
@@ -331,6 +345,14 @@ class TestOpenAI:
         assert model.model_name == 'text-embedding-3-small'
         assert model.system == 'openai'
         assert urlparse(model.base_url).hostname == 'gateway.pydantic.dev'
+
+    async def test_infer_model_vllm(self):
+        with patch.dict(os.environ, {'VLLM_BASE_URL': 'http://localhost:8000/v1'}):
+            model = infer_embedding_model('vllm:intfloat/e5-mistral-7b-instruct')
+        assert isinstance(model, OpenAIEmbeddingModel)
+        assert model.model_name == 'intfloat/e5-mistral-7b-instruct'
+        assert model.system == 'vllm'
+        assert model.base_url == 'http://localhost:8000/v1/'
 
     async def test_query(self, embedder: Embedder):
         result = await embedder.embed_query('Hello, world!')

@@ -63,6 +63,7 @@ from pydantic_ai.realtime.codec import (
     OutputTranscript,
     ResponseDone,
     SessionUsage,
+    TextContext,
     ToolCall,
     ToolCallCancelled,
     ToolResult,
@@ -807,6 +808,12 @@ def test_profile() -> None:
     # and URL context is accepted but never actually grounds, so neither is advertised and a
     # `local=` fallback is used instead.
     assert profile.get('supported_native_tools') == frozenset({WebSearchTool})
+    # The Vertex half-cascade `gemini-live-2.5-flash` closes the session with `1007 thinking_level is
+    # not supported by this model`, so the shared `thinking` setting is skipped there; its native-audio
+    # sibling and the 3.x models take it.
+    assert GoogleRealtimeModel('gemini-live-2.5-flash').profile.get('supports_thinking') is False
+    assert GoogleRealtimeModel('gemini-live-2.5-flash-native-audio').profile.get('supports_thinking') is True
+    assert GoogleRealtimeModel('gemini-3.1-flash-live-preview').profile.get('supports_thinking') is True
     assert GoogleRealtimeModel('gemini-3.1-flash-live-preview').profile.get('supported_native_tools') == frozenset(
         {WebSearchTool}
     )
@@ -1005,6 +1012,15 @@ async def test_send_text() -> None:
     assert sent['turn_complete'] is True
     assert sent['turns'].role == 'user'
     assert sent['turns'].parts[0].text == 'hello'
+
+
+async def test_send_text_context() -> None:
+    session = _RecordingSession()
+    await _conn(session).send(TextContext('background'))
+    sent = session.client_content[0]
+    assert sent['turn_complete'] is False
+    assert sent['turns'].role == 'user'
+    assert sent['turns'].parts[0].text == 'background'
 
 
 async def test_send_image_as_video_frame() -> None:
@@ -1716,8 +1732,9 @@ async def test_connect_seeds_message_history(monkeypatch: pytest.MonkeyPatch) ->
             {
                 'parts': [
                     {'text': '[Tool call-1: weather returned: ["sunny","See file weather.png."]]'},
-                    {'text': 'This is file weather.png:'},
+                    {'text': '<tool_result tool_name="weather" tool_call_id="call-1" file_id="weather.png">'},
                     {'inline_data': {'data': b'tool-image', 'mime_type': 'image/png'}},
+                    {'text': '</tool_result>'},
                     {'text': '[Tool plain-call: plain returned: ok]'},
                     {'text': '[Tool call-1: weather error: invalid city\n\nFix the errors and try again.]'},
                     {'text': 'Validation feedback:\nanswer in prose\n\nFix the errors and try again.'},

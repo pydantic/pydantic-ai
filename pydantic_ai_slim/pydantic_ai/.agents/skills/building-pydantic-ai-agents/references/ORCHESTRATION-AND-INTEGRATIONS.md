@@ -1,6 +1,6 @@
 # Orchestration and Integrations
 
-Read this file when the user wants multi-agent coordination, graphs, direct model calls, A2A, durable execution, embeddings, evals, or third-party integrations.
+Read this file when the user wants multi-agent coordination, graphs, direct model calls, A2A, durable execution, embeddings, image generation, evals, or third-party integrations.
 
 ## Coordinate Multiple Agents
 
@@ -88,6 +88,8 @@ Temporal entry points:
 
 `TemporalAgent`, `DBOSAgent`, and `PrefectAgent` are deprecated wrapper agents.
 
+Pass every executing toolset that needs durable wrapping to the agent constructor. In particular, construct a `DynamicToolset` with an explicit `id` and pass it to `Agent(toolsets=[...])`; the `@agent.toolset` decorator registers after the engine's durable units were created. Toolsets that arrive later — via the decorator, `run(toolsets=...)`, `override(toolsets=...)`, or a per-run capability — are never wrapped for durable execution: under the `*Durability` capability, using one inside a workflow or flow raises a `UserError` (DBOS still accepts a `FunctionToolset`, whose tools it runs inline either way). The deprecated wrapper agents don't run this check — inside a workflow or flow they run the toolset list frozen at wrap time, so a toolset registered that late is silently left out. A toolset added at run time also cannot reuse a construction-time toolset's `id`.
+
 Temporal and DBOS register durable units before their workers start, so attach capabilities at agent construction time. Passing `run(capabilities=[...])` inside one of their workflows raises a `UserError` unless the capability is the observer-only `Instrumentation`; broader support for observer-only capabilities is tracked in [#5477](https://github.com/pydantic/pydantic-ai/issues/5477), where users can share their use cases. Prefect creates tasks per call, so it has no such registration boundary and accepts a per-run capability that contributes no executing toolset; one that does is still rejected by the runtime-toolset guard.
 
 A run-time `model=` inside a workflow must be a model-name string or an instance registered in the durability capability's `models=`. An unregistered `Model` instance raises a `UserError`: it can't be serialized into the activity/step/task, and rebuilding it from its `model_id` would build a different model. To build a specific instance inside the durable unit (e.g. per-user credentials from `deps`), pass a string and use a `ResolveModelId` capability.
@@ -111,6 +113,26 @@ from pydantic_ai import Embedder
 
 embedder = Embedder('openai:text-embedding-3-small')
 ```
+
+## Generate Images
+
+Use `ImageGenerator(...)` when the application, rather than an agent, decides that an image should be created or edited.
+
+```python
+from pydantic_ai import ImageGenerator
+
+generator = ImageGenerator('openai:gpt-image-2')
+result = generator.generate_sync('A watercolor map of a floating city.')
+image_bytes = result.image.data
+```
+
+Use `await generator.generate(...)` from async code. `result.image` is the first generated image as a `BinaryImage`; use `result.images` when you asked for several or need per-image metadata such as `revised_prompt`.
+
+`ImageGenerationSettings` carries only the portable settings — `dimensions`, `aspect_ratio`, `extra_headers`, `extra_body`. Everything else, including image count, quality, output format, and background, is provider-prefixed on `OpenAIImageGenerationSettings`, `GoogleImageGenerationSettings`, or `XaiImageGenerationSettings`.
+
+Pass reference images through `images=[...]` to edit or transform them. A provider content block raises `ContentFilterError` instead of returning an empty result, so a rejected prompt can be retried explicitly.
+
+When the agent rather than the application should decide, use the `ImageGeneration` capability with `fallback_image_model='openai:gpt-image-2'` (or an `ImageGenerationModel`; an `ImageGenerator` goes on `local`), which calls the direct image model as a tool when the conversational model has no native image generation.
 
 ## Use LangChain Tools
 

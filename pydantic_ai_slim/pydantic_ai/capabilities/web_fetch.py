@@ -40,6 +40,13 @@ class WebFetch(NativeOrLocalTool[AgentDepsT]):
     max_content_tokens: int | None
     """Maximum content length in tokens. Native-only; ignored by local tools."""
 
+    id: str | None = 'web_fetch'
+    """One-off: an agent searches, fetches or generates one way, so the id is fixed.
+
+    Declared here rather than only as an `__init__` default so the class states it where
+    `_declares_default_id` -- and a reader -- can see it.
+    """
+
     def __init__(
         self,
         *,
@@ -52,7 +59,7 @@ class WebFetch(NativeOrLocalTool[AgentDepsT]):
         max_uses: int | None = None,
         enable_citations: bool | None = None,
         max_content_tokens: int | None = None,
-        id: str | None = None,
+        id: str | None = 'web_fetch',
         defer_loading: bool = False,
         description: str | None = None,
     ) -> None:

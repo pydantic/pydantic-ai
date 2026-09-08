@@ -37,6 +37,7 @@ with try_import() as azure_imports_successful:
     from pydantic_ai.providers.azure import AzureProvider
 
 if TYPE_CHECKING:
+    from pydantic_ai.models import AbstractModel
     from pydantic_ai.providers import Provider
 
 CASSETTES_DIR = Path(__file__).parent / 'cassettes'
@@ -424,3 +425,19 @@ def parity_ws_cassette(
 
     with _ws_cassette(request, provider_name) as cassette:
         yield case, provider, cassette
+
+
+@pytest.fixture
+def no_genai_prices_context_window(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pin the profile's `context_window` to `None` for whole-profile assertions.
+
+    The window is genai-prices data that changes with the pinned dataset, not a capability claim;
+    `tests/realtime/test_openai.py` covers the fill itself.
+    """
+
+    def unknown_window(
+        model: AbstractModel | str, *, provider_api_url: str | None = None, provider_name: str | None = None
+    ) -> None:
+        return None
+
+    monkeypatch.setattr('pydantic_ai.realtime.model.lookup_context_window', unknown_window)

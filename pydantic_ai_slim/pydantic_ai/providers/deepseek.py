@@ -44,6 +44,8 @@ class DeepSeekProvider(_OpenAICompatibleProvider):
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile | None:
         profile = deepseek_model_profile(model_name)
+        is_v4 = model_name.startswith('deepseek-v4-')
+        thinks_by_default = is_v4 or model_name == 'deepseek-reasoner'
 
         # As DeepSeekProvider is most often used with OpenAIChatModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
         # we need to maintain that behavior unless json_schema_transformer is set explicitly.
@@ -55,17 +57,26 @@ class DeepSeekProvider(_OpenAICompatibleProvider):
             OpenAIModelProfile(
                 supports_json_object_output=True,
                 openai_chat_thinking_field='reasoning_content',
-                # Starting from DeepSeek v3.2, DeepSeek requires sending thinking parts for optimal agentic performance.
+                # For a conversation carrying tools, DeepSeek documents that `reasoning_content` must be
+                # passed back in every subsequent request. See https://api-docs.deepseek.com/guides/thinking_mode.
                 openai_chat_send_back_thinking_parts='field',
                 # DeepSeek's Responses endpoint documents merging each function call into the
                 # assistant message adjacent to it, unlike the official Responses API, so an
                 # assistant item between two calls strands the first one without its output.
                 openai_responses_supports_interleaved_function_calls=False,
-                # Reasoning-capable models do not support tool_choice=required; use startswith so
-                # future deepseek-v4-* SKUs are covered automatically without listing each one.
-                openai_supports_tool_choice_required=(
-                    model_name != 'deepseek-reasoner' and not model_name.startswith('deepseek-v4-')
-                ),
+                # DeepSeek rejects a forced tool choice only while thinking is on, answering
+                # `Thinking mode does not support this tool_choice`. `deepseek-reasoner` cannot turn
+                # thinking off, so for it the restriction is unconditional; the v4 models can, so
+                # theirs is evaluated per request. `startswith` covers future deepseek-v4-* SKUs
+                # without listing each one.
+                openai_supports_tool_choice_required=model_name != 'deepseek-reasoner',
+                openai_supports_forced_tool_choice_with_thinking=not is_v4,
+                # Thinking is on by default on DeepSeek V4 models and `deepseek-reasoner`; every other
+                # model name (including `deepseek-chat`) is treated as thinking-off by default.
+                openai_reasoning_enabled_by_default=thinks_by_default,
+                # DeepSeek's Responses endpoint honors `text.format` of type `json_schema`, while its
+                # Chat Completions endpoint rejects it with `This response_format type is unavailable now`.
+                openai_responses_supports_json_schema_output=True,
                 # `openai_supports_phase` is deliberately left at its `False` default even though
                 # DeepSeek labels its Responses API output with `phase`: the field is absent from
                 # DeepSeek's documented input items, and its API silently ignores what it doesn't

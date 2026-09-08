@@ -69,6 +69,7 @@ with try_import() as openai_available:
     from pydantic_ai.models.crusoe import CrusoeModel
     from pydantic_ai.models.ollama import OllamaModel
     from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
+    from pydantic_ai.models.openai_codex import OpenAICodexModel
     from pydantic_ai.models.openrouter import OpenRouterModel
     from pydantic_ai.models.snowflake import SnowflakeModel
     from pydantic_ai.models.zai import ZaiModel
@@ -77,6 +78,7 @@ with try_import() as openai_available:
     from pydantic_ai.providers.crusoe import CrusoeProvider
     from pydantic_ai.providers.ollama import OllamaProvider
     from pydantic_ai.providers.openai import OpenAIProvider
+    from pydantic_ai.providers.openai_codex import OpenAICodexCredentials, OpenAICodexProvider
     from pydantic_ai.providers.openrouter import OpenRouterProvider
     from pydantic_ai.providers.snowflake import SnowflakeProvider
     from pydantic_ai.providers.zai import ZaiProvider
@@ -455,6 +457,16 @@ def _openai_responses(client: httpx2.AsyncClient) -> Model:
     return OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=PROBE_KEY, http_client=client))
 
 
+def _openai_codex(client: httpx2.AsyncClient) -> Model:
+    return OpenAICodexModel(
+        'gpt-5.6-luna',
+        provider=OpenAICodexProvider(
+            credentials=OpenAICodexCredentials(access_token=PROBE_KEY, refresh_token=PROBE_KEY, account_id='probe'),
+            http_client=client,
+        ),
+    )
+
+
 def _cerebras(client: httpx2.AsyncClient) -> Model:
     return CerebrasModel('llama3.1-8b', provider=CerebrasProvider(api_key=PROBE_KEY, http_client=client))
 
@@ -527,6 +539,14 @@ CASES = [
         _needs(openai_available, 'openai'),
     ),
     Case('OpenAIResponsesModel', ('OpenAI',), http_probe(_openai_responses), _needs(openai_available, 'openai')),
+    # `temperature`/`top_p` provoke the reasoning-model sampling warning, which the suite's
+    # `filterwarnings = error` would otherwise turn into a request that never sends.
+    Case(
+        'OpenAICodexModel',
+        ('OpenAI Codex',),
+        http_probe(_openai_codex),
+        _needs(openai_available, 'openai') + (pytest.mark.filterwarnings('ignore:Sampling parameters.*:UserWarning'),),
+    ),
     Case('CerebrasModel', ('Cerebras',), http_probe(_cerebras), _needs(openai_available, 'openai')),
     Case('CrusoeModel', ('Crusoe',), http_probe(_crusoe), _needs(openai_available, 'openai')),
     Case('OllamaModel', ('Ollama',), http_probe(_ollama), _needs(openai_available, 'openai')),

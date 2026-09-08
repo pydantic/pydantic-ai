@@ -74,6 +74,10 @@ agent = Agent(model)
 ...
 ```
 
+## SDK retries {#sdk-retries}
+
+Unlike the OpenAI, Anthropic and Groq clients, the Cohere client exposes no `max_retries` knob: its built-in client retries server errors and rate limits twice above whatever transport you pass here, and that cannot be turned off. Keep it in mind when sizing the transport — see [Provider SDK retries](../retries.md#provider-sdk-retries).
+
 ## Model settings
 
 You can customize model behavior using [`CohereModelSettings`][pydantic_ai.models.cohere.CohereModelSettings]:

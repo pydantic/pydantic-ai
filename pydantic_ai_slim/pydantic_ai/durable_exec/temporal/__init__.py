@@ -14,6 +14,7 @@ from dataclasses import replace
 from typing import Any
 
 from pydantic.errors import PydanticUserError
+from temporalio import workflow
 from temporalio.contrib.pydantic import PydanticPayloadConverter
 from temporalio.converter import DataConverter, DefaultPayloadConverter
 from temporalio.plugin import SimplePlugin
@@ -22,6 +23,7 @@ from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner
 
 from pydantic_graph.exceptions import UnsupportedEventLoopError
 
+from ..._event_registry import set_replay_isolation_guard
 from ...agent.abstract import AbstractAgent
 from ...exceptions import AgentRunError, UserError
 from ._agent import TemporalAgent  # pyright: ignore[reportDeprecated]
@@ -87,6 +89,17 @@ def _workflow_runner(runner: WorkflowRunner | None) -> WorkflowRunner:
 
     if not isinstance(runner, SandboxedWorkflowRunner):
         return runner
+
+    # The sandbox re-executes application modules while `pydantic_ai` is passed through, so an event
+    # class defined in a workflow module is redefined against the host's registry on every validation
+    # cycle. Telling the registry to keep the host's class means workflow and activity code both hold
+    # the class they imported, and `isinstance` works on either side of the boundary.
+    #
+    # Installed here rather than at import: this runs on the host while a worker that will actually
+    # sandbox workflows is being configured, which is the only situation the guard is for, and always
+    # before the first sandboxed module is executed. Importing this module, or a test that touches
+    # Temporal without running a sandboxed worker, then leaves the registry alone.
+    set_replay_isolation_guard(workflow.unsafe.in_sandbox)
 
     return replace(
         runner,

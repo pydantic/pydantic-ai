@@ -4,19 +4,19 @@
 .uv: ## Check that uv is installed
 	@uv --version || echo 'Please install uv: https://docs.astral.sh/uv/getting-started/installation/'
 
-.PHONY: .pre-commit
-.pre-commit: ## Check that pre-commit is installed
-	@pre-commit -V || echo 'Please install pre-commit: https://pre-commit.com/'
-
 .PHONY: install
-install: .uv .pre-commit ## Install the package, dependencies, and pre-commit for local development
+install: .uv ## Install the package, dependencies, and pre-commit for local development
 	uv sync --frozen --all-extras --no-extra mcp-tasks --all-packages --group lint
 	# pyright typechecks the gh-aw shim, which imports pydantic-ai-harness. The
 	# harness is kept out of the lock (its pydantic-ai-slim dep collides with the
 	# workspace member under lowest-direct), so install it out-of-band; --no-deps
 	# because pydantic-ai-slim is already present. See .github/workflows/ci.yml.
 	uv pip install --no-deps "pydantic-ai-harness==0.7.0"
-	pre-commit install --install-hooks
+	@if command -v pre-commit >/dev/null 2>&1; then \
+		pre-commit install --install-hooks; \
+	else \
+		uv tool install pre-commit && "$$(uv tool dir --bin)/pre-commit" install --install-hooks; \
+	fi
 
 .PHONY: install-all-python
 install-all-python: ## Install and synchronize an interpreter for every python version
@@ -39,12 +39,24 @@ lint: ## Lint the code
 	uv run ruff format --check
 	uv run ruff check
 
+# Worker processes for pyright's check phase, all producing identical output. Unset is pyright's own
+# single-process check, and so is 1; 'auto' is up to one worker per logical core and a positive
+# integer caps them. Anything else pyright cannot read as a positive integer, 0 and 'off' included,
+# means 'auto' -- pyright's parseThreadsArgValue: https://github.com/microsoft/pyright/blob/1.1.411/packages/pyright-internal/src/pyright.ts#L1366-L1377
+# See docs/contributing.md for when the workers pay for themselves.
+PYRIGHT_THREADS ?=
+
 .PHONY: typecheck-pyright
 typecheck-pyright:
 	@# To typecheck for a specific version of python, run 'make install-all-python' then set environment variable PYRIGHT_PYTHON=3.10 or similar
 	@# PYRIGHT_PYTHON_IGNORE_WARNINGS avoids the overhead of making a request to github on every invocation
-	@# --threads parallelizes the check phase across logical cores (~2x faster, identical output)
-	PYRIGHT_PYTHON_IGNORE_WARNINGS=1 uv run pyright --threads $(if $(PYRIGHT_PYTHON),--pythonversion $(PYRIGHT_PYTHON))
+	PYRIGHT_PYTHON_IGNORE_WARNINGS=1 uv run pyright $(if $(PYRIGHT_THREADS),--threads $(PYRIGHT_THREADS)) $(if $(PYRIGHT_PYTHON),--pythonversion $(PYRIGHT_PYTHON))
+
+.PHONY: typecheck-changed
+typecheck-changed: ## Run static type checking on the files reached by changes since it last passed
+	@# The pre-commit hook's entry point. Falls back to `typecheck-pyright` whenever the
+	@# narrowed set is not provably the same answer; see scripts/typecheck_changed.py
+	uv run python scripts/typecheck_changed.py
 
 .PHONY: typecheck-mypy
 typecheck-mypy:

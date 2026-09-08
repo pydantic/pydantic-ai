@@ -11,7 +11,7 @@ The [`VercelAIAdapter`][pydantic_ai.ui.vercel_ai.VercelAIAdapter] class is respo
 
 If you're using a Starlette-based web framework like FastAPI, you can use the [`VercelAIAdapter.dispatch_request()`][pydantic_ai.ui.UIAdapter.dispatch_request] class method from an endpoint function to directly handle a request and return a streaming response of Vercel AI events. This is demonstrated in the next section.
 
-If you're using a web framework not based on Starlette (e.g. Django or Flask) or need fine-grained control over the input or output, you can create a `VercelAIAdapter` instance and directly use its methods. This is demonstrated in "Advanced Usage" section below.
+If you're using a web framework not based on Starlette (e.g. Django or Flask) or need fine-grained control over the input or output, you can create a `VercelAIAdapter` instance and directly use its methods. This is demonstrated in the "Advanced Usage" section below.
 
 ### Usage with Starlette/FastAPI
 
@@ -124,14 +124,64 @@ async def cancel_chat(chat_id: str) -> None:
 
 ### Data Chunks
 
-Pydantic AI tools can send [Vercel AI data stream chunks](https://ai-sdk.dev/docs/ai-sdk-ui/stream-protocol#data-stream-protocol) by returning a
+To send data to the client while a run is in progress — for example progress updates from a long-running tool — emit a [`CustomEvent`](../agent.md#custom-events) via [`ctx.emit()`][pydantic_ai.tools.RunContext.emit]:
+
+```python {title="vercel_ai_custom_events.py"}
+from dataclasses import dataclass
+
+from pydantic_ai import Agent, CustomEvent, RunContext
+
+agent = Agent('openai:gpt-5.2')
+
+
+@dataclass(kw_only=True)
+class FileUploadProgressEvent(CustomEvent):
+    done: int
+    total: int
+
+
+@agent.tool
+async def upload_files(ctx: RunContext, total: int) -> str:
+    for done in range(1, total + 1):
+        # Do a unit of work, then tell the frontend how far along we are.
+        await ctx.emit(FileUploadProgressEvent(done=done, total=total))
+    return f'Uploaded {total} files'
+```
+
+Each event reaches the client as a [`DataChunk`][pydantic_ai.ui.vercel_ai.response_types.DataChunk] with `type` set to `data-{name}` and the result of [`to_payload()`][pydantic_ai.messages.CustomEvent.to_payload] as its `data` — here, `type='data-file_upload_progress'` and `data={'done': 1, 'total': 3}`. Chunks arrive as the events are emitted, while the tool is still running.
+
+The `data` shape is the same whether or not the event was emitted from inside a tool call, so a frontend written against one shape doesn't break when the same event class is later emitted from somewhere else. Override [`to_payload()`][pydantic_ai.messages.CustomEvent.to_payload] to control the shape — to name the fields the way the frontend expects, or to put the tool attribution on the wire:
+
+```python {title="vercel_ai_custom_event_payload.py"}
+from dataclasses import dataclass
+from typing import Any
+
+from pydantic_ai import CustomEvent
+
+
+@dataclass(kw_only=True)
+class FileUploadPhaseEvent(CustomEvent):
+    done: int
+    total: int
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            'completed': self.done,
+            'total': self.total,
+            'toolCallId': self.tool_call_id,
+        }
+```
+
+Returning a data-carrying chunk (see below) from `to_payload()` sends that chunk verbatim instead. An event class declared [`ui=False`](../agent.md#custom-events) is never forwarded, so events meant only for server-side consumers stay off the wire; nor is an event whose class this process never imported, since its opt-out travels on the class rather than the wire.
+
+Pydantic AI tools can also attach [Vercel AI data stream chunks](https://ai-sdk.dev/docs/ai-sdk-ui/stream-protocol#data-stream-protocol) to a **tool result**, by returning a
 [`ToolReturn`](../tools-advanced.md#advanced-tool-returns) object with a data-carrying chunk
 (or a list of chunks) as `metadata`.
 The supported chunk types are [`DataChunk`][pydantic_ai.ui.vercel_ai.response_types.DataChunk],
 [`SourceUrlChunk`][pydantic_ai.ui.vercel_ai.response_types.SourceUrlChunk],
 [`SourceDocumentChunk`][pydantic_ai.ui.vercel_ai.response_types.SourceDocumentChunk],
 and [`FileChunk`][pydantic_ai.ui.vercel_ai.response_types.FileChunk].
-This is useful for attaching structured data to the frontend alongside the tool result, such as source URLs or custom data payloads.
+Unlike emitted events, these are part of the message and survive a message-history round-trip, which is what you want for data the frontend must be able to rebuild, such as the source URLs behind an answer; the trade-off is that they are sent when the tool returns rather than while it runs.
 
 ```python {title="vercel_ai_tool_chunks.py"}
 from pydantic_ai import Agent, ToolReturn

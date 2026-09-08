@@ -55,6 +55,7 @@ from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities import (
     Capability,
+    ImageGeneration,
     ProcessHistory,
 )
 from pydantic_ai.exceptions import (
@@ -66,12 +67,14 @@ from pydantic_ai.exceptions import (
     UsageLimitExceeded,
     UserError,
 )
+from pydantic_ai.images import ImageGenerator, TestImageGenerationModel
 from pydantic_ai.models import (
     Model,
     ModelRequestParameters,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.native_tools import ImageGenerationTool
 from pydantic_ai.realtime import (
     RealtimeModel,
     RealtimeModelProfile,
@@ -81,6 +84,7 @@ from pydantic_ai.realtime import (
 from pydantic_ai.realtime.codec import RealtimeConnection
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
+from pydantic_ai.toolsets.prepared import PreparedToolset
 from pydantic_ai.usage import UsageLimits
 
 from ..._inline_snapshot import snapshot
@@ -2162,7 +2166,7 @@ async def test_temporal_agent_with_unserializable_deps_type(allow_model_requests
         with workflow_raises(
             UserError,
             snapshot(
-                "A value passed to a Temporal activity failed to be serialized (Unable to serialize unknown type: <class 'pydantic_ai.providers.openai.OpenAIProvider'>). Temporal requires all values that are passed to activities to be serializable using Pydantic's `TypeAdapter`. Besides `deps`, this includes `model_settings`, the `RunContext` `metadata` and `tool_call_metadata`, and tool `metadata`."
+                "A value passed to a Temporal activity failed to be serialized (Unable to serialize unknown type: <class 'pydantic_ai.providers.openai.OpenAIProvider'>). Temporal requires all values that are passed to activities to be serializable using Pydantic's `TypeAdapter`. Besides `deps`, this includes `model_settings`, the `RunContext` `metadata` and `tool_call_metadata`, tool `metadata`, and the payload fields of any emitted `CustomEvent` or `CapabilityEvent`, which ride the event stream handler activity."
             ),
         ):
             await client.execute_workflow(
@@ -2654,7 +2658,8 @@ async def test_unserializable_model_settings(client: Client):
             f'(Unable to serialize unknown type: {httpx.Timeout!r}). '
             "Temporal requires all values that are passed to activities to be serializable using Pydantic's "
             '`TypeAdapter`. Besides `deps`, this includes `model_settings`, the `RunContext` `metadata` and '
-            '`tool_call_metadata`, and tool `metadata`.',
+            '`tool_call_metadata`, tool `metadata`, and the payload fields of any emitted `CustomEvent` or '
+            '`CapabilityEvent`, which ride the event stream handler activity.',
         ):
             await client.execute_workflow(
                 UnserializableModelSettingsWorkflow.run,
@@ -2676,6 +2681,23 @@ def test_temporal_run_context_preserves_run_id():
 
     reconstructed = TemporalRunContext.deserialize_run_context(serialized, deps=None)
     assert reconstructed.run_id == 'run-123'
+
+
+def test_temporal_run_context_context_window_used_is_none_without_messages():
+    reconstructed = TemporalRunContext.deserialize_run_context(
+        TemporalRunContext.serialize_run_context(RunContext(deps=None, model=TestModel(), usage=RunUsage())), deps=None
+    )
+    assert reconstructed.context_window_used is None
+
+    # Even if a custom activity context carries a model, the ratio stays unknown when it omits the
+    # full message history, as the default Temporal context does to keep activity payloads small.
+    reconstructed_with_model = TemporalRunContext(
+        deps=None,
+        model=TestModel(profile={'context_window': 100}),
+        usage=RunUsage(),
+        run_id='run-123',
+    )
+    assert reconstructed_with_model.context_window_used is None
 
 
 run_id_test_agent = Agent(TestModel(custom_output_text='ok'), name='run_id_test_agent')
@@ -3022,6 +3044,34 @@ async def test_loaded_capability_tool_without_a_reveal_marker_answers_inside_an_
     # The registry itself still doesn't cross — only the ids it resolves to.
     with pytest.raises(UserError, match="'capabilities' is not available"):
         _ = reconstructed.capabilities
+
+
+async def test_image_generation_prepare_function_reads_the_model_inside_an_activity():
+    """`ImageGeneration`'s per-request notice reads `ctx.model`, which is guarded inside an activity.
+
+    A `DynamicCapability` re-resolves the capability's toolset activity-side, so its prepare
+    function runs against a rehydrated context that deliberately left the live model behind. The
+    native-vs-direct routing the notice describes was already decided in the workflow process, so
+    the read has to degrade to "say nothing" rather than raise out of `get_tools`.
+    """
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), run_id='run-123')
+    reconstructed = deserialize_run_context(
+        TemporalRunContext, await _serialized_run_context_across_the_wire(ctx), deps=None, agent=None
+    )
+    with pytest.raises(UserError, match="'model' is not available"):
+        _ = reconstructed.model
+
+    capability = ImageGeneration(
+        native=ImageGenerationTool(),
+        local=ImageGenerator(TestImageGenerationModel()),
+        dimensions=(1280, 720),
+    )
+    toolset = capability.get_toolset()
+    assert isinstance(toolset, PreparedToolset)
+
+    prepared = toolset.prepare_func(reconstructed, [])
+    assert inspect.isawaitable(prepared)
+    assert await prepared == []
 
 
 class LegacyFieldsRunContext(TemporalRunContext[Any]):

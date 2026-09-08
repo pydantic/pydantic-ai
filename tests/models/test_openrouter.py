@@ -42,8 +42,7 @@ from pydantic_ai.native_tools import AdvisorTool, WebSearchTool
 
 from .._inline_snapshot import snapshot
 from ..cassette_utils import single_request_body
-from ..conftest import IsDatetime, IsStr, message, try_import
-from .conftest import RequestCapture
+from ..conftest import IsDatetime, IsStr, RequestCapture, message, try_import
 from .mock_openai import MockOpenAI, get_mock_chat_completion_kwargs
 
 with try_import() as imports_successful:

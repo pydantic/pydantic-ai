@@ -12,8 +12,7 @@ from pydantic_ai.settings import ModelSettings, ThinkingLevel
 from pydantic_ai.usage import RequestUsage
 
 from .._inline_snapshot import snapshot
-from ..conftest import IsDatetime, IsStr, try_import
-from .conftest import RequestCapture
+from ..conftest import IsDatetime, IsStr, RequestCapture, try_import
 
 with try_import() as imports_successful:
     from openai.types import chat
@@ -169,12 +168,17 @@ async def test_zai_thinking_across_turns(allow_model_requests: None, zai_api_key
     first_thinking, second_thinking = [
         part.content for result in (first, second) for part in result.response.parts if isinstance(part, ThinkingPart)
     ]
-    assert [
-        message['reasoning_content']
-        for body in request_capture.bodies('/chat/completions')
-        for message in body['messages']
-        if message['role'] == 'assistant'
-    ] == [first_thinking, first_thinking, second_thinking]
+    replayed_thinking: list[str] = []
+    for body in request_capture.bodies('/chat/completions'):
+        messages = body['messages']
+        assert isinstance(messages, list)
+        for message in messages:
+            assert isinstance(message, dict)
+            if message.get('role') == 'assistant':
+                reasoning_content = message['reasoning_content']
+                assert isinstance(reasoning_content, str)
+                replayed_thinking.append(reasoning_content)
+    assert replayed_thinking == [first_thinking, first_thinking, second_thinking]
 
 
 async def test_zai_thinking_stream(allow_model_requests: None, zai_api_key: str, request_capture: RequestCapture):

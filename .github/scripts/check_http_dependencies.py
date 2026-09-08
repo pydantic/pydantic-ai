@@ -44,7 +44,7 @@ openai_requirements = [requirement for requirement in slim if requirement.name =
 assert len(openai_requirements) == len(openai_extras)
 for requirement in openai_requirements:
     assert not requirement.extras
-    assert requirement.specifier.contains('3.0.0')
+    assert requirement.specifier.contains('3.8.0')
     assert requirement.marker is not None
     assert str(requirement.marker).removeprefix('extra == ').strip('"') in openai_extras
 
@@ -56,7 +56,7 @@ assert any(
 
 anthropic_requirements = [requirement for requirement in slim if requirement.name == 'anthropic']
 assert len(anthropic_requirements) == 1
-assert anthropic_requirements[0].specifier.contains('1.0.0')
+assert anthropic_requirements[0].specifier.contains('1.3.0')
 assert str(anthropic_requirements[0].marker) == 'extra == "anthropic"'
 
 anthropic_dependencies = [Requirement(value) for value in requires('anthropic') or []]
