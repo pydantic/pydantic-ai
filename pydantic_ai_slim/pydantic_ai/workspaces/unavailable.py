@@ -5,7 +5,7 @@ the same explicit failure mode. Pydantic AI uses it where a live execution
 environment cannot safely exist, and applications can pass one deliberately to disable
 execution with a policy-specific explanation.
 
-It implements the flat filesystem opt-in so every operation surfaces the configured reason.
+It implements the required backend operations so every operation surfaces the configured reason.
 """
 
 from __future__ import annotations

@@ -76,8 +76,8 @@ class WorkspaceUnavailableError(WorkspaceError):
 class WorkspaceTimeoutError(WorkspaceError, TimeoutError):
     """A command exceeded the `timeout=` it was started with.
 
-    `stdout` and `stderr` carry any output recovered before the deadline (empty when the backend
-    cannot recover it). Whether the command and its descendants are terminated is backend-specific.
+    `stdout` and `stderr` carry any captured output available when the error is raised (empty when
+    the backend cannot recover it). Whether the command and its descendants are terminated is backend-specific.
     `timeout` is the deadline that was enforced, which may be coarser than requested (e.g. platforms
     that take whole seconds).
     """
@@ -85,9 +85,9 @@ class WorkspaceTimeoutError(WorkspaceError, TimeoutError):
     def __init__(self, message: str, *, stdout: str = '', stderr: str = '', timeout: float | None = None) -> None:
         super().__init__(message)
         self.stdout = stdout
-        """Standard output recovered before the timeout."""
+        """Captured standard output, when available."""
         self.stderr = stderr
-        """Standard error recovered before the timeout."""
+        """Captured standard error, when available."""
         self.timeout = timeout
         """The deadline that was enforced, in seconds."""
 
@@ -225,8 +225,8 @@ class WorkspaceBackend(Protocol):
     implementations must honor, and the [workspace documentation](../workspace.md) for lifecycle
     rules: this protocol has no create, connect or destroy member. A backend is built from
     configuration plus an optional [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] and does no
-    I/O until its first operation, which creates or attaches as needed. Pydantic AI never starts
-    or stops an environment.
+    I/O until its first operation, which creates or attaches as needed. Pydantic AI does not
+    automatically provision or tear down an environment at run boundaries.
     """
 
     @property

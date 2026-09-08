@@ -253,10 +253,10 @@ navigation:
             path: "shell.md"
             source: "harness"
             slug: "harness/shell"
-          - page: "Modal Workspace"
-            path: "modal-workspace.md"
+          - page: "Modal Sandbox"
+            path: "modal-sandbox.md"
             source: "harness"
-            slug: "harness/modal-workspace"
+            slug: "harness/modal-sandbox"
       - section: "Tools & Native Abilities"
         slug: ""
         contents:

@@ -659,8 +659,7 @@ class AgentRunResult(Generic[OutputDataT]):
 
         Pass it to a later run or a subagent as `workspace=result.workspace` to keep working in the same
         environment. Nothing tears it down when the run ends, so it is still usable here: copy files
-        out, or destroy it yourself through
-        [`backend`][pydantic_ai.workspaces.Workspace.backend] if your provider supports that.
+        out, or retain the concrete provider backend and await its native workspace for lifecycle methods.
 
         A result that did not come from a run — one deserialized from JSON, or built by hand — has
         a placeholder whose operations explain that no workspace is attached.

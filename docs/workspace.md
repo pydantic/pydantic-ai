@@ -1,9 +1,8 @@
 # Workspaces
 
-Workspaces give an agent a workspace where its tools can run commands and work with files. Attach
-an environment to a run, then use [`ctx.workspace`][pydantic_ai.tools.RunContext.workspace] inside
-your tools. For trusted local development, the smallest complete example uses
-[`LocalWorkspace`][pydantic_ai.workspaces.LocalWorkspace]:
+A workspace gives tools access to an execution environment through
+[`ctx.workspace`][pydantic_ai.tools.RunContext.workspace]. Your application chooses the environment
+and supplies the tools. For trusted local development:
 
 ```python
 from pydantic_ai import Agent, RunContext
@@ -19,48 +18,19 @@ async def execute(ctx: RunContext[None], command: list[str]) -> str:
 
 
 async def main() -> None:
-    async with LocalWorkspace() as workspace:
-        await agent.run('Write fizzbuzz to fizzbuzz.py and run it.', workspace=workspace)
+    async with LocalWorkspace() as backend:
+        await agent.run('Write fizzbuzz to fizzbuzz.py and run it.', workspace=backend)
 ```
 
-The tool does not need to know whether the attached environment is a local process, container,
-VM, or remote service. It uses the same [`Workspace`][pydantic_ai.workspaces.Workspace] methods in
-each case:
+`LocalWorkspace` runs host subprocesses and accesses the host filesystem. It provides no isolation.
+Use an isolated environment for untrusted code. Local commands inherit `PATH`, `HOME`, `LANG`, and
+`TMPDIR` when present, plus the explicit `env` overlay. Their combined captured output is limited to
+10 MiB. Redirect larger output to a file and read a window of it.
 
-- [`run()`][pydantic_ai.workspaces.Workspace.run] runs a command and returns its output and exit code.
-- [`read_file()`][pydantic_ai.workspaces.Workspace.read_file] returns a line window suitable for
-  model context.
-- [`read_text()`][pydantic_ai.workspaces.Workspace.read_text] and
-  [`write_text()`][pydantic_ai.workspaces.Workspace.write_text] work with complete text files.
+## Files and policy wrappers
 
-!!! warning "`LocalWorkspace` does not isolate code"
-    [`LocalWorkspace`][pydantic_ai.workspaces.LocalWorkspace] runs commands as host subprocesses and
-    reads and writes the host filesystem. It is suitable only for trusted development and
-    tests, which is why it is opt-in. Attach a container-, VM-, or remote-backed workspace before
-    exposing command execution or file access to untrusted input.
-
-Commands run by `LocalWorkspace` inherit only `PATH`, `HOME`, `LANG` and `TMPDIR`, plus `env`; other
-parent variables, including provider API keys, are not inherited by default, but `HOME` and the
-host filesystem remain available. Output is capped at 10 MiB: redirect noisy output to a file and
-read a window instead. A background process can delay return by up to the two-second drain grace.
-
-Every interface that owns a run takes the same `workspace=` argument, and none of them attaches a
-workspace for you:
-
-```python {title="workspace_to_cli.py" test="skip"}
-from pathlib import Path
-
-from pydantic_ai import Agent
-from pydantic_ai.workspaces import LocalWorkspace
-
-agent = Agent('anthropic:claude-sonnet-5')
-agent.to_cli_sync(workspace=LocalWorkspace(root=Path.cwd()))
-```
-
-## Read files without flooding model context
-
-Use [`Workspace.read_file()`][pydantic_ai.workspaces.Workspace.read_file] instead of loading a whole
-file into the model's context:
+Relative paths resolve against the workspace's working directory. Use `read_text` and `write_text`
+for complete text files, or `read_file` for a line window:
 
 ```python
 from pydantic_ai import RunContext
@@ -72,273 +42,166 @@ async def read_source(ctx: RunContext[None], path: str, offset: int = 1) -> str:
     return window.text + suffix
 ```
 
-Relative paths resolve against the workspace's working directory. For complete files, use
-[`read_text()`][pydantic_ai.workspaces.Workspace.read_text] and
-[`write_text()`][pydantic_ai.workspaces.Workspace.write_text].
+[`WrapperWorkspace`][pydantic_ai.workspaces.WrapperWorkspace] composes an existing `Workspace`.
+Override an operation to add behavior before or after it. Helpers such as `read_text` and `read_file`
+use the overridden `read_bytes` operation:
 
-## Safety and policy
+```python
+import logging
 
-Workspace access is opt-in. If you do not attach one, workspace operations raise
-[`UserError`][pydantic_ai.exceptions.UserError] with instructions for attaching an environment;
-Pydantic AI never silently runs commands or reads files on the host.
+from pydantic_ai.workspaces import (
+    LocalWorkspace,
+    ReadOnlyWorkspace,
+    Workspace,
+    WrapperWorkspace,
+)
 
-Pydantic AI provides the connection, not model-facing command or file tools. Your application
-chooses which operations to expose and enforces approval, command, path, timeout, and output
-rules in those tools. If commands must be constrained, use argv form and validate each argument;
-do not rely on a denylist over free-form shell strings.
+logger = logging.getLogger(__name__)
 
-## Choose where the code runs
 
-Pydantic AI chooses one workspace for the run, in this order:
+class LoggingWorkspace(WrapperWorkspace):
+    async def read_bytes(self, path: str) -> bytes:
+        logger.debug('Reading %s', path)
+        return await self.wrapped.read_bytes(path)
 
-1. The environment passed through `workspace=`.
-2. The environment supplied by one active capability.
-3. The unavailable default, which explains how to attach one when a tool tries to use it.
 
-If more than one capability returns a backend, the run raises when the second answer is found.
-Backends are lazy, so this selection does not create an environment that needs cleanup. Deferred
-capabilities are not asked, because they load after the workspace is chosen.
+async def main() -> None:
+    async with LocalWorkspace() as backend:
+        source = Workspace(backend)
+        await source.write_text('message.txt', 'hello')
+        workspace = ReadOnlyWorkspace(LoggingWorkspace(source))
+        assert await workspace.read_text('message.txt') == 'hello'
+```
 
-### Directly, per run
+`ReadOnlyWorkspace` allows reads and directory listings, and refuses commands and file changes.
+Commands are blocked because they could change the same filesystem. This is a policy for calls
+through the workspace interface; it does not provide operating-system isolation.
 
-Pass any [`WorkspaceBackend`][pydantic_ai.workspaces.WorkspaceBackend] through `workspace=`. Create it
-before the run and tear it down afterward, as shown in the [first example](#workspaces). Pass the
-same backend to several runs when they should share one workspace.
+## Selecting a workspace
 
-### Supply a workspace from a capability
+An explicit backend or facade passed through `workspace=` is used directly. Otherwise, configured
+capabilities receive an explicit `WorkspaceRef`, the latest `ModelResponse.workspace_ref` from
+message history, or `None` when there is no reference. A latest value of `None` suppresses older
+references. History supplies identity, not provider configuration.
 
-A capability can supply the run's workspace, which is useful for applications that create containers
-or remote environments on demand. There is one hook:
+Exactly one capability may supply a workspace. Multiple suppliers raise `UserError`. An unrecognized
+explicit `WorkspaceRef` also raises. With no reference and no supplier, operations on the unavailable
+default explain how to attach a workspace; they do not fall back to the host.
 
-[`get_workspace`][pydantic_ai.capabilities.AbstractCapability.get_workspace] runs once per run after
-[`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run] has selected the per-run
-capability instances, but before the run lifecycle hooks. It returns a backend or `None` to
-decline. It is synchronous and must not touch the network: it hands back a backend built from your
-own settings, and that backend creates or attaches the first time somebody runs a command.
+[`get_workspace`][pydantic_ai.capabilities.AbstractCapability.get_workspace] is synchronous and does
+no I/O. It runs after `for_run` has resolved the per-run capability instances, and is skipped for an
+explicit backend or facade. Return `None` to decline a reference belonging to another provider:
 
-`ref` is the identity of an environment the run should continue in when the caller passed a
-[`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] through `workspace=`. `None` means make a fresh one.
-Pydantic AI does not infer workspace identity from message history; pass `result.workspace` to another
-run to reuse its live backend, or pass its `ref` when the next run should reconnect through a
-capability.
-
-The backend holds your settings and, if the run is continuing an environment, its identity. Remote
-providers should keep their typed native workspace behind a property, acquire it lazily in a private
-`_get_workspace()` method, and implement `_create_or_attach(ref)` with provider-specific locking,
-caching, cleanup, and reconnect behavior. [`LocalWorkspace`][pydantic_ai.workspaces.LocalWorkspace]
-shows the lazy acquisition pattern for a host directory; provider integrations show the corresponding
-typed native SDK implementation.
-
-The capability then just builds one:
-
-```python {title="workspace_capability.py"}
+```python
 from dataclasses import dataclass
-from typing import Any
+from pathlib import Path
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
-from pydantic_ai.workspaces import LocalWorkspace
+from pydantic_ai.workspaces import LocalWorkspace, WorkspaceBackend, WorkspaceRef
 
 
 @dataclass
-class MyWorkspaceCapability(AbstractCapability[Any]):
-    root: str
+class LocalWorkspaceCapability(AbstractCapability[None]):
+    root: Path
 
-    def get_workspace(self, ctx: RunContext[Any], *, ref: WorkspaceRef | None) -> WorkspaceBackend:
+    def get_workspace(self, ctx: RunContext[None], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
+        if ref is not None:
+            return None
         return LocalWorkspace(self.root)
 
 
 agent = Agent(
     'anthropic:claude-sonnet-5',
-    capabilities=[MyWorkspaceCapability(root='/tmp/my-workspace', id='my_workspace')],
+    capabilities=[LocalWorkspaceCapability(root=Path.cwd())],
 )
 ```
 
-`workspace` returns something you can only `await`, never call a method on directly, so the connect
-step cannot be skipped by accident. The lock means two tools running at once still produce one
-environment.
+Pass `result.workspace` to another run, or `ctx.workspace` to a subagent, to preserve the same
+facade and its policies. A reconnectable backend exposes a `WorkspaceRef(provider=..., id=...)`;
+pass that reference to reconnect through a configured provider. Local workspaces have no such
+reference. Passing `workspace=None` uses normal selection, including message history.
 
-Exactly one attached capability may return a backend. Two raise
-[`UserError`][pydantic_ai.exceptions.UserError] naming both.
+To disable workspace access explicitly, pass
+`UnavailableWorkspace(reason='Workspace access is disabled by application policy.')`.
+The same `workspace=` argument is available on the streaming, CLI, and web interfaces.
 
-#### Starting and stopping is yours
+## Backend and lifecycle responsibilities
 
-Pydantic AI never creates, closes, destroys or pauses an environment. A conversation can span many
-runs, so ending a run does not mean the workspace is finished with.
+A [`WorkspaceBackend`][pydantic_ai.workspaces.WorkspaceBackend] implements `ref`, `run`, and
+`working_dir`. `Workspace` supplies path, text, and windowed-read helpers. It prefers native
+[`SupportsFilesystem`][pydantic_ai.workspaces.SupportsFilesystem] methods and otherwise derives file
+operations from command execution using standard shell utilities. Commands and file operations
+must address the same environment.
 
-If you want something to happen around a run, use the ordinary hooks:
+Provider constructors only store configuration. The provider keeps its typed native SDK handle
+behind an awaitable `workspace` property. Its private `_get_workspace()` locks first acquisition
+and caches the handle; `_create_or_attach(ref)` performs the SDK calls. Operations run outside that
+lock. A supplied reference attaches to that environment and fails if it is gone; it must not
+silently create an empty replacement. Without a reference, first use can create an environment
+and publish its reference. Reading `ref` does not trigger acquisition.
 
-| You want | Where it goes |
-|---|---|
-| Warm the workspace up before the model runs | `before_run`, calling something harmless like `await ctx.workspace.working_dir()` |
-| Copy files in, or mount storage | `before_run` |
-| Copy results out, or pause the environment | `after_run` |
-| Clean up even when the run fails or is cancelled | `wrap_run`, with `try`/`finally` |
-| Destroy it for good | your own code, after the run, through `result.workspace` |
+Core does not automatically provision or tear down environments at run boundaries. Use ordinary
+`before_run`, `after_run`, or `wrap_run` hooks for application lifecycle work. Retain the concrete
+provider backend when you need SDK-specific methods: `await backend.workspace` returns its native
+handle. `Workspace.backend` exposes the immediate wrapped layer, which may itself be a workspace.
 
-Environment lifetime and idle cleanup are provider and application configuration.
-
-#### Carrying on where a run left off
-
-A finished run hands back the workspace it used, so the environment and its files are still there
-afterwards. Read an artifact out of it, or pass it to the next run and keep working in the same
-workspace:
-
-```python
-from pydantic_ai import Agent, RunContext
-from pydantic_ai.workspaces import LocalWorkspace
-
-agent = Agent('anthropic:claude-sonnet-5')
-
-
-@agent.tool
-async def execute(ctx: RunContext[None], command: list[str]) -> str:
-    result = await ctx.workspace.run(command, timeout=60)
-    return result.stdout if result.exit_code == 0 else f'[exit {result.exit_code}] {result.stderr}'
-
-
-async def main() -> None:
-    async with LocalWorkspace() as workspace:
-        first = await agent.run('Write fizzbuzz to fizzbuzz.py and run it.', workspace=workspace)
-        await agent.run('Now add a test for it.', workspace=first.workspace)
-```
-
-The same value works for a subagent: pass `ctx.workspace` from a tool and the subagent shares the
-workspace instead of getting one of its own.
-
-### Disabling execution with a policy reason
-
-Pass [`UnavailableWorkspace`][pydantic_ai.workspaces.UnavailableWorkspace] as
-`workspace=UnavailableWorkspace(reason='Local execution is disabled by application policy.')` to
-prevent capabilities from attaching a workspace and give attempted operations a useful error.
-
-### Making a workspace read-only
-
-Wrap a workspace in [`ReadOnlyWorkspace`][pydantic_ai.workspaces.ReadOnlyWorkspace] when an agent should
-inspect a workspace without changing it:
-
-```python
-from pydantic_ai import Agent, RunContext
-from pydantic_ai.workspaces import LocalWorkspace, ReadOnlyWorkspace, Workspace
-
-agent = Agent('anthropic:claude-sonnet-5')
-
-
-@agent.tool
-async def read_workspace_file(ctx: RunContext[None], path: str) -> str:
-    return await ctx.workspace.read_text(path)
-
-
-async def main() -> None:
-    async with LocalWorkspace() as workspace:
-        root = await workspace.working_dir()
-        await workspace.write_bytes(f'{root}/data.csv', b'a,b\n1,2\n')
-        await agent.run(
-            'Summarize data.csv in the working directory.',
-            workspace=ReadOnlyWorkspace(Workspace(workspace)),
-        )
-```
-
-File reads and directory listings work; commands and file changes raise
-[`UserError`][pydantic_ai.exceptions.UserError]. If the agent must run commands against protected
-data, enforce read-only access in the environment itself, for example with a read-only mount.
-
-Policies compose by overriding primitive operations on [`WrapperWorkspace`][pydantic_ai.workspaces.WrapperWorkspace]:
-
-```python
-from pydantic_ai.workspaces import WrapperWorkspace, Workspace
-
-
-class LoggingWorkspace(WrapperWorkspace):
-    async def read_bytes(self, path: str) -> bytes:
-        print(f'reading {path}')
-        return await self.wrapped.read_bytes(path)
-```
-
-Higher-level helpers such as `read_text()` and `read_file()` use the overridden primitive. A
-wrapper can therefore add behavior around reads or writes without forwarding every helper method.
-
-## Build a workspace integration
-
-A backend is required to implement only three members: its `ref`, command execution, and its
-working directory. Pydantic AI exposes it to tools through a
-[`Workspace`][pydantic_ai.workspaces.Workspace] object, which adds text decoding, path resolution,
-and line-window reads. Filesystem methods are always available: `Workspace` prefers a backend's
-flat, native [`SupportsFilesystem`][pydantic_ai.workspaces.SupportsFilesystem] implementation and
-otherwise derives the same operations from `run()` using standard shell utilities.
-
-| Need | [`Workspace`][pydantic_ai.workspaces.Workspace] API | Backend support |
-|---|---|---|
-| Execute a command | [`run()`][pydantic_ai.workspaces.Workspace.run] | — |
-| Read/write files | [`read_bytes()`][pydantic_ai.workspaces.Workspace.read_bytes] / [`read_text()`][pydantic_ai.workspaces.Workspace.read_text] / [`write_text()`][pydantic_ai.workspaces.Workspace.write_text] | Native [`SupportsFilesystem`][pydantic_ai.workspaces.SupportsFilesystem], or shell fallback over `run()` |
-| Windowed read | [`read_file()`][pydantic_ai.workspaces.Workspace.read_file] | Bounded `sed` over `run()`, then the ordinary native-or-shell filesystem path |
-| Working directory | [`working_dir()`][pydantic_ai.workspaces.Workspace.working_dir] | — |
-| Path resolution | [`resolve()`][pydantic_ai.workspaces.Workspace.resolve] | Handled by `Workspace` |
-
-The protocol contracts that matter to callers:
-
-- `WorkspaceBackend` stays small; implement flat `SupportsFilesystem` methods when the provider has
-  a better native file API. `Workspace` supplies a complete shell fallback when it does not.
-- `timeout=` guarantees the command is terminated before
-  [`WorkspaceTimeoutError`][pydantic_ai.workspaces.WorkspaceTimeoutError] is raised; its `stdout` and
-  `stderr` attributes contain output produced before termination when the backend can recover it.
-- Backends raise [`WorkspaceUnavailableError`][pydantic_ai.workspaces.WorkspaceUnavailableError] when
-  the environment is permanently unusable and consumers should stop retrying it.
-- Backends raise [`WorkspaceError`][pydantic_ai.workspaces.WorkspaceError] for deliberate recoverable
-  operation failures; catch specific subclasses before the base class.
-- A filesystem reports a missing path with the builtin `FileNotFoundError`, and its `stat()` and
-  `list_dir()` entries can reuse the concrete [`FileEntry`][pydantic_ai.workspaces.FileEntry]
-  carrier instead of declaring their own.
-- A non-zero `exit_code` is a normal result, not an exception. `run()` results can reuse the
-  concrete [`CommandResult`][pydantic_ai.workspaces.CommandResult] carrier instead of declaring
-  their own.
-
-These translations are a backend's whole error-handling duty; wrapping other SDK failures is
-optional.
-
-[`WorkspaceBackend.run()`][pydantic_ai.workspaces.WorkspaceBackend.run] returns complete captured
-output. Truncating it in a tool bounds model context, not the backend's memory; bound untrusted
-output in the command itself (for example with `tail`).
-
-!!! warning "The workspace protocol is not a security boundary"
-    Isolation comes from the backend environment. In particular,
-    [`resolve()`][pydantic_ai.workspaces.Workspace.resolve] only normalizes text: `..` can escape the
-    base directory and symlinks are not inspected. Enforce confinement in the workspace itself.
-
-[`LocalWorkspace`][pydantic_ai.workspaces.LocalWorkspace] is the reference implementation. A custom
-backend works without registration when it implements the relevant protocols.
+A non-zero command exit is a normal result. Missing files raise `FileNotFoundError`; unavailable
+environments raise `WorkspaceUnavailableError`. `WorkspaceTimeoutError` carries available output
+when a command deadline is exceeded. Command termination behavior depends on the provider.
+`resolve()` normalizes path spelling, including `..`; it does not enforce confinement.
 
 ## Durable execution
 
-Tools and capability hooks still use `ctx.workspace` unchanged under
-[Temporal](durable_execution/temporal.md), [DBOS](durable_execution/dbos.md), and
-[Prefect](durable_execution/prefect.md). A `Workspace` method called directly from replayed workflow
-code executes inside the durable tool or capability activity you configure. The live backend never
-crosses the boundary; its
-[`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef], the method arguments, and the serializable run
-context do. The worker reconnects through the exact capability that supplied the workspace.
-Accessing `workspace.backend` in workflow code is rejected because calling a provider-specific
-method directly would bypass durable execution.
+The application owns durable provisioning, retries, and cleanup. Persist a stable reference before
+a workflow needs to reconnect to the environment. A live SDK handle does not cross a serialized
+boundary. Core does not automatically route workspace operations into activities or steps.
 
-The supplying capability needs an explicit stable reference. Use the capability [shown above](#supply-a-workspace-from-a-capability) to have the
-agent pick the workspace. If the environment is made elsewhere, pass its reference instead:
+Temporal's default context serializes the known reference. An application customizes
+`TemporalRunContext.deserialize_run_context` to validate that JSON value, construct its lazy backend
+from worker configuration, and restore any wrappers. Configure the context through
+`TemporalDurability(run_context_type=...)`. Tools then use `ctx.workspace` inside their activity.
 
-```python
-from pydantic_ai import WorkspaceRef
+For example, with the optional Modal workspace integration installed:
 
-workspace = WorkspaceRef(provider='my-provider', id='workspace-123')
+```python {test="skip"}
+from typing import Any
+
+from pydantic import TypeAdapter
+from pydantic_ai_harness.modal_workspace import ModalWorkspace, ModalWorkspaceBackend
+
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.durable_exec.temporal import TemporalDurability, TemporalRunContext
+from pydantic_ai.workspaces import ReadOnlyWorkspace, Workspace, WorkspaceRef
+
+
+class AppTemporalContext(TemporalRunContext[None]):
+    @classmethod
+    def deserialize_run_context(cls, ctx: dict[str, Any], deps: None) -> 'AppTemporalContext':
+        data = dict(ctx)
+        ref = TypeAdapter(WorkspaceRef).validate_python(data.pop('workspace_ref'))
+        backend = ModalWorkspaceBackend(ref=ref)
+        workspace = ReadOnlyWorkspace(Workspace(backend))
+        return cls(**{**data, 'workspace': workspace}, deps=deps)
+
+
+agent = Agent(
+    'anthropic:claude-sonnet-5',
+    capabilities=[ModalWorkspace(), TemporalDurability(run_context_type=AppTemporalContext)],
+)
+
+
+@agent.tool
+async def read_report(ctx: RunContext[None]) -> str:
+    return await ctx.workspace.read_text('report.txt')
 ```
 
-Pass that value through `workspace=`. The agent must also have a capability whose `get_workspace`
-recognizes the reference. Do not pass a live backend or `LocalWorkspace` into a durable run; neither
-can cross the durable boundary.
+In the workflow, pass the saved `WorkspaceRef` through `agent.run(workspace=ref, ...)`.
+Provider credentials come from worker configuration, not the reference. Restore policy wrappers
+on each worker: a reference identifies the environment, not its access policy. A tool performing
+commands uses `ctx.workspace.run()` in the same way, with a policy that permits commands.
 
-For reliable durable lifecycles:
-
-- make the backend's create-or-attach step safe to run twice, because durable operations may retry;
-- reconnect an existing environment rather than quietly making an empty one in its place;
-- keep credentials on the capability, never in `WorkspaceRef` or workflow history;
-- configure a provider-side TTL or reaper because a cancelled workflow may not run cleanup.
-
-See the relevant durable-execution guide for engine-specific retry and task configuration.
+See the [Temporal guide](durable_execution/temporal.md) for workflow and worker setup, and the
+[DBOS](durable_execution/dbos.md) and [Prefect](durable_execution/prefect.md) guides for their durable
+execution boundaries. Provisioning a new environment and persisting its reference must follow the
+application's retry and recovery rules.

@@ -637,8 +637,9 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
         `ref` is the identity of an environment the run should continue in when the caller passed
         a [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] through `workspace=`. `None` means the
-        backend should create a fresh environment. Workspace identity is not inferred from message
-        history. At most one attached capability may answer.
+        backend should create a fresh environment. When continuing from message history, the latest
+        response's `workspace_ref` is used unless the caller passes an explicit backend, facade, or ref.
+        At most one attached capability may answer.
         """
         return None
 

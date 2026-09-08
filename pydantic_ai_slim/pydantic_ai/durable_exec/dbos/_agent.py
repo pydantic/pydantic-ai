@@ -81,7 +81,7 @@ _LIVE_WORKSPACE_ERROR = live_workspace_error(
 )
 _WORKSPACE_REF_UNSUPPORTED_ERROR = (
     '`DBOSAgent` cannot use a workspace inside a workflow. Migrate to a regular `Agent` with `DBOSDurability` '
-    'and a construction-time workspace capability; that path routes every workspace method through a DBOS step.'
+    'and configure any workspace operations in your application-owned durable tools or capability hooks.'
 )
 
 
@@ -95,7 +95,7 @@ _WORKSPACE_REF_UNSUPPORTED_ERROR = (
 - `mcp_step_config=` → set `mcp_step_config=` on `DBOSDurability`.
 - `model_step_config=` → set `model_step_config=` on `DBOSDurability`.
 - `parallel_execution_mode=` → set `parallel_execution_mode=` on `DBOSDurability`.
-- `workspace=` → use a construction-time workspace capability with an explicit stable `id`; workspace methods then run as DBOS steps.
+- `workspace=` → arrange workspace access and provider I/O in application-owned durable tools or hooks.
 Pass `register_legacy_workflows=True` to `DBOSDurability` and pin the DBOS application version so in-flight `DBOSAgent` workflows recover across the migration.""",
     category=PydanticAIDeprecationWarning,
 )
@@ -514,7 +514,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             event_stream_handler: Optional event stream handler to use for this run.
             capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
             workspace: Optional workspace backend or [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] for this run; overrides capability contributions. See the [workspace docs](../workspace.md).
-               The deprecated `DBOSAgent` does not support workspace access inside a workflow; migrate to `DBOSDurability` with a construction-time workspace capability.
+               The deprecated `DBOSAgent` does not support workspace access inside a workflow; migrate to `DBOSDurability` and configure workspace access in application-owned durable tools or capability hooks.
             spec: Optional agent spec to apply for this run.
 
         Returns:
@@ -678,7 +678,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             event_stream_handler: Optional event stream handler to use for this run.
             capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
             workspace: Optional workspace backend or [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] for this run; overrides capability contributions. See the [workspace docs](../workspace.md).
-               The deprecated `DBOSAgent` does not support workspace access inside a workflow; migrate to `DBOSDurability` with a construction-time workspace capability.
+               The deprecated `DBOSAgent` does not support workspace access inside a workflow; migrate to `DBOSDurability` and configure workspace access in application-owned durable tools or capability hooks.
             spec: Optional agent spec to apply for this run.
 
         Returns:
@@ -840,7 +840,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             event_stream_handler: Optional event stream handler to use for this run. It will receive all the events up until the final result is found, which you can then read or stream from inside the context manager.
             capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
             workspace: Optional workspace backend or [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] for this run; overrides capability contributions. See the [workspace docs](../workspace.md).
-               The deprecated `DBOSAgent` does not support workspace access inside a workflow; migrate to `DBOSDurability` with a construction-time workspace capability.
+               The deprecated `DBOSAgent` does not support workspace access inside a workflow; migrate to `DBOSDurability` and configure workspace access in application-owned durable tools or capability hooks.
             spec: Optional agent spec to apply for this run.
 
         Returns:
@@ -1013,7 +1013,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             toolsets: Optional additional toolsets for this run.
             capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
             workspace: Optional workspace backend or [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] for this run; overrides capability contributions. See the [workspace docs](../workspace.md).
-               The deprecated `DBOSAgent` does not support workspace access inside a workflow; migrate to `DBOSDurability` with a construction-time workspace capability.
+               The deprecated `DBOSAgent` does not support workspace access inside a workflow; migrate to `DBOSDurability` and configure workspace access in application-owned durable tools or capability hooks.
             spec: Optional agent spec to apply for this run.
 
         Returns:
@@ -1199,7 +1199,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             toolsets: Optional additional toolsets for this run.
             capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
             workspace: Optional workspace backend or [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] for this run; overrides capability contributions. See the [workspace docs](../workspace.md).
-               The deprecated `DBOSAgent` does not support workspace access inside a workflow; migrate to `DBOSDurability` with a construction-time workspace capability.
+               The deprecated `DBOSAgent` does not support workspace access inside a workflow; migrate to `DBOSDurability` and configure workspace access in application-owned durable tools or capability hooks.
             spec: Optional agent spec to apply for this run.
 
         Returns:
