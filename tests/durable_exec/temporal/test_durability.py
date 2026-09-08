@@ -5,7 +5,7 @@ import re
 import sys
 import uuid
 import warnings
-from collections.abc import AsyncIterable, Sequence
+from collections.abc import AsyncIterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import timedelta
 from decimal import Decimal
@@ -13,6 +13,7 @@ from typing import Any, cast
 from unittest.mock import patch
 
 import pytest
+from pydantic import TypeAdapter
 
 from pydantic_ai import (
     Agent,
@@ -93,6 +94,7 @@ from pydantic_ai.tools import DeferredToolRequests, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.toolsets.external import TOOL_SCHEMA_VALIDATOR
 from pydantic_ai.usage import UsageLimits
+from pydantic_ai.workspaces import Workspace, WorkspaceBackend, WorkspaceRef, WrapperWorkspace
 from pydantic_graph import GraphBuilder, StepContext
 
 from ..._inline_snapshot import snapshot
@@ -103,12 +105,13 @@ try:
     from temporalio.activity import _Definition as ActivityDefinition  # pyright: ignore[reportPrivateUsage]
     from temporalio.client import Client, WorkflowFailureError
     from temporalio.common import RetryPolicy
-    from temporalio.worker import UnsandboxedWorkflowRunner, Worker
+    from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
     from temporalio.workflow import ActivityConfig
 
     from pydantic_ai.durable_exec._toolset import unwrap_tool_call_result
     from pydantic_ai.durable_exec.temporal import (
         AgentPlugin,
+        PydanticAIPlugin,
         TemporalAgent,  # pyright: ignore[reportDeprecated]
         TemporalDurability,
     )
@@ -166,6 +169,7 @@ with workflow.unsafe.imports_passed_through():
 
     # Loads `vcr`, which Temporal doesn't like without passing through the import
     from ...conftest import IsDatetime, IsInt, IsList, IsStr
+    from ...workspace_fakes import FakeWorkspace, FakeWorkspaceResult
 
     # `_shared` loads the same sandbox-sensitive modules, so import it passed-through as well.
     from ._shared import (
@@ -4594,3 +4598,121 @@ async def test_durability_prepare_renamed_tool_runs_in_activity(client: Client):
     assert output == snapshot('the registered function ran')
     # The model only ever saw the renamed tool, in both steps.
     assert _renamed_tool_names == snapshot([['exposed_tool'], ['exposed_tool']])
+
+
+_workspace_probe_backends: list[FakeWorkspace] = []
+
+
+@dataclass
+class WorkspaceProbeDeps:
+    prefix: str
+
+
+class WorkspaceProbePolicy(WrapperWorkspace):
+    def __init__(self, wrapped: Workspace, deps: WorkspaceProbeDeps):
+        super().__init__(wrapped)
+        self.deps = deps
+
+    async def run(
+        self,
+        command: str | Sequence[str],
+        *,
+        shell: bool = False,
+        cwd: str | None = None,
+        env: Mapping[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> FakeWorkspaceResult:
+        assert activity.in_activity()
+        result = await self.wrapped.run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
+        assert self.ref is not None
+        return FakeWorkspaceResult(
+            exit_code=result.exit_code,
+            stdout=f'policy:{self.deps.prefix}:{self.ref.id}:{result.stdout}',
+            stderr=result.stderr,
+        )
+
+
+class WorkspaceProbeCapability(AbstractCapability[WorkspaceProbeDeps]):
+    def get_workspace(self, ctx: RunContext[WorkspaceProbeDeps], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
+        if ref is None or ref.provider != 'probe':
+            return None
+        return WorkspaceProbePolicy(Workspace(FakeWorkspace(ref.id, ref=ref)), ctx.deps)
+
+
+class WorkspaceProbeContext(TemporalRunContext[WorkspaceProbeDeps]):
+    @classmethod
+    def deserialize_run_context(cls, ctx: dict[str, Any], deps: WorkspaceProbeDeps) -> WorkspaceProbeContext:
+        data = dict(ctx)
+        raw_ref: Any = data.pop('workspace_ref')
+        assert isinstance(raw_ref, dict), f'expected JSON object, got {type(raw_ref)}'
+        ref = TypeAdapter(WorkspaceRef).validate_python(raw_ref)
+        backend = FakeWorkspace(ref.id, ref=ref)
+        _workspace_probe_backends.append(backend)
+        workspace = WorkspaceProbePolicy(Workspace(backend), deps)
+        return cls(**{**data, 'workspace': workspace}, deps=deps)
+
+
+_workspace_probe_agent = Agent(
+    TestModel(call_tools=['probe_workspace']),
+    name='workspace_probe_agent',
+    deps_type=WorkspaceProbeDeps,
+    capabilities=[
+        Instrumentation(),
+        WorkspaceProbeCapability(),
+        TemporalDurability(run_context_type=WorkspaceProbeContext, activity_config=BASE_ACTIVITY_CONFIG),
+    ],
+)
+
+
+@_workspace_probe_agent.tool
+async def probe_workspace(ctx: RunContext[WorkspaceProbeDeps]) -> str:
+    assert isinstance(ctx, WorkspaceProbeContext)
+    first = await ctx.workspace.run(['first'])
+    second = await ctx.workspace.run(['second'])
+    return f'{first.stdout}|{second.stdout}'
+
+
+@workflow.defn
+class WorkspaceProbeWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        result = await _workspace_probe_agent.run(
+            'Use the probe_workspace tool.',
+            deps=WorkspaceProbeDeps(prefix='worker'),
+            workspace=WorkspaceRef(provider='probe', id='existing-123'),
+        )
+        assert result.workspace.ref == WorkspaceRef(provider='probe', id='existing-123')
+        return result.output
+
+
+async def test_temporal_workspace_restores_ref_and_replays_without_side_effects(client: Client):
+    """A real sandboxed worker restores a typed workspace ref in an activity and replay skips it."""
+    _workspace_probe_backends.clear()
+
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[WorkspaceProbeWorkflow],
+        plugins=[AgentPlugin(_workspace_probe_agent)],
+    ):
+        handle = await client.start_workflow(
+            WorkspaceProbeWorkflow.run,
+            id=f'{WorkspaceProbeWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+        output = await handle.result()
+        history = await handle.fetch_history()
+
+    before_replay = [(backend.attach_calls, backend.create_calls, list(backend.commands)) for backend in _workspace_probe_backends]
+    backend_count = len(_workspace_probe_backends)
+    replay = await Replayer(workflows=[WorkspaceProbeWorkflow], plugins=[PydanticAIPlugin()]).replay_workflow(history)
+    after_replay = [(backend.attach_calls, backend.create_calls, list(backend.commands)) for backend in _workspace_probe_backends]
+
+    assert replay.replay_failure is None
+    expected = 'policy:worker:existing-123:connected|policy:worker:existing-123:connected'
+    assert TypeAdapter(dict[str, str]).validate_json(output) == {'probe_workspace': expected}
+    assert sum(backend.attach_calls for backend in _workspace_probe_backends) == 1
+    assert sum(backend.create_calls for backend in _workspace_probe_backends) == 0
+    assert len(_workspace_probe_backends) == backend_count
+    assert [command for backend in _workspace_probe_backends for command in backend.commands] == [['first'], ['second']]
+    assert before_replay == after_replay
