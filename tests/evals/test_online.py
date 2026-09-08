@@ -5,6 +5,7 @@ from __future__ import annotations as _annotations
 import asyncio
 import inspect
 import random
+import threading
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -1369,6 +1370,101 @@ async def test_sync_function_no_event_loop():
     assert results[0].value is True
     assert ctx.output == 42
     assert ctx.inputs == {'x': 21}
+
+
+@pytest.mark.anyio
+async def test_wait_for_evaluations_joins_background_thread():
+    """wait_for_evaluations() joins a background thread that is still running when the wait begins."""
+    started = threading.Event()
+    release = threading.Event()
+    completed: list[bool] = []
+
+    class GatedEvaluator(Evaluator):
+        """Evaluator that blocks on a gate until released to hold the background thread open."""
+
+        async def evaluate(self, ctx: EvaluatorContext) -> EvaluatorOutput:
+            started.set()
+            # Block off the loop thread: the background dispatch thread runs an event loop, and a
+            # blocking wait on it would be rejected by the blockbuster fixture in tests/conftest.py.
+            from anyio import to_thread
+
+            await to_thread.run_sync(release.wait, 10)
+            completed.append(True)
+            return True
+
+    collector = Collector()
+    config = OnlineEvalConfig(default_sink=collector)
+
+    @config.evaluate(GatedEvaluator())
+    def my_func(x: int) -> int:
+        return x * 2
+
+    # Call from a thread with no running event loop to exercise _dispatch_in_background_thread
+    from anyio.to_thread import run_sync
+
+    result = await run_sync(my_func, 21)
+    assert result == 42
+    assert started.wait(timeout=10)  # evaluator is live on the background thread, blocked on the gate
+
+    # Release the gate from another thread so the background thread outlives the start of the wait
+    threading.Thread(target=release.set).start()
+
+    await wait_for_evaluations()
+
+    assert completed == [True]  # the wait cannot return before the joined thread finished
+    assert len(collector.calls) == 1
+    results, _, ctx = collector.calls[0]
+    assert len(results) == 1
+    assert results[0].value is True
+    assert ctx.output == 42
+    assert ctx.inputs == {'x': 21}
+
+
+@pytest.mark.anyio
+async def test_wait_for_evaluations_warns_on_background_thread_timeout():
+    """wait_for_evaluations(timeout=...) warns when a background thread outlives the timeout."""
+    started = threading.Event()
+    release = threading.Event()
+    completed: list[bool] = []
+
+    class GatedEvaluator(Evaluator):
+        """Evaluator that blocks on a gate until released to hold the background thread open."""
+
+        async def evaluate(self, ctx: EvaluatorContext) -> EvaluatorOutput:
+            started.set()
+            # Block off the loop thread: the background dispatch thread runs an event loop, and a
+            # blocking wait on it would be rejected by the blockbuster fixture in tests/conftest.py.
+            from anyio import to_thread
+
+            await to_thread.run_sync(release.wait, 10)
+            completed.append(True)
+            return True
+
+    collector = Collector()
+    config = OnlineEvalConfig(default_sink=collector)
+
+    @config.evaluate(GatedEvaluator())
+    def my_func(x: int) -> int:
+        return x * 2
+
+    # Call from a thread with no running event loop to exercise _dispatch_in_background_thread
+    from anyio.to_thread import run_sync
+
+    result = await run_sync(my_func, 21)
+    assert result == 42
+    assert started.wait(timeout=10)
+
+    with pytest.warns(UserWarning, match='Background evaluation thread did not complete within 0.1s timeout'):
+        await wait_for_evaluations(timeout=0.1)
+
+    release.set()  # let the background thread finish so no non-daemon thread is left stranded
+    await wait_for_evaluations()
+
+    assert completed == [True]
+    assert len(collector.calls) == 1
+    results, _, ctx = collector.calls[0]
+    assert len(results) == 1
+    assert results[0].value is True
 
 
 @pytest.mark.anyio
