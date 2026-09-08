@@ -78,8 +78,7 @@ async def test_cerebras_forwards_settings_the_api_honors(
         service_tier='flex',
         logit_bias={'424243': 7},
     )
-    with pytest.warns(UserWarning, match='logit_bias'):
-        await model_request(model, prompt, model_settings=settings, model_request_parameters=params)
+    await model_request(model, prompt, model_settings=settings, model_request_parameters=params)
 
     body = request_capture.body('/chat/completions')
     assert {name: body.get(name, '<stripped>') for name in TRACKED_SETTINGS} == snapshot(

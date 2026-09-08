@@ -577,18 +577,9 @@ def _drop_unsupported_params(profile: OpenAIModelProfile, model_settings: OpenAI
 
     Mutates `model_settings`.
 
-    Used by profiles that name `openai_unsupported_model_settings`: currently Cerebras (`logit_bias`)
-    and GitHub Copilot's Claude ids which disallow sampling settings (`temperature`, `top_p`),
-    mirroring `AnthropicModel`.
+    Used currently only by Cerebras
     """
-    unsupported = profile.get('openai_unsupported_model_settings', ())
-    dropped = [setting for setting in unsupported if setting in model_settings]
-    if dropped:
-        warnings.warn(
-            f'{dropped} are not supported by this model and will be ignored.',
-            UserWarning,
-        )
-    for setting in dropped:
+    for setting in profile.get('openai_unsupported_model_settings', ()):
         model_settings.pop(setting, None)
 
 

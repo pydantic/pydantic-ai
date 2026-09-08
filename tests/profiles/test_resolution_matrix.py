@@ -1308,9 +1308,10 @@ def test_github_copilot_unknown_model():
 def test_github_copilot_openai_family_prefix_arms(model_name: str):
     """Pin every remaining OpenAI-family arm of the Copilot prefix table.
 
-    A typo'd key would silently fall through to the capability-less fallback and strip reasoning
-    support; asserting each prefix resolves to the same-id `openai_model_profile` (plus the Copilot
-    overlay) makes any future reroute fail loudly.
+    A typo'd key would silently fall through to the capability-less fallback and strip the family's
+    structured-output, native-tool and inline-system-prompt support — and, on the o-series and
+    `oswe` arms, its reasoning support too; asserting each prefix resolves to the same-id
+    `openai_model_profile` (plus the Copilot overlay) makes any future reroute fail loudly.
     """
     from pydantic_ai.profiles.openai import openai_model_profile
 

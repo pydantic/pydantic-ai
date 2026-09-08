@@ -281,6 +281,31 @@ async def test_github_copilot_thinking_sends_reasoning_effort(
     assert request_capture.body('/chat/completions')['reasoning_effort'] == 'high'
 
 
+async def test_github_copilot_flagged_claude_drops_sampling_settings_on_the_wire(
+    allow_model_requests: None, github_copilot_api_key: str, request_capture: RequestCapture
+):
+    """A flagged Claude id drops `temperature` and `top_p` before the request, as `AnthropicModel` does.
+
+    `test_github_copilot_provider_sampling_restriction_follows_the_family` pins the profile tuple;
+    this pins the joint — the family flag reaching the shared drop on a real request — and that
+    Copilot answers `200` to the stripped body. `claude-sonnet-5` carries the flag, which the
+    unflagged `claude-haiku-4.5` used by the tests above does not.
+    """
+    model = GitHubCopilotModel(
+        'claude-sonnet-5',
+        provider=GitHubCopilotProvider(api_key=github_copilot_api_key, http_client=request_capture.client),
+    )
+
+    result = await Agent(model, instructions='Be concise.').run(
+        'What is the capital of France?', model_settings=ModelSettings(temperature=0.2, top_p=0.9)
+    )
+
+    body = request_capture.body('/chat/completions')
+    assert 'temperature' not in body
+    assert 'top_p' not in body
+    assert result.output == snapshot('Paris')
+
+
 @pytest.mark.xfail(
     strict=True,
     reason='Blocked on a genai-prices release carrying the `github-copilot` provider added in '
@@ -477,80 +502,52 @@ async def test_github_copilot_gemini_thinking(
     )
 
 
-@pytest.mark.vcr(ignore_hosts=['copilot-proxy.example'])
-async def test_github_copilot_gemini_thinking_stream(allow_model_requests: None):
-    """`gemini-` ids stream `reasoning_text` into a `ThinkingPart` — the streamed twin of the Claude pin.
+async def test_github_copilot_gemini_thinking_stream(allow_model_requests: None, github_copilot_api_key: str):
+    """The Gemini streamed twin: `reasoning_text` reaches a `ThinkingPart` on the streamed path too.
 
-    Synthesized through the `MockTransport` proxy (the sandbox cannot record cassettes); the chunk
-    shape is the `reasoning_text` delta shape the Claude streamed cassettes pin for their family.
+    `test_github_copilot_claude_thinking_stream` covers the same path on the other family that
+    reasons in this field; both are pinned because the profile keys `openai_chat_thinking_field` on
+    two prefixes, and a profile covering only one would drop the reasoning for the other's users.
+
+    The prompt asks for one step more than the Claude twin's because Gemini reasons adaptively: at
+    the `medium` effort `thinking=True` maps to, the bare factoring prompt sometimes streams back
+    `content` alone, with no `reasoning_text` for the part to come from.
+
+    The reasoning text itself is matched loosely, as the non-streamed Gemini test matches it: its
+    wording and length change on every re-record, and what this pins is the part arriving at all
+    with the `id` the profile names.
     """
-    proxy = _CopilotProxy(
-        streams=(
-            _proxy_sse(
-                _proxy_chunk({'reasoning_text': '3599 = 59 × 61.'}, model='gemini-3.8-flash'),
-                _proxy_chunk({'content': 'The weather in Paris is sunny.'}, model='gemini-3.8-flash'),
-                _proxy_chunk({'content': None}, finish_reason='stop', model='gemini-3.8-flash'),
-            ),
-        )
-    )
+    model = GitHubCopilotModel('gemini-3.8-flash', provider=GitHubCopilotProvider(api_key=github_copilot_api_key))
+    agent = Agent(model, instructions='Be concise.')
 
-    async with httpx2.AsyncClient(transport=httpx2.MockTransport(proxy.handle)) as http_client:
-        provider = GitHubCopilotProvider(
-            base_url='https://copilot-proxy.example/api', api_key='placeholder-token', http_client=http_client
-        )
-        agent = Agent(GitHubCopilotModel('gemini-3.8-flash', provider=provider), instructions='Be concise.')
+    async with agent.run_stream(
+        'Factor 3599 into two primes, then show only their sum.', model_settings=ModelSettings(thinking=True)
+    ) as result:
+        output = await result.get_output()
 
-        async with agent.run_stream(
-            'What is the weather in Paris?', model_settings=ModelSettings(thinking=True)
-        ) as result:
-            output = await result.get_output()
-
-    assert output == snapshot('The weather in Paris is sunny.')
-    assert proxy.bodies[0]['reasoning_effort'] == 'medium'
+    assert output == snapshot('120')
     assert result.all_messages()[-1] == snapshot(
         ModelResponse(
             parts=[
-                ThinkingPart(content='3599 = 59 × 61.', id='reasoning_text', provider_name='github-copilot'),
-                TextPart(content='The weather in Paris is sunny.'),
+                ThinkingPart(
+                    content=IsStr(),
+                    id='reasoning_text',
+                    provider_name='github-copilot',
+                ),
+                TextPart(content='120'),
             ],
+            usage=RequestUsage(details={'reasoning_tokens': 199}, input_tokens=19, output_tokens=3),
             model_name='gemini-3.8-flash',
             timestamp=IsDatetime(),
             provider_name='github-copilot',
-            provider_url='https://copilot-proxy.example/api/',
+            provider_url='https://api.githubcopilot.com',
             provider_details={'timestamp': IsDatetime(), 'finish_reason': 'stop'},
-            provider_response_id='msg_proxy_stream_01',
+            provider_response_id=IsStr(),
             finish_reason='stop',
             run_id=IsStr(),
             conversation_id=IsStr(),
         )
     )
-
-
-@pytest.mark.vcr(ignore_hosts=['copilot-proxy.example'])
-async def test_github_copilot_flagged_claude_drops_sampling_settings_on_the_wire(allow_model_requests: None):
-    """Flagged Claude ids drop `temperature`/`top_p` on the wire and warn, mirroring `AnthropicModel`.
-
-    The profile tuple is pinned in `tests/providers/test_github_copilot.py`; this pins the joint —
-    the family flag reaching `_drop_unsupported_params` on a real request — plus the warning.
-    """
-    proxy = _CopilotProxy(streams=(_PROXY_TEXT_STREAM,))
-
-    async with httpx2.AsyncClient(transport=httpx2.MockTransport(proxy.handle)) as http_client:
-        provider = GitHubCopilotProvider(
-            base_url='https://copilot-proxy.example/api', api_key='placeholder-token', http_client=http_client
-        )
-        agent = Agent(GitHubCopilotModel('claude-opus-4.8', provider=provider))
-
-        with pytest.warns(UserWarning, match='temperature'):
-            async with agent.run_stream(
-                'What is the weather in Paris?', model_settings=ModelSettings(temperature=0.2, top_p=0.9)
-            ) as result:
-                output = await result.get_output()
-
-    assert output == snapshot('The weather in Paris is sunny.')
-    body = proxy.bodies[0]
-    assert 'temperature' not in body
-    assert 'top_p' not in body
 
 
 async def test_github_copilot_claude_thinking_false_is_rejected(
@@ -641,9 +638,7 @@ _PROXY_RESPONSE_ID = 'msg_proxy_stream_01'
 _PROXY_TOOL_CALL_ID = 'toolu_proxy_stream_01'
 
 
-def _proxy_chunk(
-    delta: dict[str, object], finish_reason: str | None = None, model: str = 'claude-haiku-4.5'
-) -> dict[str, object]:
+def _proxy_chunk(delta: dict[str, object], finish_reason: str | None = None) -> dict[str, object]:
     """One Copilot streamed chunk, modelled on the shapes in this file's live cassettes.
 
     Copilot omits `object` on every chunk, which is why it is absent here too.
@@ -651,7 +646,7 @@ def _proxy_chunk(
     choice: dict[str, object] = {'index': 0, 'delta': delta}
     if finish_reason is not None:
         choice['finish_reason'] = finish_reason
-    return {'choices': [choice], 'created': 1788538002, 'id': _PROXY_RESPONSE_ID, 'model': model}
+    return {'choices': [choice], 'created': 1788538002, 'id': _PROXY_RESPONSE_ID, 'model': 'claude-haiku-4.5'}
 
 
 def _proxy_sse(*chunks: dict[str, object]) -> bytes:
@@ -687,12 +682,11 @@ class _CopilotProxy:
 
     requests: list[httpx2.Request] = field(default_factory=list[httpx2.Request])
     bodies: list[dict[str, object]] = field(default_factory=list[dict[str, object]])
-    streams: tuple[bytes, ...] = (_PROXY_TOOL_CALL_STREAM, _PROXY_TEXT_STREAM)
 
     async def handle(self, request: httpx2.Request) -> httpx2.Response:
         self.requests.append(request)
         self.bodies.append(json.loads(request.content))
-        stream = self.streams[min(len(self.requests) - 1, len(self.streams) - 1)]
+        stream = _PROXY_TOOL_CALL_STREAM if len(self.requests) == 1 else _PROXY_TEXT_STREAM
         return httpx2.Response(200, content=stream, headers={'content-type': 'text/event-stream'})
 
 
