@@ -3,6 +3,7 @@ from __future__ import annotations as _annotations
 import argparse
 import functools
 import json
+import re
 import sys
 from collections.abc import Sequence
 from contextlib import AsyncExitStack, ExitStack
@@ -268,6 +269,7 @@ subcommands:
         default='dark',
     )
     parser.add_argument('--no-stream', action='store_true', help='Disable streaming from the model')
+    parser.add_argument('--no-tool-calls', action='store_true', help='Hide tool-call activity while streaming')
     parser.add_argument(
         '--mcp-config',
         help='Path to MCP servers configuration file (JSON, using the same mcpServers shape as Claude Desktop, Claude Code, and Cursor).',
@@ -357,13 +359,35 @@ def _run_chat_command(
 
     if args.prompt:
         try:
-            anyio.run(functools.partial(ask_agent, agent, args.prompt, stream, console, code_theme, toolsets=toolsets))
+            anyio.run(
+                functools.partial(
+                    ask_agent,
+                    agent,
+                    args.prompt,
+                    stream,
+                    console,
+                    code_theme,
+                    toolsets=toolsets,
+                    show_tool_calls=not args.no_tool_calls,
+                )
+            )
         except KeyboardInterrupt:
             pass
         return 0
 
     try:
-        return anyio.run(functools.partial(run_chat, stream, agent, console, code_theme, prog_name, toolsets=toolsets))
+        return anyio.run(
+            functools.partial(
+                run_chat,
+                stream,
+                agent,
+                console,
+                code_theme,
+                prog_name,
+                toolsets=toolsets,
+                show_tool_calls=not args.no_tool_calls,
+            )
+        )
     except KeyboardInterrupt:  # pragma: no cover
         return 0
 
@@ -381,6 +405,8 @@ async def run_chat(
     model_settings: ModelSettings | None = None,
     usage_limits: _usage.UsageLimits | None = None,
     toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+    *,
+    show_tool_calls: bool = True,
 ) -> int:
     prompt_history_path = (config_dir or PYDANTIC_AI_HOME) / PROMPT_HISTORY_FILENAME
     prompt_history_path.parent.mkdir(parents=True, exist_ok=True)
@@ -432,6 +458,7 @@ async def run_chat(
                         usage_limits=usage_limits,
                         toolsets=toolsets,
                         usage=session_usage,
+                        show_tool_calls=show_tool_calls,
                     )
                     session_turns += 1
                 except anyio.get_cancelled_exc_class():
@@ -457,6 +484,7 @@ async def ask_agent(
     toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
     *,
     usage: _usage.RunUsage | None = None,
+    show_tool_calls: bool = True,
 ) -> list[ModelMessage]:
     status = Status('[dim]Working on it…[/dim]', console=console)
 
@@ -492,7 +520,7 @@ async def ask_agent(
                 usage=turn_usage,
             ) as agent_run:
                 live = Live('', refresh_per_second=15, console=console, vertical_overflow='ellipsis')
-                content_pieces: list[str] = []
+                content_pieces: list[str | Text] = []
                 # Tool calls run concurrently and can return out of order, so in-flight calls are
                 # keyed by call id — rendering only the latest would erase the others' indicators.
                 pending_calls: dict[str, str] = {}
@@ -514,35 +542,67 @@ async def ask_agent(
 
                             async for content in handle_stream.stream_output(debounce_by=None):
                                 updated_content = str(content)
-                                display = '\n\n'.join([*content_pieces, updated_content])
-                                live.update(Markdown(display, code_theme=code_theme))
+                                pieces = list(content_pieces)
+                                if updated_content.strip():
+                                    pieces.append(updated_content)
+                                live.update(_cli_output(pieces, console.width, code_theme))
 
                     elif Agent.is_call_tools_node(node):
                         # Freeze the text streamed so far so tool-call lines append below it rather
                         # than overwriting it on the next model request node.
-                        if updated_content:
+                        if updated_content.strip():
                             content_pieces.append(updated_content)
-                            updated_content = ''
+                        updated_content = ''
 
                         async with node.stream(agent_run.ctx) as handle_stream:
                             async for event in handle_stream:
+                                if not show_tool_calls:
+                                    continue
                                 if isinstance(event, FunctionToolCallEvent):
-                                    pending_calls[event.tool_call_id] = event.part.tool_name
+                                    args = ', '.join(
+                                        f'{key if key.isidentifier() else repr(key)}={value!r}'
+                                        for key, value in event.part.args_as_dict().items()
+                                    )
+                                    pending_calls[event.tool_call_id] = f'{event.part.tool_name}({args})'
                                 elif isinstance(event, FunctionToolResultEvent):
                                     # Pop on any result, not just a `ToolReturnPart`: a call that
                                     # comes back as a `RetryPromptPart` would otherwise stay pending
                                     # and pin its indicator for the rest of the run.
-                                    pending_calls.pop(event.tool_call_id, None)
+                                    summary = pending_calls.pop(event.tool_call_id, event.part.tool_name)
                                     if isinstance(event.part, ToolReturnPart):
-                                        content_pieces.append(f'> Called tool `{event.part.tool_name}`.')
-                                calling = [f'> _Calling tool `{name}`…_' for name in pending_calls.values()]
-                                live.update(Markdown('\n\n'.join([*content_pieces, *calling]), code_theme=code_theme))
+                                        content_pieces.append(Text(f'Called tool {summary}.'))
+                                calling = [Text(f'Calling tool {summary}…') for summary in pending_calls.values()]
+                                live.update(_cli_output([*content_pieces, *calling], console.width, code_theme))
 
             assert agent_run.result is not None
             return agent_run.result.all_messages()
     finally:
         if usage is not None:
             usage.incr(turn_usage)
+
+
+_BACKTICK_RUN = re.compile(r'`+')
+
+
+def _cli_output(pieces: Sequence[str | Text], width: int, code_theme: str) -> Markdown:
+    """Keep one Markdown document, with literal tool rows separated by hard line breaks."""
+    markup: list[str] = []
+    previous_tool = False
+    for piece in pieces:
+        is_tool = isinstance(piece, Text)
+        if markup:
+            markup.append('  \n' if previous_tool and is_tool else '\n\n')
+        if isinstance(piece, Text):
+            preview = piece.copy()
+            # Leave room for the blockquote border and padding.
+            preview.truncate(max(1, width - 4), overflow='ellipsis')
+            # A delimiter longer than any backtick run keeps code and markup in arguments literal.
+            delimiter = '`' * (max((len(run) for run in _BACKTICK_RUN.findall(preview.plain)), default=0) + 1)
+            markup.append(f'> {delimiter} {preview.plain} {delimiter}')
+        else:
+            markup.append(piece)
+        previous_tool = is_tool
+    return Markdown(''.join(markup), code_theme=code_theme)
 
 
 class CustomAutoSuggest(AutoSuggestFromHistory):

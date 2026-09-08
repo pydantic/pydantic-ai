@@ -46,9 +46,15 @@ Then running `clai` will start an interactive session where you can chat with th
 - `/cp`: Copy the last response to clipboard
 - `/usage`: Show cumulative token usage for the session (turns, input, output, requests, tool calls); add `--json` for a single-line JSON object
 
-When streaming (the default), any tool the agent calls is shown as it runs and marked done once its
-result arrives, so you can follow a tool-using agent without leaving the terminal. Pass `--no-stream`
-to print only the final answer.
+When streaming (the default), function-tool calls show their name and an argument preview while
+running and when completed, for example `Called tool get_weather(city='Lisbon').`. Each call fits
+on one terminal line, with long previews truncated. Consecutive calls appear together, separated
+from assistant text by a blank line.
+
+Pass `--no-tool-calls` to hide these notices while keeping streamed responses, for example when
+Logfire already displays tool activity. This also hides argument previews if you do not want tool
+inputs displayed in the terminal. It does not suppress errors, the working spinner, or output from
+tools and logging. Pass `--no-stream` to print only the final answer.
 
 ### CLI Options
 
@@ -59,6 +65,7 @@ to print only the final answer.
 | `-a`, `--agent` | Custom agent in `module:variable` format |
 | `-t`, `--code-theme` | Syntax highlighting theme (`dark`, `light`, or [pygments theme](https://pygments.org/styles/)) |
 | `--no-stream` | Disable streaming from the model |
+| `--no-tool-calls` | Hide tool-call activity while keeping streamed responses |
 | `--mcp-config` | Path to [MCP servers configuration file](mcp/client.md#loading-mcp-toolsets-from-configuration) (JSON, using the same `mcpServers` shape as Claude Desktop, Claude Code, and Cursor) |
 | `-l`, `--list-models` | List all available models and exit |
 | `--version` | Show version and exit |
@@ -143,6 +150,8 @@ _(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())
 
 Both run the same chat interface as `clai`, so an agent with tools shows each call as it runs and
 marks it done when the result arrives, exactly as described under [CLI Usage](#cli-usage).
+Pass `show_tool_calls=False` to either method to hide tool-call activity, for example
+`agent.to_cli_sync(show_tool_calls=False)`.
 
 ### Message History
 
