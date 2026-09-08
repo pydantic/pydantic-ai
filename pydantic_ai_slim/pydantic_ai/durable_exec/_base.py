@@ -27,6 +27,7 @@ from pydantic_ai.agent import Agent, EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.agent.wrapper import WrapperAgent
 from pydantic_ai.capabilities import ProcessEventStream
+from pydantic_ai.capabilities._sandbox import get_run_sandbox, sandbox_supplier_scope
 from pydantic_ai.capabilities.abstract import (
     AbstractCapability,
     CapabilityOrdering,
@@ -361,12 +362,20 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                     method: SandboxMethod = method,
                     supplier_id: str = supplier_id,
                 ) -> SandboxOperationResult:
-                    supplier = await recover_capability(params.run_context, capability_id=supplier_id)
-                    raw_backend = supplier.get_sandbox(params.run_context, ref=params.ref)
-                    if raw_backend is None:
+                    ctx = params.run_context
+                    supplier = (ctx._run_capabilities_by_id or {}).get(supplier_id)  # pyright: ignore[reportPrivateUsage]
+                    if supplier is None:
+                        original = next(
+                            cap for cap in leaf_capabilities(agent.root_capability) if cap.id == supplier_id
+                        )
+                        scope = sandbox_supplier_scope(agent.root_capability, original)
+                        supplier = await scope.for_run(ctx)
+                    selection = get_run_sandbox(supplier, ctx, params.ref)
+                    if selection is None:
                         raise UserError(
                             f'Sandbox capability {supplier_id!r} declined a reference it previously supplied.'
                         )
+                    raw_backend = selection.backend
                     sandbox = Sandbox(raw_backend)
                     try:
                         value = await cast(Callable[..., Any], getattr(sandbox, method))(**params.arguments)

@@ -7,14 +7,16 @@ from typing_extensions import TypeVar
 
 from pydantic_ai._run_context import AnchoredEvidence, CapabilityEventT, CustomEventT
 from pydantic_ai._utils import is_str_dict
-from pydantic_ai.capabilities._sandbox import get_run_sandbox
-from pydantic_ai.capabilities.abstract import leaf_capabilities
+from pydantic_ai.capabilities._sandbox import get_run_sandbox, sandbox_supplier_scope
+from pydantic_ai.capabilities.abstract import AbstractCapability, leaf_capabilities
 from pydantic_ai.durable_exec._toolset import EnqueueGuard, enqueue_not_supported_message
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import CapabilityEvent, CustomEvent
 from pydantic_ai.sandboxes import Sandbox, SandboxRef, UnavailableSandbox
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage, UsageLimits
+
+from ._sandbox_backend import ActivitySandboxBackend
 
 if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AbstractAgent
@@ -337,7 +339,13 @@ def _restore_sandbox(
             )
             return
         ref = SandboxRef(sandbox_id=sandbox_id) if isinstance(sandbox_id, str) else None
-        backend = suppliers[0].get_sandbox(ctx, ref=ref)
+        supplier = suppliers[0]
+        # Retain ancestor wrappers: their `for_run` may impose the supplier's policy.
+        scope = sandbox_supplier_scope(agent.root_capability, supplier)
+        if any(type(capability).for_run is not AbstractCapability.for_run for capability in leaf_capabilities(scope)):
+            ctx.__dict__['_sandbox'] = Sandbox(ActivitySandboxBackend(scope, ctx, ref))
+            return
+        backend = supplier.get_sandbox(ctx, ref=ref)
         if backend is None:
             ctx.__dict__['_sandbox_unavailable_reason'] = (
                 f'Sandbox capability {supplier_id!r} declined the serialized sandbox reference.'
@@ -358,7 +366,14 @@ def _restore_sandbox(
                 'so there is no capability chain to resolve the reference through.'
             )
             return
-        selection = get_run_sandbox(agent.root_capability, ctx, SandboxRef(sandbox_id=sandbox_id))
+        # Older references have no supplier ID. Recover the original tree, as an ordinary run
+        # does, and let `get_run_sandbox` exclude deferred suppliers after `for_run`.
+        scope = agent.root_capability
+        ref = SandboxRef(sandbox_id=sandbox_id)
+        if any(type(capability).for_run is not AbstractCapability.for_run for capability in leaf_capabilities(scope)):
+            ctx.__dict__['_sandbox'] = Sandbox(ActivitySandboxBackend(scope, ctx, ref))
+            return
+        selection = get_run_sandbox(scope, ctx, ref)
         if selection is None:
             ctx.__dict__['_sandbox_unavailable_reason'] = (
                 f'No capability can supply sandbox {sandbox_id!r}: every `get_sandbox` returned `None`. '

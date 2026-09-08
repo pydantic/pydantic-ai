@@ -18,6 +18,7 @@ from pydantic_ai import Agent, AgentStreamEvent, ModelMessage, ModelSettings
 from pydantic_ai._run_context import set_current_run_context
 from pydantic_ai.capabilities import (
     AbstractCapability,
+    CombinedCapability,
     ProcessEventStream,
     ResolveModelId,
     WrapperCapability,
@@ -59,6 +60,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.sandboxes import (
     CommandResult,
     FileEntry,
+    ReadOnlySandbox,
     Sandbox,
     SandboxBackend,
     SandboxError,
@@ -2073,3 +2075,36 @@ async def test_prefect_capability_operation_cache_identity_includes_context_and_
         ('tenant-b', 'test'),
         ('tenant-b', 'alternative'),
     ]
+
+
+async def test_bound_sandbox_operation_preserves_parent_policy() -> None:
+    from ..sandbox_fakes import FakeSandbox
+
+    backend = FakeSandbox('policy', ref=SandboxRef(sandbox_id='policy'))
+
+    class Protected(AbstractCapability[Any]):
+        id = 'sandbox'
+
+        def get_sandbox(self, ctx: RunContext[Any], *, ref: SandboxRef | None) -> SandboxBackend:
+            return ReadOnlySandbox(backend)
+
+    class ParentPolicy(WrapperCapability[Any]):
+        async def for_run(self, ctx: RunContext[Any]) -> WrapperCapability[Any]:
+            return WrapperCapability(CombinedCapability([Protected()]), id=self.id)
+
+    policy = ParentPolicy(CombinedCapability([SandboxCapability(backend)]), id='policy')
+    agent = Agent(TestModel(), name='parent_policy', capabilities=[policy, RecordingDurability()])
+    durability = RecordingDurability.from_agent(agent)
+    assert durability is not None
+    operation = durability._bound_sandbox_operations['sandbox']['run']  # pyright: ignore[reportPrivateUsage]
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), agent=agent)
+    with pytest.raises(UserError, match='read-only'):
+        await operation(
+            SandboxOperationParams(
+                run_context=ctx,
+                supplier_id='sandbox',
+                ref=backend.ref,
+                arguments={'command': ['touch', '/workspace/private']},
+            )
+        )
+    assert backend.commands == []

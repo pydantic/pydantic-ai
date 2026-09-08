@@ -94,6 +94,10 @@ agent = Agent('openai:gpt-5.2')
 app = agent.to_web(instructions='Always respond in a friendly tone.')
 ```
 
+A sandbox passed to `to_web(sandbox=...)` is shared by every chat using that app.
+For separate user workspaces, use a custom endpoint that authenticates the request
+and chooses the sandbox for that user or authorized conversation.
+
 ## Tool Approval
 
 Tools that [require approval](deferred-tools.md#human-in-the-loop-tool-approval) are surfaced in the UI as approve/reject prompts: when the agent calls such a tool, the UI renders the pending call and lets you approve or deny it before the run continues. This works out of the box — no extra configuration is needed.

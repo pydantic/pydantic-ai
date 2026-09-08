@@ -56,8 +56,11 @@ from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities import (
     Capability,
+    CombinedCapability,
     ProcessHistory,
+    WrapperCapability,
 )
+from pydantic_ai.capabilities.abstract import leaf_capabilities
 from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
@@ -81,7 +84,14 @@ from pydantic_ai.realtime import (
 )
 from pydantic_ai.realtime.codec import RealtimeConnection
 from pydantic_ai.run import AgentRunResult
-from pydantic_ai.sandboxes import Sandbox, SandboxBackend, SandboxRef, UnavailableSandbox
+from pydantic_ai.sandboxes import (
+    ReadOnlySandbox,
+    Sandbox,
+    SandboxBackend,
+    SandboxRef,
+    SandboxTimeoutError,
+    UnavailableSandbox,
+)
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
 from pydantic_ai.usage import UsageLimits
 
@@ -4279,3 +4289,164 @@ async def test_delegate_agent_usage_is_not_merged_back_from_activity(client: Cli
 
     in_process_result = await usage_delegation_agent.run('delegate please')
     assert in_process_result.usage == snapshot(RunUsage(requests=3, input_tokens=110, output_tokens=12, tool_calls=1))
+
+
+@pytest.mark.parametrize('legacy', [False, True], ids=['supplier', 'legacy-ref'])
+@pytest.mark.parametrize('operation', ['write', 'command'])
+@pytest.mark.parametrize('parent_policy', [False, True], ids=['supplier-policy', 'parent-policy'])
+async def test_temporal_activity_restores_per_run_sandbox_policy(legacy: bool, operation: str, parent_policy: bool):
+    backend = FakeSandbox('policy', ref=SandboxRef(sandbox_id='policy'))
+    contexts: list[dict[str, Any]] = []
+
+    class Protected(Capability[None]):
+        def get_sandbox(self, ctx: RunContext[None], *, ref: SandboxRef | None) -> SandboxBackend:
+            return ReadOnlySandbox(backend)
+
+    class Policy(Capability[None]):
+        async def for_run(self, ctx: RunContext[None]) -> Capability[None]:
+            return Protected(id=self.id)
+
+        def get_sandbox(self, ctx: RunContext[None], *, ref: SandboxRef | None) -> SandboxBackend:
+            return backend  # pragma: no cover
+
+    class Capture(Capability[None]):
+        async def before_run(self, ctx: RunContext[None]) -> None:
+            with pytest.raises(UserError, match='read-only'):
+                await ctx.sandbox.write_bytes('/workspace/private', b'ordinary mutation')
+            contexts.append(TemporalRunContext.serialize_run_context(ctx))
+
+    class Supplier(Capability[None]):
+        def get_sandbox(self, ctx: RunContext[None], *, ref: SandboxRef | None) -> SandboxBackend:
+            return backend  # pragma: no cover
+
+    class ReadOnlyPolicy(Capability[None]):
+        pass
+
+    class ParentPolicy(WrapperCapability[None]):
+        async def for_run(self, ctx: RunContext[None]) -> WrapperCapability[None]:
+            assert any(isinstance(capability, ReadOnlyPolicy) for capability in leaf_capabilities(self.wrapped))
+            return WrapperCapability(CombinedCapability([Protected(id='sandbox')]), id=self.id)
+
+    policy = (
+        ParentPolicy(
+            CombinedCapability([Supplier(id='sandbox'), ReadOnlyPolicy(id='read-only-policy', defer_loading=True)]),
+            id='policy',
+        )
+        if parent_policy
+        else Policy(id='sandbox')
+    )
+    agent = Agent(TestModel(), deps_type=type(None), capabilities=[policy, Capture()])
+    await agent.run('hello')
+    serialized = contexts[0]
+    if legacy:
+        serialized['_sandbox_state'].pop('supplier_id')
+    restored = deserialize_run_context(TemporalRunContext, serialized, deps=None, agent=agent)
+
+    with pytest.raises(UserError, match='read-only'):
+        if operation == 'command':
+            await restored.sandbox.backend.run(['touch', '/workspace/private'])
+        else:
+            await restored.sandbox.write_bytes('/workspace/private', b'activity mutation')
+    assert backend.files == {}
+    assert backend.commands == []
+
+
+async def test_temporal_activity_uses_per_run_workspace_for_commands_and_files():
+    backend = FakeSandbox('tenant', {'/workspace/input': b'input'})
+    recoveries: list[str] = []
+
+    class ResolvedTenant(Capability[str]):
+        def get_sandbox(self, ctx: RunContext[str], *, ref: SandboxRef | None) -> SandboxBackend:
+            return backend
+
+    class Tenant(Capability[str]):
+        async def for_run(self, ctx: RunContext[str]) -> Capability[str]:
+            recoveries.append(ctx.deps)
+            await anyio.sleep(0)
+            return ResolvedTenant(id=self.id)
+
+        def get_sandbox(self, ctx: RunContext[str], *, ref: SandboxRef | None) -> SandboxBackend:
+            pytest.fail('The construction-time supplier must not be used')  # pragma: no cover
+
+    supplier = Tenant(id='sandbox')
+    agent = Agent(TestModel(), deps_type=str, capabilities=[supplier])
+    ctx = RunContext(
+        deps='tenant',
+        model=TestModel(),
+        usage=RunUsage(),
+        sandbox=Sandbox(backend, _supplier_id=supplier.id, _supplier=supplier),
+    )
+    restored = deserialize_run_context(
+        TemporalRunContext, TemporalRunContext.serialize_run_context(ctx), deps='tenant', agent=agent
+    )
+    assert recoveries == []
+    assert restored.sandbox.ref is None
+
+    assert await asyncio.gather(restored.sandbox.working_dir(), restored.sandbox.read_bytes('/workspace/input')) == [
+        '/workspace',
+        b'input',
+    ]
+    await restored.sandbox.make_dir('/workspace/output')
+    await restored.sandbox.write_bytes('/workspace/output/file', b'output')
+    assert (await restored.sandbox.stat('/workspace/output/file')).size == 6
+    assert {entry.path for entry in await restored.sandbox.list_dir('/workspace')} == {
+        '/workspace/input',
+        '/workspace/output/file',
+    }
+    assert await restored.sandbox.exists('/workspace/output/file')
+    await restored.sandbox.remove('/workspace/output/file')
+    assert not await restored.sandbox.exists('/workspace/output/file')
+    assert (await restored.sandbox.run(['true'], timeout=10)).stdout == 'connected'
+    assert restored.sandbox.ref == backend.ref
+    assert recoveries == ['tenant']
+
+
+async def test_temporal_activity_rejects_a_declining_per_run_sandbox_supplier():
+    class Declining(Capability[None]):
+        async def for_run(self, ctx: RunContext[None]) -> Capability[None]:
+            return Capability()
+
+        def get_sandbox(self, ctx: RunContext[None], *, ref: SandboxRef | None) -> SandboxBackend:
+            pytest.fail('The construction-time supplier must not be used')  # pragma: no cover
+
+    supplier = Declining(id='sandbox')
+    ctx = _sandbox_context(Sandbox(FakeSandbox('unused'), _supplier_id=supplier.id, _supplier=supplier))
+    restored = deserialize_run_context(
+        TemporalRunContext,
+        TemporalRunContext.serialize_run_context(ctx),
+        deps=None,
+        agent=Agent(TestModel(), capabilities=[supplier]),
+    )
+    with pytest.raises(UserError, match='per-run sandbox capability declined'):
+        await restored.sandbox.run(['true'])
+
+
+@pytest.mark.parametrize('provider_timeout', [False, True], ids=['deadline', 'provider-error'])
+async def test_temporal_activity_bounds_sandbox_recovery_without_replacing_provider_errors(provider_timeout: bool):
+    error = TimeoutError('provider configuration failed')
+
+    class Slow(Capability[None]):
+        async def for_run(self, ctx: RunContext[None]) -> Capability[None]:
+            if provider_timeout:
+                raise error
+            await anyio.sleep_forever()
+            pytest.fail('Recovery must be cancelled')  # pragma: no cover
+
+        def get_sandbox(self, ctx: RunContext[None], *, ref: SandboxRef | None) -> SandboxBackend:
+            pytest.fail('The construction-time supplier must not be used')  # pragma: no cover
+
+    supplier = Slow(id='sandbox')
+    ctx = _sandbox_context(Sandbox(FakeSandbox('unused'), _supplier_id=supplier.id, _supplier=supplier))
+    restored = deserialize_run_context(
+        TemporalRunContext,
+        TemporalRunContext.serialize_run_context(ctx),
+        deps=None,
+        agent=Agent(TestModel(), capabilities=[supplier]),
+    )
+    with pytest.raises(TimeoutError) as caught:
+        await restored.sandbox.run(['true'], timeout=0.01)
+    if provider_timeout:
+        assert caught.value is error
+    else:
+        assert isinstance(caught.value, SandboxTimeoutError)
+        assert caught.value.timeout == 0.01

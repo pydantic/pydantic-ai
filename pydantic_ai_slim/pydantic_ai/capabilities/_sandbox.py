@@ -43,3 +43,14 @@ def get_run_sandbox(
             )
         selection = SandboxSelection(backend, leaf)
     return selection
+
+
+def sandbox_supplier_scope(
+    root: AbstractCapability[AgentDepsT], supplier: AbstractCapability[AgentDepsT]
+) -> AbstractCapability[AgentDepsT]:
+    """Retain the outermost supplier branch without changing a wrapper's policy inputs."""
+    return next(
+        capability
+        for capability in leaf_capabilities(root)
+        if any(leaf is supplier for leaf in leaf_capabilities(capability))
+    )
