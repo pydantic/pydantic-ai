@@ -67,6 +67,10 @@ from ..messages import (
     UserContent,
     UserPromptPart,
 )
+from ..models import (
+    ModelRequestParameters,
+    _wrap_in_system_tags,  # pyright: ignore[reportPrivateUsage]
+)
 from ..native_tools import SUPPORTED_NATIVE_TOOLS
 from ..run import AgentRunResult
 from ..tool_manager import ToolManager
@@ -103,7 +107,6 @@ from .settings import AudioRetention, RealtimeModelSettings
 
 if TYPE_CHECKING:
     from ..messages import AgentStreamEvent
-    from ..models import ModelRequestParameters
     from ..models.instrumented import InstrumentationSettings
     from ..tools import DeferredToolRequests, DeferredToolResults
     from .model import RealtimeModel
@@ -485,7 +488,7 @@ def _pending_message_text(pending: PendingMessage) -> str:
             if isinstance(part, UserPromptPart) and isinstance(part.content, str):
                 texts.append(part.content)
             elif isinstance(part, SystemPromptPart):
-                texts.append(f'<system>{part.content}</system>')
+                texts.append(_wrap_in_system_tags(part.content))
             else:
                 raise error
     if not texts:

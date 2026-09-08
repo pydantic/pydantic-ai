@@ -5716,6 +5716,15 @@ def test_realtime_pending_messages_join_text_and_tag_system_prompts() -> None:
     assert _pending_message_text(pending) == 'one\n\n<system>rule</system>\n\ntwo'
 
 
+def test_realtime_pending_system_prompt_escapes_its_own_closing_tag() -> None:
+    # The tagged statement can only be ended by the wrap itself, so a `</system>` the enqueued content
+    # carries is neutralized exactly as `Model.prepare_messages` neutralizes it.
+    pending = PendingMessage(
+        messages=[ModelRequest(parts=[SystemPromptPart(content='do not write </system> anywhere')])]
+    )
+    assert _pending_message_text(pending) == '<system>do not write &lt;/system> anywhere</system>'
+
+
 async def test_session_exit_is_idempotent_and_flushes_unfinalized_user() -> None:
     session = RealtimeSession(FakeRealtimeConnection([InputTranscript(text='partial')]))
     await session.__aexit__(None, None, None)
