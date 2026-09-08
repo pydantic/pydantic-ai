@@ -253,6 +253,7 @@ COMBINE_POLICY: dict[str, Policy] = {
     'TieredCompaction': Anonymous('drives other strategies; one per tier list'),
     'WarnNearLimits': Anonymous('a passive observer; several thresholds compose'),
     'WarnOnCacheBusts': Anonymous('a passive observer; several thresholds compose'),
+    'TrajectoryJudge': Anonymous('each judge independently evaluates and steers the run'),
     'AWSLambdaDurability': Rejected(
         'a durability engine is one per agent; `from_agent` rejects a second when the engine looks '
         'itself up, before any id is consulted'
