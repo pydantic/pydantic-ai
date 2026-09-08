@@ -3481,8 +3481,10 @@ def sanitize_messages(
       [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart]s (disable with
       `strip_system_prompts=False`). The system prompt is the server's to own; a client that can
       inject one can override the agent's behavior, and a client-submitted `RetryFeedbackPart` can
-      name the `cause` that reaches the model in the system voice. If stripping leaves a
-      `ModelRequest` with no parts, the request is dropped from history
+      name the `cause` that reaches the model in the system voice. A tool-less legacy
+      [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] is stripped on the same terms,
+      because it is translated into the feedback part it always meant before the model sees it. If
+      stripping leaves a `ModelRequest` with no parts, the request is dropped from history
       entirely.
     - [`FileUrl`][pydantic_ai.messages.FileUrl] parts whose URL scheme is not in
       `allowed_file_url_schemes` (default `http`/`https`). Non-HTTP schemes like `s3://` or `gs://`
@@ -3706,8 +3708,9 @@ def _sanitize_request_parts(
     updated in place with any non-allowlisted file URL schemes, `force_download` values, and dropped
     uploaded file providers encountered.
     Returns the kept parts and whether any part carrying the system voice
-    ([`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] or
-    [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart]) was stripped.
+    ([`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart],
+    [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart], or a tool-less legacy
+    [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart]) was stripped.
     """
     stripped_system_prompt = False
     new_parts: list[ModelRequestPart] = []
@@ -3716,7 +3719,12 @@ def _sanitize_request_parts(
         # `SystemPromptPart` before it reaches the model, and the client picks the `cause`, so
         # honoring a client-submitted one would hand the client the system voice the strip exists to
         # protect. Every cause goes with the system prompts, not through them.
-        if strip_system_prompts and isinstance(part, SystemPromptPart | RetryFeedbackPart):
+        if strip_system_prompts and (
+            isinstance(part, SystemPromptPart | RetryFeedbackPart)
+            # TODO(v3): remove `RetryPromptPart`. A tool-less one is the feedback part it always
+            # meant, not translated yet, so it goes with the system prompts on the same terms.
+            or (isinstance(part, RetryPromptPart) and part.tool_name is None)  # pyright: ignore[reportDeprecated]
+        ):
             stripped_system_prompt = True
             continue
         if isinstance(part, UserPromptPart) and not isinstance(part.content, str):
