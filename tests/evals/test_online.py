@@ -5,6 +5,7 @@ from __future__ import annotations as _annotations
 import asyncio
 import inspect
 import random
+import warnings
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -44,6 +45,43 @@ needs_logfire = pytest.mark.skipif(not logfire_import_successful(), reason='logf
 
 
 if TYPE_CHECKING or imports_successful():
+
+    async def test_wait_for_evaluations_joins_background_threads(monkeypatch: pytest.MonkeyPatch) -> None:
+        joined: list[float] = []
+
+        class CompletedThread:
+            def join(self, *, timeout: float) -> None:
+                joined.append(timeout)
+
+            def is_alive(self) -> bool:
+                return False
+
+        monkeypatch.setattr(_online, '_background_tasks', set())
+        monkeypatch.setattr(_online, '_background_events', set())
+        monkeypatch.setattr(_online, '_background_threads', {CompletedThread()})
+
+        await wait_for_evaluations(timeout=1.25)
+
+        assert joined == [1.25]
+
+    async def test_wait_for_evaluations_warns_for_live_background_threads(monkeypatch: pytest.MonkeyPatch) -> None:
+        class LiveThread:
+            def join(self, *, timeout: float) -> None:
+                pass
+
+            def is_alive(self) -> bool:
+                return True
+
+        monkeypatch.setattr(_online, '_background_tasks', set())
+        monkeypatch.setattr(_online, '_background_events', set())
+        monkeypatch.setattr(_online, '_background_threads', {LiveThread()})
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter('always')
+            await wait_for_evaluations(timeout=0.5)
+
+        monkeypatch.setattr(_online, '_background_threads', set())
+        assert [str(item.message) for item in caught] == ['Background evaluation thread did not complete within 0.5s timeout']
 
     @dataclass
     class AlwaysTrue(Evaluator):
