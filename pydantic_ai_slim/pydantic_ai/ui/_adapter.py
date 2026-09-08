@@ -26,6 +26,7 @@ from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.agent.abstract import AgentMetadata
 from pydantic_ai.capabilities import AbstractCapability, ReinjectSystemPrompt
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     CompactionPart,
     ForceDownloadMode,
@@ -377,7 +378,14 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
 
     @cached_property
     def deferred_tool_results(self) -> DeferredToolResults | None:
-        """Deferred tool results extracted from the request, used for tool approval workflows."""
+        """Deferred tool results extracted from the request, used for tool approval workflows.
+
+        An implementation may raise `UserError` to reject a malformed request: it is resolved inside
+        the stream returned by [`run_stream_native`][pydantic_ai.ui.UIAdapter.run_stream_native]
+        rather than when it is called, so the error reaches the client as a protocol error event
+        instead of escaping the streaming response. Any other exception escapes as it normally
+        would, so a bug in an implementation still surfaces as a server error.
+        """
         return None
 
     @cached_property
@@ -512,18 +520,51 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             toolsets: Optional additional toolsets for this run.
             capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
                 Use `capabilities=[NativeTool(...)]` to add provider-side native tools per request.
+
+        An exception from [`deferred_tool_results`][pydantic_ai.ui.UIAdapter.deferred_tool_results]
+        is re-raised on the first iteration of the returned stream rather than at the call site, so
+        a subclass raising on a malformed request surfaces that as a protocol error event on the
+        stream. Nothing else about the run input is deferred.
         """
-        if deferred_tool_results is None:
-            deferred_tool_results = self.deferred_tool_results
         if conversation_id is None:
             conversation_id = self.conversation_id
 
-        frontend_messages = self.sanitize_messages(self.messages, deferred_tool_results=deferred_tool_results)
-        if message_history:
-            # A client-supplied compaction part would trim the trusted server-side history off the
-            # wire, so only the server's own boundaries are honored. See `_drop_compaction_parts`.
-            frontend_messages = _drop_compaction_parts(frontend_messages)
-        message_history = [*(message_history or []), *frontend_messages]
+        # `deferred_tool_results` is the one part of the run input an implementation is expected to
+        # reject a malformed request from — an AG-UI resume payload that fails the schema advertised
+        # to the client. Handing that exception back as a stream that raises on first iteration puts
+        # it inside `transform_stream`'s error handling, so it reaches the client as a protocol
+        # error event instead of escaping the streaming response as an unhandled server error. Only
+        # the raising path is deferred: every request that resolves keeps deriving its run input
+        # here, so no other error and no `sanitize_messages` warning changes when it fires — which
+        # is also why this block sits where the eager resolution did, ahead of the state warning
+        # below. Only `UserError` is deferred, the exception an implementation raises to reject the
+        # request; any other exception is a bug in the implementation and keeps escaping as a server
+        # error rather than being dressed up as a protocol error the client can do nothing about.
+        try:
+            if deferred_tool_results is None:
+                deferred_tool_results = self.deferred_tool_results
+        except UserError as e:
+            # Rebound because Python clears the `except ... as` name when the block exits, leaving
+            # the generator below with an unresolvable free variable.
+            error = e
+
+            async def rejected_stream() -> AsyncIterator[NativeEvent]:
+                raise error
+                yield  # pragma: no cover
+
+            # Returning here rather than falling through matters: the run can no longer start, so
+            # none of the setup below may run for it. `deps.state` must not be mutated for a run
+            # that never happens, and a `StateHandler`'s own validation of the client's state must
+            # not raise at the call site and mask this error.
+            return rejected_stream()
+        else:
+            frontend_messages = self.sanitize_messages(self.messages, deferred_tool_results=deferred_tool_results)
+            if message_history:
+                # A client-supplied compaction part would trim the trusted server-side history off
+                # the wire, so only the server's own boundaries are honored. See
+                # `_drop_compaction_parts`.
+                frontend_messages = _drop_compaction_parts(frontend_messages)
+            message_history = [*(message_history or []), *frontend_messages]
 
         toolset = self.toolset
         if toolset:
