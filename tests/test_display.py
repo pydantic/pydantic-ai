@@ -42,6 +42,11 @@ def reset_banner(monkeypatch: pytest.MonkeyPatch):
     _display.BANNER_ENABLED = True
     monkeypatch.delenv('PYDANTIC_AI_NO_BANNER', raising=False)
     monkeypatch.delenv('CI', raising=False)
+    # This suite is the one place a test run may show a banner, and the only place that decides
+    # whether an agent is watching — the agent running the suite doesn't get to answer that.
+    monkeypatch.delenv('PYTEST_VERSION', raising=False)
+    for agent_var in _display._AGENT_ENV_VARS:  # pyright: ignore[reportPrivateUsage]
+        monkeypatch.delenv(agent_var, raising=False)
     # Colour is asserted on its own; everywhere else it would only obscure what's being asserted.
     monkeypatch.setenv('NO_COLOR', '1')
     monkeypatch.setattr(importlib.util, 'find_spec', find_spec_without_harness)
@@ -92,6 +97,9 @@ def summarize(text: str) -> str:  # pragma: no cover
     return text
 
 
+_SUPPRESSING_ENV_VARS = frozenset({'PYDANTIC_AI_NO_BANNER', 'CI', 'PYTEST_VERSION'})
+
+
 def test_render_banner(render: Callable[..., str]):
     assert render() == snapshot("""\
                       HEADING
@@ -126,11 +134,11 @@ def test_render_banner_for_an_unnamed_agent(render: Callable[..., str]):
 def test_render_banner_without_observability(render: Callable[..., str]):
     """What `clai` shows: the same banner, minus advice it has already acted on."""
     assert render(observability=False) == snapshot("""\
-         / \\          HEADING
-       /     \\
-     /____.____\\      agent: support_agent • model: openai:gpt-5.6-sol • tools: 2 • capabilities: 0
-   /      |      \\
- /        |        \\  hide this dev-only banner: set up observability or set PYDANTIC_AI_NO_BANNER=1
+         / \\
+       /     \\        HEADING
+     /____.____\\
+   /      |      \\    agent: support_agent • model: openai:gpt-5.6-sol • tools: 2 • capabilities: 0
+ /        |        \\
   ·.______|______.·\
 """)
 
@@ -147,8 +155,7 @@ def test_render_banner_wraps_long_details(render: Callable[..., str]):
      /____.____\\      agent: the-agent-that-has-a-rather-long-name
    /      |      \\      model: bedrock:us.anthropic.claude-fable-5-20260101-v1:0 • tools: 2
  /        |        \\    capabilities: 0
-  ·.______|______.·
-                      hide this dev-only banner: set up observability or set PYDANTIC_AI_NO_BANNER=1\
+  ·.______|______.·\
 """)
 
 
@@ -223,6 +230,7 @@ def test_display_banner_with_harness_module_but_no_distribution(monkeypatch: pyt
     [
         ('PYDANTIC_AI_NO_BANNER', ''),
         ('CI', ''),
+        ('PYTEST_VERSION', ''),
         ('instrumented', True),
         ('tty', False),
         ('enabled', False),
@@ -232,7 +240,7 @@ def test_display_banner_suppressed(
     condition: str, value: str | bool, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ):
     kwargs: dict[str, Any] = {}
-    if condition in {'PYDANTIC_AI_NO_BANNER', 'CI'}:
+    if condition in _SUPPRESSING_ENV_VARS:
         monkeypatch.setenv(condition, str(value))
     elif condition == 'instrumented':
         kwargs['instrumented'] = value
@@ -251,6 +259,7 @@ def test_display_banner_suppressed(
     [
         ('PYDANTIC_AI_NO_BANNER', ''),
         ('CI', ''),
+        ('PYTEST_VERSION', ''),
         ('tty', False),
         ('enabled', False),
     ],
@@ -259,7 +268,7 @@ def test_a_banner_that_can_never_be_shown_stops_being_offered(
     condition: str, value: str | bool, monkeypatch: pytest.MonkeyPatch
 ):
     """Otherwise every run in a production process gathers a banner's details all over again."""
-    if condition in {'PYDANTIC_AI_NO_BANNER', 'CI'}:
+    if condition in _SUPPRESSING_ENV_VARS:
         monkeypatch.setenv(condition, str(value))
     elif condition == 'tty':
         monkeypatch.setattr(sys.stderr, 'isatty', lambda: value)
@@ -269,6 +278,57 @@ def test_a_banner_that_can_never_be_shown_stops_being_offered(
     display_banner()
 
     assert _display.banner_pending() is False
+
+
+@pytest.mark.parametrize('agent_var', _display._AGENT_ENV_VARS)  # pyright: ignore[reportPrivateUsage]
+def test_a_coding_agent_reading_stderr_is_shown_the_banner(agent_var: str, monkeypatch: pytest.MonkeyPatch):
+    """An agent's `stderr` is a pipe it reads back, so the terminal check alone would reach none of them."""
+    stderr = StringIO()
+    monkeypatch.setattr(sys, 'stderr', stderr)
+    monkeypatch.setenv(agent_var, '1')
+
+    display_banner()
+
+    assert 'agent: support_agent' in stderr.getvalue()
+
+
+def test_the_banner_an_agent_reads_is_the_one_a_person_would_have(monkeypatch: pytest.MonkeyPatch):
+    """Written the same and saying the same thing, so reading along shows what they'd have seen."""
+    for_a_terminal = TTYStream()
+    monkeypatch.setattr(sys, 'stderr', for_a_terminal)
+    display_banner()
+
+    _display._banner_displayed = False  # pyright: ignore[reportPrivateUsage]
+    for_an_agent = StringIO()
+    monkeypatch.setattr(sys, 'stderr', for_an_agent)
+    monkeypatch.setenv('AI_AGENT', 'some-harness')
+    display_banner()
+
+    assert for_an_agent.getvalue() == for_a_terminal.getvalue()
+
+
+def test_an_agent_is_not_written_the_colour_codes_a_terminal_gets(monkeypatch: pytest.MonkeyPatch):
+    """A pipe renders none of them, so they'd reach the agent — and the user reading along — raw."""
+    monkeypatch.delenv('NO_COLOR')
+    stderr = StringIO()
+    monkeypatch.setattr(sys, 'stderr', stderr)
+    monkeypatch.setenv('AI_AGENT', 'some-harness')
+
+    display_banner()
+
+    assert '\x1b[' not in stderr.getvalue()
+
+
+def test_an_agent_does_not_override_a_suppressed_banner(monkeypatch: pytest.MonkeyPatch):
+    """`CI` and the rest say the output is nobody's to read, whoever started the process."""
+    stderr = StringIO()
+    monkeypatch.setattr(sys, 'stderr', stderr)
+    monkeypatch.setenv('AI_AGENT', 'some-harness')
+    monkeypatch.setenv('CI', '')
+
+    display_banner()
+
+    assert stderr.getvalue() == ''
 
 
 def test_an_instrumented_run_leaves_the_banner_for_another_agent(monkeypatch: pytest.MonkeyPatch, stderr: TTYStream):

@@ -44,6 +44,15 @@ _HIGHLIGHT_COLOR = '\x1b[32m'
 _COLOR_RESET = '\x1b[0m'
 _COLOR_PATTERN = re.compile(r'\x1b\[\d+m')
 
+_AGENT_ENV_VARS = ('AI_AGENT', 'CLAUDECODE', 'CODEX_THREAD_ID', 'CURSOR_AGENT', 'GEMINI_CLI')
+"""Environment variables that mean a coding agent is running this process and reads what it writes.
+
+`AI_AGENT` is the one any harness can set to say so, including one built on Pydantic AI itself. The
+rest are what agents that don't set it already set for this purpose, so this list is best-effort and
+will always be behind: an agent it doesn't know is left where every agent was before, without a
+banner, rather than shown a wrong one.
+"""
+
 
 class BannerDisplay(Protocol):
     """Displays the banner for a run, once it knows what the agent alone couldn't say."""
@@ -71,12 +80,31 @@ def banner_available(*, is_terminal: bool) -> bool:
         is_terminal: Whether the caller's own destination is a terminal. `clai` asks its console,
             which knows about `FORCE_COLOR` and `TERM`; anything writing to `stderr` asks that.
     """
-    return not _banner_suppressed() and is_terminal and claim_banner()
+    return not _banner_suppressed() and (is_terminal or _running_under_agent()) and claim_banner()
+
+
+def _running_under_agent() -> bool:
+    """Whether a coding agent is running this process and will read what it writes.
+
+    An agent's `stderr` is a pipe it reads back rather than a terminal, so without this the banner
+    would reach nobody working through one — which is now how much of the writing of Pydantic AI
+    code happens. It's shown to them exactly as it is to a human, and says the same thing, so what
+    the user sees when they read along is what they'd have seen themselves.
+    """
+    return any(var in os.environ for var in _AGENT_ENV_VARS)
 
 
 def _banner_suppressed() -> bool:
     """Whether the user or the environment has asked not to be shown the banner."""
-    return not BANNER_ENABLED or 'PYDANTIC_AI_NO_BANNER' in os.environ or 'CI' in os.environ
+    return (
+        not BANNER_ENABLED
+        or 'PYDANTIC_AI_NO_BANNER' in os.environ
+        or 'CI' in os.environ
+        # A test run is nobody's first run, and its output is captured and read back only when
+        # something fails. Without this, an agent running a suite would attach a banner to whichever
+        # test happened to go first.
+        or 'PYTEST_VERSION' in os.environ
+    )
 
 
 def claim_banner() -> bool:
@@ -124,17 +152,18 @@ def render_banner(
 
     lines = [_version_line(), '', *_info_lines(info)]
     if observability:
+        # Both halves of this are advice for someone who hasn't set observability up, so a session
+        # that has stays out of it entirely rather than being told to do what it has already done.
         lines += ['', *_observability_lines()]
-
-    lines += [
-        '',
-        *wrap(
-            'hide this dev-only banner: set up observability or set PYDANTIC_AI_NO_BANNER=1',
-            width=_TEXT_WIDTH,
-            subsequent_indent='  ',
-            break_on_hyphens=False,
-        ),
-    ]
+        lines += [
+            '',
+            *wrap(
+                'hide this dev-only banner: set up observability or set PYDANTIC_AI_NO_BANNER=1',
+                width=_TEXT_WIDTH,
+                subsequent_indent='  ',
+                break_on_hyphens=False,
+            ),
+        ]
 
     banner = _beside_logo(lines)
     return banner if color else _COLOR_PATTERN.sub('', banner)
@@ -156,11 +185,12 @@ def display_agent_banner(
     if instrumented:
         return
 
-    if not banner_available(is_terminal=_stderr_is_terminal()):
-        # Whatever turned it away — a suppressing environment, `stderr` that is not a terminal — is
-        # not something a process changes its mind about, so spend the claim. Without this, every
-        # run in a non-interactive process would gather a banner's details all over again only to
-        # throw them away here.
+    is_terminal = _stderr_is_terminal()
+    if not banner_available(is_terminal=is_terminal):
+        # Whatever turned it away — a suppressing environment, `stderr` that is neither a terminal
+        # nor read by an agent — is not something a process changes its mind about, so spend the
+        # claim. Without this, every run in a non-interactive process would gather a banner's
+        # details all over again only to throw them away here.
         claim_banner()
         return
 
@@ -171,8 +201,9 @@ def display_agent_banner(
             output_type=output_type,
             tools=tools,
             capabilities=capabilities,
-            # Nothing renders this one for us, so the convention has to be honored here.
-            color='NO_COLOR' not in os.environ,
+            # Nothing renders this one for us, so the conventions have to be honored here: colour
+            # belongs to a terminal, and an agent reading `stderr` back would get the codes raw.
+            color=is_terminal and 'NO_COLOR' not in os.environ,
         )
         print(banner, file=sys.stderr)
     except Exception:

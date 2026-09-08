@@ -1510,6 +1510,22 @@ def terminal_clai(env: TestEnv) -> Iterator[None]:
     env.set('FORCE_COLOR', '1')
     env.remove('CI')
     env.remove('PYDANTIC_AI_NO_BANNER')
+    # The suite that asserts on the banner is the one place a test run is allowed to show one.
+    env.remove('PYTEST_VERSION')
+    _display._banner_displayed = False  # pyright: ignore[reportPrivateUsage]
+    try:
+        yield
+    finally:
+        _display._banner_displayed = False  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.fixture
+def agent_clai(env: TestEnv) -> Iterator[None]:
+    """A `clai` a coding agent started, whose output is a pipe it reads back rather than a terminal."""
+    env.set('AI_AGENT', 'some-harness')
+    env.remove('CI')
+    env.remove('PYDANTIC_AI_NO_BANNER')
+    env.remove('PYTEST_VERSION')
     _display._banner_displayed = False  # pyright: ignore[reportPrivateUsage]
     try:
         yield
@@ -1538,6 +1554,21 @@ def test_clai_intro_shows_banner(capfd: CaptureFixture[str], mocker: MockerFixtu
     # Matched on the label, not the prose, which is the banner's to reword.
     assert 'observability:' in output
     assert 'with openai:gpt-5' not in output
+
+
+def test_clai_nested_in_an_agent_still_opens_with_a_banner(
+    capfd: CaptureFixture[str], mocker: MockerFixture, env: TestEnv, agent_clai: None
+):
+    """A harness running `clai` reads what it writes, so a pipe is no reason to hold the banner back."""
+    env.set('OPENAI_API_KEY', 'test')
+    mocker.patch('pydantic_ai._cli.ask_agent')
+
+    assert cli(['hello']) == 0
+
+    output = capfd.readouterr().out
+    assert '·.______|______.·' in output
+    # Nothing renders the codes for a pipe, so the console leaves them out rather than writing them raw.
+    assert '\x1b[' not in output
 
 
 def test_clai_intro_names_the_agent_the_user_asked_for(

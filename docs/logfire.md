@@ -438,4 +438,6 @@ See the [usage and metadata example in the agents guide](agent.md#run-metadata) 
 
 ### The first-run banner
 
-Until instrumentation is configured, the first agent run in a process prints a short banner to `stderr` describing the run and pointing here. It's only shown interactively: never when instrumentation is configured, when `stderr` isn't a terminal, or when `CI` is set to any value. Set `PYDANTIC_AI_NO_BANNER` to any value to turn it off entirely.
+Until instrumentation is configured, the first agent run in a process prints a short banner to `stderr` describing the run and pointing here. It's shown only where someone is there to read it: when `stderr` is a terminal, or when a coding agent is running the process and reads back what it writes. It's never shown when instrumentation is configured, under `pytest`, or when `CI` is set to any value. Set `PYDANTIC_AI_NO_BANNER` to any value to turn it off entirely.
+
+Coding agents are recognized by the environment variables they set, among them `CLAUDECODE`, `CODEX_THREAD_ID`, `CURSOR_AGENT`, and `GEMINI_CLI`. A harness that isn't on that list — including one built on Pydantic AI — can set `AI_AGENT` to any value to be treated the same way. Agents are shown the same banner a person is, worded the same way, so that a user reading along sees what they would have seen themselves.
