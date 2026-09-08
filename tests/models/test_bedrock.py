@@ -6926,8 +6926,8 @@ def test_bedrock_anthropic_5_api_rejects_sampling_settings(
     Sent through the raw client rather than the model, so this records the API's own behavior and
     cannot drift with our filtering: cassettes are matched on the URL, not the body, so a recording
     made through the model would keep replaying if the settings ever started riding along again.
-    `test_bedrock_anthropic_5_drops_sampling_settings` is what catches that, by asserting on the
-    recorded request body.
+    `test_bedrock_anthropic_5_drops_sampling_settings` is what catches that by matching the newly
+    generated request body against its recording during playback.
     """
     model = BedrockConverseModel('eu.anthropic.claude-opus-5', provider=bedrock_provider)
 
@@ -6949,14 +6949,16 @@ def test_bedrock_anthropic_5_api_rejects_sampling_settings(
     )
 
 
+@pytest.mark.vcr(additional_matchers=['body'])
 async def test_bedrock_anthropic_5_drops_sampling_settings(
     allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette
 ):
     """A Claude 5 model on Bedrock warns and drops the sampling settings instead of failing with a 400.
 
     Mirrors `AnthropicModel`, which honors the same `anthropic_disallows_sampling_settings` profile
-    flag. Asserted on the recorded request body rather than on the call succeeding: `temperature`
-    and `top_p` must not reach `inferenceConfig`, and unified `top_k` must not reach
+    flag. The body matcher makes playback fail if the newly generated request differs from the
+    recording; the snapshots keep the expected wire shape visible in the test. `temperature` and
+    `top_p` must not reach `inferenceConfig`, and unified `top_k` must not reach
     `additionalModelRequestFields`.
     """
     settings = BedrockModelSettings(max_tokens=16, temperature=0.2, top_p=0.3, top_k=5)
@@ -6982,6 +6984,7 @@ async def test_bedrock_anthropic_5_drops_sampling_settings(
     assert settings == snapshot({'max_tokens': 16, 'temperature': 0.2, 'top_p': 0.3, 'top_k': 5})
 
 
+@pytest.mark.vcr(additional_matchers=['body'])
 async def test_bedrock_non_flagged_model_keeps_sampling_settings(
     allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette
 ):
@@ -6991,6 +6994,7 @@ async def test_bedrock_non_flagged_model_keeps_sampling_settings(
     out because the model rejects it alongside `temperature` with "`temperature` and `top_p` cannot
     both be specified for this model"; all three settings travel the same path, so one of the pair is
     enough to pin it (the same reason `test_anthropic_sampling_settings_reach_the_wire` omits it).
+    The body matcher proves the newly generated request still matches this expected wire shape.
     """
     settings = BedrockModelSettings(max_tokens=16, temperature=0.2, top_k=5)
     model = BedrockConverseModel('eu.anthropic.claude-haiku-4-5-20251001-v1:0', provider=bedrock_provider)
