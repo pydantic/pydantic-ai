@@ -35,5 +35,7 @@ jobs:
     # on every harness change without security benefit. Ignore configured in `.github/zizmor.yml`.
     uses: pydantic/pydantic-ai-harness/.github/workflows/compat-test.yml@main
     with:
+      # Test the companion compatibility patch until harness#760 merges; then remove this pin.
+      harness-ref: f833211bb63a32758e518b0f2ea92b0a17e8f870
       pydantic-ai-ref: ${{ github.event.pull_request.head.sha || github.sha }}
       pydantic-ai-repo: ${{ github.event.pull_request.head.repo.full_name || github.repository }}

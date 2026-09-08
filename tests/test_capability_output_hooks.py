@@ -1768,14 +1768,14 @@ class TestOutputHookFullLifecycle:
         result = await agent.run('hello')
         assert result.output == MyOutput(value=1)
         assert log == [
-            'before_validate',
             'wrap_validate:before',
-            'wrap_validate:after',
+            'before_validate',
             'after_validate',
-            'before_execute',
+            'wrap_validate:after',
             'wrap_execute:before',
-            'wrap_execute:after',
+            'before_execute',
             'after_execute',
+            'wrap_execute:after',
         ]
         assert result.all_messages() == snapshot(
             [
