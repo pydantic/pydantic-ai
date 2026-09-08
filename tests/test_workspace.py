@@ -69,6 +69,20 @@ async def test_wrapper_overrides_apply_to_text_and_window_reads():
     assert (await workspace.read_file('file.txt', limit=1)).lines == ('outer',)
 
 
+async def test_virtual_wrapper_read_file_does_not_resolve_before_read_bytes():
+    class VirtualWorkspace(WrapperWorkspace):
+        async def read_bytes(self, path: str) -> bytes:
+            return b'one\ntwo\nthree\n'
+
+    workspace = VirtualWorkspace(Workspace(UnavailableWorkspace('no backing workspace')))
+
+    bounded = await workspace.read_file('virtual.txt', offset=2, limit=1)
+    full = await workspace.read_file('virtual.txt')
+
+    assert bounded.lines == ('two',)
+    assert full.lines == ('one', 'two', 'three')
+
+
 async def test_wrapper_overrides_apply_to_text_writes():
     backend = FakeWorkspace('wrapper')
     writes: list[tuple[str, bytes]] = []
@@ -294,6 +308,22 @@ async def test_run_only_backend_has_a_complete_binary_safe_shell_filesystem(tmp_
         await workspace.read_bytes(filename)
 
 
+async def test_run_only_filesystem_lists_symlinked_directories(tmp_path: Path) -> None:
+    target = tmp_path / 'target'
+    child = target / 'child'
+    child.mkdir(parents=True)
+    (child / 'file.txt').write_text('content')
+    (target / 'child-link').symlink_to(child, target_is_directory=True)
+    root_link = tmp_path / 'root-link'
+    root_link.symlink_to(target, target_is_directory=True)
+
+    workspace = Workspace(RunOnlyWorkspaceBackend(LocalWorkspace(tmp_path)))
+    entries = {entry.name: entry for entry in await workspace.list_dir(str(root_link))}
+
+    assert entries['child'].is_dir
+    assert entries['child-link'].is_dir
+
+
 @pytest.mark.parametrize('cleanup_fails', [False, True])
 async def test_shell_write_preserves_the_original_error_when_cleanup_fails(tmp_path: Path, cleanup_fails: bool) -> None:
     cleanup_attempted = False
@@ -495,7 +525,7 @@ async def test_bounded_read_through_read_only_workspace_uses_filesystem() -> Non
 
 async def test_unavailable_workspace_uses_the_configured_reason_for_every_operation() -> None:
     reason = 'workspace disabled by policy'
-    backend = UnavailableWorkspace(reason)
+    backend = Workspace(UnavailableWorkspace(reason))
     # No environment exists, so there is no identity a later run could reconnect to.
     assert backend.ref is None
     operations = [

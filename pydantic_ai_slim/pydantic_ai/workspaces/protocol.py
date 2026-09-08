@@ -74,19 +74,20 @@ class WorkspaceUnavailableError(WorkspaceError):
 
 
 class WorkspaceTimeoutError(WorkspaceError, TimeoutError):
-    """A command exceeded the `timeout=` it was started with and was killed.
+    """A command exceeded the `timeout=` it was started with.
 
-    `stdout` and `stderr` carry any output the command produced before the kill (empty when
-    the backend cannot recover it); `timeout` is the deadline that was enforced, which may be
-    coarser than requested (e.g. platforms that take whole seconds).
+    `stdout` and `stderr` carry any output recovered before the deadline (empty when the backend
+    cannot recover it). Whether the command and its descendants are terminated is backend-specific.
+    `timeout` is the deadline that was enforced, which may be coarser than requested (e.g. platforms
+    that take whole seconds).
     """
 
     def __init__(self, message: str, *, stdout: str = '', stderr: str = '', timeout: float | None = None) -> None:
         super().__init__(message)
         self.stdout = stdout
-        """Standard output produced before the command was killed."""
+        """Standard output recovered before the timeout."""
         self.stderr = stderr
-        """Standard error produced before the command was killed."""
+        """Standard error recovered before the timeout."""
         self.timeout = timeout
         """The deadline that was enforced, in seconds."""
 
@@ -262,8 +263,9 @@ class WorkspaceBackend(Protocol):
                 against ambient state (such as a local backend's host process working
                 directory) would silently escape the workspace root.
             env: Extra environment variables for the command.
-            timeout: Deadline in seconds, measured from this call. On expiry the command is killed
-                and a [`WorkspaceTimeoutError`][pydantic_ai.workspaces.WorkspaceTimeoutError] is raised.
+            timeout: Deadline in seconds, measured from this call. On expiry a
+                [`WorkspaceTimeoutError`][pydantic_ai.workspaces.WorkspaceTimeoutError] is raised;
+                whether the command is terminated is backend-specific.
         """
         ...
 

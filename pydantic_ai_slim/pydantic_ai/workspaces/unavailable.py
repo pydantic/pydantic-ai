@@ -16,13 +16,13 @@ from typing_extensions import Never
 
 from pydantic_ai.exceptions import UserError
 
-from .protocol import SupportsFilesystem, WorkspaceBackend, WorkspaceCommand
+from .protocol import WorkspaceBackend, WorkspaceCommand
 
 __all__ = ('UnavailableWorkspace',)
 
 
-class UnavailableWorkspace(WorkspaceBackend, SupportsFilesystem):
-    """A `WorkspaceBackend` whose every operation raises `UserError` with a configured reason."""
+class UnavailableWorkspace(WorkspaceBackend):
+    """A `WorkspaceBackend` whose execution operations raise `UserError` with a configured reason."""
 
     def __init__(self, reason: str):
         self.reason = reason
@@ -44,25 +44,4 @@ class UnavailableWorkspace(WorkspaceBackend, SupportsFilesystem):
         raise UserError(self.reason)
 
     async def working_dir(self) -> Never:
-        raise UserError(self.reason)
-
-    async def read_bytes(self, path: str) -> Never:
-        raise UserError(self.reason)
-
-    async def write_bytes(self, path: str, data: bytes) -> Never:
-        raise UserError(self.reason)
-
-    async def stat(self, path: str) -> Never:
-        raise UserError(self.reason)
-
-    async def list_dir(self, path: str) -> Never:
-        raise UserError(self.reason)
-
-    async def make_dir(self, path: str) -> Never:
-        raise UserError(self.reason)
-
-    async def remove(self, path: str) -> Never:
-        raise UserError(self.reason)
-
-    async def exists(self, path: str) -> Never:
         raise UserError(self.reason)

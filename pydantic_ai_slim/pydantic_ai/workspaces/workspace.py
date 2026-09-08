@@ -174,14 +174,14 @@ class _ShellFilesystem(SupportsFilesystem):
     async def _list_paths(self, quoted_path: str, *, directories_only: bool = False) -> WorkspaceResult:
         temporary_path = f'/tmp/.pydantic-ai-{uuid.uuid4().hex}.list'
         quoted_temporary = shlex.quote(temporary_path)
-        type_filter = ' -type d' if directories_only else ''
+        type_filter = r' -exec test -d {} \;' if directories_only else ''
         # Do not pipe `find` into `base64`: a POSIX shell reports only `base64`'s exit status and
         # could turn a failed traversal into a successful partial listing. The temporary file keeps
         # `find`'s status authoritative, and the trap removes it on every shell exit path.
         return await self._backend.run(
             f'file={quoted_temporary}; trap \'rm -f "$file"\' EXIT HUP INT TERM; '
             f'test -d {quoted_path} && '
-            f'find {quoted_path} -mindepth 1 -maxdepth 1{type_filter} -print0 > "$file" && base64 < "$file"',
+            f'find -H {quoted_path} -mindepth 1 -maxdepth 1{type_filter} -print0 > "$file" && base64 < "$file"',
             shell=True,
         )
 
@@ -328,7 +328,7 @@ class Workspace(WorkspaceBackend):
         await self.write_bytes(path, content.encode(encoding))
 
     async def read_file(self, path: str, *, offset: int = 1, limit: int | None = None) -> FileWindow:
-        """Read a line window from `path`, resolving relative paths through the backend first.
+        """Read a line window from `path`.
 
         `offset` is the 1-based first line and `limit` is the maximum number of lines. When
         `limit` is `None`, the window extends through EOF. `limit` bounds returned lines, not
@@ -345,13 +345,12 @@ class Workspace(WorkspaceBackend):
             raise ValueError('`offset` must be at least 1')
         if limit is not None and limit < 1:
             raise ValueError('`limit` must be at least 1')
-        resolved_path = await self.resolve(path)
         if limit is not None:
             # Before the filesystem lookup: a backend with only `run()` can still serve
             # windowed reads through the slice, and command-capable remote backends avoid
             # transferring the whole file. This bounds line count, not byte size: one line
             # may still be arbitrarily large.
-            window = await self._read_file_via_shell(resolved_path, offset, limit)
+            window = await self._read_file_via_shell(path, offset, limit)
             if window is not None:
                 return window
 
@@ -365,12 +364,15 @@ class Workspace(WorkspaceBackend):
         timed out), so the caller can fall back to the backend filesystem when available.
         `total_lines` is only reported when the slice provably reached EOF.
         """
+        resolved_path = await self.resolve(path)
         end = offset + limit  # one extra line, to learn whether more exist
         try:
             # argv, never shell=True: the path is an argument, not shell-interpreted text.
             # `{end}q` stops `sed` at the window instead of scanning to EOF, and the timeout
             # bounds the optimization on paths that never finish.
-            result = await self.run(['sed', '-n', f'{offset},{end}p;{end}q', path], timeout=_SHELL_SLICE_TIMEOUT)
+            result = await self.run(
+                ['sed', '-n', f'{offset},{end}p;{end}q', resolved_path], timeout=_SHELL_SLICE_TIMEOUT
+            )
         except (NotImplementedError, OSError, WorkspaceTimeoutError, UserError):
             return None
         if result.exit_code != 0 or result.stderr:
@@ -382,7 +384,7 @@ class Workspace(WorkspaceBackend):
         if not lines:
             # Empty output covers an empty file or an offset past EOF. The exact total is
             # unknown without scanning to EOF, which would defeat the bounded-read contract.
-            await self._validate_bounded_read_path(path)
+            await self._validate_bounded_read_path(resolved_path)
             return FileWindow(lines=(), start_line=offset, has_more=False, total_lines=None)
         if len(lines) > limit:
             return FileWindow(lines=tuple(lines[:limit]), start_line=offset, has_more=True, total_lines=None)
