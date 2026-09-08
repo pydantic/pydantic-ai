@@ -150,6 +150,7 @@ _CAPABILITY_PAGE_META = {
     'dynamic-workflow.md': ('dynamic_workflow', 'Dynamic Workflow'),
     'planning.md': ('planning', 'Planning'),
     'system-reminders.md': ('system_reminders', 'System Reminders'),
+    'trajectory-judge.md': ('trajectory_judge', 'Trajectory Judge'),
     'capability-creation.md': ('capability_creation', 'Runtime Capability Creation'),
     'guardrails.md': ('guardrails', 'Input, Output & Tool Guardrails'),
     'prompt-injection-defender.md': ('prompt_injection_defender', 'Prompt Injection Defender'),
