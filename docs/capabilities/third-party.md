@@ -27,6 +27,7 @@ Pydantic AI supports [multi-agent patterns](../multi-agent-applications.md) dire
 [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/guardrails/) provides input and output guardrails that validate or block requests and responses, and Pydantic AI enforces usage, token, and request limits via [`UsageLimits`](../agent.md#usage-limits). As a community alternative bundling several ready-made shields, including USD cost tracking:
 
 * [`pydantic-ai-shields`](https://github.com/vstorm-co/pydantic-ai-shields) - Ready-to-use guardrail capabilities: `CostTracking` (tracks token usage and USD cost per run, raises `BudgetExceededError` on budget overrun); `ToolGuard` (block or require approval for specific tools); `InputGuard` and `OutputGuard` (custom sync or async validation functions); `PromptInjection`, `PiiDetector`, `SecretRedaction`, `BlockedKeywords`, and `NoRefusals` content shields.
+* [`piighost`](https://github.com/Athroniaeth/piighost) - Protect personal data (PII) in your agent. It hides sensitive values before the model sees them, then restores the real values in the reply and at the tool boundary, so tools and the user still get the real data. Added as `capabilities=[pii_hooks(...)]`, with pluggable regex, NER, and LLM detectors and thread-consistent tokens across a multi-turn history. Available through the `piighost[pydantic-ai]` extra.
 
 ## File Operations & Sandboxing {#file-operations-sandboxing}
 
