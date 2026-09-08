@@ -11,6 +11,7 @@ from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import AbstractNativeTool, CodeExecutionTool, WebFetchTool
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
 
+from ..._inline_snapshot import snapshot
 from ...conftest import try_import
 from ..test_anthropic import MockAnthropic, completion_message, get_mock_chat_completion_kwargs
 
@@ -224,15 +225,17 @@ async def test_anthropic_agent_recovers_from_unconfigured_native_tool_call(allow
 
     assert result.output == 'ok'
     assert not any(isinstance(part, NativeToolCallPart) for message in result.all_messages() for part in message.parts)
-    assert get_mock_chat_completion_kwargs(mock_client)[1]['messages'] == [
-        {'role': 'user', 'content': [{'text': 'hello', 'type': 'text'}]},
-        {
-            'role': 'user',
-            'content': [
-                {
-                    'text': 'Validation feedback:\nPlease return text.\n\nFix the errors and try again.',
-                    'type': 'text',
-                }
-            ],
-        },
-    ]
+    assert get_mock_chat_completion_kwargs(mock_client)[1]['messages'] == snapshot(
+        [
+            {'role': 'user', 'content': [{'text': 'hello', 'type': 'text'}]},
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'text': '<system>The response contained no usable output. Please return text.</system>',
+                        'type': 'text',
+                    }
+                ],
+            },
+        ]
+    )

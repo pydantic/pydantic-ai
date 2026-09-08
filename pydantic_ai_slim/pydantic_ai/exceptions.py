@@ -23,7 +23,7 @@ else:
 
 
 if TYPE_CHECKING:
-    from .messages import ModelMessage, ModelResponse, RetryPromptPart, ToolReturnPart
+    from .messages import ModelMessage, ModelResponse, RetryFeedbackPart, RetryPromptPart, ToolReturnPart
     from .usage import RunUsage
 
 __all__ = (
@@ -614,15 +614,19 @@ class FallbackExceptionGroup(ExceptionGroup[Any]):
 
 
 class ToolRetryError(Exception):
-    """Exception used to signal a `ToolRetry` message should be returned to the LLM."""
+    """Exception used to signal a retry message should be returned to the LLM.
 
-    def __init__(self, tool_retry: RetryPromptPart):
+    `tool_retry` is whichever part the retry travels as: a `RetryPromptPart` when it answers a tool
+    call, a `RetryFeedbackPart` when it answers no call at all.
+    """
+
+    def __init__(self, tool_retry: RetryPromptPart | RetryFeedbackPart):
         self.tool_retry = tool_retry
-        message = (
-            tool_retry.content
-            if isinstance(tool_retry.content, str)
-            else self._format_error_details(tool_retry.content, tool_retry.tool_name)
-        )
+        if isinstance(tool_retry.content, str):
+            message = tool_retry.content
+        else:
+            tool_name = tool_retry.tool_name if tool_retry.part_kind == 'retry-prompt' else None
+            message = self._format_error_details(tool_retry.content, tool_name)
         super().__init__(message)
 
     def __reduce__(self) -> tuple[type, tuple[Any, ...]]:

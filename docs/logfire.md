@@ -350,7 +350,14 @@ Builds on version 5 by giving tool results the message role the [GenAI semantic 
 - Old (v2-5): a tool result is a `tool_call_response` part inside a `{"role": "user"}` message
 - New (v6): it moves to a `{"role": "tool"}` message
 
-This applies to tool returns and to retries that answer a tool call. A retry that answers nothing — output validation, a `ModelRetry` from a validator — stays on `user`, which is the role it reaches the model as. A request whose parts span both roles is emitted as consecutive messages in part order rather than one merged message.
+This applies to tool returns and to retries that answer a tool call. A request whose parts span both roles is emitted as consecutive messages in part order rather than one merged message.
+
+Pydantic AI's own [retry feedback](retries.md#feedback-that-belongs-to-no-tool-call) — a [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart], the retry that answers no tool call — moves on the same version, for the same reason:
+
+- Old (v2-5): a text part inside a `{"role": "user"}` message
+- New (v6): it moves to a `{"role": "system"}` message, the voice the part reaches the model in
+
+That move shows up on `pydantic_ai.all_messages`, which records the stored message history. A model request span's `gen_ai.input.messages` records the history as sent, and by then the part has been rendered into a mid-conversation system prompt — or into `<system>`-tagged user text on a provider that takes no mid-conversation system message — so that attribute reads the same at every version. A tool-less [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] loaded from a history recorded before this part existed stays on `user`.
 
 ---
 

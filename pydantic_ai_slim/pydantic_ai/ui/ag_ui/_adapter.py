@@ -34,6 +34,7 @@ from ...messages import (
     ModelResponse,
     NativeToolCallPart,
     NativeToolReturnPart,
+    RetryFeedbackPart,
     RetryPromptPart,
     SpeechPart,
     SystemPromptPart,
@@ -50,6 +51,7 @@ from ...messages import (
     VideoUrl,
     narrow_message_parts,
 )
+from ...models import _render_retry_feedback  # pyright: ignore[reportPrivateUsage]
 from ...output import OutputDataT
 from ...tools import (
     AgentDepsT,
@@ -100,11 +102,13 @@ try:
         parse_ag_ui_version,
         parse_builtin_tool_call_id,
         parse_encrypted_outcome,
+        parse_encrypted_retry_feedback,
         parse_encrypted_tool_kind,
         rehydrate_tool_return_content,
+        retry_feedback_encrypted_value_kwargs,
         thinking_encrypted_metadata,
         tool_kind_encrypted_value_kwargs,
-        warn_tool_kind_not_persisted,
+        warn_encrypted_value_not_persisted,
     )
 except ImportError as e:
     raise ImportError(
@@ -454,8 +458,15 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             )
                             builder.add(UserPromptPart(content=content_to_add))
 
-                case SystemMessage(content=content) | DeveloperMessage(content=content):
-                    builder.add(SystemPromptPart(content=content))
+                case SystemMessage() | DeveloperMessage() as system_msg:
+                    # A system message only reloads as harness retry feedback when it carries the
+                    # `encrypted_value` marker this adapter dumped it with; one the client wrote has
+                    # no such claim and stays a plain `SystemPromptPart`, so it can never gain
+                    # harness provenance. See `retry_feedback_from_payload`.
+                    feedback = (
+                        parse_encrypted_retry_feedback(system_msg.encrypted_value) if use_encrypted_value else None
+                    )
+                    builder.add(feedback if feedback is not None else SystemPromptPart(content=system_msg.content))
 
                 case AssistantMessage(content=content, tool_calls=tool_calls_list):
                     if content:
@@ -750,6 +761,21 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     )
                 else:
                     user_content.append(TextInputContent(type='text', text=part.model_response()))
+            elif isinstance(part, RetryFeedbackPart):
+                # Harness feedback carries the system voice it is rendered in for the model, not the
+                # user's, so it dumps as its own `SystemMessage` rather than as text a person appears
+                # to have written (https://github.com/pydantic/pydantic-ai/issues/6404). Flushing
+                # first keeps it in the position it was authored in here, instead of joining the
+                # standing prompt at the head of the request; that's this adapter's dump shape, not a
+                # guarantee every adapter makes — `VercelAIAdapter` hoists it above the user message.
+                flush_user_content()
+                result.append(
+                    SystemMessage(
+                        id=_new_message_id(),
+                        content=_render_retry_feedback(part),
+                        **retry_feedback_encrypted_value_kwargs(part, supported=use_encrypted_value),
+                    )
+                )
             elif isinstance(part, SpeechPart):  # pragma: no cover
                 pass  # Realtime audio parts are not rendered in AG-UI
             else:
@@ -926,6 +952,11 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
           carrier from 0.1.11 (`ToolMessage` has no outcome slot). Below that, `'failed'` survives
           via `ToolMessage.error`, `'denied'` reloads as `'failed'`, and `'interrupted'` reloads as
           `'success'`.
+        - `RetryFeedbackPart` dumps as a `SystemMessage` holding the same text the model is shown,
+          with the part itself in that message's `encrypted_value`; it reloads as a
+          `RetryFeedbackPart` only from there, so a system message the client wrote stays a
+          `SystemPromptPart`. Below 0.1.11 the carrier doesn't exist, so it reloads as a
+          `SystemPromptPart` holding the rendered text, and the dump warns.
         - `RetryPromptPart` becomes `ToolReturnPart` (or `UserPromptPart`) on reload.
         - A `NativeToolReturnPart` is always emitted directly after its `NativeToolCallPart`, so any
           part that originally sat between them — e.g. a `CompactionPart` — reloads after the pair
@@ -957,12 +988,18 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         result: list[Message] = []
 
         if parse_ag_ui_version(ag_ui_version) < ENCRYPTED_VALUE_VERSION and any(
-            isinstance(part, (ToolCallPart, ToolReturnPart, NativeToolCallPart, NativeToolReturnPart))
-            and part.tool_kind is not None
+            isinstance(part, RetryFeedbackPart)
+            or (
+                isinstance(part, (ToolCallPart, ToolReturnPart, NativeToolCallPart, NativeToolReturnPart))
+                # A non-`'success'` `outcome` on a `tool_kind`-less return also degrades below the
+                # floor and also goes unwarned. That gap predates this part and stays as it was —
+                # arming the warning for it would start warning users who never hit retry feedback.
+                and part.tool_kind is not None
+            )
             for msg in messages
             for part in msg.parts
         ):
-            warn_tool_kind_not_persisted(ag_ui_version)
+            warn_encrypted_value_not_persisted(ag_ui_version)
 
         for msg in messages:
             if isinstance(msg, ModelRequest):

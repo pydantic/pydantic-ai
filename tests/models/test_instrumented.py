@@ -3,13 +3,14 @@ from __future__ import annotations
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 import pytest
 from opentelemetry.trace import NoOpTracerProvider
-from pydantic_core import to_json
+from pydantic_core import ErrorDetails, to_json
 
 from pydantic_ai import (
+    Agent,
     AudioUrl,
     BinaryContent,
     CachePoint,
@@ -21,11 +22,13 @@ from pydantic_ai import (
     ModelRequest,
     ModelResponse,
     ModelResponseStreamEvent,
+    ModelRetry,
     NativeToolCallPart,
     NativeToolReturnPart,
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
+    RetryFeedbackPart,
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
@@ -39,7 +42,9 @@ from pydantic_ai import (
 from pydantic_ai._instrumentation import MessageJsonCache, has_stale_message_json
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
-from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
+from pydantic_ai.capabilities.instrumentation import Instrumentation
+from pydantic_ai.models import Model, ModelProfile, ModelRequestParameters, StreamedResponse
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
@@ -977,8 +982,12 @@ def test_messages_to_otel_messages_request_roles_v6():
     """From version 6 a request splits into one message per role, in part order.
 
     A tool return and a retry that answers a tool call both render as a `tool_call_response`, which
-    the GenAI semantic conventions put in a `tool` message. A retry that answers nothing renders as
-    text and reaches the model as user content, so it starts a new message.
+    the GenAI semantic conventions put in a `tool` message. A legacy retry that answers nothing
+    renders as text and reaches the model as user content, so it starts a new message, while a
+    `RetryFeedbackPart` reaches it in the system voice and takes `system`.
+
+    Every one of those roles is a changed value on telemetry versions 2-5 already emit, so each is
+    gated on version 6 and the earlier versions keep the single `user` message they shared.
     """
     messages: list[ModelMessage] = [
         ModelRequest(parts=[SystemPromptPart(content='Be brief.'), UserPromptPart(content='Convert 10 EUR.')]),
@@ -988,6 +997,7 @@ def test_messages_to_otel_messages_request_roles_v6():
                 ToolReturnPart(tool_name='convert', content='11 USD', tool_call_id='call_1'),
                 RetryPromptPart(content='Unknown currency.', tool_name='convert', tool_call_id='call_2'),
                 RetryPromptPart(content='Output did not validate.'),
+                RetryFeedbackPart(content='Output did not validate.', cause='validation_error'),
                 UserPromptPart(content='Thanks.'),
             ]
         ),
@@ -1027,10 +1037,11 @@ Output did not validate.
 
 Fix the errors and try again.\
 """,
-                    },
-                    {'type': 'text', 'content': 'Thanks.'},
+                    }
                 ],
             },
+            {'role': 'system', 'parts': [{'type': 'text', 'content': 'Output did not validate.'}]},
+            {'role': 'user', 'parts': [{'type': 'text', 'content': 'Thanks.'}]},
         ]
     )
 
@@ -1038,6 +1049,260 @@ Fix the errors and try again.\
     settings = InstrumentationSettings(include_content=True)
     assert [message['role'] for message in settings.messages_to_otel_messages(messages)] == snapshot(
         ['system', 'user', 'assistant', 'user']
+    )
+
+
+def test_messages_to_otel_messages_retry_feedback_across_versions():
+    """A retry that answers no tool call, on each setting that renders it differently.
+
+    The content is the part's own feedback at every version. The sentence that frames it as the
+    harness speaking is chosen per `cause` at `prepare_messages` time, so it belongs to the request,
+    not to the stored history this renders — which is why nothing here is version-gated but the role.
+
+    Version 6 gives the part the `system` role it reaches the model in. Versions 2-5 keep the `user`
+    the tool-less `RetryPromptPart` this part replaced was emitted on, so a consumer written against
+    them keeps reading the role it was built for.
+
+    A validation error's `input` — the value the model sent — is dropped at every version, so the
+    largest model-chosen string in the run never lands in a `system` message.
+    """
+    errors: list[ErrorDetails] = [
+        {'type': 'missing', 'loc': ('answer',), 'msg': 'Field required', 'input': {'answr': 'oui'}},
+        {'type': 'string_type', 'loc': ('answer', 'text'), 'msg': 'Input should be a valid string', 'input': 42},
+    ]
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                RetryFeedbackPart(content=errors, cause='validation_error'),
+                RetryFeedbackPart(content='Answer in French.', cause='model_retry'),
+            ]
+        ),
+    ]
+    settings_by_label: dict[str, InstrumentationSettings] = {
+        'v5': InstrumentationSettings(version=5),
+        'v6': InstrumentationSettings(version=6),
+        'v6 without content': InstrumentationSettings(version=6, include_content=False),
+    }
+    by_settings = {label: settings.messages_to_otel_messages(messages) for label, settings in settings_by_label.items()}
+    assert by_settings == snapshot(
+        {
+            'v5': [
+                {
+                    'role': 'user',
+                    'parts': [
+                        {
+                            'type': 'text',
+                            'content': """\
+2 validation errors:
+```json
+[
+  {
+    "type": "missing",
+    "loc": [
+      "answer"
+    ],
+    "msg": "Field required"
+  },
+  {
+    "type": "string_type",
+    "loc": [
+      "answer",
+      "text"
+    ],
+    "msg": "Input should be a valid string"
+  }
+]
+```\
+""",
+                        },
+                        {'type': 'text', 'content': 'Answer in French.'},
+                    ],
+                }
+            ],
+            'v6': [
+                {
+                    'role': 'system',
+                    'parts': [
+                        {
+                            'type': 'text',
+                            'content': """\
+2 validation errors:
+```json
+[
+  {
+    "type": "missing",
+    "loc": [
+      "answer"
+    ],
+    "msg": "Field required"
+  },
+  {
+    "type": "string_type",
+    "loc": [
+      "answer",
+      "text"
+    ],
+    "msg": "Input should be a valid string"
+  }
+]
+```\
+""",
+                        },
+                        {'type': 'text', 'content': 'Answer in French.'},
+                    ],
+                }
+            ],
+            'v6 without content': [{'role': 'system', 'parts': [{'type': 'text'}, {'type': 'text'}]}],
+        }
+    )
+
+
+async def test_run_records_retry_feedback_on_both_spans(capfire: CaptureLogfire):
+    """What an agent run records for a retry that answers no tool call.
+
+    Two attributes carry it, built from two different histories, and neither substitutes for the
+    other. `pydantic_ai.all_messages` on the run span is built from the stored history, so it is the
+    one that reaches `RetryFeedbackPart.otel_message_parts` and the one the instrumentation version
+    moves. A request span's `gen_ai.input.messages` is built after `Model.prepare_messages`, which
+    has already replaced the part with the statement the model is shown — so it records that
+    statement, identically on every version, and differs only by whether the provider takes a
+    mid-conversation system message or needs the `<system>`-tagged fallback.
+
+    Every other test here calls `messages_to_otel_messages` directly, where the part is still a
+    `RetryFeedbackPart`. Only a run pins which of the two shapes a consumer is actually served, and
+    on which attribute a new version would be visible at all.
+    """
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        answered = any(isinstance(message, ModelResponse) for message in messages)
+        return ModelResponse(parts=[TextPart('Ten euros.' if answered else 'Non.')])
+
+    recorded: dict[str, dict[str, Any]] = {}
+    for version in (5, 6):
+        for supports_inline_system_prompts in (True, False):
+            capfire.exporter.clear()
+            agent = Agent(
+                FunctionModel(
+                    respond, profile=ModelProfile(supports_inline_system_prompts=supports_inline_system_prompts)
+                ),
+                capabilities=[Instrumentation(settings=InstrumentationSettings(version=version))],
+            )
+
+            @agent.output_validator
+            def spell_it_out(text: str) -> str:
+                if text == 'Non.':
+                    raise ModelRetry('Answer in English.')
+                return text
+
+            await agent.run('Convert 10 EUR.')
+
+            spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+            requests = [span for span in spans if 'gen_ai.input.messages' in span['attributes']]
+            [run] = [span for span in spans if 'pydantic_ai.all_messages' in span['attributes']]
+            recorded[f'v{version}, inline system prompts: {supports_inline_system_prompts}'] = {
+                'request after the retry (gen_ai.input.messages)': requests[-1]['attributes']['gen_ai.input.messages'],
+                'run (pydantic_ai.all_messages)': run['attributes']['pydantic_ai.all_messages'],
+            }
+
+    assert recorded == snapshot(
+        {
+            'v5, inline system prompts: True': {
+                'request after the retry (gen_ai.input.messages)': [
+                    {'role': 'user', 'parts': [{'type': 'text', 'content': 'Convert 10 EUR.'}]},
+                    {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'Non.'}]},
+                    {
+                        'role': 'system',
+                        'parts': [
+                            {
+                                'type': 'text',
+                                'content': """\
+The response was not accepted:
+Answer in English.\
+""",
+                            }
+                        ],
+                    },
+                ],
+                'run (pydantic_ai.all_messages)': [
+                    {'role': 'user', 'parts': [{'type': 'text', 'content': 'Convert 10 EUR.'}]},
+                    {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'Non.'}]},
+                    {'role': 'user', 'parts': [{'type': 'text', 'content': 'Answer in English.'}]},
+                    {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'Ten euros.'}]},
+                ],
+            },
+            'v5, inline system prompts: False': {
+                'request after the retry (gen_ai.input.messages)': [
+                    {'role': 'user', 'parts': [{'type': 'text', 'content': 'Convert 10 EUR.'}]},
+                    {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'Non.'}]},
+                    {
+                        'role': 'user',
+                        'parts': [
+                            {
+                                'type': 'text',
+                                'content': """\
+<system>The response was not accepted:
+Answer in English.</system>\
+""",
+                            }
+                        ],
+                    },
+                ],
+                'run (pydantic_ai.all_messages)': [
+                    {'role': 'user', 'parts': [{'type': 'text', 'content': 'Convert 10 EUR.'}]},
+                    {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'Non.'}]},
+                    {'role': 'user', 'parts': [{'type': 'text', 'content': 'Answer in English.'}]},
+                    {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'Ten euros.'}]},
+                ],
+            },
+            'v6, inline system prompts: True': {
+                'request after the retry (gen_ai.input.messages)': [
+                    {'role': 'user', 'parts': [{'type': 'text', 'content': 'Convert 10 EUR.'}]},
+                    {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'Non.'}]},
+                    {
+                        'role': 'system',
+                        'parts': [
+                            {
+                                'type': 'text',
+                                'content': """\
+The response was not accepted:
+Answer in English.\
+""",
+                            }
+                        ],
+                    },
+                ],
+                'run (pydantic_ai.all_messages)': [
+                    {'role': 'user', 'parts': [{'type': 'text', 'content': 'Convert 10 EUR.'}]},
+                    {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'Non.'}]},
+                    {'role': 'system', 'parts': [{'type': 'text', 'content': 'Answer in English.'}]},
+                    {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'Ten euros.'}]},
+                ],
+            },
+            'v6, inline system prompts: False': {
+                'request after the retry (gen_ai.input.messages)': [
+                    {'role': 'user', 'parts': [{'type': 'text', 'content': 'Convert 10 EUR.'}]},
+                    {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'Non.'}]},
+                    {
+                        'role': 'user',
+                        'parts': [
+                            {
+                                'type': 'text',
+                                'content': """\
+<system>The response was not accepted:
+Answer in English.</system>\
+""",
+                            }
+                        ],
+                    },
+                ],
+                'run (pydantic_ai.all_messages)': [
+                    {'role': 'user', 'parts': [{'type': 'text', 'content': 'Convert 10 EUR.'}]},
+                    {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'Non.'}]},
+                    {'role': 'system', 'parts': [{'type': 'text', 'content': 'Answer in English.'}]},
+                    {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'Ten euros.'}]},
+                ],
+            },
+        }
     )
 
 
@@ -1426,7 +1691,12 @@ def test_messages_without_content(document_content: BinaryContent):
             parts=[RetryPromptPart('retry_prompt', tool_name='tool', tool_call_id='tool_call_2')],
             timestamp=IsDatetime(),
         ),
+        # A tool-less legacy retry and the harness feedback that replaced it: both carry
+        # model-visible prose, so both must honor `include_content=False` like every sibling part.
         ModelRequest(parts=[RetryPromptPart('retry_prompt_no_tool')], timestamp=IsDatetime()),
+        ModelRequest(
+            parts=[RetryFeedbackPart(content='harness feedback', cause='model_retry')], timestamp=IsDatetime()
+        ),
         ModelRequest(parts=[UserPromptPart(content=['user_prompt2', document_content])], timestamp=IsDatetime()),
         ModelRequest(parts=[UserPromptPart('simple text prompt')], timestamp=IsDatetime()),
         ModelResponse(parts=[FilePart(content=document_content)]),
@@ -1456,6 +1726,7 @@ def test_messages_without_content(document_content: BinaryContent):
             },
             {'role': 'user', 'parts': [{'type': 'tool_call_response', 'id': 'tool_call_1', 'name': 'tool'}]},
             {'role': 'user', 'parts': [{'type': 'tool_call_response', 'id': 'tool_call_2', 'name': 'tool'}]},
+            {'role': 'user', 'parts': [{'type': 'text'}]},
             {'role': 'user', 'parts': [{'type': 'text'}]},
             {'role': 'user', 'parts': [{'type': 'text'}, {'type': 'blob', 'mime_type': 'application/pdf'}]},
             {'role': 'user', 'parts': [{'type': 'text'}]},
@@ -2508,7 +2779,7 @@ async def test_wrapped_model_receives_unprepared_request():
     and re-walk an already-transformed JSON schema. Regression test for the behaviour introduced in
     #5429 and released in v1.100.0.
     """
-    from pydantic_ai.models.function import AgentInfo, FunctionModel
+    from pydantic_ai.models.function import FunctionModel
     from pydantic_ai.output import OutputObjectDefinition
     from pydantic_ai.profiles import ModelProfile
 

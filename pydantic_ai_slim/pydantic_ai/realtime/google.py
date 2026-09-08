@@ -60,6 +60,7 @@ from ..messages import (
     RealtimeResponseInterruptedEvent,
     RealtimeSessionErrorEvent,
     RealtimeSessionReconnectEvent,
+    RetryFeedbackPart,
     RetryPromptPart,
     SpeechPart,
     SystemPromptPart,
@@ -73,7 +74,11 @@ from ..messages import (
     UserPromptPart,
     VideoUrl,
 )
-from ..models import ModelRequestParameters
+from ..models import (
+    ModelRequestParameters,
+    _render_retry_feedback,  # pyright: ignore[reportPrivateUsage]
+    _wrap_in_system_tags,  # pyright: ignore[reportPrivateUsage]
+)
 
 # Reuse the classic `GoogleModel`'s native tool mappers so a realtime turn's grounding / code-execution
 # native tool parts are byte-identical in shape to a classic request's, rather than duplicating the
@@ -426,6 +431,15 @@ async def _seed_request_parts(
             output = part.model_response()
             text = output if part.tool_name is None else f'[Tool {part.tool_call_id}: {part.tool_name} error: {output}]'
             parts.append(genai_types.Part(text=text))
+        elif isinstance(part, RetryFeedbackPart):
+            # A seeded turn has no system role — a `SystemPromptPart` is hoisted to
+            # `system_instruction` instead — and this feedback answers one response rather than
+            # standing over the session, so hoisting it there would be wrong. It takes the same
+            # `<system>` tagging every model without a mid-conversation system message gets, which
+            # is what keeps the model from reading it as something a person said
+            # (https://github.com/pydantic/pydantic-ai/issues/6404).
+            feedback = _wrap_in_system_tags(_render_retry_feedback(part, escape_system_close_tags=True))
+            parts.append(genai_types.Part(text=feedback))
         else:
             assert_never(part)
     return parts
