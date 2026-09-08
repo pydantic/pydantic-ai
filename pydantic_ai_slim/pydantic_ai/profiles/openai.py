@@ -464,8 +464,9 @@ def openai_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
         'audio_input_sample_rate': 24000,
         'audio_output_sample_rate': 24000,
         # Reasoning effort is only accepted by the `gpt-realtime-2*` reasoning models; the GA
-        # `gpt-realtime` rejects it ("Unsupported option for this model").
-        'supports_thinking': model_name.startswith('gpt-realtime-2'),
+        # `gpt-realtime` (and its dated `gpt-realtime-2025-…` snapshots) rejects it ("Unsupported
+        # option for this model"), so match the version number at a `-`/`.` boundary.
+        'supports_thinking': bool(re.match(r'gpt-realtime-2(?:[.-]|$)', model_name)),
     }
 
 

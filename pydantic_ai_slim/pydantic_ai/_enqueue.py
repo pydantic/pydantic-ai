@@ -170,10 +170,11 @@ class PendingMessage:
 class PendingMessageQueue(list[PendingMessage]):
     """A run's pending messages with thread-safe append and drain operations."""
 
-    __slots__ = ('_lock',)
+    __slots__ = ('_closed', '_lock')
 
     def __init__(self, messages: Iterable[PendingMessage] = ()) -> None:
         super().__init__(messages)
+        self._closed = False
         self._lock = threading.Lock()
 
     def __reduce_ex__(self, protocol: SupportsIndex) -> tuple[type[PendingMessageQueue], tuple[list[PendingMessage]]]:
@@ -181,16 +182,26 @@ class PendingMessageQueue(list[PendingMessage]):
 
     def append(self, pending: PendingMessage) -> None:
         with self._lock:
+            if self._closed:
+                raise UserError('`enqueue` is not available because the agent run has ended.')
             super().append(pending)
 
     def pop_priority(self, priority: PendingMessagePriority) -> list[PendingMessage]:
         with self._lock:
             return self._pop_priority(priority)
 
-    def pop_all_by_priority(self) -> tuple[list[PendingMessage], list[PendingMessage]]:
-        """Remove both priorities atomically, returning `'asap'` first."""
+    def drain_at_end(self) -> tuple[list[PendingMessage], list[PendingMessage]]:
+        """Drain both priorities, or atomically close an empty queue."""
         with self._lock:
-            return self._pop_priority('asap'), self._pop_priority('when_idle')
+            asap = self._pop_priority('asap')
+            when_idle = self._pop_priority('when_idle')
+            if not asap and not when_idle:
+                self._closed = True
+            return asap, when_idle
+
+    def close(self) -> None:
+        with self._lock:
+            self._closed = True
 
     def _pop_priority(self, priority: PendingMessagePriority) -> list[PendingMessage]:
         selected = [pending for pending in self if pending.priority == priority]

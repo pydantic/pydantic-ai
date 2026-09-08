@@ -6,7 +6,16 @@ import dataclasses
 import functools
 import inspect
 import warnings
-from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Awaitable, Callable, Generator, Sequence
+from collections.abc import (
+    AsyncGenerator,
+    AsyncIterable,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Collection,
+    Generator,
+    Sequence,
+)
 from contextlib import (
     AbstractAsyncContextManager,
     AsyncExitStack,
@@ -18,6 +27,7 @@ from copy import copy
 from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, cast, overload
+from uuid import uuid4
 
 import anyio
 from opentelemetry.trace import NoOpTracer
@@ -31,6 +41,7 @@ from pydantic_ai.capabilities._deferred_capability_loader import DeferredCapabil
 
 from .. import (
     _agent_graph,
+    _enqueue,
     _instructions,
     _output,
     _system_prompt,
@@ -76,6 +87,7 @@ from ..capabilities.abstract import (
     leaf_capabilities,
 )
 from ..capabilities.combined import bind_capabilities_tier
+from ..capabilities.hooks import EventT, Hooks, OnEventHookFunc
 from ..capabilities.instrumentation import Instrumentation as InstrumentationCap
 from ..models.instrumented import InstrumentationSettings, InstrumentedModel
 from ..native_tools import AbstractNativeTool
@@ -199,6 +211,7 @@ async def _run_lifecycle_hooks(  # noqa: C901
     extract_error: Callable[[BaseException], BaseException] | None = None,
     result_ready: Callable[[], bool] | None = None,
     restore_context_on: AsyncExitStack | None = None,
+    on_body_done: Callable[[], None] | None = None,
 ) -> AsyncGenerator[_RunLifecycle]:
     """Dispatch run hooks around a caller-owned run body.
 
@@ -223,24 +236,38 @@ async def _run_lifecycle_hooks(  # noqa: C901
     _run_done = asyncio.Event()
     _run_error: BaseException | None = None
     _wrap_context: list[tuple[ContextVar[Any], Any]] | None = None
+    body_done = False
+
+    def _finish_body() -> None:
+        nonlocal body_done
+        if not body_done:
+            if on_body_done is not None:
+                on_body_done()
+            body_done = True
 
     async def _do_run() -> AgentRunResult[Any]:
         nonlocal _wrap_context
-        run_ctx._run_capabilities_by_id = {  # pyright: ignore[reportPrivateUsage]
-            capability.id: capability for capability in leaf_capabilities(run_capability) if capability.id is not None
-        }
-        run_capability._prepare_run_context(run_ctx)  # pyright: ignore[reportPrivateUsage]
-        with set_current_run_context(run_ctx):
-            await run_capability.before_run(run_ctx)
-            current_ctx = contextvars.copy_context()
-        # Capture context vars set by wrap_run/before_run so they can be propagated to the
-        # caller's task, where the run body and any child tasks execute.
-        _wrap_context = [
-            (var, current_ctx[var])
-            for var in current_ctx
-            if var not in outer_context or outer_context[var] is not current_ctx[var]
-        ]
-        _run_ready.set()
+        try:
+            run_ctx._run_capabilities_by_id = {  # pyright: ignore[reportPrivateUsage]
+                capability.id: capability
+                for capability in leaf_capabilities(run_capability)
+                if capability.id is not None
+            }
+            run_capability._prepare_run_context(run_ctx)  # pyright: ignore[reportPrivateUsage]
+            with set_current_run_context(run_ctx):
+                await run_capability.before_run(run_ctx)
+                current_ctx = contextvars.copy_context()
+            # Capture context vars set by wrap_run/before_run so they can be propagated to the
+            # caller's task, where the run body and any child tasks execute.
+            _wrap_context = [
+                (var, current_ctx[var])
+                for var in current_ctx
+                if var not in outer_context or outer_context[var] is not current_ctx[var]
+            ]
+            _run_ready.set()
+        except BaseException:
+            _finish_body()
+            raise
         await _run_done.wait()
         if _run_error is not None:
             raise extract_error(_run_error) if extract_error is not None else _run_error
@@ -259,6 +286,7 @@ async def _run_lifecycle_hooks(  # noqa: C901
     try:
         await asyncio.wait({_ready_waiter, _wrap_task}, return_when=asyncio.FIRST_COMPLETED)
     except BaseException as exc:
+        _finish_body()
         # Unblock `_do_run` before draining, mirroring the streaming handoff: if
         # `before_run`'s durable step absorbed the CancelledError (e.g. Temporal's
         # cooperative cancellation) and returned, `_do_run` is parked on
@@ -301,6 +329,7 @@ async def _run_lifecycle_hooks(  # noqa: C901
 
     short_circuited = _wrap_task.done() and not _run_ready.is_set()
     if short_circuited:
+        _finish_body()
         await _finalize_result(_wrap_task.result())
 
     try:
@@ -315,6 +344,7 @@ async def _run_lifecycle_hooks(  # noqa: C901
             # Don't re-raise yet — give wrap_run a chance to recover. If wrap_run catches
             # the error from handler() and returns a recovery result, it is suppressed.
         finally:
+            _finish_body()
             if not short_circuited:
                 _run_done.set()
                 if _run_error is None and (result_ready is None or result_ready()):
@@ -655,6 +685,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         capabilities = wrap_capability_funcs(capabilities)
 
         _inject_auto_capabilities(capabilities)
+
+        # Listeners registered with `@agent.on_event` live here rather than in the root capability,
+        # so they survive an overridden root capability the way `@agent.tool` tools survive
+        # `override(toolsets=...)`. `on_event` is the only way to reach it, so it never contributes
+        # instructions, tools or model settings, and while it holds no listeners `listens_to()` is
+        # False and the dispatch gate skips it entirely.
+        self._event_hooks: Hooks[AgentDepsT] = Hooks()
 
         self._root_capability = CombinedCapability(capabilities)
         _validate_capability_ids(self._root_capability.capabilities)
@@ -1665,6 +1702,16 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             conversation_id=state.conversation_id,
             _cancellation=cancellation,
         )
+        pending_message_queue = state.pending_messages
+        assert isinstance(pending_message_queue, _enqueue.PendingMessageQueue)
+
+        @contextmanager
+        def close_pending_messages_on_error() -> Generator[None]:
+            try:
+                yield
+            except BaseException:
+                pending_message_queue.close()
+                raise
 
         # Resolve run metadata up front so capability and toolset `for_run` hooks
         # can see it on `RunContext.metadata`. Metadata factories receive the
@@ -1673,7 +1720,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # so any field that becomes available later still ends up reflected in
         # `agent_run.metadata`. Factories should be pure mappings over the run
         # context, not perform IO or have side effects.
-        state.metadata = self._get_metadata(initial_ctx, metadata)
+        with close_pending_messages_on_error():
+            state.metadata = self._get_metadata(initial_ctx, metadata)
         initial_ctx.metadata = state.metadata
 
         # Resolve the capability layers and extract their per-run contributions. Shared with
@@ -1682,14 +1730,15 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # instrumentation-settings resolution above, the deferred loader (`inject_deferred_loader=True`),
         # the output toolset below, and the layered `get_model_settings` closure. Keep those in sync
         # with the realtime call site.
-        resolved_caps = await self._resolve_run_capabilities(
-            initial_ctx,
-            base_capability=base_capability,
-            extra_capabilities=extra_capabilities,
-            instrumentation_cap=instrumentation_cap,
-            inject_deferred_loader=True,
-            base_is_override=base_is_override,
-        )
+        with close_pending_messages_on_error():
+            resolved_caps = await self._resolve_run_capabilities(
+                initial_ctx,
+                base_capability=base_capability,
+                extra_capabilities=extra_capabilities,
+                instrumentation_cap=instrumentation_cap,
+                inject_deferred_loader=True,
+                base_is_override=base_is_override,
+            )
         run_capability = resolved_caps.run_capability
         capabilities_dict = resolved_caps.capabilities
         cap_instructions = resolved_caps.instructions
@@ -1723,17 +1772,18 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             )
 
         # Build toolset with per-run capability contributions
-        toolset = self._get_toolset(
-            output_toolset=output_toolset,
-            additional_toolsets=toolsets,
-            cap_toolsets=cap_toolsets,
-            run_capability=run_capability,
-            max_output_retries=effective_output_toolset_max_retries,
-        )
-        toolset = await toolset.for_run(initial_ctx)
-        tool_manager = ToolManager[AgentDepsT](
-            toolset, root_capability=run_capability, default_max_retries=effective_tool_retries_resolved
-        )
+        with close_pending_messages_on_error():
+            toolset = self._get_toolset(
+                output_toolset=output_toolset,
+                additional_toolsets=toolsets,
+                cap_toolsets=cap_toolsets,
+                run_capability=run_capability,
+                max_output_retries=effective_output_toolset_max_retries,
+            )
+            toolset = await toolset.for_run(initial_ctx)
+            tool_manager = ToolManager[AgentDepsT](
+                toolset, root_capability=run_capability, default_max_retries=effective_tool_retries_resolved
+            )
 
         # Build instructions with per-run capability contributions
         sourced_instructions = self._get_instructions(
@@ -1757,8 +1807,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         )
         discovered_tool_names = parse_discovered_tools(message_history) if message_history else set[str]()
 
-        run_model_contribution = None if model_is_explicit else run_capability.get_model()
-        self._check_dynamic_model_resume(run_model_contribution, message_history)
+        with close_pending_messages_on_error():
+            run_model_contribution = None if model_is_explicit else run_capability.get_model()
+            self._check_dynamic_model_resume(run_model_contribution, message_history)
         model_selector: ModelSelector[AgentDepsT] | None
         model_selected_for_step: int | None
         capability_owns_current_model: bool
@@ -1776,12 +1827,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             model_selected_for_step = None
             capability_owns_current_model = True
         elif run_model_contribution is not None:
-            model_used = await self._resolve_model_selection(
-                run_model_contribution,
-                capability=run_capability,
-                deps=deps,
-                resolved_models=resolved_models_by_selection,
-            )
+            with close_pending_messages_on_error():
+                model_used = await self._resolve_model_selection(
+                    run_model_contribution,
+                    capability=run_capability,
+                    deps=deps,
+                    resolved_models=resolved_models_by_selection,
+                )
             model_id = run_model_contribution if isinstance(run_model_contribution, str) else None
             model_selector = None
             model_selected_for_step = None
@@ -1794,6 +1846,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             model_selected_for_step = None
             capability_owns_current_model = False
         else:
+            pending_message_queue.close()
             raise exceptions.UserError(
                 'A capability removed the bootstrap model in `for_run()` but the agent has no default model.'
             )
@@ -2403,6 +2456,88 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         return func
 
     @overload
+    def on_event(
+        self, func: OnEventHookFunc[_messages.AgentStreamEvent], /
+    ) -> OnEventHookFunc[_messages.AgentStreamEvent]: ...
+
+    @overload
+    def on_event(
+        self, *event_types: type[EventT], timeout: float | None = None
+    ) -> Callable[[OnEventHookFunc[EventT]], OnEventHookFunc[EventT]]: ...
+
+    def on_event(
+        self,
+        func_or_event_type: OnEventHookFunc[_messages.AgentStreamEvent] | type[EventT] | None = None,
+        *event_types: type[EventT],
+        timeout: float | None = None,
+    ) -> Any:
+        """Decorator to register a listener for events on this agent's run event stream.
+
+        Every event on the stream can be listened for: the framework's own model and tool events,
+        the application's [`CustomEvent`][pydantic_ai.messages.CustomEvent]s, and the
+        [`CapabilityEvent`][pydantic_ai.messages.CapabilityEvent]s published by the agent's
+        capabilities. Naming event classes narrows the `event` argument to their union and lets
+        dispatch skip the agent's listeners for anything else; a bare `@agent.on_event` sees every
+        [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent].
+
+        This is the application-level counterpart to
+        [`@on_event`][pydantic_ai.capabilities.on_event] on a capability, and it dispatches at the
+        same point. These listeners join after the agent's own capabilities, so they see the events
+        those emitted, and they survive an overridden root capability. Capability ordering still
+        applies: one asking for `position='innermost'` keeps that position and its listeners run
+        after these.
+
+        Dispatch happens *upstream* of
+        [`wrap_run_event_stream()`][pydantic_ai.capabilities.AbstractCapability.wrap_run_event_stream],
+        so a listener sees each event as it was emitted, not as it is finally delivered. A
+        capability that rewrites, replaces or drops events in its stream wrapper does so after
+        every listener has already run, which means a listener can see an event that no stream
+        consumer ever receives. To act on the delivered stream instead, wrap it yourself with
+        `wrap_run_event_stream` on a [`Hooks`][pydantic_ai.capabilities.Hooks] capability, or
+        consume [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events].
+
+        Being application code, a listener may emit a `CustomEvent` of its own. That is how a
+        capability's internal event reaches a frontend: capability events are deliberately not
+        forwarded by the [AG-UI](../ui/ag-ui.md) and [Vercel AI](../ui/vercel-ai.md) adapters, so
+        you republish the part of one that is public.
+
+        For hook families other than events, pass a [`Hooks`][pydantic_ai.capabilities.Hooks]
+        capability to `capabilities=`, where its position among the other capabilities — which
+        decides where it sits in each wrap chain — is yours to choose.
+
+        Example:
+        ```python
+        from dataclasses import dataclass
+
+        from pydantic_ai import Agent, CapabilityEvent, CustomEvent, RunContext
+
+        agent = Agent('test')
+
+
+        @dataclass(kw_only=True)
+        class IndexRebuiltEvent(CapabilityEvent, namespace='indexer'):
+            documents: int
+
+
+        @dataclass(kw_only=True)
+        class SearchReadyEvent(CustomEvent):
+            documents: int
+
+
+        @agent.on_event(IndexRebuiltEvent)
+        async def republish(ctx: RunContext[None], event: IndexRebuiltEvent) -> None:
+            await ctx.emit(SearchReadyEvent(documents=event.documents))
+        ```
+        """
+        # `Hooks.on.event` already sorts the bare form from the filtered one; forward verbatim so
+        # there is one implementation of that split. Typed `Any` because the overloads above carry
+        # the signature, as they do for the registrar itself.
+        registrar: Any = self._event_hooks.on
+        if func_or_event_type is None:
+            return registrar.event(*event_types, timeout=timeout)
+        return registrar.event(func_or_event_type, *event_types, timeout=timeout)
+
+    @overload
     def tool(self, func: ToolFuncContext[AgentDepsT, ToolParams], /) -> ToolFuncContext[AgentDepsT, ToolParams]: ...
 
     @overload
@@ -2760,7 +2895,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         silently drop a `with agent.override(root_capability=...):` block).
         """
         override_cap = self._override_root_capability.get()
-        return self._effective_root_capability(), override_cap is not None
+        base = self._effective_root_capability()
+        if self._event_hooks.has_on_event:
+            # Wrapped here rather than in `_root_capability` so an override of it cannot drop the
+            # listeners; `Hooks` binds to itself, so it needs no `for_agent` pass. `CombinedCapability`
+            # re-sorts, so this joins after the agent's own capabilities but still yields to one that
+            # asks for `position='innermost'` — see `on_event`'s docstring.
+            base = CombinedCapability([base, self._event_hooks])
+        return base, override_cap is not None
 
     def _bind_run_capabilities(
         self, extra_capabilities: list[AbstractCapability[AgentDepsT]]
@@ -3655,6 +3797,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         run_id: str | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         audio_retention: AudioRetention = 'transcript_only',
+        handle_barge_in: bool = False,
         retain_images_every_n: int = 1,
         retain_images_max: int | None = 100,
         provider_session: RealtimeProviderSession | None = None,
@@ -3785,6 +3928,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     usage=resolved.run_context.usage,
                     usage_limits=usage_limits,
                     audio_retention=audio_retention,
+                    handle_barge_in=handle_barge_in,
                     retain_images_every_n=retain_images_every_n,
                     retain_images_max=retain_images_max,
                     message_history=message_history,
@@ -4032,6 +4176,8 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
     async def open(self) -> AsyncGenerator[AgentRun[_PreparedDepsT, _PreparedOutputT]]:
         graph_deps = self.graph_deps
         state = self.state
+        pending_message_queue = state.pending_messages
+        assert isinstance(pending_message_queue, _enqueue.PendingMessageQueue)
 
         @asynccontextmanager
         async def _translate_cancellation() -> AsyncGenerator[None]:
@@ -4079,6 +4225,7 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
             # the run is over so it can never cancel unrelated later work on this task.
             graph_deps.cancellation.bind()
             stack.callback(graph_deps.cancellation.finish)
+            stack.callback(pending_message_queue.close)
             if self.cancellation_token is not None:
                 graph_deps.cancellation.attach_token(self.cancellation_token)
 
@@ -4135,6 +4282,9 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
                 result_ready=lambda: agent_run.result is not None,
                 # Restore on `stack` in LIFO order (after toolset exit, before graph run exit).
                 restore_context_on=stack,
+                # Once graph driving stops, no later enqueue can be delivered. Close before
+                # `wrap_run` cleanup, `after_run`, or `on_run_error` gets control back.
+                on_body_done=pending_message_queue.close,
             ):
                 # Enter toolset AFTER context vars are propagated so that toolset
                 # __aenter__/__aexit__ run inside the run span context.
@@ -4352,16 +4502,37 @@ def _build_run_capabilities(capability: AbstractCapability[AgentDepsT]) -> dict[
     for cap in capabilities:
         capability_id = cap.id
         if capability_id is None:
-            base_id = to_snake(type(cap).__name__)
-            capability_id = base_id
-            suffix = 2
-            while capability_id in by_id or capability_id in explicit_ids:
-                capability_id = f'{base_id}_{suffix}'
-                suffix += 1
-
+            capability_id = _synthetic_capability_id(type(cap), taken=by_id.keys() | explicit_ids)
         by_id[capability_id] = cap
 
     return by_id
+
+
+def _synthetic_capability_id(cls: type[AbstractCapability[Any]], *, taken: Collection[str]) -> str:
+    """A key for a capability the user never named, shaped so nobody mistakes it for a name.
+
+    Every capability in a run needs a key, including the ones with no `id`, or `ctx.capabilities`
+    could not list them. Nothing carries such a key out of the run: the paths that persist one --
+    the load records progressive disclosure reads back out of message history -- all require
+    `defer_loading=True`, which in turn requires an explicit `id`. So this is a run-local handle,
+    and the only thing wrong with the `thinking` / `thinking_2` it used to be was that it looked
+    exactly like an `id` somebody chose.
+
+    It looked stable, too, and wasn't: the ordinal counted from attachment order, so listing two
+    anonymous capabilities of one class the other way round swapped which of them owned
+    `thinking_2`. Nothing depended on that, because nothing may -- but a reader who copied the key
+    out of `ctx.capabilities` had no way to tell.
+
+    Angle brackets say "the framework named this", the way `'<agent>'` and `'<output>'` already do
+    for toolsets. The class name keeps the registry and a traceback readable. The random suffix is
+    the part that matters: it differs every run, so relying on it fails immediately and visibly
+    rather than the next time someone reorders a list.
+    """
+    base_id = to_snake(cls.__name__)
+    while True:
+        candidate = f'<{base_id}:{uuid4().hex[:6]}>'
+        if candidate not in taken:
+            return candidate
 
 
 def _validate_spec(

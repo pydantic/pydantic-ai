@@ -187,6 +187,75 @@ def test_agent_from_spec_image_generation():
     assert cap.local is False
 
 
+def test_agent_from_spec_deprecated_fallback_model_key():
+    """A spec written against the old key keeps loading, and warns at the loading line.
+
+    The deprecated name stays in `ImageGeneration.__init__` and `XSearch.__init__` for exactly
+    this: the published schema forbids extra keys, so removing it would fail such a spec outright
+    rather than deprecate it. `from_spec` reaches the capability through several pydantic-ai
+    frames, so the notice has to be attributed past them to be filterable by the user's module.
+    """
+    with pytest.warns(
+        PydanticAIDeprecationWarning, match=r'`fallback_model` is deprecated; use `fallback_subagent_model`'
+    ) as record:
+        agent = Agent.from_spec(
+            {
+                'model': 'test',
+                'capabilities': [
+                    {'ImageGeneration': {'fallback_model': 'openai-responses:gpt-5.4'}},
+                    {'XSearch': {'fallback_model': 'xai:grok-4.3'}},
+                ],
+            }
+        )
+    assert [warning.filename for warning in record] == [__file__, __file__]
+    children = agent._root_capability.capabilities  # pyright: ignore[reportPrivateUsage]
+    image_gen = next(c for c in children if isinstance(c, ImageGeneration))
+    x_search = next(c for c in children if isinstance(c, XSearch))
+    assert image_gen.fallback_subagent_model == 'openai-responses:gpt-5.4'
+    assert x_search.fallback_subagent_model == 'xai:grok-4.3'
+
+
+def test_agent_from_spec_fallback_subagent_model_key():
+    """The current key configures the same subagent from a spec."""
+    agent = Agent.from_spec(
+        {
+            'model': 'test',
+            'capabilities': [
+                {'ImageGeneration': {'fallback_subagent_model': 'openai-responses:gpt-5.4'}},
+                {'XSearch': {'fallback_subagent_model': 'xai:grok-4.3'}},
+            ],
+        }
+    )
+    children = agent._root_capability.capabilities  # pyright: ignore[reportPrivateUsage]
+    image_gen = next(c for c in children if isinstance(c, ImageGeneration))
+    x_search = next(c for c in children if isinstance(c, XSearch))
+    assert image_gen.fallback_subagent_model == 'openai-responses:gpt-5.4'
+    assert x_search.fallback_subagent_model == 'xai:grok-4.3'
+    assert image_gen.get_toolset() is not None
+    assert x_search.get_toolset() is not None
+
+
+@pytest.mark.parametrize('name, model', [('ImageGeneration', 'openai-responses:gpt-5.4'), ('XSearch', 'xai:grok-4.3')])
+def test_agent_from_spec_rejects_both_fallback_model_keys(name: str, model: str):
+    """A spec carrying both spellings is refused rather than silently picking one.
+
+    `_spec.load_from_registry` wraps every capability-constructor error, so the refusal the
+    constructor raises as a `UserError` reaches the caller as a `ValueError` naming the capability,
+    with the `UserError` as its cause. Direct construction raises the `UserError` itself, which
+    `tests/test_capability_native_or_local.py` pins.
+    """
+    with pytest.raises(ValueError, match=f'Failed to instantiate capability {name!r}') as exc_info:
+        Agent.from_spec(
+            {
+                'model': 'test',
+                'capabilities': [{name: {'fallback_model': model, 'fallback_subagent_model': model}}],
+            }
+        )
+    cause = exc_info.value.__cause__
+    assert isinstance(cause, UserError)
+    assert str(cause).startswith(f'{name}: cannot specify both `fallback_model` and `fallback_subagent_model`')
+
+
 def test_agent_from_spec_web_fetch():
     agent = Agent.from_spec(
         {
@@ -1879,6 +1948,10 @@ def test_model_json_schema_with_capabilities():
                             'title': 'Native',
                         },
                         'local': {'anyOf': [{'const': False, 'type': 'boolean'}, {'type': 'null'}], 'title': 'Local'},
+                        'fallback_subagent_model': {
+                            'anyOf': [{'$ref': '#/$defs/KnownModelName'}, {'type': 'string'}, {'type': 'null'}],
+                            'title': 'Fallback Subagent Model',
+                        },
                         'fallback_model': {
                             'anyOf': [{'$ref': '#/$defs/KnownModelName'}, {'type': 'string'}, {'type': 'null'}],
                             'title': 'Fallback Model',
@@ -2131,6 +2204,10 @@ def test_model_json_schema_with_capabilities():
                     'properties': {
                         'native': {'anyOf': [{'$ref': '#/$defs/XSearchTool'}, {'type': 'boolean'}], 'title': 'Native'},
                         'local': {'anyOf': [{'const': False, 'type': 'boolean'}, {'type': 'null'}], 'title': 'Local'},
+                        'fallback_subagent_model': {
+                            'anyOf': [{'$ref': '#/$defs/KnownModelName'}, {'type': 'string'}, {'type': 'null'}],
+                            'title': 'Fallback Subagent Model',
+                        },
                         'fallback_model': {
                             'anyOf': [{'$ref': '#/$defs/KnownModelName'}, {'type': 'string'}, {'type': 'null'}],
                             'title': 'Fallback Model',
@@ -3305,8 +3382,11 @@ async def test_custom_init_capability_can_initialize_metadata_without_post_init(
     assert non_deferred_cap.id is None
     assert non_deferred_cap.description is None
     assert non_deferred_cap.defer_loading is False
-    assert non_deferred_capability_map == {'deferred_cap': non_deferred_cap}
-    assert 'deferred_cap' in non_deferred_available_ids
+    assert list(non_deferred_capability_map.values()) == [non_deferred_cap]
+    # No `id`, so the registry keys it by a run-local handle rather than a name.
+    (handle,) = non_deferred_capability_map
+    assert re.fullmatch(r'<deferred_cap:[0-9a-f]{6}>', handle), handle
+    assert handle in non_deferred_available_ids
 
 
 async def test_duplicate_explicit_capability_ids_set_after_construction_raise_at_run() -> None:
@@ -3334,7 +3414,12 @@ async def test_duplicate_explicit_capability_ids_set_after_construction_raise_at
 
 
 async def test_anonymous_non_deferred_capabilities_get_run_local_ids() -> None:
-    """Anonymous non-deferred capabilities are still present in run context."""
+    """Anonymous non-deferred capabilities are present in run context, keyed by a handle.
+
+    Run-local is what the keys always were; they now say so. The pair used to be `plain_cap` and
+    `plain_cap_2`, numbered from the order they were listed in, so which one was `plain_cap_2`
+    moved when the list did.
+    """
 
     @dataclass
     class PlainCap(AbstractCapability):
@@ -3344,10 +3429,13 @@ async def test_anonymous_non_deferred_capabilities_get_run_local_ids() -> None:
     second = PlainCap()
     capability_map, available_ids = await _registered_capability_context(first, second)
 
-    assert list(capability_map) == ['plain_cap', 'plain_cap_2']
+    handles = list(capability_map)
+    assert len(handles) == 2, handles
+    assert all(re.fullmatch(r'<plain_cap:[0-9a-f]{6}>', handle) for handle in handles), handles
+    assert list(capability_map.values()) == [first, second]
     assert first.id is None
     assert second.id is None
-    assert {'plain_cap', 'plain_cap_2'} <= available_ids
+    assert set(handles) <= available_ids
 
 
 def _bare_local(query: str) -> str:
@@ -3360,8 +3448,8 @@ async def test_one_off_capabilities_carry_a_stable_default_id() -> None:
     them without the user naming something they never constructed."""
     assert WebSearch(local=_bare_local).id == 'web_search'
     assert WebFetch(local=_bare_local).id == 'web_fetch'
-    assert ImageGeneration(fallback_model='openai-responses:gpt-5.4').id == 'image_generation'
-    assert XSearch(fallback_model='xai:grok-4.3').id == 'x_search'
+    assert ImageGeneration(fallback_subagent_model='openai-responses:gpt-5.4').id == 'image_generation'
+    assert XSearch(fallback_subagent_model='xai:grok-4.3').id == 'x_search'
     assert Thinking().id == 'thinking'
     assert Instrumentation().id == 'instrumentation'
     assert ReinjectSystemPrompt().id == 'reinject_system_prompt'
@@ -3380,11 +3468,18 @@ async def test_two_one_off_capabilities_in_one_layer_combine() -> None:
 
 
 async def test_one_off_capability_with_id_none_is_still_disambiguated() -> None:
-    """`id=None` is the documented escape hatch back to per-occurrence ids."""
+    """`id=None` is the documented escape hatch back to per-occurrence keys.
+
+    Both survive as separate entries, which is what the escape hatch is for; neither is named.
+    """
     first = Thinking(effort='low', id=None)
     second = Thinking(effort='high', id=None)
     capability_map, _ = await _registered_capability_context(first, second)
-    assert list(capability_map) == ['thinking', 'thinking_2']
+
+    handles = list(capability_map)
+    assert len(handles) == 2, handles
+    assert all(re.fullmatch(r'<thinking:[0-9a-f]{6}>', handle) for handle in handles), handles
+    assert list(capability_map.values()) == [first, second]
 
 
 async def test_run_level_one_off_capability_supersedes_the_agent_level_one() -> None:

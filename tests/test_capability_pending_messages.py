@@ -27,7 +27,13 @@ from pydantic_ai.capabilities import (
     ProcessHistory,
     ToolSearch,
 )
-from pydantic_ai.capabilities.abstract import AbstractCapability
+from pydantic_ai.capabilities.abstract import (
+    AbstractCapability,
+    AgentNode,
+    CapabilityOrdering,
+    NodeResult,
+    WrapRunHandler,
+)
 from pydantic_ai.exceptions import (
     UserError,
 )
@@ -71,27 +77,37 @@ pytestmark = [
 # ===== Pending Message Queue Tests =====
 
 
-def test_pending_message_queue_copy_round_trip():
-    queue = PendingMessageQueue([PendingMessage(messages=[ModelRequest(parts=[UserPromptPart(content='queued')])])])
+def test_pending_message_queue_state_and_copy_round_trip():
+    pending = PendingMessage(messages=[ModelRequest(parts=[UserPromptPart(content='queued')])])
+    state = _agent_graph.GraphAgentState(pending_messages=[pending])
+    adapter = TypeAdapter(_agent_graph.GraphAgentState)
 
-    copies = [copy.deepcopy(queue), pickle.loads(pickle.dumps(queue))]
+    queues = [
+        state.pending_messages,
+        adapter.validate_python(adapter.dump_python(state)).pending_messages,
+        copy.deepcopy(state.pending_messages),
+        pickle.loads(pickle.dumps(state.pending_messages)),
+    ]
 
-    assert all(isinstance(item, PendingMessageQueue) and item == queue for item in copies)
+    assert all(isinstance(queue, PendingMessageQueue) and queue == [pending] for queue in queues)
 
 
-@pytest.mark.parametrize('drain_all', [False, True], ids=['one-priority', 'all-priorities'])
-def test_sync_enqueue_does_not_race_pending_message_drain(drain_all: bool):
-    """A worker-thread enqueue is not overwritten by either drain operation."""
-    drain_and_enqueue_ready = threading.Barrier(2)
+@pytest.mark.parametrize('at_end', [False, True], ids=['between-nodes', 'run-ending'])
+def test_sync_enqueue_does_not_race_pending_message_drain(at_end: bool):
+    """A worker enqueue either survives a mid-run drain or is rejected at run end."""
+    drain_started = threading.Event()
+    enqueue_started = threading.Event()
+    release_drain = threading.Event()
 
     class BlockingQueue(PendingMessageQueue):
         def append(self, pending: PendingMessage) -> None:
-            drain_and_enqueue_ready.wait(timeout=5)
+            enqueue_started.set()
             super().append(pending)
 
         def _pop_priority(self, priority: PendingMessagePriority) -> list[PendingMessage]:
-            if priority == 'asap':
-                drain_and_enqueue_ready.wait(timeout=5)
+            if priority == 'asap' and not drain_started.is_set():
+                drain_started.set()
+                assert release_drain.wait(timeout=5)
             return super()._pop_priority(priority)
 
     queue = BlockingQueue()
@@ -102,14 +118,105 @@ def test_sync_enqueue_does_not_race_pending_message_drain(drain_all: bool):
         pending_messages=queue,
     )
 
-    drain = queue.pop_all_by_priority if drain_all else lambda: queue.pop_priority('asap')
+    drain = queue.drain_at_end if at_end else lambda: queue.pop_priority('asap')
     with ThreadPoolExecutor(max_workers=2) as executor:
         drain_future = executor.submit(drain)
+        assert drain_started.wait(timeout=5)
         enqueue_future = executor.submit(ctx.enqueue, 'from sync tool')
+        assert enqueue_started.wait(timeout=5)
+        assert not enqueue_future.done()
+        release_drain.set()
         drain_future.result(timeout=5)
-        enqueue_future.result(timeout=5)
+        if at_end:
+            with pytest.raises(UserError, match='run has ended'):
+                enqueue_future.result(timeout=5)
+        else:
+            enqueue_future.result(timeout=5)
 
-    assert len(queue) == 1
+    assert len(queue) == (0 if at_end else 1)
+
+
+@pytest.mark.parametrize('finish_run', [False, True], ids=['early-exit', 'finished'])
+async def test_agent_run_enqueue_after_run_ends_raises(finish_run: bool):
+    agent = Agent(TestModel())
+
+    async with agent.iter('hello') as agent_run:
+        if finish_run:
+            async for _ in agent_run:
+                pass
+
+    with pytest.raises(UserError, match='run has ended'):
+        agent_run.enqueue('too late')
+
+
+async def test_enqueue_rejected_before_wrap_run_cleanup():
+    enqueue_errors: list[UserError] = []
+
+    class CleanupCapability(AbstractCapability[object]):
+        async def wrap_run(self, ctx: RunContext[object], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
+            try:
+                return await handler()
+            finally:
+                try:
+                    ctx.enqueue('too late')
+                except UserError as error:
+                    enqueue_errors.append(error)
+
+    def fail_model(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        raise RuntimeError('model failed')
+
+    agent = Agent(FunctionModel(fail_model), capabilities=[CleanupCapability()])
+    with pytest.raises(RuntimeError, match='model failed'):
+        await agent.run('hello')
+
+    assert len(enqueue_errors) == 1
+    assert 'run has ended' in str(enqueue_errors[0])
+
+
+async def test_enqueue_after_metadata_setup_fails_raises():
+    captured_ctx: RunContext[object] | None = None
+
+    def fail_metadata(ctx: RunContext[object]) -> dict[str, Any]:
+        nonlocal captured_ctx
+        captured_ctx = ctx
+        raise RuntimeError('metadata failed')
+
+    agent = Agent(TestModel())
+    with pytest.raises(RuntimeError, match='metadata failed'):
+        await agent.run('hello', metadata=fail_metadata)
+
+    assert captured_ctx is not None
+    with pytest.raises(UserError, match='run has ended'):
+        captured_ctx.enqueue('too late')
+
+
+async def test_pending_queue_stays_open_for_outermost_redirect():
+    """Final draining waits until every capability can redirect an apparent end."""
+
+    class RedirectCapability(AbstractCapability[object]):
+        redirected = False
+
+        def get_ordering(self) -> CapabilityOrdering:
+            return CapabilityOrdering(position='outermost', wraps=[AbstractCapability])
+
+        async def after_node_run(
+            self, ctx: RunContext[object], *, node: AgentNode[object], result: NodeResult[object]
+        ) -> NodeResult[object]:
+            if isinstance(result, End) and not self.redirected:
+                self.redirected = True
+                ctx.enqueue('after redirect')
+                return _agent_graph.ModelRequestNode(request=ModelRequest(parts=[UserPromptPart(content='redirect')]))
+            return result
+
+    agent = Agent(TestModel(), capabilities=[RedirectCapability()])
+    result = await agent.run('hello')
+
+    assert any(
+        isinstance(part, UserPromptPart) and part.content == 'after redirect'
+        for message in result.all_messages()
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+    )
 
 
 async def test_enqueue_asap_message_from_tool():

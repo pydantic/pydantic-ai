@@ -69,6 +69,13 @@ class ToolResult:
 
 
 @dataclass
+class TextContext:
+    """A text item added to the conversation as context, without asking the model to respond (like an image)."""
+
+    text: str
+
+
+@dataclass
 class CommitAudio:
     """Commit the buffered input audio as a user turn (manual turn-taking / push-to-talk).
 
@@ -123,12 +130,13 @@ completes — neither is accepted by `send()`.
 
 RealtimeInput = TypeAliasType(
     'RealtimeInput',
-    'str | BinaryAudio | BinaryImage | CommitAudio | ClearAudio | CreateResponse | CancelResponse | TruncateOutput | ToolResult',
+    'str | TextContext | BinaryAudio | BinaryImage | CommitAudio | ClearAudio | CreateResponse | CancelResponse | TruncateOutput | ToolResult',
 )
 """Union of content types accepted by [`RealtimeConnection.send`][pydantic_ai.realtime.codec.RealtimeConnection.send].
 
 The connection-level counterpart of [`RealtimeSessionInput`][pydantic_ai.realtime.RealtimeSessionInput],
-already normalized: a `str` is a complete text turn, a
+already normalized: a `str` is a complete text turn that solicits a response,
+[`TextContext`][pydantic_ai.realtime.codec.TextContext] is text added without soliciting a response, a
 [`BinaryAudio`][pydantic_ai.messages.BinaryAudio] carries a raw mono PCM16 chunk at the model's
 [`audio_input_sample_rate`][pydantic_ai.realtime.RealtimeSession.audio_input_sample_rate]
 (`media_type='audio/pcm'`), and a [`BinaryImage`][pydantic_ai.messages.BinaryImage] an image frame.
@@ -440,6 +448,18 @@ class RealtimeConnection(ABC):
         return True
 
     @property
+    def interrupts_response_on_speech(self) -> bool:
+        """Whether the configured turn detection makes the *server* cancel the active response when user speech starts.
+
+        OpenAI-protocol server VAD with `interrupt_response` enabled (the default) cancels the
+        in-progress response on speech onset by itself. A client cancel sent at that same moment can
+        race the server's own cancellation and be applied to the *next* response instead, silencing
+        the reply to the barge-in — so the session's automatic barge-in handling sends only the
+        truncation when this is `True`. Defaults to `False`, which keeps the client-side cancel.
+        """
+        return False
+
+    @property
     def reconnect_restores_in_flight_state(self) -> bool:
         """Whether a reconnect continues the response and tool calls that were in flight when the socket dropped.
 
@@ -474,6 +494,7 @@ __all__ = (
     'CommitAudio',
     'ClearAudio',
     'CreateResponse',
+    'TextContext',
     'CancelResponse',
     'TruncateOutput',
     # Model-profile helpers for provider implementations.
