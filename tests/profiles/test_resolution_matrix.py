@@ -1300,6 +1300,26 @@ def test_github_copilot_unknown_model():
     )
 
 
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+@pytest.mark.parametrize(
+    'model_name',
+    ['o1-mini', 'o3-mini', 'o4-mini', 'mai-1', 'oswe-mini', 'raptor-mini', 'exec-agent-mini'],
+)
+def test_github_copilot_openai_family_prefix_arms(model_name: str):
+    """Pin every remaining OpenAI-family arm of the Copilot prefix table.
+
+    A typo'd key would silently fall through to the capability-less fallback and strip reasoning
+    support; asserting each prefix resolves to the same-id `openai_model_profile` (plus the Copilot
+    overlay) makes any future reroute fail loudly.
+    """
+    from pydantic_ai.profiles.openai import openai_model_profile
+
+    expected = _normalize(openai_model_profile(model_name))
+    assert expected is not None
+    expected['openai_chat_supports_max_completion_tokens'] = True
+    assert _normalize(GitHubCopilotProvider.model_profile(model_name)) == expected
+
+
 def test_openrouter_qwen():
     from pydantic_ai.providers.openrouter import OpenRouterProvider
 
