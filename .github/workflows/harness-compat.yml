@@ -36,6 +36,6 @@ jobs:
     uses: pydantic/pydantic-ai-harness/.github/workflows/compat-test.yml@main
     with:
       # Test the companion compatibility patch until harness#760 merges; then remove this pin.
-      harness-ref: bd76d830c46ff8d62567761d7619e9390e5e56db
+      harness-ref: f833211bb63a32758e518b0f2ea92b0a17e8f870
       pydantic-ai-ref: ${{ github.event.pull_request.head.sha || github.sha }}
       pydantic-ai-repo: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
