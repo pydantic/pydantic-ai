@@ -4633,7 +4633,9 @@ class WorkspaceProbePolicy(WrapperWorkspace):
 
 
 class WorkspaceProbeCapability(AbstractCapability[WorkspaceProbeDeps]):
-    def get_workspace(self, ctx: RunContext[WorkspaceProbeDeps], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
+    def get_workspace(
+        self, ctx: RunContext[WorkspaceProbeDeps], *, ref: WorkspaceRef | None
+    ) -> WorkspaceBackend | None:
         if ref is None or ref.provider != 'probe':
             return None
         return WorkspaceProbePolicy(Workspace(FakeWorkspace(ref.id, ref=ref)), ctx.deps)
@@ -4703,10 +4705,14 @@ async def test_temporal_workspace_restores_ref_and_replays_without_side_effects(
         output = await handle.result()
         history = await handle.fetch_history()
 
-    before_replay = [(backend.attach_calls, backend.create_calls, list(backend.commands)) for backend in _workspace_probe_backends]
+    before_replay = [
+        (backend.attach_calls, backend.create_calls, list(backend.commands)) for backend in _workspace_probe_backends
+    ]
     backend_count = len(_workspace_probe_backends)
     replay = await Replayer(workflows=[WorkspaceProbeWorkflow], plugins=[PydanticAIPlugin()]).replay_workflow(history)
-    after_replay = [(backend.attach_calls, backend.create_calls, list(backend.commands)) for backend in _workspace_probe_backends]
+    after_replay = [
+        (backend.attach_calls, backend.create_calls, list(backend.commands)) for backend in _workspace_probe_backends
+    ]
 
     assert replay.replay_failure is None
     expected = 'policy:worker:existing-123:connected|policy:worker:existing-123:connected'

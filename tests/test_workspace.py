@@ -744,14 +744,14 @@ async def test_a_result_still_round_trips_through_json_when_a_workspace_was_used
     restored = adapter.validate_json(adapter.dump_json(result))
 
     assert restored == result
-    with pytest.raises(UserError, match='created outside an agent run'):
+    with pytest.raises(UserError, match='No workspace is attached'):
         await restored.workspace.run(['true'])
 
 
 async def test_a_result_built_outside_a_run_explains_that_no_workspace_is_attached() -> None:
     result = AgentRunResult[str]('output')
 
-    with pytest.raises(UserError, match='created outside an agent run'):
+    with pytest.raises(UserError, match='No workspace is attached'):
         await result.workspace.run(['true'])
 
 
@@ -981,6 +981,67 @@ async def test_result_workspace_survives_after_run_replacement() -> None:
 
     assert result.output == 'replaced'
     assert result.workspace is workspace
+
+
+@pytest.mark.parametrize('fail', [False, True], ids=['success', 'error'])
+async def test_late_after_run_workspace_ref_is_stamped_on_latest_response(fail: bool) -> None:
+    backend = FakeWorkspace('late-after-run')
+
+    class LateUse(AbstractCapability[Any]):
+        async def after_run(self, ctx: RunContext[Any], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
+            assert ctx.workspace.ref is None
+            await ctx.workspace.run(['after-run'])
+            if fail:
+                raise RuntimeError('late failure')
+            return result
+
+    agent = Agent(TestModel(custom_output_text='done'), capabilities=[LateUse()])
+    with capture_run_messages() as captured:
+        if fail:
+            with pytest.raises(RuntimeError, match='late failure'):
+                await agent.run('go', workspace=backend)
+        else:
+            await agent.run('go', workspace=backend)
+    response = next(message for message in reversed(captured) if isinstance(message, ModelResponse))
+
+    assert response.workspace_ref == backend.ref
+
+
+async def test_no_prompt_response_clone_gets_late_workspace_ref() -> None:
+    old_response = ModelResponse(parts=[TextPart('old')], workspace_ref=WorkspaceRef(provider='fake', id='old'))
+    backend = FakeWorkspace('late-no-prompt')
+
+    class LateUse(AbstractCapability[Any]):
+        async def after_run(self, ctx: RunContext[Any], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
+            assert ctx.workspace.ref is None
+            await ctx.workspace.run(['after-run'])
+            return result
+
+    result = await Agent(TestModel(custom_output_text='done'), capabilities=[LateUse()]).run(
+        message_history=[old_response], workspace=backend
+    )
+    response = next(message for message in reversed(result.all_messages()) if isinstance(message, ModelResponse))
+
+    assert response is not old_response
+    assert response.workspace_ref == backend.ref
+    assert old_response.workspace_ref == WorkspaceRef(provider='fake', id='old')
+
+
+async def test_borrowed_short_circuit_response_keeps_its_original_workspace_ref() -> None:
+    old_ref = WorkspaceRef(provider='fake', id='old')
+    old_response = ModelResponse(parts=[TextPart('old')], workspace_ref=old_ref)
+    backend = FakeWorkspace('borrowed-short-circuit')
+
+    class ShortCircuit(AbstractCapability[Any]):
+        async def wrap_run(self, ctx: RunContext[Any], *, handler: Any) -> AgentRunResult[str]:
+            await ctx.workspace.run(['cached'])
+            return AgentRunResult('cached')
+
+    agent = Agent(TestModel(), capabilities=[ShortCircuit()])
+    result = await agent.run('new', message_history=[old_response], workspace=backend)
+
+    assert result.output == 'cached'
+    assert old_response.workspace_ref == old_ref
 
 
 async def test_streamed_short_circuit_result_keeps_the_workspace_identity() -> None:

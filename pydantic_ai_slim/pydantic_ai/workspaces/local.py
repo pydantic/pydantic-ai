@@ -128,6 +128,7 @@ class LocalWorkspace(WorkspaceBackend, SupportsFilesystem):
         async with self._lock:
             if self._live is not None:
                 return self._live
+
             # Blocking filesystem calls run off the event loop. The lock serializes
             # acquisition so concurrent first uses cannot create separate directories.
             # Always the canonical spelling (symlinks resolved, no `..`), set on first use: the

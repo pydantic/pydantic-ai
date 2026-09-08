@@ -1626,7 +1626,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             conversation_id=_agent_graph.resolve_conversation_id(conversation_id, message_history),
         )
         historical_response = next(
-            (message for message in reversed(state.message_history) if isinstance(message, _messages.ModelResponse)), None
+            (message for message in reversed(state.message_history) if isinstance(message, _messages.ModelResponse)),
+            None,
         )
         historical_workspace_ref = historical_response.workspace_ref if historical_response is not None else None
 
@@ -4187,9 +4188,24 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
     ]
 
     @asynccontextmanager
-    async def open(self) -> AsyncGenerator[AgentRun[_PreparedDepsT, _PreparedOutputT]]:
+    async def open(self) -> AsyncGenerator[AgentRun[_PreparedDepsT, _PreparedOutputT]]:  # noqa: C901
         graph_deps = self.graph_deps
         state = self.state
+        initial_responses = tuple(
+            message for message in state.message_history if isinstance(message, _messages.ModelResponse)
+        )
+
+        def refresh_workspace_ref() -> None:
+            message = next(
+                (
+                    message
+                    for message in reversed(state.message_history)
+                    if isinstance(message, _messages.ModelResponse)
+                ),
+                None,
+            )
+            if message is not None and all(message is not original for original in initial_responses):
+                message.workspace_ref = graph_deps.workspace.ref
 
         @asynccontextmanager
         async def _translate_cancellation() -> AsyncGenerator[None]:
@@ -4229,6 +4245,7 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
         async with AsyncExitStack() as stack:
             # Enter first so cancellation is classified only after every other context has torn down.
             await stack.enter_async_context(_translate_cancellation())
+            stack.callback(refresh_workspace_ref)
 
             # Bind the run's cancellation controller to this task and register the token BEFORE any
             # potentially-blocking setup (the concurrency limiter, model entry): a run queued behind
