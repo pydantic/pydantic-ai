@@ -56,7 +56,8 @@ The `Thinking` capability maps each effort value to the selected provider's nati
 | xAI | `reasoning_effort` omitted on Grok 4.3 (uses its default) | `reasoning_effort='high'` | Grok 4.3 supports `'none'`, `'low'`, `'medium'`, and `'high'`, and `thinking=True` omits the parameter so the model applies its own default; Grok 3 Mini only supports `'low'` and `'high'` (so `thinking=True` → `'high'`) and silently ignores `thinking=False`; Grok 4.5 supports `'low'`, `'medium'`, and `'high'` but not `'none'`, so it reasons always-on (`thinking=True` → `'medium'`) and silently ignores `thinking=False` |
 | Bedrock (Claude 4.6+) | `thinking.type='adaptive'` | `{type: 'adaptive'}` + `output_config.effort='high'` | Effort lives in the sibling `output_config` field per AWS docs; `xhigh` maps to `max` |
 | Bedrock (Claude older) | `thinking.type='enabled'` | `budget_tokens=16384` | Budget-based |
-| Bedrock (OpenAI) | `reasoning_effort='medium'` | `reasoning_effort='high'` | Converse rejects `'none'`; `thinking=False` silently ignored |
+| Bedrock (OpenAI GPT-OSS) | `reasoning_effort='medium'` | `reasoning_effort='high'` | Converse rejects `'none'`; `thinking=False` silently ignored |
+| Bedrock (OpenAI GPT-5.6) | Not mapped | Not mapped | No verified unified-thinking mapping on Converse |
 | Bedrock (Qwen) | `reasoning_config='high'` | `reasoning_config='high'` | Only `'low'` and `'high'`; `thinking=False` silently ignored |
 | Bedrock Mantle | `reasoning={'effort': 'medium'}` | `reasoning={'effort': 'high'}` | Served on the Responses API, so effort rides the `reasoning` object; `thinking=False` → `effort='none'` |
 

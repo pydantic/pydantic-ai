@@ -18,7 +18,7 @@ import re
 __all__ = ('BEDROCK_GEO_PREFIXES', 'remove_bedrock_geo_prefix', 'split_bedrock_model_id')
 
 # Known geo prefixes for cross-region inference profile IDs
-BEDROCK_GEO_PREFIXES: tuple[str, ...] = ('us', 'eu', 'apac', 'jp', 'au', 'ca', 'global', 'us-gov')
+BEDROCK_GEO_PREFIXES: tuple[str, ...] = ('us', 'eu', 'apac', 'jp', 'au', 'ca', 'in', 'global', 'us-gov')
 
 _VERSION_SUFFIX_RE = re.compile(r'(.+)-v\d+(?::\d+)?$')
 
