@@ -749,6 +749,75 @@ async def test_tool_manager_reuse_self():
     assert tool_manager != updated_tool_manager
 
 
+async def test_tool_manager_rebuilds_within_step_when_capability_availability_changes():
+    """Tools are re-resolved mid-step when capability availability moved, without re-running the step transition.
+
+    Two invariants that an agent run can't reach today, so they're pinned directly rather than
+    through `Agent.run`. The retry carry-over sits behind the `run_step` short-circuit: a same-step
+    rebuild that dropped the accumulated counts would hand every tool a fresh budget mid-run, and
+    one that re-ran the carry-over would charge two units of that budget for a single failure.
+    And `AbstractToolset.for_run_step` is a step boundary with real lifecycle effects
+    (`DynamicToolset` exits and re-enters its inner toolset there, re-running its factory), so a
+    same-step rebuild has to reuse the already-transitioned toolset and only re-run `get_tools`.
+    """
+    factory_calls = 0
+
+    def toolset_func(ctx: RunContext[None]) -> AbstractToolset[None]:
+        nonlocal factory_calls
+        factory_calls += 1
+        toolset = FunctionToolset[None](max_retries=3)
+
+        @toolset.tool_plain
+        def failing_tool() -> int:
+            raise ModelRetry('This tool always fails')
+
+        return toolset
+
+    secrets = Capability[None](id='secrets', description='Secret tools.', defer_loading=True)
+    step_1 = replace(build_run_context(None, run_step=1), capabilities={'secrets': secrets})
+
+    async with DynamicToolset(toolset_func) as dynamic_toolset:
+        tool_manager = await ToolManager[None](dynamic_toolset).for_run_step(step_1)
+        assert factory_calls == 1
+
+        with pytest.raises(ToolRetryError):
+            await tool_manager.handle_call(ToolCallPart(tool_name='failing_tool', args={}))
+
+        # A step advance charges that failure, so the same-step rebuild below has counts to carry.
+        tool_manager = await tool_manager.for_run_step(replace(step_1, run_step=2))
+        assert factory_calls == 2
+        assert tool_manager.ctx is not None
+        assert tool_manager.ctx.retries == snapshot({'failing_tool': 1})
+
+        with pytest.raises(ToolRetryError):
+            await tool_manager.handle_call(ToolCallPart(tool_name='failing_tool', args={}))
+        assert tool_manager.failed_tools == {'failing_tool'}
+
+        # Availability moves mid-step: same `run_step`, but the deferred capability is now loaded.
+        # (A fresh context carries no retries of its own, as the graph's does not.)
+        step_2_loaded = replace(step_1, run_step=2, loaded_capability_ids={'secrets'})
+        rebuilt = await tool_manager.for_run_step(step_2_loaded)
+
+        assert rebuilt is not tool_manager
+        # The step transition is not re-run, so the dynamic toolset's factory doesn't fire again.
+        assert factory_calls == 2
+        assert rebuilt.ctx is not None
+        # Retries carry through untouched: neither reset by the fresh context nor charged twice.
+        assert rebuilt.ctx.retries == snapshot({'failing_tool': 1})
+        # Per-step accumulators survive, so the next step's carry-over still sees this step's failure.
+        assert rebuilt.failed_tools == {'failing_tool'}
+
+        # Availability unchanged: no rebuild, the same manager is returned.
+        assert await rebuilt.for_run_step(step_2_loaded) is rebuilt
+
+        # Advancing the step charges the second failure exactly once, and does re-run the transition.
+        advanced = await rebuilt.for_run_step(replace(step_2_loaded, run_step=3))
+        assert factory_calls == 3
+        assert advanced.ctx is not None
+        assert advanced.ctx.retries == snapshot({'failing_tool': 2})
+        assert advanced.failed_tools == set()
+
+
 async def test_tool_manager_retry_logic():
     """Test the retry logic with failed_tools and for_run_step method."""
 
