@@ -1,0 +1,87 @@
+name: Temporary Claude gateway probe
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions: {}
+
+jobs:
+  probe: # zizmor: ignore[secrets-outside-env] -- temporary probe restricted to this maintainer-owned branch
+    name: Probe Claude gateway authentication
+    if: github.event.pull_request.head.ref == 'codex/fix-pr-category-labeling'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Probe gateway HTTP authentication modes
+        env:
+          ANTHROPIC_BASE_URL: ${{ secrets.CLAUDE_CODE_BASE_URL }}
+          GATEWAY_KEY: ${{ secrets.CLAUDE_CODE_API_KEY }}
+        run: |
+          request_body='{"model":"claude-opus-4-8","max_tokens":1,"messages":[{"role":"user","content":"."}]}'
+
+          probe() {
+            auth_name="$1"
+            auth_header="$2"
+            response_file="$RUNNER_TEMP/claude-gateway-$auth_name.json"
+            status=$(curl --silent --show-error --output "$response_file" --write-out '%{http_code}' \
+              --request POST "$ANTHROPIC_BASE_URL/v1/messages" \
+              --header "$auth_header" \
+              --header 'anthropic-version: 2023-06-01' \
+              --header 'content-type: application/json' \
+              --data "$request_body") || status=000
+            response_type=$(jq -r '.error.type // .type // "non-json"' "$response_file" 2>/dev/null || echo 'non-json')
+            echo "$auth_name: HTTP $status ($response_type)"
+          }
+
+          probe x-api-key "x-api-key: $GATEWAY_KEY"
+          probe bearer "Authorization: Bearer $GATEWAY_KEY"
+
+      - name: Probe Claude Code with x-api-key authentication
+        id: x_api_key
+        continue-on-error: true
+        uses: anthropics/claude-code-action@428971d2ecd6e3a7cb0ee0da2a3a8b33fdb3678d # v1.0.157
+        env:
+          ANTHROPIC_BASE_URL: ${{ secrets.CLAUDE_CODE_BASE_URL }}
+        with:
+          anthropic_api_key: ${{ secrets.CLAUDE_CODE_API_KEY }}
+          github_token: ${{ github.token }}
+          claude_args: |
+            --model claude-opus-4-8[1m]
+            --max-turns 1
+            --json-schema '{"type":"object","properties":{"category":{"type":"string","enum":["chore"]}},"required":["category"]}'
+          prompt: Return the category `chore` using the requested structured output.
+
+      - name: Probe Claude Code with bearer authentication
+        id: bearer
+        continue-on-error: true
+        uses: anthropics/claude-code-action@428971d2ecd6e3a7cb0ee0da2a3a8b33fdb3678d # v1.0.157
+        env:
+          ANTHROPIC_BASE_URL: ${{ secrets.CLAUDE_CODE_BASE_URL }}
+          ANTHROPIC_AUTH_TOKEN: ${{ secrets.CLAUDE_CODE_API_KEY }}
+        with:
+          anthropic_api_key: ${{ secrets.CLAUDE_CODE_API_KEY }}
+          github_token: ${{ github.token }}
+          claude_args: |
+            --model claude-opus-4-8[1m]
+            --max-turns 1
+            --json-schema '{"type":"object","properties":{"category":{"type":"string","enum":["chore"]}},"required":["category"]}'
+          prompt: Return the category `chore` using the requested structured output.
+
+      - name: Summarize Claude Code probes
+        env:
+          X_API_KEY_OUTCOME: ${{ steps.x_api_key.outcome }}
+          X_API_KEY_OUTPUT: ${{ steps.x_api_key.outputs.structured_output }}
+          BEARER_OUTCOME: ${{ steps.bearer.outcome }}
+          BEARER_OUTPUT: ${{ steps.bearer.outputs.structured_output }}
+        run: |
+          [ -n "$X_API_KEY_OUTPUT" ] && x_api_key_structured=true || x_api_key_structured=false
+          [ -n "$BEARER_OUTPUT" ] && bearer_structured=true || bearer_structured=false
+          echo "x-api-key Claude Code outcome: $X_API_KEY_OUTCOME; structured output: $x_api_key_structured"
+          echo "bearer Claude Code outcome: $BEARER_OUTCOME; structured output: $bearer_structured"
