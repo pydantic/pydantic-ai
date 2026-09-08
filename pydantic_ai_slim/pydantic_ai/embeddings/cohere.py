@@ -202,7 +202,7 @@ class CohereEmbeddingModel(EmbeddingModel):
                 max_tokens=settings.get('cohere_max_tokens'),
                 truncate=truncate,
                 request_options=request_options,
-                embedding_types=['float'],  # Always request float embeddings to avoid Cohere SDK deserialization bug.
+                embedding_types=['float'],  # Always request float embeddings to avoid Cohere SDK deserialization bug
             )
 
         embeddings = response.embeddings.float_
@@ -235,7 +235,7 @@ class CohereEmbeddingModel(EmbeddingModel):
         with _map_api_errors(self._model_name):
             result = await self._v1_client.tokenize(
                 model=self.model_name,
-                text=text,  # Has a max length of 65536 characters.
+                text=text,  # Has a max length of 65536 characters
                 offline=False,
             )
 
