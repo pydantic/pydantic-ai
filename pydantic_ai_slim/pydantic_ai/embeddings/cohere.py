@@ -35,9 +35,7 @@ def _map_api_errors(model_name: str) -> Generator[None]:
 
     except ApiError as e:  # pragma: no cover
         if (status_code := e.status_code) and status_code >= 400:
-            raise ModelHTTPError(
-                status_code=status_code, model_name=model_name, body=e.body, headers=e.headers
-            ) from e
+            raise ModelHTTPError(status_code=status_code, model_name=model_name, body=e.body, headers=e.headers) from e
 
         raise ModelAPIError(model_name=model_name, message=str(e)) from e
 
