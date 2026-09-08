@@ -39,8 +39,9 @@ Whether a refusal arrives as an error or as ordinary output therefore depends on
 
 | Provider | Refusal / safety wire event | Adapter behavior | Default outcome |
 |---|---|---|---|
-| OpenAI (Chat Completions, streaming and not) | `choice.message.refusal` / refusal delta | Response parts are emptied, `finish_reason='content_filter'` is set, the refusal string is kept in `provider_details['refusal']` | Response is empty, so [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError] is raised |
-| OpenAI Responses | refusal output item | Same as above | [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError] is raised |
+| OpenAI (Chat Completions, not streaming) | `choice.message.refusal` | Response parts are emptied, `finish_reason='content_filter'` is set, the refusal string is kept in `provider_details['refusal']` | Response is empty, so [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError] is raised |
+| OpenAI (Chat Completions, streaming) | refusal delta | The refusal itself is withheld (no part is emitted for it), `finish_reason='content_filter'` is set and the refusal string kept in `provider_details['refusal']`; any text emitted before the refusal delta is retained | Raises when no text preceded the refusal; otherwise the retained text is returned as ordinary output |
+| OpenAI Responses | refusal output item | Same as non-streaming Chat Completions | [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError] is raised |
 | Anthropic | `stop_reason='refusal'` | `finish_reason='content_filter'` is set and the stop explanation is kept in `provider_details['refusal']`, but any text block is preserved as a part | Responses with text parts are returned as ordinary output; empty responses raise [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError] |
 | Google | Safety-family `finishReason` values (`SAFETY`, `RECITATION`, `BLOCKLIST`, `PROHIBITED_CONTENT`, `SPII`, `IMAGE_SAFETY`, `IMAGE_PROHIBITED_CONTENT`, `MODEL_ARMOR`) | `finish_reason='content_filter'` is set, and any text parts are preserved | Responses with text parts are returned as ordinary output; empty responses raise [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError] |
 
