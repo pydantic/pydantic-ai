@@ -188,7 +188,7 @@ async def test_reinject_replacement_hides_existing_prompts_from_dynamic_prompt()
     )
 
     @agent.system_prompt
-    def server_prompt(ctx: RunContext[None]) -> str:
+    def server_prompt(ctx: RunContext[object]) -> str:
         seen.append(
             [
                 part.content
