@@ -8,6 +8,13 @@ from typing import TYPE_CHECKING
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import FunctionToolset
 
+from pydantic_ai_harness.planning._events import (
+    PlanCompletedEvent,
+    PlanCreatedEvent,
+    PlanDeletedEvent,
+    PlanStatusChangedEvent,
+    PlanUpdatedEvent,
+)
 from pydantic_ai_harness.planning._types import PlanItem, PlanStatusUpdate, TaskStatus
 
 if TYPE_CHECKING:
@@ -370,6 +377,24 @@ class PlanningToolset(FunctionToolset[AgentDepsT]):
     def _valid_status(self, status: TaskStatus) -> bool:
         return self._subtasks or status is not TaskStatus.blocked
 
+    async def _emit_changes(self, ctx: RunContext[AgentDepsT], before: list[PlanItem], after: list[PlanItem]) -> None:
+        """Emit typed run events for the difference between two store snapshots."""
+        old = {item.id: item for item in before}
+        new = {item.id: item for item in after}
+        for item in after:
+            previous = old.get(item.id)
+            if previous is None:
+                await ctx.emit(PlanCreatedEvent(item=item))
+            elif item != previous:
+                await ctx.emit(PlanUpdatedEvent(item=item, previous_state=previous))
+                if item.status != previous.status:
+                    await ctx.emit(PlanStatusChangedEvent(item=item, previous_state=previous))
+                    if item.status is TaskStatus.completed:
+                        await ctx.emit(PlanCompletedEvent(item=item, previous_state=previous))
+        for item in before:
+            if item.id not in new:
+                await ctx.emit(PlanDeletedEvent(item=item))
+
     async def write_plan(self, ctx: RunContext[AgentDepsT], items: list[PlanItem]) -> str:
         """Create or replace the whole plan.
 
@@ -404,7 +429,10 @@ class PlanningToolset(FunctionToolset[AgentDepsT]):
             # commits one bulk `set_items` and stays event-silent (no per-step events).
             for item, new_status in list(dependency_block_transitions(new_items)):
                 item.status = new_status
-        await self._resolve(ctx).set_items(new_items)
+        store = self._resolve(ctx)
+        before = await store.get_items()
+        await store.set_items(new_items)
+        await self._emit_changes(ctx, before, await store.get_items())
         in_progress = sum(1 for item in new_items if item.status is TaskStatus.in_progress)
         note = '' if in_progress <= 1 else _MULTI_IN_PROGRESS_NOTE
         return f'Plan updated: {len(new_items)} step(s).\n\n{render_plan(new_items)}{note}'
@@ -437,7 +465,10 @@ class PlanningToolset(FunctionToolset[AgentDepsT]):
             content: The step description in imperative form.
             active_form: Optional present-continuous label, e.g. "Fix bug" -> "Fixing bug".
         """
-        item = await self._resolve(ctx).add_item(PlanItem(content=content, active_form=active_form))
+        store = self._resolve(ctx)
+        before = await store.get_items()
+        item = await store.add_item(PlanItem(content=content, active_form=active_form))
+        await self._emit_changes(ctx, before, await store.get_items())
         return f"Added step '{content}' with id: {item.id}"
 
     async def _sync_dependency_blocks(self, store: PlanStore) -> None:
@@ -497,6 +528,7 @@ class PlanningToolset(FunctionToolset[AgentDepsT]):
             return refusal
         await store.update_item(task_id, status=status)
         await self._sync_dependency_blocks(store)
+        await self._emit_changes(ctx, items, await store.get_items())
         return f"Updated step '{item.content}' status to '{await self._stored_status(store, task_id, status)}'."
 
     async def update_task_statuses(self, ctx: RunContext[AgentDepsT], updates: list[PlanStatusUpdate]) -> str:
@@ -515,7 +547,8 @@ class PlanningToolset(FunctionToolset[AgentDepsT]):
             return 'No updates provided.'
         # Validate against a projection so earlier entries are visible to later ones
         # (e.g. completing a prerequisite and starting its dependent in one call).
-        projected = [item.model_copy(deep=True) for item in await store.get_items()]
+        before = await store.get_items()
+        projected = [item.model_copy(deep=True) for item in before]
         errors: list[str] = []
         resolved: list[tuple[PlanItem, TaskStatus]] = []
         for update in updates:
@@ -539,6 +572,7 @@ class PlanningToolset(FunctionToolset[AgentDepsT]):
         for item, status in resolved:
             await store.update_item(item.id, status=status)
         await self._sync_dependency_blocks(store)
+        await self._emit_changes(ctx, before, await store.get_items())
         lines = [
             f'- [{item.id}] {item.content} -> {await self._stored_status(store, item.id, status)}'
             for item, status in resolved
@@ -553,11 +587,13 @@ class PlanningToolset(FunctionToolset[AgentDepsT]):
             task_id: Id of the step to remove.
         """
         store = self._resolve(ctx)
+        before = await store.get_items()
         item = await store.get_item(task_id)
         if item is None:
             return f"Step with id '{task_id}' not found."
         await store.remove_item(task_id)
         subtasks_removed = await self._cleanup_after_removal(store, task_id) if self._subtasks else 0
+        await self._emit_changes(ctx, before, await store.get_items())
         extra = f' and {subtasks_removed} subtask(s)' if subtasks_removed else ''
         return f"Removed step '{item.content}' (id: {task_id}){extra}."
 
@@ -606,10 +642,12 @@ class PlanningToolset(FunctionToolset[AgentDepsT]):
             active_form: Optional present-continuous label.
         """
         store = self._resolve(ctx)
+        before = await store.get_items()
         parent = await store.get_item(parent_id)
         if parent is None:
             return f"Parent step with id '{parent_id}' not found."
         item = await store.add_item(PlanItem(content=content, active_form=active_form, parent_id=parent_id))
+        await self._emit_changes(ctx, before, await store.get_items())
         return f"Added subtask '{content}' with id: {item.id} (parent: {parent_id})"
 
     async def set_dependency(self, ctx: RunContext[AgentDepsT], task_id: str, depends_on_id: str) -> str:
@@ -641,6 +679,7 @@ class PlanningToolset(FunctionToolset[AgentDepsT]):
             and item.status is not TaskStatus.blocked
         ):
             await store.update_item(task_id, depends_on=new_depends_on, status=TaskStatus.blocked)
+            await self._emit_changes(ctx, items, await store.get_items())
             return (
                 f"Added dependency: '{item.content}' now depends on '{dependency.content}'. Step automatically blocked."
             )
@@ -649,6 +688,7 @@ class PlanningToolset(FunctionToolset[AgentDepsT]):
         # prerequisite that may be terminal -- and so excluded from `get_available_tasks`
         # with nothing left to free it. Every other write reconciles; so does this one.
         await self._sync_dependency_blocks(store)
+        await self._emit_changes(ctx, items, await store.get_items())
         return f"Added dependency: '{item.content}' now depends on '{dependency.content}'."
 
     async def get_available_tasks(self, ctx: RunContext[AgentDepsT]) -> str:

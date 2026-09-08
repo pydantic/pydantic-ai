@@ -89,20 +89,21 @@ Not: that spend stays under the ceiling. The request that crosses the line compl
 ```python
 from decimal import Decimal
 
+from pydantic_ai import Agent
 from pydantic_ai_harness import SpendLimits
-from pydantic_ai_harness.spend import Budget, SpendSnapshot
+from pydantic_ai_harness.spend import Budget, SpendRecordedEvent
 
+limits = SpendLimits(budgets=[Budget(usd=Decimal('100'))])
+agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[limits])
 
-def show(snapshot: SpendSnapshot) -> None:
-    print(f'{snapshot.model} cost ${snapshot.usd}')
-    for status in snapshot.budgets:
-        print(f'  {status.budget.name}: ${status.remaining_usd} left')
-
-
-SpendLimits(budgets=[Budget(usd=Decimal('100'))], on_spend=show)
+@agent.on_event(SpendRecordedEvent)
+async def show(ctx, event):
+    print(f'{event.model} cost ${event.usd}')
 ```
 
-`on_spend` fires after every response, sync or async, with a `SpendSnapshot` -- including one that `on_unpriced='raise'` is about to reject, since a report that skipped exactly the unpriced responses would be missing the ones worth knowing about. It carries the response's `usage` unchanged, so cache reads and writes are available without this capability modelling them. Under durable execution, orchestration can replay this callback even though the journaled accrual ran only once. Make the callback idempotent before it writes an audit record, emits a billing event, or performs another side effect.
+`SpendRecordedEvent` is emitted after every response, including one that `on_unpriced='raise'` is about to reject. Its flat payload carries the response usage and serializable budget readings. Under durable execution, orchestration can deliver it again even though the journaled accrual ran only once, so keep a listener that writes an audit record or emits a billing event idempotent.
+
+Migration: `on_spend` remains supported but is deprecated. Move its callback body to a `SpendRecordedEvent` subscription; the same idempotency requirement applies to it.
 
 `status()` reads the same numbers without a run, which is what a cost display in a UI wants:
 
@@ -121,7 +122,7 @@ Set `expose_tools=True` to give the agent a `get_spend` tool. It is off by defau
 
 ## Reacting to a threshold
 
-`on_spend` is awaited inside `wrap_model_request`, so an async callback does hold the run there. It is still the wrong place to ask for approval: it fires after every response that reaches the accrual, including the one carrying the final answer, and `SpendSnapshot` says nothing about whether another turn follows -- so a callback that waits there leaves a run that has already finished waiting for a decision nothing will act on. Use `on_spend` to report.
+Spend events are reporting signals, not approval points: they can follow the response carrying the final answer.
 
 The seam that runs before a request rather than after a response is `before_model_request`. A small capability of your own can read `status(ctx)` there and hold the run until someone decides:
 

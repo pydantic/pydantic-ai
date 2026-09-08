@@ -22,6 +22,7 @@ from pydantic_ai_harness.planning._store import (
     emit_deleted,
     emit_mutation,
     validate_table_name,
+    warn_event_emitter,
 )
 from pydantic_ai_harness.planning._types import PlanItem, TaskStatus
 
@@ -78,6 +79,7 @@ class PostgresPlanStore:
         table: str = 'plan_items',
         event_emitter: PlanEventEmitter | None = None,
     ) -> None:
+        warn_event_emitter(event_emitter)
         validate_table_name(table)
         self._pool = pool
         self._session = session

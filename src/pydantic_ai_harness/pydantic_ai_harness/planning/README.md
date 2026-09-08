@@ -114,23 +114,27 @@ The planner's read-only discipline is a property of how you configure that agent
 
 ## Events
 
-Give a store a `PlanEventEmitter` to react to changes -- surface progress in a UI, mirror steps to a tracker, notify a channel on completion:
+Subscribe to typed plan events to react to changes made through the `Planning` tools:
 
 ```python
-from pydantic_ai_harness.planning import InMemoryPlanStore, PlanEventEmitter
+from pydantic_ai import Agent
+from pydantic_ai_harness import Planning
+from pydantic_ai_harness.planning import PlanCompletedEvent
 
-emitter = PlanEventEmitter()
+agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[Planning()])
 
-@emitter.on_completed
-async def announce(event):
+@agent.on_event(PlanCompletedEvent)
+async def announce(ctx, event):
     print('done:', event.item.content)
-
-store = InMemoryPlanStore(event_emitter=emitter)
 ```
 
-Emitted types: `created`, `updated`, `status_changed`, `completed`, `deleted`.
+The family contains
+`PlanCreatedEvent`, `PlanUpdatedEvent`, `PlanStatusChangedEvent`, `PlanCompletedEvent`, and
+`PlanDeletedEvent`; each carries the affected `item` and, for updates, `previous_state`.
 
-Events come from the granular tools (`add_task`, `update_task_status`, `add_subtask`, ...). `write_plan` is a bulk whole-plan replacement and is **event-silent**, so a UI driven purely off events won't see plans the model builds or rewrites with `write_plan`. Read the plan after the run too, or steer the model toward the granular tools when you need live event coverage.
+Run events come from planning tool paths, including `write_plan`. Direct application mutations on a
+`PlanStore` have no run context and do not produce run events. `PlanEventEmitter`, `EventCallback`,
+and store `event_emitter` parameters remain supported but are deprecated.
 
 ## Why whole-plan replacement
 

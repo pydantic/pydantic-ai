@@ -36,6 +36,7 @@ from pydantic_ai_harness.compaction import (
     DEFAULT_CONTEXT_WINDOW,
     ClearToolResults,
     ContextUsage,
+    ContextUsageEvent,
     DeduplicateFileReads,
     ReportContextUsage,
     SlidingWindowCompaction,
@@ -95,6 +96,13 @@ def _ctx(model: Any = None) -> Any:
         model: Model = dataclasses.field(default_factory=TestModel)
         deps: None = None
         tracer: Tracer = dataclasses.field(default_factory=NoOpTracer)
+        emitted: list[Any] = dataclasses.field(default_factory=list[Any])
+
+        async def emit(self, event: Any) -> Any:
+            # Like the real `RunContext.emit` with no listeners: the event is recorded and
+            # returned unmutated, so an immediate-dispatch emitter can read its own decision.
+            self.emitted.append(event)
+            return event
 
     return _FakeCtx(model=model) if model is not None else _FakeCtx()
 
@@ -865,6 +873,21 @@ class TestContextUsage:
 
 
 class TestReportContextUsage:
+    async def test_emits_without_a_callback(self, monkeypatch: pytest.MonkeyPatch):
+        """The documented shape: no `on_usage`, so the event is the only reading."""
+        _fixed_window(monkeypatch, 1_000)
+        monitor: ReportContextUsage[None] = ReportContextUsage()
+        ctx = _ctx()
+
+        request_context = _request_context(_history(2))
+        assert await monitor.before_model_request(ctx, request_context) is request_context
+
+        assert [type(event) for event in ctx.emitted] == [ContextUsageEvent]
+        event = ctx.emitted[0]
+        assert event.window_tokens == 1_000
+        assert event.used_tokens > 0
+        assert event.resolved is True
+
     async def test_reports_before_each_request(self, monkeypatch: pytest.MonkeyPatch):
         _fixed_window(monkeypatch, 1_000)
         seen: list[ContextUsage] = []
@@ -1493,3 +1516,6 @@ class TestRealtimeModelSkipsTokenTriggers:
 
         with pytest.raises(UserError, match='needs a request-response model'):
             await capability._summarize(_history(2), ctx)  # pyright: ignore[reportPrivateUsage]
+
+
+pytestmark = pytest.mark.filterwarnings('ignore::pydantic_ai_harness.HarnessDeprecationWarning')

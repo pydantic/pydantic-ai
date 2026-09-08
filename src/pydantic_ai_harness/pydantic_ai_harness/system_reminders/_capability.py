@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Awaitable, Callable, Sequence
 from copy import copy
 from dataclasses import KW_ONLY, dataclass, field, replace
@@ -25,6 +26,8 @@ from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.tools import AgentDepsT, RunContext
 
 from pydantic_ai_harness._usage import reserved_usage_limits
+from pydantic_ai_harness._warn import HarnessDeprecationWarning
+from pydantic_ai_harness.system_reminders._events import ReminderFiredEvent
 
 if TYPE_CHECKING:
     from pydantic_ai.capabilities.abstract import WrapModelRequestHandler
@@ -119,7 +122,7 @@ class SystemReminders(AbstractCapability[AgentDepsT]):
     """TTL for the cache breakpoint placed before the tail reminder."""
 
     on_fire: Callable[[str], None] | None = None
-    """Optional observability callback invoked with each rendered reminder as it fires."""
+    """Deprecated callback invoked with each rendered reminder. Subscribe to `ReminderFiredEvent` instead."""
 
     # Override the inherited default ID because durable-operation recovery needs a stable identity.
     _: KW_ONLY
@@ -139,6 +142,13 @@ class SystemReminders(AbstractCapability[AgentDepsT]):
         # Dynamic configuration is a sequence, not a live queue. Freeze caller-owned lists so
         # callbacks cannot change the operation index used to recover an LLM reminder.
         self.dynamic_reminders = tuple(self.dynamic_reminders)
+        if self.on_fire is not None:
+            warnings.warn(
+                '`SystemReminders.on_fire` is deprecated; subscribe to `ReminderFiredEvent` with `@agent.on_event` '
+                'instead, or with `@on_event` on a capability of your own.',
+                HarnessDeprecationWarning,
+                stacklevel=2,
+            )
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> SystemReminders[AgentDepsT]:
         """Return a fresh per-run instance with reset counters (config preserved).
@@ -191,6 +201,8 @@ class SystemReminders(AbstractCapability[AgentDepsT]):
                 messages[-1] = replace(last, parts=[*last.parts, UserPromptPart(content=content)])
                 for key, _text in fired:
                     self._fire_counts[key] = self._fire_counts.get(key, 0) + 1
+                for text in texts:
+                    await ctx.emit(ReminderFiredEvent(text=text))
                 if self.on_fire is not None:
                     for text in texts:
                         self.on_fire(text)

@@ -8,6 +8,7 @@ from pydantic_ai_harness.system_reminders._capability import (
     Reminder,
     SystemReminders,
 )
+from pydantic_ai_harness.system_reminders._events import SYSTEM_REMINDERS_EVENTS, ReminderFiredEvent
 
 __all__ = [
     'AsyncDynamicReminder',
@@ -15,5 +16,7 @@ __all__ = [
     'GoalReanchor',
     'LLMReminder',
     'Reminder',
+    'ReminderFiredEvent',
+    'SYSTEM_REMINDERS_EVENTS',
     'SystemReminders',
 ]

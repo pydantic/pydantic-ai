@@ -126,17 +126,22 @@ A strategy knows when to act but says nothing about how close the run is to the 
 ```python
 from pydantic_ai import Agent
 from pydantic_ai_harness import ReportContextUsage, SummarizingCompaction
+from pydantic_ai_harness.compaction import ContextUsageEvent
 
 agent = Agent(
     'anthropic:claude-sonnet-5',
     capabilities=[
         SummarizingCompaction(max_fraction=0.9, keep_messages=20),
-        ReportContextUsage(on_usage=lambda usage: print(f'{usage.fraction:.0%}')),
+        ReportContextUsage(),
     ],
 )
+
+@agent.on_event(ContextUsageEvent)
+async def show(ctx, event):
+    print(f'{event.fraction:.0%}')
 ```
 
-Each reading carries `used_tokens`, `window_tokens`, and `resolved` -- `False` when the window is the fallback rather than the model's real one, so a gauge can show that the percentage is a guess. `on_usage` may be a coroutine function, so a gauge that pushes over a socket does not need a sync bridge. Order matters: register the monitor *after* a compaction capability to observe the corrected current history after same-cycle compaction, or before it to see what triggered the compaction.
+Each reading carries `used_tokens`, `window_tokens`, `fraction`, and `resolved` -- `False` when the window is the fallback rather than the model's real one, so a gauge can show that the percentage is a guess. Migration: `on_usage` remains supported but is deprecated. Move its callback body to a `ContextUsageEvent` subscription. Order matters: register the monitor *after* a compaction capability to observe the corrected current history after same-cycle compaction, or before it to see what triggered the compaction.
 
 `used_tokens` follows the accounting above: provider usage anchors include instructions, tool
 definitions, and `FilePart` payloads from the anchored request. The suffix after the anchor, or a

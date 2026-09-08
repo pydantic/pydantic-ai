@@ -127,6 +127,26 @@ Without a durability engine, generation runs directly in all three cases, with t
 
 ## Configuration
 
+Subscribe to `ReminderFiredEvent` to observe reminders after they are appended:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai_harness import SystemReminders
+from pydantic_ai_harness.system_reminders import Reminder, ReminderFiredEvent
+
+agent = Agent(
+    'anthropic:claude-sonnet-4-6',
+    capabilities=[SystemReminders(reminders=[Reminder('...', interval=5)])],
+)
+
+@agent.on_event(ReminderFiredEvent)
+async def record(ctx, event):
+    print(event.text)
+```
+
+Migration: `on_fire` remains supported but is deprecated. Move its callback body to this
+subscription.
+
 ```python
 from pydantic_ai_harness import SystemReminders
 from pydantic_ai_harness.system_reminders import Reminder
@@ -135,7 +155,6 @@ SystemReminders(
     reminders=[Reminder('...', interval=5)],
     dynamic_reminders=[],       # callables evaluated every request
     cache_ttl='5m',             # TTL for the cache breakpoint before the reminder ('5m' | '1h')
-    on_fire=None,               # optional callback invoked with each rendered reminder
 )
 ```
 

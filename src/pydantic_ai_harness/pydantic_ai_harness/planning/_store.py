@@ -4,9 +4,8 @@ A `PlanStore` is an async CRUD interface over an ordered list of plan steps. The
 default `InMemoryPlanStore` keeps them in process memory (matching planning's
 original ephemeral behaviour); `SqlitePlanStore` persists them to a local SQLite
 file. `PostgresPlanStore` (in `_postgres.py`) covers a server database over a
-caller-owned pool. All three accept an optional `PlanEventEmitter` and emit the
-same events, so an application can react to changes regardless of where the plan
-lives.
+caller-owned pool. Their deprecated `event_emitter` parameters preserve callback delivery for
+applications migrating to typed events from `Planning` tool runs.
 """
 
 from __future__ import annotations
@@ -15,14 +14,30 @@ import json
 import re
 import sqlite3
 import threading
+import warnings
 from typing import Protocol, runtime_checkable
 
 import anyio.to_thread
 
+from pydantic_ai_harness._warn import HarnessDeprecationWarning
 from pydantic_ai_harness.planning._events import PlanEvent, PlanEventEmitter, PlanEventType
 from pydantic_ai_harness.planning._types import PlanItem, TaskStatus
 
 _VALID_TABLE_RE = re.compile(r'[A-Za-z_][A-Za-z0-9_]{0,62}')
+
+
+def warn_event_emitter(event_emitter: PlanEventEmitter | None) -> None:
+    """Warn when a store is configured with the deprecated emitter delivery path."""
+    if event_emitter is not None:
+        warnings.warn(
+            '`event_emitter` is deprecated; subscribe with `@agent.on_event` to the events `Planning` emits '
+            'instead -- `PlanCreatedEvent`, `PlanUpdatedEvent`, `PlanStatusChangedEvent`, '
+            '`PlanCompletedEvent` and `PlanDeletedEvent`, from `pydantic_ai_harness.planning`. They are '
+            'emitted from the planning tools rather than from the store, so a mutation your own code '
+            'makes on this store directly has no run context and reaches no listener.',
+            HarnessDeprecationWarning,
+            stacklevel=3,
+        )
 
 
 @runtime_checkable
@@ -150,6 +165,7 @@ class InMemoryPlanStore:
     """In-process plan storage. The default backend; state is lost on exit."""
 
     def __init__(self, *, event_emitter: PlanEventEmitter | None = None) -> None:
+        warn_event_emitter(event_emitter)
         self._items: list[PlanItem] = []
         self._emitter = event_emitter
 
@@ -233,6 +249,7 @@ class SqlitePlanStore:
         table: str = 'plan_items',
         event_emitter: PlanEventEmitter | None = None,
     ) -> None:
+        warn_event_emitter(event_emitter)
         validate_table_name(table)
         if database == ':memory:':
             raise ValueError(

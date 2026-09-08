@@ -44,7 +44,10 @@ from tests.conftest import agent_run_names  # pyright: ignore[reportMissingTypeS
 if TYPE_CHECKING:
     from logfire.testing import CaptureLogfire
 
-pytestmark = pytest.mark.anyio
+pytestmark = [
+    pytest.mark.anyio,
+    pytest.mark.filterwarnings('ignore::pydantic_ai_harness.HarnessDeprecationWarning'),
+]
 
 
 @pytest.fixture
@@ -65,6 +68,11 @@ def _ctx(
     ctx.messages = messages if messages is not None else []
     ctx.usage = usage if usage is not None else RunUsage()
     ctx.usage_limits = usage_limits if usage_limits is not None else UsageLimits()
+
+    async def emit(event: Any) -> Any:
+        return event
+
+    ctx.emit = emit
     return ctx
 
 

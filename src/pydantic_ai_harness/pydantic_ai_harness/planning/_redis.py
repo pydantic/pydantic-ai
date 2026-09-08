@@ -20,7 +20,13 @@ import json
 from typing import Protocol, runtime_checkable
 
 from pydantic_ai_harness.planning._events import PlanEventEmitter
-from pydantic_ai_harness.planning._store import apply_updates, emit_created, emit_deleted, emit_mutation
+from pydantic_ai_harness.planning._store import (
+    apply_updates,
+    emit_created,
+    emit_deleted,
+    emit_mutation,
+    warn_event_emitter,
+)
 from pydantic_ai_harness.planning._types import PlanItem, TaskStatus
 
 
@@ -53,6 +59,7 @@ class RedisPlanStore:
         expire_seconds: int | None = None,
         event_emitter: PlanEventEmitter | None = None,
     ) -> None:
+        warn_event_emitter(event_emitter)
         self._client = client
         self._session = session
         self._key_prefix = key_prefix
