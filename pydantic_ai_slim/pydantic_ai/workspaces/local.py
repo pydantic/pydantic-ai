@@ -21,7 +21,7 @@ from types import TracebackType
 import anyio
 from typing_extensions import Self
 
-from pydantic_ai._utils import cancel_and_drain, run_in_executor
+from pydantic_ai._utils import cancel_and_drain, gather, run_in_executor
 
 from .protocol import (
     CommandResult,
@@ -136,13 +136,18 @@ class LocalWorkspace(WorkspaceBackend, SupportsFilesystem):
             # directories, breaking the protocol's one-environment contract. Keep cancellation
             # from abandoning the filesystem operation before its result is recorded: otherwise
             # a created temporary directory has no owner and can never be cleaned up.
-            with anyio.CancelScope(shield=True):
-                if self._given_root is None:
-                    self._live = await run_in_executor(
-                        lambda: Path(tempfile.mkdtemp(prefix='pydantic-ai-workspace-')).resolve()
-                    )
-                else:
-                    self._live = await run_in_executor(self._given_root.resolve)
+            async def acquire_root() -> None:
+                # A shielded child owns the blocking call and is drained by `gather`: raw
+                # `asyncio.Task.cancel()` must not abandon a created directory before `_live` records it.
+                with anyio.CancelScope(shield=True):
+                    if self._given_root is None:
+                        self._live = await run_in_executor(
+                            lambda: Path(tempfile.mkdtemp(prefix='pydantic-ai-workspace-')).resolve()
+                        )
+                    else:
+                        self._live = await run_in_executor(self._given_root.resolve)
+
+            await gather(acquire_root())
             assert self._live is not None
             return self._live
 
@@ -155,17 +160,21 @@ class LocalWorkspace(WorkspaceBackend, SupportsFilesystem):
         # Under the acquisition lock: an unlocked clear would race acquisition — a first use
         # blocked on the lock could otherwise recreate a root mid-teardown that nothing
         # would ever remove.
-        with anyio.CancelScope(shield=True):
-            async with self._lock:
-                if self._owns_root and self._live is not None:
-                    root = self._live
-                    try:
-                        await run_in_executor(shutil.rmtree, root)
-                    except FileNotFoundError:
-                        # A command or `fs.remove()` may have deleted the root already; exiting
-                        # must not raise (it would mask the exception that ended the block).
-                        pass
-                    self._live = None
+        async def cleanup() -> None:
+            # Drain the shielded child so raw cancellation cannot abandon an in-flight removal.
+            with anyio.CancelScope(shield=True):
+                async with self._lock:
+                    if self._owns_root and self._live is not None:
+                        root = self._live
+                        try:
+                            await run_in_executor(shutil.rmtree, root)
+                        except FileNotFoundError:
+                            # A command or `fs.remove()` may have deleted the root already; exiting
+                            # must not raise (it would mask the exception that ended the block).
+                            pass
+                        self._live = None
+
+        await gather(cleanup())
 
     async def working_dir(self) -> str:
         return str(await self.root)

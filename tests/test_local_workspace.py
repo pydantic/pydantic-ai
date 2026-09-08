@@ -75,8 +75,10 @@ async def test_cancelled_context_exit_removes_owned_root() -> None:
             shutil.rmtree(root, ignore_errors=True)
 
 
+@pytest.mark.parametrize('raw_cancel', [False, True], ids=['anyio-cancel', 'raw-task-cancel'])
 async def test_cancelled_root_acquisition_keeps_ownership_with_abandoned_thread(
     monkeypatch: pytest.MonkeyPatch,
+    raw_cancel: bool,
 ) -> None:
     real_mkdtemp: Callable[..., str] = tempfile.mkdtemp
     started = threading.Event()
@@ -93,10 +95,12 @@ async def test_cancelled_root_acquisition_keeps_ownership_with_abandoned_thread(
     monkeypatch.setattr('pydantic_ai.workspaces.local.tempfile.mkdtemp', held_mkdtemp)
     workspace = LocalWorkspace()
     acquisition_scope: anyio.CancelScope | None = None
+    acquisition_task: asyncio.Task[None] | None = None
     acquisition_finished = anyio.Event()
 
     async def acquire_root() -> None:
-        nonlocal acquisition_scope
+        nonlocal acquisition_scope, acquisition_task
+        acquisition_task = asyncio.current_task()
         with anyio.CancelScope() as scope:
             acquisition_scope = scope
             try:
@@ -106,31 +110,37 @@ async def test_cancelled_root_acquisition_keeps_ownership_with_abandoned_thread(
                 acquisition_finished.set()
 
     roots: set[Path] = set()
+    task = asyncio.create_task(acquire_root())
     try:
-        async with anyio.create_task_group() as tg:
-            try:
-                tg.start_soon(acquire_root)
-                while not started.is_set():
-                    await anyio.sleep(0)
-                assert acquisition_scope is not None
-                acquisition_scope.cancel()
-                await anyio.sleep(0)
-                release.set()
-                await acquisition_finished.wait()
-                root = Path(await workspace.root)
-                roots.update(created)
-                roots.add(root)
+        while not started.is_set():
+            await anyio.sleep(0)
+        assert acquisition_scope is not None
+        if raw_cancel:
+            assert acquisition_task is task
+            task.cancel()
+        else:
+            acquisition_scope.cancel()
+        await anyio.sleep(0)
+        release.set()
+        await acquisition_finished.wait()
+        with suppress(asyncio.CancelledError):
+            await task
+        root = Path(await workspace.root)
+        roots.update(created)
+        roots.add(root)
 
-                assert len(created) == 1
-                assert created[0].resolve() == root
-                assert root.exists()
-                async with workspace:
-                    assert Path(await workspace.root) == root
-                assert not root.exists()
-            finally:
-                release.set()
+        assert len(created) == 1
+        assert created[0].resolve() == root
+        assert root.exists()
+        async with workspace:
+            assert Path(await workspace.root) == root
+        assert not root.exists()
     finally:
         release.set()
+        if not task.done():
+            task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
         for root in roots | set(created):
             shutil.rmtree(root, ignore_errors=True)
 
@@ -642,6 +652,48 @@ async def test_temp_root_already_deleted_on_exit_does_not_raise():
         root = Path(await workspace.working_dir())
         await workspace.remove(str(root))  # a command or tool may delete the root itself
     assert not root.exists()
+
+
+async def test_raw_cancelled_context_exit_drains_root_cleanup(monkeypatch: pytest.MonkeyPatch) -> None:
+    workspace = LocalWorkspace()
+    root = Path(await workspace.root)
+    started = threading.Event()
+    release = threading.Event()
+    real_rmtree = shutil.rmtree
+
+    def held_rmtree(path: str | Path, *args: Any, **kwargs: Any) -> None:
+        started.set()
+        release.wait()
+        real_rmtree(path, *args, **kwargs)
+
+    monkeypatch.setattr('pydantic_ai.workspaces.local.shutil.rmtree', held_rmtree)
+
+    async def close_workspace() -> None:
+        async with workspace:
+            pass
+
+    task = asyncio.create_task(close_workspace())
+    try:
+        await anyio.to_thread.run_sync(started.wait)
+        task.cancel()
+        await anyio.sleep(0)
+        assert not task.done()
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert not root.exists()
+
+        async with workspace:
+            fresh_root = Path(await workspace.root)
+        assert fresh_root != root
+        assert not fresh_root.exists()
+    finally:
+        release.set()
+        if not task.done():
+            task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
+        real_rmtree(root, ignore_errors=True)
 
 
 async def test_failed_owned_root_cleanup_retains_root_for_retry(monkeypatch: pytest.MonkeyPatch) -> None:
