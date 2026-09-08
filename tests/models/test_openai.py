@@ -6481,3 +6481,26 @@ def test_model_construction_preloads_lazy_dependencies():
     env = {key: value for key, value in os.environ.items() if not key.startswith('COVERAGE_')}
     process = subprocess.run([sys.executable, '-c', script], capture_output=True, text=True, timeout=120, env=env)
     assert process.returncode == 0, f'lazy-dependency preload check failed:\n{process.stderr}'
+
+
+async def test_empty_choices_non_streaming_raises_typed_error(allow_model_requests: None):
+    """Regression: a schema-valid but empty `choices` array (sent by OpenAI-compatible
+    gateways; the streaming twin is already skipped per #5165) used to escape as a bare
+    `IndexError` instead of the typed `UnexpectedModelBehavior` this file's own contract
+    uses for malformed non-streaming responses."""
+    c = chat.ChatCompletion(
+        id='123',
+        choices=[],
+        created=1704067200,  # 2024-01-01
+        model='gpt-4o-123',
+        object='chat.completion',
+    )
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    with pytest.raises(UnexpectedModelBehavior) as exc_info:
+        await agent.run('What is the capital of France?')
+    assert exc_info.value.message == (
+        'Invalid response from openai chat completions endpoint: response contains no choices'
+    )
