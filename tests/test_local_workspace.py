@@ -62,18 +62,15 @@ async def test_local_workspace_concurrent_first_use_creates_one_root(monkeypatch
 
 async def test_cancelled_context_exit_removes_owned_root() -> None:
     workspace = LocalWorkspace()
-    root: Path | None = None
+    root = Path(await workspace.root)
     try:
         async with anyio.create_task_group() as tg:
             async with workspace:
-                root = Path(await workspace.root)
                 assert root.exists()
                 tg.cancel_scope.cancel()
-            assert root is not None
-            assert not root.exists()
+        assert not root.exists()
     finally:
-        if root is not None:
-            shutil.rmtree(root, ignore_errors=True)
+        shutil.rmtree(root, ignore_errors=True)
 
 
 @pytest.mark.parametrize('raw_cancel', [False, True], ids=['anyio-cancel', 'raw-task-cancel'])
@@ -138,8 +135,7 @@ async def test_cancelled_root_acquisition_keeps_ownership_with_abandoned_thread(
         assert not root.exists()
     finally:
         release.set()
-        if not task.done():
-            task.cancel()
+        task.cancel()
         with suppress(asyncio.CancelledError):
             await task
         for root in roots | set(created):
@@ -690,8 +686,7 @@ async def test_raw_cancelled_context_exit_drains_root_cleanup(monkeypatch: pytes
         assert not fresh_root.exists()
     finally:
         release.set()
-        if not task.done():
-            task.cancel()
+        task.cancel()
         with suppress(asyncio.CancelledError):
             await task
         real_rmtree(root, ignore_errors=True)

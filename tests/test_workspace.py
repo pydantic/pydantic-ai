@@ -84,6 +84,29 @@ async def test_virtual_wrapper_read_file_does_not_resolve_before_read_bytes():
     assert full.lines == ('one', 'two', 'three')
 
 
+async def test_empty_bounded_shell_read_of_directory_raises() -> None:
+    class EmptySed(FakeWorkspace):
+        async def stat(self, path: str) -> FakeEntry:
+            await self.ensure_ready()
+            return FakeEntry(name='directory', path=path, is_dir=True)
+
+        async def run(
+            self,
+            command: str | Sequence[str],
+            *,
+            shell: bool = False,
+            cwd: str | None = None,
+            env: Mapping[str, str] | None = None,
+            timeout: float | None = None,
+        ) -> FakeWorkspaceResult:
+            await self.ensure_ready()
+            return FakeWorkspaceResult()
+
+    workspace = Workspace(EmptySed('empty-sed'))
+    with pytest.raises(IsADirectoryError):
+        await workspace.read_file('directory', limit=1)
+
+
 async def test_wrapper_overrides_apply_to_text_writes():
     backend = FakeWorkspace('wrapper')
     writes: list[tuple[str, bytes]] = []
@@ -797,9 +820,8 @@ async def test_wrapper_composes_workspace_policy_over_combined_capability() -> N
     agent = Agent(TestModel(call_tools=['probe']), capabilities=[capability])
 
     @agent.tool
-    async def probe(ctx: RunContext[Any]) -> str:
+    async def probe(ctx: RunContext[Any]) -> None:
         await ctx.workspace.write_text('blocked.txt', 'nope')
-        return 'unreachable'
 
     with pytest.raises(UserError, match='read-only'):
         await agent.run('go')
@@ -1064,8 +1086,7 @@ async def test_interrupted_stream_history_keeps_the_workspace_ref() -> None:
     agent = Agent(TestModel(custom_output_text='hello world'))
 
     async with agent.run_stream('go', workspace=backend) as result:
-        async for _ in result.stream_response(debounce_by=None):
-            break
+        await anext(result.stream_response(debounce_by=None))
         await result.cancel()
 
     assert result.response.state == 'interrupted'

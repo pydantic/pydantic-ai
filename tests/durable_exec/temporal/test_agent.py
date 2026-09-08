@@ -2707,15 +2707,17 @@ def test_temporal_run_context_omits_ref_for_local_workspace():
     assert 'workspace_ref' not in serialized
 
 
-def test_temporal_run_context_serializes_only_a_concrete_workspace_ref():
+async def test_temporal_run_context_serializes_only_a_concrete_workspace_ref():
     workspace = Workspace(RecordingWorkspaceBackend('preprovisioned'))
     serialized = TemporalRunContext.serialize_run_context(_workspace_context(workspace))
     assert serialized['workspace_ref'] == WorkspaceRef(provider='fake', id='preprovisioned')
 
     decoded = deserialize_run_context(TemporalRunContext, serialized, deps=None, agent=None)
-    assert 'workspace' not in decoded.__dict__
+    assert decoded.workspace is decoded.workspace
+    assert replace(decoded).workspace is decoded.workspace
+    assert decoded.workspace.ref is None
     with pytest.raises(UserError, match=r'custom .*deserialize_run_context'):
-        _ = decoded.workspace
+        await decoded.workspace.run(['pwd'])
 
 
 async def test_temporal_application_deserializer_restores_validated_workspace_ref():

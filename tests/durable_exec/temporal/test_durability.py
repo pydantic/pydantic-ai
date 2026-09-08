@@ -4633,11 +4633,8 @@ class WorkspaceProbePolicy(WrapperWorkspace):
 
 
 class WorkspaceProbeCapability(AbstractCapability[WorkspaceProbeDeps]):
-    def get_workspace(
-        self, ctx: RunContext[WorkspaceProbeDeps], *, ref: WorkspaceRef | None
-    ) -> WorkspaceBackend | None:
-        if ref is None or ref.provider != 'probe':
-            return None
+    def get_workspace(self, ctx: RunContext[WorkspaceProbeDeps], *, ref: WorkspaceRef | None) -> WorkspaceBackend:
+        assert ref is not None and ref.provider == 'probe'
         return WorkspaceProbePolicy(Workspace(FakeWorkspace(ref.id, ref=ref)), ctx.deps)
 
 
