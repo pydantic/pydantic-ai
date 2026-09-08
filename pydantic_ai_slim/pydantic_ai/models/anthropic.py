@@ -12,7 +12,7 @@ from typing import Any, Literal, TypeAlias, TypeGuard, cast, overload
 import pydantic_core
 from opentelemetry.trace import get_current_span
 from pydantic import TypeAdapter
-from typing_extensions import assert_never
+from typing_extensions import assert_never, override
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._http import to_httpx2_timeout
@@ -1080,10 +1080,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
         return super().prepare_request(model_settings, model_request_parameters)
 
+    @override
     def _prepare_model_settings(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
     ) -> ModelSettings | None:
-        del model_request_parameters
         if self.profile.get('anthropic_disallows_sampling_settings', False) and model_settings:
             filtered: ModelSettings = {**model_settings}
             self._drop_unsupported_sampling_settings(filtered)

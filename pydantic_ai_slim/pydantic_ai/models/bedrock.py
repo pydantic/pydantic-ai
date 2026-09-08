@@ -15,7 +15,7 @@ from urllib.parse import parse_qs, urlparse
 
 import anyio.to_thread
 from pydantic_core import to_json
-from typing_extensions import ParamSpec, TypedDict, assert_never
+from typing_extensions import ParamSpec, TypedDict, assert_never, override
 
 try:
     from botocore.client import BaseClient
@@ -720,10 +720,10 @@ class BedrockConverseModel(Model[BaseClient]):
         # Pass unmerged model_settings; base class does its own merge
         return super().prepare_request(model_settings, model_request_parameters)
 
+    @override
     def _prepare_model_settings(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
     ) -> ModelSettings | None:
-        del model_request_parameters
         if self.profile.get('anthropic_disallows_sampling_settings', False) and model_settings:
             filtered: ModelSettings = {**model_settings}
             self._drop_unsupported_sampling_settings(filtered)
