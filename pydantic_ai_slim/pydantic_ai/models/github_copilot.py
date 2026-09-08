@@ -2,17 +2,14 @@
 
 from __future__ import annotations as _annotations
 
-from dataclasses import dataclass, replace
-from typing import Literal, cast
+from dataclasses import dataclass
+from typing import Literal
 
 from typing_extensions import override
 
-from ..exceptions import UserError
 from ..profiles import ModelProfileSpec
 from ..providers import Provider
-from ..providers.github_copilot import GitHubCopilotModelProfile
 from ..settings import ModelSettings
-from . import ModelRequestParameters
 
 try:
     from openai import AsyncOpenAI
@@ -69,30 +66,6 @@ class GitHubCopilotModel(OpenAIChatModel):
             settings: Model-specific settings that will be used as defaults for this model.
         """
         super().__init__(model_name, provider=provider, profile=profile, settings=settings)
-
-    @override
-    def prepare_request(
-        self,
-        model_settings: ModelSettings | None,
-        model_request_parameters: ModelRequestParameters,
-    ) -> tuple[ModelSettings | None, ModelRequestParameters]:
-        settings, params = super().prepare_request(model_settings, model_request_parameters)
-        # The parent resolves the unified `thinking` setting onto the parameters, so this reads the
-        # value that would actually be sent — including one that came from the model's own `settings`.
-        profile = cast(GitHubCopilotModelProfile, self.profile)
-        if not profile.get('github_copilot_supports_reasoning_effort', True):
-            if params.thinking is False:
-                # `thinking=False` asks for no reasoning, which this transport does anyway. Copilot
-                # rejects `reasoning_effort='none'` on these models just as it rejects the enabling
-                # levels, so the request is satisfied by sending nothing rather than by an error.
-                params = replace(params, thinking=None)
-            elif params.thinking is not None:
-                raise UserError(
-                    f'`thinking` is not supported with `GitHubCopilotModel` and model {self.model_name!r}: '
-                    "GitHub Copilot's chat completions API rejects `reasoning_effort` for Anthropic models. "
-                    'Use a model whose Copilot catalog entry lists `reasoning_effort`, or omit `thinking`.'
-                )
-        return settings, params
 
     @override
     def _validate_completion(self, response: chat.ChatCompletion) -> _ChatCompletion:

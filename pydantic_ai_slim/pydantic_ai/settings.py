@@ -456,8 +456,8 @@ class ModelSettings(TypedDict, total=False):
     * Cerebras (only `False` is forwarded, as `reasoning_effort='none'`; the enable levels are not
       sent because Cerebras models reason by default, and `gpt-oss` ignores the disable too)
     * Crusoe
-    * GitHub Copilot (Anthropic models raise a `UserError` instead: Copilot's Chat Completions API
-      rejects `reasoning_effort` for them, including the disabling value)
+    * GitHub Copilot (as `reasoning_effort`; which ids accept it, and which levels, is per-model and
+      enforced by Copilot, so an unsupported value comes back as a `400 invalid_reasoning_effort`)
     * Ollama
     * OpenRouter (as `extra_body['reasoning']`)
     * Snowflake (as `extra_body['reasoning']` on Claude models, otherwise as `reasoning_effort`)

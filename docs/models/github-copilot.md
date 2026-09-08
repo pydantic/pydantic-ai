@@ -77,6 +77,8 @@ curl -H "Authorization: Bearer $GITHUB_COPILOT_API_KEY" https://api.githubcopilo
 
 Each entry's `supported_endpoints` says which API serves it; Pydantic AI needs `/chat/completions` in that list.
 
+The listing is a floor rather than the full set, so an id missing from it is worth trying anyway: at the time of writing `gemini-3.7-flash` and `gemini-3.8-flash` are served on Chat Completions while appearing nowhere in the response.
+
 Two `400` responses tell you why an id didn't work:
 
 - `model_not_supported` — your plan doesn't include that model. `claude-sonnet-4.5`, for instance, is unavailable on an Individual plan.
@@ -84,7 +86,7 @@ Two `400` responses tell you why an id didn't work:
 
 ## Thinking
 
-Reasoning models reachable on Chat Completions — the ids whose catalog entry lists `reasoning_effort`, such as `gpt-5.4` and `kimi-k3` — take the unified [`thinking`][pydantic_ai.settings.ModelSettings.thinking] setting:
+Reasoning models reachable on Chat Completions — such as `gpt-5.4`, `claude-sonnet-5` and `gemini-3.8-flash` at the time of writing — take the unified [`thinking`][pydantic_ai.settings.ModelSettings.thinking] setting:
 
 ```python
 from pydantic_ai import Agent
@@ -97,7 +99,15 @@ agent = Agent(
 ...
 ```
 
-Copilot's Anthropic models are the exception. They think, but only through an API Pydantic AI doesn't speak yet: Copilot's Chat Completions endpoint rejects `reasoning_effort` for them outright, so requesting `thinking` on a `claude-` id raises a [`UserError`][pydantic_ai.exceptions.UserError] rather than silently returning an answer with no reasoning. `thinking=False` is accepted and sends nothing, since that is what it asks for. The gate covers the unified setting only: [`openai_reasoning_effort`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_reasoning_effort] is a provider-namespaced setting you opted into, so it goes out verbatim and Copilot answers `400`.
+Which ids surface their reasoning depends on the family. Copilot returns Anthropic and Google reasoning in a `reasoning_text` field rather than in either of the field names OpenAI-compatible providers usually use, and Pydantic AI knows that field for `claude-` and `gemini-` ids, so their reasoning arrives as a [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] on both the streamed and non-streamed paths and goes back in the same field on later turns. Copilot returns a `reasoning_opaque` signature alongside it, which Pydantic AI does not carry; Copilot accepts follow-up turns without it. The OpenAI and MoonshotAI ids are the other case: `gpt-5.4` and `kimi-k3` reason on the effort you give them — `kimi-k3` bills reasoning tokens for it — but Copilot returns no reasoning text at all, so those ids never produce a `ThinkingPart`.
+
+The Claude ids also reason *adaptively*: the effort you set is a ceiling rather than an instruction, so Copilot may answer an easy question with no reasoning at any effort, and a `ThinkingPart` is not guaranteed on every response.
+
+`thinking` is forwarded as `reasoning_effort` and Copilot decides what it accepts, per model: ask for a level an id doesn't list and it answers `400 invalid_reasoning_effort` naming the levels it does. Three cases worth knowing:
+
+- `thinking=False` becomes `reasoning_effort='none'`, which only some ids offer. The `claude-` and `gemini-` ids list `low` upwards and no `none`, so it `400`s there rather than silently doing nothing.
+- `thinking=True` becomes `reasoning_effort='medium'`, which `kimi-k3` does not list (its levels are `low`, `high`, `max`), so pick an explicit level for that one.
+- An id whose entry carries no `reasoning_effort` key at all, such as `claude-haiku-4.5`, rejects every value.
 
 ## Custom endpoints
 

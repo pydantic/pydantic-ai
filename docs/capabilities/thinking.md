@@ -316,9 +316,9 @@ agent = Agent(model, model_settings=settings)
 
 ## GitHub Copilot
 
-Copilot's GPT, Gemini, Grok and Kimi ids take the unified [`thinking`][pydantic_ai.settings.ModelSettings.thinking] setting as `reasoning_effort`, inherited from [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel].
+Copilot takes the unified [`thinking`][pydantic_ai.settings.ModelSettings.thinking] setting as `reasoning_effort`, inherited from [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel]. Whether a given id accepts it, and which levels, is a per-model fact Copilot reports in its own catalog and enforces itself; [`GitHubCopilotModel`][pydantic_ai.models.github_copilot.GitHubCopilotModel] adds no gate of its own.
 
-Copilot's Anthropic models are the exception. They reason, but only through an API Pydantic AI does not yet speak: Copilot's Chat Completions endpoint rejects `reasoning_effort` for them outright. Rather than return an answer with no [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] and no explanation, [`GitHubCopilotModel`][pydantic_ai.models.github_copilot.GitHubCopilotModel] raises a [`UserError`][pydantic_ai.exceptions.UserError] when `thinking` is requested on a `claude-` id. `thinking=False` is accepted and sends nothing — Copilot rejects `reasoning_effort='none'` for these models too, and sending nothing is what "don't reason" asks for.
+Copilot's Anthropic and Google ids return their reasoning in a non-standard `reasoning_text` field, which Pydantic AI maps to a [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] and sends back in the same field on later turns. Its OpenAI and MoonshotAI ids accept the setting and reason on it, but Copilot returns no reasoning text for them, so they yield no `ThinkingPart`. The Anthropic ids reason adaptively besides, so the effort is a ceiling rather than an instruction and an easy question may come back with no reasoning at all. Their `reasoning_effort` list also has no `none`, so `thinking=False` goes out as `reasoning_effort='none'` and Copilot answers `400 invalid_reasoning_effort`. See [GitHub Copilot](../models/github-copilot.md#thinking).
 
 ## Snowflake Cortex
 

@@ -67,33 +67,42 @@ what `OpenAIChatModel` sends, and posing as a Copilot chat client would buy noth
 """
 
 
-class GitHubCopilotModelProfile(OpenAIModelProfile, total=False):
-    """Profile for models used with `GitHubCopilotModel`.
-
-    ALL FIELDS MUST BE `github_copilot_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
-    """
-
-    github_copilot_supports_reasoning_effort: bool
-    """Whether Copilot's Chat Completions endpoint accepts `reasoning_effort` for this model. Default: `True`.
-
-    Copilot rejects the parameter outright for Anthropic models — including `reasoning_effort='none'` —
-    even though those models support thinking through `/v1/messages`.
-    `GET https://api.githubcopilot.com/models` reports the accepted values per model, and omits the
-    key entirely for Anthropic ids.
-    """
-
-
-def _github_copilot_overlay(model_name: str, family_profile: ModelProfile | None) -> GitHubCopilotModelProfile:
+def _github_copilot_overlay(model_name: str, family_profile: ModelProfile | None) -> OpenAIModelProfile:
     """Facts about Copilot's own gateway, which the upstream family profile cannot know.
 
     `model_name` is already lowercased and stripped of a leading `copilot/`.
     """
-    overlay = GitHubCopilotModelProfile(
+    overlay = OpenAIModelProfile(
         # Copilot rejects `max_tokens` with an explicit "use `max_completion_tokens` instead" 400, so
         # the gateway pins the field regardless of what a family profile asks for.
         openai_chat_supports_max_completion_tokens=True,
-        github_copilot_supports_reasoning_effort=not model_name.startswith('claude-'),
     )
+
+    if model_name.startswith(('claude-', 'gemini-')):
+        # Copilot returns these families' reasoning in `reasoning_text`, which is neither of the two
+        # names `OpenAIChatModel` falls back to, so without this the reasoning is dropped — the exact
+        # defect this provider exists to fix. Probed live 2026-09-07 on `claude-sonnet-5`,
+        # `gemini-3.7-flash` and `gemini-3.8-flash`: all three return `reasoning_text` alongside
+        # `content`, on the streamed deltas as well as the non-streamed message. Note the Gemini ids
+        # are absent from `GET /models` while `/chat/completions` serves them, so the catalog is a
+        # floor, not the reachable set.
+        #
+        # The other reachable families are deliberately left without a field name, because the same
+        # probes found they emit none: `gpt-5.4` and `kimi-k3` answer with `content`/`padding`/`role`
+        # only, at every effort level — `kimi-k3` bills `usage.reasoning_tokens` while surfacing no
+        # text. Naming a field a family does not emit is not free: it would route that family's
+        # `reasoning`/`reasoning_content` parts into tags mode when sending them back.
+        #
+        # `reasoning_opaque`, the signature Copilot returns alongside, is deliberately not carried:
+        # the probes round-tripped an assistant turn with it, without it, and with only one of the
+        # two, and Copilot answered 200 every time, on both families. Add signature plumbing when a
+        # probe shows it is needed.
+        #
+        # For the same reason `openai_chat_send_back_thinking_parts` is left at `'auto'`, which echoes
+        # the field when a part came from it. DeepSeek, Z.AI and MoonshotAI force `'field'` because
+        # their APIs 400 on a thinking turn that omits it; Copilot does not, so it follows `ollama`,
+        # the other provider that names a field without forcing the mode.
+        overlay['openai_chat_thinking_field'] = 'reasoning_text'
 
     if family_profile and family_profile.get('anthropic_disallows_sampling_settings'):
         overlay['openai_unsupported_model_settings'] = _ANTHROPIC_DISALLOWED_SAMPLING_SETTINGS

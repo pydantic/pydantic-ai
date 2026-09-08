@@ -1096,7 +1096,7 @@ def test_github_copilot_anthropic_claude_haiku_4_5():
             ),
             'tool_deferral_mode': 'standalone',
             'openai_chat_supports_max_completion_tokens': True,
-            'github_copilot_supports_reasoning_effort': False,
+            'openai_chat_thinking_field': 'reasoning_text',
         }
     )
 
@@ -1121,7 +1121,6 @@ def test_github_copilot_openai_gpt_5_4():
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, ToolSearchTool, WebSearchTool}
             ),
             'openai_chat_supports_max_completion_tokens': True,
-            'github_copilot_supports_reasoning_effort': True,
         }
     )
 
@@ -1150,7 +1149,7 @@ def test_github_copilot_google_gemini_3_pro():
             'google_supports_thinking_level': True,
             'google_supports_strict_tool_definition': True,
             'openai_chat_supports_max_completion_tokens': True,
-            'github_copilot_supports_reasoning_effort': True,
+            'openai_chat_thinking_field': 'reasoning_text',
         }
     )
 
@@ -1168,7 +1167,6 @@ def test_github_copilot_xai_grok_4_5():
             'grok_supports_builtin_tools': True,
             'grok_reasoning_efforts': frozenset({'high', 'low', 'medium'}),
             'openai_chat_supports_max_completion_tokens': True,
-            'github_copilot_supports_reasoning_effort': True,
         }
     )
 
@@ -1182,7 +1180,6 @@ def test_github_copilot_moonshotai_kimi_k3():
             'ignore_streamed_leading_whitespace': True,
             'supports_thinking': True,
             'openai_chat_supports_max_completion_tokens': True,
-            'github_copilot_supports_reasoning_effort': True,
         }
     )
 
@@ -1192,11 +1189,7 @@ def test_github_copilot_unknown_model():
     """An id from no known family gets the OpenAI-compatible fallback and the overlay, nothing else."""
     profile = GitHubCopilotProvider.model_profile('some-future-copilot-model')
     assert _normalize(profile) == snapshot(
-        {
-            'json_schema_transformer': OpenAIJsonSchemaTransformer,
-            'openai_chat_supports_max_completion_tokens': True,
-            'github_copilot_supports_reasoning_effort': True,
-        }
+        {'json_schema_transformer': OpenAIJsonSchemaTransformer, 'openai_chat_supports_max_completion_tokens': True}
     )
 
 

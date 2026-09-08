@@ -7,16 +7,22 @@ in the parent's validation step — which is why a plain `OpenAIChatModel` point
 URL cannot complete a single request. Repairing that envelope is the point of this model class, and
 `test_github_copilot_envelope_breaks_the_stock_openai_model` is the recording that proves it.
 
-The other half is thinking: Copilot rejects `reasoning_effort` outright for Anthropic ids, for the
-disabling value as well as the enabling ones, so the model raises rather than degrade silently and
-drops a `thinking=False` that would otherwise go out as `reasoning_effort='none'`.
+The other half is thinking. Copilot returns an Anthropic id's reasoning in `reasoning_text`, a field
+name `OpenAIChatModel` does not know on its own, so the provider profile points
+`openai_chat_thinking_field` at it and the ordinary Chat Completions machinery does the rest — mapping
+it to a `ThinkingPart` and sending it back on later turns. Nothing in this model gates `thinking`:
+Copilot itself answers `400 invalid_reasoning_effort` for an id whose catalog entry has no
+`reasoning_effort`, and for the `'none'` that `thinking=False` maps to, which its Claude ids do not
+offer because they reason adaptively.
 """
 
 from __future__ import annotations as _annotations
 
+import json
 import os
-import re
+from dataclasses import dataclass, field
 
+import httpx2
 import pytest
 
 from pydantic_ai import (
@@ -27,10 +33,8 @@ from pydantic_ai import (
     TextPart,
     ThinkingPart,
     UnexpectedModelBehavior,
-    UserError,
     UserPromptPart,
 )
-from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage
 
@@ -39,7 +43,7 @@ from ..conftest import IsDatetime, IsStr, RequestCapture, try_import
 
 with try_import() as imports_successful:
     from pydantic_ai.models.github_copilot import GitHubCopilotModel
-    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIChatModelSettings
+    from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.providers.github_copilot import GitHubCopilotProvider
 
 
@@ -260,7 +264,11 @@ async def test_github_copilot_sends_model_id_verbatim(
 async def test_github_copilot_thinking_sends_reasoning_effort(
     allow_model_requests: None, github_copilot_api_key: str, request_capture: RequestCapture
 ):
-    """The `github_copilot_supports_reasoning_effort` flag-on side: GPT ids take the parameter."""
+    """`thinking` reaches the wire as `reasoning_effort`, unchanged by this model class.
+
+    `gpt-5.4` is the id whose catalog entry lists `reasoning_effort` and which returns no reasoning
+    field at all, so it pins the forwarding on its own, separately from the Claude ids below.
+    """
     model = GitHubCopilotModel(
         'gpt-5.4',
         provider=GitHubCopilotProvider(api_key=github_copilot_api_key, http_client=request_capture.client),
@@ -271,89 +279,6 @@ async def test_github_copilot_thinking_sends_reasoning_effort(
     )
 
     assert request_capture.body('/chat/completions')['reasoning_effort'] == 'high'
-
-
-@pytest.mark.parametrize('thinking', [True, 'high'])
-@pytest.mark.parametrize('setting_source', ['run', 'model'])
-def test_github_copilot_thinking_raises_for_claude(
-    allow_model_requests: None, github_copilot_api_key: str, thinking: bool | str, setting_source: str
-):
-    """The flag-off side: Copilot rejects `reasoning_effort` for Anthropic ids, so we say so.
-
-    Not a VCR test — the error is raised before any request, which is the whole point: silently
-    dropping `thinking` here would return an answer with no `ThinkingPart` and no explanation.
-
-    Both places a user can put the setting are covered, because the check reads the *resolved*
-    parameters: a model-level `settings=` is invisible to a check that only inspects the argument
-    passed to `run`.
-    """
-    settings = ModelSettings(thinking=thinking)  # pyright: ignore[reportArgumentType]
-    model = GitHubCopilotModel(
-        'claude-haiku-4.5',
-        provider=GitHubCopilotProvider(api_key=github_copilot_api_key),
-        settings=settings if setting_source == 'model' else None,
-    )
-    agent = Agent(model)
-
-    with pytest.raises(
-        UserError,
-        match=re.escape(
-            "`thinking` is not supported with `GitHubCopilotModel` and model 'claude-haiku-4.5': "
-            "GitHub Copilot's chat completions API rejects `reasoning_effort` for Anthropic models."
-        ),
-    ):
-        agent.run_sync('What is the capital of France?', model_settings=settings if setting_source == 'run' else None)
-
-
-async def test_github_copilot_thinking_false_is_dropped_for_claude(
-    allow_model_requests: None, github_copilot_api_key: str, request_capture: RequestCapture
-):
-    """`thinking=False` asks for nothing, so it is satisfied by sending nothing.
-
-    Copilot rejects `reasoning_effort='none'` on Anthropic ids exactly as it rejects `'high'`, and
-    `Model.prepare_request` resolves `False` onto the parameters because the Claude profile does
-    support thinking. Forwarding it would break code that merely turns reasoning off.
-    """
-    model = GitHubCopilotModel(
-        'claude-haiku-4.5',
-        provider=GitHubCopilotProvider(api_key=github_copilot_api_key, http_client=request_capture.client),
-    )
-
-    result = await Agent(model, instructions='Be concise.').run(
-        'What is the capital of France?', model_settings=ModelSettings(thinking=False)
-    )
-
-    assert 'reasoning_effort' not in request_capture.body('/chat/completions')
-    assert result.output == snapshot('The capital of France is Paris.')
-
-
-@pytest.mark.parametrize('thinking', [None, False])
-def test_github_copilot_reasoning_effort_is_forwarded_for_claude(
-    allow_model_requests: None, github_copilot_api_key: str, thinking: bool | None
-):
-    """The gate covers the unified `thinking` setting only, and deliberately stops there.
-
-    `openai_reasoning_effort` is provider-namespaced, so a user who sets it has opted into the
-    OpenAI wire field itself. `models/AGENTS.md` requires forwarding such a setting and letting the
-    API report the incompatibility, rather than guarding on a capability we assumed; `SnowflakeModel
-    ._translate_thinking` draws the same line for Claude on Cortex. Copilot answers `400`, which is
-    the intended outcome; a `UserError` here would mean someone widened the gate to cover it.
-
-    `thinking=False` is included because the gate rewrites it to `None`: the explicit effort must
-    still win, which is the precedence `capabilities/thinking.py` documents.
-    """
-    model = GitHubCopilotModel(
-        'claude-haiku-4.5',
-        provider=GitHubCopilotProvider(api_key=github_copilot_api_key),
-    )
-    settings = OpenAIChatModelSettings(openai_reasoning_effort='low')
-    if thinking is not None:
-        settings['thinking'] = thinking
-
-    resolved, _ = model.prepare_request(settings, ModelRequestParameters())
-
-    assert resolved is not None
-    assert resolved.get('openai_reasoning_effort') == 'low'
 
 
 @pytest.mark.xfail(
@@ -369,21 +294,237 @@ def test_github_copilot_context_window_is_known(github_copilot_api_key: str):
     assert model.profile.get('context_window') is not None
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=UserError,
-    reason="Blocked on the Copilot `/v1/messages` transport. Copilot's Claude models think, but its "
-    'Chat Completions endpoint cannot ask them to, so this raises `UserError` today. An XPASS means '
-    'the Messages transport landed and the `github_copilot_supports_reasoning_effort` gate can go.',
-)
-async def test_github_copilot_claude_thinking(allow_model_requests: None, github_copilot_api_key: str):
-    """No cassette: the `UserError` is raised before any request goes out."""
+async def test_github_copilot_claude_thinking(
+    allow_model_requests: None, github_copilot_api_key: str, request_capture: RequestCapture
+):
+    """Copilot's Claude ids reason on Chat Completions, and the reasoning reaches the user.
+
+    It arrives in `reasoning_text`, which is neither of the two field names `OpenAIChatModel` falls
+    back to, so the `ThinkingPart` below exists only because the provider profile names that field.
+    Copilot returns a `reasoning_opaque` signature alongside it that Pydantic AI deliberately does
+    not carry; `test_github_copilot_claude_thinking_is_sent_back` is what says Copilot accepts a
+    later turn without it.
+
+    The prompt is chosen, not incidental. These ids reason *adaptively*: the effort is a ceiling, not
+    an instruction, and the model answers an easy question without reasoning at any effort. Probed
+    live on 2026-09-07, this prompt at `thinking=True` returned reasoning on 4 of 4 attempts while
+    `'Is 221 prime?'` returned none on 4 of 4 — so a re-record needs a question worth thinking about,
+    not a higher effort.
+    """
+    model = GitHubCopilotModel(
+        'claude-sonnet-5',
+        provider=GitHubCopilotProvider(api_key=github_copilot_api_key, http_client=request_capture.client),
+    )
+    agent = Agent(model, instructions='Be concise.')
+
+    result = await agent.run(
+        'Factor 3599 into two primes. Show only the answer.', model_settings=ModelSettings(thinking=True)
+    )
+
+    assert request_capture.body('/chat/completions')['reasoning_effort'] == 'medium'
+    assert result.all_messages()[-1] == snapshot(
+        ModelResponse(
+            parts=[
+                ThinkingPart(
+                    content="""\
+3599 factors as 59 times 61.
+
+""",
+                    id='reasoning_text',
+                    provider_name='github-copilot',
+                ),
+                TextPart(content='3599 = 59 × 61'),
+            ],
+            usage=RequestUsage(input_tokens=31, output_tokens=24),
+            model_name='claude-sonnet-5',
+            timestamp=IsDatetime(),
+            provider_name='github-copilot',
+            provider_url='https://api.githubcopilot.com',
+            provider_details={'finish_reason': 'stop', 'timestamp': IsDatetime()},
+            provider_response_id=IsStr(),
+            finish_reason='stop',
+            run_id=IsStr(),
+            conversation_id=IsStr(),
+        )
+    )
+
+
+async def test_github_copilot_claude_thinking_stream(allow_model_requests: None, github_copilot_api_key: str):
+    """The streamed twin: `reasoning_text` arrives as deltas and accumulates into a `ThinkingPart`.
+
+    `_map_thinking_delta` reads the same profile field as the non-streamed path, so a profile that
+    covered only one of the two would leave streaming users with the reasoning silently dropped.
+    """
+    model = GitHubCopilotModel('claude-sonnet-5', provider=GitHubCopilotProvider(api_key=github_copilot_api_key))
+    agent = Agent(model, instructions='Be concise.')
+
+    async with agent.run_stream(
+        'Factor 3599 into two primes. Show only the answer.', model_settings=ModelSettings(thinking=True)
+    ) as result:
+        output = await result.get_output()
+
+    assert output == snapshot('**3599 = 59 × 61**')
+    assert result.all_messages()[-1] == snapshot(
+        ModelResponse(
+            parts=[
+                ThinkingPart(
+                    content="""\
+3599 factors as a difference of squares: 60²-1² = 59×61.
+
+""",
+                    id='reasoning_text',
+                    provider_name='github-copilot',
+                ),
+                TextPart(content='**3599 = 59 × 61**'),
+            ],
+            usage=RequestUsage(output_tokens=41, input_tokens=31),
+            model_name='claude-sonnet-5',
+            timestamp=IsDatetime(),
+            provider_name='github-copilot',
+            provider_url='https://api.githubcopilot.com',
+            provider_details={'timestamp': IsDatetime(), 'finish_reason': 'stop'},
+            provider_response_id=IsStr(),
+            finish_reason='stop',
+            run_id=IsStr(),
+            conversation_id=IsStr(),
+        )
+    )
+
+
+async def test_github_copilot_claude_thinking_is_sent_back(
+    allow_model_requests: None, github_copilot_api_key: str, request_capture: RequestCapture
+):
+    """A second turn echoes the reasoning back in `reasoning_text`, and Copilot accepts it.
+
+    `openai_chat_send_back_thinking_parts` is left at its `'auto'` default, which sends a
+    `ThinkingPart` back in the field it came from when its `id` matches the profile's field name.
+    Copilot does not require the echo — probed live on 2026-09-07 it answered `200` to tool round
+    trips that omitted it, and to ones carrying only the `reasoning_opaque` signature we drop — so
+    the profile does not force `'field'` mode.
+    """
+    model = GitHubCopilotModel(
+        'claude-sonnet-5',
+        provider=GitHubCopilotProvider(api_key=github_copilot_api_key, http_client=request_capture.client),
+    )
+    agent = Agent(model, instructions='Be concise.')
+    settings = ModelSettings(thinking=True)
+
+    first = await agent.run('Factor 3599 into two primes. Show only the answer.', model_settings=settings)
+    await agent.run('Now factor 5183 the same way.', message_history=first.all_messages(), model_settings=settings)
+
+    assert request_capture.bodies('/chat/completions')[1]['messages'] == snapshot(
+        [
+            {'role': 'system', 'content': 'Be concise.'},
+            {'role': 'user', 'content': 'Factor 3599 into two primes. Show only the answer.'},
+            {
+                'role': 'assistant',
+                'reasoning_text': """\
+3599 factors as 59 times 61.
+
+""",
+                'content': '3599 = 59 × 61',
+            },
+            {'role': 'user', 'content': 'Now factor 5183 the same way.'},
+        ]
+    )
+
+
+async def test_github_copilot_gemini_thinking(
+    allow_model_requests: None, github_copilot_api_key: str, request_capture: RequestCapture
+):
+    """Copilot's Gemini ids return reasoning in the same `reasoning_text` field the Claude ids use.
+
+    The second family on that field, and the reason the profile keys it on two prefixes rather than
+    on `claude-`. Worth its own recording because these ids do not appear in `GET /models` at all
+    while `/chat/completions` serves them, so the catalog cannot be read as the reachable set.
+
+    The reasoning text itself is matched loosely: Gemini's is several paragraphs and would churn the
+    snapshot on every re-record, while what this test is about is the part existing at all with the
+    `id` the profile names. `usage.details` carries the reasoning tokens Copilot billed for it.
+    """
+    model = GitHubCopilotModel(
+        'gemini-3.8-flash',
+        provider=GitHubCopilotProvider(api_key=github_copilot_api_key, http_client=request_capture.client),
+    )
+    agent = Agent(model, instructions='Be concise.')
+
+    result = await agent.run(
+        'Factor 3599 into two primes. Show only the answer.', model_settings=ModelSettings(thinking=True)
+    )
+
+    assert request_capture.body('/chat/completions')['reasoning_effort'] == 'medium'
+    assert result.all_messages()[-1] == snapshot(
+        ModelResponse(
+            parts=[
+                ThinkingPart(
+                    content=IsStr(),
+                    id='reasoning_text',
+                    provider_name='github-copilot',
+                ),
+                TextPart(content='59 × 61'),
+            ],
+            usage=RequestUsage(details={'reasoning_tokens': 122}, input_tokens=18, output_tokens=6),
+            model_name='gemini-3.8-flash',
+            timestamp=IsDatetime(),
+            provider_name='github-copilot',
+            provider_url='https://api.githubcopilot.com',
+            provider_details={'finish_reason': 'stop', 'timestamp': IsDatetime()},
+            provider_response_id=IsStr(),
+            finish_reason='stop',
+            run_id=IsStr(),
+            conversation_id=IsStr(),
+        )
+    )
+
+
+async def test_github_copilot_claude_thinking_false_is_rejected(
+    allow_model_requests: None, github_copilot_api_key: str
+):
+    """`thinking=False` maps to `reasoning_effort='none'`, which Copilot's Claude ids do not offer.
+
+    They reason adaptively and expose no off switch — the catalog lists
+    `[low medium high xhigh max]` and no `none` — so Copilot answers `400`. Surfacing that beats
+    dropping the setting: a user who asked to turn reasoning off would otherwise be billed for
+    reasoning they believed they had disabled.
+    """
+    model = GitHubCopilotModel('claude-sonnet-5', provider=GitHubCopilotProvider(api_key=github_copilot_api_key))
+    agent = Agent(model, instructions='Be concise.')
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        await agent.run('Is 221 prime?', model_settings=ModelSettings(thinking=False))
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.body == snapshot(
+        {
+            'message': 'reasoning_effort "none" is not supported by model claude-sonnet-5; supported values: [low medium high xhigh max]',
+            'code': 'invalid_reasoning_effort',
+        }
+    )
+
+
+async def test_github_copilot_claude_without_reasoning_effort_support_is_rejected(
+    allow_model_requests: None, github_copilot_api_key: str
+):
+    """Not every Claude id Copilot serves takes `reasoning_effort`, and Copilot says which.
+
+    `claude-haiku-4.5`'s catalog entry carries no `reasoning_effort` key at all, so the parameter is
+    rejected outright. That is a per-id fact Copilot owns and reports. A client-side gate keyed on
+    the `claude-` prefix would have to guess it and would guess wrong, which is what
+    `test_github_copilot_claude_thinking` — the same parameter accepted on `claude-sonnet-5` — shows.
+    """
     model = GitHubCopilotModel('claude-haiku-4.5', provider=GitHubCopilotProvider(api_key=github_copilot_api_key))
     agent = Agent(model, instructions='Be concise.')
 
-    result = await agent.run('What is 2 + 2?', model_settings=ModelSettings(thinking=True))
+    with pytest.raises(ModelHTTPError) as exc_info:
+        await agent.run('Is 221 prime?', model_settings=ModelSettings(thinking=True))
 
-    assert any(isinstance(part, ThinkingPart) for part in result.new_messages()[-1].parts)
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.body == snapshot(
+        {
+            'message': 'reasoning_effort "medium" was provided, but model claude-haiku-4.5 does not support reasoning effort',
+            'code': 'invalid_reasoning_effort',
+        }
+    )
 
 
 @pytest.mark.xfail(
@@ -418,3 +559,125 @@ async def test_github_copilot_fine_grained_pat_authenticates(allow_model_request
     result = await agent.run('What is the capital of France?')
 
     assert result.output
+
+
+_PROXY_RESPONSE_ID = 'msg_proxy_stream_01'
+_PROXY_TOOL_CALL_ID = 'toolu_proxy_stream_01'
+
+
+def _proxy_chunk(delta: dict[str, object], finish_reason: str | None = None) -> dict[str, object]:
+    """One Copilot streamed chunk, modelled on the shapes in this file's live cassettes.
+
+    Copilot omits `object` on every chunk, which is why it is absent here too.
+    """
+    choice: dict[str, object] = {'index': 0, 'delta': delta}
+    if finish_reason is not None:
+        choice['finish_reason'] = finish_reason
+    return {'choices': [choice], 'created': 1788538002, 'id': _PROXY_RESPONSE_ID, 'model': 'claude-haiku-4.5'}
+
+
+def _proxy_sse(*chunks: dict[str, object]) -> bytes:
+    return ''.join(f'data: {json.dumps(chunk)}\n\n' for chunk in chunks).encode() + b'data: [DONE]\n\n'
+
+
+# The tool call arrives as an opening delta carrying `id`/`type`/`function.name` and then bare
+# `function.arguments` fragments, each keyed by the same `index` — the shape
+# `test_github_copilot_claude_stream_tool_call` recorded against Copilot.
+_PROXY_TOOL_CALL_STREAM = _proxy_sse(
+    _proxy_chunk(
+        {
+            'content': None,
+            'tool_calls': [
+                {'function': {'name': 'get_weather'}, 'id': _PROXY_TOOL_CALL_ID, 'index': 0, 'type': 'function'}
+            ],
+        }
+    ),
+    _proxy_chunk({'content': None, 'tool_calls': [{'function': {'arguments': '{"city": '}, 'index': 0}]}),
+    _proxy_chunk({'content': None, 'tool_calls': [{'function': {'arguments': '"Paris"}'}, 'index': 0}]}),
+    _proxy_chunk({'content': None}, finish_reason='tool_calls'),
+)
+
+_PROXY_TEXT_STREAM = _proxy_sse(
+    _proxy_chunk({'content': 'The weather in Paris is sunny.'}),
+    _proxy_chunk({'content': None}, finish_reason='stop'),
+)
+
+
+@dataclass
+class _CopilotProxy:
+    """A stand-in for a Copilot-compatible proxy: records what reached it, replays two streams."""
+
+    requests: list[httpx2.Request] = field(default_factory=list[httpx2.Request])
+    bodies: list[dict[str, object]] = field(default_factory=list[dict[str, object]])
+
+    async def handle(self, request: httpx2.Request) -> httpx2.Response:
+        self.requests.append(request)
+        self.bodies.append(json.loads(request.content))
+        stream = _PROXY_TOOL_CALL_STREAM if len(self.requests) == 1 else _PROXY_TEXT_STREAM
+        return httpx2.Response(200, content=stream, headers={'content-type': 'text/event-stream'})
+
+
+@pytest.fixture
+def copilot_proxy() -> _CopilotProxy:
+    return _CopilotProxy()
+
+
+@pytest.mark.vcr(ignore_hosts=['copilot-proxy.example'])
+async def test_github_copilot_streams_a_tool_call_round_trip_through_a_proxy(
+    allow_model_requests: None, copilot_proxy: _CopilotProxy
+):
+    """A custom base URL, a placeholder bearer, and a fully streamed tool-call round trip.
+
+    This is the shape a downstream engine such as gh-aw drives: `GitHubCopilotProvider` pointed at a
+    proxy that swaps the token out, so the credential Pydantic AI holds is a placeholder that must
+    never reach a network. What it adds over its two neighbours — `test_github_copilot_provider_base_url_argument`
+    for the URL and `test_github_copilot_claude_stream_tool_call` for the recorded streamed shapes —
+    is the three together across one transport: where the request lands, which bearer rides with it,
+    and a tool call reassembled from split argument fragments and answered on a second streamed
+    request. The proxy here is a `MockTransport` stand-in; nothing is asserted about a real one.
+    """
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(copilot_proxy.handle)) as http_client:
+        provider = GitHubCopilotProvider(
+            base_url='https://copilot-proxy.example/api',
+            api_key='placeholder-token',
+            http_client=http_client,
+        )
+        agent = Agent(GitHubCopilotModel('claude-haiku-4.5', provider=provider), instructions='Be concise.')
+        cities: list[str] = []
+
+        @agent.tool_plain
+        def get_weather(city: str) -> str:
+            """Get the weather in a city."""
+            cities.append(city)
+            return 'sunny'
+
+        async with agent.run_stream('What is the weather in Paris?') as result:
+            output = await result.get_output()
+
+    assert output == snapshot('The weather in Paris is sunny.')
+    assert cities == ['Paris']
+    assert [str(request.url) for request in copilot_proxy.requests] == snapshot(
+        ['https://copilot-proxy.example/api/chat/completions', 'https://copilot-proxy.example/api/chat/completions']
+    )
+    assert [request.headers['authorization'] for request in copilot_proxy.requests] == snapshot(
+        ['Bearer placeholder-token', 'Bearer placeholder-token']
+    )
+    assert [body['model'] for body in copilot_proxy.bodies] == snapshot(['claude-haiku-4.5', 'claude-haiku-4.5'])
+    assert copilot_proxy.bodies[1]['messages'] == snapshot(
+        [
+            {'role': 'system', 'content': 'Be concise.'},
+            {'role': 'user', 'content': 'What is the weather in Paris?'},
+            {
+                'role': 'assistant',
+                'content': None,
+                'tool_calls': [
+                    {
+                        'id': 'toolu_proxy_stream_01',
+                        'type': 'function',
+                        'function': {'name': 'get_weather', 'arguments': '{"city": "Paris"}'},
+                    }
+                ],
+            },
+            {'role': 'tool', 'tool_call_id': 'toolu_proxy_stream_01', 'content': 'sunny'},
+        ]
+    )

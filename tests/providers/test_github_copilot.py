@@ -134,13 +134,19 @@ def test_github_copilot_provider_pass_openai_client():
 
 
 def test_github_copilot_provider_claude_profile():
-    """Claude ids get the Anthropic family profile, plus the Copilot overlay on top."""
+    """Claude ids get the Anthropic family profile, plus the Copilot overlay on top.
+
+    `openai_chat_thinking_field` is the overlay's load-bearing part: Copilot returns this family's
+    reasoning in `reasoning_text`, which is neither of the two names `OpenAIChatModel` falls back to,
+    so without it the reasoning would be dropped. `test_github_copilot_provider_gemini_profile` pins
+    the other family on that field.
+    """
     profile = GitHubCopilotProvider.model_profile('claude-haiku-4.5')
     assert profile is not None
     assert profile.get('supports_thinking') is True
     assert profile.get('supports_json_schema_output') is True
     assert profile.get('json_schema_transformer') is OpenAIJsonSchemaTransformer
-    assert profile.get('github_copilot_supports_reasoning_effort') is False
+    assert profile.get('openai_chat_thinking_field') == 'reasoning_text'
     assert profile.get('openai_chat_supports_max_completion_tokens') is True
 
 
@@ -166,21 +172,38 @@ def test_github_copilot_profile_dot_to_hyphen_is_anthropic_only():
 
 
 def test_github_copilot_provider_gpt_profile():
+    """The off side of the `openai_chat_thinking_field` branch: these families emit no reasoning field.
+
+    Probed live on 2026-09-07 with `reasoning_effort` set and unset: `gpt-5.4` and `kimi-k3` answer
+    with `content`, `padding` and `role` only — `kimi-k3` bills reasoning tokens while surfacing no
+    text — so neither gets a custom field. Naming one they don't emit would route their
+    `reasoning`/`reasoning_content` parts into tags mode when sending thinking back.
+    """
     profile = GitHubCopilotProvider.model_profile('gpt-5.4')
     assert profile is not None
     assert profile.get('supports_thinking') is True
-    assert profile.get('github_copilot_supports_reasoning_effort') is True
+    assert profile.get('openai_chat_thinking_field') is None
     assert profile.get('json_schema_transformer') is OpenAIJsonSchemaTransformer
+
+    kimi = GitHubCopilotProvider.model_profile('kimi-k3')
+    assert kimi is not None
+    assert kimi.get('openai_chat_thinking_field') is None
 
 
 def test_github_copilot_provider_gemini_profile():
-    """Copilot speaks OpenAI tools and `response_format`, not Gemini `generateContent`."""
+    """Copilot speaks OpenAI tools and `response_format`, not Gemini `generateContent`.
+
+    Gemini is the second family on `reasoning_text`: probed live on 2026-09-07, `gemini-3.7-flash`
+    and `gemini-3.8-flash` return it exactly as `claude-sonnet-5` does, so the profile keys the field
+    on two prefixes rather than on `claude-` alone.
+    """
     family = google_model_profile('gemini-3.0-pro')
     assert family is not None and family.get('json_schema_transformer') is GoogleJsonSchemaTransformer
 
     profile = GitHubCopilotProvider.model_profile('gemini-3.0-pro')
     assert profile is not None
     assert profile.get('json_schema_transformer') is OpenAIJsonSchemaTransformer
+    assert profile.get('openai_chat_thinking_field') == 'reasoning_text'
 
 
 def test_github_copilot_provider_sampling_restriction_follows_the_family():
