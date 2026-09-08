@@ -159,6 +159,50 @@ def test_render_banner_wraps_long_details(render: Callable[..., str]):
 """)
 
 
+def test_render_banner_elides_a_detail_too_wide_for_the_column(render: Callable[..., str]):
+    """A Bedrock ARN is far wider than the banner, and its ends are the part worth keeping."""
+    banner = render(
+        model='bedrock:arn:aws:bedrock:us-east-1:123456789012:inference-profile/us.anthropic.claude-fable-5-v1:0',
+        observability=False,
+    )
+
+    assert banner == snapshot("""\
+         / \\          HEADING
+       /     \\
+     /____.____\\      agent: support_agent
+   /      |      \\      model: bedrock:arn:aws:bedrock:us-east-1:…e/us.anthropic.claude-fable-5-v1:0
+ /        |        \\    tools: 2 • capabilities: 0
+  ·.______|______.·\
+""")
+    # Both ends survive, so the banner still names a provider and a model rather than an account.
+    assert 'bedrock:arn' in banner
+    assert 'claude-fable-5-v1:0' in banner
+    assert max(map(len, banner.splitlines())) <= 100
+
+
+def test_render_banner_wraps_a_version_line_too_wide_for_the_column(
+    monkeypatch: pytest.MonkeyPatch, render: Callable[..., str]
+):
+    """A dev install with the harness already overflows, and no version is worth cutting short."""
+    monkeypatch.setattr(
+        _display,
+        '_version_line',
+        lambda: 'pydantic-ai v2.35.1.dev17+65fcb1d83 • pydantic-ai-harness v0.7.0 • Python 3.14.3',
+    )
+
+    banner = render(observability=False)
+
+    assert banner == snapshot("""\
+         / \\
+       /     \\        pydantic-ai v2.35.1.dev17+65fcb1d83 • pydantic-ai-harness v0.7.0 • Python
+     /____.____\\        3.14.3
+   /      |      \\
+ /        |        \\  agent: support_agent • model: openai:gpt-5.6-sol • tools: 2 • capabilities: 0
+  ·.______|______.·\
+""")
+    assert max(map(len, banner.splitlines())) <= 100
+
+
 def test_render_banner_colors_the_logo_and_identity(monkeypatch: pytest.MonkeyPatch, render: Callable[..., str]):
     """The logo takes `clai`'s magenta, and what identifies the agent takes the green it used."""
     banner = render(color=True, observability=False)
@@ -207,9 +251,12 @@ def test_display_banner_with_harness(monkeypatch: pytest.MonkeyPatch, stderr: TT
 
     display_banner()
 
-    assert (
+    # Asserted on the line rather than on the output, which wraps it once the versions are long
+    # enough — as a dev install with the harness already is.
+    assert _display._version_line() == (  # pyright: ignore[reportPrivateUsage]
         f'pydantic-ai v{__version__} • pydantic-ai-harness v1.2.3 • Python {_display.platform.python_version()}'
-    ) in stderr.getvalue()
+    )
+    assert 'pydantic-ai-harness v1.2.3' in stderr.getvalue()
 
 
 def test_display_banner_with_harness_module_but_no_distribution(monkeypatch: pytest.MonkeyPatch, stderr: TTYStream):

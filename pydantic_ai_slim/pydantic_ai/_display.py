@@ -150,7 +150,8 @@ def render_banner(
     info.append(('tools', str(tools), False))
     info.append(('capabilities', str(capabilities), False))
 
-    lines = [_version_line(), '', *_info_lines(info)]
+    # The versions carry no colour, so `textwrap` can be trusted to break them at a separator.
+    lines = [*wrap(_version_line(), width=_TEXT_WIDTH, subsequent_indent=_INFO_INDENT), '', *_info_lines(info)]
     if observability:
         # Both halves of this are advice for someone who hasn't set observability up, so a session
         # that has stays out of it entirely rather than being told to do what it has already done.
@@ -235,6 +236,7 @@ def _info_lines(info: Sequence[tuple[str, str, bool]]) -> list[str]:
     lines: list[str] = []
     width = 0
     for label, value, highlight in info:
+        value = _elided(value, _TEXT_WIDTH - len(_INFO_INDENT) - len(label) - len(': '))
         item = f'{label}: {value}'
         styled = f'{label}: {_colored(value, _HIGHLIGHT_COLOR)}' if highlight else item
         if lines and width + len(_INFO_SEPARATOR) + len(item) <= _TEXT_WIDTH:
@@ -245,6 +247,19 @@ def _info_lines(info: Sequence[tuple[str, str, bool]]) -> list[str]:
             lines.append(indent + styled)
             width = len(indent) + len(item)
     return lines
+
+
+def _elided(value: str, width: int) -> str:
+    """`value` brought down to `width` by dropping its middle, which is the part that identifies least.
+
+    A model ID too wide for the banner is usually an ARN or a deployment path, whose ends say the
+    provider and the model and whose middle is an account and a region. Cutting the tail off instead
+    would leave the banner naming a model without the model in it.
+    """
+    if len(value) <= width:
+        return value
+    head = (width - 1) // 2
+    return value[:head] + '…' + value[len(value) - (width - 1 - head) :]
 
 
 def _colored(text: str, color: str) -> str:
