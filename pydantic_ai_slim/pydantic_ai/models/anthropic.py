@@ -71,6 +71,7 @@ from ..native_tools._tool_search import (
 )
 from ..profiles import DEFAULT_THINKING_TAGS, ModelProfile, ModelProfileSpec, merge_profile
 from ..profiles.anthropic import (
+    ANTHROPIC_SAMPLING_PARAMS,
     ANTHROPIC_THINKING_BUDGET_MAP,
     AnthropicCodeExecutionToolVersion,
     AnthropicEffort,
@@ -327,7 +328,6 @@ _ADVISOR_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicVertex, Asy
 # that ignores the entry on *every* transport — which measured the model, not the transport.
 _INLINE_SYSTEM_PROMPT_UNSUPPORTED_CLIENTS = (AsyncAnthropicFoundry,)
 
-_ANTHROPIC_SAMPLING_PARAMS = ('temperature', 'top_p', 'top_k')
 _ANTHROPIC_TASK_BUDGETS_BETA = 'task-budgets-2026-03-13'
 _ANTHROPIC_THINKING_BINDING_BETA = 'thinking-binding-controls-2026-08-01'
 _ANTHROPIC_DROP_STALE_THINKING_BLOCKS: BetaThinkingBlockBindingParam = {'prefix_mismatch_behavior': 'drop_block'}
@@ -596,7 +596,7 @@ def _build_extra_body(
     the SDK gave it while the parameters were still named arguments.
     """
     fields: dict[str, Any] = {
-        setting: value for setting in _ANTHROPIC_SAMPLING_PARAMS if (value := model_settings.get(setting)) is not None
+        setting: value for setting in ANTHROPIC_SAMPLING_PARAMS if (value := model_settings.get(setting)) is not None
     }
     if thinking_override is not None:
         fields['thinking'] = thinking_override
@@ -1086,19 +1086,19 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         return prepared_settings, model_request_parameters
 
     def _drop_unsupported_sampling_settings(self, model_settings: ModelSettings) -> None:
-        dropped = {setting for setting in _ANTHROPIC_SAMPLING_PARAMS if setting in model_settings}
+        dropped = {setting for setting in ANTHROPIC_SAMPLING_PARAMS if setting in model_settings}
         extra_body = model_settings.get('extra_body')
         if is_str_dict(extra_body):
-            dropped |= {setting for setting in _ANTHROPIC_SAMPLING_PARAMS if setting in extra_body}
+            dropped |= {setting for setting in ANTHROPIC_SAMPLING_PARAMS if setting in extra_body}
             model_settings['extra_body'] = {
-                key: value for key, value in extra_body.items() if key not in _ANTHROPIC_SAMPLING_PARAMS
+                key: value for key, value in extra_body.items() if key not in ANTHROPIC_SAMPLING_PARAMS
             }
 
-        for setting in _ANTHROPIC_SAMPLING_PARAMS:
+        for setting in ANTHROPIC_SAMPLING_PARAMS:
             model_settings.pop(setting, None)
 
         if dropped:
-            ordered = [setting for setting in _ANTHROPIC_SAMPLING_PARAMS if setting in dropped]
+            ordered = [setting for setting in ANTHROPIC_SAMPLING_PARAMS if setting in dropped]
             warnings.warn(
                 f'Sampling parameters {ordered} are not supported by {self.model_name!r}. These settings will be ignored.',
                 UserWarning,
