@@ -646,6 +646,13 @@ class TestMCPCapability:
         assert isinstance(native_sse, MCPServerTool)
         assert native_sse.id == 'server1.example.com-sse'
 
+        # Same host/path on different ports must not collide (#8207)
+        cap_a = MCP(url='http://localhost:8000/mcp', native=True)
+        cap_b = MCP(url='http://localhost:9000/mcp', native=True)
+        assert cap_a.id == 'localhost:8000-mcp'
+        assert cap_b.id == 'localhost:9000-mcp'
+        assert cap_a.id != cap_b.id
+
     def test_mcp_local_toolset_id_derived(self):
         """MCP stamps a derived id on the local `MCPToolset` so it can be used with durable
         execution. Precedence: explicit `id` → native `MCPServerTool` id → host+slug from the URL,

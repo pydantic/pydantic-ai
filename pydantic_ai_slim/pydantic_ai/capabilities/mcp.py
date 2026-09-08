@@ -136,11 +136,16 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
             return self.native.id
         if url is None:
             return None
-        # Include hostname to avoid collisions (e.g. two /sse URLs on different hosts)
+        # Include hostname (and port when present) to avoid collisions — e.g. two /sse
+        # URLs on different hosts, or the same path on localhost:8000 vs localhost:9000 (#8207).
         parsed = urlparse(url)
         path = parsed.path.rstrip('/')
         slug = path.split('/')[-1] if path else ''
-        host = parsed.hostname or ''
+        if parsed.port is not None:
+            # Prefer netloc (minus userinfo) so IPv6 brackets and the port stay intact.
+            host = parsed.netloc.rsplit('@', 1)[-1]
+        else:
+            host = parsed.hostname or ''
         return f'{host}-{slug}' if slug else host or url
 
     @cached_property
