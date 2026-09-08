@@ -83,7 +83,7 @@ class DeferredToolRequests:
             for tool_call_id in approval_ids - set(approvals):
                 approvals[tool_call_id] = ToolApproved()
 
-        return DeferredToolResults(approvals=approvals, calls=calls, metadata=metadata or {})
+        return DeferredToolResults(approvals=approvals, calls=calls, metadata=_copy_deferred_metadata(metadata))
 
     def remaining(self, results: DeferredToolResults) -> DeferredToolRequests | None:
         """Return unresolved requests after applying results, or `None` if all resolved."""
@@ -94,9 +94,13 @@ class DeferredToolRequests:
         remaining = DeferredToolRequests(
             calls=[c for c in self.calls if c.tool_call_id not in call_result_ids],
             approvals=[c for c in self.approvals if c.tool_call_id not in approval_result_ids],
-            metadata={k: v for k, v in self.metadata.items() if k not in resolved_ids},
+            metadata={k: dict(v) for k, v in self.metadata.items() if k not in resolved_ids},
         )
         return remaining if remaining.calls or remaining.approvals else None
+
+
+def _copy_deferred_metadata(metadata: dict[str, dict[str, Any]] | None) -> dict[str, dict[str, Any]]:
+    return {tool_call_id: dict(tool_call_metadata) for tool_call_id, tool_call_metadata in (metadata or {}).items()}
 
 
 @dataclass(kw_only=True)

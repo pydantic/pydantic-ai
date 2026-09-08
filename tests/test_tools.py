@@ -2906,6 +2906,24 @@ def test_deferred_tool_results_serializable():
     )
 
 
+def test_deferred_tool_metadata_copied_at_continuation_boundaries():
+    requests = DeferredToolRequests(
+        calls=[ToolCallPart('tool', {}, tool_call_id='call-1')],
+        metadata={'call-1': {'scope': 'before'}},
+    )
+    caller_metadata = {'call-1': {'scope': 'before'}}
+
+    results = requests.build_results(metadata=caller_metadata)
+    caller_metadata['call-1']['scope'] = 'after-build-results'
+
+    remaining = requests.remaining(results)
+    assert remaining is not None
+    requests.metadata['call-1']['scope'] = 'after-remaining'
+
+    assert results.metadata == {'call-1': {'scope': 'before'}}
+    assert remaining.metadata == {'call-1': {'scope': 'before'}}
+
+
 def test_deferred_tool_call_result_tool_failed():
     """A `ToolFailed` in `DeferredToolResults.calls` reaches the model as a failed tool return, not a retry or a success."""
 
