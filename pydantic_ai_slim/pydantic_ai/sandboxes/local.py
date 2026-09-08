@@ -23,6 +23,7 @@ from typing_extensions import Self
 
 from pydantic_ai._utils import cancel_and_drain, run_in_executor
 
+from ._lazy import LazySandbox
 from .protocol import (
     CommandResult,
     FileEntry,
@@ -59,7 +60,7 @@ _OUTPUT_DRAIN_GRACE = 2.0
 """How long to keep reading a command's pipes after the direct child has exited."""
 
 
-class LocalSandbox(SandboxBackend, SupportsFilesystem):
+class LocalSandbox(LazySandbox[Path], SandboxBackend, SupportsFilesystem):
     """[`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] over host subprocesses and the host filesystem.
 
     Isolates nothing: commands run as host subprocesses with the host process's privileges.
@@ -107,8 +108,7 @@ class LocalSandbox(SandboxBackend, SupportsFilesystem):
         # kernel resolves a cwd like `link/..` through the symlink while lexical joins collapse
         # it as text, so a non-canonical root would point `run()` and `fs` at different
         # directories, breaking the protocol's one-environment contract.
-        self._resolved_root: Path | None = None
-        self._root_lock = anyio.Lock()
+        super().__init__()
         self._ref: SandboxRef | None = None
 
     @property
@@ -124,23 +124,18 @@ class LocalSandbox(SandboxBackend, SupportsFilesystem):
         shape for their provider handle, so create-or-attach happens on first use and no method
         can skip it.
         """
-        return self._resolve_root()
+        return self.sandbox
 
-    async def _resolve_root(self) -> Path:
-        # The default temp root is created lazily, so a constructed-but-unused sandbox doesn't
-        # leak a directory, and off the event loop, since `mkdtemp` and `resolve` are blocking
-        # syscalls. The lock is what makes the two safe together: without it, two concurrent
-        # first uses would each create a directory and one would leak.
-        async with self._root_lock:
-            if self._resolved_root is None:
-                if self._given_root is None:
-                    self._resolved_root = await run_in_executor(
-                        lambda: Path(tempfile.mkdtemp(prefix='pydantic-ai-sandbox-')).resolve()
-                    )
-                else:
-                    self._resolved_root = await run_in_executor(self._given_root.resolve)
-                self._ref = SandboxRef(sandbox_id=f'local-{uuid.uuid4().hex}')
-            return self._resolved_root
+    async def create_or_attach(self) -> Path:
+        """Create or canonicalize the working directory on first acquisition."""
+        # Blocking filesystem calls run off the event loop. LazySandbox serializes
+        # acquisition so concurrent first uses cannot create separate directories.
+        if self._given_root is None:
+            root = await run_in_executor(lambda: Path(tempfile.mkdtemp(prefix='pydantic-ai-sandbox-')).resolve())
+        else:
+            root = await run_in_executor(self._given_root.resolve)
+        self._ref = SandboxRef(sandbox_id=f'local-{uuid.uuid4().hex}')
+        return root
 
     async def __aenter__(self) -> Self:
         return self
@@ -148,14 +143,14 @@ class LocalSandbox(SandboxBackend, SupportsFilesystem):
     async def __aexit__(
         self, exc_type: type[BaseException] | None, exc: BaseException | None, tb: TracebackType | None
     ) -> None:
-        # Under the root lock: an unlocked clear would race `_resolve_root()` — a first use
+        # Under the root lock: an unlocked clear would race acquisition — a first use
         # blocked on the lock could otherwise recreate a root mid-teardown that nothing
         # would ever remove.
-        async with self._root_lock:
-            if self._owns_root and self._resolved_root is not None:
+        async with self._lock:
+            if self._owns_root and self._live is not None:
                 # Reset first so a reused sandbox lazily creates a fresh root instead of
                 # resurrecting the deleted path.
-                root, self._resolved_root, self._ref = self._resolved_root, None, None
+                root, self._live, self._ref = self._live, None, None
                 try:
                     await run_in_executor(shutil.rmtree, root)
                 except FileNotFoundError:

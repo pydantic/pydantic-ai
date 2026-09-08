@@ -126,33 +126,22 @@ The backend holds your settings and, if the run is continuing an environment, it
 the environment behind a property so no method can use it without connecting first:
 
 ```python {title="my_backend.py"}
-from collections.abc import Awaitable
 from typing import Any
 
-import anyio
-
-from pydantic_ai.sandboxes import CommandResult, SandboxCommand, SandboxRef
+from pydantic_ai.sandboxes import CommandResult, LazySandbox, SandboxCommand, SandboxRef
 
 
-class MyBackend:
+class MyBackend(LazySandbox[Any]):
     def __init__(self, *, client: Any, ref: SandboxRef | None, name: str | None):
+        super().__init__()
         self.client, self.ref, self.name = client, ref, name
-        self._sandbox: Any | None = None
-        self._lock = anyio.Lock()
 
-    @property
-    def sandbox(self) -> Awaitable[Any]:
-        return self._resolve()
-
-    async def _resolve(self) -> Any:
-        async with self._lock:
-            if self._sandbox is None:
-                if self.ref is not None:
-                    self._sandbox = await self.client.connect(self.ref.sandbox_id)
-                else:
-                    self._sandbox = await self.client.create(name=self.name)
-                    self.ref = SandboxRef(sandbox_id=self._sandbox.id)
-        return self._sandbox
+    async def create_or_attach(self) -> Any:
+        if self.ref is not None:
+            return await self.client.connect(self.ref.sandbox_id)
+        sandbox = await self.client.create(name=self.name)
+        self.ref = SandboxRef(sandbox_id=sandbox.id)
+        return sandbox
 
     async def run(self, command: SandboxCommand, **kwargs: Any) -> CommandResult:
         sandbox = await self.sandbox
@@ -162,6 +151,18 @@ class MyBackend:
         sandbox = await self.sandbox
         return sandbox.working_dir
 ```
+
+[`LazySandbox`][pydantic_ai.sandboxes.LazySandbox] is optional authoring support; the backend
+protocol remains structural. Parameterize it with your SDK's native sandbox type instead of
+`Any` in a real integration. Each operation awaits `self.sandbox`; the helper serializes
+acquisition per backend instance and caches a successful handle. The lock is released before
+the operation, so independent commands can run concurrently.
+
+Failed or cancelled acquisition is not cached; a waiting or later caller may retry.
+Cancelling a waiting caller does not cancel the acquisition already in progress. Providers own
+partial-resource cleanup, identity updates, and SDK error translation in `create_or_attach`.
+The helper does not coordinate separate instances or processes, check remote liveness, or
+manage teardown. Callers await the property rather than calling the acquisition hook directly.
 
 The capability then just builds one:
 
