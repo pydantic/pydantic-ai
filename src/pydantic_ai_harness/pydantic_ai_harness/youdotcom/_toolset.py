@@ -165,14 +165,35 @@ class YouClient(Protocol):
         ...  # pragma: no cover
 
 
+def _harness_version() -> str:
+    """Resolve the installed `pydantic-ai-harness` version for the attribution header."""
+    from importlib.metadata import version as _pkg_version
+
+    try:
+        return _pkg_version('pydantic-ai-harness')
+    except Exception:  # pragma: no cover
+        return 'unknown'
+
+
 def default_client(timeout_ms: int) -> YouClient:
-    """Build a `youdotcom.You` client from the `YDC_API_KEY` environment variable."""
+    """Build a `youdotcom.You` client from the `YDC_API_KEY` environment variable.
+
+    The client carries an `X-Client-Info` attribution header (SDK 3.1.2+)
+    so You.com analytics can distinguish harness traffic from other SDK callers.
+    """
     if not (os.environ.get('YDC_API_KEY') or os.environ.get('YOU_API_KEY_AUTH')):
         raise UserError(
             'The You.com capabilities need an API key: set the YDC_API_KEY environment variable, '
             'or pass a configured client, e.g. YouSearch(client=You(api_key_auth=...)).'
         )
-    return You(api_key_auth=None, timeout_ms=timeout_ms)
+    return You(
+        api_key_auth=None,
+        timeout_ms=timeout_ms,
+        app_name='pydantic-ai-harness',
+        app_version=_harness_version(),
+        app_title='Pydantic AI Harness',
+        app_url='https://github.com/pydantic/pydantic-ai-harness',
+    )
 
 
 def recoverable(

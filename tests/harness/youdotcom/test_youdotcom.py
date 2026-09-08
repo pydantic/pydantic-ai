@@ -7,6 +7,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+from unittest.mock import patch
 
 import httpx
 import pytest
@@ -30,6 +31,7 @@ from pydantic_ai_harness.youdotcom import (
     YouSearch,
     YouSearchToolset,
 )
+from pydantic_ai_harness.youdotcom._toolset import default_client
 
 
 @pytest.fixture
@@ -596,6 +598,19 @@ class TestYouSearchCapability:
         monkeypatch.setenv('YOU_API_KEY_AUTH', 'legacy-key')
         toolset = YouSearch[None]().get_toolset()
         assert isinstance(toolset, YouSearchToolset)
+
+    def test_default_client_sets_attribution_header(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """default_client() passes app_name/app_version/app_title/app_url to You()."""
+        monkeypatch.setenv('YDC_API_KEY', 'test-key')
+        with patch('pydantic_ai_harness.youdotcom._toolset.You') as you_cls:
+            default_client(timeout_ms=60_000)
+        kwargs = you_cls.call_args.kwargs
+        assert kwargs['app_name'] == 'pydantic-ai-harness'
+        assert kwargs['app_title'] == 'Pydantic AI Harness'
+        assert kwargs['app_url'] == 'https://github.com/pydantic/pydantic-ai-harness'
+        assert isinstance(kwargs['app_version'], str) and kwargs['app_version']
+        assert kwargs['api_key_auth'] is None
+        assert kwargs['timeout_ms'] == 60_000
 
     @pytest.mark.parametrize('num_results', [0, 21])
     def test_num_results_out_of_bounds_rejected(self, num_results: int) -> None:

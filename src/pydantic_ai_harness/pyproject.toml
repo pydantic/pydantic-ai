@@ -83,7 +83,7 @@ aws-lambda = [
     "pydantic-ai-slim>=2.38.0",
 ]
 youdotcom = [
-    "youdotcom>=3.1.1,<4",
+    "youdotcom>=3.1.2,<4",
 ]
 mongodb = [
     "pymongo>=4.17.0",
