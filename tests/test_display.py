@@ -91,49 +91,45 @@ def find_anything(name: str) -> object:
     return object()
 
 
-def test_render_banner_with_logfire(monkeypatch: pytest.MonkeyPatch, render: Callable[..., str]):
-    # Pin the branch via `sys.modules` rather than the install, so the slim jobs — where `logfire`
-    # genuinely isn't importable — assert the same banner as the full ones.
-    monkeypatch.setitem(sys.modules, 'logfire', None)
-
+def test_render_banner(render: Callable[..., str]):
     assert render() == snapshot("""\
                       HEADING
+
          / \\          agent: support_agent • model: openai:gpt-5.6-sol • tools: 2 • capabilities: 0
-       /     \\        observability: off — to see every model and tool call live with its cost,
-     /____.____\\        pass `instrument=True` to `Agent()` and run `logfire.configure()`.
-   /      |      \\      sign up for Pydantic Logfire for free via `uvx logfire auth` or
- /        |        \\    https://logfire.pydantic.dev, or use any OpenTelemetry backend.
-  ·.______|______.·     docs: https://pydantic.dev/docs/ai/logfire/
-                      hide this banner: PYDANTIC_AI_NO_BANNER=1\
+       /     \\
+     /____.____\\      observability: off — to see every model and tool call live with its cost, ask
+   /      |      \\      an agent to read https://pydantic.dev/ai-setup.md and instrument Pydantic AI
+ /        |        \\    Pydantic Logfire gives you 10M free spans every month without a credit card,
+  ·.______|______.·     or you can point the Logfire SDK at any other OpenTelemetry backend
+
+                      hide this dev-only banner: set up observability or set PYDANTIC_AI_NO_BANNER=1\
 """)
 
 
-def test_render_banner_without_logfire(monkeypatch: pytest.MonkeyPatch, render: Callable[..., str]):
-    monkeypatch.delitem(sys.modules, 'logfire', raising=False)
-    monkeypatch.setattr(importlib.util, 'find_spec', find_nothing)
-
+def test_render_banner_for_an_unnamed_agent(render: Callable[..., str]):
     # An agent with no name of its own drops the `agent:` segment rather than inventing a name.
     assert render(name=None, output_type=list[str], capabilities=3) == snapshot("""\
                       HEADING
+
          / \\          model: openai:gpt-5.6-sol • output: list[str] • tools: 2 • capabilities: 3
-       /     \\        observability: off — to see every model and tool call live with its cost,
-     /____.____\\        install `logfire`, pass `instrument=True` to `Agent()`, and run
-   /      |      \\      `logfire.configure()`.
- /        |        \\    sign up for Pydantic Logfire for free via `uvx logfire auth` or
-  ·.______|______.·     https://logfire.pydantic.dev, or use any OpenTelemetry backend.
-                        docs: https://pydantic.dev/docs/ai/logfire/
-                      hide this banner: PYDANTIC_AI_NO_BANNER=1\
+       /     \\
+     /____.____\\      observability: off — to see every model and tool call live with its cost, ask
+   /      |      \\      an agent to read https://pydantic.dev/ai-setup.md and instrument Pydantic AI
+ /        |        \\    Pydantic Logfire gives you 10M free spans every month without a credit card,
+  ·.______|______.·     or you can point the Logfire SDK at any other OpenTelemetry backend
+
+                      hide this dev-only banner: set up observability or set PYDANTIC_AI_NO_BANNER=1\
 """)
 
 
 def test_render_banner_without_observability(render: Callable[..., str]):
     """What `clai` shows: the same banner, minus advice it has already acted on."""
     assert render(observability=False) == snapshot("""\
-         / \\
+         / \\          HEADING
        /     \\
-     /____.____\\      HEADING
-   /      |      \\    agent: support_agent • model: openai:gpt-5.6-sol • tools: 2 • capabilities: 0
- /        |        \\
+     /____.____\\      agent: support_agent • model: openai:gpt-5.6-sol • tools: 2 • capabilities: 0
+   /      |      \\
+ /        |        \\  hide this dev-only banner: set up observability or set PYDANTIC_AI_NO_BANNER=1
   ·.______|______.·\
 """)
 
@@ -145,12 +141,13 @@ def test_render_banner_wraps_long_details(render: Callable[..., str]):
         model='bedrock:us.anthropic.claude-fable-5-20260101-v1:0',
         observability=False,
     ) == snapshot("""\
-         / \\
-       /     \\        HEADING
+         / \\          HEADING
+       /     \\
      /____.____\\      agent: the-agent-that-has-a-rather-long-name
    /      |      \\      model: bedrock:us.anthropic.claude-fable-5-20260101-v1:0 • tools: 2
  /        |        \\    capabilities: 0
-  ·.______|______.·\
+  ·.______|______.·
+                      hide this dev-only banner: set up observability or set PYDANTIC_AI_NO_BANNER=1\
 """)
 
 
@@ -218,25 +215,6 @@ def test_display_banner_with_harness_module_but_no_distribution(monkeypatch: pyt
     display_banner()
 
     assert 'pydantic-ai-harness' not in stderr.getvalue()
-
-
-def test_display_banner_with_loaded_logfire(monkeypatch: pytest.MonkeyPatch, stderr: TTYStream):
-    def fail_find_logfire(name: str) -> None:
-        if name == 'logfire':
-            pytest.fail('find_spec should not be called')  # pragma: no cover
-        return None
-
-    monkeypatch.setattr(sys, 'stderr', stderr)
-    monkeypatch.setitem(sys.modules, 'logfire', None)
-    monkeypatch.setattr(importlib.util, 'find_spec', fail_find_logfire)
-
-    display_banner()
-
-    # An already-imported `logfire` takes the branch that doesn't tell the user to install it, but
-    # still tells them how to switch it on. Matched on the identifiers rather than the prose around
-    # them, which is the banner's to reword.
-    assert 'install `logfire`' not in stderr.getvalue()
-    assert '`instrument=True`' in stderr.getvalue()
 
 
 @pytest.mark.parametrize(

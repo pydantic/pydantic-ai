@@ -1574,7 +1574,7 @@ def test_clai_intro_drops_observability_for_an_instrumented_agent(
 
     output = _plain(capfd.readouterr().out)
     assert 'agent: observed' in output
-    assert 'observability' not in output
+    assert 'observability: off' not in output
 
 
 def test_clai_intro_drops_observability_when_instrumented_globally(
@@ -1597,7 +1597,7 @@ def test_clai_intro_drops_observability_when_instrumented_globally(
 
     output = _plain(capfd.readouterr().out)
     assert 'agent: observed' in output
-    assert 'observability' not in output
+    assert 'observability: off' not in output
 
 
 def test_run_chat_banner_names_the_model_the_session_will_use(

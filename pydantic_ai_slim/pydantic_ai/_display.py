@@ -122,9 +122,19 @@ def render_banner(
     info.append(('tools', str(tools), False))
     info.append(('capabilities', str(capabilities), False))
 
-    lines = [_version_line(), *_info_lines(info)]
+    lines = [_version_line(), '', *_info_lines(info)]
     if observability:
-        lines += _observability_lines()
+        lines += ['', *_observability_lines()]
+
+    lines += [
+        '',
+        *wrap(
+            'hide this dev-only banner: set up observability or set PYDANTIC_AI_NO_BANNER=1',
+            width=_TEXT_WIDTH,
+            subsequent_indent='  ',
+            break_on_hyphens=False,
+        ),
+    ]
 
     banner = _beside_logo(lines)
     return banner if color else _COLOR_PATTERN.sub('', banner)
@@ -254,29 +264,20 @@ def _version_line() -> str:
 
 def _observability_lines() -> list[str]:
     """How to see what the agent actually did, for someone who hasn't set that up yet."""
-    if 'logfire' not in sys.modules and importlib.util.find_spec('logfire') is None:
-        setup = 'install `logfire`, pass `instrument=True` to `Agent()`, and run `logfire.configure()`'
-    else:
-        setup = 'pass `instrument=True` to `Agent()` and run `logfire.configure()`'
-
     return [
-        'observability: off — to see every model and tool call live with its cost,',
         *wrap(
-            f'{setup}.',
+            'observability: off — to see every model and tool call live with its cost, ask an agent to read https://pydantic.dev/ai-setup.md and instrument Pydantic AI',
+            width=_TEXT_WIDTH,
+            subsequent_indent='  ',
+            break_on_hyphens=False,
+        ),
+        *wrap(
+            'Pydantic Logfire gives you 10M free spans every month without a credit card, or you can point the Logfire SDK at any other OpenTelemetry backend',
             width=_TEXT_WIDTH,
             initial_indent='  ',
             subsequent_indent='  ',
             break_on_hyphens=False,
         ),
-        *wrap(
-            'sign up for Pydantic Logfire for free via `uvx logfire auth` or https://logfire.pydantic.dev, or use any OpenTelemetry backend.',
-            width=_TEXT_WIDTH,
-            initial_indent='  ',
-            subsequent_indent='  ',
-            break_on_hyphens=False,
-        ),
-        '  docs: https://pydantic.dev/docs/ai/logfire/',
-        'hide this banner: PYDANTIC_AI_NO_BANNER=1',
     ]
 
 
