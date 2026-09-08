@@ -32,7 +32,7 @@ jobs:
       notice_items: ${{ steps.reconcile.outputs.notice_items }}
       has_notices: ${{ steps.reconcile.outputs.has_notices }}
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ job.workflow_repository }}
           ref: ${{ job.workflow_sha }}
@@ -62,7 +62,7 @@ jobs:
     outputs:
       notice_items: ${{ steps.prepare.outputs.notice_items }}
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ job.workflow_repository }}
           ref: ${{ job.workflow_sha }}
@@ -80,7 +80,7 @@ jobs:
         run: python .github/scripts/issue_pr_attention_monitor.py prepare
       - name: Post actionable attention digest to the triage channel
         if: ${{ steps.prepare.outputs.has_notices == 'true' }}
-        uses: slackapi/slack-github-action@45a88b9581bfab2566dc881e2cd66d334e621e2c # v3.0.3
+        uses: slackapi/slack-github-action@dcb1066f776dd043e64d0e8ba94ca15cc7e1875d # v4.0.0
         with:
           errors: true
           payload: ${{ steps.prepare.outputs.slack_payload }}
@@ -97,7 +97,7 @@ jobs:
       issues: write
       pull-requests: write
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ job.workflow_repository }}
           ref: ${{ job.workflow_sha }}
@@ -131,7 +131,7 @@ jobs:
       issues: read
       pull-requests: read
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ job.workflow_repository }}
           ref: ${{ job.workflow_sha }}
@@ -155,7 +155,7 @@ jobs:
           LOGFIRE_URL: ${{ vars.LOGFIRE_URL }}
         run: python .github/scripts/issue_pr_attention_monitor.py census
       - name: Post the daily coverage heartbeat to the triage channel
-        uses: slackapi/slack-github-action@45a88b9581bfab2566dc881e2cd66d334e621e2c # v3.0.3
+        uses: slackapi/slack-github-action@dcb1066f776dd043e64d0e8ba94ca15cc7e1875d # v4.0.0
         with:
           errors: true
           payload: ${{ steps.census.outputs.slack_payload }}
@@ -172,7 +172,7 @@ jobs:
     permissions: {}
     steps:
       - name: Report attention operations failure privately
-        uses: slackapi/slack-github-action@45a88b9581bfab2566dc881e2cd66d334e621e2c # v3.0.3
+        uses: slackapi/slack-github-action@dcb1066f776dd043e64d0e8ba94ca15cc7e1875d # v4.0.0
         with:
           errors: true
           payload: '{"text":":rotating_light: Issue and PR attention operations failed: <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|inspect the run>"}'
