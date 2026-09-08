@@ -614,6 +614,18 @@ class Model(AbstractModel, Generic[InterfaceClient]):
 
         return model_request_parameters
 
+    @staticmethod
+    def _apply_model_settings_filter(
+        model_settings: ModelSettings | None, filter_settings: Callable[[ModelSettings], None]
+    ) -> ModelSettings | None:
+        """Apply an in-place filter to a copy of model settings, preserving the caller's input."""
+        if not model_settings:
+            return model_settings
+
+        filtered: ModelSettings = {**model_settings}
+        filter_settings(filtered)
+        return filtered or None
+
     def prepare_request(
         self,
         model_settings: ModelSettings | None,

@@ -719,10 +719,10 @@ class BedrockConverseModel(Model[BaseClient]):
             )
         # Pass unmerged model_settings; base class does its own merge
         prepared_settings, model_request_parameters = super().prepare_request(model_settings, model_request_parameters)
-        if self.profile.get('anthropic_disallows_sampling_settings', False) and prepared_settings:
-            filtered: ModelSettings = {**prepared_settings}
-            self._drop_unsupported_sampling_settings(filtered)
-            prepared_settings = filtered or None
+        if self.profile.get('anthropic_disallows_sampling_settings', False):
+            prepared_settings = self._apply_model_settings_filter(
+                prepared_settings, self._drop_unsupported_sampling_settings
+            )
         return prepared_settings, model_request_parameters
 
     def _drop_unsupported_sampling_settings(self, model_settings: ModelSettings) -> None:
@@ -742,7 +742,7 @@ class BedrockConverseModel(Model[BaseClient]):
             warnings.warn(
                 f'Sampling parameters {dropped} are not supported by {self.model_name!r}. These settings will be ignored.',
                 UserWarning,
-                stacklevel=2,
+                stacklevel=3,
             )
 
     @property
