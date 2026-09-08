@@ -68,6 +68,9 @@ async def test_context_usage_event_and_legacy_callback() -> None:
 
     with pytest.warns(HarnessDeprecationWarning, match=r'ReportContextUsage\.on_usage.*ContextUsageEvent.*on_event'):
         capability = ReportContextUsage(on_usage=legacy.append, context_window=1_000)
+    # pydantic-ai 2.41 derives a run-local synthetic id for anonymous capabilities, so pin one
+    # rather than asserting on whichever derivation policy the installed core uses.
+    capability.id = 'report_context_usage'
     await Agent(TestModel(), capabilities=[capability, hooks]).run('go')
 
     assert len(legacy) == 1
