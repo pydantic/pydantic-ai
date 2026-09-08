@@ -184,6 +184,7 @@ def test_github_copilot_provider_gpt_profile():
     assert profile.get('supports_thinking') is True
     assert profile.get('openai_chat_thinking_field') is None
     assert profile.get('json_schema_transformer') is OpenAIJsonSchemaTransformer
+    assert profile.get('openai_chat_supports_max_completion_tokens') is True
 
     kimi = GitHubCopilotProvider.model_profile('kimi-k3')
     assert kimi is not None

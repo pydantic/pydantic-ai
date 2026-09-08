@@ -44,6 +44,7 @@ from ..conftest import IsDatetime, IsStr, RequestCapture, try_import
 with try_import() as imports_successful:
     from pydantic_ai.models.github_copilot import GitHubCopilotModel
     from pydantic_ai.models.openai import OpenAIChatModel
+    from pydantic_ai.profiles.openai import OpenAIModelProfile
     from pydantic_ai.providers.github_copilot import GitHubCopilotProvider
 
 
@@ -304,6 +305,60 @@ async def test_github_copilot_flagged_claude_drops_sampling_settings_on_the_wire
     assert 'temperature' not in body
     assert 'top_p' not in body
     assert result.output == snapshot('Paris')
+
+
+async def test_github_copilot_sends_max_completion_tokens(
+    allow_model_requests: None, github_copilot_api_key: str, request_capture: RequestCapture
+):
+    """The `max_tokens` setting goes out as `max_completion_tokens`, and Copilot answers `200`.
+
+    `test_github_copilot_provider_gpt_profile` pins the flag on this id at profile level; this pins
+    the joint — the flag reaching the field substitution on a real request, and the substituted body
+    being the one Copilot accepts. `test_github_copilot_rejects_max_tokens` records the other side.
+    """
+    model = GitHubCopilotModel(
+        'gpt-5.4',
+        provider=GitHubCopilotProvider(api_key=github_copilot_api_key, http_client=request_capture.client),
+    )
+
+    result = await Agent(model, instructions='Be concise.').run(
+        'What is the capital of France?', model_settings=ModelSettings(max_tokens=123)
+    )
+
+    body = request_capture.body('/chat/completions')
+    assert body['max_completion_tokens'] == 123
+    assert 'max_tokens' not in body
+    assert result.output == snapshot('Paris.')
+
+
+async def test_github_copilot_rejects_max_tokens(
+    allow_model_requests: None, github_copilot_api_key: str, request_capture: RequestCapture
+):
+    """Copilot answers a bare `400 Bad Request` to the stock `max_tokens` field.
+
+    This is why the overlay pins `openai_chat_supports_max_completion_tokens`, and it is the
+    flag-off side of that branch: a partial `profile=` merges on top of the provider's, so the
+    request goes out the way an unpinned Copilot model would send it. The 400 carries a plain-text
+    body rather than Copilot's usual `{'message', 'code'}` JSON, so there is no field name in it to
+    match on — the status and the absence of a response are the whole signal a user gets.
+    """
+    model = GitHubCopilotModel(
+        'gpt-5.4',
+        provider=GitHubCopilotProvider(api_key=github_copilot_api_key, http_client=request_capture.client),
+        profile=OpenAIModelProfile(openai_chat_supports_max_completion_tokens=False),
+    )
+    assert model.profile.get('openai_chat_supports_max_completion_tokens') is False
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        await Agent(model, instructions='Be concise.').run(
+            'What is the capital of France?', model_settings=ModelSettings(max_tokens=123)
+        )
+
+    body = request_capture.body('/chat/completions')
+    assert body['max_tokens'] == 123
+    assert 'max_completion_tokens' not in body
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.body == snapshot('Bad Request')
 
 
 @pytest.mark.xfail(

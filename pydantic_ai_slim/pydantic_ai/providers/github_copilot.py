@@ -73,8 +73,12 @@ def _github_copilot_overlay(model_name: str, family_profile: ModelProfile | None
     `model_name` is already lowercased and stripped of a leading `copilot/`.
     """
     overlay = OpenAIModelProfile(
-        # Copilot rejects `max_tokens` with an explicit "use `max_completion_tokens` instead" 400, so
-        # the gateway pins the field regardless of what a family profile asks for.
+        # A body holding `max_tokens` gets a bare `400 Bad Request` — plain text, without the
+        # `message`/`code` JSON Copilot's other 400s carry, so nothing names the offending field —
+        # while the same body holding `max_completion_tokens` gets `200`. The gateway therefore pins
+        # the field regardless of what a family profile asks for.
+        # `test_github_copilot_sends_max_completion_tokens` and `test_github_copilot_rejects_max_tokens`
+        # record both sides.
         openai_chat_supports_max_completion_tokens=True,
     )
 
