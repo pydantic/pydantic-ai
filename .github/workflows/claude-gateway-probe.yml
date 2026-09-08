@@ -24,12 +24,12 @@ jobs:
           ANTHROPIC_BASE_URL: ${{ secrets.CLAUDE_CODE_BASE_URL }}
           GATEWAY_KEY: ${{ secrets.CLAUDE_CODE_API_KEY }}
         run: |
-          request_body='{"model":"claude-opus-4-8","max_tokens":1,"messages":[{"role":"user","content":"."}]}'
-
           probe() {
             auth_name="$1"
             auth_header="$2"
+            model="$3"
             response_file="$RUNNER_TEMP/claude-gateway-$auth_name.json"
+            request_body=$(jq -nc --arg model "$model" '{model: $model, max_tokens: 1, messages: [{role: "user", content: "."}]}')
             curl_args=()
             if [ -n "$auth_header" ]; then
               curl_args+=(--header "$auth_header")
@@ -53,6 +53,14 @@ jobs:
                 response_type=access-policy
               elif rg --ignore-case --quiet 'model|route|deployment' "$response_file"; then
                 response_type=model-route
+              elif rg --ignore-case --quiet 'disabled|deactivated|inactive|suspended|expired' "$response_file"; then
+                response_type=disabled
+              elif rg --ignore-case --quiet 'account|organi[sz]ation|workspace|team' "$response_file"; then
+                response_type=account-policy
+              elif rg --ignore-case --quiet 'subscription|plan|entitlement|tier' "$response_file"; then
+                response_type=entitlement
+              elif rg --ignore-case --quiet 'usage|capacity|temporar|available|service' "$response_file"; then
+                response_type=service-policy
               else
                 response_type=unclassified
               fi
@@ -61,49 +69,8 @@ jobs:
             echo "$auth_name: HTTP $status; content-type $content_type; bytes $size_download; class $response_type; fingerprint $response_hash"
           }
 
-          probe no-auth ''
-          probe x-api-key "x-api-key: $GATEWAY_KEY"
-          probe bearer "Authorization: Bearer $GATEWAY_KEY"
-
-      - name: Probe Claude Code with x-api-key authentication
-        id: x_api_key
-        continue-on-error: true
-        uses: anthropics/claude-code-action@428971d2ecd6e3a7cb0ee0da2a3a8b33fdb3678d # v1.0.157
-        env:
-          ANTHROPIC_BASE_URL: ${{ secrets.CLAUDE_CODE_BASE_URL }}
-        with:
-          anthropic_api_key: ${{ secrets.CLAUDE_CODE_API_KEY }}
-          github_token: ${{ github.token }}
-          claude_args: |
-            --model claude-opus-4-8[1m]
-            --max-turns 1
-            --json-schema '{"type":"object","properties":{"category":{"type":"string","enum":["chore"]}},"required":["category"]}'
-          prompt: Return the category `chore` using the requested structured output.
-
-      - name: Probe Claude Code with bearer authentication
-        id: bearer
-        continue-on-error: true
-        uses: anthropics/claude-code-action@428971d2ecd6e3a7cb0ee0da2a3a8b33fdb3678d # v1.0.157
-        env:
-          ANTHROPIC_BASE_URL: ${{ secrets.CLAUDE_CODE_BASE_URL }}
-          ANTHROPIC_AUTH_TOKEN: ${{ secrets.CLAUDE_CODE_API_KEY }}
-        with:
-          anthropic_api_key: ${{ secrets.CLAUDE_CODE_API_KEY }}
-          github_token: ${{ github.token }}
-          claude_args: |
-            --model claude-opus-4-8[1m]
-            --max-turns 1
-            --json-schema '{"type":"object","properties":{"category":{"type":"string","enum":["chore"]}},"required":["category"]}'
-          prompt: Return the category `chore` using the requested structured output.
-
-      - name: Summarize Claude Code probes
-        env:
-          X_API_KEY_OUTCOME: ${{ steps.x_api_key.outcome }}
-          X_API_KEY_OUTPUT: ${{ steps.x_api_key.outputs.structured_output }}
-          BEARER_OUTCOME: ${{ steps.bearer.outcome }}
-          BEARER_OUTPUT: ${{ steps.bearer.outputs.structured_output }}
-        run: |
-          [ -n "$X_API_KEY_OUTPUT" ] && x_api_key_structured=true || x_api_key_structured=false
-          [ -n "$BEARER_OUTPUT" ] && bearer_structured=true || bearer_structured=false
-          echo "x-api-key Claude Code outcome: $X_API_KEY_OUTCOME; structured output: $x_api_key_structured"
-          echo "bearer Claude Code outcome: $BEARER_OUTCOME; structured output: $bearer_structured"
+          probe no-auth '' claude-opus-4-8
+          probe x-api-key-opus "x-api-key: $GATEWAY_KEY" claude-opus-4-8
+          probe bearer-opus "Authorization: Bearer $GATEWAY_KEY" claude-opus-4-8
+          probe x-api-key-sonnet "x-api-key: $GATEWAY_KEY" claude-sonnet-4-6
+          probe x-api-key-haiku "x-api-key: $GATEWAY_KEY" claude-haiku-4-5-20251001
