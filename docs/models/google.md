@@ -446,6 +446,11 @@ agent = Agent(model, model_settings=model_settings)
 ...
 ```
 
+Pydantic AI resolves each model's supported levels from Google's documented thinking table and snaps a
+requested effort to the nearest supported level. For a model id the table doesn't cover, declare its
+levels with [`GoogleModelProfile.google_thinking_levels`][pydantic_ai.profiles.google.GoogleModelProfile.google_thinking_levels]
+(default: the full scale); unsupported efforts resolve to the nearest supported level.
+
 See [Thinking](../capabilities/thinking.md) for the unified API and [Gemini API docs](https://ai.google.dev/gemini-api/docs/thinking) for Google's native thinking configuration.
 
 ### Safety settings

@@ -576,6 +576,36 @@ def test_google_gemini_2_5_flash_image():
     )
 
 
+@pytest.mark.skipif(not google_imports(), reason='google not installed')
+def test_google_gemini_3_7_flash_thinking_levels():
+    # The level set must survive the provider `model_profile()` path, not just `google_model_profile()`.
+    profile = GoogleProvider.model_profile('gemini-3.7-flash')
+    assert profile is not None
+    assert profile.get('google_thinking_levels') == frozenset(('LOW', 'MEDIUM', 'HIGH'))
+    assert _normalize(profile) == snapshot(
+        {
+            'google_supported_mime_types_in_tool_returns': (
+                'image/png',
+                'image/jpeg',
+                'image/webp',
+                'application/pdf',
+                'text/plain',
+            ),
+            'google_supports_minimal_thinking_level': False,
+            'google_supports_server_side_tool_invocations': True,
+            'google_supports_strict_tool_definition': True,
+            'google_supports_thinking_level': True,
+            'google_supports_tool_combination': True,
+            'google_thinking_levels': frozenset(('LOW', 'MEDIUM', 'HIGH')),
+            'json_schema_transformer': GoogleJsonSchemaTransformer,
+            'supports_json_object_output': True,
+            'supports_json_schema_output': True,
+            'supports_thinking': True,
+            'supports_tool_return_schema': True,
+        }
+    )
+
+
 @pytest.mark.skipif(not xai_imports(), reason='xai not installed')
 def test_xai_grok_4():
     profile = XaiProvider.model_profile('grok-4')
@@ -1052,6 +1082,49 @@ def test_openrouter_google_gemini_3_pro():
             'openrouter_supports_dynamic_instruction_cache': False,
             'openrouter_max_cache_points': None,
             'openrouter_supports_forced_tool_choice_with_thinking': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_openrouter_google_gemini_3_8_flash_thinking_levels():
+    """Google via OpenRouter — the restricted level set survives the three-layer merge."""
+    from pydantic_ai.providers.openrouter import OpenRouterProvider
+
+    profile = OpenRouterProvider.model_profile('google/gemini-3.8-flash')
+    assert profile is not None
+    assert profile.get('google_thinking_levels') == frozenset(('LOW', 'MEDIUM', 'HIGH'))
+    assert _normalize(profile) == snapshot(
+        {
+            'google_supported_mime_types_in_tool_returns': (
+                'image/png',
+                'image/jpeg',
+                'image/webp',
+                'application/pdf',
+                'text/plain',
+            ),
+            'google_supports_minimal_thinking_level': False,
+            'google_supports_server_side_tool_invocations': True,
+            'google_supports_strict_tool_definition': True,
+            'google_supports_thinking_level': True,
+            'google_supports_tool_combination': True,
+            'google_thinking_levels': frozenset(('LOW', 'MEDIUM', 'HIGH')),
+            'json_schema_transformer': _OpenRouterGoogleJsonSchemaTransformer,
+            'openai_chat_send_back_thinking_parts': 'field',
+            'openai_chat_supports_file_urls': True,
+            'openai_chat_supports_max_completion_tokens': False,
+            'openai_chat_supports_web_search': True,
+            'openai_chat_thinking_field': 'reasoning',
+            'openrouter_max_cache_points': None,
+            'openrouter_supports_cache_control': True,
+            'openrouter_supports_cache_ttl': False,
+            'openrouter_supports_dynamic_instruction_cache': False,
+            'openrouter_supports_forced_tool_choice_with_thinking': True,
+            'openrouter_supports_tool_cache': False,
+            'supports_json_object_output': True,
+            'supports_json_schema_output': True,
+            'supports_thinking': True,
+            'supports_tool_return_schema': True,
         }
     )
 
