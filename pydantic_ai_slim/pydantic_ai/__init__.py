@@ -162,10 +162,6 @@ from .profiles import (
     ModelProfileSpec,
 )
 from .run import AgentRun, AgentRunResult, AgentRunResultEvent
-from .sandboxes import (
-    Sandbox,
-    SandboxRef,
-)
 from .settings import ModelSettings, ToolChoice, ToolOrOutput
 from .template import TemplateStr
 from .tools import (
@@ -197,6 +193,10 @@ from .toolsets import (
     WrapperToolset,
 )
 from .usage import RequestUsage, RunUsage, UsageLimits
+from .workspaces import (
+    Workspace,
+    WorkspaceRef,
+)
 
 __all__ = (
     '__version__',
@@ -379,9 +379,9 @@ __all__ = (
     'AgentCapability',
     'Capability',
     'CapabilityFunc',
-    # sandboxes
-    'Sandbox',
-    'SandboxRef',
+    # workspaces
+    'Workspace',
+    'WorkspaceRef',
     # output
     'ToolOutput',
     'NativeOutput',

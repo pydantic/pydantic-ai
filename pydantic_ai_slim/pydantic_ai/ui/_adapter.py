@@ -36,11 +36,11 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.output import OutputDataT, OutputSpec
-from pydantic_ai.sandboxes import SandboxBackend, SandboxRef
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
+from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 
 from ._event_stream import NativeEvent, OnCancelFunc, OnCompleteFunc, UIEventStream
 
@@ -490,7 +490,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AbstractCapability[AgentDepsT]] | None = None,
-        sandbox: SandboxBackend | SandboxRef | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | None = None,
     ) -> AsyncIterator[NativeEvent]:
         """Run the agent with the protocol-specific run input and stream Pydantic AI events.
 
@@ -514,7 +514,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             toolsets: Optional additional toolsets for this run.
             capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
                 Use `capabilities=[NativeTool(...)]` to add provider-side native tools per request.
-            sandbox: Optional sandbox backend or [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] for this run; overrides capability contributions. See the [sandbox docs](../../sandbox.md).
+            workspace: Optional workspace backend or [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] for this run; overrides capability contributions. See the [workspace docs](../../workspace.md).
         """
         if deferred_tool_results is None:
             deferred_tool_results = self.deferred_tool_results
@@ -577,7 +577,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 infer_name=infer_name,
                 toolsets=toolsets,
                 capabilities=run_capabilities,
-                sandbox=sandbox,
+                workspace=workspace,
             ) as events:
                 async for event in events:
                     yield event
@@ -603,7 +603,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AbstractCapability[AgentDepsT]] | None = None,
-        sandbox: SandboxBackend | SandboxRef | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | None = None,
         on_complete: OnCompleteFunc[EventT] | None = None,
         on_cancel: OnCancelFunc[EventT] | None = None,
     ) -> AsyncIterator[EventT]:
@@ -629,7 +629,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             toolsets: Optional additional toolsets for this run.
             capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
                 Use `capabilities=[NativeTool(...)]` to add provider-side native tools per request.
-            sandbox: Optional sandbox backend or [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] for this run; overrides capability contributions. See the [sandbox docs](../../sandbox.md).
+            workspace: Optional workspace backend or [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] for this run; overrides capability contributions. See the [workspace docs](../../workspace.md).
             on_complete: Optional callback function called when the agent run completes successfully.
                 The callback receives the completed [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] and can optionally yield additional protocol-specific events.
             on_cancel: Optional callback function called when the agent run ends in first-party cancellation.
@@ -653,7 +653,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 infer_name=infer_name,
                 toolsets=toolsets,
                 capabilities=capabilities,
-                sandbox=sandbox,
+                workspace=workspace,
             ),
             on_complete=on_complete,
             on_cancel=on_cancel,
@@ -681,7 +681,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[DispatchDepsT]] | None = None,
         capabilities: Sequence[AbstractCapability[DispatchDepsT]] | None = None,
-        sandbox: SandboxBackend | SandboxRef | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | None = None,
         on_complete: OnCompleteFunc[EventT] | None = None,
         on_cancel: OnCancelFunc[EventT] | None = None,
         manage_system_prompt: Literal['server', 'client'] = 'server',
@@ -717,7 +717,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             toolsets: Optional additional toolsets for this run.
             capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
                 Use `capabilities=[NativeTool(...)]` to add provider-side native tools per request.
-            sandbox: Optional sandbox backend or [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] for this run; overrides capability contributions. See the [sandbox docs](../../sandbox.md).
+            workspace: Optional workspace backend or [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] for this run; overrides capability contributions. See the [workspace docs](../../workspace.md).
             on_complete: Optional callback function called when the agent run completes successfully.
                 The callback receives the completed [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] and can optionally yield additional protocol-specific events.
             on_cancel: Optional callback function called when the agent run ends in first-party cancellation.
@@ -790,7 +790,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 infer_name=infer_name,
                 toolsets=toolsets,
                 capabilities=capabilities,
-                sandbox=sandbox,
+                workspace=workspace,
                 on_complete=on_complete,
                 on_cancel=on_cancel,
             ),

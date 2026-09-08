@@ -63,13 +63,13 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.output import OutputDataT
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
-from pydantic_ai.sandboxes import SandboxRef
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, ExternalToolset
+from pydantic_ai.workspaces import WorkspaceRef
 
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, message, message_part
-from .sandbox_fakes import ConnectOnlySandboxCapability
+from .workspace_fakes import ConnectOnlyWorkspaceCapability
 
 pytest.importorskip('starlette')
 
@@ -1338,17 +1338,17 @@ async def test_run_stream_native_metadata_forwarded():
 
 
 async def test_adapter_dispatch_request(monkeypatch: pytest.MonkeyPatch):
-    # The agent carries a capability that recognizes the ref: a `SandboxRef` no capability can
+    # The agent carries a capability that recognizes the ref: a `WorkspaceRef` no capability can
     # supply is a `UserError`, and this test is about the forwarding, not that failure.
-    agent = Agent(model=TestModel(), capabilities=[ConnectOnlySandboxCapability()])
+    agent = Agent(model=TestModel(), capabilities=[ConnectOnlyWorkspaceCapability()])
     request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
-    sandbox = SandboxRef(sandbox_id='test')
-    captured_sandbox: list[object] = []
+    workspace = WorkspaceRef(workspace_id='test')
+    captured_workspace: list[object] = []
 
     run_stream_events = agent.run_stream_events
 
     def capture_run_stream_events(**kwargs: Any) -> Any:
-        captured_sandbox.append(kwargs['sandbox'])
+        captured_workspace.append(kwargs['workspace'])
         return run_stream_events(**kwargs)
 
     monkeypatch.setattr(agent, 'run_stream_events', capture_run_stream_events)
@@ -1377,7 +1377,7 @@ async def test_adapter_dispatch_request(monkeypatch: pytest.MonkeyPatch):
         agent=agent,
         metadata={'ui': 'dispatch'},
         on_complete=on_complete,
-        sandbox=sandbox,
+        workspace=workspace,
     )
 
     assert isinstance(response, StreamingResponse)
@@ -1416,7 +1416,7 @@ async def test_adapter_dispatch_request(monkeypatch: pytest.MonkeyPatch):
         ]
     )
     assert captured_metadata == [{'ui': 'dispatch'}]
-    assert captured_sandbox == [sandbox]
+    assert captured_workspace == [workspace]
 
 
 def test_manage_system_prompt_visible_in_base_adapter_signatures():

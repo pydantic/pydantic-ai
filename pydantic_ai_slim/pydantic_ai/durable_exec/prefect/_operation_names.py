@@ -7,11 +7,11 @@ from .._operation import (
     ModelCancelSuspendedResponseId,
     ModelCompactMessagesId,
     ModelRequestId,
-    SandboxOperationId,
     ToolsetCallToolId,
     ToolsetGetInstructionsId,
     ToolsetGetToolsId,
     ToolsetValidateToolArgumentsId,
+    WorkspaceOperationId,
 )
 from .._operation_names import DurableInvocationName, DurableOperationNamer
 
@@ -25,8 +25,8 @@ class PrefectOperationNamer(DurableOperationNamer):
 
     def operation_name(self, operation_id: DurableOperationId) -> str:
         match operation_id:
-            case SandboxOperationId(capability_id=capability_id, method=method):
-                return f'Sandbox: {capability_id}.{method}'
+            case WorkspaceOperationId(capability_id=capability_id, method=method):
+                return f'Workspace: {capability_id}.{method}'
             case CapabilityOperationId(capability_id=capability_id, operation=operation):
                 return f'Capability: {capability_id}.{operation}'
             case ModelRequestId(streaming=True, model_name=model_name):

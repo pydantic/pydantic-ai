@@ -9,7 +9,7 @@ from pydantic_ai.durable_exec._operation import (
     CapabilityOperationId,
     DurableOperationId,
     EventStreamHandlerId,
-    SandboxOperationId,
+    WorkspaceOperationId,
 )
 from pydantic_ai.durable_exec._operation_backend import CallableOperationBackend, RoleBasedOperationConfig
 
@@ -36,7 +36,7 @@ class PrefectOperationBackend(CallableOperationBackend[TaskConfig]):
         sequence_key: str | None = None
         if isinstance(operation_id, EventStreamHandlerId):
             sequence_key = self._event_sequence_key
-        elif isinstance(operation_id, CapabilityOperationId | SandboxOperationId):
+        elif isinstance(operation_id, CapabilityOperationId | WorkspaceOperationId):
             capability_id = operation_id.capability_id
             operation_name = (
                 operation_id.operation if isinstance(operation_id, CapabilityOperationId) else operation_id.method

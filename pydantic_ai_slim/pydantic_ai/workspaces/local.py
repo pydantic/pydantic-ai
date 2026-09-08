@@ -1,6 +1,6 @@
-"""The default local implementation of the [sandbox backend protocol][pydantic_ai.sandboxes.SandboxBackend].
+"""The default local implementation of the [workspace backend protocol][pydantic_ai.workspaces.WorkspaceBackend].
 
-[`LocalSandbox`][pydantic_ai.sandboxes.LocalSandbox] runs commands as plain host subprocesses —
+[`LocalWorkspace`][pydantic_ai.workspaces.LocalWorkspace] runs commands as plain host subprocesses —
 it **isolates nothing** — and doubles as the reference implementation of the protocol.
 """
 
@@ -23,19 +23,19 @@ from typing_extensions import Self
 
 from pydantic_ai._utils import cancel_and_drain, run_in_executor
 
-from ._lazy import LazySandbox
+from ._lazy import LazyWorkspace
 from .protocol import (
     CommandResult,
     FileEntry,
-    SandboxBackend,
-    SandboxCommand,
-    SandboxError,
-    SandboxRef,
-    SandboxTimeoutError,
     SupportsFilesystem,
+    WorkspaceBackend,
+    WorkspaceCommand,
+    WorkspaceError,
+    WorkspaceRef,
+    WorkspaceTimeoutError,
 )
 
-__all__ = ('LocalSandbox',)
+__all__ = ('LocalWorkspace',)
 
 _MAX_CAPTURE_BYTES = 10 * 1024 * 1024
 """Ceiling on the combined stdout and stderr a single command may produce."""
@@ -60,55 +60,55 @@ _OUTPUT_DRAIN_GRACE = 2.0
 """How long to keep reading a command's pipes after the direct child has exited."""
 
 
-class LocalSandbox(LazySandbox[Path], SandboxBackend, SupportsFilesystem):
-    """[`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] over host subprocesses and the host filesystem.
+class LocalWorkspace(LazyWorkspace[Path], WorkspaceBackend, SupportsFilesystem):
+    """[`WorkspaceBackend`][pydantic_ai.workspaces.WorkspaceBackend] over host subprocesses and the host filesystem.
 
     Isolates nothing: commands run as host subprocesses with the host process's privileges.
-    It is never attached by default — runs without a sandbox get
-    [`UnavailableSandbox`][pydantic_ai.sandboxes.UnavailableSandbox] — so attaching it is an
+    It is never attached by default — runs without a workspace get
+    [`UnavailableWorkspace`][pydantic_ai.workspaces.UnavailableWorkspace] — so attaching it is an
     explicit opt-in for trusted workloads, tests, and development. POSIX-only: construction
     raises `NotImplementedError` elsewhere, where the timeout contract (kill the whole process
     group at the deadline) can't be honored. A command that calls `setsid` itself puts its own
     children in a new group, which that kill does not reach; a command you do not trust needs a
-    real sandbox, not this one.
+    real workspace, not this one.
 
     Commands receive only `PATH`, `HOME`, `LANG`, and `TMPDIR` from the parent when present, plus
     variables explicitly supplied through `env`. This prevents framework credentials from being
     inherited, but is a leak fix rather than an isolation boundary.
 
     It is the in-tree worked example of the lazy pattern every backend follows — see
-    [`root`][pydantic_ai.sandboxes.LocalSandbox.root].
+    [`root`][pydantic_ai.workspaces.LocalWorkspace.root].
 
     Args:
         root: The working directory commands run in and relative paths resolve against; must
             be an absolute path (a relative one would silently depend on the host process's
             working directory). Defaults to a fresh temporary directory, created on first use
-            and removed again when the sandbox is used as an async context manager — pass a
+            and removed again when the workspace is used as an async context manager — pass a
             `root` of your own to keep the files a run produces. A caller-supplied `root` is
             never removed, and is canonicalized (symlinks resolved) on first use, so
-            [`working_dir()`][pydantic_ai.sandboxes.SandboxBackend.working_dir] reports the
+            [`working_dir()`][pydantic_ai.workspaces.WorkspaceBackend.working_dir] reports the
             directory commands actually run in.
     """
 
     def __init__(self, root: str | Path | None = None):
         if os.name != 'posix':
             raise NotImplementedError(
-                'LocalSandbox only supports POSIX platforms: its timeout contract kills the whole '
-                'process group. On other platforms, attach a container- or VM-based sandbox instead.'
+                'LocalWorkspace only supports POSIX platforms: its timeout contract kills the whole '
+                'process group. On other platforms, attach a container- or VM-based workspace instead.'
             )
         if root is not None and not Path(root).is_absolute():
             raise ValueError(
                 f'root must be an absolute path, got {str(root)!r}: a relative root would depend on '
                 "the host process's working directory at some later moment. Make the intent explicit "
-                "at the call site instead, e.g. `LocalSandbox(Path.cwd() / 'work')`."
+                "at the call site instead, e.g. `LocalWorkspace(Path.cwd() / 'work')`."
             )
         self._owns_root = root is None
         self._given_root = None if root is None else Path(root)
         super().__init__()
-        self._ref: SandboxRef | None = None
+        self._ref: WorkspaceRef | None = None
 
     @property
-    def ref(self) -> SandboxRef | None:
+    def ref(self) -> WorkspaceRef | None:
         return self._ref
 
     @property
@@ -120,21 +120,21 @@ class LocalSandbox(LazySandbox[Path], SandboxBackend, SupportsFilesystem):
         shape for their provider handle, so create-or-attach happens on first use and no method
         can skip it.
         """
-        return self.sandbox
+        return self.workspace
 
     async def create_or_attach(self) -> Path:
         """Create or canonicalize the working directory on first acquisition."""
-        # Blocking filesystem calls run off the event loop. LazySandbox serializes
+        # Blocking filesystem calls run off the event loop. LazyWorkspace serializes
         # acquisition so concurrent first uses cannot create separate directories.
         # Always the canonical spelling (symlinks resolved, no `..`), set on first use: the
         # kernel resolves a cwd like `link/..` through the symlink while lexical joins collapse
         # it as text, so a non-canonical root would point `run()` and `fs` at different
         # directories, breaking the protocol's one-environment contract.
         if self._given_root is None:
-            root = await run_in_executor(lambda: Path(tempfile.mkdtemp(prefix='pydantic-ai-sandbox-')).resolve())
+            root = await run_in_executor(lambda: Path(tempfile.mkdtemp(prefix='pydantic-ai-workspace-')).resolve())
         else:
             root = await run_in_executor(self._given_root.resolve)
-        self._ref = SandboxRef(sandbox_id=f'local-{uuid.uuid4().hex}')
+        self._ref = WorkspaceRef(workspace_id=f'local-{uuid.uuid4().hex}')
         return root
 
     async def __aenter__(self) -> Self:
@@ -148,7 +148,7 @@ class LocalSandbox(LazySandbox[Path], SandboxBackend, SupportsFilesystem):
         # would ever remove.
         async with self._lock:
             if self._owns_root and self._live is not None:
-                # Reset first so a reused sandbox lazily creates a fresh root instead of
+                # Reset first so a reused workspace lazily creates a fresh root instead of
                 # resurrecting the deleted path.
                 root, self._live, self._ref = self._live, None, None
                 try:
@@ -239,7 +239,7 @@ class LocalSandbox(LazySandbox[Path], SandboxBackend, SupportsFilesystem):
         return await run_in_executor(self._path(path).exists)
 
     async def _spawn(
-        self, command: SandboxCommand, cwd: str | None, env: Mapping[str, str]
+        self, command: WorkspaceCommand, cwd: str | None, env: Mapping[str, str]
     ) -> asyncio.subprocess.Process | Exception:
         """Start the command, returning the spawn failure instead of raising it.
 
@@ -280,7 +280,7 @@ class LocalSandbox(LazySandbox[Path], SandboxBackend, SupportsFilesystem):
 
     async def run(
         self,
-        command: SandboxCommand,
+        command: WorkspaceCommand,
         *,
         shell: bool = False,
         cwd: str | None = None,
@@ -288,13 +288,13 @@ class LocalSandbox(LazySandbox[Path], SandboxBackend, SupportsFilesystem):
         timeout: float | None = None,
     ) -> CommandResult:
         # `CommandResult` is the concrete carrier the built-in backends return; the protocol
-        # `SandboxResult` stays structural so third-party backends can return their SDK's own
+        # `WorkspaceResult` stays structural so third-party backends can return their SDK's own
         # result object without wrapping it.
         deadline = None if timeout is None else time.monotonic() + timeout
         if cwd is not None and not Path(cwd).is_absolute():
             raise ValueError(
                 f'cwd must be an absolute path, got {cwd!r}: a relative cwd would resolve against '
-                "the host process's working directory, not the sandbox root"
+                "the host process's working directory, not the workspace root"
             )
         # Keep the child environment small so the framework's credentials do not reach commands;
         # the caller can explicitly provide any additional variables it needs.
@@ -319,7 +319,7 @@ class LocalSandbox(LazySandbox[Path], SandboxBackend, SupportsFilesystem):
             raise
         except TimeoutError as error:
             spawn.add_done_callback(self._kill_abandoned_spawn)
-            raise SandboxTimeoutError(
+            raise WorkspaceTimeoutError(
                 f'command timed out after {timeout} seconds and was killed',
                 stdout='',
                 stderr='',
@@ -332,11 +332,11 @@ class LocalSandbox(LazySandbox[Path], SandboxBackend, SupportsFilesystem):
         if stdout_pipe is None or stderr_pipe is None:  # pragma: no cover
             # Unreachable: both are spawned with `PIPE`. Stated rather than asserted so an
             # optimized interpreter still fails loudly instead of raising `AttributeError` later.
-            raise SandboxError('local sandbox could not capture the command output pipes')
+            raise WorkspaceError('local workspace could not capture the command output pipes')
         stdout_buffer = bytearray()
         stderr_buffer = bytearray()
         # Plain tasks rather than an anyio task group: a reader that trips the output ceiling
-        # raises `SandboxError`, and a task group would deliver it wrapped in a
+        # raises `WorkspaceError`, and a task group would deliver it wrapped in a
         # `BaseExceptionGroup`, changing the exception callers and tests see.
         reader_tasks = [
             asyncio.create_task(self._read_stream(stdout_pipe, stdout_buffer, stderr_buffer)),
@@ -348,21 +348,21 @@ class LocalSandbox(LazySandbox[Path], SandboxBackend, SupportsFilesystem):
             await self._drain_output(reader_tasks, deadline)
             self._close_transport(process)
         except TimeoutError as error:
-            # The contract: a timeout kills the command first, then raises SandboxTimeoutError —
+            # The contract: a timeout kills the command first, then raises WorkspaceTimeoutError —
             # even when a hardened host denies the group kill, in which case the
             # denial rides along as the cause instead of replacing the promised type.
             denial = await self._kill_and_reap_and_close(process, reader_tasks)
             stdout = stdout_buffer.decode('utf-8', errors='replace')
             stderr = stderr_buffer.decode('utf-8', errors='replace')
             if denial is not None:
-                raise SandboxTimeoutError(
+                raise WorkspaceTimeoutError(
                     f'command timed out after {timeout} seconds; killing its process group was '
                     'denied, so only the direct child was killed and grandchildren may survive',
                     stdout=stdout,
                     stderr=stderr,
                     timeout=timeout,
                 ) from denial
-            raise SandboxTimeoutError(
+            raise WorkspaceTimeoutError(
                 f'command timed out after {timeout} seconds and was killed',
                 stdout=stdout,
                 stderr=stderr,
@@ -387,8 +387,8 @@ class LocalSandbox(LazySandbox[Path], SandboxBackend, SupportsFilesystem):
         while chunk := await stream.read(_READ_CHUNK_BYTES):
             buffer.extend(chunk)
             if len(buffer) + len(other_buffer) > _MAX_CAPTURE_BYTES:
-                raise SandboxError(
-                    f'local sandbox output exceeded {_MAX_CAPTURE_MIB} MiB safety limit; '
+                raise WorkspaceError(
+                    f'local workspace output exceeded {_MAX_CAPTURE_MIB} MiB safety limit; '
                     "redirect the command's "
                     'output to a file and read a window of it with `read_file` instead'
                 )
@@ -403,7 +403,7 @@ class LocalSandbox(LazySandbox[Path], SandboxBackend, SupportsFilesystem):
         # descendant holding the command's stdout can postpone indefinitely.
         returncode = process.returncode
         while returncode is None:
-            # A finished reader means the output ceiling tripped: re-raise its `SandboxError`
+            # A finished reader means the output ceiling tripped: re-raise its `WorkspaceError`
             # here rather than waiting for a command that will never be read to completion.
             for task in reader_tasks:
                 if task.done():
@@ -495,7 +495,7 @@ class LocalSandbox(LazySandbox[Path], SandboxBackend, SupportsFilesystem):
 
     @staticmethod
     def _kill(process: asyncio.subprocess.Process) -> None:
-        # Internal to `LocalSandbox`: `SandboxBackend` has no `kill` member, because not every
+        # Internal to `LocalWorkspace`: `WorkspaceBackend` has no `kill` member, because not every
         # platform lets a client stop a running command.
         #
         # The child leads its own process group (`start_new_session=True`), so "already

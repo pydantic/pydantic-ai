@@ -14,8 +14,8 @@ import httpx2
 
 from pydantic_ai import Agent
 from pydantic_ai.native_tools import AbstractNativeTool
-from pydantic_ai.sandboxes import SandboxBackend, SandboxRef
 from pydantic_ai.settings import ModelSettings
+from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 
 from ._hosts import HostValidationMiddleware, normalized_pattern
 from .api import BUNDLED_UI_SDK_VERSION, ModelsParam, create_api_app
@@ -174,7 +174,7 @@ def create_web_app(
     sdk_version: Literal[5, 6, 7] = BUNDLED_UI_SDK_VERSION,
     allowed_hosts: Sequence[str] | None = None,
     *,
-    sandbox: SandboxBackend | SandboxRef | None = None,
+    workspace: WorkspaceBackend | WorkspaceRef | None = None,
 ) -> Starlette:
     """Create a Starlette app that serves a web chat UI for the given agent.
 
@@ -192,7 +192,7 @@ def create_web_app(
         native_tools: Optional list of additional native tools to make available in the UI.
             Tools already configured on the agent are always included but won't appear as options.
         deps: Optional dependencies to use for all requests.
-        sandbox: Optional sandbox backend or [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] for all requests; overrides capability contributions. See the [sandbox docs](../../sandbox.md).
+        workspace: Optional workspace backend or [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] for all requests; overrides capability contributions. See the [workspace docs](../../workspace.md).
         model_settings: Optional settings to use for all model requests.
         instructions: Optional extra instructions to pass to each agent run.
         html_source: Path or URL for the chat UI HTML. Can be:
@@ -227,7 +227,7 @@ def create_web_app(
         models=models,
         native_tools=native_tools,
         deps=deps,
-        sandbox=sandbox,
+        workspace=workspace,
         model_settings=model_settings,
         instructions=instructions,
         sdk_version=sdk_version,

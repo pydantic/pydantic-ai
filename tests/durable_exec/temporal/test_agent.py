@@ -87,27 +87,27 @@ from pydantic_ai.realtime import (
 )
 from pydantic_ai.realtime.codec import RealtimeConnection
 from pydantic_ai.run import AgentRunResult
-from pydantic_ai.sandboxes import (
-    ReadOnlySandbox,
-    Sandbox,
-    SandboxBackend,
-    SandboxRef,
-    SandboxTimeoutError,
-    UnavailableSandbox,
-)
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
 from pydantic_ai.toolsets.prepared import PreparedToolset
 from pydantic_ai.usage import UsageLimits
+from pydantic_ai.workspaces import (
+    ReadOnlyWorkspace,
+    UnavailableWorkspace,
+    Workspace,
+    WorkspaceBackend,
+    WorkspaceRef,
+    WorkspaceTimeoutError,
+)
 
 from ..._inline_snapshot import snapshot
 from ...continuation_utils import ScriptedContinuationModel, scripted_response
 from ...model_lifecycle_utils import LifecycleTrackingModel
-from ...sandbox_fakes import (
-    ConnectOnlySandboxCapability,
-    FakeSandbox,
-    RecordingSandboxBackend,
-    SandboxCapability,
-    ref_sandbox,
+from ...workspace_fakes import (
+    ConnectOnlyWorkspaceCapability,
+    FakeWorkspace,
+    RecordingWorkspaceBackend,
+    WorkspaceCapability,
+    ref_workspace,
 )
 
 try:
@@ -117,12 +117,12 @@ try:
     from temporalio.common import RetryPolicy
     from temporalio.contrib.pydantic import pydantic_data_converter
     from temporalio.exceptions import CancelledError as TemporalCancelledError
-    from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
+    from temporalio.worker import Replayer, UnworkspaceedWorkflowRunner, Worker
     from temporalio.workflow import ActivityCancellationType, ActivityConfig
 
-    from pydantic_ai.durable_exec._sandbox import SandboxOperationParams
     from pydantic_ai.durable_exec._toolset import unwrap_tool_call_result
     from pydantic_ai.durable_exec._utils import StreamedActivityResult
+    from pydantic_ai.durable_exec._workspace import WorkspaceOperationParams
     from pydantic_ai.durable_exec.temporal import (
         AgentPlugin,
         PydanticAIWorkflow,
@@ -147,7 +147,7 @@ try:
         deserialize_run_context,
     )
     from pydantic_ai.durable_exec.temporal._toolset import CallToolParams
-    from pydantic_ai.durable_exec.temporal._transports import _SandboxOperationTransport
+    from pydantic_ai.durable_exec.temporal._transports import _WorkspaceOperationTransport
 
 except ImportError:  # pragma: lax no cover
     pytest.skip('temporal not installed', allow_module_level=True)
@@ -157,8 +157,8 @@ except ImportError:  # pragma: lax no cover
 # plain because which of the two arms a run measures depends on its Python version.
 if sys.version_info >= (3, 14):  # pragma: lax no cover
     pytest.skip(
-        'temporalio sandbox is incompatible with Python 3.14: '
-        'sandbox module state accumulates across validation cycles causing import failures after ~22 workflows '
+        'temporalio workspace is incompatible with Python 3.14: '
+        'workspace module state accumulates across validation cycles causing import failures after ~22 workflows '
         '(remove when https://github.com/temporalio/sdk-python/issues/1326 closes)',
         allow_module_level=True,
     )
@@ -195,7 +195,7 @@ with workflow.unsafe.imports_passed_through():
     # Loads `vcr`, which Temporal doesn't like without passing through the import
     from ...conftest import IsDatetime, IsStr
 
-    # `_shared` loads the same sandbox-sensitive modules, so import it passed-through as well.
+    # `_shared` loads the same workspace-sensitive modules, so import it passed-through as well.
     from ._shared import (
         BASE_ACTIVITY_CONFIG,
         TASK_QUEUE,
@@ -350,7 +350,7 @@ async def test_anyio_scope_cancel_of_activity_await_does_not_wedge(client: Clien
         task_queue=TASK_QUEUE,
         workflows=[AnyioScopeActivityCancellationWorkflow],
         activities=[_slow_cancellable_activity],
-        workflow_runner=UnsandboxedWorkflowRunner(),
+        workflow_runner=UnworkspaceedWorkflowRunner(),
     ):
         handle = await client.start_workflow(
             AnyioScopeActivityCancellationWorkflow.run,
@@ -396,7 +396,7 @@ async def test_wait_for_nonstreaming_agent_timeout_does_not_livelock(client: Cli
         task_queue=TASK_QUEUE,
         workflows=[WaitForNonStreamingAgentTimeoutWorkflow],
         plugins=[AgentPlugin(_wait_for_nonstreaming_agent)],
-        workflow_runner=UnsandboxedWorkflowRunner(),
+        workflow_runner=UnworkspaceedWorkflowRunner(),
     ):
         result = await client.execute_workflow(
             WaitForNonStreamingAgentTimeoutWorkflow.run,
@@ -454,7 +454,7 @@ async def test_wait_for_agent_timeout_in_workflow_does_not_livelock(client: Clie
         task_queue=TASK_QUEUE,
         workflows=[WaitForAgentTimeoutWorkflow],
         plugins=[AgentPlugin(_wait_for_timeout_agent)],
-        workflow_runner=UnsandboxedWorkflowRunner(),
+        workflow_runner=UnworkspaceedWorkflowRunner(),
     ):
         result = await client.execute_workflow(
             WaitForAgentTimeoutWorkflow.run,
@@ -481,7 +481,7 @@ async def test_temporal_cancellation_backstop_survives_absorbed_activity_cancel(
         task_queue=TASK_QUEUE,
         workflows=[CancellationBackstopWorkflow],
         plugins=[AgentPlugin(_cancellation_agent)],
-        workflow_runner=UnsandboxedWorkflowRunner(),
+        workflow_runner=UnworkspaceedWorkflowRunner(),
     ):
         handle = await client.start_workflow(
             CancellationBackstopWorkflow.run,
@@ -501,7 +501,7 @@ async def test_temporal_cancellation_backstop_survives_absorbed_activity_cancel(
 
     await Replayer(
         workflows=[CancellationBackstopWorkflow],
-        workflow_runner=UnsandboxedWorkflowRunner(),
+        workflow_runner=UnworkspaceedWorkflowRunner(),
         data_converter=pydantic_data_converter,
     ).replay_workflow(history)
 
@@ -577,7 +577,7 @@ async def test_temporal_agent_history_replays_after_migrating_to_durability(clie
         task_queue=TASK_QUEUE,
         workflows=[TemporalAgentMigrationWorkflow],
         activities=_legacy_migration_agent.temporal_activities,
-        workflow_runner=UnsandboxedWorkflowRunner(),
+        workflow_runner=UnworkspaceedWorkflowRunner(),
     ):
         output = await client.execute_workflow(
             TemporalAgentMigrationWorkflow.run,
@@ -593,7 +593,7 @@ async def test_temporal_agent_history_replays_after_migrating_to_durability(clie
     try:
         await Replayer(
             workflows=[TemporalAgentMigrationWorkflow],
-            workflow_runner=UnsandboxedWorkflowRunner(),
+            workflow_runner=UnworkspaceedWorkflowRunner(),
             data_converter=pydantic_data_converter,
         ).replay_workflow(history)
     finally:
@@ -2711,12 +2711,12 @@ def test_temporal_run_context_preserves_run_id():
     assert reconstructed.run_id == 'run-123'
 
 
-def _sandbox_context(sandbox: Sandbox) -> RunContext[None]:
-    return RunContext(deps=None, model=TestModel(), usage=RunUsage(), sandbox=sandbox)
+def _workspace_context(workspace: Workspace) -> RunContext[None]:
+    return RunContext(deps=None, model=TestModel(), usage=RunUsage(), workspace=workspace)
 
 
-def test_temporal_run_context_preserves_unavailable_sandbox_reason():
-    ctx = _sandbox_context(Sandbox(UnavailableSandbox('disabled by policy')))
+def test_temporal_run_context_preserves_unavailable_workspace_reason():
+    ctx = _workspace_context(Workspace(UnavailableWorkspace('disabled by policy')))
 
     reconstructed = deserialize_run_context(
         TemporalRunContext,
@@ -2726,7 +2726,7 @@ def test_temporal_run_context_preserves_unavailable_sandbox_reason():
     )
 
     with pytest.raises(UserError, match='disabled by policy'):
-        _ = reconstructed.sandbox
+        _ = reconstructed.workspace
 
 
 def test_temporal_run_context_does_not_serialize_a_live_backend():
@@ -2735,26 +2735,26 @@ def test_temporal_run_context_does_not_serialize_a_live_backend():
     Its identity would name an environment nothing in the activity can reach, so it does not
     cross the boundary at all.
     """
-    live_sandbox = Sandbox(RecordingSandboxBackend('live'))
+    live_workspace = Workspace(RecordingWorkspaceBackend('live'))
 
-    serialized = TemporalRunContext.serialize_run_context(_sandbox_context(live_sandbox))
+    serialized = TemporalRunContext.serialize_run_context(_workspace_context(live_workspace))
 
-    assert '_sandbox_state' not in serialized
+    assert '_workspace_state' not in serialized
 
 
-def test_temporal_run_context_serializes_a_fresh_sandbox_supplier():
+def test_temporal_run_context_serializes_a_fresh_workspace_supplier():
     """A supplier id crosses before the lazy backend has an environment ref."""
-    supplier = SandboxCapability(FakeSandbox('fresh'))
-    sandbox = Sandbox(supplier.backend, _supplier_id=supplier.id, _supplier=supplier)
+    supplier = WorkspaceCapability(FakeWorkspace('fresh'))
+    workspace = Workspace(supplier.backend, _supplier_id=supplier.id, _supplier=supplier)
 
-    serialized = TemporalRunContext.serialize_run_context(_sandbox_context(sandbox))
+    serialized = TemporalRunContext.serialize_run_context(_workspace_context(workspace))
 
-    assert serialized['_sandbox_state'] == {'supplier_id': 'sandbox', 'sandbox_id': None}
+    assert serialized['_workspace_state'] == {'supplier_id': 'workspace', 'workspace_id': None}
 
 
-def test_temporal_registers_every_user_facing_sandbox_method():
-    supplier = SandboxCapability(FakeSandbox('registered'))
-    agent = Agent(TestModel(), name='sandbox_methods', capabilities=[supplier, TemporalDurability()])
+def test_temporal_registers_every_user_facing_workspace_method():
+    supplier = WorkspaceCapability(FakeWorkspace('registered'))
+    agent = Agent(TestModel(), name='workspace_methods', capabilities=[supplier, TemporalDurability()])
     durability = TemporalDurability.from_agent(agent)
     assert durability is not None
 
@@ -2762,9 +2762,9 @@ def test_temporal_registers_every_user_facing_sandbox_method():
         ActivityDefinition.must_from_callable(activity).name  # pyright: ignore[reportUnknownMemberType]
         for activity in durability.temporal_activities
     }
-    sandbox_names = {name for name in names if name is not None and '__sandbox__sandbox__' in name}
-    assert sandbox_names == {
-        f'agent__sandbox_methods__sandbox__sandbox__{method}'
+    workspace_names = {name for name in names if name is not None and '__workspace__workspace__' in name}
+    assert workspace_names == {
+        f'agent__workspace_methods__workspace__workspace__{method}'
         for method in (
             'run',
             'working_dir',
@@ -2784,147 +2784,147 @@ def test_temporal_registers_every_user_facing_sandbox_method():
 
 
 @pytest.mark.parametrize('state', [None, {}], ids=['legacy-payload', 'empty'])
-def test_temporal_run_context_without_sandbox_state_has_no_sandbox(state: dict[str, Any] | None):
-    serialized = TemporalRunContext.serialize_run_context(_sandbox_context(Sandbox(UnavailableSandbox('ignored'))))
+def test_temporal_run_context_without_workspace_state_has_no_workspace(state: dict[str, Any] | None):
+    serialized = TemporalRunContext.serialize_run_context(_workspace_context(Workspace(UnavailableWorkspace('ignored'))))
     if state is None:
-        serialized.pop('_sandbox_state')
+        serialized.pop('_workspace_state')
     else:
-        serialized['_sandbox_state'] = state
+        serialized['_workspace_state'] = state
 
     reconstructed = deserialize_run_context(TemporalRunContext, serialized, deps=None, agent=None)
 
     with pytest.raises(UserError, match='not available inside a Temporal activity'):
-        _ = reconstructed.sandbox
+        _ = reconstructed.workspace
 
 
-async def test_temporal_run_context_reconnects_sandbox_ref_through_agent():
-    connector = ConnectOnlySandboxCapability()
+async def test_temporal_run_context_reconnects_workspace_ref_through_agent():
+    connector = ConnectOnlyWorkspaceCapability()
     agent = Agent(TestModel(), capabilities=[connector])
-    ref = SandboxRef(sandbox_id='temporal-ref')
+    ref = WorkspaceRef(workspace_id='temporal-ref')
 
-    sandbox = ref_sandbox(ref, connector)
-    serialized = TemporalRunContext.serialize_run_context(_sandbox_context(sandbox))
+    workspace = ref_workspace(ref, connector)
+    serialized = TemporalRunContext.serialize_run_context(_workspace_context(workspace))
 
     reconstructed = deserialize_run_context(TemporalRunContext, serialized, deps=None, agent=agent)
 
-    assert (await reconstructed.sandbox.run(['true'])).stdout == 'connected'
-    assert connector.sandbox_ids == ['temporal-ref']
+    assert (await reconstructed.workspace.run(['true'])).stdout == 'connected'
+    assert connector.workspace_ids == ['temporal-ref']
 
 
-def test_temporal_sandbox_operation_transport_round_trips_context_and_arguments():
-    supplier = SandboxCapability(FakeSandbox('transport'))
-    agent = Agent(TestModel(), name='sandbox_transport', capabilities=[supplier, TemporalDurability()])
+def test_temporal_workspace_operation_transport_round_trips_context_and_arguments():
+    supplier = WorkspaceCapability(FakeWorkspace('transport'))
+    agent = Agent(TestModel(), name='workspace_transport', capabilities=[supplier, TemporalDurability()])
     durability = TemporalDurability.from_agent(agent)
     assert durability is not None
-    ctx = _sandbox_context(Sandbox(supplier.backend, _supplier_id=supplier.id, _supplier=supplier))
-    params = SandboxOperationParams(
+    ctx = _workspace_context(Workspace(supplier.backend, _supplier_id=supplier.id, _supplier=supplier))
+    params = WorkspaceOperationParams(
         run_context=ctx,
-        supplier_id='sandbox',
-        ref=SandboxRef(sandbox_id='transport-ref'),
+        supplier_id='workspace',
+        ref=WorkspaceRef(workspace_id='transport-ref'),
         arguments={'path': 'file.txt'},
     )
 
-    transport = _SandboxOperationTransport(durability)
+    transport = _WorkspaceOperationTransport(durability)
     loaded = transport.load(transport.dump(params), runtime=object())
 
-    assert loaded.supplier_id == 'sandbox'
-    assert loaded.ref == SandboxRef(sandbox_id='transport-ref')
+    assert loaded.supplier_id == 'workspace'
+    assert loaded.ref == WorkspaceRef(workspace_id='transport-ref')
     assert loaded.arguments == {'path': 'file.txt'}
     assert loaded.run_context.deps is None
 
 
 async def test_temporal_run_context_reports_when_matching_supplier_declines_serialized_ref():
     class DecliningConnector(Capability[Any]):
-        id = 'connect_only_sandbox'
+        id = 'connect_only_workspace'
 
-        def get_sandbox(self, ctx: RunContext[Any], *, ref: SandboxRef | None) -> None:
+        def get_workspace(self, ctx: RunContext[Any], *, ref: WorkspaceRef | None) -> None:
             return None
 
-    connector = ConnectOnlySandboxCapability()
+    connector = ConnectOnlyWorkspaceCapability()
     serialized = TemporalRunContext.serialize_run_context(
-        _sandbox_context(ref_sandbox(SandboxRef(sandbox_id='declined'), connector))
+        _workspace_context(ref_workspace(WorkspaceRef(workspace_id='declined'), connector))
     )
     reconstructed = deserialize_run_context(
         TemporalRunContext,
         serialized,
         deps=None,
-        agent=Agent(TestModel(), capabilities=[DecliningConnector(id='connect_only_sandbox')]),
+        agent=Agent(TestModel(), capabilities=[DecliningConnector(id='connect_only_workspace')]),
     )
 
-    with pytest.raises(UserError, match='declined the serialized sandbox reference'):
-        await reconstructed.sandbox.run(['true'])
+    with pytest.raises(UserError, match='declined the serialized workspace reference'):
+        await reconstructed.workspace.run(['true'])
 
 
 @pytest.mark.parametrize('agent', [None, Agent(TestModel())], ids=['without-agent', 'without-provider'])
 async def test_temporal_run_context_explains_legacy_ref_rebuild_failure(agent: Agent[None, str] | None):
-    serialized = TemporalRunContext.serialize_run_context(_sandbox_context(Sandbox(UnavailableSandbox('ignored'))))
-    serialized['_sandbox_state'] = {'sandbox_id': 'legacy-ref'}
+    serialized = TemporalRunContext.serialize_run_context(_workspace_context(Workspace(UnavailableWorkspace('ignored'))))
+    serialized['_workspace_state'] = {'workspace_id': 'legacy-ref'}
 
     reconstructed = deserialize_run_context(TemporalRunContext, serialized, deps=None, agent=agent)
 
-    message = 'no agent is attached' if agent is None else 'No capability can supply sandbox'
+    message = 'no agent is attached' if agent is None else 'No capability can supply workspace'
     with pytest.raises(UserError, match=message):
-        await reconstructed.sandbox.run(['true'])
+        await reconstructed.workspace.run(['true'])
 
 
 async def test_temporal_run_context_rebuilds_a_legacy_ref_through_the_capability_chain():
-    connector = ConnectOnlySandboxCapability()
-    serialized = TemporalRunContext.serialize_run_context(_sandbox_context(Sandbox(UnavailableSandbox('ignored'))))
-    serialized['_sandbox_state'] = {'sandbox_id': 'legacy-ref'}
+    connector = ConnectOnlyWorkspaceCapability()
+    serialized = TemporalRunContext.serialize_run_context(_workspace_context(Workspace(UnavailableWorkspace('ignored'))))
+    serialized['_workspace_state'] = {'workspace_id': 'legacy-ref'}
 
     reconstructed = deserialize_run_context(
         TemporalRunContext, serialized, deps=None, agent=Agent(TestModel(), capabilities=[connector])
     )
 
-    assert (await reconstructed.sandbox.run(['true'])).stdout == 'connected'
-    assert connector.sandbox_ids == ['legacy-ref']
+    assert (await reconstructed.workspace.run(['true'])).stdout == 'connected'
+    assert connector.workspace_ids == ['legacy-ref']
 
 
 async def test_temporal_run_context_ref_no_capability_recognizes_cannot_connect():
     """An agent whose capabilities all decline the ref cannot rebuild it either.
 
-    Recorded rather than raised at the boundary: an activity that never touches the sandbox
+    Recorded rather than raised at the boundary: an activity that never touches the workspace
     must not fail because of one.
     """
-    missing = ConnectOnlySandboxCapability()
+    missing = ConnectOnlyWorkspaceCapability()
     agent = Agent(TestModel())
 
     reconstructed = deserialize_run_context(
         TemporalRunContext,
         TemporalRunContext.serialize_run_context(
-            _sandbox_context(ref_sandbox(SandboxRef(sandbox_id='stranger'), missing))
+            _workspace_context(ref_workspace(WorkspaceRef(workspace_id='stranger'), missing))
         ),
         deps=None,
         agent=agent,
     )
 
-    with pytest.raises(UserError, match=r"Cannot rebuild sandbox from capability 'connect_only_sandbox'"):
-        await reconstructed.sandbox.run(['true'])
+    with pytest.raises(UserError, match=r"Cannot rebuild workspace from capability 'connect_only_workspace'"):
+        await reconstructed.workspace.run(['true'])
 
 
 async def test_temporal_run_context_ref_without_agent_cannot_connect():
-    ref = SandboxRef(sandbox_id='orphan')
+    ref = WorkspaceRef(workspace_id='orphan')
 
-    sandbox = ref_sandbox(ref, ConnectOnlySandboxCapability())
+    workspace = ref_workspace(ref, ConnectOnlyWorkspaceCapability())
     reconstructed = deserialize_run_context(
         TemporalRunContext,
-        TemporalRunContext.serialize_run_context(_sandbox_context(sandbox)),
+        TemporalRunContext.serialize_run_context(_workspace_context(workspace)),
         deps=None,
         agent=None,
     )
 
     with pytest.raises(UserError, match='no agent is attached'):
-        await reconstructed.sandbox.run(['true'])
+        await reconstructed.workspace.run(['true'])
 
 
-async def test_temporal_activity_rebuilds_the_sandbox_and_leaves_it_running():
-    """A tool activity reaches its sandbox through the capability, and nothing tears it down after.
+async def test_temporal_activity_rebuilds_the_workspace_and_leaves_it_running():
+    """A tool activity reaches its workspace through the capability, and nothing tears it down after.
 
     The end of an activity is not the end of the environment: one conversation spans many runs,
     and many activities, so Pydantic AI never closes what a capability supplied.
     """
 
-    class ClosableBackend(RecordingSandboxBackend):
+    class ClosableBackend(RecordingWorkspaceBackend):
         def __init__(self) -> None:
             super().__init__('provider-only')
             self.close_calls: list[bool] = []
@@ -2936,18 +2936,18 @@ async def test_temporal_activity_rebuilds_the_sandbox_and_leaves_it_running():
     backend = ClosableBackend()
 
     class Provider(Capability[Any]):
-        def get_sandbox(self, ctx: RunContext[Any], *, ref: SandboxRef | None) -> SandboxBackend | None:
+        def get_workspace(self, ctx: RunContext[Any], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
             return backend
 
-    async def use_sandbox(ctx: RunContext[None]) -> str:
-        return (await ctx.sandbox.run(['true'])).stdout
+    async def use_workspace(ctx: RunContext[None]) -> str:
+        return (await ctx.workspace.run(['true'])).stdout
 
     provider = Provider(id='provider')
     agent = Agent(TestModel(), capabilities=[provider])
-    toolset = FunctionToolset[None](tools=[use_sandbox], id='sandbox-toolset')
+    toolset = FunctionToolset[None](tools=[use_workspace], id='workspace-toolset')
     temporal_toolset = temporalize_function_toolset(
         toolset,
-        activity_name_prefix='test__sandbox_rebuild',
+        activity_name_prefix='test__workspace_rebuild',
         activity_config=BASE_ACTIVITY_CONFIG,
         tool_activity_config={},
         deps_type=type(None),
@@ -2955,7 +2955,7 @@ async def test_temporal_activity_rebuilds_the_sandbox_and_leaves_it_running():
     )
     (call_tool_activity,) = temporal_toolset.durable_registrations
 
-    sandbox = ref_sandbox(SandboxRef(sandbox_id='provider-only'), provider)
+    workspace = ref_workspace(WorkspaceRef(workspace_id='provider-only'), provider)
 
     # The activity runs outside a Temporal worker here, so stub what heartbeating asks of the SDK.
     with (
@@ -2964,10 +2964,10 @@ async def test_temporal_activity_rebuilds_the_sandbox_and_leaves_it_running():
     ):
         result = await call_tool_activity(
             CallToolParams(
-                name='use_sandbox',
+                name='use_workspace',
                 tool_args={},
-                serialized_run_context=TemporalRunContext.serialize_run_context(_sandbox_context(sandbox)),
-                tool_def=toolset.tools['use_sandbox'].tool_def,
+                serialized_run_context=TemporalRunContext.serialize_run_context(_workspace_context(workspace)),
+                tool_def=toolset.tools['use_workspace'].tool_def,
             ),
             None,
         )
@@ -4194,7 +4194,7 @@ async def test_workflow_agent_run_cancel_is_application_outcome_and_replays(clie
     assert output == 'cancelled:True'
     await Replayer(
         workflows=[WorkflowCancelAgentWorkflow],
-        workflow_runner=UnsandboxedWorkflowRunner(),
+        workflow_runner=UnworkspaceedWorkflowRunner(),
         data_converter=pydantic_data_converter,
     ).replay_workflow(history)
 
@@ -4326,29 +4326,29 @@ async def test_delegate_agent_usage_is_not_merged_back_from_activity(client: Cli
 @pytest.mark.parametrize('legacy', [False, True], ids=['supplier', 'legacy-ref'])
 @pytest.mark.parametrize('operation', ['write', 'command'])
 @pytest.mark.parametrize('parent_policy', [False, True], ids=['supplier-policy', 'parent-policy'])
-async def test_temporal_activity_restores_per_run_sandbox_policy(legacy: bool, operation: str, parent_policy: bool):
-    backend = FakeSandbox('policy', ref=SandboxRef(sandbox_id='policy'))
+async def test_temporal_activity_restores_per_run_workspace_policy(legacy: bool, operation: str, parent_policy: bool):
+    backend = FakeWorkspace('policy', ref=WorkspaceRef(workspace_id='policy'))
     contexts: list[dict[str, Any]] = []
 
     class Protected(Capability[None]):
-        def get_sandbox(self, ctx: RunContext[None], *, ref: SandboxRef | None) -> SandboxBackend:
-            return ReadOnlySandbox(backend)
+        def get_workspace(self, ctx: RunContext[None], *, ref: WorkspaceRef | None) -> WorkspaceBackend:
+            return ReadOnlyWorkspace(backend)
 
     class Policy(Capability[None]):
         async def for_run(self, ctx: RunContext[None]) -> Capability[None]:
             return Protected(id=self.id)
 
-        def get_sandbox(self, ctx: RunContext[None], *, ref: SandboxRef | None) -> SandboxBackend:
+        def get_workspace(self, ctx: RunContext[None], *, ref: WorkspaceRef | None) -> WorkspaceBackend:
             return backend  # pragma: no cover
 
     class Capture(Capability[None]):
         async def before_run(self, ctx: RunContext[None]) -> None:
             with pytest.raises(UserError, match='read-only'):
-                await ctx.sandbox.write_bytes('/workspace/private', b'ordinary mutation')
+                await ctx.workspace.write_bytes('/workspace/private', b'ordinary mutation')
             contexts.append(TemporalRunContext.serialize_run_context(ctx))
 
     class Supplier(Capability[None]):
-        def get_sandbox(self, ctx: RunContext[None], *, ref: SandboxRef | None) -> SandboxBackend:
+        def get_workspace(self, ctx: RunContext[None], *, ref: WorkspaceRef | None) -> WorkspaceBackend:
             return backend  # pragma: no cover
 
     class ReadOnlyPolicy(Capability[None]):
@@ -4357,38 +4357,38 @@ async def test_temporal_activity_restores_per_run_sandbox_policy(legacy: bool, o
     class ParentPolicy(WrapperCapability[None]):
         async def for_run(self, ctx: RunContext[None]) -> WrapperCapability[None]:
             assert any(isinstance(capability, ReadOnlyPolicy) for capability in leaf_capabilities(self.wrapped))
-            return WrapperCapability(CombinedCapability([Protected(id='sandbox')]), id=self.id)
+            return WrapperCapability(CombinedCapability([Protected(id='workspace')]), id=self.id)
 
     policy = (
         ParentPolicy(
-            CombinedCapability([Supplier(id='sandbox'), ReadOnlyPolicy(id='read-only-policy', defer_loading=True)]),
+            CombinedCapability([Supplier(id='workspace'), ReadOnlyPolicy(id='read-only-policy', defer_loading=True)]),
             id='policy',
         )
         if parent_policy
-        else Policy(id='sandbox')
+        else Policy(id='workspace')
     )
     agent = Agent(TestModel(), deps_type=type(None), capabilities=[policy, Capture()])
     await agent.run('hello')
     serialized = contexts[0]
     if legacy:
-        serialized['_sandbox_state'].pop('supplier_id')
+        serialized['_workspace_state'].pop('supplier_id')
     restored = deserialize_run_context(TemporalRunContext, serialized, deps=None, agent=agent)
 
     with pytest.raises(UserError, match='read-only'):
         if operation == 'command':
-            await restored.sandbox.backend.run(['touch', '/workspace/private'])
+            await restored.workspace.backend.run(['touch', '/workspace/private'])
         else:
-            await restored.sandbox.write_bytes('/workspace/private', b'activity mutation')
+            await restored.workspace.write_bytes('/workspace/private', b'activity mutation')
     assert backend.files == {}
     assert backend.commands == []
 
 
 async def test_temporal_activity_uses_per_run_workspace_for_commands_and_files():
-    backend = FakeSandbox('tenant', {'/workspace/input': b'input'})
+    backend = FakeWorkspace('tenant', {'/workspace/input': b'input'})
     recoveries: list[str] = []
 
     class ResolvedTenant(Capability[str]):
-        def get_sandbox(self, ctx: RunContext[str], *, ref: SandboxRef | None) -> SandboxBackend:
+        def get_workspace(self, ctx: RunContext[str], *, ref: WorkspaceRef | None) -> WorkspaceBackend:
             return backend
 
     class Tenant(Capability[str]):
@@ -4397,64 +4397,64 @@ async def test_temporal_activity_uses_per_run_workspace_for_commands_and_files()
             await anyio.sleep(0)
             return ResolvedTenant(id=self.id)
 
-        def get_sandbox(self, ctx: RunContext[str], *, ref: SandboxRef | None) -> SandboxBackend:
+        def get_workspace(self, ctx: RunContext[str], *, ref: WorkspaceRef | None) -> WorkspaceBackend:
             pytest.fail('The construction-time supplier must not be used')  # pragma: no cover
 
-    supplier = Tenant(id='sandbox')
+    supplier = Tenant(id='workspace')
     agent = Agent(TestModel(), deps_type=str, capabilities=[supplier])
     ctx = RunContext(
         deps='tenant',
         model=TestModel(),
         usage=RunUsage(),
-        sandbox=Sandbox(backend, _supplier_id=supplier.id, _supplier=supplier),
+        workspace=Workspace(backend, _supplier_id=supplier.id, _supplier=supplier),
     )
     restored = deserialize_run_context(
         TemporalRunContext, TemporalRunContext.serialize_run_context(ctx), deps='tenant', agent=agent
     )
     assert recoveries == []
-    assert restored.sandbox.ref is None
+    assert restored.workspace.ref is None
 
-    assert await asyncio.gather(restored.sandbox.working_dir(), restored.sandbox.read_bytes('/workspace/input')) == [
+    assert await asyncio.gather(restored.workspace.working_dir(), restored.workspace.read_bytes('/workspace/input')) == [
         '/workspace',
         b'input',
     ]
-    await restored.sandbox.make_dir('/workspace/output')
-    await restored.sandbox.write_bytes('/workspace/output/file', b'output')
-    assert (await restored.sandbox.stat('/workspace/output/file')).size == 6
-    assert {entry.path for entry in await restored.sandbox.list_dir('/workspace')} == {
+    await restored.workspace.make_dir('/workspace/output')
+    await restored.workspace.write_bytes('/workspace/output/file', b'output')
+    assert (await restored.workspace.stat('/workspace/output/file')).size == 6
+    assert {entry.path for entry in await restored.workspace.list_dir('/workspace')} == {
         '/workspace/input',
         '/workspace/output/file',
     }
-    assert await restored.sandbox.exists('/workspace/output/file')
-    await restored.sandbox.remove('/workspace/output/file')
-    assert not await restored.sandbox.exists('/workspace/output/file')
-    assert (await restored.sandbox.run(['true'], timeout=10)).stdout == 'connected'
-    assert restored.sandbox.ref == backend.ref
+    assert await restored.workspace.exists('/workspace/output/file')
+    await restored.workspace.remove('/workspace/output/file')
+    assert not await restored.workspace.exists('/workspace/output/file')
+    assert (await restored.workspace.run(['true'], timeout=10)).stdout == 'connected'
+    assert restored.workspace.ref == backend.ref
     assert recoveries == ['tenant']
 
 
-async def test_temporal_activity_rejects_a_declining_per_run_sandbox_supplier():
+async def test_temporal_activity_rejects_a_declining_per_run_workspace_supplier():
     class Declining(Capability[None]):
         async def for_run(self, ctx: RunContext[None]) -> Capability[None]:
             return Capability()
 
-        def get_sandbox(self, ctx: RunContext[None], *, ref: SandboxRef | None) -> SandboxBackend:
+        def get_workspace(self, ctx: RunContext[None], *, ref: WorkspaceRef | None) -> WorkspaceBackend:
             pytest.fail('The construction-time supplier must not be used')  # pragma: no cover
 
-    supplier = Declining(id='sandbox')
-    ctx = _sandbox_context(Sandbox(FakeSandbox('unused'), _supplier_id=supplier.id, _supplier=supplier))
+    supplier = Declining(id='workspace')
+    ctx = _workspace_context(Workspace(FakeWorkspace('unused'), _supplier_id=supplier.id, _supplier=supplier))
     restored = deserialize_run_context(
         TemporalRunContext,
         TemporalRunContext.serialize_run_context(ctx),
         deps=None,
         agent=Agent(TestModel(), capabilities=[supplier]),
     )
-    with pytest.raises(UserError, match='per-run sandbox capability declined'):
-        await restored.sandbox.run(['true'])
+    with pytest.raises(UserError, match='per-run workspace capability declined'):
+        await restored.workspace.run(['true'])
 
 
 @pytest.mark.parametrize('provider_timeout', [False, True], ids=['deadline', 'provider-error'])
-async def test_temporal_activity_bounds_sandbox_recovery_without_replacing_provider_errors(provider_timeout: bool):
+async def test_temporal_activity_bounds_workspace_recovery_without_replacing_provider_errors(provider_timeout: bool):
     error = TimeoutError('provider configuration failed')
 
     class Slow(Capability[None]):
@@ -4464,11 +4464,11 @@ async def test_temporal_activity_bounds_sandbox_recovery_without_replacing_provi
             await anyio.sleep_forever()
             pytest.fail('Recovery must be cancelled')  # pragma: no cover
 
-        def get_sandbox(self, ctx: RunContext[None], *, ref: SandboxRef | None) -> SandboxBackend:
+        def get_workspace(self, ctx: RunContext[None], *, ref: WorkspaceRef | None) -> WorkspaceBackend:
             pytest.fail('The construction-time supplier must not be used')  # pragma: no cover
 
-    supplier = Slow(id='sandbox')
-    ctx = _sandbox_context(Sandbox(FakeSandbox('unused'), _supplier_id=supplier.id, _supplier=supplier))
+    supplier = Slow(id='workspace')
+    ctx = _workspace_context(Workspace(FakeWorkspace('unused'), _supplier_id=supplier.id, _supplier=supplier))
     restored = deserialize_run_context(
         TemporalRunContext,
         TemporalRunContext.serialize_run_context(ctx),
@@ -4476,9 +4476,9 @@ async def test_temporal_activity_bounds_sandbox_recovery_without_replacing_provi
         agent=Agent(TestModel(), capabilities=[supplier]),
     )
     with pytest.raises(TimeoutError) as caught:
-        await restored.sandbox.run(['true'], timeout=0.01)
+        await restored.workspace.run(['true'], timeout=0.01)
     if provider_timeout:
         assert caught.value is error
     else:
-        assert isinstance(caught.value, SandboxTimeoutError)
+        assert isinstance(caught.value, WorkspaceTimeoutError)
         assert caught.value.timeout == 0.01

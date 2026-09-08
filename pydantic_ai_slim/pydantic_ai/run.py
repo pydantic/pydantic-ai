@@ -21,7 +21,7 @@ from ._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority
 from ._instrumentation import current_otel_traceparent
 from ._run_context import (
     CustomEventT,
-    unattached_sandbox,
+    unattached_workspace,
 )
 from .output import OutputDataT
 from .tools import AgentDepsT
@@ -29,7 +29,7 @@ from .tools import AgentDepsT
 if TYPE_CHECKING:
     from ._run_context import RunContext
     from .result import FinalResult
-    from .sandboxes import Sandbox
+    from .workspaces import Workspace
 
 
 @dataclasses.dataclass(repr=False)
@@ -164,9 +164,9 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             self._graph_run.deps.new_message_index,
             self._traceparent(required=False),
         )
-        # Set outside the constructor because `sandbox` is not a dataclass field: see the
+        # Set outside the constructor because `workspace` is not a dataclass field: see the
         # property on `AgentRunResult`.
-        result.__dict__['_sandbox'] = self._graph_run.deps.sandbox
+        result.__dict__['_workspace'] = self._graph_run.deps.workspace
         return result
 
     def all_messages(self) -> list[_messages.ModelMessage]:
@@ -654,24 +654,24 @@ class AgentRunResult(Generic[OutputDataT]):
     _traceparent_value: str | None = dataclasses.field(repr=False, compare=False, default=None)
 
     @property
-    def sandbox(self) -> Sandbox:
-        """The [`Sandbox`][pydantic_ai.sandboxes.Sandbox] the run used.
+    def workspace(self) -> Workspace:
+        """The [`Workspace`][pydantic_ai.workspaces.Workspace] the run used.
 
-        Pass it to a later run or a subagent as `sandbox=result.sandbox` to keep working in the same
+        Pass it to a later run or a subagent as `workspace=result.workspace` to keep working in the same
         environment. Nothing tears it down when the run ends, so it is still usable here: copy files
         out, or destroy it yourself through
-        [`backend`][pydantic_ai.sandboxes.Sandbox.backend] if your provider supports that.
+        [`backend`][pydantic_ai.workspaces.Workspace.backend] if your provider supports that.
 
         A result that did not come from a run — one deserialized from JSON, or built by hand — has
-        a placeholder whose operations explain that no sandbox is attached.
+        a placeholder whose operations explain that no workspace is attached.
         """
-        # Deliberately not a dataclass field. A result is serializable and a sandbox is not: it
+        # Deliberately not a dataclass field. A result is serializable and a workspace is not: it
         # holds a live handle to an environment, and Temporal and Prefect both put whole results
         # on the wire. Keeping it off `__dataclass_fields__` keeps it out of every serializer.
-        sandbox = self.__dict__.get('_sandbox')
-        if sandbox is None:
-            sandbox = self.__dict__['_sandbox'] = unattached_sandbox()
-        return sandbox
+        workspace = self.__dict__.get('_workspace')
+        if workspace is None:
+            workspace = self.__dict__['_workspace'] = unattached_workspace()
+        return workspace
 
     @overload
     def _traceparent(self, *, required: Literal[False]) -> str | None: ...

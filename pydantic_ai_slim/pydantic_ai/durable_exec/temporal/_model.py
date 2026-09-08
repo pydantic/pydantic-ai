@@ -166,7 +166,7 @@ class TemporalModel(WrapperModel):
             # Resolve the model that produced the response (mirrors `request_activity`'s use of
             # `model_id`) so a multi-model registry cancels on the right client. The teardown is a
             # raw HTTP call to the provider, so it must run in an activity rather than the workflow
-            # sandbox. The run context and deps travel inside the single params payload to preserve
+            # workspace. The run context and deps travel inside the single params payload to preserve
             # the activity command shape for replay; old payloads omit them and keep the previous
             # environment-inference behavior.
             run_context = None

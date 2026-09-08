@@ -42,12 +42,12 @@ from pydantic_ai.durable_exec._operation import (
     ModelRequestId,
     NoCacheIdentity,
     OperationConfigRole,
-    SandboxOperationId,
     ToolsetCallToolId,
     ToolsetGetInstructionsId,
     ToolsetGetToolsId,
     ToolsetValidateToolArgumentsId,
     TypedResultCodec,
+    WorkspaceOperationId,
 )
 from pydantic_ai.durable_exec._operation_backend import (
     BoundDurableOperation,
@@ -724,8 +724,8 @@ def _exhaustive_identity(operation_id: DurableOperationId) -> str:
             return 'compact'
         case CapabilityOperationId():
             return 'capability'
-        case SandboxOperationId():
-            return 'sandbox'
+        case WorkspaceOperationId():
+            return 'workspace'
         case EventStreamHandlerId():
             return 'event'
         case ToolsetGetToolsId():
@@ -745,7 +745,7 @@ def test_operation_identity_union_is_exhaustively_constructible() -> None:
         ModelCancelSuspendedResponseId(None, model_name='model'),
         ModelCompactMessagesId(None, model_name='model'),
         CapabilityOperationId('capability', operation='operation'),
-        SandboxOperationId('capability', method='run'),
+        WorkspaceOperationId('capability', method='run'),
         EventStreamHandlerId(),
         ToolsetGetToolsId('function', toolset_id='tools'),
         ToolsetGetInstructionsId('mcp'),
@@ -757,7 +757,7 @@ def test_operation_identity_union_is_exhaustively_constructible() -> None:
         'cancel',
         'compact',
         'capability',
-        'sandbox',
+        'workspace',
         'event',
         'tools',
         'instructions',

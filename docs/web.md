@@ -94,9 +94,9 @@ agent = Agent('openai:gpt-5.2')
 app = agent.to_web(instructions='Always respond in a friendly tone.')
 ```
 
-A sandbox passed to `to_web(sandbox=...)` is shared by every chat using that app.
+A workspace passed to `to_web(workspace=...)` is shared by every chat using that app.
 For separate user workspaces, use a custom endpoint that authenticates the request
-and chooses the sandbox for that user or authorized conversation.
+and chooses the workspace for that user or authorized conversation.
 
 ## Tool Approval
 

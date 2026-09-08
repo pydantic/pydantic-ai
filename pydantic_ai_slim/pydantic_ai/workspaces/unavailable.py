@@ -1,6 +1,6 @@
-"""A sandbox backend that reports why execution is unavailable.
+"""A workspace backend that reports why execution is unavailable.
 
-[`UnavailableSandbox`][pydantic_ai.sandboxes.UnavailableSandbox] gives sandbox operations
+[`UnavailableWorkspace`][pydantic_ai.workspaces.UnavailableWorkspace] gives workspace operations
 the same explicit failure mode. Pydantic AI uses it where a live execution
 environment cannot safely exist, and applications can pass one deliberately to disable
 execution with a policy-specific explanation.
@@ -16,13 +16,13 @@ from typing_extensions import Never
 
 from pydantic_ai.exceptions import UserError
 
-from .protocol import SandboxBackend, SandboxCommand, SupportsFilesystem
+from .protocol import SupportsFilesystem, WorkspaceBackend, WorkspaceCommand
 
-__all__ = ('UnavailableSandbox',)
+__all__ = ('UnavailableWorkspace',)
 
 
-class UnavailableSandbox(SandboxBackend, SupportsFilesystem):
-    """A `SandboxBackend` whose every operation raises `UserError` with a configured reason."""
+class UnavailableWorkspace(WorkspaceBackend, SupportsFilesystem):
+    """A `WorkspaceBackend` whose every operation raises `UserError` with a configured reason."""
 
     def __init__(self, reason: str):
         self.reason = reason
@@ -34,7 +34,7 @@ class UnavailableSandbox(SandboxBackend, SupportsFilesystem):
 
     async def run(
         self,
-        command: SandboxCommand,
+        command: WorkspaceCommand,
         *,
         shell: bool = False,
         cwd: str | None = None,

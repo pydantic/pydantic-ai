@@ -7,16 +7,16 @@ from typing_extensions import TypeVar
 
 from pydantic_ai._run_context import AnchoredEvidence, CapabilityEventT, CustomEventT
 from pydantic_ai._utils import is_str_dict
-from pydantic_ai.capabilities._sandbox import get_run_sandbox, sandbox_supplier_scope
+from pydantic_ai.capabilities._workspace import get_run_workspace, workspace_supplier_scope
 from pydantic_ai.capabilities.abstract import AbstractCapability, leaf_capabilities
 from pydantic_ai.durable_exec._toolset import EnqueueGuard, enqueue_not_supported_message
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import CapabilityEvent, CustomEvent
-from pydantic_ai.sandboxes import Sandbox, SandboxRef, UnavailableSandbox
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage, UsageLimits
+from pydantic_ai.workspaces import UnavailableWorkspace, Workspace, WorkspaceRef
 
-from ._sandbox_backend import ActivitySandboxBackend
+from ._workspace_backend import ActivityWorkspaceBackend
 
 if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AbstractAgent
@@ -24,11 +24,11 @@ if TYPE_CHECKING:
 AgentDepsT = TypeVar('AgentDepsT', default=object, covariant=True)
 """Type variable for the agent dependencies in `RunContext`."""
 
-TEMPORAL_SANDBOX_UNAVAILABLE_REASON = (
-    'RunContext.sandbox is not available inside a Temporal activity: a live sandbox handle cannot cross '
-    'the activity boundary. Attach a capability that supplies a sandbox through its `get_sandbox` hook, '
-    'or pass a `SandboxRef` to the agent run; either way the sandbox is re-opened inside each activity '
-    "through the capability chain's `get_sandbox`."
+TEMPORAL_WORKSPACE_UNAVAILABLE_REASON = (
+    'RunContext.workspace is not available inside a Temporal activity: a live workspace handle cannot cross '
+    'the activity boundary. Attach a capability that supplies a workspace through its `get_workspace` hook, '
+    'or pass a `WorkspaceRef` to the agent run; either way the workspace is re-opened inside each activity '
+    "through the capability chain's `get_workspace`."
 )
 
 
@@ -90,9 +90,9 @@ _RENAMED_FIELDS: tuple[tuple[str, str], ...] = (
 # Reading any other omitted field raises instead of returning the `RunContext` dataclass default,
 # which would silently pass for real run state (e.g. `instrumentation_version` reading as the
 # default version rather than the run's, or `prompt` as `None` for a subclass that drops it).
-# `sandbox` is excluded because it is served by the class-level property below, which raises the
-# sandbox-specific `TEMPORAL_SANDBOX_UNAVAILABLE_REASON` message when no ref was serialized.
-_GUARDED_FIELDS = frozenset(RunContext.__dataclass_fields__) - {'deps', 'sandbox', *_NONE_UNLESS_ATTACHED}
+# `workspace` is excluded because it is served by the class-level property below, which raises the
+# workspace-specific `TEMPORAL_WORKSPACE_UNAVAILABLE_REASON` message when no ref was serialized.
+_GUARDED_FIELDS = frozenset(RunContext.__dataclass_fields__) - {'deps', 'workspace', *_NONE_UNLESS_ATTACHED}
 
 
 class TemporalRunContext(RunContext[AgentDepsT]):
@@ -100,12 +100,12 @@ class TemporalRunContext(RunContext[AgentDepsT]):
 
     By default, only the `deps`, `run_id`, `conversation_id`, `metadata`, `retries`, `tool_call_id`, `tool_name`, `tool_call_approved`, `tool_call_metadata`, `retry`, `max_retries`, `run_step`, `usage`, `usage_limits`, `partial_output`, `trace_include_content`, `instrumentation_version`, `loaded_capability_ids`, `discovered_tool_names`, the private dispatch-only availability supplements, and `capability_active` attributes will be available. Reading any other attribute raises a `UserError` explaining how to make it available, rather than returning its default value, so a field that didn't cross the boundary can't be mistaken for real run state.
 
-    `agent` and `root_capability` are re-attached from the worker's agent instance, `pending_messages` holds a guard that makes [`enqueue`][pydantic_ai.tools.RunContext.enqueue] raise inside an activity, and `tool_manager` and `realtime_session` are `None`: they hold live run state that isn't serializable (for `tool_manager`, `available_tool_names` returns the resolved snapshot serialized at activity dispatch time, falling back to `discovered_tool_names` if a custom subclass doesn't carry it; for `realtime_session`, `None` already means "not available here"). The `capabilities` registry is excluded for the same reason — it holds live capability objects (toolsets, hooks, callables) — so `active_capability_ids` likewise returns a snapshot serialized at dispatch time, which is what lets [`is_tool_available`][pydantic_ai.tools.RunContext.is_tool_available] answer for a capability-owned tool inside an activity; reading `capabilities` itself still raises. `model` and `tracer` are excluded as live objects too. `messages` is excluded because the full history would be duplicated into every activity payload, and `prompt` is excluded because a multi-modal prompt can carry large `BinaryContent` that would likewise ride in every activity payload, risking Temporal's 2 MB limit. `model_settings` is excluded because it's only set for model requests, which receive it as their own activity parameter, and `validation_context` because it's an arbitrary user object with no serialization contract. A live `sandbox` is likewise unavailable because the handle cannot cross the activity boundary; only its [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] is serialized, and the run's sandbox capability builds a fresh backend from that identity inside the activity, which attaches on first use.
+    `agent` and `root_capability` are re-attached from the worker's agent instance, `pending_messages` holds a guard that makes [`enqueue`][pydantic_ai.tools.RunContext.enqueue] raise inside an activity, and `tool_manager` and `realtime_session` are `None`: they hold live run state that isn't serializable (for `tool_manager`, `available_tool_names` returns the resolved snapshot serialized at activity dispatch time, falling back to `discovered_tool_names` if a custom subclass doesn't carry it; for `realtime_session`, `None` already means "not available here"). The `capabilities` registry is excluded for the same reason — it holds live capability objects (toolsets, hooks, callables) — so `active_capability_ids` likewise returns a snapshot serialized at dispatch time, which is what lets [`is_tool_available`][pydantic_ai.tools.RunContext.is_tool_available] answer for a capability-owned tool inside an activity; reading `capabilities` itself still raises. `model` and `tracer` are excluded as live objects too. `messages` is excluded because the full history would be duplicated into every activity payload, and `prompt` is excluded because a multi-modal prompt can carry large `BinaryContent` that would likewise ride in every activity payload, risking Temporal's 2 MB limit. `model_settings` is excluded because it's only set for model requests, which receive it as their own activity parameter, and `validation_context` because it's an arbitrary user object with no serialization contract. A live `workspace` is likewise unavailable because the handle cannot cross the activity boundary; only its [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] is serialized, and the run's workspace capability builds a fresh backend from that identity inside the activity, which attaches on first use.
     To make another attribute available, create a `TemporalRunContext` subclass with a custom `serialize_run_context` class method that returns a dictionary that includes the attribute and pass it as the `run_context_type` argument to [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability]. A subclass can use this escape hatch to opt in to carrying `prompt` if it knows its prompts are text-only.
     """
 
-    _sandbox: Sandbox | None = None
-    _sandbox_unavailable_reason: str = TEMPORAL_SANDBOX_UNAVAILABLE_REASON
+    _workspace: Workspace | None = None
+    _workspace_unavailable_reason: str = TEMPORAL_WORKSPACE_UNAVAILABLE_REASON
 
     def __init__(self, deps: AgentDepsT, **kwargs: Any):
         self.__dict__ = {**kwargs, 'deps': deps}
@@ -143,14 +143,14 @@ class TemporalRunContext(RunContext[AgentDepsT]):
         instance_fields[name] = RunContext.__dataclass_fields__[name]
 
     @property
-    def sandbox(self) -> Sandbox:  # pyright: ignore[reportIncompatibleVariableOverride] — deliberately raises on access
-        """The sandbox rebuilt from the serialized ref inside a Temporal activity.
+    def workspace(self) -> Workspace:  # pyright: ignore[reportIncompatibleVariableOverride] — deliberately raises on access
+        """The workspace rebuilt from the serialized ref inside a Temporal activity.
 
-        When no reference was supplied, access raises the configured unavailable-sandbox reason.
+        When no reference was supplied, access raises the configured unavailable-workspace reason.
         """
-        if self._sandbox is not None:
-            return self._sandbox
-        raise UserError(self._sandbox_unavailable_reason)
+        if self._workspace is not None:
+            return self._workspace
+        raise UserError(self._workspace_unavailable_reason)
 
     @property
     def available_tool_names(self) -> set[str]:
@@ -262,18 +262,18 @@ class TemporalRunContext(RunContext[AgentDepsT]):
             '_deferred_capability_ids': ctx._deferred_capability_ids,
             'capability_active': ctx.capability_active,
         }
-        sandbox = ctx.sandbox
-        backend = sandbox._raw_backend()  # pyright: ignore[reportPrivateUsage]
-        if isinstance(backend, UnavailableSandbox):
-            serialized['_sandbox_state'] = {'unavailable_reason': backend.reason}
+        workspace = ctx.workspace
+        backend = workspace._raw_backend()  # pyright: ignore[reportPrivateUsage]
+        if isinstance(backend, UnavailableWorkspace):
+            serialized['_workspace_state'] = {'unavailable_reason': backend.reason}
         else:
-            supplier_id, _ = sandbox._supplier_details()  # pyright: ignore[reportPrivateUsage]
+            supplier_id, _ = workspace._supplier_details()  # pyright: ignore[reportPrivateUsage]
             if supplier_id is not None:
                 # Carry the supplier even before the lazy backend has an environment id, so the
-                # first sandbox call can create it inside an activity.
-                serialized['_sandbox_state'] = {
+                # first workspace call can create it inside an activity.
+                serialized['_workspace_state'] = {
                     'supplier_id': supplier_id,
-                    'sandbox_id': sandbox.ref.sandbox_id if sandbox.ref is not None else None,
+                    'workspace_id': workspace.ref.workspace_id if workspace.ref is not None else None,
                 }
         return serialized
 
@@ -304,9 +304,9 @@ def deserialize_run_context(
     if agent is not None:
         ctx.__dict__['agent'] = agent
         ctx.__dict__['root_capability'] = agent.root_capability
-    sandbox_state = serialized.get('_sandbox_state')
-    if is_str_dict(sandbox_state):
-        _restore_sandbox(ctx, sandbox_state, agent)
+    workspace_state = serialized.get('_workspace_state')
+    if is_str_dict(workspace_state):
+        _restore_workspace(ctx, workspace_state, agent)
     # `pending_messages` isn't serialized across the activity boundary, and any code running inside
     # an activity (a tool, a `process_tool_call` hook, an `event_stream_handler`) is in a durable
     # unit whose result is replayed without re-running it, so an enqueue would be dropped. Install
@@ -315,17 +315,17 @@ def deserialize_run_context(
     return ctx
 
 
-def _restore_sandbox(
-    ctx: RunContext[Any], sandbox_state: dict[str, Any], agent: AbstractAgent[Any, Any] | None
+def _restore_workspace(
+    ctx: RunContext[Any], workspace_state: dict[str, Any], agent: AbstractAgent[Any, Any] | None
 ) -> None:
-    """Rebuild the run's sandbox inside an activity from its serialized identity."""
-    sandbox_id = sandbox_state.get('sandbox_id')
-    supplier_id = sandbox_state.get('supplier_id')
-    unavailable_reason = sandbox_state.get('unavailable_reason')
+    """Rebuild the run's workspace inside an activity from its serialized identity."""
+    workspace_id = workspace_state.get('workspace_id')
+    supplier_id = workspace_state.get('supplier_id')
+    unavailable_reason = workspace_state.get('unavailable_reason')
     if isinstance(supplier_id, str):
         if agent is None:
-            ctx.__dict__['_sandbox_unavailable_reason'] = (
-                f'Cannot rebuild sandbox from capability {supplier_id!r}: no agent is attached to this '
+            ctx.__dict__['_workspace_unavailable_reason'] = (
+                f'Cannot rebuild workspace from capability {supplier_id!r}: no agent is attached to this '
                 'Temporal activity.'
             )
             return
@@ -333,53 +333,53 @@ def _restore_sandbox(
             capability for capability in leaf_capabilities(agent.root_capability) if capability.id == supplier_id
         ]
         if len(suppliers) != 1:
-            ctx.__dict__['_sandbox_unavailable_reason'] = (
-                f'Cannot rebuild sandbox from capability {supplier_id!r}: expected one matching capability, '
+            ctx.__dict__['_workspace_unavailable_reason'] = (
+                f'Cannot rebuild workspace from capability {supplier_id!r}: expected one matching capability, '
                 f'found {len(suppliers)}.'
             )
             return
-        ref = SandboxRef(sandbox_id=sandbox_id) if isinstance(sandbox_id, str) else None
+        ref = WorkspaceRef(workspace_id=workspace_id) if isinstance(workspace_id, str) else None
         supplier = suppliers[0]
         # Retain ancestor wrappers: their `for_run` may impose the supplier's policy.
-        scope = sandbox_supplier_scope(agent.root_capability, supplier)
+        scope = workspace_supplier_scope(agent.root_capability, supplier)
         if any(type(capability).for_run is not AbstractCapability.for_run for capability in leaf_capabilities(scope)):
-            ctx.__dict__['_sandbox'] = Sandbox(ActivitySandboxBackend(scope, ctx, ref))
+            ctx.__dict__['_workspace'] = Workspace(ActivityWorkspaceBackend(scope, ctx, ref))
             return
-        backend = supplier.get_sandbox(ctx, ref=ref)
+        backend = supplier.get_workspace(ctx, ref=ref)
         if backend is None:
-            ctx.__dict__['_sandbox_unavailable_reason'] = (
-                f'Sandbox capability {supplier_id!r} declined the serialized sandbox reference.'
+            ctx.__dict__['_workspace_unavailable_reason'] = (
+                f'Workspace capability {supplier_id!r} declined the serialized workspace reference.'
             )
             return
-        ctx.__dict__['_sandbox'] = Sandbox(backend)
-    elif isinstance(sandbox_id, str):
+        ctx.__dict__['_workspace'] = Workspace(backend)
+    elif isinstance(workspace_id, str):
         # The worker's capability tree is the registry: the capability that recognizes this ref
         # exists on the agent this worker constructed, credentials included. Building the backend
         # does no I/O, so it is safe here; it reaches the provider on its first operation.
         #
         # When it cannot be rebuilt, the reason is recorded rather than raised: this runs for
-        # every activity, and one that never touches the sandbox must not fail because of it.
-        # Reading `ctx.sandbox` is what surfaces the explanation.
+        # every activity, and one that never touches the workspace must not fail because of it.
+        # Reading `ctx.workspace` is what surfaces the explanation.
         if agent is None:
-            ctx.__dict__['_sandbox_unavailable_reason'] = (
-                f'Cannot rebuild sandbox {sandbox_id!r}: no agent is attached to this Temporal activity, '
+            ctx.__dict__['_workspace_unavailable_reason'] = (
+                f'Cannot rebuild workspace {workspace_id!r}: no agent is attached to this Temporal activity, '
                 'so there is no capability chain to resolve the reference through.'
             )
             return
         # Older references have no supplier ID. Recover the original tree, as an ordinary run
-        # does, and let `get_run_sandbox` exclude deferred suppliers after `for_run`.
+        # does, and let `get_run_workspace` exclude deferred suppliers after `for_run`.
         scope = agent.root_capability
-        ref = SandboxRef(sandbox_id=sandbox_id)
+        ref = WorkspaceRef(workspace_id=workspace_id)
         if any(type(capability).for_run is not AbstractCapability.for_run for capability in leaf_capabilities(scope)):
-            ctx.__dict__['_sandbox'] = Sandbox(ActivitySandboxBackend(scope, ctx, ref))
+            ctx.__dict__['_workspace'] = Workspace(ActivityWorkspaceBackend(scope, ctx, ref))
             return
-        selection = get_run_sandbox(scope, ctx, ref)
+        selection = get_run_workspace(scope, ctx, ref)
         if selection is None:
-            ctx.__dict__['_sandbox_unavailable_reason'] = (
-                f'No capability can supply sandbox {sandbox_id!r}: every `get_sandbox` returned `None`. '
-                'Attach a capability whose `get_sandbox` recognizes it.'
+            ctx.__dict__['_workspace_unavailable_reason'] = (
+                f'No capability can supply workspace {workspace_id!r}: every `get_workspace` returned `None`. '
+                'Attach a capability whose `get_workspace` recognizes it.'
             )
             return
-        ctx.__dict__['_sandbox'] = Sandbox(selection.backend)
+        ctx.__dict__['_workspace'] = Workspace(selection.backend)
     elif isinstance(unavailable_reason, str):
-        ctx.__dict__['_sandbox_unavailable_reason'] = unavailable_reason
+        ctx.__dict__['_workspace_unavailable_reason'] = unavailable_reason

@@ -44,7 +44,6 @@ from ..exceptions import RunCancelled
 from ..output import OutputDataT, OutputSpec
 from ..result import AgentStream, FinalResult, StreamedRunResult
 from ..run import AgentRun, AgentRunResult, AgentRunResultEvent
-from ..sandboxes import SandboxBackend, SandboxRef
 from ..settings import ModelSettings
 from ..template import TemplateStr
 from ..tool_manager import ToolManager
@@ -57,6 +56,7 @@ from ..tools import (
     ToolFuncEither,
 )
 from ..toolsets import AbstractToolset
+from ..workspaces import WorkspaceBackend, WorkspaceRef
 
 if TYPE_CHECKING:
     from pydantic_ai.agent.spec import AgentSpec
@@ -494,7 +494,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        sandbox: SandboxBackend | SandboxRef | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AgentRunResult[OutputDataT]: ...
 
@@ -521,7 +521,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        sandbox: SandboxBackend | SandboxRef | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AgentRunResult[RunOutputDataT]: ...
 
@@ -547,7 +547,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        sandbox: SandboxBackend | SandboxRef | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AgentRunResult[Any]:
         """Run the agent with a user prompt in async mode.
@@ -595,7 +595,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             toolsets: Optional additional toolsets for this run.
             event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools to use for this run. Under a durability capability, this per-run handler runs workflow-side; model events are replayed after each model request completes. For handler I/O inside the durable boundary, pass `event_stream_handler=` to the durability capability.
             capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
-            sandbox: Optional sandbox backend or [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] for this run; overrides capability contributions. See the [sandbox docs](../sandbox.md).
+            workspace: Optional workspace backend or [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] for this run; overrides capability contributions. See the [workspace docs](../workspace.md).
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
@@ -624,7 +624,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             retries=retries,
             toolsets=toolsets,
             capabilities=capabilities,
-            sandbox=sandbox,
+            workspace=workspace,
             spec=spec,
         ) as agent_run:
             # Drive via next() so capability hooks fire for each node. `next()` already streams a
@@ -695,7 +695,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        sandbox: SandboxBackend | SandboxRef | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AgentRunResult[OutputDataT]: ...
 
@@ -722,7 +722,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        sandbox: SandboxBackend | SandboxRef | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AgentRunResult[RunOutputDataT]: ...
 
@@ -748,7 +748,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        sandbox: SandboxBackend | SandboxRef | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AgentRunResult[Any]:
         """Synchronously run the agent with a user prompt.
@@ -800,7 +800,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             toolsets: Optional additional toolsets for this run.
             event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools to use for this run. Under a durability capability, this per-run handler runs workflow-side; model events are replayed after each model request completes. For handler I/O inside the durable boundary, pass `event_stream_handler=` to the durability capability.
             capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
-            sandbox: Optional sandbox backend or [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] for this run; overrides capability contributions. See the [sandbox docs](../sandbox.md).
+            workspace: Optional workspace backend or [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] for this run; overrides capability contributions. See the [workspace docs](../workspace.md).
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
@@ -832,7 +832,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 toolsets=toolsets,
                 event_stream_handler=event_stream_handler,
                 capabilities=capabilities,
-                sandbox=sandbox,
+                workspace=workspace,
                 spec=spec,
             )
         )
@@ -860,7 +860,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        sandbox: SandboxBackend | SandboxRef | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[result.StreamedRunResult[AgentDepsT, OutputDataT]]: ...
 
@@ -887,7 +887,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        sandbox: SandboxBackend | SandboxRef | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[result.StreamedRunResult[AgentDepsT, RunOutputDataT]]: ...
 
@@ -914,7 +914,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        sandbox: SandboxBackend | SandboxRef | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AsyncGenerator[result.StreamedRunResult[AgentDepsT, Any]]:
         """Run the agent with a user prompt in async streaming mode.
@@ -971,7 +971,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 It will receive all the events up until the final result is found, which you can then read or stream from inside the context manager.
                 Note that it does _not_ receive any events after the final result is found.
             capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
-            sandbox: Optional sandbox backend or [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] for this run; overrides capability contributions. See the [sandbox docs](../sandbox.md).
+            workspace: Optional workspace backend or [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] for this run; overrides capability contributions. See the [workspace docs](../workspace.md).
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
@@ -1004,7 +1004,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             infer_name=False,
             toolsets=toolsets,
             capabilities=capabilities,
-            sandbox=sandbox,
+            workspace=workspace,
             spec=spec,
         ) as agent_run:
             # Handle wrap_run short-circuit: result is already available
@@ -1172,7 +1172,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        sandbox: SandboxBackend | SandboxRef | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> result.StreamedRunResultSync[AgentDepsT, OutputDataT]: ...
 
@@ -1198,7 +1198,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        sandbox: SandboxBackend | SandboxRef | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> result.StreamedRunResultSync[AgentDepsT, RunOutputDataT]: ...
 
@@ -1223,7 +1223,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        sandbox: SandboxBackend | SandboxRef | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> result.StreamedRunResultSync[AgentDepsT, Any]:
         """Run the agent with a user prompt in sync streaming mode.
@@ -1292,7 +1292,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 It will receive all the events up until the final result is found, which you can then read or stream from inside the context manager.
                 Note that it does _not_ receive any events after the final result is found.
             capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
-            sandbox: Optional sandbox backend or [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] for this run; overrides capability contributions. See the [sandbox docs](../sandbox.md).
+            workspace: Optional workspace backend or [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] for this run; overrides capability contributions. See the [workspace docs](../workspace.md).
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
@@ -1323,7 +1323,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 toolsets=toolsets,
                 event_stream_handler=event_stream_handler,
                 capabilities=capabilities,
-                sandbox=sandbox,
+                workspace=workspace,
                 spec=spec,
             )
         )
@@ -1350,7 +1350,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        sandbox: SandboxBackend | SandboxRef | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRunEvents[OutputDataT]]: ...
 
@@ -1376,7 +1376,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        sandbox: SandboxBackend | SandboxRef | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRunEvents[RunOutputDataT]]: ...
 
@@ -1401,7 +1401,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        sandbox: SandboxBackend | SandboxRef | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRunEvents[Any]]:
         """Run the agent with a user prompt in async mode and stream events from the run.
@@ -1474,7 +1474,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
-            sandbox: Optional sandbox backend or [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] for this run; overrides capability contributions. See the [sandbox docs](../sandbox.md).
+            workspace: Optional workspace backend or [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] for this run; overrides capability contributions. See the [workspace docs](../workspace.md).
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
@@ -1505,7 +1505,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 toolsets=toolsets,
                 event_stream_handler=event_stream_handler,
                 capabilities=capabilities,
-                sandbox=sandbox,
+                workspace=workspace,
                 spec=spec,
             )
 
@@ -1533,7 +1533,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        sandbox: SandboxBackend | SandboxRef | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, OutputDataT]]: ...
 
@@ -1559,7 +1559,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        sandbox: SandboxBackend | SandboxRef | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, RunOutputDataT]]: ...
 
@@ -1586,7 +1586,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        sandbox: SandboxBackend | SandboxRef | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AsyncGenerator[AgentRun[AgentDepsT, Any]]:
         """A contextmanager which can be used to iterate over the agent graph's nodes as they are executed.
@@ -1681,7 +1681,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
-            sandbox: Optional sandbox backend or [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] for this run; overrides capability contributions. See the [sandbox docs](../sandbox.md).
+            workspace: Optional workspace backend or [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] for this run; overrides capability contributions. See the [workspace docs](../workspace.md).
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
@@ -2036,7 +2036,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         usage_limits: _usage.UsageLimits | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         *,
-        sandbox: SandboxBackend | SandboxRef | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | None = None,
     ) -> None:
         """Run the agent in a CLI chat interface.
 
@@ -2047,7 +2047,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
             model: Optional model to use for the agent run.
-            sandbox: Optional sandbox backend or [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] for this run; overrides capability contributions. See the [sandbox docs](../sandbox.md).
+            workspace: Optional workspace backend or [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] for this run; overrides capability contributions. See the [workspace docs](../workspace.md).
 
         Example:
         ```python {title="agent_to_cli.py" test="skip"}
@@ -2074,7 +2074,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             model=model,
             model_settings=model_settings,
             usage_limits=usage_limits,
-            sandbox=sandbox,
+            workspace=workspace,
         )
 
     def to_cli_sync(
@@ -2086,7 +2086,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         usage_limits: _usage.UsageLimits | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         *,
-        sandbox: SandboxBackend | SandboxRef | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | None = None,
     ) -> None:
         """Run the agent in a CLI chat interface with the non-async interface.
 
@@ -2097,7 +2097,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
             model: Optional model to use for the agent run.
-            sandbox: Optional sandbox backend or [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] for this run; overrides capability contributions. See the [sandbox docs](../sandbox.md).
+            workspace: Optional workspace backend or [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] for this run; overrides capability contributions. See the [workspace docs](../workspace.md).
 
         ```python {title="agent_to_cli_sync.py" test="skip"}
         from pydantic_ai import Agent
@@ -2115,7 +2115,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 model=model,
                 model_settings=model_settings,
                 usage_limits=usage_limits,
-                sandbox=sandbox,
+                workspace=workspace,
             )
         )
 

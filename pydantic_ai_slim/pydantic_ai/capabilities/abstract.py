@@ -28,7 +28,6 @@ from pydantic_ai.messages import (
     ModelResponse,
     ToolCallPart,
 )
-from pydantic_ai.sandboxes import Sandbox, SandboxBackend, SandboxRef
 from pydantic_ai.tools import (
     AgentDepsT,
     AgentNativeTool,
@@ -39,6 +38,7 @@ from pydantic_ai.tools import (
     ToolDefinition,
 )
 from pydantic_ai.toolsets import AbstractToolset, AgentToolset
+from pydantic_ai.workspaces import Workspace, WorkspaceBackend, WorkspaceRef
 
 from ._merge import merge_capability_fields
 from ._on_event import collect_on_event_methods, marked_listens_to
@@ -473,15 +473,15 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         capability surface decisions tracked in #5477.
         """
 
-    def _wrap_sandbox(
+    def _wrap_workspace(
         self,
         ctx: RunContext[AgentDepsT],
-        sandbox: Sandbox,
+        workspace: Workspace,
         *,
         supplier: AbstractCapability[AgentDepsT] | None,
-    ) -> Sandbox:
-        """Apply private cross-cutting behavior to the selected run sandbox."""
-        return sandbox
+    ) -> Workspace:
+        """Apply private cross-cutting behavior to the selected run workspace."""
+        return workspace
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
         """Return the capability instance to use for this agent run.
@@ -636,16 +636,16 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """Return native tools to register with the agent."""
         return []
 
-    def get_sandbox(self, ctx: RunContext[AgentDepsT], *, ref: SandboxRef | None) -> SandboxBackend | None:
-        """Supply the run's sandbox backend, or `None` if this capability does not provide one.
+    def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
+        """Supply the run's workspace backend, or `None` if this capability does not provide one.
 
         Called once per run, synchronously, and must do no I/O: return a backend configured from
         this capability's own settings, carrying `ref` when one was recovered or passed in. The
         backend creates or attaches on its first operation, so nothing here reaches the network.
 
         `ref` is the identity of an environment the run should continue in when the caller passed
-        a [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] through `sandbox=`. `None` means the
-        backend should create a fresh environment. Sandbox identity is not inferred from message
+        a [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] through `workspace=`. `None` means the
+        backend should create a fresh environment. Workspace identity is not inferred from message
         history. At most one attached capability may answer.
         """
         return None

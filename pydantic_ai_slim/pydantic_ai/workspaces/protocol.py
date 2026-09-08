@@ -1,19 +1,19 @@
 """Structural backend protocols for execution environments attached to an agent run.
 
-A *sandbox* is an environment — a subprocess jail, a container, a microVM, a remote worker —
+A *workspace* is an environment — a subprocess jail, a container, a microVM, a remote worker —
 that an agent run can execute commands in and read/write files of. Backends implement the
-small [`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] protocol (command execution and
+small [`WorkspaceBackend`][pydantic_ai.workspaces.WorkspaceBackend] protocol (command execution and
 working-directory reporting); native filesystem access is the optional, flat
 `SupportsFilesystem` protocol, so a backend implements exactly the parts its platform supports.
 Tools and capabilities use the
-read-only [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox] object; identity and
-lifecycle are covered in the [sandbox documentation](../sandbox.md).
+read-only [`RunContext.workspace`][pydantic_ai.tools.RunContext.workspace] object; identity and
+lifecycle are covered in the [workspace documentation](../workspace.md).
 
 Contracts every implementation must honor (the rest are on the relevant members):
 
 - **One environment.** `run` and native filesystem methods operate on the same filesystem: a file
   written through either is visible to the other. Consumers (including
-  [`Sandbox`][pydantic_ai.sandboxes.Sandbox]) rely on this to serve file operations
+  [`Workspace`][pydantic_ai.workspaces.Workspace]) rely on this to serve file operations
   through whichever of the two paths is cheaper.
 - **Results are honest.** `exit_code` is the real process exit code; a non-zero exit is a
   normal result, not an exception. Infrastructure failures raise; they are never disguised as
@@ -33,19 +33,19 @@ from typing import Protocol, TypeAlias, runtime_checkable
 __all__ = (
     'CommandResult',
     'FileEntry',
-    'SandboxBackend',
-    'SandboxCommand',
-    'SandboxError',
-    'SandboxFileEntry',
-    'SandboxRef',
-    'SandboxResult',
-    'SandboxTimeoutError',
-    'SandboxUnavailableError',
+    'WorkspaceBackend',
+    'WorkspaceCommand',
+    'WorkspaceError',
+    'WorkspaceFileEntry',
+    'WorkspaceRef',
+    'WorkspaceResult',
+    'WorkspaceTimeoutError',
+    'WorkspaceUnavailableError',
     'SupportsFilesystem',
 )
 
-SandboxCommand: TypeAlias = str | Sequence[str]
-"""A command to execute in a sandbox.
+WorkspaceCommand: TypeAlias = str | Sequence[str]
+"""A command to execute in a workspace.
 
 Either an argv sequence (`['python', '-c', 'print(1)']`), or — with `shell=True` — a shell
 string (`'echo $HOME | wc -c'`). Passing a `str` without `shell=True` is invalid, and so is
@@ -55,36 +55,36 @@ an argv sequence with `shell=True`: implementations must reject either mismatch 
 
 
 @dataclass(frozen=True, kw_only=True)
-class SandboxRef:
-    """Serializable identity of a sandbox environment, as the backend spells it.
+class WorkspaceRef:
+    """Serializable identity of a workspace environment, as the backend spells it.
 
     The string is whatever that backend needs to find its environment again: a provider-issued
     id for Modal, Daytona or E2B, a caller-chosen name for platforms that cannot reattach by id.
     Pydantic AI never interprets it, and it must never carry credentials.
     """
 
-    sandbox_id: str
+    workspace_id: str
     """The backend's own identifier for the environment."""
 
 
-class SandboxError(RuntimeError):
-    """The sandbox layer deliberately failed an operation.
+class WorkspaceError(RuntimeError):
+    """The workspace layer deliberately failed an operation.
 
     Callers should catch specific subclasses before this base class.
     """
 
 
-class SandboxUnavailableError(SandboxError):
-    """The sandbox environment is gone or permanently unusable from this process.
+class WorkspaceUnavailableError(WorkspaceError):
+    """The workspace environment is gone or permanently unusable from this process.
 
     Backends raise this (or a subclass) when the environment was terminated, expired at its
     platform-side lifetime, cannot be found, or rejected the process's credentials — any
     failure where retrying the same operation cannot succeed. Consumers use it to stop using
-    the sandbox instead of retrying; other exceptions from a backend may be transient.
+    the workspace instead of retrying; other exceptions from a backend may be transient.
     """
 
 
-class SandboxTimeoutError(SandboxError, TimeoutError):
+class WorkspaceTimeoutError(WorkspaceError, TimeoutError):
     """A command exceeded the `timeout=` it was started with and was killed.
 
     `stdout` and `stderr` carry any output the command produced before the kill (empty when
@@ -102,12 +102,12 @@ class SandboxTimeoutError(SandboxError, TimeoutError):
         """The deadline that was enforced, in seconds."""
 
 
-class SandboxResult(Protocol):
+class WorkspaceResult(Protocol):
     """The result of a completed command execution.
 
     Backends return richer native result objects with these fields. Requiring `CommandResult`
     would make them import Pydantic AI or wrap every result; the protocol keeps those objects
-    unwrapped and exposes the minimum read by `Sandbox._read_file_via_shell`.
+    unwrapped and exposes the minimum read by `Workspace._read_file_via_shell`.
     """
 
     @property
@@ -128,7 +128,7 @@ class SandboxResult(Protocol):
 
 @dataclass(frozen=True, kw_only=True)
 class CommandResult:
-    """Concrete [`SandboxResult`][pydantic_ai.sandboxes.SandboxResult] carrier used by the built-in backends.
+    """Concrete [`WorkspaceResult`][pydantic_ai.workspaces.WorkspaceResult] carrier used by the built-in backends.
 
     Third-party backends may reuse it instead of declaring their own carrier.
     """
@@ -138,10 +138,10 @@ class CommandResult:
     stderr: str
 
 
-class SandboxFileEntry(Protocol):
-    """Metadata about a file or directory inside the sandbox.
+class WorkspaceFileEntry(Protocol):
+    """Metadata about a file or directory inside the workspace.
 
-    Structural, like [`SandboxResult`][pydantic_ai.sandboxes.SandboxResult]: implementations
+    Structural, like [`WorkspaceResult`][pydantic_ai.workspaces.WorkspaceResult]: implementations
     return their native entry types.
     """
 
@@ -152,7 +152,7 @@ class SandboxFileEntry(Protocol):
 
     @property
     def path(self) -> str:
-        """Absolute POSIX path of the entry inside the sandbox."""
+        """Absolute POSIX path of the entry inside the workspace."""
         ...
 
     @property
@@ -168,7 +168,7 @@ class SandboxFileEntry(Protocol):
 
 @dataclass(frozen=True, kw_only=True)
 class FileEntry:
-    """Concrete `SandboxFileEntry` carrier used by the built-in filesystems.
+    """Concrete `WorkspaceFileEntry` carrier used by the built-in filesystems.
 
     Third-party backends may reuse it instead of declaring their own carrier.
     """
@@ -181,17 +181,17 @@ class FileEntry:
 
 @runtime_checkable
 class SupportsFilesystem(Protocol):
-    """Optional native file access implemented directly by a sandbox backend.
+    """Optional native file access implemented directly by a workspace backend.
 
     The methods are flat on the backend rather than hidden behind a separate `.fs` object.
-    [`Sandbox`][pydantic_ai.sandboxes.Sandbox] prefers these native methods and derives the same
-    operations from [`SandboxBackend.run`][pydantic_ai.sandboxes.SandboxBackend.run] when they
+    [`Workspace`][pydantic_ai.workspaces.Workspace] prefers these native methods and derives the same
+    operations from [`WorkspaceBackend.run`][pydantic_ai.workspaces.WorkspaceBackend.run] when they
     are absent.
 
     All paths are absolute POSIX paths; use
-    [`Sandbox.resolve`][pydantic_ai.sandboxes.Sandbox.resolve] to turn model-supplied relative
+    [`Workspace.resolve`][pydantic_ai.workspaces.Workspace.resolve] to turn model-supplied relative
     paths into absolute ones first. The filesystem API is bytes-only: decoding policy lives in
-    the [`Sandbox`][pydantic_ai.sandboxes.Sandbox] text helpers.
+    the [`Workspace`][pydantic_ai.workspaces.Workspace] text helpers.
 
     Operations that require an existing path raise the builtin `FileNotFoundError` when it is
     missing; `exists` returns `False`. Backends translate their SDK's own missing-file exception.
@@ -205,11 +205,11 @@ class SupportsFilesystem(Protocol):
         """Write bytes to a file, creating missing parent directories and replacing existing contents."""
         ...
 
-    async def stat(self, path: str) -> SandboxFileEntry:
+    async def stat(self, path: str) -> WorkspaceFileEntry:
         """Return metadata for a file or directory."""
         ...
 
-    async def list_dir(self, path: str) -> Sequence[SandboxFileEntry]:
+    async def list_dir(self, path: str) -> Sequence[WorkspaceFileEntry]:
         """List the entries of a directory (non-recursive)."""
         ...
 
@@ -227,20 +227,20 @@ class SupportsFilesystem(Protocol):
 
 
 @runtime_checkable
-class SandboxBackend(Protocol):
+class WorkspaceBackend(Protocol):
     """Backend for an isolated execution environment attached to an agent run.
 
     Structural protocol: any object with these members conforms — no registration or base
-    class required. See the [module doc string][pydantic_ai.sandboxes] for the contracts
-    implementations must honor, and the [sandbox documentation](../sandbox.md) for lifecycle
+    class required. See the [module doc string][pydantic_ai.workspaces] for the contracts
+    implementations must honor, and the [workspace documentation](../workspace.md) for lifecycle
     rules: this protocol has no create, connect or destroy member. A backend is built from
-    configuration plus an optional [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] and does no
+    configuration plus an optional [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] and does no
     I/O until its first operation, which creates or attaches as needed. Pydantic AI never starts
     or stops an environment.
     """
 
     @property
-    def ref(self) -> SandboxRef | None:
+    def ref(self) -> WorkspaceRef | None:
         """Identity of the environment this backend is bound to, or `None` before it has one.
 
         A backend built to attach to an existing environment reports its ref straight away. One
@@ -252,35 +252,35 @@ class SandboxBackend(Protocol):
 
     async def run(
         self,
-        command: SandboxCommand,
+        command: WorkspaceCommand,
         *,
         shell: bool = False,
         cwd: str | None = None,
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
-    ) -> SandboxResult:
+    ) -> WorkspaceResult:
         """Execute a command and wait for it to complete.
 
         When the awaiting task is cancelled, implementations must not knowingly leave the command
-        running in the sandbox; a backend whose platform offers no way to stop a running command
+        running in the workspace; a backend whose platform offers no way to stop a running command
         must document that limitation.
 
         Args:
             command: An argv sequence, or a shell string with `shell=True`.
-            shell: Whether to interpret `command` with the sandbox's shell.
-            cwd: Absolute working directory for the command; defaults to the sandbox's
-                [`working_dir`][pydantic_ai.sandboxes.SandboxBackend.working_dir].
+            shell: Whether to interpret `command` with the workspace's shell.
+            cwd: Absolute working directory for the command; defaults to the workspace's
+                [`working_dir`][pydantic_ai.workspaces.WorkspaceBackend.working_dir].
                 Implementations must reject a relative path with `ValueError`: resolving it
                 against ambient state (such as a local backend's host process working
-                directory) would silently escape the sandbox root.
+                directory) would silently escape the workspace root.
             env: Extra environment variables for the command.
             timeout: Deadline in seconds, measured from this call. On expiry the command is killed
-                and a [`SandboxTimeoutError`][pydantic_ai.sandboxes.SandboxTimeoutError] is raised.
+                and a [`WorkspaceTimeoutError`][pydantic_ai.workspaces.WorkspaceTimeoutError] is raised.
         """
         ...
 
     async def working_dir(self) -> str:
-        """The sandbox's default working directory (absolute POSIX path).
+        """The workspace's default working directory (absolute POSIX path).
 
         The path must be filesystem-canonical: symlinks resolved and no `.`/`..` segments.
         Only the backend can resolve paths inside its own environment, and consumers join

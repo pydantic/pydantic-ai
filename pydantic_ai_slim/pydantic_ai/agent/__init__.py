@@ -78,8 +78,8 @@ from ..capabilities import (
 from ..capabilities._dynamic import wrap_capability_funcs
 from ..capabilities._ordering import find_capability, has_capability_type
 from ..capabilities._pending_messages import PendingMessageDrainCapability
-from ..capabilities._sandbox import (
-    get_run_sandbox,
+from ..capabilities._workspace import (
+    get_run_workspace,
 )
 from ..capabilities.abstract import (
     _combine_duplicate_capabilities,  # pyright: ignore[reportPrivateUsage]
@@ -96,7 +96,6 @@ from ..native_tools import AbstractNativeTool
 from ..native_tools._tool_search import ToolSearchTool
 from ..output import OutputDataT, OutputSpec, StructuredDict
 from ..run import AgentRun, AgentRunResult
-from ..sandboxes import Sandbox, SandboxBackend, SandboxRef, UnavailableSandbox
 from ..settings import ModelSettings, merge_model_settings
 from ..template import TemplateStr
 from ..tool_manager import ParallelExecutionMode, ToolManager
@@ -131,6 +130,7 @@ from ..toolsets.abstract import AGENT_TOOLSET_ID
 from ..toolsets.combined import CombinedToolset
 from ..toolsets.function import FunctionToolset
 from ..toolsets.prepared import PreparedToolset
+from ..workspaces import UnavailableWorkspace, Workspace, WorkspaceBackend, WorkspaceRef
 from .abstract import (
     AbstractAgent,
     AgentMetadata,
@@ -418,11 +418,11 @@ _PreparedDepsT = TypeVar('_PreparedDepsT')
 _PreparedOutputT = TypeVar('_PreparedOutputT')
 NoneType = type(None)
 
-_NO_SANDBOX_REASON = (
-    'No sandbox is attached to this run. Pass `sandbox=LocalSandbox()` to the run method to use the '
+_NO_WORKSPACE_REASON = (
+    'No workspace is attached to this run. Pass `workspace=LocalWorkspace()` to the run method to use the '
     'local machine (unsafe: commands and file operations run with the full permissions of this process), '
-    'attach a capability that supplies a sandbox through its `get_sandbox` hook, or pass a `SandboxRef` '
-    'to connect to an existing environment. See https://ai.pydantic.dev/sandbox/ for details.'
+    'attach a capability that supplies a workspace through its `get_workspace` hook, or pass a `WorkspaceRef` '
+    'to connect to an existing environment. See https://ai.pydantic.dev/workspace/ for details.'
 )
 
 
@@ -526,7 +526,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     def _enter_lock(self) -> anyio.Lock:
         # We use a cached_property for this because `anyio.Lock` binds to the event loop on which
         # it's first used; deferring creation until first access ensures it binds to the correct
-        # running loop and avoids issues with Temporal's workflow sandbox.
+        # running loop and avoids issues with Temporal's workflow workspace.
         return anyio.Lock()
 
     # `__init__` keeps an overload pair purely so Pyright resolves a class-union `output_type`
@@ -1244,7 +1244,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        sandbox: SandboxBackend | SandboxRef | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, OutputDataT]]: ...
 
@@ -1270,7 +1270,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        sandbox: SandboxBackend | SandboxRef | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, RunOutputDataT]]: ...
 
@@ -1296,7 +1296,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        sandbox: SandboxBackend | SandboxRef | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AsyncGenerator[AgentRun[AgentDepsT, Any]]:
         """A contextmanager which can be used to iterate over the agent graph's nodes as they are executed.
@@ -1391,7 +1391,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
-            sandbox: Optional sandbox backend or [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] for this run; overrides capability contributions. See the [sandbox docs](../sandbox.md).
+            workspace: Optional workspace backend or [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] for this run; overrides capability contributions. See the [workspace docs](../workspace.md).
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
@@ -1418,7 +1418,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             retries=retries,
             toolsets=toolsets,
             capabilities=capabilities,
-            sandbox=sandbox,
+            workspace=workspace,
             spec=spec,
         )
         async with prepared.open() as agent_run:
@@ -1444,7 +1444,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         retries: int | AgentRetries | None = None,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        sandbox: SandboxBackend | SandboxRef | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> _PreparedAgentRun[AgentDepsT, Any]:
         # Consume the pending `AgentRunEvents` binding before ANY user-supplied code (capability /
@@ -1700,21 +1700,21 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             run_id=state.run_id,
             conversation_id=state.conversation_id,
             _cancellation=cancellation,
-            sandbox=Sandbox.wrap(UnavailableSandbox(_NO_SANDBOX_REASON)),
+            workspace=Workspace.wrap(UnavailableWorkspace(_NO_WORKSPACE_REASON)),
         )
 
-        # A caller-provided live sandbox is already known and is visible to `for_run`. A sandbox
+        # A caller-provided live workspace is already known and is visible to `for_run`. A workspace
         # supplied by a capability is selected from the final per-run capability tree below, so a
         # capability that replaces itself in `for_run` cannot leave behind the bootstrap backend.
-        run_sandbox = initial_ctx.sandbox
-        sandbox_supplier: AbstractCapability[AgentDepsT] | None = None
-        if sandbox is not None and not isinstance(sandbox, SandboxRef):
-            # An explicit backend, or an existing `Sandbox` passed straight through from a
+        run_workspace = initial_ctx.workspace
+        workspace_supplier: AbstractCapability[AgentDepsT] | None = None
+        if workspace is not None and not isinstance(workspace, WorkspaceRef):
+            # An explicit backend, or an existing `Workspace` passed straight through from a
             # parent run or a previous result.
-            run_sandbox = sandbox if isinstance(sandbox, Sandbox) else Sandbox(sandbox)
-            if isinstance(sandbox, Sandbox):
-                _, sandbox_supplier = sandbox._supplier_details()  # pyright: ignore[reportPrivateUsage]
-            initial_ctx.sandbox = run_sandbox
+            run_workspace = workspace if isinstance(workspace, Workspace) else Workspace(workspace)
+            if isinstance(workspace, Workspace):
+                _, workspace_supplier = workspace._supplier_details()  # pyright: ignore[reportPrivateUsage]
+            initial_ctx.workspace = run_workspace
 
         # Resolve run metadata up front so capability and toolset `for_run` hooks
         # can see it on `RunContext.metadata`. Metadata factories receive the
@@ -1748,34 +1748,34 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         cap_toolsets = resolved_caps.toolsets
 
         # Nothing here does I/O: the backend creates or attaches on its first operation. Resolve
-        # capability-provided sandboxes only now, after `for_run()` has chosen the instances whose
+        # capability-provided workspaces only now, after `for_run()` has chosen the instances whose
         # hooks and durable operations this run will actually use.
-        if sandbox is None or isinstance(sandbox, SandboxRef):
-            selection = get_run_sandbox(run_capability, initial_ctx, sandbox)
+        if workspace is None or isinstance(workspace, WorkspaceRef):
+            selection = get_run_workspace(run_capability, initial_ctx, workspace)
             if selection is None:
-                if isinstance(sandbox, SandboxRef):
+                if isinstance(workspace, WorkspaceRef):
                     raise exceptions.UserError(
-                        f'No capability can supply sandbox {sandbox.sandbox_id!r}: every `get_sandbox` returned '
-                        '`None`. Attach a capability whose `get_sandbox` recognizes it.'
+                        f'No capability can supply workspace {workspace.workspace_id!r}: every `get_workspace` returned '
+                        '`None`. Attach a capability whose `get_workspace` recognizes it.'
                     )
             else:
-                sandbox_supplier = selection.supplier
-                run_sandbox = Sandbox(
+                workspace_supplier = selection.supplier
+                run_workspace = Workspace(
                     selection.backend, _supplier_id=selection.supplier.id, _supplier=selection.supplier
                 )
-        elif isinstance(sandbox, Sandbox):
-            # A sandbox returned by an earlier run carries the old per-run supplier instance.
+        elif isinstance(workspace, Workspace):
+            # A workspace returned by an earlier run carries the old per-run supplier instance.
             # Keep the environment handle, but dispatch through this run's replacement instance.
-            supplier_id, _ = sandbox._supplier_details()  # pyright: ignore[reportPrivateUsage]
+            supplier_id, _ = workspace._supplier_details()  # pyright: ignore[reportPrivateUsage]
             if supplier_id is not None:
-                sandbox_supplier = next(
+                workspace_supplier = next(
                     (capability for capability in leaf_capabilities(run_capability) if capability.id == supplier_id),
-                    sandbox_supplier,
+                    workspace_supplier,
                 )
-        run_sandbox = run_capability._wrap_sandbox(  # pyright: ignore[reportPrivateUsage]
-            initial_ctx, run_sandbox, supplier=sandbox_supplier
+        run_workspace = run_capability._wrap_workspace(  # pyright: ignore[reportPrivateUsage]
+            initial_ctx, run_workspace, supplier=workspace_supplier
         )
-        initial_ctx.sandbox = run_sandbox
+        initial_ctx.workspace = run_workspace
 
         # Whether any capability's `for_run` swapped a model-layer contribution during resolution; the
         # per-step model-selection block below keys off this. The model layers are the tail of the
@@ -1913,7 +1913,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             capabilities=capabilities_dict,
             loaded_capability_ids=loaded_capability_ids,
             discovered_tool_names=discovered_tool_names,
-            sandbox=run_sandbox,
+            workspace=run_workspace,
             native_tools=cap_native_tools,
             tool_manager=tool_manager,
             tracer=tracer,
@@ -4081,7 +4081,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         *,
         models: ModelsParam = None,
         deps: AgentDepsT = None,
-        sandbox: SandboxBackend | SandboxRef | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | None = None,
         model_settings: ModelSettings | None = None,
         instructions: str | None = None,
         html_source: str | Path | None = None,
@@ -4096,7 +4096,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         The returned Starlette application can be mounted into a FastAPI app or run directly
         with any ASGI server (uvicorn, hypercorn, etc.).
 
-        Note that the `deps`, `sandbox`, and `model_settings` will be the same for each request.
+        Note that the `deps`, `workspace`, and `model_settings` will be the same for each request.
         To provide different `deps` for each request use the lower-level adapters directly.
 
         The agent's configured native tools (registered via `capabilities=[NativeTool(...)]`
@@ -4111,7 +4111,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 The agent's model is always included. Native tool support is automatically
                 determined from each model's profile.
             deps: Optional dependencies to use for all requests.
-            sandbox: Optional sandbox backend or [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] for all requests; overrides capability contributions. See the [sandbox docs](../sandbox.md).
+            workspace: Optional workspace backend or [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] for all requests; overrides capability contributions. See the [workspace docs](../workspace.md).
             model_settings: Optional settings to use for all model requests.
             instructions: Optional extra instructions to pass to each agent run.
             html_source: Path or URL for the chat UI HTML. Can be:
@@ -4152,7 +4152,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             self,
             models=models,
             deps=deps,
-            sandbox=sandbox,
+            workspace=workspace,
             model_settings=model_settings,
             instructions=instructions,
             html_source=html_source,

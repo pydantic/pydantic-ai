@@ -9,11 +9,18 @@ import anyio
 
 from pydantic_ai import RunContext
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.sandboxes import Sandbox, SandboxBackend, SandboxCommand, SandboxRef, SandboxResult, SupportsFilesystem
+from pydantic_ai.workspaces import (
+    SupportsFilesystem,
+    Workspace,
+    WorkspaceBackend,
+    WorkspaceCommand,
+    WorkspaceRef,
+    WorkspaceResult,
+)
 
 
 @dataclass(frozen=True)
-class FakeSandboxResult:
+class FakeWorkspaceResult:
     exit_code: int = 0
     stdout: str = ''
     stderr: str = ''
@@ -30,11 +37,11 @@ class FakeEntry:
 _SED_WINDOW = re.compile(r'^(\d+),(\d+)p;\2q$')
 
 
-class FakeSandbox(SandboxBackend, SupportsFilesystem):
+class FakeWorkspace(WorkspaceBackend, SupportsFilesystem):
     """A lazy in-memory backend with the optional native filesystem."""
 
     def __init__(
-        self, name: str, files: dict[str, bytes] | None = None, *, ref: SandboxRef | None = None, sed: bool = True
+        self, name: str, files: dict[str, bytes] | None = None, *, ref: WorkspaceRef | None = None, sed: bool = True
     ) -> None:
         self.name = name
         self._ref = ref
@@ -49,7 +56,7 @@ class FakeSandbox(SandboxBackend, SupportsFilesystem):
         self.reads: list[str] = []
 
     @property
-    def ref(self) -> SandboxRef | None:
+    def ref(self) -> WorkspaceRef | None:
         return self._ref
 
     async def ensure_ready(self) -> None:
@@ -59,7 +66,7 @@ class FakeSandbox(SandboxBackend, SupportsFilesystem):
             await anyio.sleep(0)
             if self._ref is None:
                 self.create_calls += 1
-                self._ref = SandboxRef(sandbox_id=f'fake-{self.name}')
+                self._ref = WorkspaceRef(workspace_id=f'fake-{self.name}')
             else:
                 self.attach_calls += 1
             self._ready = True
@@ -72,16 +79,16 @@ class FakeSandbox(SandboxBackend, SupportsFilesystem):
         cwd: str | None = None,
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
-    ) -> FakeSandboxResult:
+    ) -> FakeWorkspaceResult:
         await self.ensure_ready()
         if not isinstance(command, str) and list(command[:2]) == ['sed', '-n']:
             if not self._sed:
-                return FakeSandboxResult(exit_code=127, stderr='sed: not found')
+                return FakeWorkspaceResult(exit_code=127, stderr='sed: not found')
             expression, path = command[2], command[3]
             match = _SED_WINDOW.match(expression)
             assert match is not None
             if path not in self.files:
-                return FakeSandboxResult(exit_code=2, stderr=f'sed: {path}: No such file or directory')
+                return FakeWorkspaceResult(exit_code=2, stderr=f'sed: {path}: No such file or directory')
             text = self.files[path].decode('utf-8', errors='replace')
             lines = text.split('\n')
             if lines[-1] == '':
@@ -91,9 +98,9 @@ class FakeSandbox(SandboxBackend, SupportsFilesystem):
             stdout = '\n'.join(selected)
             if selected and (start + len(selected) < len(lines) or text.endswith('\n')):
                 stdout += '\n'
-            return FakeSandboxResult(stdout=stdout)
+            return FakeWorkspaceResult(stdout=stdout)
         self.commands.append(command)
-        return FakeSandboxResult(stdout='connected')
+        return FakeWorkspaceResult(stdout='connected')
 
     async def working_dir(self) -> str:
         await self.ensure_ready()
@@ -144,16 +151,16 @@ class FakeSandbox(SandboxBackend, SupportsFilesystem):
         self.cleanup_calls.append('release')
 
 
-class RecordingSandboxBackend(SandboxBackend):
+class RecordingWorkspaceBackend(WorkspaceBackend):
     """The three required backend members, with no `SupportsFilesystem`."""
 
-    def __init__(self, sandbox_id: str, *, ref: SandboxRef | None = None) -> None:
-        self._ref = ref or SandboxRef(sandbox_id=sandbox_id)
+    def __init__(self, workspace_id: str, *, ref: WorkspaceRef | None = None) -> None:
+        self._ref = ref or WorkspaceRef(workspace_id=workspace_id)
         self.commands: list[str | Sequence[str]] = []
         self.cleanup_calls: list[str] = []
 
     @property
-    def ref(self) -> SandboxRef | None:
+    def ref(self) -> WorkspaceRef | None:
         return self._ref
 
     async def run(
@@ -164,9 +171,9 @@ class RecordingSandboxBackend(SandboxBackend):
         cwd: str | None = None,
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
-    ) -> FakeSandboxResult:
+    ) -> FakeWorkspaceResult:
         self.commands.append(command)
-        return FakeSandboxResult(stdout='connected')
+        return FakeWorkspaceResult(stdout='connected')
 
     async def working_dir(self) -> str:
         return '/workspace'
@@ -175,26 +182,26 @@ class RecordingSandboxBackend(SandboxBackend):
         self.cleanup_calls.append(f'close:{terminate}')
 
 
-class RunOnlySandboxBackend(SandboxBackend):
+class RunOnlyWorkspaceBackend(WorkspaceBackend):
     """Hide an inner backend's optional methods to exercise the shell portability path."""
 
-    def __init__(self, inner: SandboxBackend) -> None:
+    def __init__(self, inner: WorkspaceBackend) -> None:
         self.inner = inner
-        self.commands: list[SandboxCommand] = []
+        self.commands: list[WorkspaceCommand] = []
 
     @property
-    def ref(self) -> SandboxRef | None:
+    def ref(self) -> WorkspaceRef | None:
         return self.inner.ref
 
     async def run(
         self,
-        command: SandboxCommand,
+        command: WorkspaceCommand,
         *,
         shell: bool = False,
         cwd: str | None = None,
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
-    ) -> SandboxResult:
+    ) -> WorkspaceResult:
         self.commands.append(command)
         return await self.inner.run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
 
@@ -202,48 +209,48 @@ class RunOnlySandboxBackend(SandboxBackend):
         return await self.inner.working_dir()
 
 
-def ref_sandbox(ref: SandboxRef, supplier: AbstractCapability[Any] | None = None) -> Sandbox:
-    return Sandbox(
-        RecordingSandboxBackend(ref.sandbox_id, ref=ref),
+def ref_workspace(ref: WorkspaceRef, supplier: AbstractCapability[Any] | None = None) -> Workspace:
+    return Workspace(
+        RecordingWorkspaceBackend(ref.workspace_id, ref=ref),
         _supplier_id=supplier.id if supplier is not None else None,
         _supplier=supplier,
     )
 
 
-class ConnectOnlySandboxCapability(AbstractCapability[Any]):
+class ConnectOnlyWorkspaceCapability(AbstractCapability[Any]):
     """Supplies a run-only backend for the requested ref."""
 
-    id = 'connect_only_sandbox'
+    id = 'connect_only_workspace'
 
     def __init__(self) -> None:
-        self.sandbox_ids: list[str] = []
-        self.backends: list[RecordingSandboxBackend] = []
+        self.workspace_ids: list[str] = []
+        self.backends: list[RecordingWorkspaceBackend] = []
 
-    def get_sandbox(self, ctx: RunContext[Any], *, ref: SandboxRef | None) -> SandboxBackend | None:
+    def get_workspace(self, ctx: RunContext[Any], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
         if ref is None:
             return None
-        self.sandbox_ids.append(ref.sandbox_id)
-        backend = RecordingSandboxBackend(ref.sandbox_id, ref=ref)
+        self.workspace_ids.append(ref.workspace_id)
+        backend = RecordingWorkspaceBackend(ref.workspace_id, ref=ref)
         self.backends.append(backend)
         return backend
 
 
-class SandboxCapability(AbstractCapability[Any]):
-    id = 'sandbox'
+class WorkspaceCapability(AbstractCapability[Any]):
+    id = 'workspace'
 
-    def __init__(self, backend: FakeSandbox | None = None) -> None:
-        self.backend = backend or FakeSandbox('capability')
-        self.refs: list[SandboxRef | None] = []
+    def __init__(self, backend: FakeWorkspace | None = None) -> None:
+        self.backend = backend or FakeWorkspace('capability')
+        self.refs: list[WorkspaceRef | None] = []
 
-    def get_sandbox(self, ctx: RunContext[Any], *, ref: SandboxRef | None) -> SandboxBackend:
+    def get_workspace(self, ctx: RunContext[Any], *, ref: WorkspaceRef | None) -> WorkspaceBackend:
         self.refs.append(ref)
         return self.backend
 
 
-class DecliningSandboxCapability(AbstractCapability[Any]):
+class DecliningWorkspaceCapability(AbstractCapability[Any]):
     def __init__(self) -> None:
         self.calls = 0
 
-    def get_sandbox(self, ctx: RunContext[Any], *, ref: SandboxRef | None) -> None:
+    def get_workspace(self, ctx: RunContext[Any], *, ref: WorkspaceRef | None) -> None:
         self.calls += 1
         return None

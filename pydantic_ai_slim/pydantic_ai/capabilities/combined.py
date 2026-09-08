@@ -16,7 +16,6 @@ from pydantic_ai._instructions import (
 from pydantic_ai._utils import aclose_all, gather, replace_no_init
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
-from pydantic_ai.sandboxes import Sandbox
 from pydantic_ai.settings import ModelSettings, merge_model_settings
 from pydantic_ai.tools import (
     AgentDepsT,
@@ -29,6 +28,7 @@ from pydantic_ai.tools import (
 from pydantic_ai.toolsets import AbstractToolset, AgentToolset, CombinedToolset
 from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
+from pydantic_ai.workspaces import Workspace
 
 from ._on_event import collect_on_event_methods, marked_listens_to
 from ._ordering import collect_leaves, is_innermost, sort_capabilities
@@ -256,16 +256,16 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         for capability in self.capabilities:
             capability._validate_runtime_capabilities(capabilities)
 
-    def _wrap_sandbox(
+    def _wrap_workspace(
         self,
         ctx: RunContext[AgentDepsT],
-        sandbox: Sandbox,
+        workspace: Workspace,
         *,
         supplier: AbstractCapability[AgentDepsT] | None,
-    ) -> Sandbox:
+    ) -> Workspace:
         for capability in self.capabilities:
-            sandbox = capability._wrap_sandbox(ctx, sandbox, supplier=supplier)
-        return sandbox
+            workspace = capability._wrap_workspace(ctx, workspace, supplier=supplier)
+        return workspace
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
         # The children's contributions, not `_collect_instructions`: that asks whether a subclass

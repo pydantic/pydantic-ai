@@ -365,7 +365,7 @@ def test_docs_examples(
     # `from bank_database import DatabaseConn` wrongly sorted in imports
     # waiting for https://github.com/pydantic/pytest-examples/issues/43
     # and https://github.com/pydantic/pytest-examples/issues/46
-    if 'import DatabaseConn' in example.source or 'from my_sandboxes import' in example.source:
+    if 'import DatabaseConn' in example.source or 'from my_workspaces import' in example.source:
         ruff_ignore.append('I001')
 
     if noqa:
@@ -1059,7 +1059,7 @@ async def model_logic(  # noqa: C901
             if isinstance(part, UserPromptPart) and isinstance(part.content, str)
         ]
         # The examples' `execute` tool reports failures as '[exit N] ...'; the command
-        # really ran in the sandbox, so require it to have succeeded.
+        # really ran in the workspace, so require it to have succeeded.
         assert isinstance(m.content, str) and not m.content.startswith('[exit '), m.content
         if 'Write fizzbuzz to fizzbuzz.py and run it.' in prompts:
             return ModelResponse(parts=[TextPart('fizzbuzz.py is written and runs clean.')])

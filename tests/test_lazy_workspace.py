@@ -1,4 +1,4 @@
-"""The shared sandbox authoring helper's acquisition contract."""
+"""The shared workspace authoring helper's acquisition contract."""
 
 from collections.abc import Awaitable, Callable
 
@@ -7,57 +7,57 @@ import pytest
 from anyio.abc import TaskStatus
 from typing_extensions import assert_type
 
-from pydantic_ai.sandboxes import LazySandbox
+from pydantic_ai.workspaces import LazyWorkspace
 
 pytestmark = pytest.mark.anyio
 
 
-class NativeSandbox:
+class NativeWorkspace:
     pass
 
 
-class Backend(LazySandbox[NativeSandbox]):
-    def __init__(self, acquire: Callable[[], Awaitable[NativeSandbox]], sandbox: NativeSandbox | None = None) -> None:
-        super().__init__(sandbox)
+class Backend(LazyWorkspace[NativeWorkspace]):
+    def __init__(self, acquire: Callable[[], Awaitable[NativeWorkspace]], workspace: NativeWorkspace | None = None) -> None:
+        super().__init__(workspace)
         self.acquire = acquire
 
-    async def create_or_attach(self) -> NativeSandbox:
+    async def create_or_attach(self) -> NativeWorkspace:
         return await self.acquire()
 
 
-class TestLazySandbox:
+class TestLazyWorkspace:
     async def test_property_waits_for_await_and_reuses_native_handle(self) -> None:
         calls = 0
-        native = NativeSandbox()
+        native = NativeWorkspace()
 
-        async def acquire() -> NativeSandbox:
+        async def acquire() -> NativeWorkspace:
             nonlocal calls
             calls += 1
             return native
 
         backend = Backend(acquire)
-        pending = backend.sandbox
-        assert_type(pending, Awaitable[NativeSandbox])
+        pending = backend.workspace
+        assert_type(pending, Awaitable[NativeWorkspace])
         assert calls == 0
-        assert assert_type(await pending, NativeSandbox) is native
-        assert await backend.sandbox is native
+        assert assert_type(await pending, NativeWorkspace) is native
+        assert await backend.workspace is native
         assert calls == 1
 
     async def test_supplied_native_handle_skips_acquisition(self) -> None:
-        async def acquire() -> NativeSandbox:
+        async def acquire() -> NativeWorkspace:
             pytest.fail('An existing handle must not be acquired again')  # pragma: no cover
 
-        native = NativeSandbox()
-        assert await Backend(acquire, native).sandbox is native
+        native = NativeWorkspace()
+        assert await Backend(acquire, native).workspace is native
 
     async def test_concurrent_first_use_acquires_once(self) -> None:
         calls = 0
         entered = anyio.Event()
         release = anyio.Event()
-        native = NativeSandbox()
-        results: list[NativeSandbox] = []
+        native = NativeWorkspace()
+        results: list[NativeWorkspace] = []
 
-        async def acquire() -> NativeSandbox:
+        async def acquire() -> NativeWorkspace:
             nonlocal calls
             calls += 1
             entered.set()
@@ -67,7 +67,7 @@ class TestLazySandbox:
         backend = Backend(acquire)
 
         async def use() -> None:
-            results.append(await backend.sandbox)
+            results.append(await backend.workspace)
 
         async with anyio.create_task_group() as group:
             group.start_soon(use)
@@ -80,10 +80,10 @@ class TestLazySandbox:
 
     async def test_failed_acquisition_can_be_retried(self) -> None:
         calls = 0
-        native = NativeSandbox()
+        native = NativeWorkspace()
         error = RuntimeError('provider unavailable')
 
-        async def acquire() -> NativeSandbox:
+        async def acquire() -> NativeWorkspace:
             nonlocal calls
             calls += 1
             if calls == 1:
@@ -92,17 +92,17 @@ class TestLazySandbox:
 
         backend = Backend(acquire)
         with pytest.raises(RuntimeError) as caught:
-            await backend.sandbox
+            await backend.workspace
         assert caught.value is error
-        assert await backend.sandbox is native
+        assert await backend.workspace is native
         assert calls == 2
 
     async def test_cancelled_acquisition_releases_lock_for_retry(self) -> None:
         calls = 0
         entered = anyio.Event()
-        native = NativeSandbox()
+        native = NativeWorkspace()
 
-        async def acquire() -> NativeSandbox:
+        async def acquire() -> NativeWorkspace:
             nonlocal calls
             calls += 1
             if calls == 1:
@@ -115,22 +115,22 @@ class TestLazySandbox:
         async def use(*, task_status: TaskStatus[anyio.CancelScope]) -> None:
             with anyio.CancelScope() as scope:
                 task_status.started(scope)
-                await backend.sandbox
+                await backend.workspace
 
         async with anyio.create_task_group() as group:
             scope = await group.start(use)
             await entered.wait()
             scope.cancel()
-        assert await backend.sandbox is native
+        assert await backend.workspace is native
         assert calls == 2
 
     async def test_cancelling_waiter_preserves_acquisition(self) -> None:
         entered = anyio.Event()
         release = anyio.Event()
-        native = NativeSandbox()
-        results: list[NativeSandbox] = []
+        native = NativeWorkspace()
+        results: list[NativeWorkspace] = []
 
-        async def acquire() -> NativeSandbox:
+        async def acquire() -> NativeWorkspace:
             entered.set()
             await release.wait()
             return native
@@ -138,12 +138,12 @@ class TestLazySandbox:
         backend = Backend(acquire)
 
         async def owner() -> None:
-            results.append(await backend.sandbox)
+            results.append(await backend.workspace)
 
         async def waiter(*, task_status: TaskStatus[anyio.CancelScope]) -> None:
             with anyio.CancelScope() as scope:
                 task_status.started(scope)
-                await backend.sandbox
+                await backend.workspace
             assert scope.cancelled_caught
 
         async with anyio.create_task_group() as group:
@@ -154,4 +154,4 @@ class TestLazySandbox:
             scope.cancel()
             release.set()
         assert results == [native]
-        assert await backend.sandbox is native
+        assert await backend.workspace is native

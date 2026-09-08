@@ -1,10 +1,10 @@
-"""The user-facing sandbox API.
+"""The user-facing workspace API.
 
-Sandbox backends implement the small
-[`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] protocol and typically also
-[`SupportsFilesystem`][pydantic_ai.sandboxes.SupportsFilesystem]. The `Sandbox` object owns
+Workspace backends implement the small
+[`WorkspaceBackend`][pydantic_ai.workspaces.WorkspaceBackend] protocol and typically also
+[`SupportsFilesystem`][pydantic_ai.workspaces.SupportsFilesystem]. The `Workspace` object owns
 model-facing semantics such as decoding and windowed file reads. Capabilities and user tools
-consume it through [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox].
+consume it through [`RunContext.workspace`][pydantic_ai.tools.RunContext.workspace].
 """
 
 from __future__ import annotations as _annotations
@@ -26,17 +26,17 @@ if TYPE_CHECKING:
 
 from .protocol import (
     FileEntry,
-    SandboxBackend,
-    SandboxCommand,
-    SandboxError,
-    SandboxFileEntry,
-    SandboxRef,
-    SandboxResult,
-    SandboxTimeoutError,
     SupportsFilesystem,
+    WorkspaceBackend,
+    WorkspaceCommand,
+    WorkspaceError,
+    WorkspaceFileEntry,
+    WorkspaceRef,
+    WorkspaceResult,
+    WorkspaceTimeoutError,
 )
 
-__all__ = ('FileWindow', 'Sandbox')
+__all__ = ('FileWindow', 'Workspace')
 
 _SHELL_SLICE_TIMEOUT = 10
 """Deadline in seconds for the `sed` fast path in `read_file`.
@@ -55,19 +55,19 @@ _SHELL_CLEANUP_TIMEOUT = 10
 """Maximum time spent removing an interrupted fallback write's temporary files."""
 
 
-class _SandboxOperationDispatcher(Protocol):
+class _WorkspaceOperationDispatcher(Protocol):
     @property
-    def ref(self) -> SandboxRef | None: ...
+    def ref(self) -> WorkspaceRef | None: ...
 
     @property
-    def backend(self) -> SandboxBackend: ...
+    def backend(self) -> WorkspaceBackend: ...
 
     def __call__(self, method: str, arguments: Mapping[str, Any]) -> Awaitable[Any]: ...
 
 
 @dataclass(frozen=True, kw_only=True)
 class FileWindow:
-    """A line window of a sandbox file, as returned by [`Sandbox.read_file`][pydantic_ai.sandboxes.Sandbox.read_file]."""
+    """A line window of a workspace file, as returned by [`Workspace.read_file`][pydantic_ai.workspaces.Workspace.read_file]."""
 
     lines: tuple[str, ...]
     """The requested lines, without trailing newlines; a trailing `\r` (Windows line ending)
@@ -88,12 +88,12 @@ class FileWindow:
 class _ShellFilesystem(SupportsFilesystem):
     """Derive filesystem operations from a backend's command-execution primitive.
 
-    This is the portability floor for command-capable sandboxes. Backends should implement
+    This is the portability floor for command-capable workspaces. Backends should implement
     `SupportsFilesystem` when their provider has a native API: native calls avoid the shell's
     utility assumptions and the base64 transfer overhead used here to preserve arbitrary bytes.
     """
 
-    def __init__(self, backend: SandboxBackend):
+    def __init__(self, backend: WorkspaceBackend):
         self._backend = backend
 
     async def read_bytes(self, path: str) -> bytes:
@@ -102,7 +102,7 @@ class _ShellFilesystem(SupportsFilesystem):
         try:
             return base64.b64decode(result.stdout)
         except ValueError as error:
-            raise SandboxError(f'shell filesystem returned invalid base64 while reading {path!r}') from error
+            raise WorkspaceError(f'shell filesystem returned invalid base64 while reading {path!r}') from error
 
     async def write_bytes(self, path: str, data: bytes) -> None:
         parent = posixpath.dirname(path)
@@ -161,7 +161,7 @@ class _ShellFilesystem(SupportsFilesystem):
         try:
             size = int(output)
         except ValueError as error:
-            raise SandboxError(f'shell filesystem returned an invalid size for {path!r}: {output!r}') from error
+            raise WorkspaceError(f'shell filesystem returned an invalid size for {path!r}: {output!r}') from error
         return FileEntry(name=posixpath.basename(posixpath.normpath(path)), path=path, is_dir=False, size=size)
 
     async def list_dir(self, path: str) -> tuple[FileEntry, ...]:
@@ -174,7 +174,7 @@ class _ShellFilesystem(SupportsFilesystem):
             entries = base64.b64decode(result.stdout).decode().split('\0')
             directories = set(base64.b64decode(directory_result.stdout).decode().split('\0'))
         except (UnicodeDecodeError, ValueError) as error:
-            raise SandboxError(f'shell filesystem returned an invalid directory listing for {path!r}') from error
+            raise WorkspaceError(f'shell filesystem returned an invalid directory listing for {path!r}') from error
         return tuple(
             FileEntry(
                 name=posixpath.basename(entry_path),
@@ -185,7 +185,7 @@ class _ShellFilesystem(SupportsFilesystem):
             for entry_path in sorted(entry for entry in entries if entry)
         )
 
-    async def _list_paths(self, quoted_path: str, *, directories_only: bool = False) -> SandboxResult:
+    async def _list_paths(self, quoted_path: str, *, directories_only: bool = False) -> WorkspaceResult:
         temporary_path = f'/tmp/.pydantic-ai-{uuid.uuid4().hex}.list'
         quoted_temporary = shlex.quote(temporary_path)
         type_filter = ' -type d' if directories_only else ''
@@ -214,27 +214,27 @@ class _ShellFilesystem(SupportsFilesystem):
         result = await self._backend.run(f'test -e {shlex.quote(path)}', shell=True)
         return result.exit_code == 0
 
-    async def _raise_for_error(self, result: SandboxResult, path: str, *, missing: bool = False) -> None:
+    async def _raise_for_error(self, result: WorkspaceResult, path: str, *, missing: bool = False) -> None:
         if result.exit_code == 0:
             return
         if missing and not await self.exists(path):
             raise FileNotFoundError(path)
         message = result.stderr.strip() or f'shell filesystem operation failed for {path!r}'
-        raise SandboxError(message)
+        raise WorkspaceError(message)
 
 
-class Sandbox(SandboxBackend):
-    """Rich sandbox interface exposed to tools and capabilities.
+class Workspace(WorkspaceBackend):
+    """Rich workspace interface exposed to tools and capabilities.
 
-    `Sandbox` forwards the backend's required methods and adds filesystem access, path
+    `Workspace` forwards the backend's required methods and adds filesystem access, path
     resolution, and uniform text and windowed-file helpers. Use
-    [`backend`][pydantic_ai.sandboxes.Sandbox.backend] to reach provider-specific
+    [`backend`][pydantic_ai.workspaces.Workspace.backend] to reach provider-specific
     functionality.
     """
 
     def __init__(
         self,
-        backend: SandboxBackend,
+        backend: WorkspaceBackend,
         *,
         _supplier_id: str | None = None,
         _supplier: AbstractCapability[Any] | None = None,
@@ -242,38 +242,38 @@ class Sandbox(SandboxBackend):
         self._backend = backend
         self._supplier_id = _supplier_id
         self._supplier = _supplier
-        self._operation_dispatcher: _SandboxOperationDispatcher | None = None
+        self._operation_dispatcher: _WorkspaceOperationDispatcher | None = None
 
     def _supplier_details(self) -> tuple[str | None, AbstractCapability[Any] | None]:
         """Return private routing metadata for durable execution."""
         return self._supplier_id, self._supplier
 
     @classmethod
-    def wrap(cls, value: SandboxBackend) -> Sandbox:
-        """Wrap `value`, returning an existing `Sandbox` unchanged."""
-        return value if isinstance(value, Sandbox) else cls(value)
+    def wrap(cls, value: WorkspaceBackend) -> Workspace:
+        """Wrap `value`, returning an existing `Workspace` unchanged."""
+        return value if isinstance(value, Workspace) else cls(value)
 
-    def _install_operation_dispatcher(self, dispatcher: _SandboxOperationDispatcher) -> None:
-        """Route user-facing methods without replacing this `Sandbox` object."""
+    def _install_operation_dispatcher(self, dispatcher: _WorkspaceOperationDispatcher) -> None:
+        """Route user-facing methods without replacing this `Workspace` object."""
         self._operation_dispatcher = dispatcher
 
-    def _raw_backend(self) -> SandboxBackend:
+    def _raw_backend(self) -> WorkspaceBackend:
         """Return the provider backend for framework-internal serialization and routing."""
         return self._backend
 
-    def _replace_raw_backend(self, backend: SandboxBackend) -> None:
+    def _replace_raw_backend(self, backend: WorkspaceBackend) -> None:
         """Reconnect the direct-use view after a durable operation learns its identity."""
         self._backend = backend
 
     @property
-    def backend(self) -> SandboxBackend:
+    def backend(self) -> WorkspaceBackend:
         """The wrapped backend, for access to provider-specific functionality."""
         if dispatcher := self._operation_dispatcher:
             return dispatcher.backend
         return self._backend
 
     @property
-    def ref(self) -> SandboxRef | None:
+    def ref(self) -> WorkspaceRef | None:
         """Identity of the environment, once the backend has one.
 
         `None` until a backend built to create a fresh environment has run its first operation.
@@ -292,28 +292,28 @@ class Sandbox(SandboxBackend):
 
     async def run(
         self,
-        command: SandboxCommand,
+        command: WorkspaceCommand,
         *,
         shell: bool = False,
         cwd: str | None = None,
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
-    ) -> SandboxResult:
+    ) -> WorkspaceResult:
         """Execute a command and wait for it to complete.
 
-        Delegates to [`SandboxBackend.run`][pydantic_ai.sandboxes.SandboxBackend.run]; arguments
+        Delegates to [`WorkspaceBackend.run`][pydantic_ai.workspaces.WorkspaceBackend.run]; arguments
         and contracts are documented there.
         """
-        # Checked here as well as in the backend: a relative cwd has no sandbox meaning, and the
+        # Checked here as well as in the backend: a relative cwd has no workspace meaning, and the
         # wrapper is the seam every tool call goes through, so the error is the same whichever
         # backend is attached.
         if cwd is not None and not posixpath.isabs(cwd):
             raise ValueError(
-                f'cwd must be an absolute POSIX path, got {cwd!r}; resolve relative paths with `sandbox.resolve()` first'
+                f'cwd must be an absolute POSIX path, got {cwd!r}; resolve relative paths with `workspace.resolve()` first'
             )
         if dispatcher := self._operation_dispatcher:
             return cast(
-                SandboxResult,
+                WorkspaceResult,
                 await dispatcher(
                     'run', {'command': command, 'shell': shell, 'cwd': cwd, 'env': env, 'timeout': timeout}
                 ),
@@ -321,10 +321,10 @@ class Sandbox(SandboxBackend):
         return await self._backend.run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
 
     async def working_dir(self) -> str:
-        """The sandbox's default working directory (absolute, filesystem-canonical POSIX path).
+        """The workspace's default working directory (absolute, filesystem-canonical POSIX path).
 
         The canonicality contract is documented on
-        [`SandboxBackend.working_dir`][pydantic_ai.sandboxes.SandboxBackend.working_dir].
+        [`WorkspaceBackend.working_dir`][pydantic_ai.workspaces.WorkspaceBackend.working_dir].
         """
         if dispatcher := self._operation_dispatcher:
             return cast(str, await dispatcher('working_dir', {}))
@@ -333,10 +333,10 @@ class Sandbox(SandboxBackend):
     async def resolve(self, path: str, *, base: str | None = None) -> str:
         """Resolve a possibly-relative path to an absolute POSIX path.
 
-        Joins `path` onto `base` (default: [`working_dir`][pydantic_ai.sandboxes.Sandbox.working_dir])
+        Joins `path` onto `base` (default: [`working_dir`][pydantic_ai.workspaces.Workspace.working_dir])
         and normalizes it textually. This is a spelling convenience for model-supplied paths,
         **not** a confinement mechanism: `..` segments can escape `base` and symlinks are not
-        inspected. Isolation is the sandbox's job, not this method's.
+        inspected. Isolation is the workspace's job, not this method's.
         """
         if base is not None and not posixpath.isabs(base):
             raise ValueError(f'base must be an absolute path, got {base!r}')
@@ -359,16 +359,16 @@ class Sandbox(SandboxBackend):
             return
         await self._filesystem.write_bytes(await self.resolve(path), data)
 
-    async def stat(self, path: str) -> SandboxFileEntry:
+    async def stat(self, path: str) -> WorkspaceFileEntry:
         """Return metadata for a file or directory."""
         if dispatcher := self._operation_dispatcher:
-            return cast(SandboxFileEntry, await dispatcher('stat', {'path': path}))
+            return cast(WorkspaceFileEntry, await dispatcher('stat', {'path': path}))
         return await self._filesystem.stat(await self.resolve(path))
 
-    async def list_dir(self, path: str) -> Sequence[SandboxFileEntry]:
+    async def list_dir(self, path: str) -> Sequence[WorkspaceFileEntry]:
         """List the entries of a directory (non-recursive)."""
         if dispatcher := self._operation_dispatcher:
-            return cast(Sequence[SandboxFileEntry], await dispatcher('list_dir', {'path': path}))
+            return cast(Sequence[WorkspaceFileEntry], await dispatcher('list_dir', {'path': path}))
         return await self._filesystem.list_dir(await self.resolve(path))
 
     async def make_dir(self, path: str) -> None:
@@ -395,7 +395,7 @@ class Sandbox(SandboxBackend):
         """Read text from `path`, resolving relative paths through the backend first.
 
         Decoding is strict: undecodable bytes raise `UnicodeDecodeError`. For a lossy,
-        model-facing view use [`read_file`][pydantic_ai.sandboxes.Sandbox.read_file].
+        model-facing view use [`read_file`][pydantic_ai.workspaces.Workspace.read_file].
         """
         if dispatcher := self._operation_dispatcher:
             return cast(str, await dispatcher('read_text', {'path': path, 'encoding': encoding}))
@@ -414,11 +414,11 @@ class Sandbox(SandboxBackend):
         `offset` is the 1-based first line and `limit` is the maximum number of lines. When
         `limit` is `None`, the window extends through EOF. `limit` bounds returned lines, not
         bytes or characters: a single line may be arbitrarily large, and a backend without a
-        usable in-sandbox `sed` command may transfer the whole file through its filesystem API
-        before `Sandbox` applies the line window.
+        usable in-workspace `sed` command may transfer the whole file through its filesystem API
+        before `Workspace` applies the line window.
 
         This is a model-facing view: content is decoded as UTF-8 with U+FFFD replacement for
-        undecodable bytes. Use [`read_text`][pydantic_ai.sandboxes.Sandbox.read_text] for
+        undecodable bytes. Use [`read_text`][pydantic_ai.workspaces.Workspace.read_text] for
         strict decoding or `read_bytes` for exact bytes. Reading a special file that never
         ends (a FIFO, a device) blocks the way the underlying filesystem read does.
         """
@@ -449,7 +449,7 @@ class Sandbox(SandboxBackend):
         return _window_from_data(data, offset, limit)
 
     async def _read_file_via_shell(self, path: str, offset: int, limit: int) -> FileWindow | None:
-        """Slice a line window with `sed` inside the sandbox, so only the window crosses the wire.
+        """Slice a line window with `sed` inside the workspace, so only the window crosses the wire.
 
         Returns `None` on failure (no usable `sed`, `run()` unsupported, or a slice that
         timed out), so the caller can fall back to the backend filesystem when available.
@@ -462,7 +462,7 @@ class Sandbox(SandboxBackend):
             # `{end}q` stops `sed` at the window instead of scanning to EOF, and the timeout
             # bounds the optimization on paths that never finish.
             result = await backend.run(['sed', '-n', f'{offset},{end}p;{end}q', path], timeout=_SHELL_SLICE_TIMEOUT)
-        except (NotImplementedError, OSError, SandboxTimeoutError, UserError):
+        except (NotImplementedError, OSError, WorkspaceTimeoutError, UserError):
             return None
         if result.exit_code != 0 or result.stderr:
             return None

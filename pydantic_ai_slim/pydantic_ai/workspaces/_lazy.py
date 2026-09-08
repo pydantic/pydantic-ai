@@ -1,4 +1,4 @@
-"""Optional authoring support for sandbox backends backed by a native SDK object."""
+"""Optional authoring support for workspace backends backed by a native SDK object."""
 
 from __future__ import annotations
 
@@ -8,17 +8,17 @@ from typing import Generic, TypeVar
 
 import anyio
 
-__all__ = ('LazySandbox',)
+__all__ = ('LazyWorkspace',)
 
-SandboxT = TypeVar('SandboxT')
+WorkspaceT = TypeVar('WorkspaceT')
 
 
-class LazySandbox(Generic[SandboxT], ABC):
+class LazyWorkspace(Generic[WorkspaceT], ABC):
     """Share lazy acquisition and caching across provider backend implementations.
 
     Subclasses implement `create_or_attach` and their normal backend operations.
-    Operations await `self.sandbox` to obtain the native SDK object. This helper
-    does not change Pydantic AI's `SandboxBackend` protocol or manage remote lifetime.
+    Operations await `self.workspace` to obtain the native SDK object. This helper
+    does not change Pydantic AI's `WorkspaceBackend` protocol or manage remote lifetime.
 
     Concurrent acquisition is serialized per instance. A successful handle is cached;
     failed or cancelled acquisition is not cached, so a waiting or later caller can
@@ -28,16 +28,16 @@ class LazySandbox(Generic[SandboxT], ABC):
     Hold `_lock` when clearing that cached handle so teardown cannot race acquisition.
 
     Args:
-        sandbox: An already acquired native handle, if one is available.
+        workspace: An already acquired native handle, if one is available.
     """
 
-    def __init__(self, sandbox: SandboxT | None = None) -> None:
+    def __init__(self, workspace: WorkspaceT | None = None) -> None:
         """Retain an optional native handle without performing acquisition."""
-        self._live = sandbox
+        self._live = workspace
         self._lock = anyio.Lock()
 
     @property
-    def sandbox(self) -> Awaitable[SandboxT]:
+    def workspace(self) -> Awaitable[WorkspaceT]:
         """The native SDK object, acquired when awaited and reused on later awaits.
 
         Each access is awaitable, including when a handle was passed to the constructor.
@@ -45,17 +45,17 @@ class LazySandbox(Generic[SandboxT], ABC):
         """
         return self._resolve()
 
-    async def _resolve(self) -> SandboxT:
+    async def _resolve(self) -> WorkspaceT:
         async with self._lock:
             if self._live is None:
                 self._live = await self.create_or_attach()
             return self._live
 
     @abstractmethod
-    async def create_or_attach(self) -> SandboxT:
+    async def create_or_attach(self) -> WorkspaceT:
         """Acquire a native SDK object or raise if it cannot be acquired.
 
-        This is the provider implementation hook. Callers use `await self.sandbox`
+        This is the provider implementation hook. Callers use `await self.workspace`
         to get coordination and caching. The provider owns identity updates, SDK
         error translation, and cleanup of resources left by failed or cancelled
         acquisition. Returning successfully must leave the handle ready for operations.

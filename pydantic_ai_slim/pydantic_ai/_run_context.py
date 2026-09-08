@@ -27,11 +27,11 @@ if TYPE_CHECKING:
     from .capabilities.abstract import AbstractCapability
     from .models import AbstractModel
     from .realtime import RealtimeModelSettings, RealtimeSession
-    from .sandboxes import Sandbox
     from .settings import ModelSettings
     from .tool_manager import ToolManager
     from .tools import ToolDefinition
     from .usage import RunUsage, UsageLimits
+    from .workspaces import Workspace
 
 AgentDepsT = TypeVar('AgentDepsT', default=object, contravariant=True)
 """Type variable for agent dependencies."""
@@ -101,16 +101,16 @@ async def dispatch_event_stream(
         yield ctx._event_stream_replacements.pop(event_id, event)  # pyright: ignore[reportPrivateUsage]
 
 
-def unattached_sandbox() -> Sandbox:
-    # Imported lazily to keep the run-context module independent of the sandbox facade during
+def unattached_workspace() -> Workspace:
+    # Imported lazily to keep the run-context module independent of the workspace facade during
     # package initialization. This factory runs only when a `RunContext` is constructed.
-    from .sandboxes import Sandbox, UnavailableSandbox
+    from .workspaces import UnavailableWorkspace, Workspace
 
-    return Sandbox.wrap(
-        UnavailableSandbox(
-            'No sandbox is attached: this `RunContext` was created outside an agent run. '
-            'Sandboxes are attached when a run starts — pass `sandbox=` to the run method or supply one '
-            "from a capability's `get_sandbox`."
+    return Workspace.wrap(
+        UnavailableWorkspace(
+            'No workspace is attached: this `RunContext` was created outside an agent run. '
+            'Workspaces are attached when a run starts — pass `workspace=` to the run method or supply one '
+            "from a capability's `get_workspace`."
         )
     )
 
@@ -227,15 +227,15 @@ class RunContext(Generic[RunContextAgentDepsT]):
     [`RealtimeModelSettings`][pydantic_ai.realtime.RealtimeModelSettings] the session was opened
     with, for the whole session (realtime settings are fixed at connect time).
     """
-    sandbox: Sandbox = field(default_factory=unattached_sandbox)
-    """The [`Sandbox`][pydantic_ai.sandboxes.Sandbox] attached to this run.
+    workspace: Workspace = field(default_factory=unattached_workspace)
+    """The [`Workspace`][pydantic_ai.workspaces.Workspace] attached to this run.
 
-    Chosen once, before `for_run`: the `sandbox=` run argument, else the one capability whose
-    [`get_sandbox`][pydantic_ai.capabilities.AbstractCapability.get_sandbox] returned a backend,
+    Chosen once, before `for_run`: the `workspace=` run argument, else the one capability whose
+    [`get_workspace`][pydantic_ai.capabilities.AbstractCapability.get_workspace] returned a backend,
     else a placeholder whose operations explain how to attach one. Never the host by default.
 
     Choosing it does no I/O: the backend creates or attaches on its first operation, and the run
-    never tears it down. See the [sandbox docs](../sandbox.md).
+    never tears it down. See the [workspace docs](../workspace.md).
     """
     pending_messages: list[PendingMessage] | None = field(default=None, repr=False)
     """Queue read and mutated by the internal `PendingMessageDrainCapability`.
@@ -302,7 +302,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
 
     Provides access to tool validation and execution, including tracing and
     capability hooks. Useful for toolsets that need to dispatch tool calls
-    programmatically (e.g. code execution sandboxes).
+    programmatically (e.g. code execution workspaces).
 
     Not available in `TemporalRunContext` — it is not serializable across
     Temporal activity boundaries.

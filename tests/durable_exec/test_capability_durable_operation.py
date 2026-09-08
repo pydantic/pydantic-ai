@@ -39,15 +39,15 @@ from pydantic_ai.durable_exec._codec import JSON_CODEC
 from pydantic_ai.durable_exec._operation import CapabilityOperationId, DurableOperationId, OperationConfigRole
 from pydantic_ai.durable_exec._operation_backend import CallableOperationBackend
 from pydantic_ai.durable_exec._operation_names import JournalOperationNamer
-from pydantic_ai.durable_exec._sandbox import (
-    DurableSandboxDispatcher,
-    SandboxOperationError,
-    SandboxOperationParams,
-    SandboxOperationResult,
-    normalize_sandbox_value,
-    sandbox_operation_error,
-)
 from pydantic_ai.durable_exec._toolset import ToolConfig
+from pydantic_ai.durable_exec._workspace import (
+    DurableWorkspaceDispatcher,
+    WorkspaceOperationError,
+    WorkspaceOperationParams,
+    WorkspaceOperationResult,
+    normalize_workspace_value,
+    workspace_operation_error,
+)
 from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import CapabilityEvent, ModelRequest, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.models import (
@@ -57,22 +57,22 @@ from pydantic_ai.models import (
     StreamedResponse,
 )
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.sandboxes import (
-    CommandResult,
-    FileEntry,
-    ReadOnlySandbox,
-    Sandbox,
-    SandboxBackend,
-    SandboxError,
-    SandboxRef,
-    SandboxTimeoutError,
-    SandboxUnavailableError,
-)
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
+from pydantic_ai.workspaces import (
+    CommandResult,
+    FileEntry,
+    ReadOnlyWorkspace,
+    Workspace,
+    WorkspaceBackend,
+    WorkspaceError,
+    WorkspaceRef,
+    WorkspaceTimeoutError,
+    WorkspaceUnavailableError,
+)
 
 from ..model_lifecycle_utils import LifecycleTrackingModel
-from ..sandbox_fakes import SandboxCapability
+from ..workspace_fakes import WorkspaceCapability
 
 if TYPE_CHECKING:
     from dbos import DBOS, DBOSConfig, SetWorkflowID
@@ -192,82 +192,82 @@ class ReplayingDurability(RecordingDurability):
     replay_capability_operations = True
 
 
-async def test_durability_rejects_live_sandbox_in_durable_context() -> None:
-    from ..sandbox_fakes import RecordingSandboxBackend
+async def test_durability_rejects_live_workspace_in_durable_context() -> None:
+    from ..workspace_fakes import RecordingWorkspaceBackend
 
-    agent = Agent(TestModel(), name='live_sandbox', capabilities=[RecordingDurability()])
+    agent = Agent(TestModel(), name='live_workspace', capabilities=[RecordingDurability()])
 
-    with pytest.raises(UserError, match=r'live sandbox backend.*Pass a `SandboxRef`'):
-        await agent.run('go', sandbox=RecordingSandboxBackend('live'))
+    with pytest.raises(UserError, match=r'live workspace backend.*Pass a `WorkspaceRef`'):
+        await agent.run('go', workspace=RecordingWorkspaceBackend('live'))
 
 
-async def test_durability_routes_sandbox_calls_from_durable_context() -> None:
-    """Contextual sandbox calls become durable units without changing tool code."""
-    from ..sandbox_fakes import ConnectOnlySandboxCapability
+async def test_durability_routes_workspace_calls_from_durable_context() -> None:
+    """Contextual workspace calls become durable units without changing tool code."""
+    from ..workspace_fakes import ConnectOnlyWorkspaceCapability
 
     durability = RecordingDurability()
-    agent = Agent(TestModel(), name='ref_sandbox', capabilities=[ConnectOnlySandboxCapability(), durability])
+    agent = Agent(TestModel(), name='ref_workspace', capabilities=[ConnectOnlyWorkspaceCapability(), durability])
 
     @agent.tool
     async def probe(ctx: RunContext[Any]) -> str:
-        return (await ctx.sandbox.run(['true'])).stdout
+        return (await ctx.workspace.run(['true'])).stdout
 
-    result = await agent.run('go', sandbox=SandboxRef(sandbox_id='outside'))
+    result = await agent.run('go', workspace=WorkspaceRef(workspace_id='outside'))
 
     assert result.output == '{"probe":"connected"}'
     bound = RecordingDurability.from_agent(agent)
     assert bound is not None
-    assert [name for name, _ in bound.calls if '__sandbox__' in name] == [
-        'ref_sandbox__sandbox__connect_only_sandbox.run'
+    assert [name for name, _ in bound.calls if '__workspace__' in name] == [
+        'ref_workspace__workspace__connect_only_workspace.run'
     ]
 
 
-async def test_failed_first_durable_sandbox_call_preserves_created_environment() -> None:
-    """A semantic error after lazy creation must not make the next call create another sandbox."""
-    from ..sandbox_fakes import FakeSandbox
+async def test_failed_first_durable_workspace_call_preserves_created_environment() -> None:
+    """A semantic error after lazy creation must not make the next call create another workspace."""
+    from ..workspace_fakes import FakeWorkspace
 
-    backends: list[FakeSandbox] = []
+    backends: list[FakeWorkspace] = []
 
-    class FreshSandbox(AbstractCapability[Any]):
-        id = 'fresh_sandbox'
+    class FreshWorkspace(AbstractCapability[Any]):
+        id = 'fresh_workspace'
 
-        def get_sandbox(self, ctx: RunContext[Any], *, ref: SandboxRef | None) -> FakeSandbox:
-            backend = FakeSandbox('failed-first-call', ref=ref)
+        def get_workspace(self, ctx: RunContext[Any], *, ref: WorkspaceRef | None) -> FakeWorkspace:
+            backend = FakeWorkspace('failed-first-call', ref=ref)
             backends.append(backend)
             return backend
 
         async def before_run(self, ctx: RunContext[Any]) -> None:
             with pytest.raises(FileNotFoundError):
-                await ctx.sandbox.read_text('missing.txt')
-            await ctx.sandbox.write_text('created.txt', 'same environment')
+                await ctx.workspace.read_text('missing.txt')
+            await ctx.workspace.write_text('created.txt', 'same environment')
 
     result = await Agent(
-        TestModel(), name='failed_first_sandbox_call', capabilities=[FreshSandbox(), RecordingDurability()]
+        TestModel(), name='failed_first_workspace_call', capabilities=[FreshWorkspace(), RecordingDurability()]
     ).run('go')
 
-    assert result.sandbox.ref == SandboxRef(sandbox_id='fake-failed-first-call')
+    assert result.workspace.ref == WorkspaceRef(workspace_id='fake-failed-first-call')
     assert sum(backend.create_calls for backend in backends) == 1
-    assert {backend.ref for backend in backends if backend.ref is not None} == {result.sandbox.ref}
+    assert {backend.ref for backend in backends if backend.ref is not None} == {result.workspace.ref}
 
 
-async def test_durable_sandbox_is_available_in_hooks_and_after_the_run() -> None:
-    """One high-level method is one durable unit, and the returned sandbox remains usable."""
-    from ..sandbox_fakes import FakeSandbox
+async def test_durable_workspace_is_available_in_hooks_and_after_the_run() -> None:
+    """One high-level method is one durable unit, and the returned workspace remains usable."""
+    from ..workspace_fakes import FakeWorkspace
 
     state = [True]
-    backend = FakeSandbox('hooks')
+    backend = FakeWorkspace('hooks')
 
-    class HookSandbox(AbstractCapability[Any]):
-        id = 'hook_sandbox'
+    class HookWorkspace(AbstractCapability[Any]):
+        id = 'hook_workspace'
 
-        def get_sandbox(self, ctx: RunContext[Any], *, ref: SandboxRef | None) -> FakeSandbox:
+        def get_workspace(self, ctx: RunContext[Any], *, ref: WorkspaceRef | None) -> FakeWorkspace:
             return backend
 
         async def before_run(self, ctx: RunContext[Any]) -> None:
-            await ctx.sandbox.write_text('note.txt', 'from hook')
+            await ctx.workspace.write_text('note.txt', 'from hook')
 
         async def after_run(self, ctx: RunContext[Any], *, result: Any) -> Any:
-            assert await ctx.sandbox.read_text('note.txt') == 'from hook'
+            assert await ctx.workspace.read_text('note.txt') == 'from hook'
             return result
 
     class ToggleDurability(RecordingDurability):
@@ -275,96 +275,96 @@ async def test_durable_sandbox_is_available_in_hooks_and_after_the_run() -> None
         def in_durable_context(self) -> bool:
             return state[0]
 
-    agent = Agent(TestModel(), name='hook_sandbox_agent', capabilities=[HookSandbox(), ToggleDurability()])
+    agent = Agent(TestModel(), name='hook_workspace_agent', capabilities=[HookWorkspace(), ToggleDurability()])
     result = await agent.run('go')
 
     durability = ToggleDurability.from_agent(agent)
     assert durability is not None
-    assert [name for name, _ in durability.calls if '__sandbox__' in name] == [
-        'hook_sandbox_agent__sandbox__hook_sandbox.write_text',
-        'hook_sandbox_agent__sandbox__hook_sandbox.read_text',
+    assert [name for name, _ in durability.calls if '__workspace__' in name] == [
+        'hook_workspace_agent__workspace__hook_workspace.write_text',
+        'hook_workspace_agent__workspace__hook_workspace.read_text',
     ]
 
-    second = await agent.run('again', sandbox=result.sandbox)
-    assert second.sandbox is result.sandbox
-    assert [name for name, _ in durability.calls if '__sandbox__' in name] == [
-        'hook_sandbox_agent__sandbox__hook_sandbox.write_text',
-        'hook_sandbox_agent__sandbox__hook_sandbox.read_text',
-        'hook_sandbox_agent__sandbox__hook_sandbox.write_text',
-        'hook_sandbox_agent__sandbox__hook_sandbox.read_text',
+    second = await agent.run('again', workspace=result.workspace)
+    assert second.workspace is result.workspace
+    assert [name for name, _ in durability.calls if '__workspace__' in name] == [
+        'hook_workspace_agent__workspace__hook_workspace.write_text',
+        'hook_workspace_agent__workspace__hook_workspace.read_text',
+        'hook_workspace_agent__workspace__hook_workspace.write_text',
+        'hook_workspace_agent__workspace__hook_workspace.read_text',
     ]
 
     state[0] = False
-    assert await second.sandbox.read_text('note.txt') == 'from hook'
+    assert await second.workspace.read_text('note.txt') == 'from hook'
 
 
-async def test_concurrent_first_durable_sandbox_calls_create_one_environment() -> None:
-    from ..sandbox_fakes import FakeSandbox
+async def test_concurrent_first_durable_workspace_calls_create_one_environment() -> None:
+    from ..workspace_fakes import FakeWorkspace
 
-    backends: list[FakeSandbox] = []
+    backends: list[FakeWorkspace] = []
 
-    class FreshSandbox(AbstractCapability[Any]):
-        id = 'fresh_sandbox'
+    class FreshWorkspace(AbstractCapability[Any]):
+        id = 'fresh_workspace'
 
-        def get_sandbox(self, ctx: RunContext[Any], *, ref: SandboxRef | None) -> FakeSandbox:
-            backend = FakeSandbox('concurrent', ref=ref)
+        def get_workspace(self, ctx: RunContext[Any], *, ref: WorkspaceRef | None) -> FakeWorkspace:
+            backend = FakeWorkspace('concurrent', ref=ref)
             backends.append(backend)
             return backend
 
         async def before_run(self, ctx: RunContext[Any]) -> None:
             async with anyio.create_task_group() as task_group:
-                task_group.start_soon(ctx.sandbox.working_dir)
-                task_group.start_soon(ctx.sandbox.exists, '/workspace/missing')
+                task_group.start_soon(ctx.workspace.working_dir)
+                task_group.start_soon(ctx.workspace.exists, '/workspace/missing')
 
-    agent = Agent(TestModel(), name='concurrent_sandbox', capabilities=[FreshSandbox(), RecordingDurability()])
+    agent = Agent(TestModel(), name='concurrent_workspace', capabilities=[FreshWorkspace(), RecordingDurability()])
     await agent.run('go')
 
     assert sum(backend.create_calls for backend in backends) == 1
 
 
-async def test_durability_allows_live_sandbox_outside_durable_context() -> None:
-    from ..sandbox_fakes import RecordingSandboxBackend
+async def test_durability_allows_live_workspace_outside_durable_context() -> None:
+    from ..workspace_fakes import RecordingWorkspaceBackend
 
     class OutsideDurability(RecordingDurability):
         @property
         def in_durable_context(self) -> bool:
             return False
 
-    result = await Agent(TestModel(), name='live_sandbox', capabilities=[OutsideDurability()]).run(
-        'go', sandbox=RecordingSandboxBackend('live')
+    result = await Agent(TestModel(), name='live_workspace', capabilities=[OutsideDurability()]).run(
+        'go', workspace=RecordingWorkspaceBackend('live')
     )
 
     assert result.output == 'success (no tool calls)'
 
 
-async def test_durable_sandbox_dispatcher_requires_a_stable_supplier_id() -> None:
+async def test_durable_workspace_dispatcher_requires_a_stable_supplier_id() -> None:
     class UnnamedSupplier(AbstractCapability[Any]):
-        def get_sandbox(  # pragma: no cover - construction rejects the missing id before supplying
-            self, ctx: RunContext[Any], *, ref: SandboxRef | None
-        ) -> SandboxBackend:
-            from ..sandbox_fakes import FakeSandbox
+        def get_workspace(  # pragma: no cover - construction rejects the missing id before supplying
+            self, ctx: RunContext[Any], *, ref: WorkspaceRef | None
+        ) -> WorkspaceBackend:
+            from ..workspace_fakes import FakeWorkspace
 
-            return FakeSandbox('unnamed', ref=ref)
+            return FakeWorkspace('unnamed', ref=ref)
 
-    from ..sandbox_fakes import FakeSandbox
+    from ..workspace_fakes import FakeWorkspace
 
     with pytest.raises(UserError, match='needs an explicit `id`'):
-        DurableSandboxDispatcher(
-            Sandbox(FakeSandbox('raw')),
+        DurableWorkspaceDispatcher(
+            Workspace(FakeWorkspace('raw')),
             supplier=UnnamedSupplier(),
             operations={},
             in_durable_context=lambda: True,
         )
 
 
-async def test_durable_sandbox_dispatcher_guards_backend_and_context() -> None:
-    from ..sandbox_fakes import FakeSandbox
+async def test_durable_workspace_dispatcher_guards_backend_and_context() -> None:
+    from ..workspace_fakes import FakeWorkspace
 
-    raw = FakeSandbox('raw')
-    supplier = SandboxCapability(raw)
+    raw = FakeWorkspace('raw')
+    supplier = WorkspaceCapability(raw)
     durable = True
-    dispatcher = DurableSandboxDispatcher(
-        Sandbox(raw), supplier=supplier, operations={}, in_durable_context=lambda: durable
+    dispatcher = DurableWorkspaceDispatcher(
+        Workspace(raw), supplier=supplier, operations={}, in_durable_context=lambda: durable
     )
 
     with pytest.raises(UserError, match='not available in durable workflow code'):
@@ -377,12 +377,12 @@ async def test_durable_sandbox_dispatcher_guards_backend_and_context() -> None:
     assert await dispatcher('working_dir', {}) == '/workspace'
 
 
-async def test_durable_sandbox_dispatcher_rejects_an_unregistered_method() -> None:
-    from ..sandbox_fakes import FakeSandbox
+async def test_durable_workspace_dispatcher_rejects_an_unregistered_method() -> None:
+    from ..workspace_fakes import FakeWorkspace
 
-    raw = FakeSandbox('raw')
-    dispatcher = DurableSandboxDispatcher(
-        Sandbox(raw), supplier=SandboxCapability(raw), operations={}, in_durable_context=lambda: True
+    raw = FakeWorkspace('raw')
+    dispatcher = DurableWorkspaceDispatcher(
+        Workspace(raw), supplier=WorkspaceCapability(raw), operations={}, in_durable_context=lambda: True
     )
     ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
 
@@ -393,27 +393,27 @@ async def test_durable_sandbox_dispatcher_rejects_an_unregistered_method() -> No
 @pytest.mark.parametrize(
     ('error', 'error_type'),
     [
-        (SandboxOperationError(kind='timeout', message='timed out', timeout=1), SandboxTimeoutError),
-        (SandboxOperationError(kind='unavailable', message='gone'), SandboxUnavailableError),
-        (SandboxOperationError(kind='sandbox', message='failed'), SandboxError),
-        (SandboxOperationError(kind='not_found', message='missing'), FileNotFoundError),
-        (SandboxOperationError(kind='not_a_directory', message='not dir'), NotADirectoryError),
-        (SandboxOperationError(kind='is_a_directory', message='is dir'), IsADirectoryError),
-        (SandboxOperationError(kind='not_implemented', message='unsupported'), NotImplementedError),
+        (WorkspaceOperationError(kind='timeout', message='timed out', timeout=1), WorkspaceTimeoutError),
+        (WorkspaceOperationError(kind='unavailable', message='gone'), WorkspaceUnavailableError),
+        (WorkspaceOperationError(kind='workspace', message='failed'), WorkspaceError),
+        (WorkspaceOperationError(kind='not_found', message='missing'), FileNotFoundError),
+        (WorkspaceOperationError(kind='not_a_directory', message='not dir'), NotADirectoryError),
+        (WorkspaceOperationError(kind='is_a_directory', message='is dir'), IsADirectoryError),
+        (WorkspaceOperationError(kind='not_implemented', message='unsupported'), NotImplementedError),
     ],
 )
-async def test_durable_sandbox_dispatcher_reconstructs_operation_errors(
-    error: SandboxOperationError, error_type: type[Exception]
+async def test_durable_workspace_dispatcher_reconstructs_operation_errors(
+    error: WorkspaceOperationError, error_type: type[Exception]
 ) -> None:
-    from ..sandbox_fakes import FakeSandbox
+    from ..workspace_fakes import FakeWorkspace
 
-    async def operation(params: SandboxOperationParams, *, config: object | None = None) -> SandboxOperationResult:
-        return SandboxOperationResult(error=error, ref=SandboxRef(sandbox_id='raw'))
+    async def operation(params: WorkspaceOperationParams, *, config: object | None = None) -> WorkspaceOperationResult:
+        return WorkspaceOperationResult(error=error, ref=WorkspaceRef(workspace_id='raw'))
 
-    raw = FakeSandbox('raw', ref=SandboxRef(sandbox_id='raw'))
-    dispatcher = DurableSandboxDispatcher(
-        Sandbox(raw),
-        supplier=SandboxCapability(raw),
+    raw = FakeWorkspace('raw', ref=WorkspaceRef(workspace_id='raw'))
+    dispatcher = DurableWorkspaceDispatcher(
+        Workspace(raw),
+        supplier=WorkspaceCapability(raw),
         operations=cast(Any, {'run': operation}),
         in_durable_context=lambda: True,
     )
@@ -423,36 +423,36 @@ async def test_durable_sandbox_dispatcher_reconstructs_operation_errors(
         await dispatcher('run', {'command': ['true']})
 
 
-async def test_durable_sandbox_dispatcher_validates_and_reconnects_returned_refs() -> None:
-    from ..sandbox_fakes import FakeSandbox
+async def test_durable_workspace_dispatcher_validates_and_reconnects_returned_refs() -> None:
+    from ..workspace_fakes import FakeWorkspace
 
     ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
 
-    async def without_ref(params: SandboxOperationParams, *, config: object | None = None) -> SandboxOperationResult:
-        return SandboxOperationResult(value='value')
+    async def without_ref(params: WorkspaceOperationParams, *, config: object | None = None) -> WorkspaceOperationResult:
+        return WorkspaceOperationResult(value='value')
 
-    raw = FakeSandbox('raw')
-    supplier = SandboxCapability(raw)
-    missing_ref = DurableSandboxDispatcher(
-        Sandbox(raw),
+    raw = FakeWorkspace('raw')
+    supplier = WorkspaceCapability(raw)
+    missing_ref = DurableWorkspaceDispatcher(
+        Workspace(raw),
         supplier=supplier,
         operations=cast(Any, {'working_dir': without_ref}),
         in_durable_context=lambda: True,
     )
-    with set_current_run_context(ctx), pytest.raises(RuntimeError, match='without assigning a `SandboxRef`'):
+    with set_current_run_context(ctx), pytest.raises(RuntimeError, match='without assigning a `WorkspaceRef`'):
         await missing_ref('working_dir', {})
 
-    async def with_ref(params: SandboxOperationParams, *, config: object | None = None) -> SandboxOperationResult:
-        return SandboxOperationResult(value='/workspace', ref=SandboxRef(sandbox_id='created'))
+    async def with_ref(params: WorkspaceOperationParams, *, config: object | None = None) -> WorkspaceOperationResult:
+        return WorkspaceOperationResult(value='/workspace', ref=WorkspaceRef(workspace_id='created'))
 
     class DecliningSupplier(AbstractCapability[Any]):
         id = 'declining'
 
-        def get_sandbox(self, ctx: RunContext[Any], *, ref: SandboxRef | None) -> None:
+        def get_workspace(self, ctx: RunContext[Any], *, ref: WorkspaceRef | None) -> None:
             return None
 
-    declined = DurableSandboxDispatcher(
-        Sandbox(FakeSandbox('fresh')),
+    declined = DurableWorkspaceDispatcher(
+        Workspace(FakeWorkspace('fresh')),
         supplier=DecliningSupplier(),
         operations=cast(Any, {'working_dir': with_ref}),
         in_durable_context=lambda: True,
@@ -461,65 +461,65 @@ async def test_durable_sandbox_dispatcher_validates_and_reconnects_returned_refs
         await declined('working_dir', {})
 
 
-def test_durable_sandbox_value_and_error_normalization() -> None:
+def test_durable_workspace_value_and_error_normalization() -> None:
     entry = FileEntry(name='file.txt', path='/file.txt', is_dir=False, size=4)
 
-    assert normalize_sandbox_value('run', CommandResult(exit_code=1, stdout='out', stderr='err')) == CommandResult(
+    assert normalize_workspace_value('run', CommandResult(exit_code=1, stdout='out', stderr='err')) == CommandResult(
         exit_code=1, stdout='out', stderr='err'
     )
-    assert normalize_sandbox_value('stat', entry) == entry
-    assert normalize_sandbox_value('list_dir', [entry]) == [entry]
-    assert normalize_sandbox_value('working_dir', '/workspace') == '/workspace'
+    assert normalize_workspace_value('stat', entry) == entry
+    assert normalize_workspace_value('list_dir', [entry]) == [entry]
+    assert normalize_workspace_value('working_dir', '/workspace') == '/workspace'
 
     errors: list[BaseException] = [
-        SandboxTimeoutError('timed out', stdout='out', stderr='err', timeout=1),
-        SandboxUnavailableError('gone'),
-        SandboxError('failed'),
+        WorkspaceTimeoutError('timed out', stdout='out', stderr='err', timeout=1),
+        WorkspaceUnavailableError('gone'),
+        WorkspaceError('failed'),
         FileNotFoundError('missing'),
         NotADirectoryError('not dir'),
         IsADirectoryError('is dir'),
         NotImplementedError('unsupported'),
     ]
-    outcomes = [sandbox_operation_error(error) for error in errors]
+    outcomes = [workspace_operation_error(error) for error in errors]
     assert all(outcome is not None for outcome in outcomes)
-    assert [cast(SandboxOperationError, outcome).kind for outcome in outcomes] == [
+    assert [cast(WorkspaceOperationError, outcome).kind for outcome in outcomes] == [
         'timeout',
         'unavailable',
-        'sandbox',
+        'workspace',
         'not_found',
         'not_a_directory',
         'is_a_directory',
         'not_implemented',
     ]
-    assert sandbox_operation_error(ValueError('unexpected')) is None
+    assert workspace_operation_error(ValueError('unexpected')) is None
 
 
-async def test_bound_sandbox_operation_validates_supplier_and_backend_contracts() -> None:
-    from ..sandbox_fakes import FakeSandbox, FakeSandboxResult
+async def test_bound_workspace_operation_validates_supplier_and_backend_contracts() -> None:
+    from ..workspace_fakes import FakeWorkspace, FakeWorkspaceResult
 
     class DecliningSupplier(AbstractCapability[Any]):
         id = 'declining'
 
-        def get_sandbox(self, ctx: RunContext[Any], *, ref: SandboxRef | None) -> None:
+        def get_workspace(self, ctx: RunContext[Any], *, ref: WorkspaceRef | None) -> None:
             return None
 
     declining = DecliningSupplier()
-    declining_agent = Agent(TestModel(), name='declining_sandbox', capabilities=[declining, RecordingDurability()])
+    declining_agent = Agent(TestModel(), name='declining_workspace', capabilities=[declining, RecordingDurability()])
     declining_durability = RecordingDurability.from_agent(declining_agent)
     assert declining_durability is not None
     declining_ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), agent=declining_agent)
-    declining_operation = declining_durability._bound_sandbox_operations['declining']['run']  # pyright: ignore[reportPrivateUsage]
+    declining_operation = declining_durability._bound_workspace_operations['declining']['run']  # pyright: ignore[reportPrivateUsage]
     with pytest.raises(UserError, match='declined a reference it previously supplied'):
         await declining_operation(
-            SandboxOperationParams(
+            WorkspaceOperationParams(
                 run_context=declining_ctx,
                 supplier_id='declining',
-                ref=SandboxRef(sandbox_id='existing'),
+                ref=WorkspaceRef(workspace_id='existing'),
                 arguments={'command': ['true']},
             )
         )
 
-    class UnexpectedBackend(FakeSandbox):
+    class UnexpectedBackend(FakeWorkspace):
         async def run(
             self,
             command: str | Sequence[str],
@@ -528,67 +528,67 @@ async def test_bound_sandbox_operation_validates_supplier_and_backend_contracts(
             cwd: str | None = None,
             env: Mapping[str, str] | None = None,
             timeout: float | None = None,
-        ) -> FakeSandboxResult:
+        ) -> FakeWorkspaceResult:
             raise ValueError('unexpected')
 
-    unexpected_supplier = SandboxCapability(UnexpectedBackend('unexpected'))
+    unexpected_supplier = WorkspaceCapability(UnexpectedBackend('unexpected'))
     unexpected_agent = Agent(
-        TestModel(), name='unexpected_sandbox', capabilities=[unexpected_supplier, RecordingDurability()]
+        TestModel(), name='unexpected_workspace', capabilities=[unexpected_supplier, RecordingDurability()]
     )
     unexpected_durability = RecordingDurability.from_agent(unexpected_agent)
     assert unexpected_durability is not None
     unexpected_ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), agent=unexpected_agent)
-    unexpected_operation = unexpected_durability._bound_sandbox_operations['sandbox']['run']  # pyright: ignore[reportPrivateUsage]
+    unexpected_operation = unexpected_durability._bound_workspace_operations['workspace']['run']  # pyright: ignore[reportPrivateUsage]
     with pytest.raises(ValueError, match='unexpected'):
         await unexpected_operation(
-            SandboxOperationParams(
+            WorkspaceOperationParams(
                 run_context=unexpected_ctx,
-                supplier_id='sandbox',
+                supplier_id='workspace',
                 ref=None,
                 arguments={'command': ['true']},
             )
         )
 
-    class RefusingBackend(FakeSandbox):
+    class RefusingBackend(FakeWorkspace):
         @property
         def ref(self) -> None:
             return None
 
-    refusing_supplier = SandboxCapability(RefusingBackend('refusing'))
+    refusing_supplier = WorkspaceCapability(RefusingBackend('refusing'))
     refusing_agent = Agent(
-        TestModel(), name='refusing_sandbox', capabilities=[refusing_supplier, RecordingDurability()]
+        TestModel(), name='refusing_workspace', capabilities=[refusing_supplier, RecordingDurability()]
     )
     refusing_durability = RecordingDurability.from_agent(refusing_agent)
     assert refusing_durability is not None
     refusing_ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), agent=refusing_agent)
-    refusing_operation = refusing_durability._bound_sandbox_operations['sandbox']['run']  # pyright: ignore[reportPrivateUsage]
-    with pytest.raises(RuntimeError, match='without assigning a `SandboxRef`'):
+    refusing_operation = refusing_durability._bound_workspace_operations['workspace']['run']  # pyright: ignore[reportPrivateUsage]
+    with pytest.raises(RuntimeError, match='without assigning a `WorkspaceRef`'):
         await refusing_operation(
-            SandboxOperationParams(
+            WorkspaceOperationParams(
                 run_context=refusing_ctx,
-                supplier_id='sandbox',
+                supplier_id='workspace',
                 ref=None,
                 arguments={'command': ['true']},
             )
         )
 
 
-def test_wrap_sandbox_rejects_unstable_or_runtime_only_suppliers() -> None:
-    from ..sandbox_fakes import FakeSandbox
+def test_wrap_workspace_rejects_unstable_or_runtime_only_suppliers() -> None:
+    from ..workspace_fakes import FakeWorkspace
 
     class UnnamedSupplier(AbstractCapability[Any]):
-        def get_sandbox(  # pragma: no cover - wrapping rejects the missing id before supplying
-            self, ctx: RunContext[Any], *, ref: SandboxRef | None
-        ) -> SandboxBackend:
-            return FakeSandbox('unnamed', ref=ref)
+        def get_workspace(  # pragma: no cover - wrapping rejects the missing id before supplying
+            self, ctx: RunContext[Any], *, ref: WorkspaceRef | None
+        ) -> WorkspaceBackend:
+            return FakeWorkspace('unnamed', ref=ref)
 
     class LateSupplier(AbstractCapability[Any]):
         id = 'late'
 
-        def get_sandbox(  # pragma: no cover - wrapping rejects the unregistered id before supplying
-            self, ctx: RunContext[Any], *, ref: SandboxRef | None
-        ) -> SandboxBackend:
-            return FakeSandbox('late', ref=ref)
+        def get_workspace(  # pragma: no cover - wrapping rejects the unregistered id before supplying
+            self, ctx: RunContext[Any], *, ref: WorkspaceRef | None
+        ) -> WorkspaceBackend:
+            return FakeWorkspace('late', ref=ref)
 
     agent = Agent(TestModel(), name='runtime_supplier', capabilities=[RecordingDurability()])
     durability = RecordingDurability.from_agent(agent)
@@ -596,9 +596,9 @@ def test_wrap_sandbox_rejects_unstable_or_runtime_only_suppliers() -> None:
     ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), agent=agent)
 
     with pytest.raises(UserError, match='needs an explicit `id`'):
-        durability._wrap_sandbox(ctx, Sandbox(FakeSandbox('unnamed')), supplier=UnnamedSupplier())  # pyright: ignore[reportPrivateUsage]
+        durability._wrap_workspace(ctx, Workspace(FakeWorkspace('unnamed')), supplier=UnnamedSupplier())  # pyright: ignore[reportPrivateUsage]
     with pytest.raises(UserError, match='added at run time'):
-        durability._wrap_sandbox(ctx, Sandbox(FakeSandbox('late')), supplier=LateSupplier())  # pyright: ignore[reportPrivateUsage]
+        durability._wrap_workspace(ctx, Workspace(FakeWorkspace('late')), supplier=LateSupplier())  # pyright: ignore[reportPrivateUsage]
 
 
 class TransparentDurability(RecordingDurability):
@@ -2077,32 +2077,32 @@ async def test_prefect_capability_operation_cache_identity_includes_context_and_
     ]
 
 
-async def test_bound_sandbox_operation_preserves_parent_policy() -> None:
-    from ..sandbox_fakes import FakeSandbox
+async def test_bound_workspace_operation_preserves_parent_policy() -> None:
+    from ..workspace_fakes import FakeWorkspace
 
-    backend = FakeSandbox('policy', ref=SandboxRef(sandbox_id='policy'))
+    backend = FakeWorkspace('policy', ref=WorkspaceRef(workspace_id='policy'))
 
     class Protected(AbstractCapability[Any]):
-        id = 'sandbox'
+        id = 'workspace'
 
-        def get_sandbox(self, ctx: RunContext[Any], *, ref: SandboxRef | None) -> SandboxBackend:
-            return ReadOnlySandbox(backend)
+        def get_workspace(self, ctx: RunContext[Any], *, ref: WorkspaceRef | None) -> WorkspaceBackend:
+            return ReadOnlyWorkspace(backend)
 
     class ParentPolicy(WrapperCapability[Any]):
         async def for_run(self, ctx: RunContext[Any]) -> WrapperCapability[Any]:
             return WrapperCapability(CombinedCapability([Protected()]), id=self.id)
 
-    policy = ParentPolicy(CombinedCapability([SandboxCapability(backend)]), id='policy')
+    policy = ParentPolicy(CombinedCapability([WorkspaceCapability(backend)]), id='policy')
     agent = Agent(TestModel(), name='parent_policy', capabilities=[policy, RecordingDurability()])
     durability = RecordingDurability.from_agent(agent)
     assert durability is not None
-    operation = durability._bound_sandbox_operations['sandbox']['run']  # pyright: ignore[reportPrivateUsage]
+    operation = durability._bound_workspace_operations['workspace']['run']  # pyright: ignore[reportPrivateUsage]
     ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), agent=agent)
     with pytest.raises(UserError, match='read-only'):
         await operation(
-            SandboxOperationParams(
+            WorkspaceOperationParams(
                 run_context=ctx,
-                supplier_id='sandbox',
+                supplier_id='workspace',
                 ref=backend.ref,
                 arguments={'command': ['touch', '/workspace/private']},
             )

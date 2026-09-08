@@ -10,7 +10,6 @@ from pydantic_ai._instructions import AgentInstructions, SourcedInstruction, nor
 from pydantic_ai._utils import aclose_all, replace_no_init
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
-from pydantic_ai.sandboxes import Sandbox, SandboxBackend, SandboxRef
 from pydantic_ai.tools import (
     AgentDepsT,
     AgentNativeTool,
@@ -20,6 +19,7 @@ from pydantic_ai.tools import (
     ToolDefinition,
 )
 from pydantic_ai.toolsets import AbstractToolset, AgentToolset
+from pydantic_ai.workspaces import Workspace, WorkspaceBackend, WorkspaceRef
 
 from ._on_event import collect_on_event_methods, marked_listens_to
 from .abstract import (
@@ -212,14 +212,14 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
     def _validate_runtime_capabilities(self, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> None:
         self.wrapped._validate_runtime_capabilities(capabilities)
 
-    def _wrap_sandbox(
+    def _wrap_workspace(
         self,
         ctx: RunContext[AgentDepsT],
-        sandbox: Sandbox,
+        workspace: Workspace,
         *,
         supplier: AbstractCapability[AgentDepsT] | None,
-    ) -> Sandbox:
-        return self.wrapped._wrap_sandbox(ctx, sandbox, supplier=supplier)
+    ) -> Workspace:
+        return self.wrapped._wrap_workspace(ctx, workspace, supplier=supplier)
 
     # --- Get methods ---
 
@@ -264,8 +264,8 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
         return self.wrapped.get_wrapper_toolset(toolset)
 
-    def get_sandbox(self, ctx: RunContext[AgentDepsT], *, ref: SandboxRef | None) -> SandboxBackend | None:
-        return self.wrapped.get_sandbox(ctx, ref=ref)
+    def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
+        return self.wrapped.get_workspace(ctx, ref=ref)
 
     async def prepare_tools(
         self,
