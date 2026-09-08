@@ -21,6 +21,10 @@ Use this before opening a PR or reviewing a capability change.
 - No casts are used to paper over type design.
 - The implementation uses Pydantic AI hooks/toolsets instead of duplicating core
   runtime behavior.
+- The change states what it emits to OpenTelemetry. A decision point an operator
+  needs (a refusal, a budget stop, a rewritten history) carries a span on
+  `ctx.tracer`; emitting nothing is documented with its reason. See
+  `capability-authoring.md` "Telemetry".
 - Capability ordering is justified when present.
 - Dependency changes are required, linked to an issue, and made through `uv`;
   every PR touching `pyproject.toml` or `uv.lock` carries

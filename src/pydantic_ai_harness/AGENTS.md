@@ -85,6 +85,20 @@ acts on the run and one verb phrase states its entire contract. Never invent a
 nominalization for an action, and never name a capability after the problem it
 solves.
 
+## Telemetry
+
+OpenTelemetry is part of a feature's design, not a follow-up. Every new
+capability decides what it emits before it merges, from the point of view of
+someone operating a run in production and asking what happened, why the run
+changed course, and what it cost.
+
+Emitting nothing is a valid answer when core's own spans already cover the work.
+It is an answer to state in the docs, not a step to skip.
+
+The house pattern (spans on `ctx.tracer`, attribute naming, content behind
+`trace_include_content`) is in `agent_docs/capability-authoring.md`
+"Telemetry".
+
 ## Coding standards
 
 - Python 3.10+ (target version for pyright and ruff)
