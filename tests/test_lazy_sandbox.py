@@ -45,7 +45,7 @@ class TestLazySandbox:
 
     async def test_supplied_native_handle_skips_acquisition(self) -> None:
         async def acquire() -> NativeSandbox:
-            pytest.fail('An existing handle must not be acquired again')
+            pytest.fail('An existing handle must not be acquired again')  # pragma: no cover
 
         native = NativeSandbox()
         assert await Backend(acquire, native).sandbox is native
