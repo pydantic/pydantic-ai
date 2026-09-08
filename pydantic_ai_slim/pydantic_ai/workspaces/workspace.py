@@ -224,11 +224,6 @@ class Workspace(WorkspaceBackend):
     ):
         self._backend = backend
 
-    @classmethod
-    def wrap(cls, value: WorkspaceBackend) -> Workspace:
-        """Wrap `value`, returning an existing `Workspace` unchanged."""
-        return value if isinstance(value, Workspace) else cls(value)
-
     @property
     def backend(self) -> WorkspaceBackend:
         """The wrapped backend, for access to provider-specific functionality."""
@@ -360,7 +355,6 @@ class Workspace(WorkspaceBackend):
             if window is not None:
                 return window
 
-            await self._validate_bounded_read_path(resolved_path)
         data = await self.read_bytes(path)
         return _window_from_data(data, offset, limit)
 

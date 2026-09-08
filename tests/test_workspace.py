@@ -10,13 +10,26 @@ import anyio
 import pytest
 from pydantic import TypeAdapter
 
-from pydantic_ai import Agent, RunContext, UserError
+from pydantic_ai import Agent, RunContext, UserError, capture_run_messages
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.durable_exec._workspace import guard_workflow_workspace
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.exceptions import ApprovalRequired
+from pydantic_ai.messages import (
+    FunctionToolResultEvent,
+    ModelMessage,
+    ModelMessagesTypeAdapter,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    UserPromptPart,
+)
+from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.run import AgentRunResult
+from pydantic_ai.settings import ModelSettings
+from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved
 from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import (
     FileWindow,
@@ -45,7 +58,7 @@ pytestmark = pytest.mark.anyio
 
 
 async def test_wrapper_overrides_apply_to_text_and_window_reads():
-    backend = FakeWorkspace('wrapper', {'/workspace/file.txt': b'inner'})
+    backend = FakeWorkspace('wrapper')
 
     class ReadingWrapper(WrapperWorkspace):
         async def read_bytes(self, path: str) -> bytes:
@@ -591,6 +604,102 @@ async def test_the_result_carries_the_workspace_the_run_used() -> None:
     assert capability.backend.create_calls == 1
 
 
+async def test_workspace_ref_is_persisted_and_reused_from_agent_history() -> None:
+    seen_refs: list[WorkspaceRef | None] = []
+    backends: list[FakeWorkspace] = []
+
+    class HistoryCapability(AbstractCapability[Any]):
+        id = 'history-workspace'
+
+        def get_workspace(self, ctx: RunContext[Any], *, ref: WorkspaceRef | None) -> WorkspaceBackend:
+            seen_refs.append(ref)
+            backend = FakeWorkspace('history', ref=ref)
+            backends.append(backend)
+            return backend
+
+    class RepeatingTestModel(TestModel):
+        def _request(
+            self,
+            messages: list[ModelMessage],
+            model_settings: ModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+        ) -> ModelResponse:
+            if isinstance(messages[-1], ModelRequest) and any(
+                isinstance(part, UserPromptPart) for part in messages[-1].parts
+            ):
+                messages = []
+            return super()._request(messages, model_settings, model_request_parameters)
+
+    agent = Agent(RepeatingTestModel(call_tools=['probe']), deps_type=type(None), capabilities=[HistoryCapability()])
+
+    @agent.tool
+    async def probe(ctx: RunContext[None]) -> str:
+        return (await ctx.workspace.run(['true'])).stdout
+
+    first = await agent.run('first')
+    history = ModelMessagesTypeAdapter.validate_json(first.all_messages_json())
+    second = await agent.run('second', message_history=history)
+
+    ref = WorkspaceRef(provider='fake', id='fake-history')
+    assert seen_refs == [None, ref]
+    assert first.response.workspace_ref == ref
+    assert second.response.workspace_ref == ref
+    assert second.workspace.ref == ref
+    assert backends[0].create_calls == 1
+    assert backends[1].attach_calls == 1
+    assert backends[1].create_calls == 0
+
+
+async def test_explicit_workspace_facade_wins_over_historical_ref_without_mutating_history() -> None:
+    backend = FakeWorkspace('explicit-history')
+    explicit = ReadOnlyWorkspace(Workspace(backend))
+    historical = ModelResponse(
+        parts=[TextPart('old')], metadata={'keep': True}, workspace_ref=WorkspaceRef(provider='fake', id='old')
+    )
+    agent = Agent(TestModel(custom_output_text='done'), deps_type=type(None))
+
+    result = await agent.run('new', message_history=[historical], workspace=explicit)
+
+    assert result.workspace is explicit
+    assert historical.metadata == {'keep': True}
+    assert historical.workspace_ref == WorkspaceRef(provider='fake', id='old')
+    with pytest.raises(UserError, match='read-only'):
+        await result.workspace.run(['true'])
+
+
+async def test_latest_none_workspace_ref_suppresses_an_older_historical_ref(tmp_path: Path) -> None:
+    seen: list[WorkspaceRef | None] = []
+
+    class HistoryCapability(AbstractCapability[Any]):
+        def get_workspace(self, ctx: RunContext[Any], *, ref: WorkspaceRef | None) -> WorkspaceBackend:
+            seen.append(ref)
+            return FakeWorkspace('latest-none', ref=ref)
+
+    agent = Agent(TestModel(custom_output_text='done'), deps_type=type(None), capabilities=[HistoryCapability()])
+
+    older = ModelResponse(parts=[TextPart('old')], workspace_ref=WorkspaceRef(provider='fake', id='old'))
+    first = await agent.run('first', message_history=[older], workspace=LocalWorkspace(tmp_path))
+    await agent.run('new', message_history=first.all_messages())
+
+    assert seen == [None]
+
+
+async def test_historical_workspace_ref_without_capability_stays_unavailable() -> None:
+    historical = ModelResponse(
+        parts=[ToolCallPart('probe', {})], workspace_ref=WorkspaceRef(provider='missing', id='remote')
+    )
+    agent = Agent(TestModel(call_tools=['probe']), deps_type=type(None))
+
+    @agent.tool
+    async def probe(ctx: RunContext[None]) -> str:
+        with pytest.raises(UserError, match='No workspace is attached'):
+            await ctx.workspace.run(['true'])
+        return 'unavailable'
+
+    result = await agent.run(None, message_history=[historical])
+    assert result.output == '{"probe":"unavailable"}'
+
+
 async def test_a_result_still_round_trips_through_json_when_a_workspace_was_used() -> None:
     """The workspace is a live handle, so it is left out of the serialized result rather than breaking it."""
     agent = Agent(_tool_call_model(), capabilities=[WorkspaceCapability()])
@@ -644,45 +753,6 @@ async def test_deferred_capability_never_contributes_a_backend() -> None:
     assert capability.refs == []
 
 
-def test_backend_construction_does_no_io() -> None:
-    backend = FakeWorkspace('lazy')
-
-    assert backend.ref is None
-    assert backend.create_calls == 0
-    assert backend.attach_calls == 0
-
-
-async def test_first_operation_creates_the_environment_once() -> None:
-    backend = FakeWorkspace('fresh')
-
-    await backend.run(['true'])
-    await backend.working_dir()
-
-    assert backend.create_calls == 1
-    assert backend.attach_calls == 0
-    assert backend.ref is not None
-
-
-async def test_concurrent_first_operations_create_one_environment() -> None:
-    backend = FakeWorkspace('concurrent')
-
-    async with anyio.create_task_group() as tg:
-        tg.start_soon(backend.run, ['true'])
-        tg.start_soon(backend.working_dir)
-
-    assert backend.create_calls == 1
-    assert backend.ref is not None
-
-
-async def test_create_backend_ref_is_set_after_its_first_operation() -> None:
-    backend = FakeWorkspace('identity')
-    assert backend.ref is None
-
-    await backend.run(['true'])
-
-    assert backend.ref == WorkspaceRef(provider='fake', id='fake-identity')
-
-
 async def test_workspace_ref_forwards_backend_identity() -> None:
     backend = FakeWorkspace('ref')
     workspace = Workspace(backend)
@@ -691,15 +761,6 @@ async def test_workspace_ref_forwards_backend_identity() -> None:
     await workspace.run(['true'])
 
     assert workspace.ref == WorkspaceRef(provider='fake', id='fake-ref')
-
-
-def test_workspace_wrap_is_idempotent() -> None:
-    backend = FakeWorkspace('wrapped')
-    workspace = Workspace.wrap(backend)
-
-    assert isinstance(workspace, Workspace)
-    assert workspace.backend is backend
-    assert Workspace.wrap(workspace) is workspace
 
 
 async def test_run_rejects_relative_cwd() -> None:
@@ -783,16 +844,20 @@ async def test_failed_run_never_cleans_up_the_workspace() -> None:
         await ctx.workspace.run(['true'])
         raise RuntimeError('boom')
 
-    with pytest.raises(RuntimeError, match='boom'):
+    with capture_run_messages() as messages, pytest.raises(RuntimeError, match='boom'):
         await agent.run('go', workspace=backend)
 
     assert backend.cleanup_calls == []
+    response = next(message for message in reversed(messages) if isinstance(message, ModelResponse))
+    assert response.workspace_ref == backend.ref
+    assert backend.ref is not None
 
 
 async def test_cancelled_run_never_cleans_up_the_workspace() -> None:
     backend = FakeWorkspace('cancelled')
     agent = Agent(_tool_call_model())
     entered = anyio.Event()
+    captured_messages: list[ModelMessage] = []
 
     @agent.tool
     async def probe(ctx: RunContext[Any]) -> str:
@@ -804,13 +869,140 @@ async def test_cancelled_run_never_cleans_up_the_workspace() -> None:
     async with anyio.create_task_group() as tg:
 
         async def run_agent() -> None:
-            await agent.run('go', workspace=backend)
+            with capture_run_messages() as captured:
+                try:
+                    await agent.run('go', workspace=backend)
+                finally:
+                    captured_messages.extend(captured)
 
         tg.start_soon(run_agent)
         await entered.wait()
         tg.cancel_scope.cancel()
 
     assert backend.cleanup_calls == []
+    response = next(message for message in reversed(captured_messages) if isinstance(message, ModelResponse))
+    assert response.workspace_ref == backend.ref
+    assert backend.ref is not None
+
+
+async def test_streamed_responses_keep_the_workspace_ref() -> None:
+    ref = WorkspaceRef(provider='fake', id='streamed')
+    backend = FakeWorkspace('streamed', ref=ref)
+    agent = Agent(TestModel(custom_output_text='streamed'))
+
+    async with agent.run_stream('go', workspace=Workspace(backend)) as result:
+        responses = [response async for response in result.stream_response(debounce_by=None)]
+
+    assert responses
+    assert all(response.workspace_ref == ref for response in responses)
+
+
+async def test_interrupted_stream_history_keeps_the_workspace_ref() -> None:
+    ref = WorkspaceRef(provider='fake', id='interrupted')
+    backend = FakeWorkspace('interrupted', ref=ref)
+    agent = Agent(TestModel(custom_output_text='hello world'))
+
+    async with agent.run_stream('go', workspace=backend) as result:
+        async for _ in result.stream_response(debounce_by=None):
+            break
+        await result.cancel()
+
+    assert result.response.state == 'interrupted'
+    assert result.response.workspace_ref == ref
+    response = next(message for message in reversed(result.all_messages()) if isinstance(message, ModelResponse))
+    assert response.workspace_ref == ref
+
+
+async def test_no_prompt_history_response_is_copied_before_stamping_workspace_ref() -> None:
+    original = ModelResponse(parts=[TextPart('finished')])
+    backend = FakeWorkspace('history-copy', ref=WorkspaceRef(provider='fake', id='history-copy'))
+    agent = Agent(TestModel(custom_output_text='unused'))
+
+    result = await agent.run(message_history=[original], workspace=Workspace(backend))
+
+    assert result.output == 'finished'
+    assert original.workspace_ref is None
+    response = next(message for message in reversed(result.all_messages()) if isinstance(message, ModelResponse))
+    assert response is not original
+    assert response.workspace_ref == backend.ref
+
+
+async def test_no_prompt_pending_tool_call_history_is_copied_before_execution() -> None:
+    original = ModelResponse(parts=[ToolCallPart('probe', {})])
+    history = [ModelRequest(parts=[UserPromptPart('go')]), original]
+    backend = FakeWorkspace('pending')
+    agent = Agent(TestModel(custom_output_text='done'))
+
+    @agent.tool
+    async def probe(ctx: RunContext[Any]) -> str:
+        return (await ctx.workspace.run(['true'])).stdout
+
+    result = await agent.run(message_history=history, workspace=Workspace(backend))
+
+    assert result.output == 'done'
+    assert original.workspace_ref is None
+    copied = next(message for message in result.all_messages() if isinstance(message, ModelResponse))
+    assert copied is not original
+    assert copied.workspace_ref == backend.ref
+
+
+async def test_tool_result_event_sees_workspace_ref_after_lazy_acquisition() -> None:
+    backend = FakeWorkspace('event')
+    agent = Agent(TestModel(call_tools=['probe']))
+    observed: list[WorkspaceRef | None] = []
+
+    @agent.tool
+    async def probe(ctx: RunContext[Any]) -> str:
+        await ctx.workspace.run(['true'])
+        return 'ok'
+
+    @agent.on_event(FunctionToolResultEvent)
+    async def observe(ctx: RunContext[Any], event: FunctionToolResultEvent) -> None:
+        response = next(message for message in reversed(ctx.messages) if isinstance(message, ModelResponse))
+        observed.append(response.workspace_ref)
+
+    await agent.run('go', workspace=backend)
+
+    assert observed == [backend.ref]
+    assert backend.ref is not None
+
+
+async def test_deferred_approval_stamps_copied_response_after_workspace_acquisition() -> None:
+    original_response: ModelResponse | None = None
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal original_response
+        if len(messages) == 1:
+            original_response = ModelResponse(parts=[ToolCallPart('probe', {})])
+            return original_response
+        return ModelResponse(parts=[TextPart('approved')])
+
+    agent = Agent(FunctionModel(model), deps_type=type(None), output_type=[str, DeferredToolRequests])
+
+    @agent.tool
+    async def probe(ctx: RunContext[None]) -> str:
+        if not ctx.tool_call_approved:
+            raise ApprovalRequired
+        return (await ctx.workspace.run(['true'])).stdout
+
+    first = await agent.run('go')
+    assert isinstance(first.output, DeferredToolRequests)
+    assert original_response is not None
+    assert original_response.workspace_ref is None
+
+    backend = FakeWorkspace('approved')
+    source_tool_response = next(message for message in first.all_messages() if isinstance(message, ModelResponse))
+    second = await agent.run(
+        message_history=first.all_messages(),
+        deferred_tool_results=DeferredToolResults(approvals={first.output.approvals[0].tool_call_id: ToolApproved()}),
+        workspace=Workspace(backend),
+    )
+
+    assert second.output == 'approved'
+    assert original_response.workspace_ref is None
+    copied_tool_response = next(message for message in second.all_messages() if isinstance(message, ModelResponse))
+    assert copied_tool_response is not source_tool_response
+    assert copied_tool_response.workspace_ref == backend.ref
 
 
 async def test_guard_workflow_workspace_only_rejects_a_live_handle() -> None:

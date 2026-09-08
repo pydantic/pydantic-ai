@@ -2796,6 +2796,9 @@ class ModelResponse:
     metadata: dict[str, Any] | None = None
     """Additional data that can be accessed programmatically by the application but is not sent to the LLM."""
 
+    workspace_ref: WorkspaceRef | None = None
+    """Reference to the workspace selected for this model response, if any."""
+
     state: ModelResponseState = 'complete'
     """The state of this response, indicating whether it is final or requires further action.
 

@@ -106,7 +106,7 @@ def unattached_workspace() -> Workspace:
     # package initialization. This factory runs only when a `RunContext` is constructed.
     from .workspaces import UnavailableWorkspace, Workspace
 
-    return Workspace.wrap(
+    return Workspace(
         UnavailableWorkspace(
             'No workspace is attached: this `RunContext` was created outside an agent run. '
             'Workspaces are attached when a run starts — pass `workspace=` to the run method or supply one '

@@ -215,12 +215,12 @@ prevent capabilities from attaching a workspace and give attempted operations a 
 
 ### Making a workspace read-only
 
-Wrap a backend in [`ReadOnlyWorkspace`][pydantic_ai.workspaces.ReadOnlyWorkspace] when an agent should
+Wrap a workspace in [`ReadOnlyWorkspace`][pydantic_ai.workspaces.ReadOnlyWorkspace] when an agent should
 inspect a workspace without changing it:
 
 ```python
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.workspaces import LocalWorkspace, ReadOnlyWorkspace
+from pydantic_ai.workspaces import LocalWorkspace, ReadOnlyWorkspace, Workspace
 
 agent = Agent('anthropic:claude-sonnet-5')
 
@@ -236,13 +236,28 @@ async def main() -> None:
         await workspace.write_bytes(f'{root}/data.csv', b'a,b\n1,2\n')
         await agent.run(
             'Summarize data.csv in the working directory.',
-            workspace=ReadOnlyWorkspace(workspace),
+            workspace=ReadOnlyWorkspace(Workspace(workspace)),
         )
 ```
 
 File reads and directory listings work; commands and file changes raise
 [`UserError`][pydantic_ai.exceptions.UserError]. If the agent must run commands against protected
 data, enforce read-only access in the environment itself, for example with a read-only mount.
+
+Policies compose by overriding primitive operations on [`WrapperWorkspace`][pydantic_ai.workspaces.WrapperWorkspace]:
+
+```python
+from pydantic_ai.workspaces import WrapperWorkspace, Workspace
+
+
+class LoggingWorkspace(WrapperWorkspace):
+    async def read_bytes(self, path: str) -> bytes:
+        print(f'reading {path}')
+        return await self.wrapped.read_bytes(path)
+```
+
+Higher-level helpers such as `read_text()` and `read_file()` use the overridden primitive. A
+wrapper can therefore add behavior around reads or writes without forwarding every helper method.
 
 ## Build a workspace integration
 

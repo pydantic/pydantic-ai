@@ -198,7 +198,9 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     @property
     def response(self) -> _messages.ModelResponse:
         """Get the current state of the response."""
-        return self._raw_stream_response.get()
+        response = self._raw_stream_response.get()
+        response.workspace_ref = self._run_ctx.workspace.ref
+        return response
 
     @property
     def usage(self) -> RunUsage:

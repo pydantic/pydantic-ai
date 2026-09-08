@@ -1054,6 +1054,7 @@ async def test_google_model_safety_settings(allow_model_requests: None, google_p
                 'run_id': IsStr(),
                 'conversation_id': IsStr(),
                 'metadata': None,
+                'workspace_ref': None,
             }
         ]
     )

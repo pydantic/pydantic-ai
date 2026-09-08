@@ -319,6 +319,6 @@ async def prepare_workspace(ctx: RunContext[Any]) -> None:
             'Attach a capability whose `get_workspace` recognizes it.'
         )
         return
-    ctx.__dict__['workspace'] = Workspace.wrap(backend)
+    ctx.__dict__['workspace'] = backend if isinstance(backend, Workspace) else Workspace(backend)
     if isinstance(ctx, TemporalRunContext):
         ctx._expose_field('workspace')  # pyright: ignore[reportPrivateUsage]

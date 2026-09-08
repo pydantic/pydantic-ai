@@ -1629,6 +1629,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             run_id=_agent_graph.resolve_run_id(run_id, message_history),
             conversation_id=_agent_graph.resolve_conversation_id(conversation_id, message_history),
         )
+        historical_response = next(
+            (message for message in reversed(state.message_history) if isinstance(message, _messages.ModelResponse)), None
+        )
+        historical_workspace_ref = historical_response.workspace_ref if historical_response is not None else None
 
         # Build a resolver that computes model settings per-step, in order of precedence: run > agent > model
         model_settings_override = self._override_model_settings.get()
@@ -1700,7 +1704,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             run_id=state.run_id,
             conversation_id=state.conversation_id,
             _cancellation=cancellation,
-            workspace=Workspace.wrap(UnavailableWorkspace(_NO_WORKSPACE_REASON)),
+            workspace=Workspace(UnavailableWorkspace(_NO_WORKSPACE_REASON)),
         )
 
         # A caller-provided live workspace is already known and is visible to `for_run`. A workspace
@@ -1710,7 +1714,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if workspace is not None and not isinstance(workspace, WorkspaceRef):
             # An explicit backend, or an existing `Workspace` passed straight through from a
             # parent run or a previous result.
-            run_workspace = Workspace.wrap(workspace)
+            run_workspace = workspace if isinstance(workspace, Workspace) else Workspace(workspace)
             initial_ctx.workspace = run_workspace
 
         # Resolve run metadata up front so capability and toolset `for_run` hooks
@@ -1748,7 +1752,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # capability-provided workspaces only now, after `for_run()` has chosen the instances whose
         # hooks and durable operations this run will actually use.
         if workspace is None or isinstance(workspace, WorkspaceRef):
-            selection = get_run_workspace(run_capability, initial_ctx, workspace)
+            selection_ref = workspace if isinstance(workspace, WorkspaceRef) else historical_workspace_ref
+            selection = get_run_workspace(run_capability, initial_ctx, selection_ref)
             if selection is None:
                 if isinstance(workspace, WorkspaceRef):
                     raise exceptions.UserError(
@@ -1756,7 +1761,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                         '`None`. Attach a capability whose `get_workspace` recognizes it.'
                     )
             else:
-                run_workspace = Workspace.wrap(selection)
+                run_workspace = selection if isinstance(selection, Workspace) else Workspace(selection)
         initial_ctx.workspace = run_workspace
 
         # Whether any capability's `for_run` swapped a model-layer contribution during resolution; the
