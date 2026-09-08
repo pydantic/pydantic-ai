@@ -24,6 +24,9 @@ class LazySandbox(Generic[SandboxT], ABC):
     failed or cancelled acquisition is not cached, so a waiting or later caller can
     try again. Cancelling a waiter does not cancel another caller's acquisition.
 
+    Subclasses may inspect `_live` during teardown without triggering acquisition.
+    Hold `_lock` when clearing that cached handle so teardown cannot race acquisition.
+
     Args:
         sandbox: An already acquired native handle, if one is available.
     """

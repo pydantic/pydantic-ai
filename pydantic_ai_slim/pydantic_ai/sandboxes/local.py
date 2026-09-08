@@ -104,10 +104,6 @@ class LocalSandbox(LazySandbox[Path], SandboxBackend, SupportsFilesystem):
             )
         self._owns_root = root is None
         self._given_root = None if root is None else Path(root)
-        # Always the canonical spelling (symlinks resolved, no `..`), set on first use: the
-        # kernel resolves a cwd like `link/..` through the symlink while lexical joins collapse
-        # it as text, so a non-canonical root would point `run()` and `fs` at different
-        # directories, breaking the protocol's one-environment contract.
         super().__init__()
         self._ref: SandboxRef | None = None
 
@@ -130,6 +126,10 @@ class LocalSandbox(LazySandbox[Path], SandboxBackend, SupportsFilesystem):
         """Create or canonicalize the working directory on first acquisition."""
         # Blocking filesystem calls run off the event loop. LazySandbox serializes
         # acquisition so concurrent first uses cannot create separate directories.
+        # Always the canonical spelling (symlinks resolved, no `..`), set on first use: the
+        # kernel resolves a cwd like `link/..` through the symlink while lexical joins collapse
+        # it as text, so a non-canonical root would point `run()` and `fs` at different
+        # directories, breaking the protocol's one-environment contract.
         if self._given_root is None:
             root = await run_in_executor(lambda: Path(tempfile.mkdtemp(prefix='pydantic-ai-sandbox-')).resolve())
         else:
@@ -143,7 +143,7 @@ class LocalSandbox(LazySandbox[Path], SandboxBackend, SupportsFilesystem):
     async def __aexit__(
         self, exc_type: type[BaseException] | None, exc: BaseException | None, tb: TracebackType | None
     ) -> None:
-        # Under the root lock: an unlocked clear would race acquisition — a first use
+        # Under the acquisition lock: an unlocked clear would race acquisition — a first use
         # blocked on the lock could otherwise recreate a root mid-teardown that nothing
         # would ever remove.
         async with self._lock:
