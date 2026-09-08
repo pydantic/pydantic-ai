@@ -16,7 +16,7 @@ import logging
 from collections.abc import Callable, Hashable, Sequence
 from dataclasses import dataclass, field
 from inspect import isawaitable
-from typing import Generic, Literal
+from typing import Generic, Literal, cast
 from uuid import uuid4
 
 import acp
@@ -45,7 +45,7 @@ from pydantic_ai.models import KnownModelName, Model, known_model_names
 from pydantic_ai.output import OutputDataT
 from pydantic_ai.run import AgentRunResultEvent
 from pydantic_ai.tools import AgentDepsT
-from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
+from pydantic_ai.toolsets import AbstractToolset, AgentToolset, FunctionToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
 
 from pydantic_ai_harness.experimental.acp._content import PromptContentBlock, prompt_blocks_to_user_content
@@ -614,6 +614,7 @@ class PydanticAIACPAgent(acp.Agent, Generic[AgentDepsT, OutputDataT]):
                     deferred_tool_results=deferred_results,
                     output_type=output_type,
                     deps=config.deps,
+                    capabilities=config.capabilities,
                     toolsets=config.toolsets,
                     # Per-run override for the client's model config choice; `None` uses the
                     # agent's own model, never mutating the shared agent. A `model_resolver` (if
@@ -832,9 +833,17 @@ class PydanticAIACPAgent(acp.Agent, Generic[AgentDepsT, OutputDataT]):
         """Names of the tools that pause for the client's approval, announced `pending` in `_emit_event`.
 
         Only `FunctionToolset`-held tools expose `requires_approval` without a live run context;
-        tools from other toolset types are treated as not requiring approval.
+        tools from other toolset types are treated as not requiring approval. A session capability
+        is asked for its toolset the same way, so its approval-required tools are announced too --
+        except when it builds one per run, which needs a run context this scan doesn't have.
         """
         toolsets: list[AbstractToolset[AgentDepsT]] = [*self._agent.toolsets, *(config.toolsets or [])]
+        for capability in config.capabilities or ():
+            # `get_toolset()` returns `AgentToolset`, whose other arm is a callable that builds one
+            # per run; that needs a run context this scan doesn't have, so only a toolset counts.
+            contributed: AgentToolset[AgentDepsT] | None = capability.get_toolset()
+            if isinstance(contributed, AbstractToolset):
+                toolsets.append(cast(AbstractToolset[AgentDepsT], contributed))
         names: set[str] = set()
         for toolset in toolsets:
             if isinstance(toolset, FunctionToolset):

@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, on_event
 from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets import AgentToolset
 
+from pydantic_ai_harness._warn import HarnessDeprecationWarning
+from pydantic_ai_harness.filesystem import DirectoryListedEvent, FileReadEvent
 from pydantic_ai_harness.repo_context._loader import (
     ContextFile,
     discover_instruction_files,
@@ -27,6 +30,14 @@ if TYPE_CHECKING:
 _INVENTORY_HINT = (
     'Call `{tool_name}` to map where this repo keeps its coding-assistant setup '
     '(instruction dirs, skills, sub-agents, and hooks) so you can read and translate it.'
+)
+_DEFAULT_TRAVERSAL_TOOL_NAMES = frozenset({'list_directory', 'read_file'})
+_DEFAULT_TRAVERSAL_PATH_ARG = 'path'
+_TRAVERSAL_DEPRECATION = (
+    '`RepoContext.traversal_tool_names` and `RepoContext.traversal_path_arg` are deprecated. '
+    'Traversal detection now reacts to `FileReadEvent` and `DirectoryListedEvent`. Hosts can emit these events by '
+    'importing them from `pydantic_ai_harness.filesystem`. The customized tool-sniffing fallback remains active for '
+    'this configuration.'
 )
 
 
@@ -48,11 +59,11 @@ class RepoContext(AbstractCapability[AgentDepsT]):
        assets; it does not parse them.
 
     3. Nested-on-traversal (`nested_traversal`, off by default): when the model
-       lists or reads a directory (via a tool named in `traversal_tool_names`),
-       surface that directory's `CLAUDE.md`/`AGENTS.md`. The note is appended to
-       the **tool result** (message tail), not to system instructions, so it
-       does not invalidate the cached prefix. `nested_inject='pointer'` (default)
-       appends a one-line pointer; `'contents'` inlines the file body.
+       lists or reads a directory through a filesystem capability event,
+       surface that directory's `CLAUDE.md`/`AGENTS.md`. The note is enqueued in
+       the message tail, not added to system instructions, so it does not
+       invalidate the cached prefix. `nested_inject='pointer'` (default)
+       enqueues a one-line pointer; `'contents'` inlines the file body.
 
     Cache note: injecting file contents into the system prompt costs prompt-cache
     stability. Strategy 1 is safe because its files are static; the volatile
@@ -98,12 +109,11 @@ class RepoContext(AbstractCapability[AgentDepsT]):
     nested_inject: Literal['pointer', 'contents'] = 'pointer'
     """For Strategy 3: append a one-line `pointer`, or inline the file `contents`."""
 
-    traversal_tool_names: frozenset[str] = frozenset({'list_directory', 'read_file'})
-    """Tool names that trigger Strategy 3. Override to match the host's list/read
-    tools (e.g. `frozenset({'list_dir', 'read_file'})`)."""
+    traversal_tool_names: frozenset[str] = _DEFAULT_TRAVERSAL_TOOL_NAMES
+    """Deprecated tool names used by the compatibility traversal detector."""
 
-    traversal_path_arg: str = 'path'
-    """The tool argument key holding the listed/read path."""
+    traversal_path_arg: str = _DEFAULT_TRAVERSAL_PATH_ARG
+    """Deprecated path argument used by the compatibility traversal detector."""
 
     asset_roots: Sequence[str] = ('.claude', '.agents', '.codex', '.grok')
     """Root directories the inventory tool scans, relative to `workspace_dir`."""
@@ -114,9 +124,24 @@ class RepoContext(AbstractCapability[AgentDepsT]):
     _seen_dirs: set[str] = field(default_factory=set[str], init=False, repr=False, compare=False)
     """Run-scoped set of directories already surfaced by Strategy 3."""
 
+    _sniff_traversal_tools: bool = field(default=False, init=False, repr=False, compare=False)
+    """Whether customized legacy traversal detection remains active."""
+
+    def __post_init__(self) -> None:
+        self._sniff_traversal_tools = (
+            self.traversal_tool_names != _DEFAULT_TRAVERSAL_TOOL_NAMES
+            or self.traversal_path_arg != _DEFAULT_TRAVERSAL_PATH_ARG
+        )
+        if self._sniff_traversal_tools:
+            warnings.warn(_TRAVERSAL_DEPRECATION, HarnessDeprecationWarning, stacklevel=2)
+
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> RepoContext[AgentDepsT]:
         """Return a fresh per-run instance with isolated traversal/cache state."""
-        return replace(self)
+        if not self._sniff_traversal_tools:
+            return replace(self)
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore', HarnessDeprecationWarning)
+            return replace(self)
 
     def _files(self) -> list[ContextFile]:
         if self._context_files is None:
@@ -149,24 +174,47 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         args: dict[str, Any],
         result: Any,
     ) -> Any:
-        """Strategy 3: append a directory's instruction file to a list/read result."""
-        if not self.nested_traversal or call.tool_name not in self.traversal_tool_names:
+        """Support customized legacy traversal tool and argument names."""
+        if (
+            not self.nested_traversal
+            or not self._sniff_traversal_tools
+            or call.tool_name not in self.traversal_tool_names
+        ):
             return result
         raw_path = args.get(self.traversal_path_arg)
         if not isinstance(raw_path, str):
             return result
-        directory = self._resolve_directory(raw_path)
+        await self._enqueue_context(ctx, self._resolve_directory(raw_path))
+        return result
+
+    @on_event(FileReadEvent, DirectoryListedEvent)
+    async def _on_file_traversal(
+        self, ctx: RunContext[AgentDepsT], event: FileReadEvent | DirectoryListedEvent
+    ) -> None:
+        """Enqueue nested context after an authorized filesystem traversal.
+
+        The event's `path` is relative to the emitting filesystem's `root_dir`,
+        which need not be `workspace_dir`. Traversals that resolve outside the
+        workspace are ignored: this strategy surfaces nested context, and a
+        directory elsewhere on the host is not nested in anything it knows.
+        """
+        if not self.nested_traversal:
+            return
+        path = Path(event.root_dir) / event.path
+        directory = path.parent if isinstance(event, FileReadEvent) else path
+        if not directory.resolve().is_relative_to(self.workspace_dir.resolve()):
+            return
+        await self._enqueue_context(ctx, directory)
+
+    async def _enqueue_context(self, ctx: RunContext[AgentDepsT], directory: Path) -> None:
         context_file = find_dir_context_file(directory, self.filenames)
         if context_file is None:
-            return result
+            return
         key = str(directory.resolve())
         if key in self._seen_dirs:
-            return result
-        if not isinstance(result, str):
-            return result
+            return
         self._seen_dirs.add(key)
-        note = self._render_note(context_file)
-        return f'{result}\n\n{note}'
+        ctx.enqueue(self._render_note(context_file))
 
     def _resolve_directory(self, raw_path: str) -> Path:
         candidate = Path(raw_path)

@@ -86,6 +86,7 @@ class FileSystem(AbstractCapability[AgentDepsT]):
             max_list_results=self.max_list_results,
             max_search_results=self.max_search_results,
             max_find_results=self.max_find_results,
+            id=self.id or 'file_system',
         )
         if self.read_only:
             return FilteredToolset(toolset, lambda ctx, tool: tool.name in READ_ONLY_TOOL_NAMES)

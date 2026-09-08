@@ -11,11 +11,13 @@ import re
 import stat
 from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
-from typing import Concatenate, ParamSpec
+from typing import Concatenate, ParamSpec, TypedDict
 
 from pydantic_ai.exceptions import ModelRetry
-from pydantic_ai.tools import AgentDepsT
+from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import FunctionToolset
+
+from pydantic_ai_harness.filesystem._events import DirectoryListedEvent, FileReadEvent, FileWrittenEvent
 
 _P = ParamSpec('_P')
 
@@ -52,6 +54,13 @@ _OUTSIDE_WORKSPACE = '<outside-workspace>'
 
 _NOT_A_PATH = '<not-a-path>'
 """Shown when an error's `filename` is not a path value at all."""
+
+
+class _EventLocation(TypedDict):
+    """The `path` and `root_dir` fields shared by every filesystem event."""
+
+    path: str
+    root_dir: str
 
 
 def _model_safe_filename(filename: str | bytes, real_root: Path) -> str:
@@ -187,8 +196,9 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         max_list_results: int,
         max_search_results: int,
         max_find_results: int,
+        id: str | None = None,
     ) -> None:
-        super().__init__()
+        super().__init__(id=id)
         self._root = root_dir.resolve()
         self._real_root = Path(os.path.realpath(self._root))
         self._allowed_patterns = list(allowed_patterns)
@@ -199,10 +209,10 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         self._max_search_results = max_search_results
         self._max_find_results = max_find_results
 
-        self.add_function(self.read_file, name='read_file')
-        self.add_function(self.write_file, name='write_file')
-        self.add_function(self.edit_file, name='edit_file')
-        self.add_function(self.list_directory, name='list_directory')
+        self.add_function(self._read_file_tool, name='read_file')
+        self.add_function(self._write_file_tool, name='write_file')
+        self.add_function(self._edit_file_tool, name='edit_file')
+        self.add_function(self._list_directory_tool, name='list_directory')
         self.add_function(self.search_files, name='search_files')
         self.add_function(self.find_files, name='find_files')
         self.add_function(self.create_directory, name='create_directory')
@@ -307,6 +317,18 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         """Canonical path of a resolved location relative to the real root."""
         return str(resolved.relative_to(self._real_root))
 
+    def _event_location(self, resolved: Path) -> _EventLocation:
+        """Path fields for an event about `resolved`.
+
+        `path` is relative to the real root and `root_dir` is that root, so a
+        subscriber rooted elsewhere can rebuild the absolute location instead
+        of assuming the event came from its own root.
+        """
+        return _EventLocation(
+            path=_model_safe_filename(os.fspath(resolved), self._real_root),
+            root_dir=os.fspath(self._real_root),
+        )
+
     def _safe_resolve(self, path: str, *, write: bool = False, check_allowed: bool = True) -> Path:
         """Resolve and access-check a path in one step.
 
@@ -319,11 +341,17 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         self._check_access(self._relative_to_root(resolved), write=write, check_allowed=check_allowed)
         return resolved
 
-    @_recoverable
     async def read_file(self, path: str, *, offset: int = 0, limit: int | None = None) -> str:
+        """Read a text file directly, outside an agent run."""
+        return await self._read_file(None, path, offset=offset, limit=limit)
+
+    async def _read_file_tool(
+        self, ctx: RunContext[AgentDepsT], path: str, *, offset: int = 0, limit: int | None = None
+    ) -> str:
         """Read a text file with line numbers.
 
         Args:
+            ctx: The current agent run context.
             path: File path relative to the root directory.
             offset: Zero-based line offset to start reading from.
             limit: Maximum number of lines to return (default: 2000).
@@ -331,6 +359,12 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         Returns:
             File content with line numbers, plus metadata header.
         """
+        return await self._read_file(ctx, path, offset=offset, limit=limit)
+
+    @_recoverable
+    async def _read_file(
+        self, ctx: RunContext[AgentDepsT] | None, path: str, *, offset: int = 0, limit: int | None = None
+    ) -> str:
         if limit is None:
             limit = self._max_read_lines
         resolved = self._safe_resolve(path)
@@ -342,20 +376,39 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         raw = resolved.read_bytes()
         if _is_binary(raw):
             size = len(raw)
+            if ctx is not None:
+                content_hash = hashlib.sha256(raw).hexdigest()[:12]
+                await ctx.emit(FileReadEvent(**self._event_location(resolved), content_hash=content_hash))
             return f'[Binary file: {size} bytes. Use a binary-aware tool to inspect.]'
 
         text = raw.decode('utf-8', errors='replace')
         lines = text.splitlines(keepends=True)
         content_hash = _content_hash(text)
+        # Format before emitting: an out-of-range offset is a failed read, and
+        # a failed read must not look like a successful one to subscribers.
+        body = _format_lines(lines, offset, limit)
+        if ctx is not None:
+            await ctx.emit(FileReadEvent(**self._event_location(resolved), content_hash=content_hash))
 
         header = f'[{path} | {len(lines)} lines | hash:{content_hash}]\n'
-        return header + _format_lines(lines, offset, limit)
+        return header + body
 
-    @_recoverable
     async def write_file(self, path: str, content: str, *, expected_hash: str | None = None) -> str:
+        """Write a text file directly, outside an agent run."""
+        return await self._write_file(None, path, content, expected_hash=expected_hash)
+
+    async def _write_file_tool(
+        self,
+        ctx: RunContext[AgentDepsT],
+        path: str,
+        content: str,
+        *,
+        expected_hash: str | None = None,
+    ) -> str:
         """Create or overwrite a file with conflict detection.
 
         Args:
+            ctx: The current agent run context.
             path: File path relative to the root directory.
             content: The text content to write.
             expected_hash: If provided, the write is rejected when the file exists
@@ -364,6 +417,17 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         Returns:
             Confirmation message with new hash.
         """
+        return await self._write_file(ctx, path, content, expected_hash=expected_hash)
+
+    @_recoverable
+    async def _write_file(
+        self,
+        ctx: RunContext[AgentDepsT] | None,
+        path: str,
+        content: str,
+        *,
+        expected_hash: str | None = None,
+    ) -> str:
         resolved = self._safe_resolve(path, write=True)
 
         if resolved.exists() and not resolved.is_file():
@@ -434,16 +498,30 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
 
         new_hash = _content_hash(content)
         lines = len(content.splitlines())
+        if ctx is not None:
+            await ctx.emit(FileWrittenEvent(**self._event_location(resolved), content_hash=new_hash))
         return f'Wrote {len(content)} chars ({lines} lines) to {path}. [hash:{new_hash}]'
 
-    @_recoverable
     async def edit_file(self, path: str, old_text: str, new_text: str, *, expected_hash: str | None = None) -> str:
+        """Edit a text file directly, outside an agent run."""
+        return await self._edit_file(None, path, old_text, new_text, expected_hash=expected_hash)
+
+    async def _edit_file_tool(
+        self,
+        ctx: RunContext[AgentDepsT],
+        path: str,
+        old_text: str,
+        new_text: str,
+        *,
+        expected_hash: str | None = None,
+    ) -> str:
         """Edit a file by exact string replacement with conflict detection.
 
         The old_text must appear exactly once in the file. Include surrounding
         context lines to ensure uniqueness.
 
         Args:
+            ctx: The current agent run context.
             path: File path relative to the root directory.
             old_text: The exact text to find (must appear exactly once).
             new_text: The replacement text.
@@ -453,6 +531,18 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         Returns:
             Summary with new hash for subsequent operations.
         """
+        return await self._edit_file(ctx, path, old_text, new_text, expected_hash=expected_hash)
+
+    @_recoverable
+    async def _edit_file(
+        self,
+        ctx: RunContext[AgentDepsT] | None,
+        path: str,
+        old_text: str,
+        new_text: str,
+        *,
+        expected_hash: str | None = None,
+    ) -> str:
         resolved = self._safe_resolve(path, write=True)
         if not resolved.is_file():
             raise FileNotFoundError(f'File not found: {path}')
@@ -478,18 +568,28 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         new_content = text.replace(old_text, new_text, 1)
         resolved.write_text(new_content, encoding='utf-8')
         new_hash = _content_hash(new_content)
+        if ctx is not None:
+            await ctx.emit(FileWrittenEvent(**self._event_location(resolved), content_hash=new_hash))
         return f'Edited {path}. [hash:{new_hash}]'
 
-    @_recoverable
     async def list_directory(self, path: str = '.') -> str:
+        """List a directory directly, outside an agent run."""
+        return await self._list_directory(None, path)
+
+    async def _list_directory_tool(self, ctx: RunContext[AgentDepsT], path: str = '.') -> str:
         """List the contents of a directory.
 
         Args:
+            ctx: The current agent run context.
             path: Directory path relative to the root directory.
 
         Returns:
             A newline-separated listing with type indicators and sizes.
         """
+        return await self._list_directory(ctx, path)
+
+    @_recoverable
+    async def _list_directory(self, ctx: RunContext[AgentDepsT] | None, path: str = '.') -> str:
         # The listing root is gated by denied patterns but not by
         # allowed_patterns: a directory like '.' never matches a file pattern.
         # Entries are filtered per-entry against allowed_patterns below.
@@ -498,6 +598,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             raise NotADirectoryError(f'Not a directory: {path}')
 
         entries: list[str] = []
+        entry_count = 0
         for entry in sorted(resolved.iterdir()):
             try:
                 rel_path = entry.relative_to(self._real_root)
@@ -527,6 +628,9 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
                 entries.append(f'[... truncated at {self._max_list_results} entries]')
                 break
             entries.append(line)
+            entry_count += 1
+        if ctx is not None:
+            await ctx.emit(DirectoryListedEvent(**self._event_location(resolved), entry_count=entry_count))
         return '\n'.join(entries) if entries else '(empty directory)'
 
     @_recoverable

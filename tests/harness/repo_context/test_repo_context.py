@@ -2,16 +2,20 @@
 
 from __future__ import annotations
 
+import json
 import sys
+from collections.abc import AsyncIterator
 from pathlib import Path
+from typing import Any, Literal
 
 import pytest
-from pydantic_ai import Agent, RunContext
-from pydantic_ai.messages import ToolCallPart
+from pydantic_ai import Agent
+from pydantic_ai.messages import ModelMessage, ToolReturnPart, UserPromptPart
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.tools import ToolDefinition
-from pydantic_ai.usage import RunUsage
 
+from pydantic_ai_harness import HarnessDeprecationWarning
+from pydantic_ai_harness.filesystem import FileSystem
 from pydantic_ai_harness.repo_context import (
     AgentContextInventory,
     ContextFile,
@@ -31,21 +35,6 @@ pytestmark = pytest.mark.anyio
 @pytest.fixture
 def anyio_backend() -> str:
     return 'asyncio'
-
-
-def _run_context() -> RunContext[object]:
-    return RunContext[object](
-        deps=None,
-        model=TestModel(),
-        usage=RunUsage(),
-        prompt=None,
-        messages=[],
-        run_step=0,
-    )
-
-
-def _call(tool_name: str, **args: str) -> tuple[ToolCallPart, ToolDefinition, dict[str, str]]:
-    return ToolCallPart(tool_name=tool_name, args=args), ToolDefinition(name=tool_name), args
 
 
 def _write(path: Path, content: str) -> Path:
@@ -237,108 +226,226 @@ class TestScanAssets:
         assert claude.skills[0].endswith('.claude/skills/foo/SKILL.md')
 
 
+def _tool_returns(messages: list[ModelMessage]) -> int:
+    return sum(isinstance(part, ToolReturnPart) for message in messages for part in message.parts)
+
+
+def _repo_notes(messages: list[ModelMessage]) -> list[str]:
+    notes: list[str] = []
+    for message in messages:
+        for part in message.parts:
+            if not isinstance(part, UserPromptPart) or not isinstance(part.content, str):
+                continue
+            if '<repo-context>' in part.content or '<context-file ' in part.content:
+                notes.append(part.content)
+    return notes
+
+
 class TestNestedTraversal:
-    async def test_off_by_default_returns_result(self, tmp_path: Path) -> None:
-        _write(tmp_path / 'sub' / 'CLAUDE.md', 'nested')
-        cap = RepoContext[object](workspace_dir=tmp_path)
-        call, tool_def, args = _call('list_directory', path='sub')
-        out = await cap.after_tool_execute(_run_context(), call=call, tool_def=tool_def, args=args, result='listing')
-        assert out == 'listing'
+    @pytest.mark.parametrize(('nested_inject', 'includes_body'), [('pointer', False), ('contents', True)])
+    async def test_filesystem_event_enqueues_once_before_next_request(
+        self, tmp_path: Path, nested_inject: Literal['pointer', 'contents'], includes_body: bool
+    ) -> None:
+        _write(tmp_path / 'sub' / 'AGENTS.md', 'NESTED BODY')
+        _write(tmp_path / 'sub' / 'one.py', 'one')
+        _write(tmp_path / 'sub' / 'two.py', 'two')
 
-    async def test_pointer_appended_on_first_traversal(self, tmp_path: Path) -> None:
-        _write(tmp_path / 'sub' / 'CLAUDE.md', 'nested')
-        cap = RepoContext[object](workspace_dir=tmp_path, nested_traversal=True)
-        call, tool_def, args = _call('list_directory', path='sub')
-        out = await cap.after_tool_execute(_run_context(), call=call, tool_def=tool_def, args=args, result='listing')
-        assert out.startswith('listing')
-        assert 'sub/CLAUDE.md' in out
-        assert 'nested' not in out
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            returns = _tool_returns(messages)
+            if returns == 0:
+                yield {0: DeltaToolCall(name='read_file', json_args='{"path":"sub/one.py"}', tool_call_id='one')}
+            elif returns == 1:
+                notes = _repo_notes(messages)
+                assert len(notes) == 1
+                assert 'sub/AGENTS.md' in notes[0]
+                assert ('NESTED BODY' in notes[0]) is includes_body
+                yield {0: DeltaToolCall(name='read_file', json_args='{"path":"sub/two.py"}', tool_call_id='two')}
+            else:
+                assert len(_repo_notes(messages)) == 1
+                yield 'done'
 
-    async def test_second_traversal_no_reappend(self, tmp_path: Path) -> None:
-        _write(tmp_path / 'sub' / 'CLAUDE.md', 'nested')
-        cap = RepoContext[object](workspace_dir=tmp_path, nested_traversal=True)
-        call, tool_def, args = _call('list_directory', path='sub')
-        ctx = _run_context()
-        first = await cap.after_tool_execute(ctx, call=call, tool_def=tool_def, args=args, result='one')
-        second = await cap.after_tool_execute(ctx, call=call, tool_def=tool_def, args=args, result='two')
-        assert 'CLAUDE.md' in first
-        assert second == 'two'
+        await Agent(
+            FunctionModel(stream_function=stream),
+            capabilities=[
+                FileSystem(root_dir=tmp_path),
+                RepoContext(
+                    workspace_dir=tmp_path,
+                    autoload_instructions=False,
+                    expose_inventory_tool=False,
+                    nested_traversal=True,
+                    nested_inject=nested_inject,
+                ),
+            ],
+        ).run('go')
 
-    async def test_tool_name_not_matched(self, tmp_path: Path) -> None:
-        _write(tmp_path / 'sub' / 'CLAUDE.md', 'nested')
-        cap = RepoContext[object](workspace_dir=tmp_path, nested_traversal=True)
-        call, tool_def, args = _call('write_file', path='sub')
-        out = await cap.after_tool_execute(_run_context(), call=call, tool_def=tool_def, args=args, result='r')
-        assert out == 'r'
+    async def test_filesystem_rooted_below_the_workspace_resolves_against_its_own_root(self, tmp_path: Path) -> None:
+        project = tmp_path / 'project'
+        _write(project / 'sub' / 'AGENTS.md', 'NESTED BODY')
+        _write(project / 'sub' / 'one.py', 'one')
+        # A decoy at the path the event would name if it were wrongly rebased onto the workspace.
+        _write(tmp_path / 'sub' / 'AGENTS.md', 'DECOY BODY')
 
-    async def test_non_str_path_arg_ignored(self, tmp_path: Path) -> None:
-        cap = RepoContext[object](workspace_dir=tmp_path, nested_traversal=True)
-        call = ToolCallPart(tool_name='list_directory', args={'path': 123})
-        out = await cap.after_tool_execute(
-            _run_context(), call=call, tool_def=ToolDefinition(name='list_directory'), args={'path': 123}, result='r'
-        )
-        assert out == 'r'
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            if _tool_returns(messages) == 0:
+                yield {0: DeltaToolCall(name='read_file', json_args='{"path":"sub/one.py"}', tool_call_id='one')}
+            else:
+                notes = _repo_notes(messages)
+                assert len(notes) == 1
+                assert 'project/sub/AGENTS.md' in notes[0]
+                yield 'done'
 
-    async def test_dir_without_context_file_untouched(self, tmp_path: Path) -> None:
-        (tmp_path / 'sub').mkdir()
-        cap = RepoContext[object](workspace_dir=tmp_path, nested_traversal=True)
-        call, tool_def, args = _call('list_directory', path='sub')
-        out = await cap.after_tool_execute(_run_context(), call=call, tool_def=tool_def, args=args, result='r')
-        assert out == 'r'
+        await Agent(
+            FunctionModel(stream_function=stream),
+            capabilities=[
+                FileSystem(root_dir=project),
+                RepoContext(
+                    workspace_dir=tmp_path,
+                    autoload_instructions=False,
+                    expose_inventory_tool=False,
+                    nested_traversal=True,
+                ),
+            ],
+        ).run('go')
 
-    async def test_read_file_uses_parent_dir(self, tmp_path: Path) -> None:
-        _write(tmp_path / 'sub' / 'CLAUDE.md', 'nested')
-        target = _write(tmp_path / 'sub' / 'code.py', 'x = 1')
-        cap = RepoContext[object](workspace_dir=tmp_path, nested_traversal=True)
-        call, tool_def, args = _call('read_file', path=str(target))
-        out = await cap.after_tool_execute(_run_context(), call=call, tool_def=tool_def, args=args, result='file body')
-        assert 'CLAUDE.md' in out
-
-    async def test_contents_mode_inlines_body(self, tmp_path: Path) -> None:
-        _write(tmp_path / 'sub' / 'CLAUDE.md', 'NESTED BODY')
-        cap = RepoContext[object](workspace_dir=tmp_path, nested_traversal=True, nested_inject='contents')
-        call, tool_def, args = _call('list_directory', path='sub')
-        out = await cap.after_tool_execute(_run_context(), call=call, tool_def=tool_def, args=args, result='r')
-        assert 'NESTED BODY' in out
-
-    async def test_label_falls_back_when_dir_outside_workspace(self, tmp_path: Path) -> None:
-        workspace = tmp_path / 'ws'
+    async def test_filesystem_rooted_outside_the_workspace_enqueues_nothing(self, tmp_path: Path) -> None:
+        workspace = tmp_path / 'workspace'
         workspace.mkdir()
-        outside = _write(tmp_path / 'outside' / 'CLAUDE.md', 'nested').parent
-        cap = RepoContext[object](workspace_dir=workspace, nested_traversal=True)
-        call, tool_def, args = _call('list_directory', path=str(outside))
-        out = await cap.after_tool_execute(_run_context(), call=call, tool_def=tool_def, args=args, result='r')
-        assert outside.resolve().as_posix() in out
+        elsewhere = tmp_path / 'elsewhere'
+        _write(elsewhere / 'AGENTS.md', 'OUTSIDE BODY')
+        _write(elsewhere / 'one.py', 'one')
 
-    async def test_non_str_result_returned_unchanged(self, tmp_path: Path) -> None:
-        _write(tmp_path / 'sub' / 'CLAUDE.md', 'nested')
-        cap = RepoContext[object](
-            workspace_dir=tmp_path, nested_traversal=True, traversal_tool_names=frozenset({'list_dir', 'read_file'})
-        )
-        call, tool_def, args = _call('list_dir', path='sub')
-        listing = [{'name': 'CLAUDE.md'}, {'name': 'code.py'}]
-        out = await cap.after_tool_execute(_run_context(), call=call, tool_def=tool_def, args=args, result=listing)
-        assert out is listing
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            if _tool_returns(messages) == 0:
+                yield {0: DeltaToolCall(name='list_directory', json_args='{"path":"."}', tool_call_id='list')}
+            else:
+                assert _repo_notes(messages) == []
+                yield 'done'
 
-    async def test_string_result_still_gets_note(self, tmp_path: Path) -> None:
-        _write(tmp_path / 'sub' / 'CLAUDE.md', 'nested')
-        cap = RepoContext[object](workspace_dir=tmp_path, nested_traversal=True)
-        call, tool_def, args = _call('list_directory', path='sub')
-        out = await cap.after_tool_execute(_run_context(), call=call, tool_def=tool_def, args=args, result='listing')
-        assert out.startswith('listing')
-        assert 'CLAUDE.md' in out
+        await Agent(
+            FunctionModel(stream_function=stream),
+            capabilities=[
+                FileSystem(root_dir=elsewhere),
+                RepoContext(
+                    workspace_dir=workspace,
+                    autoload_instructions=False,
+                    expose_inventory_tool=False,
+                    nested_traversal=True,
+                ),
+            ],
+        ).run('go')
+
+    async def test_customized_sniff_fallback_warns_and_supports_non_event_tool(self, tmp_path: Path) -> None:
+        _write(tmp_path / 'sub' / 'AGENTS.md', 'NESTED BODY')
+
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            if _tool_returns(messages) == 0:
+                yield {0: DeltaToolCall(name='list_dir', json_args='{"target":"sub"}', tool_call_id='list')}
+            else:
+                assert len(_repo_notes(messages)) == 1
+                yield 'done'
+
+        def list_dir(target: str) -> list[dict[str, str]]:
+            return [{'name': 'AGENTS.md'}, {'name': 'one.py'}]
+
+        with pytest.warns(
+            HarnessDeprecationWarning,
+            match='Traversal detection now reacts to `FileReadEvent` and `DirectoryListedEvent`',
+        ):
+            capability = RepoContext(
+                workspace_dir=tmp_path,
+                autoload_instructions=False,
+                expose_inventory_tool=False,
+                nested_traversal=True,
+                traversal_tool_names=frozenset({'list_dir'}),
+                traversal_path_arg='target',
+            )
+
+        await Agent(FunctionModel(stream_function=stream), capabilities=[capability], tools=[list_dir]).run('go')
+
+    async def test_traversal_into_a_directory_without_a_context_file_enqueues_nothing(self, tmp_path: Path) -> None:
+        _write(tmp_path / 'sub' / 'one.py', 'one')
+
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            if _tool_returns(messages) == 0:
+                yield {0: DeltaToolCall(name='read_file', json_args='{"path":"sub/one.py"}', tool_call_id='one')}
+            else:
+                assert _repo_notes(messages) == []
+                yield 'done'
+
+        await Agent(
+            FunctionModel(stream_function=stream),
+            capabilities=[
+                FileSystem(root_dir=tmp_path),
+                RepoContext(
+                    workspace_dir=tmp_path,
+                    autoload_instructions=False,
+                    expose_inventory_tool=False,
+                    nested_traversal=True,
+                ),
+            ],
+        ).run('go')
+
+    async def test_customized_sniff_ignores_a_non_string_path_and_accepts_an_absolute_one(self, tmp_path: Path) -> None:
+        _write(tmp_path / 'sub' / 'AGENTS.md', 'NESTED BODY')
+
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            returns = _tool_returns(messages)
+            if returns == 0:
+                yield {0: DeltaToolCall(name='list_dir', json_args='{"target":7}', tool_call_id='bad')}
+            elif returns == 1:
+                assert _repo_notes(messages) == []
+                args = json.dumps({'target': str(tmp_path / 'sub')})
+                yield {0: DeltaToolCall(name='list_dir', json_args=args, tool_call_id='abs')}
+            else:
+                assert len(_repo_notes(messages)) == 1
+                yield 'done'
+
+        def list_dir(target: Any) -> str:
+            return 'listed'
+
+        with pytest.warns(HarnessDeprecationWarning, match='Traversal detection now reacts'):
+            capability = RepoContext(
+                workspace_dir=tmp_path,
+                autoload_instructions=False,
+                expose_inventory_tool=False,
+                nested_traversal=True,
+                traversal_tool_names=frozenset({'list_dir'}),
+                traversal_path_arg='target',
+            )
+
+        await Agent(FunctionModel(stream_function=stream), capabilities=[capability], tools=[list_dir]).run('go')
+
+    async def test_customized_sniff_labels_a_context_file_outside_the_workspace(self, tmp_path: Path) -> None:
+        workspace = tmp_path / 'workspace'
+        workspace.mkdir()
+        outside = _write(tmp_path / 'outside' / 'AGENTS.md', 'OUTSIDE BODY')
+
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            if _tool_returns(messages) == 0:
+                args = json.dumps({'target': str(outside.parent)})
+                yield {0: DeltaToolCall(name='list_dir', json_args=args, tool_call_id='out')}
+            else:
+                notes = _repo_notes(messages)
+                assert len(notes) == 1
+                assert outside.as_posix() in notes[0]
+                yield 'done'
+
+        def list_dir(target: Any) -> str:
+            return 'listed'
+
+        with pytest.warns(HarnessDeprecationWarning, match='Traversal detection now reacts'):
+            capability = RepoContext(
+                workspace_dir=workspace,
+                autoload_instructions=False,
+                expose_inventory_tool=False,
+                nested_traversal=True,
+                traversal_tool_names=frozenset({'list_dir'}),
+                traversal_path_arg='target',
+            )
+
+        await Agent(FunctionModel(stream_function=stream), capabilities=[capability], tools=[list_dir]).run('go')
 
 
 class TestForRunAndMisc:
-    async def test_for_run_isolates_state(self, tmp_path: Path) -> None:
-        _write(tmp_path / 'sub' / 'CLAUDE.md', 'nested')
-        base = RepoContext[object](workspace_dir=tmp_path, nested_traversal=True)
-        run_cap = await base.for_run(_run_context())
-        call, tool_def, args = _call('list_directory', path='sub')
-        await run_cap.after_tool_execute(_run_context(), call=call, tool_def=tool_def, args=args, result='r')
-        fresh = await base.for_run(_run_context())
-        out = await fresh.after_tool_execute(_run_context(), call=call, tool_def=tool_def, args=args, result='r2')
-        assert 'CLAUDE.md' in out
-
     def test_serialization_name(self) -> None:
         assert RepoContext.get_serialization_name() == 'RepoContext'

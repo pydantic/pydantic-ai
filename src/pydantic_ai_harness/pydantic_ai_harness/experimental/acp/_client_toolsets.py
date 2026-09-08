@@ -117,7 +117,10 @@ def acp_filesystem(session: AcpSession) -> AcpFileSystemToolset[None] | None:
 
     ```python
     def session_config(session: AcpSession) -> AcpSessionConfig[None]:
-        fs = acp_filesystem(session) or FileSystem(root_dir=session.cwd).get_toolset()
+        fs = acp_filesystem(session)
+        if fs is None:
+            # No client filesystem: register the capability, so its tools keep their owner.
+            return AcpSessionConfig(deps=None, capabilities=[FileSystem(root_dir=session.cwd)])
         return AcpSessionConfig(deps=None, toolsets=[fs])
     ```
 
