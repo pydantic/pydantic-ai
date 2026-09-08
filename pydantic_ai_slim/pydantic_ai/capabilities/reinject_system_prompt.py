@@ -78,7 +78,7 @@ class ReinjectSystemPrompt(AbstractCapability[AgentDepsT]):
         sys_parts = await ctx.agent.system_prompt_parts(
             deps=ctx.deps,
             model=model,
-            message_history=request_messages,
+            message_history=_without_system_prompts(request_messages) if self.replace_existing else request_messages,
             prompt=ctx.prompt,
             usage=ctx.usage,
             # This hook only runs in the classic request pipeline, where `ctx.model_settings`

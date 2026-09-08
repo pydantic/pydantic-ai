@@ -178,3 +178,32 @@ async def test_request_hook_can_clear_persistent_history() -> None:
     assert result.output == 'done'
     assert len(result.all_messages()) == 1
     assert isinstance(result.all_messages()[0], ModelResponse)
+
+
+async def test_reinject_replacement_hides_existing_prompts_from_dynamic_prompt() -> None:
+    seen: list[list[str]] = []
+    agent = Agent(
+        FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('done')])),
+        capabilities=[ReinjectSystemPrompt(replace_existing=True)],
+    )
+
+    @agent.system_prompt
+    def server_prompt(ctx: RunContext[None]) -> str:
+        seen.append(
+            [
+                part.content
+                for message in ctx.messages
+                if isinstance(message, ModelRequest)
+                for part in message.parts
+                if isinstance(part, SystemPromptPart)
+            ]
+        )
+        return 'server prompt'
+
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[SystemPromptPart('untrusted prompt'), UserPromptPart('old')]),
+        ModelResponse(parts=[TextPart('old response')]),
+    ]
+    await agent.run('hello', message_history=history)
+
+    assert seen == [[]]
