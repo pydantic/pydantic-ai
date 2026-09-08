@@ -13,6 +13,7 @@ from typing import Any, Literal
 import anyio
 import pytest
 import sniffio
+from pydantic import JsonValue
 from pytest import CaptureFixture
 from pytest_mock import MockerFixture
 from rich.console import Console, RenderableType
@@ -1597,29 +1598,54 @@ def test_cli_no_tool_calls(
     [
         pytest.param(
             {'code': "print(`[red]hello[/red]`)\nprint('  spaced  ')"},
-            snapshot('▌ Called tool run_code(code="print(`[red]hello[/red]`)\\nprint(\'  spaced  \')").'),
+            snapshot('▌ Called tool run_code(code=<2 lines>).'),
             id='literal-code',
         ),
         pytest.param(
             {'code': 'x' * 1000},
-            snapshot(
-                "▌ Called tool run_code(code='xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx...xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx')."
-            ),
+            snapshot('▌ Called tool run_code(code=<1,000 chars>).'),
             id='long-code',
         ),
         pytest.param(
             {'bad\nkey': 'hello'}, snapshot("▌ Called tool run_code('bad\\nkey'='hello')."), id='multiline-key'
         ),
         pytest.param(
-            {'first': 'x' * 1000, 'second': 'y' * 1000, 'third': 'not shown'},
-            snapshot(
-                "▌ Called tool run_code(first='xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx...xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', second='yyyyyyyyyyyyyy…."
-            ),
+            {'first': 'x' * 1000, 'second': 'y' * 1000, 'third': 'useful'},
+            snapshot("▌ Called tool run_code(third='useful', first=<1,000 chars>, second=<1,000 chars>)."),
             id='many-arguments',
+        ),
+        pytest.param(
+            {'code': 'import pandas as pd\n' + 'print("data")\n' * 21, 'description': 'Plot quarterly revenue'},
+            snapshot("▌ Called tool run_code(description='Plot quarterly revenue', code=<22 lines>)."),
+            id='script-with-purpose',
+        ),
+        pytest.param(
+            {'code': 'print(`[red]hello[/red]`)'},
+            snapshot("▌ Called tool run_code(code='print(`[red]hello[/red]`)')."),
+            id='literal-short-code',
+        ),
+        pytest.param(
+            {'code': 'print(1)\r\n'},
+            snapshot('▌ Called tool run_code(code=<1 line>).'),
+            id='one-line-with-ending',
+        ),
+        pytest.param(
+            {'data': [1, 2, 3], 'options': {'private': 'hidden'}, 'limit': 5},
+            snapshot('▌ Called tool run_code(limit=5, data=<3 items>, options=<1 key>).'),
+            id='collections',
+        ),
+        pytest.param(
+            {'first': 'a' * 60, 'second': 'b' * 60, 'third': 'c' * 60},
+            snapshot(
+                "▌ Called tool run_code(first='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', second='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb…."
+            ),
+            id='bounded-many-short-arguments',
         ),
     ],
 )
-async def test_tool_argument_preview(arguments: dict[str, str], expected: str, width: int, live_frames: list[str]):
+async def test_tool_argument_preview(
+    arguments: dict[str, JsonValue], expected: str, width: int, live_frames: list[str]
+):
     async def code_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
         if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
             yield 'Done.'
@@ -1627,10 +1653,10 @@ async def test_tool_argument_preview(arguments: dict[str, str], expected: str, w
             yield {0: DeltaToolCall(name='run_code', json_args=json.dumps(arguments), tool_call_id='call_1')}
 
     agent = Agent(FunctionModel(stream_function=code_stream))
-    executed: list[dict[str, str]] = []
+    executed: list[dict[str, JsonValue]] = []
 
     @agent.tool_plain
-    def run_code(**kwargs: str) -> str:
+    def run_code(**kwargs: JsonValue) -> str:
         executed.append(kwargs)
         return 'ok'
 

@@ -5,12 +5,12 @@ import functools
 import json
 import re
 import sys
-from collections.abc import Sequence
+from collections.abc import Sequence, Sized
 from contextlib import AsyncExitStack, ExitStack
 from datetime import datetime, timezone
 from pathlib import Path
 from reprlib import Repr
-from typing import Any
+from typing import Any, cast
 
 import anyio
 from pydantic import ImportString, TypeAdapter, ValidationError
@@ -594,19 +594,36 @@ async def ask_agent(
 
 _TOOL_ARG_REPR = Repr()
 _TOOL_ARG_REPR.maxstring = _TOOL_ARG_REPR.maxother = 80
-_TOOL_ARG_REPR.maxlevel = 2
-_TOOL_ARG_REPR.maxdict = _TOOL_ARG_REPR.maxlist = 3
 _TOOL_PREVIEW_WIDTH = 120
+_NEWLINE = re.compile(r'\r\n?|\n')
 
 
 def _tool_call_summary(part: ToolCallPart) -> str:
-    """Bound representations before retaining them or repeatedly rendering streamed output."""
+    """Show short arguments first, keeping large inputs recognizable without retaining their contents."""
+
+    def is_large(value: object) -> bool:
+        return isinstance(value, (dict, list)) or (
+            isinstance(value, str) and (len(value) > 80 or '\n' in value or '\r' in value)
+        )
+
     preview = Text(f'{part.tool_name}(')
-    for index, (key, value) in enumerate(part.args_as_dict().items()):
+    arguments = sorted(part.args_as_dict().items(), key=lambda item: is_large(item[1]))
+    for index, (key, value) in enumerate(arguments):
         if index:
             preview.append(', ')
         name = key if key.isidentifier() and len(key) <= 80 else _TOOL_ARG_REPR.repr(key)
-        preview.append(f'{name}={_TOOL_ARG_REPR.repr(value)}')
+        if isinstance(value, str) and ('\n' in value or '\r' in value):
+            lines = sum(1 for _ in _NEWLINE.finditer(value)) + (not value.endswith(('\n', '\r')))
+            summary = f'<{lines:,} line{"s" if lines != 1 else ""}>'
+        elif isinstance(value, str) and len(value) > 80:
+            summary = f'<{len(value):,} chars>'
+        elif isinstance(value, (dict, list)):
+            size = len(cast(Sized, value))
+            unit = 'key' if isinstance(value, dict) else 'item'
+            summary = f'<{size:,} {unit}{"s" if size != 1 else ""}>'
+        else:
+            summary = _TOOL_ARG_REPR.repr(value)
+        preview.append(f'{name}={summary}')
         if preview.cell_len >= _TOOL_PREVIEW_WIDTH:
             break
     preview.append(')')
