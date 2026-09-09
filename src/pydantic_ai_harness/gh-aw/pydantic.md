@@ -20,7 +20,7 @@ pre-agent-steps:
       python3 -P -c "from pydantic_ai_harness import Coder"
 engine:
   id: pydantic-ai
-  version: "0.26.0"
+  version: "0.30.0"
   display-name: Pydantic AI
   description: Pydantic AI CLI (pai) running the pydantic-ai-harness coder agent with MCP tool support
   experimental: true
