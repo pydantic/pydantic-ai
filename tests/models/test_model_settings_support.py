@@ -478,7 +478,7 @@ def _crusoe(client: httpx2.AsyncClient) -> Model:
 
 
 def _github_copilot(client: httpx2.AsyncClient) -> Model:
-    # A GPT id: the Anthropic ids raise on `thinking`, which is hand-maintained and not probed here.
+    # A GPT id: the Anthropic ids that reject sampling settings drop `temperature`/`top_p` before the wire.
     return GitHubCopilotModel('gpt-5.4', provider=GitHubCopilotProvider(api_key=PROBE_KEY, http_client=client))
 
 
