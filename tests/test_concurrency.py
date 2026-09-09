@@ -26,6 +26,8 @@ logfire_installed = importlib.util.find_spec('logfire') is not None
 
 pytestmark = pytest.mark.anyio
 
+READINESS_WAIT_TIMEOUT = 5
+
 
 class AsyncBarrier:
     """A simple asyncio.Barrier-like implementation compatible with Python 3.10 using anyio."""
@@ -677,7 +679,7 @@ class TestConcurrencyLimitedModelMethods:
             else:
                 assert await model.compact_messages(context, instructions='Preserve tool results') is response
 
-        with anyio.fail_after(5):
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
             async with anyio.create_task_group() as tg:
                 tg.start_soon(compact)
                 await entered.wait()
