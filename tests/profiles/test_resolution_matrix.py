@@ -75,6 +75,7 @@ with try_import() as xai_imports:
 
 with try_import() as openai_imports:
     from pydantic_ai.providers.azure import AzureProvider
+    from pydantic_ai.providers.github_copilot import GitHubCopilotProvider
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openrouter import OpenRouterProvider
 
@@ -576,6 +577,36 @@ def test_google_gemini_2_5_flash_image():
     )
 
 
+@pytest.mark.skipif(not google_imports(), reason='google not installed')
+def test_google_gemini_3_7_flash_thinking_levels():
+    # The level set must survive the provider `model_profile()` path, not just `google_model_profile()`.
+    profile = GoogleProvider.model_profile('gemini-3.7-flash')
+    assert profile is not None
+    assert profile.get('google_thinking_levels') == frozenset(('LOW', 'MEDIUM', 'HIGH'))
+    assert _normalize(profile) == snapshot(
+        {
+            'google_supported_mime_types_in_tool_returns': (
+                'image/png',
+                'image/jpeg',
+                'image/webp',
+                'application/pdf',
+                'text/plain',
+            ),
+            'google_supports_minimal_thinking_level': False,
+            'google_supports_server_side_tool_invocations': True,
+            'google_supports_strict_tool_definition': True,
+            'google_supports_thinking_level': True,
+            'google_supports_tool_combination': True,
+            'google_thinking_levels': frozenset(('LOW', 'MEDIUM', 'HIGH')),
+            'json_schema_transformer': GoogleJsonSchemaTransformer,
+            'supports_json_object_output': True,
+            'supports_json_schema_output': True,
+            'supports_thinking': True,
+            'supports_tool_return_schema': True,
+        }
+    )
+
+
 @pytest.mark.skipif(not xai_imports(), reason='xai not installed')
 def test_xai_grok_4():
     profile = XaiProvider.model_profile('grok-4')
@@ -1056,6 +1087,49 @@ def test_openrouter_google_gemini_3_pro():
     )
 
 
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_openrouter_google_gemini_3_8_flash_thinking_levels():
+    """Google via OpenRouter — the restricted level set survives the three-layer merge."""
+    from pydantic_ai.providers.openrouter import OpenRouterProvider
+
+    profile = OpenRouterProvider.model_profile('google/gemini-3.8-flash')
+    assert profile is not None
+    assert profile.get('google_thinking_levels') == frozenset(('LOW', 'MEDIUM', 'HIGH'))
+    assert _normalize(profile) == snapshot(
+        {
+            'google_supported_mime_types_in_tool_returns': (
+                'image/png',
+                'image/jpeg',
+                'image/webp',
+                'application/pdf',
+                'text/plain',
+            ),
+            'google_supports_minimal_thinking_level': False,
+            'google_supports_server_side_tool_invocations': True,
+            'google_supports_strict_tool_definition': True,
+            'google_supports_thinking_level': True,
+            'google_supports_tool_combination': True,
+            'google_thinking_levels': frozenset(('LOW', 'MEDIUM', 'HIGH')),
+            'json_schema_transformer': _OpenRouterGoogleJsonSchemaTransformer,
+            'openai_chat_send_back_thinking_parts': 'field',
+            'openai_chat_supports_file_urls': True,
+            'openai_chat_supports_max_completion_tokens': False,
+            'openai_chat_supports_web_search': True,
+            'openai_chat_thinking_field': 'reasoning',
+            'openrouter_max_cache_points': None,
+            'openrouter_supports_cache_control': True,
+            'openrouter_supports_cache_ttl': False,
+            'openrouter_supports_dynamic_instruction_cache': False,
+            'openrouter_supports_forced_tool_choice_with_thinking': True,
+            'openrouter_supports_tool_cache': False,
+            'supports_json_object_output': True,
+            'supports_json_schema_output': True,
+            'supports_thinking': True,
+            'supports_tool_return_schema': True,
+        }
+    )
+
+
 def test_openrouter_mistral_large():
     from pydantic_ai.providers.openrouter import OpenRouterProvider
 
@@ -1103,6 +1177,148 @@ def test_openrouter_xai_grok_4():
             'openrouter_supports_forced_tool_choice_with_thinking': True,
         }
     )
+
+
+# GitHub Copilot resolves families from a bare id prefix rather than a `provider/model` split, so
+# these six cover each branch of that table plus the no-family fallback. The dot-to-hyphen rewrite is
+# Anthropic-only: the Grok and Kimi entries below are dotted on purpose and would lose their family
+# profile if it were applied globally.
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_github_copilot_anthropic_claude_haiku_4_5():
+    """Anthropic via GitHub Copilot — relays Anthropic's profile through OpenAI chat."""
+    profile = GitHubCopilotProvider.model_profile('claude-haiku-4.5')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'thinking_tags': ('<thinking>', '</thinking>'),
+            'supports_json_schema_output': True,
+            'supports_thinking': True,
+            'anthropic_disallows_top_effort_when_thinking_disabled': False,
+            'anthropic_supports_forced_tool_choice': True,
+            'anthropic_binds_thinking_blocks': False,
+            'supported_native_tools': frozenset(
+                {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
+            ),
+            'tool_deferral_mode': 'standalone',
+            'openai_chat_supports_max_completion_tokens': True,
+            'openai_chat_thinking_field': 'reasoning_text',
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_github_copilot_openai_gpt_5_4():
+    profile = GitHubCopilotProvider.model_profile('gpt-5.4')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'supports_image_output': True,
+            'supports_inline_system_prompts': True,
+            'supports_thinking': True,
+            'openai_supports_encrypted_reasoning_content': True,
+            'openai_supports_reasoning': True,
+            'openai_supports_reasoning_effort_none': True,
+            'openai_responses_supports_reasoning_context': True,
+            'openai_supports_phase': True,
+            'supported_native_tools': frozenset(
+                {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, ToolSearchTool, WebSearchTool}
+            ),
+            'openai_chat_supports_max_completion_tokens': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_github_copilot_google_gemini_3_pro():
+    """Google via GitHub Copilot — the overlay replaces the Gemini transformer with the OpenAI one."""
+    profile = GitHubCopilotProvider.model_profile('gemini-3.0-pro')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'supports_tool_return_schema': True,
+            'supports_thinking': True,
+            'thinking_always_enabled': True,
+            'google_supports_tool_combination': True,
+            'google_supports_server_side_tool_invocations': True,
+            'google_supported_mime_types_in_tool_returns': (
+                'image/png',
+                'image/jpeg',
+                'image/webp',
+                'application/pdf',
+                'text/plain',
+            ),
+            'google_supports_thinking_level': True,
+            'google_supports_strict_tool_definition': True,
+            'openai_chat_supports_max_completion_tokens': True,
+            'openai_chat_thinking_field': 'reasoning_text',
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_github_copilot_xai_grok_4_5():
+    profile = GitHubCopilotProvider.model_profile('grok-4.5')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'supports_thinking': True,
+            'thinking_always_enabled': True,
+            'grok_supports_builtin_tools': True,
+            'grok_reasoning_efforts': frozenset({'high', 'low', 'medium'}),
+            'openai_chat_supports_max_completion_tokens': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_github_copilot_moonshotai_kimi_k3():
+    profile = GitHubCopilotProvider.model_profile('kimi-k3')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'ignore_streamed_leading_whitespace': True,
+            'supports_thinking': True,
+            'openai_chat_supports_max_completion_tokens': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_github_copilot_unknown_model():
+    """An id from no known family gets the OpenAI-compatible fallback and the overlay, nothing else."""
+    profile = GitHubCopilotProvider.model_profile('some-future-copilot-model')
+    assert _normalize(profile) == snapshot(
+        {'json_schema_transformer': OpenAIJsonSchemaTransformer, 'openai_chat_supports_max_completion_tokens': True}
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+@pytest.mark.parametrize(
+    'model_name',
+    ['o1-mini', 'o3-mini', 'o4-mini', 'mai-1', 'oswe-mini', 'raptor-mini', 'exec-agent-mini'],
+)
+def test_github_copilot_openai_family_prefix_arms(model_name: str):
+    """Pin every remaining OpenAI-family arm of the Copilot prefix table.
+
+    A typo'd key would silently fall through to the capability-less fallback and strip the family's
+    structured-output, native-tool and inline-system-prompt support — and, on the o-series and
+    `oswe` arms, its reasoning support too; asserting each prefix resolves to the same-id
+    `openai_model_profile` (plus the Copilot overlay) makes any future reroute fail loudly.
+    """
+    from pydantic_ai.profiles.openai import openai_model_profile
+
+    expected = _normalize(openai_model_profile(model_name))
+    assert expected is not None
+    expected['openai_chat_supports_max_completion_tokens'] = True
+    assert _normalize(GitHubCopilotProvider.model_profile(model_name)) == expected
 
 
 def test_openrouter_qwen():

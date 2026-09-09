@@ -71,6 +71,7 @@ from ..native_tools._tool_search import (
 )
 from ..profiles import DEFAULT_THINKING_TAGS, ModelProfile, ModelProfileSpec, merge_profile
 from ..profiles.anthropic import (
+    ANTHROPIC_SAMPLING_PARAMS,
     ANTHROPIC_THINKING_BUDGET_MAP,
     AnthropicCodeExecutionToolVersion,
     AnthropicEffort,
@@ -328,7 +329,6 @@ _ADVISOR_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicVertex, Asy
 # that ignores the entry on *every* transport — which measured the model, not the transport.
 _INLINE_SYSTEM_PROMPT_UNSUPPORTED_CLIENTS = (AsyncAnthropicFoundry,)
 
-_ANTHROPIC_SAMPLING_PARAMS = ('temperature', 'top_p', 'top_k')
 _ANTHROPIC_TASK_BUDGETS_BETA = 'task-budgets-2026-03-13'
 _ANTHROPIC_THINKING_BINDING_BETA = 'thinking-binding-controls-2026-08-01'
 _ANTHROPIC_DROP_STALE_THINKING_BLOCKS: BetaThinkingBlockBindingParam = {'prefix_mismatch_behavior': 'drop_block'}
@@ -597,7 +597,7 @@ def _build_extra_body(
     the SDK gave it while the parameters were still named arguments.
     """
     fields: dict[str, Any] = {
-        setting: value for setting in _ANTHROPIC_SAMPLING_PARAMS if (value := model_settings.get(setting)) is not None
+        setting: value for setting in ANTHROPIC_SAMPLING_PARAMS if (value := model_settings.get(setting)) is not None
     }
     if thinking_override is not None:
         fields['thinking'] = thinking_override
@@ -684,17 +684,21 @@ def _drop_stale_thinking_blocks(thinking: dict[str, object] | Omit) -> dict[str,
 
 
 def _history_dropped_stale_thinking_blocks(
-    messages: list[ModelMessage], *, include_count_tokens_recovery: bool = False
+    messages: list[ModelMessage],
+    *,
+    compaction_boundary: ModelResponse | None = None,
+    include_count_tokens_recovery: bool = False,
 ) -> bool:
     """Whether Anthropic already told us this conversation needs the drop on later requests."""
     for message in reversed(messages):
         if include_count_tokens_recovery and isinstance(message, ModelRequest) and message.metadata:
             namespace: object = message.metadata.get(_PYDANTIC_AI_METADATA_KEY)
-            if _utils.is_str_dict(namespace) and namespace.get(
-                _ANTHROPIC_COUNT_TOKENS_DROP_STALE_THINKING_BLOCKS_METADATA_KEY
+            if (
+                _utils.is_str_dict(namespace)
+                and namespace.get(_ANTHROPIC_COUNT_TOKENS_DROP_STALE_THINKING_BLOCKS_METADATA_KEY) is True
             ):
                 return True
-        if not isinstance(message, ModelResponse) or not message.provider_details:
+        if message is compaction_boundary or not isinstance(message, ModelResponse) or not message.provider_details:
             continue
         transformations: object = message.provider_details.get('input_transformations')
         if isinstance(transformations, list) and any(
@@ -727,6 +731,7 @@ def _thinking_with_stale_block_history(
     effective_thinking: dict[str, object] | Omit,
     betas: set[str],
     *,
+    compaction_boundary: ModelResponse | None = None,
     include_count_tokens_recovery: bool = False,
 ) -> tuple[BetaThinkingConfigParam | Omit, set[str], dict[str, object] | None, dict[str, object] | Omit]:
     """Resolve request parameters that keep a prior request-local drop active for this history."""
@@ -734,7 +739,9 @@ def _thinking_with_stale_block_history(
         profile.get('anthropic_binds_thinking_blocks', False)
         and (isinstance(effective_thinking, Omit) or 'block_binding' not in effective_thinking)
         and _history_dropped_stale_thinking_blocks(
-            messages, include_count_tokens_recovery=include_count_tokens_recovery
+            messages,
+            compaction_boundary=compaction_boundary,
+            include_count_tokens_recovery=include_count_tokens_recovery,
         )
     )
     if not keep_dropping:
@@ -1087,19 +1094,19 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         return prepared_settings, model_request_parameters
 
     def _drop_unsupported_sampling_settings(self, model_settings: ModelSettings) -> None:
-        dropped = {setting for setting in _ANTHROPIC_SAMPLING_PARAMS if setting in model_settings}
+        dropped = {setting for setting in ANTHROPIC_SAMPLING_PARAMS if setting in model_settings}
         extra_body = model_settings.get('extra_body')
         if is_str_dict(extra_body):
-            dropped |= {setting for setting in _ANTHROPIC_SAMPLING_PARAMS if setting in extra_body}
+            dropped |= {setting for setting in ANTHROPIC_SAMPLING_PARAMS if setting in extra_body}
             model_settings['extra_body'] = {
-                key: value for key, value in extra_body.items() if key not in _ANTHROPIC_SAMPLING_PARAMS
+                key: value for key, value in extra_body.items() if key not in ANTHROPIC_SAMPLING_PARAMS
             }
 
-        for setting in _ANTHROPIC_SAMPLING_PARAMS:
+        for setting in ANTHROPIC_SAMPLING_PARAMS:
             model_settings.pop(setting, None)
 
         if dropped:
-            ordered = [setting for setting in _ANTHROPIC_SAMPLING_PARAMS if setting in dropped]
+            ordered = [setting for setting in ANTHROPIC_SAMPLING_PARAMS if setting in dropped]
             warnings.warn(
                 f'Sampling parameters {ordered} are not supported by {self.model_name!r}. These settings will be ignored.',
                 UserWarning,
@@ -1183,8 +1190,16 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         context_management = self._add_compaction_params(messages, betas, model_settings)
         self._validate_task_budget_vs_context_management(model_settings, context_management)
         container, container_from_history = self._get_container(messages, model_settings)
+        recovery_messages, compaction_boundary = self._stale_thinking_block_recovery_history(messages)
         initial_thinking, initial_betas, initial_thinking_override, initial_effective_thinking = (
-            _thinking_with_stale_block_history(anthropic_profile, messages, thinking, effective_thinking, betas)
+            _thinking_with_stale_block_history(
+                anthropic_profile,
+                recovery_messages,
+                thinking,
+                effective_thinking,
+                betas,
+                compaction_boundary=compaction_boundary,
+            )
         )
 
         async def create(
@@ -1250,6 +1265,20 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             )
             _warn_stale_thinking_block_recovery(self.model_name)
             return result
+
+    def _stale_thinking_block_recovery_history(
+        self, messages: list[ModelMessage]
+    ) -> tuple[list[ModelMessage], ModelResponse | None]:
+        """The wire-visible history and response whose metadata describes the compacted-away request."""
+        trimmed_messages = self._trim_before_compaction(messages)
+        if trimmed_messages is messages:
+            return messages, None
+
+        # The shared trim may re-insert a standing-prompt request before the boundary response, but it
+        # removes every earlier response. `input_transformations` on the boundary response describes
+        # the request that produced the compaction block, not the next post-compaction request.
+        boundary = next(message for message in trimmed_messages if isinstance(message, ModelResponse))
+        return trimmed_messages, boundary
 
     @staticmethod
     def _add_compaction_params(
@@ -1485,13 +1514,15 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         betas.update(native_tool_betas)
         context_management = self._add_compaction_params(messages, betas, model_settings)
         self._validate_task_budget_vs_context_management(model_settings, context_management)
+        recovery_messages, compaction_boundary = self._stale_thinking_block_recovery_history(messages)
         initial_thinking, initial_betas, initial_thinking_override, initial_effective_thinking = (
             _thinking_with_stale_block_history(
                 anthropic_profile,
-                messages,
+                recovery_messages,
                 thinking,
                 effective_thinking,
                 betas,
+                compaction_boundary=compaction_boundary,
                 include_count_tokens_recovery=True,
             )
         )
