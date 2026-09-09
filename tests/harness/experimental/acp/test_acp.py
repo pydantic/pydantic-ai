@@ -23,8 +23,9 @@ import acp
 import pytest
 from acp import RequestError, schema
 from pydantic import BaseModel
-from pydantic_ai import Agent, DeferredToolRequests, RunContext, UsageLimitExceeded
-from pydantic_ai.capabilities import Hooks
+from pydantic_ai import Agent, DeferredToolRequests, RunContext, Tool, UsageLimitExceeded
+from pydantic_ai.capabilities import AbstractCapability, Capability, Hooks
+from pydantic_ai.exceptions import ApprovalRequired
 from pydantic_ai.messages import (
     AgentStreamEvent,
     BinaryContent,
@@ -210,6 +211,63 @@ def _approval_agent(executed: list[str]) -> Agent[None, str]:
     def delete_file(path: str) -> str:
         executed.append(path)
         return f'deleted {path}'
+
+    return agent
+
+
+class _PerRunApprovalCapability(AbstractCapability[None]):
+    """A session capability whose `for_run()` supplies an approval-gated tool the pre-run scan cannot see.
+
+    `get_toolset()` contributes nothing until the run, so `_approval_tool_names` cannot know its
+    `delete_file` pauses for approval and the call is announced as running. The run still pauses it
+    (the per-run instance carries the same tool with `requires_approval=True`), which is exactly the
+    per-run gap from #820.
+    """
+
+    def __init__(self, executed: list[str]) -> None:
+        self._executed = executed
+
+    def get_toolset(self) -> None:
+        return None
+
+    async def for_run(self, ctx: RunContext[None]) -> Capability[None]:
+        del ctx
+
+        def delete_file(path: str) -> str:
+            self._executed.append(path)
+            return f'deleted {path}'
+
+        return Capability(
+            id='per-run-approval',
+            toolsets=[FunctionToolset([Tool(delete_file, name='delete_file', requires_approval=True)])],
+        )
+
+
+def _for_run_approval_session(executed: list[str]) -> Callable[[AcpSession], AcpSessionConfig[None]]:
+    """A `session_config` handing the adapter a capability that builds its approval tool per run."""
+
+    def session_config(_session: AcpSession) -> AcpSessionConfig[None]:
+        return AcpSessionConfig(deps=None, capabilities=[_PerRunApprovalCapability(executed)])
+
+    return session_config
+
+
+def _body_raises_approval_agent(executed: list[str]) -> Agent[None, str]:
+    """An agent whose approval tool is a statically-known plain tool raising `ApprovalRequired` from its body."""
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | dict[int, DeltaToolCall]]:
+        if _has_tool_return(messages):
+            yield 'done'
+            return
+        yield {0: DeltaToolCall(name='delete_file', json_args='{"path": "x"}')}
+
+    agent = Agent(FunctionModel(stream_function=stream))
+
+    @agent.tool_plain
+    def delete_file(path: str) -> str:
+        # The side effect happens before the body asks for approval: the call has begun running.
+        executed.append(path)
+        raise ApprovalRequired()
 
     return agent
 
@@ -880,6 +938,93 @@ class TestPermission:
         ]
         assert executed == ['x']
 
+    async def test_for_run_built_approval_tool_is_corrected_to_pending_before_rejection(self) -> None:
+        # A `for_run()`-built approval tool is invisible to the pre-run scan (#820), so its call
+        # starts announced as running; the run's own approval report corrects it to `pending`
+        # before the decision, and a rejection then renders as failed, never as executed.
+        executed: list[str] = []
+        adapter: PydanticAIACPAgent[None, str] = PydanticAIACPAgent(
+            Agent(_calls_tool_each_turn(DeltaToolCall(name='delete_file', json_args='{"path": "x"}'))),
+            session_config=_for_run_approval_session(executed),
+        )
+        client = FakeClient(decider=lambda _call: 'reject_once')
+        session_id = await _start(adapter, client)
+
+        await adapter.prompt(prompt=[acp.text_block('delete')], session_id=session_id)
+
+        [(_id, _title, start_status)] = client.tool_starts()
+        assert start_status == 'in_progress'  # the pre-run scan could not flag this tool
+        tool_events = [event for event in client.events() if event[0] in ('tool_call', 'tool_call_update')]
+        assert tool_events == [
+            ('tool_call', 'delete_file'),
+            ('tool_call_update', 'pending'),
+            ('tool_call_update', 'failed'),
+        ]
+        assert executed == []
+
+    async def test_for_run_built_approval_tool_promotes_after_approval(self) -> None:
+        executed: list[str] = []
+        adapter: PydanticAIACPAgent[None, str] = PydanticAIACPAgent(
+            Agent(_calls_tool_each_turn(DeltaToolCall(name='delete_file', json_args='{"path": "x"}'))),
+            session_config=_for_run_approval_session(executed),
+        )
+        client = FakeClient(decider=lambda _call: 'allow_once')
+        session_id = await _start(adapter, client)
+
+        await adapter.prompt(prompt=[acp.text_block('delete')], session_id=session_id)
+
+        # Corrected to `pending` before the dialog, then promoted once approved, then completed.
+        tool_events = [event for event in client.events() if event[0] in ('tool_call', 'tool_call_update')]
+        assert tool_events == [
+            ('tool_call', 'delete_file'),
+            ('tool_call_update', 'pending'),
+            ('tool_call_update', 'in_progress'),
+            ('tool_call_update', 'completed'),
+        ]
+        assert executed == ['x']
+
+    async def test_for_run_built_approval_tool_always_reject_is_never_rendered_as_running(self) -> None:
+        # The always-reject path sends no permission dialog at all, so without the correction the
+        # call would go straight from its `in_progress` start to `failed`, as if it had run.
+        executed: list[str] = []
+        adapter: PydanticAIACPAgent[None, str] = PydanticAIACPAgent(
+            Agent(_calls_tool_each_turn(DeltaToolCall(name='delete_file', json_args='{"path": "x"}'))),
+            session_config=_for_run_approval_session(executed),
+        )
+        client = FakeClient(decider=lambda _call: 'reject_always')
+        session_id = await _start(adapter, client)
+
+        await adapter.prompt(prompt=[acp.text_block('delete')], session_id=session_id)
+
+        tool_events = [event for event in client.events() if event[0] in ('tool_call', 'tool_call_update')]
+        assert tool_events == [
+            ('tool_call', 'delete_file'),
+            ('tool_call_update', 'pending'),
+            ('tool_call_update', 'failed'),
+        ]
+        assert executed == []
+
+    async def test_body_raised_approval_tool_stays_in_progress(self) -> None:
+        # A statically-known tool that raises `ApprovalRequired` from its body has already started
+        # executing, so it is NOT corrected to `pending`: the run's approval report only downgrades
+        # calls whose tool the pre-run scan could not see.
+        executed: list[str] = []
+        adapter: PydanticAIACPAgent[None, str] = PydanticAIACPAgent(_body_raises_approval_agent(executed))
+        client = FakeClient(decider=lambda _call: 'reject_once')
+        session_id = await _start(adapter, client)
+
+        await adapter.prompt(prompt=[acp.text_block('delete')], session_id=session_id)
+
+        [(_id, _title, start_status)] = client.tool_starts()
+        assert start_status == 'in_progress'  # the tool did start, so it is never shown as pending
+        tool_events = [event for event in client.events() if event[0] in ('tool_call', 'tool_call_update')]
+        assert tool_events == [
+            ('tool_call', 'delete_file'),
+            ('tool_call_update', 'failed'),
+        ]
+        # The side effect ran before the approval question, exactly as the docs describe.
+        assert executed == ['x']
+
     async def test_approval_turn_with_a_store_persists_each_update_once(self) -> None:
         # The turn pauses for approval and resumes, accumulating updates across passes. The
         # persisted transcript must be the user's prompt plus what the client saw, with no
@@ -1140,14 +1285,17 @@ class TestPermission:
 
     def test_approval_names_come_from_function_toolsets_only(self) -> None:
         # A non-`FunctionToolset` session toolset cannot expose `requires_approval` without a live
-        # run context, so it contributes nothing and its calls start `in_progress`.
+        # run context, so it contributes nothing to either static name set and its calls start
+        # `in_progress`.
 
         adapter: PydanticAIACPAgent[None, str] = PydanticAIACPAgent(_approval_agent([]))
         config: AcpSessionConfig[None] = AcpSessionConfig(deps=None, toolsets=[CombinedToolset([])])
 
         names = adapter._approval_tool_names(config)  # pyright: ignore[reportPrivateUsage]
+        plain = adapter._known_non_approval_names(config)  # pyright: ignore[reportPrivateUsage]
 
         assert names == frozenset({'delete_file'})
+        assert plain == frozenset()
 
 
 class TestCancellation:
