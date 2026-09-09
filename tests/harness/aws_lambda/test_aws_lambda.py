@@ -698,11 +698,13 @@ class TestCoverageOfRemainingPaths:
         assert 'a__model.cancel_suspended_response' in ctx.step_names
 
 
-def shutdown(loop: asyncio.AbstractEventLoop) -> None:
+def shutdown(loop: asyncio.AbstractEventLoop, owner: threading.Thread | None = None) -> None:
     """Stop and close a loop a test built, so it does not outlive the test as a leak.
 
-    Retired and stopped bridge loops close themselves on their owning thread. Tests also pass
-    foreign loops that have no owning thread, so this helper closes those directly.
+    Bridge loops close themselves on their owning thread after `run_forever()` exits, so pass
+    `owner` for those: the helper joins it before closing, because closing from the test thread
+    would race the thread's own close and double-close the loop. Foreign loops have no owning
+    thread, so the helper closes those directly.
     """
     if loop.is_closed():
         return
@@ -711,6 +713,8 @@ def shutdown(loop: asyncio.AbstractEventLoop) -> None:
         deadline = time.monotonic() + 5
         while loop.is_running() and time.monotonic() < deadline:  # pragma: no branch - stops promptly
             time.sleep(0.01)
+    if owner is not None:
+        owner.join(timeout=5)
     # Unwind anything the loop was still holding, so closing it does not log a pending task.
     outstanding = asyncio.all_tasks(loop)
     if outstanding:  # pragma: no cover - test cleanup normally leaves no pending tasks
@@ -893,6 +897,8 @@ class TestBridgeFailureModes:
         # The handler returned while the abandoned run still holds `abandoned`, so the next
         # invocation must not be handed that loop.
         replacement = loops.get()
+        replacement_thread = loops._thread  # pyright: ignore[reportPrivateUsage]
+        assert replacement_thread is not None
         assert replacement is not abandoned
 
         started_waiting = time.monotonic()
@@ -903,7 +909,48 @@ class TestBridgeFailureModes:
         assert abandoned.is_closed()
         assert not abandoned_thread.is_alive()
         assert time.monotonic() - started_waiting < 0.5
-        shutdown(replacement)
+        shutdown(replacement, owner=replacement_thread)
+        gc.collect()
+
+    def test_an_unwind_that_finishes_within_the_cancel_timeout_keeps_the_loop_warm(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The budget is for the unwind; a cleanup that finishes in time does not cost the next
+        invocation its warm loop, unlike one that runs past it."""
+        loops = _bridge._AgentLoop()  # pyright: ignore[reportPrivateUsage]
+        monkeypatch.setattr(_bridge, '_agent_loop', loops)
+
+        class Suspend(BaseException):
+            pass
+
+        class SuspendingContext(FakeDurableContext):
+            def step(self, func, name=None, config=None):  # type: ignore[no-untyped-def]
+                raise Suspend('retry scheduled')
+
+        cleanup_finished = threading.Event()
+
+        agent = build_agent(act)
+
+        async def run_with_quick_cleanup() -> str:
+            try:
+                return await agent.run('go')  # type: ignore[return-value]
+            finally:
+                await asyncio.sleep(0.02)
+                cleanup_finished.set()
+
+        warm = loops.get()
+        thread = loops._thread  # pyright: ignore[reportPrivateUsage]
+        assert thread is not None
+
+        with pytest.raises(Suspend):
+            run_durable(run_with_quick_cleanup, context=SuspendingContext(), cancel_timeout=0.1)
+
+        assert cleanup_finished.wait(timeout=5)
+        # The unwind beat the budget, so the loop is still the one the next invocation gets.
+        assert loops.get() is warm
+        assert not warm.is_closed()
+        assert thread.is_alive()
+        shutdown(warm, owner=thread)
         gc.collect()
 
     def test_retirement_drains_cleanup_scheduled_when_the_main_task_finishes(
@@ -1064,17 +1111,21 @@ class TestBridgeFailureModes:
         block in `consume()` until Lambda timed the function out."""
         loops = _bridge._AgentLoop()  # pyright: ignore[reportPrivateUsage]
         stopped = loops.get()
+        stopped_thread = loops._thread  # pyright: ignore[reportPrivateUsage]
+        assert stopped_thread is not None
         stopped.call_soon_threadsafe(stopped.stop)
         deadline = time.monotonic() + 5
         while stopped.is_running() and time.monotonic() < deadline:  # pragma: no branch - stops promptly
             time.sleep(0.01)
 
         replacement = loops.get()
+        replacement_thread = loops._thread  # pyright: ignore[reportPrivateUsage]
+        assert replacement_thread is not None
 
         assert replacement is not stopped
         assert replacement.is_running()
-        shutdown(replacement)
-        shutdown(stopped)
+        shutdown(replacement, owner=replacement_thread)
+        shutdown(stopped, owner=stopped_thread)
 
     def test_retiring_an_unexpectedly_stopped_loop_finds_it_closed(self) -> None:
         loops = _bridge._AgentLoop()  # pyright: ignore[reportPrivateUsage]
@@ -1092,13 +1143,15 @@ class TestBridgeFailureModes:
     def test_retiring_a_loop_that_was_already_replaced_leaves_the_current_one_alone(self) -> None:
         loops = _bridge._AgentLoop()  # pyright: ignore[reportPrivateUsage]
         live = loops.get()
+        live_thread = loops._thread  # pyright: ignore[reportPrivateUsage]
+        assert live_thread is not None
         foreign = asyncio.new_event_loop()
 
         loops.retire(foreign, None)
 
         assert loops.get() is live
         shutdown(foreign)
-        shutdown(live)
+        shutdown(live, owner=live_thread)
 
 
 class TestRuntimeToolsets:

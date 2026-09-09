@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import AsyncIterable, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -10,11 +10,17 @@ from pydantic import TypeAdapter, ValidationError
 from pydantic_ai import AbstractToolset
 from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering
 from pydantic_ai.capabilities._tool_search import ToolSearch as _ToolSearch
-from pydantic_ai.messages import ModelResponse, NativeToolSearchReturnPart, SystemPromptPart
+from pydantic_ai.messages import AgentStreamEvent, ModelResponse, NativeToolSearchReturnPart, SystemPromptPart
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition, ToolSelector
 from typing_extensions import TypedDict
 
-from pydantic_ai_harness.code_mode._toolset import CodeModeMount, CodeModeOS, CodeModeResourceLimits, CodeModeToolset
+from pydantic_ai_harness.code_mode._eager import EagerCodeModeToolset, in_durable_execution
+from pydantic_ai_harness.code_mode._toolset import (
+    CodeModeMount,
+    CodeModeOS,
+    CodeModeResourceLimits,
+    CodeModeToolset,
+)
 
 if TYPE_CHECKING:
     from pydantic_ai.capabilities.abstract import ValidatedToolArgs
@@ -110,6 +116,14 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     both caps.
     """
 
+    eager: bool = False
+    """Execute complete streamed statements before the `run_code` call finishes.
+
+    Needs asyncio, like the sandbox executor, and is inactive under durable execution. Side
+    effects cannot be rolled back and run before hooks on `run_code` see the completed call.
+    See the Code Mode guide for the execution and `restart` semantics.
+    """
+
     dynamic_catalog: bool = False
     """Keep the `run_code` tool definition cache-stable as the sandboxed toolset grows.
 
@@ -154,6 +168,17 @@ class CodeMode(AbstractCapability[AgentDepsT]):
 
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
         """Wrap the agent's assembled toolset, splitting it into native + sandboxed subsets if needed."""
+        if self.eager:
+            return EagerCodeModeToolset(
+                wrapped=toolset,
+                tool_selector=self.tools,
+                max_retries=self.max_retries,
+                max_tool_calls=self.max_tool_calls,
+                resource_limits=self.resource_limits,
+                dynamic_catalog=self.dynamic_catalog,
+                os_access=self.os_access,
+                mount=self.mount,
+            )
         return CodeModeToolset(
             wrapped=toolset,
             tool_selector=self.tools,
@@ -164,6 +189,34 @@ class CodeMode(AbstractCapability[AgentDepsT]):
             os_access=self.os_access,
             mount=self.mount,
         )
+
+    @property
+    def has_wrap_run_event_stream(self) -> bool:
+        """Report the stream hook only when eager execution is enabled.
+
+        The base class detects a class-level override, which would put every `CodeMode` user in
+        streaming mode; gating on the instance keeps plain `CodeMode` runs non-streaming.
+        """
+        return self.eager
+
+    async def wrap_run_event_stream(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        stream: AsyncIterable[AgentStreamEvent],
+    ) -> AsyncIterable[AgentStreamEvent]:
+        """Feed streamed `run_code` argument deltas to the eager statement pump.
+
+        Wrapped events pass through unmodified; the watcher acts purely by side effect,
+        enqueueing closed statements for execution in the live REPL. Inactive under durable
+        execution, where overlapping non-deterministic work with the stream has no place in
+        a replayed workflow.
+        """
+        toolset = None if in_durable_execution(ctx) else EagerCodeModeToolset.from_run_context(ctx)
+        async for event in stream:
+            yield event
+            if toolset is not None:
+                await toolset.observe_stream_event(event, ctx)
 
     async def after_tool_execute(
         self,

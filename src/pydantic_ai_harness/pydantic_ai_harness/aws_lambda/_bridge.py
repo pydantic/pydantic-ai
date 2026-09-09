@@ -28,6 +28,7 @@ import contextvars
 import functools
 import inspect
 import threading
+import time
 from collections.abc import Awaitable, Callable, Coroutine
 from concurrent.futures import Future
 from concurrent.futures import TimeoutError as FutureTimeoutError
@@ -569,12 +570,18 @@ def _run_durable_on_agent_loop(
         if tasks:  # pragma: no branch - only empty when scheduling itself failed
             task = tasks[0]
             finished = threading.Event()
+            finished_at: list[float] = []
+
+            def record_completion() -> None:
+                finished_at.append(time.monotonic())
+                finished.set()
 
             def cancel_and_notify() -> None:
                 if task.done():
+                    # Already finished before the budget started; the flag alone says so.
                     finished.set()
                     return
-                task.add_done_callback(lambda _: finished.set())
+                task.add_done_callback(lambda _: record_completion())
                 task.cancel()
 
             try:
@@ -584,10 +591,15 @@ def _run_durable_on_agent_loop(
                 # There is no live loop left on which cancellation cleanup could run.
                 _agent_loop.retire(loop, task)
             else:
-                cleanup_finished = finished.wait(timeout=cancel_timeout)
-                if not cleanup_finished:
-                    # Cleanup is still running and we are out of budget to wait for it. Returning while
-                    # it holds the shared loop is the leak this wait exists to prevent, so give the loop
+                # A single `Event.wait(timeout)` is not a deadline: a starved waiter can be woken by
+                # the timeout and only read the flag once a late completion has set it, so the flag
+                # alone cannot say the cleanup beat the budget. It only unblocks here; the decision
+                # re-checks the task itself, judging a completion by the time the loop recorded it.
+                deadline = time.monotonic() + cancel_timeout
+                finished.wait(timeout=cancel_timeout)
+                if not task.done() or (finished_at and finished_at[0] > deadline):
+                    # Cleanup is still running, or it finished past the budget. Returning while it
+                    # holds the shared loop is the leak this wait exists to prevent, so give the loop
                     # up: the next invocation gets a fresh one instead of inheriting this one's
                     # half-torn-down state.
                     _agent_loop.retire(loop, task)

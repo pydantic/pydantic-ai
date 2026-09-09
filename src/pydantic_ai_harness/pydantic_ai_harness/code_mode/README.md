@@ -238,6 +238,62 @@ time-bounded work behind a Temporal activity instead.
 
 State persists between `run_code` calls within the same agent run -- variables, imports, and function definitions carry over. Pass `restart: true` in the tool call to reset state. If a worker crash or host-side execution failure invalidates the session, `run_code` returns a model retry that reports the reset; the next snippet must recreate any required state.
 
+## Eager execution
+
+Normally, `CodeMode` waits for the model to finish writing a `run_code` call before it
+runs any code. Set `eager=True` to start sooner:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai_harness import CodeMode
+
+agent = Agent(
+    'openai:gpt-5.6-sol',
+    capabilities=[CodeMode(eager=True)],
+)
+```
+
+For example, suppose the model produces this code one line at a time:
+
+```python
+first = await fetch_item(item_id=1)
+second = await fetch_item(item_id=2)
+[first, second]
+```
+
+With eager mode, the first call to `fetch_item` can begin as soon as the first line is
+complete. `CodeMode` continues receiving the remaining lines at the same time. Without
+eager mode, neither call begins until the model has produced the whole snippet.
+
+The code still counts as one `run_code` call. It uses one REPL session, one tool-call limit,
+and one combined result. Hooks on `fetch_item` and other tools called by the code still run.
+Hooks around `run_code` itself run only after the model has finished writing the call, so
+they cannot approve or change lines that eager mode has already run.
+
+Configured Monty resource limits still apply. Eager fragments and the remaining code share
+the same session duration and memory allowances.
+
+Keep these limitations in mind:
+
+- Eager mode cannot undo side effects from code that has already run.
+- If the model later requests `restart: true`, some work may run again.
+- If the model changes an earlier line while streaming, `CodeMode` resets the REPL and asks
+  the model to send the code again.
+- Eager mode trusts that the provider preserves the streamed `run_code` part and its tool
+  name. If a provider removes or renames the part, the work that already ran cannot be
+  undone.
+- Eager execution is used only when `run_code` is the first tool call in a model response.
+  Later tool calls wait for normal dispatch so they run in the order the model requested.
+- Eager mode is disabled when using durable execution such as Temporal or DBOS.
+- Eager mode needs asyncio, like the rest of the sandbox executor.
+- If a statement is interrupted before it finishes, for example because the call failed
+  validation, the session restarts and the next snippet must recreate its state.
+- Nested tools called from eager statements must cooperate with asyncio cancellation. When
+  a run ends or a streamed call is invalidated, `CodeMode` cancels the in-flight work and
+  waits a bounded time (currently 5 seconds) for it to release. Work that does not release
+  in time is abandoned; it cannot start further tool calls.
+- Tools called from statements that ran early are traced before the `run_code` span opens.
+
 ## Temporal durability
 
 Install both integrations:

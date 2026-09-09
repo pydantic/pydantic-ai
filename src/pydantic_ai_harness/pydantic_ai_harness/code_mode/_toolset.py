@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import keyword
 import re
@@ -501,6 +502,55 @@ class _RunCodeTool(ToolsetTool[AgentDepsT]):
 
 
 @dataclass
+class RunCodeExecution:
+    """Mutable state for one model-visible `run_code` call.
+
+    Normal execution uses one feed. Eager execution shares this object across several feeds so
+    nested-call IDs, budgets, output, and metadata do not reset between statements.
+    """
+
+    parent_tool_call_id: str
+    capture: PrintCapture = field(default_factory=PrintCapture)
+    call_count: int = 0
+    budget_exhausted: bool = False
+    nested_calls: dict[str, ToolCallPart] = field(default_factory=dict[str, ToolCallPart])
+    nested_returns: dict[str, ToolReturnPart] = field(default_factory=dict[str, ToolReturnPart])
+
+    def next_tool_call_id(self, *, max_tool_calls: int) -> str:
+        """Reserve nested-call budget and return the next stable child call ID."""
+        if self.call_count >= max_tool_calls:
+            self.budget_exhausted = True
+            raise RuntimeError(
+                f'Code mode allows {max_tool_calls} nested tool calls per `run_code` call '
+                'and this snippet asked for more. Call fewer tools, for example by filtering '
+                'the inputs first, or split the work across several `run_code` calls.'
+            )
+        self.call_count += 1
+        return f'{self.parent_tool_call_id}__{self.call_count}'
+
+    def build_tool_return(self, result: Any) -> ToolReturn[Any]:
+        """Build the single public result for the logical `run_code` call."""
+        output = self.capture.joined
+        if not output:
+            return_value: Any = result if result is not None else {}
+        elif result is None:
+            return_value = {'output': output}
+        elif _contains_multimodal(result):
+            return_value = [output, *result] if isinstance(result, list) else [output, result]
+        else:
+            return_value = {'output': output, 'result': result}
+
+        return ToolReturn(
+            return_value=return_value,
+            metadata={
+                'code_mode': True,
+                'tool_calls': self.nested_calls,
+                'tool_returns': self.nested_returns,
+            },
+        )
+
+
+@dataclass
 class CodeModeToolset(WrapperToolset[AgentDepsT]):
     """Implementation toolset for the `CodeMode` capability.
 
@@ -720,11 +770,12 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         )
         return result
 
-    async def call_tool(  # noqa: C901
+    async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
     ) -> Any:
         """Execute Python code in the sandbox, or pass through to a native tool."""
-        if not isinstance(tool, _RunCodeTool):
+        run_code_tool = self._as_run_code_tool(tool)
+        if run_code_tool is None:
             # Native (non-sandboxed) tool -- pass through to the wrapped toolset.
             return await self.wrapped.call_tool(name, tool_args, ctx, tool)
 
@@ -736,6 +787,25 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
 
         if restart:
             run_state.reset()
+
+        execution = RunCodeExecution(parent_tool_call_id=ctx.tool_call_id or 'pyd_ai_code_mode')
+        result = await self._execute_code(code, ctx, run_code_tool, execution)
+        return execution.build_tool_return(result)
+
+    @staticmethod
+    def _as_run_code_tool(tool: ToolsetTool[AgentDepsT]) -> _RunCodeTool[AgentDepsT] | None:
+        return tool if isinstance(tool, _RunCodeTool) else None
+
+    async def _execute_code(  # noqa: C901
+        self,
+        code: str,
+        ctx: RunContext[AgentDepsT],
+        tool: _RunCodeTool[AgentDepsT],
+        execution: RunCodeExecution,
+    ) -> Any:
+        """Execute one REPL feed and accumulate it into a logical `run_code` call."""
+        run_state = self._run_state
+        assert run_state is not None, '`CodeModeToolset` must be entered before calling `run_code`'
 
         fresh_repl = not run_state.has_executed_feed
 
@@ -764,13 +834,6 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         global_sequential = _global_mode_is_sequential(tool_manager.get_parallel_execution_mode)
         sequential_tools = {name for name, td in callable_defs.items() if td.sequential}
 
-        # Collect nested tool calls and returns keyed by tool_call_id so they
-        # can be attached as metadata on the run_code ToolReturnPart.
-        nested_calls: dict[str, ToolCallPart] = {}
-        nested_returns: dict[str, ToolReturnPart] = {}
-        call_counter = 0
-        budget_exhausted = False
-
         def dispatch_tool_call(sandbox_name: str, kwargs: dict[str, Any]) -> Coroutine[Any, Any, Any]:
             """Reserve nested-call budget, then build the coroutine that runs the call.
 
@@ -781,21 +844,9 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             Refusing here means no task is created; the executor hands the error to the sandbox at
             the call site, so calls that already completed keep their recorded results.
             """
-            nonlocal call_counter, budget_exhausted
-            if call_counter >= self.max_tool_calls:
-                # Recorded so the retry can name the calls that already ran if the snippet does
-                # not catch this. Reaching the budget is not itself the failure: a snippet that
-                # handles the error still returns normally, carrying its metadata.
-                budget_exhausted = True
-                raise RuntimeError(
-                    f'Code mode allows {self.max_tool_calls} nested tool calls per `run_code` call '
-                    'and this snippet asked for more. Call fewer tools, for example by filtering '
-                    'the inputs first, or split the work across several `run_code` calls.'
-                )
-            call_counter += 1
-            parent_id = ctx.tool_call_id or 'pyd_ai_code_mode'
             original_name = sanitized_to_original.get(sandbox_name, sandbox_name)
-            return run_tool_call(original_name, f'{parent_id}__{call_counter}', kwargs)
+            tool_call_id = execution.next_tool_call_id(max_tool_calls=self.max_tool_calls)
+            return run_tool_call(original_name, tool_call_id, kwargs)
 
         async def run_tool_call(original_name: str, tool_call_id: str, kwargs: dict[str, Any]) -> Any:
             """Run a single tool call dispatched from inside the sandbox.
@@ -806,7 +857,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             `await` site.
             """
             call_part = ToolCallPart(tool_name=original_name, args=kwargs, tool_call_id=tool_call_id)
-            nested_calls[tool_call_id] = call_part
+            execution.nested_calls[tool_call_id] = call_part
 
             try:
                 result = await tool_manager.handle_call(call_part, wrap_validation_errors=False)
@@ -827,7 +878,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 # `ToolDenied` to the user's script would let it masquerade as a string
                 # tool result, and the script has no way to introspect the marker class
                 # since `ToolDenied` isn't exposed inside Monty.
-                nested_returns[tool_call_id] = ToolReturnPart(
+                execution.nested_returns[tool_call_id] = ToolReturnPart(
                     tool_name=original_name,
                     content=result.message,
                     tool_call_id=tool_call_id,
@@ -842,7 +893,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 return_metadata = result.metadata
                 result = result.return_value
 
-            nested_returns[tool_call_id] = ToolReturnPart(
+            execution.nested_returns[tool_call_id] = ToolReturnPart(
                 tool_name=original_name,
                 content=result,
                 tool_call_id=tool_call_id,
@@ -857,7 +908,9 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         type_check = fresh_repl and bool(callable_defs)
         type_check_stubs = self._build_type_check_stubs(callable_defs) if type_check else None
 
-        capture = PrintCapture()
+        # One collector is reused across eager feeds. This keeps the same output cap and error
+        # behavior as a normal call while presenting one combined result to the model.
+        capture = execution.capture
 
         try:
             session = run_state.get_session(
@@ -883,6 +936,10 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 # The session is idle again and keeps assignments made before the failing line.
                 run_state.has_executed_feed = True
                 raise
+            except asyncio.CancelledError:
+                # The feed never finished, so the REPL is mid-statement. Start fresh next time.
+                run_state.reset()
+                raise
             run_state.has_executed_feed = True
         except MontySyntaxError as e:
             if fresh_repl:
@@ -906,14 +963,14 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             # semantics are the same -- the model gets another chance.
             message = f'Runtime error:\n{capture.prepend_to(e.display())}'
             duration_spent = _is_duration_exhausted(e)
-            if nested_calls and (budget_exhausted or _exhausted_sandbox_limit(e) is not None):
+            if execution.nested_calls and (execution.budget_exhausted or _exhausted_sandbox_limit(e) is not None):
                 # A retry is the only record the model gets of an uncaught failure, and these
                 # calls already started. Without them the model reruns their side effects when
                 # it retries. Asking which limit tripped, rather than testing one flag per limit,
                 # is what keeps a newly added limit from quietly losing this. It matters most on
                 # the duration path, where the advice is to restart, which discards the REPL state
                 # the model would otherwise reconstruct from.
-                message += f'\n\n{_describe_started_calls(nested_calls, nested_returns)}'
+                message += f'\n\n{_describe_started_calls(execution.nested_calls, execution.nested_returns)}'
             if duration_spent:
                 # This error keeps the session, so every later call fails on arrival too. Left
                 # alone it reads like an ordinary runtime error, which points the model at
@@ -961,32 +1018,12 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             ) from e
 
         result = completed.output
-        printed = capture.joined
-
         # Validate result to reconstruct multimodal types (e.g. BinaryContent from
         # serialized dicts) so they flow through to the model natively.
         if result is not None:
             result = _TOOL_RETURN_CONTENT_TA.validate_python(result)
 
-        # Build return value:
-        # - No print → return result directly (multimodal content stays top-level
-        #   so _split_content can extract it for native model delivery)
-        # - Print + multimodal result → list format so _split_content can extract files
-        # - Print + plain result → dict with output/result keys
-        if not printed:
-            return_value: Any = result if result is not None else {}
-        elif result is None:
-            return_value = {'output': printed}
-        elif _contains_multimodal(result):
-            # Flatten lists so _split_content can find each multimodal item at top level.
-            return_value = [printed, *result] if isinstance(result, list) else [printed, result]
-        else:
-            return_value = {'output': printed, 'result': result}
-
-        return ToolReturn(
-            return_value=return_value,
-            metadata={'code_mode': True, 'tool_calls': nested_calls, 'tool_returns': nested_returns},
-        )
+        return result
 
     def _partition_callable_tools(
         self, wrapped_tools: dict[str, ToolsetTool[AgentDepsT]]
