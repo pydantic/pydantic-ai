@@ -4123,7 +4123,9 @@ class OpenAIStreamedResponse(StreamedResponse):
                 tool_call_id=dtc.id,
             )
             if maybe_event is not None:
-                if isinstance(maybe_event, PartStartEvent):
+                if isinstance(maybe_event, PartStartEvent) and isinstance(
+                    self._parts_manager.get_part_by_vendor_id(self._vendor_part_id), TextPart
+                ):
                     self._vendor_part_id = f'{self._vendor_part_id}-{maybe_event.index}'
                 yield maybe_event
 
