@@ -202,11 +202,20 @@ class Graph(Generic[StateT, DepsT, InputT, OutputT]):
     Used to determine which joins are "final" (have no other joins as intermediates) and
     which joins should preserve fork stacks when proceeding downstream."""
 
-    def _set_graph_name(self, infer_name: bool, depth: int) -> None:
-        """Set graph name by inferring it from the calling frame if not already set."""
+    def _set_graph_name(self, infer_name: bool, extra_depth: int = 0) -> None:
+        """Set graph name by inferring it from the calling frame if not already set.
+
+        Args:
+            infer_name: Whether to infer graph name from the calling frame.
+            extra_depth: Additional stack frames between `_set_graph_name` and original call site.
+
+        Returns:
+            None
+        """
 
         if infer_name and self.name is None:
-            graph_name = infer_obj_name(self, depth=depth)
+            # Base depth = 1: `infer_obj_name` is called inside `_set_graph_name`.
+            graph_name = infer_obj_name(self, depth=1 + extra_depth)
             if graph_name is not None:  # pragma: no branch
                 self.name = graph_name
 
@@ -269,7 +278,7 @@ class Graph(Generic[StateT, DepsT, InputT, OutputT]):
         Returns:
             The final output from the graph execution
         """
-        self._set_graph_name(infer_name=infer_name, depth=2)
+        self._set_graph_name(infer_name=infer_name, extra_depth=2)
 
         async with self.iter(state=state, deps=deps, inputs=inputs, span=span, infer_name=False) as graph_run:
             # Note: This would probably be better using `async for _ in graph_run`, but this tests the `next` method,
@@ -308,7 +317,7 @@ class Graph(Generic[StateT, DepsT, InputT, OutputT]):
         Returns:
             The final output from the graph execution
         """
-        self._set_graph_name(infer_name=infer_name, depth=2)
+        self._set_graph_name(infer_name=infer_name, extra_depth=2)
 
         return _utils.run_until_complete(self.run(state=state, deps=deps, inputs=inputs, span=span, infer_name=False))
 
@@ -337,8 +346,8 @@ class Graph(Generic[StateT, DepsT, InputT, OutputT]):
         Yields:
             A GraphRun instance that can be iterated for step-by-step execution
         """
-        # Depth is 3 because asynccontextmanager adds one.
-        self._set_graph_name(infer_name=infer_name, depth=3)
+        # Extra depth is 3 because asynccontextmanager adds one.
+        self._set_graph_name(infer_name=infer_name, extra_depth=3)
 
         with ExitStack() as stack:
             entered_span: AbstractSpan | None = None
