@@ -50,14 +50,46 @@ _HIGHLIGHT_COLOR = '\x1b[32m'
 _COLOR_RESET = '\x1b[0m'
 _COLOR_PATTERN = re.compile(r'\x1b\[\d+m')
 
-_AGENT_ENV_VARS = ('AI_AGENT', 'CLAUDECODE', 'CODEX_THREAD_ID', 'CURSOR_AGENT', 'GEMINI_CLI')
-"""Environment variables that mean a coding agent is running this process and reads what it writes.
+_CODING_AGENTS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    # Each signal is a variable name, a `NAME*` prefix, or a `NAME=value` match; an agent matches on
+    # any one of its own. Ordered, first match wins, most specific first. Lifted from the two
+    # projects that maintain this table against the agents' own source: Dart's
+    # `package:unified_analytics` and `am-i-vibing`, which Astro uses to answer this same question.
+    ('claude-code', ('CLAUDECODE', 'CLAUDE_CODE', 'CLAUDE_CODE_IS_COWORK')),
+    ('codex', ('CODEX_THREAD_ID', 'CODEX_CI', 'CODEX_SANDBOX')),
+    ('gemini-cli', ('GEMINI_CLI', 'GEMINI_AGENT')),
+    ('cursor', ('CURSOR_AGENT',)),
+    (
+        'opencode',
+        ('OPENCODE', 'OPENCODE_BIN_PATH', 'OPENCODE_SERVER', 'OPENCODE_APP_INFO', 'OPENCODE_MODES', 'OPENCODE_CLIENT'),
+    ),
+    ('pi', ('PI_CODING_AGENT',)),
+    ('amp', ('AMP_CURRENT_THREAD_ID',)),
+    ('augment', ('AUGMENT_AGENT',)),
+    ('antigravity', ('ANTIGRAVITY_AGENT', 'ANTIGRAVITY_PROJECT_ID')),
+    ('crush', ('CRUSH',)),
+    ('qwen-code', ('QWEN_CODE',)),
+    ('windsurf', ('CODEIUM_EDITOR_APP_ROOT',)),
+    ('warp', ('OZ_RUN_ID',)),
+    ('copilot', ('COPILOT_*', 'GITHUB_COPILOT*')),
+    ('aider', ('AIDER_*',)),
+    # `REPL_ID` on its own is the Replit IDE, which is a person at a terminal.
+    ('replit', ('REPLIT_MODE=assistant',)),
+    ('swe-agent', ('SWE_AGENT',)),
+)
+"""Environment signals that mean a coding agent is running this process and reads what it writes.
 
-`AI_AGENT` is the one any harness can set to say so, including one built on Pydantic AI itself. The
-rest are what agents that don't set it already set for this purpose, so this list is best-effort and
-will always be behind: an agent it doesn't know is left where every agent was before, without a
-banner, rather than shown a wrong one.
+Only variables an agent names itself in, so that this can't mistake a person for one: the heuristics
+these were taken from also match on `TERM_PROGRAM`, `PAGER` and `SHELL`, which would count everyone
+typing in a given terminal. Agents identified only by their parent process are left out for the same
+reason a miss is cheap — see `detect_coding_agent`.
 """
+
+_NAMED_AGENT_ENV_VARS = ('AI_AGENT', 'AGENT')
+"""What an agent this table doesn't know can set to announce itself, the value naming it."""
+
+_UNNAMED_AGENT_VALUES = frozenset({'1', 'true', 'yes'})
+"""Values of those that say an agent is present without saying which."""
 
 
 class BannerDisplay(Protocol):
@@ -86,18 +118,39 @@ def banner_available(*, is_terminal: bool) -> bool:
         is_terminal: Whether the caller's own destination is a terminal. `clai` asks its console,
             which knows about `FORCE_COLOR` and `TERM`; anything writing to `stderr` asks that.
     """
-    return not _banner_suppressed() and (is_terminal or _running_under_agent()) and claim_banner()
+    return not _banner_suppressed() and (is_terminal or detect_coding_agent() is not None) and claim_banner()
 
 
-def _running_under_agent() -> bool:
-    """Whether a coding agent is running this process and will read what it writes.
+def detect_coding_agent() -> str | None:
+    """Name the coding agent running this process, or `None` when nothing says one is.
 
     An agent's `stderr` is a pipe it reads back rather than a terminal, so without this the banner
     would reach nobody working through one — which is now how much of the writing of Pydantic AI
     code happens. It's shown to them exactly as it is to a human, and says the same thing, so what
     the user sees when they read along is what they'd have seen themselves.
+
+    The table is best-effort and will always be behind, which is why it errs towards missing rather
+    than guessing: an agent it doesn't know is left where every agent was before, with no banner,
+    and `AI_AGENT` is there for anything that wants to say so itself. The name isn't used yet.
     """
-    return any(var in os.environ for var in _AGENT_ENV_VARS)
+    for name, signals in _CODING_AGENTS:
+        if any(_agent_signal_matches(signal) for signal in signals):
+            return name
+
+    for var in _NAMED_AGENT_ENV_VARS:
+        if value := os.environ.get(var):
+            return 'agent' if value.lower() in _UNNAMED_AGENT_VALUES else value
+
+    return None
+
+
+def _agent_signal_matches(signal: str) -> bool:
+    """Whether the environment carries `signal`: a variable name, a `NAME*` prefix, or `NAME=value`."""
+    if signal.endswith('*'):
+        prefix = signal[:-1]
+        return any(name.startswith(prefix) for name in os.environ)
+    name, _, value = signal.partition('=')
+    return os.environ.get(name) == value if value else name in os.environ
 
 
 def _banner_suppressed() -> bool:

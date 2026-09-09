@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import sys
 from collections.abc import Callable
 from importlib import metadata
@@ -20,6 +21,33 @@ from ._inline_snapshot import snapshot
 from .continuation_utils import ScriptedContinuationModel, scripted_response
 
 _find_spec = importlib.util.find_spec
+
+
+_CODING_AGENTS = _display._CODING_AGENTS  # pyright: ignore[reportPrivateUsage]
+
+
+def _agent_env_vars_in_scope() -> set[str]:
+    """Every variable `detect_coding_agent` would read, so the suite decides rather than the shell.
+
+    The agent running the tests sets some of these itself, so leaving any behind would make whether
+    a banner appears depend on who ran `pytest`.
+    """
+    names: set[str] = set(_display._NAMED_AGENT_ENV_VARS)  # pyright: ignore[reportPrivateUsage]
+    for _, signals in _CODING_AGENTS:
+        for signal in signals:
+            if signal.endswith('*'):
+                names.update(name for name in os.environ if name.startswith(signal[:-1]))
+            else:
+                names.add(signal.partition('=')[0])
+    return names
+
+
+def agent_env(signal: str) -> tuple[str, str]:
+    """A `(name, value)` pair that makes `signal` match, whichever of the three forms it is."""
+    if signal.endswith('*'):
+        return f'{signal[:-1]}SOMETHING', '1'
+    name, _, value = signal.partition('=')
+    return name, value or '1'
 
 
 class TTYStream(StringIO):
@@ -45,7 +73,7 @@ def reset_banner(monkeypatch: pytest.MonkeyPatch):
     # This suite is the one place a test run may show a banner, and the only place that decides
     # whether an agent is watching — the agent running the suite doesn't get to answer that.
     monkeypatch.delenv('PYTEST_VERSION', raising=False)
-    for agent_var in _display._AGENT_ENV_VARS:  # pyright: ignore[reportPrivateUsage]
+    for agent_var in _agent_env_vars_in_scope():
         monkeypatch.delenv(agent_var, raising=False)
     # Colour is asserted on its own; everywhere else it would only obscure what's being asserted.
     monkeypatch.setenv('NO_COLOR', '1')
@@ -326,12 +354,62 @@ def test_a_banner_that_can_never_be_shown_stops_being_offered(
     assert _display.banner_pending() is False
 
 
-@pytest.mark.parametrize('agent_var', _display._AGENT_ENV_VARS)  # pyright: ignore[reportPrivateUsage]
-def test_a_coding_agent_reading_stderr_is_shown_the_banner(agent_var: str, monkeypatch: pytest.MonkeyPatch):
+@pytest.mark.parametrize(
+    ('agent', 'signal'),
+    [pytest.param(agent, signal, id=f'{agent}-{signal}') for agent, signals in _CODING_AGENTS for signal in signals],
+)
+def test_every_signal_in_the_table_names_its_agent(agent: str, signal: str, monkeypatch: pytest.MonkeyPatch):
+    """Each row is a claim about a variable some agent sets; a typo in one would silently stop matching."""
+    monkeypatch.setenv(*agent_env(signal))
+
+    assert _display.detect_coding_agent() == agent
+
+
+def test_nothing_in_the_environment_means_no_agent():
+    assert _display.detect_coding_agent() is None
+
+
+@pytest.mark.parametrize(
+    ('value', 'expected'),
+    [
+        pytest.param('some-harness', 'some-harness', id='named'),
+        pytest.param('1', 'agent', id='flag'),
+        pytest.param('TRUE', 'agent', id='flag-uppercase'),
+        pytest.param('', None, id='empty-is-not-an-agent'),
+    ],
+)
+@pytest.mark.parametrize('var', _display._NAMED_AGENT_ENV_VARS)  # pyright: ignore[reportPrivateUsage]
+def test_an_agent_can_announce_itself_by_name(
+    var: str, value: str, expected: str | None, monkeypatch: pytest.MonkeyPatch
+):
+    """The escape hatch for a harness the table doesn't know, including one built on Pydantic AI."""
+    monkeypatch.setenv(var, value)
+
+    assert _display.detect_coding_agent() == expected
+
+
+def test_the_table_wins_over_a_generic_announcement(monkeypatch: pytest.MonkeyPatch):
+    """Crush sets both; the specific name is the more useful of the two."""
+    monkeypatch.setenv('CRUSH', '1')
+    monkeypatch.setenv('AI_AGENT', 'crush')
+
+    assert _display.detect_coding_agent() == 'crush'
+
+
+def test_a_value_matched_signal_does_not_match_another_value(monkeypatch: pytest.MonkeyPatch):
+    """`REPL_ID` and an interactive `REPLIT_MODE` are a person in the Replit IDE, not an agent."""
+    monkeypatch.setenv('REPL_ID', 'abc123')
+    monkeypatch.setenv('REPLIT_MODE', 'interactive')
+
+    assert _display.detect_coding_agent() is None
+
+
+@pytest.mark.parametrize('agent, signal', [(agent, signals[0]) for agent, signals in _CODING_AGENTS])
+def test_a_coding_agent_reading_stderr_is_shown_the_banner(agent: str, signal: str, monkeypatch: pytest.MonkeyPatch):
     """An agent's `stderr` is a pipe it reads back, so the terminal check alone would reach none of them."""
     stderr = StringIO()
     monkeypatch.setattr(sys, 'stderr', stderr)
-    monkeypatch.setenv(agent_var, '1')
+    monkeypatch.setenv(*agent_env(signal))
 
     display_banner()
 
