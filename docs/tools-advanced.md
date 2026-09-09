@@ -848,6 +848,8 @@ For more information on how `end_strategy` works with function tools, output too
 
 ## Tool Search
 
+For Kimi K3's native tool-loading channel with local search, see [Moonshot AI dynamic tool loading](models/moonshotai.md#dynamic-tool-loading).
+
 Agents with many tools (e.g. [MCP servers](mcp/client.md) exposing dozens of endpoints) can spend a lot of input tokens on tool definitions before any work happens, and tool selection accuracy noticeably degrades past ~30–50 available tools. Marking tools for deferred loading hides them from the model's initial context; the model discovers hidden tools by keyword when it needs them.
 
 For workflow *bundles* — instructions, tools, model settings, and hooks that travel together — see [on-demand capabilities](capabilities/on-demand.md), which build on the same machinery but disclose at the bundle level rather than the individual-tool level.

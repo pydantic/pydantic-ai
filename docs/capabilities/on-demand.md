@@ -140,6 +140,7 @@ A capability-owned tool is hidden until its capability loads, and it is never se
 
 - **Anthropic `tool_addition_mode='by_reference'`** references the revealed name in a `tool_addition` block. A capability-only run pre-advertises the definition with `defer_loading=True`; a mixed run with a search surface withholds it, then appends the deferred definition in the same request as the reveal.
 - **OpenAI Responses `tool_addition_mode='with_definitions'`** carries the full revealed definition in an appended `additional_tools` input item and leaves it out of `tools`.
+- **[Moonshot AI Kimi K3](../models/moonshotai.md#dynamic-tool-loading) `tool_addition_mode='with_definitions'`** appends a system message containing the revealed definitions, leaving the top-level `tools` list unchanged.
 - **No provider-native reveal-item support (`tool_addition_mode=None`)** announces `The following tool(s) are now available: {names}` when the schema is visible. It synthesizes a `search_tools` exchange only when a result must reveal a schema that is still withheld.
 
 Add a standalone `defer_loading=True` tool to the same run and tool search comes back for it, since that one genuinely is searchable. Capability-owned tools stay off the wire entirely while a search surface is present, so search remains fully native — server-executed where the model supports it — and no query can surface a tool whose capability has not loaded.
@@ -153,7 +154,7 @@ Calling the `load_capability` tool reveals capability behavior between requests.
 | What loads | Cache prefix |
 |---|---|
 | Instructions only | **Stable** — instructions land in the message history, not the request prefix. |
-| Function tools with provider-native reveal-item support (`tool_addition_mode='by_reference'` or `'with_definitions'`) | **Stable on Anthropic and OpenAI Responses** — deferred Anthropic entries are outside its cache key, and OpenAI Responses appends `additional_tools` without changing `tools[]`. |
+| Function tools with provider-native reveal-item support (`tool_addition_mode='by_reference'` or `'with_definitions'`) | **Stable on Anthropic, OpenAI Responses, and Moonshot AI Kimi K3** — deferred Anthropic entries are outside its cache key; OpenAI Responses and Kimi K3 append definitions to the conversation without changing `tools[]`. |
 | Function tools without provider-native reveal-item support (`tool_addition_mode=None`) | **May break between turns** — function-tool visibility can change as capabilities load. |
 | Native tools | **Always breaks the prefix on load** — native tool definitions are part of the request prefix on every provider. |
 

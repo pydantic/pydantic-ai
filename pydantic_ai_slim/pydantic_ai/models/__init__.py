@@ -1643,6 +1643,10 @@ def infer_model(  # noqa: C901
         from .cerebras import CerebrasModel
 
         return CerebrasModel(model_name, provider=provider)
+    elif model_kind == 'moonshotai':
+        from .moonshotai import MoonshotAIModel
+
+        return MoonshotAIModel(model_name, provider=provider)
     elif model_kind == 'crusoe':
         from .crusoe import CrusoeModel
 

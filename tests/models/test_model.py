@@ -31,6 +31,7 @@ with try_import() as imports_successful:
     from pydantic_ai.models.google import GoogleModel
     from pydantic_ai.models.groq import GroqModel
     from pydantic_ai.models.mistral import MistralModel
+    from pydantic_ai.models.moonshotai import MoonshotAIModel
     from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
     from pydantic_ai.models.openrouter import OpenRouterModel
     from pydantic_ai.providers import openai
@@ -218,8 +219,8 @@ TEST_CASES = [
         'moonshotai:kimi-k2-0711-preview',
         'kimi-k2-0711-preview',
         'moonshotai',
-        'openai',
-        OpenAIChatModel,
+        'moonshotai',
+        MoonshotAIModel,
     ),
     pytest.param(
         {'OPENAI_API_KEY': 'openai-api-key'},

@@ -1128,6 +1128,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         tool_choice: ChatCompletionToolChoiceOptionParam | None
 
         tools, tool_choice = self._get_tool_choice(model_settings, model_request_parameters)
+        has_tools = bool(tools) or 'via_history' in (model_request_parameters.tool_visibility or {}).values()
         web_search_options = self._get_web_search_options(model_request_parameters)
         profile = self.profile
 
@@ -1163,7 +1164,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                 return await self.client.chat.completions.create(
                     model=self.model_name,
                     messages=openai_messages,
-                    parallel_tool_calls=model_settings.get('parallel_tool_calls', OMIT) if tools else OMIT,
+                    parallel_tool_calls=model_settings.get('parallel_tool_calls', OMIT) if has_tools else OMIT,
                     tools=tools or OMIT,
                     tool_choice=tool_choice or OMIT,
                     stream=stream,
@@ -1427,7 +1428,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         tools: list[chat.ChatCompletionToolParam] = [
             self._map_tool_definition(t, model_settings) for t in tool_defs.values()
         ]
-        if not tools:
+        # A native tool-addition channel can carry callable tools entirely in message history.
+        if not tools and 'via_history' not in (model_request_parameters.tool_visibility or {}).values():
             return tools, None
 
         return tools, tool_choice
@@ -1650,9 +1652,10 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             if thinking_active and profile.get('openai_chat_send_back_thinking_parts', 'auto') == 'field'
             else None
         )
+        map_user_message = self._get_user_message_mapper(model_request_parameters, model_settings or {})
         for message in messages:
             if isinstance(message, ModelRequest):
-                async for item in self._map_user_message(message):
+                async for item in map_user_message(message):
                     openai_messages.append(item)
             elif isinstance(message, ModelResponse):
                 if (mapped := self._map_model_response(message)) is not None:
@@ -1689,6 +1692,15 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         if not self.profile.get('openai_chat_supports_multiple_system_messages', True):
             openai_messages = _merge_leading_system_messages(openai_messages, system_prompt_role)
         return openai_messages
+
+    def _get_user_message_mapper(
+        self, model_request_parameters: ModelRequestParameters, model_settings: ModelSettings
+    ) -> Callable[[ModelRequest], AsyncIterable[chat.ChatCompletionMessageParam]]:
+        """Build a request-scoped mapper, allowing subclasses to track declarations across messages.
+
+        The default delegates to `_map_user_message`, preserving existing subclass overrides.
+        """
+        return self._map_user_message
 
     @staticmethod
     def _map_tool_call(t: ToolCallPart) -> ChatCompletionMessageFunctionToolCallParam:

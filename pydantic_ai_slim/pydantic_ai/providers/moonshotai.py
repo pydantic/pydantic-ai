@@ -86,6 +86,7 @@ class MoonshotAIProvider(_OpenAICompatibleProvider):
                 openai_chat_thinking_field='reasoning_content',
                 openai_chat_send_back_thinking_parts='field',
                 thinking_always_enabled=is_reasoning,
+                tool_addition_mode='with_definitions' if model_name == 'kimi-k3' else None,
             ),
         )
 

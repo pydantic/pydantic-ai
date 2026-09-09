@@ -68,6 +68,7 @@ with try_import() as openai_available:
     from pydantic_ai.models.cerebras import CerebrasModel
     from pydantic_ai.models.crusoe import CrusoeModel
     from pydantic_ai.models.github_copilot import GitHubCopilotModel
+    from pydantic_ai.models.moonshotai import MoonshotAIModel
     from pydantic_ai.models.ollama import OllamaModel
     from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
     from pydantic_ai.models.openai_codex import OpenAICodexModel
@@ -78,6 +79,7 @@ with try_import() as openai_available:
     from pydantic_ai.providers.cerebras import CerebrasProvider
     from pydantic_ai.providers.crusoe import CrusoeProvider
     from pydantic_ai.providers.github_copilot import GitHubCopilotProvider
+    from pydantic_ai.providers.moonshotai import MoonshotAIProvider
     from pydantic_ai.providers.ollama import OllamaProvider
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openai_codex import OpenAICodexCredentials, OpenAICodexProvider
@@ -477,6 +479,10 @@ def _crusoe(client: httpx2.AsyncClient) -> Model:
     return CrusoeModel('openai/gpt-oss-120b', provider=CrusoeProvider(api_key=PROBE_KEY, http_client=client))
 
 
+def _moonshotai(client: httpx2.AsyncClient) -> Model:
+    return MoonshotAIModel('kimi-k3', provider=MoonshotAIProvider(api_key=PROBE_KEY, http_client=client))
+
+
 def _github_copilot(client: httpx2.AsyncClient) -> Model:
     # A GPT id: the Anthropic ids that reject sampling settings drop `temperature`/`top_p` before the wire.
     return GitHubCopilotModel('gpt-5.4', provider=GitHubCopilotProvider(api_key=PROBE_KEY, http_client=client))
@@ -556,6 +562,7 @@ CASES = [
     ),
     Case('CerebrasModel', ('Cerebras',), http_probe(_cerebras), _needs(openai_available, 'openai')),
     Case('CrusoeModel', ('Crusoe',), http_probe(_crusoe), _needs(openai_available, 'openai')),
+    Case('MoonshotAIModel', ('Moonshot AI',), http_probe(_moonshotai), _needs(openai_available, 'openai')),
     Case('GitHubCopilotModel', ('GitHub Copilot',), http_probe(_github_copilot), _needs(openai_available, 'openai')),
     Case('OllamaModel', ('Ollama',), http_probe(_ollama), _needs(openai_available, 'openai')),
     Case('OpenRouterModel', ('OpenRouter',), http_probe(_openrouter), _needs(openai_available, 'openai')),

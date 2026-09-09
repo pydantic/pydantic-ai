@@ -175,7 +175,8 @@ class ModelProfile(TypedDict, total=False):
 
     `'by_reference'` reveals a tool already declared in the request's tool definitions (Anthropic
     `tool_addition` blocks referencing a `defer_loading` entry); `'with_definitions'` carries the full
-    newly available definitions in the reveal (OpenAI Responses `additional_tools` items). `None` means
+    newly available definitions in the reveal (OpenAI Responses `additional_tools` items or Kimi K3
+    system messages carrying `tools`). `None` means
     no native channel: `Model.prepare_messages` projects the change into messages. Additions only —
     tool removal (#6985) is not modeled yet and will get its own field.
     """

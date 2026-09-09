@@ -12,6 +12,7 @@ The unified rule is: an unrevealed deferred tool stays outside the model's usabl
 
 - `tool_addition_mode='by_reference'`: Anthropic emits `tool_addition` with a `tool_reference`. Capability-only runs pre-advertise the definition with `defer_loading=True`; mixed runs with a search surface withhold it until reveal, then append the deferred definition and reference it in the same request.
 - `tool_addition_mode='with_definitions'`: first-party OpenAI Responses emits an appended `additional_tools` item containing the complete definition and does not add it to `tools`.
+- `MoonshotAIModel` on first-party `kimi-k3` also uses `'with_definitions'`: full definitions travel in an appended system message with `tools` and no `content`. Tool search runs locally. `Agent('moonshotai:kimi-k3')` selects this adapter; a plain `OpenAIChatModel` or Kimi via OpenRouter keeps the ordinary mapping.
 - `tool_addition_mode=None`: announce the change when the schema is visible, or synthesize a complete local `search_tools` exchange only when its result must reveal a schema that is still withheld.
 
 Do not copy tool definitions into `ToolAvailabilityDeltaPart`.
