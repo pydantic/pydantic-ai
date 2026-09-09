@@ -3181,6 +3181,11 @@ def sanitize_messages(
       Like a non-HTTP `FileUrl`, an `UploadedFile` references an object the model provider fetches
       using the server-side IAM role. Applies to uploaded files in user content and those nested in
       tool return parts.
+    - [`ModelResponse.workspace_ref`][pydantic_ai.messages.ModelResponse.workspace_ref], resetting it
+      to `None`. The most recent reference in history is otherwise offered to a capability's
+      `get_workspace`, so a client that can set it could point a reconnecting capability at an
+      environment it attaches to using server-side provider credentials. Reconnect explicitly by
+      passing an authorized `workspace=` instead.
     - [`ToolCallPart`][pydantic_ai.messages.ToolCallPart]s at the end of the history that aren't in
       `resolved_tool_call_ids`. An unresolved tool call at the end of client-supplied history doesn't
       correspond to a paused agent run and shouldn't be executed.
@@ -3263,7 +3268,9 @@ def sanitize_messages(
                 dropped_uploaded_file_providers=dropped_uploaded_file_providers,
             )
             if new_response_parts:
-                sanitized.append(replace(message, parts=new_response_parts))
+                # Drop `workspace_ref`: a client that can set it could point a reconnecting
+                # capability at an environment it attaches to with server-side credentials.
+                sanitized.append(replace(message, parts=new_response_parts, workspace_ref=None))
             # Otherwise drop the response entirely so we don't leave an empty
             # `ModelResponse(parts=[])` in history.
         else:
