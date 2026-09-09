@@ -110,17 +110,27 @@ directory, which means Logfire is set up already and only `instrument_pydantic_a
 
    logfire.configure()
    logfire.instrument_pydantic_ai()
-   logfire.instrument_httpx(capture_all=True)
+   logfire.instrument_httpx()
    ```
 
-   Include the `instrument_httpx` line and say what it does. Provider SDKs go through `httpx`, so it
-   is what shows the actual request and response bodies on the wire — the difference between "the
-   model answered badly" and seeing the prompt it was really sent. `capture_all=True` is what
-   captures headers and bodies rather than just the request line; it is also what makes these spans
-   large and sensitive, so offer it rather than assuming, and mention it can be turned off again
-   once a question is answered.
+   Include the `instrument_httpx` line and say what it does: provider SDKs go through `httpx`, so it
+   puts the actual HTTP request to the model beside the run that caused it. On its own it records
+   the request, the status and the timing — no headers, no bodies.
 
-5. **Name the agents.** `Agent(..., name='support_agent')` labels the run span. Without it the name
+5. **Offer `capture_all=True`, don't set it.** `logfire.instrument_httpx(capture_all=True)` adds
+   headers and both bodies, which is the difference between "the model answered badly" and seeing
+   the prompt it was really sent. Two things the user needs before they say yes:
+
+   - It instruments **every** `httpx` client in the process, not just the model calls. Unrelated
+     application traffic goes into the traces too — OAuth token exchanges, third-party APIs,
+     anything carrying credentials. Passing one client, `instrument_httpx(client, capture_all=True)`,
+     narrows it to that client.
+   - Those spans get large.
+
+   Set up [scrubbing](https://logfire.pydantic.dev/docs/how-to-guides/scrubbing/) before this reaches
+   anywhere shared, and say that it can be turned back off once the question it was for is answered.
+
+6. **Name the agents.** `Agent(..., name='support_agent')` labels the run span. Without it the name
    is inferred from the variable and falls back to `'agent'`, which makes traces hard to tell apart
    once more than one agent runs. Add it to the agents you're instrumenting; leave the rest alone.
 
@@ -135,8 +145,11 @@ import logfire
 
 logfire.configure(send_to_logfire=False)
 logfire.instrument_pydantic_ai()
-logfire.instrument_httpx(capture_all=True)
+logfire.instrument_httpx()
 ```
+
+The `capture_all=True` offer above applies here too, and matters more: these traces are going
+somewhere the whole team already reads.
 
 `send_to_logfire=False` is what keeps the data out of Pydantic Logfire; without it, spans go to
 both. The destination comes from the standard `OTEL_EXPORTER_OTLP_ENDPOINT` environment variable,
