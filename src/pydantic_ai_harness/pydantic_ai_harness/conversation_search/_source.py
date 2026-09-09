@@ -21,6 +21,7 @@ search layer.
 from __future__ import annotations
 
 import hashlib
+from dataclasses import replace
 from typing import Protocol, runtime_checkable
 
 from pydantic_ai.messages import (
@@ -92,6 +93,24 @@ class SnapshotStore(Protocol):
     async def list_snapshots(self, *, run_id: str) -> list[ContinuableSnapshot]: ...  # pragma: no cover
 
 
+def _canonical_message(message: ModelMessage) -> ModelMessage:
+    """Return a copy of `message` with framework-stamped fields cleared.
+
+    pydantic-ai stamps `timestamp`, `run_id`, and `conversation_id` onto a
+    message (and fills `instructions` on requests) after the boundary snapshot
+    that first carries it is serialized, so the same logical message has
+    different bytes before and after stamping. Clearing exactly those fields
+    makes the dedup key stable across the boundary; every other field keeps
+    participating in the key, so two genuinely distinct messages sharing parts
+    stay distinct.
+    """
+    if isinstance(message, ModelRequest):
+        return replace(message, timestamp=None, run_id=None, conversation_id=None, instructions=None)
+    # `ModelMessage` is exactly the `ModelRequest | ModelResponse` union, so any
+    # other message is a `ModelResponse`.
+    return replace(message, timestamp=None, run_id=None, conversation_id=None)
+
+
 def message_hash(message: ModelMessage) -> str:
     """Return a stable content hash of a single message.
 
@@ -99,9 +118,11 @@ def message_hash(message: ModelMessage) -> str:
     re-serialize the same growing history, and durable executors (Temporal, DBOS)
     re-instantiate messages between steps, so identity-based dedup would re-append.
     The hash is computed over `ModelMessagesTypeAdapter` bytes, so it is stable
-    across snapshot round-trips and replay.
+    across snapshot round-trips and replay. Framework-stamped metadata is cleared
+    first, see `_canonical_message`, so the overlap survives the stamping that
+    pydantic-ai applies after the boundary snapshot is saved.
     """
-    return hashlib.sha256(ModelMessagesTypeAdapter.dump_json([message])).hexdigest()
+    return hashlib.sha256(ModelMessagesTypeAdapter.dump_json([_canonical_message(message)])).hexdigest()
 
 
 def _overlap_length(history: list[str], snapshot: list[str]) -> int:

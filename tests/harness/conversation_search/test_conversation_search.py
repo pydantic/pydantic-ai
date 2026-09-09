@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import re
 import warnings
+from dataclasses import replace
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pydantic_ai.messages as messages_module
@@ -49,6 +51,7 @@ from pydantic_ai_harness.conversation_search import (
     SnapshotHistorySource,
     SnapshotStore,
 )
+from pydantic_ai_harness.conversation_search._source import message_hash
 from pydantic_ai_harness.step_persistence import (
     ContinuableSnapshot,
     FileStepStore,
@@ -225,6 +228,65 @@ class TestSnapshotHistorySource:
             assert sum('ZEBRA' in text for text in rendered) == 1
             assert sum('noted' in text for text in rendered) == 1
             assert not any('Summary of previous conversation' in text for text in rendered)
+
+    async def test_message_hash_ignores_framework_stamped_metadata(self) -> None:
+        # pydantic-ai-harness#810: pydantic-ai stamps `timestamp`, `run_id`, and
+        # `conversation_id` (and fills request `instructions`) after the boundary
+        # snapshot that first carries a message is serialized. The overlap key
+        # must hash the same logical message equally before and after stamping,
+        # so those fields are cleared before hashing; distinct parts still hash
+        # differently.
+        request = ModelRequest(parts=[ToolReturnPart(tool_name='lookup', content='result', tool_call_id='call-1')])
+        stamped_request = replace(request, timestamp=datetime.now(timezone.utc), run_id='r1', conversation_id='c1')
+        assert message_hash(request) == message_hash(stamped_request)
+
+        reply = _reply('done')
+        stamped_reply = replace(reply, timestamp=datetime.now(timezone.utc), run_id='r1', conversation_id='c1')
+        assert message_hash(reply) == message_hash(stamped_reply)
+        assert message_hash(request) != message_hash(_reply('done'))
+
+    async def test_stamped_boundary_request_does_not_duplicate_serialized_history(self, tmp_path: Path) -> None:
+        # pydantic-ai-harness#810: `StepPersistence.after_node_run` saves the
+        # boundary snapshot before pydantic-ai stamps the tool-return request it
+        # carries, so hashing the full serialized message makes the prefix overlap
+        # fail and `run_history` returns each tool-return request twice (14
+        # instead of 6). Serializing stores (`SqliteStepStore`, `FileStepStore`)
+        # reproduce it; `InMemoryStepStore` hides it because stamping mutates the
+        # very objects the in-memory store holds, so their bytes stay aligned.
+
+        def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+            returns = sum(isinstance(p, ToolReturnPart) for message in messages for p in message.parts)
+            if returns < 2:
+                return ModelResponse(parts=[ToolCallPart(tool_name='lookup', args={'q': str(returns)})])
+            return ModelResponse(parts=[TextPart(content='done')])
+
+        stores: list[SqliteStepStore | FileStepStore] = [
+            SqliteStepStore(database=tmp_path / 'runs.db'),
+            FileStepStore(tmp_path / 'runs'),
+        ]
+        for store in stores:
+            agent: Agent[object, str] = Agent(
+                FunctionModel(model_fn),
+                capabilities=[StepPersistence(store=store, agent_name='a')],
+            )
+
+            @agent.tool_plain
+            def lookup(q: str) -> str:  # pyright: ignore[reportUnusedFunction]
+                return f'result-{q}'
+
+            result = await agent.run('hi', conversation_id='c1')
+            (run,) = await store.list_runs(conversation_id='c1')
+            history = await SnapshotHistorySource(store).run_history(run_id=run.run_id)
+            expected = result.all_messages()
+            # Counts match (6, not 14): each message once, in order. Strict
+            # dataclass equality cannot be used because the boundary request is
+            # persisted before pydantic-ai stamps it, so the recovered copy
+            # carries `None` run metadata while the live one carries the stamped
+            # values; the parts (what the corpus indexes) are identical. Compare
+            # on the dedup key instead, which is exactly the stability `message_hash`
+            # promises.
+            assert len(history) == len(expected) == 6
+            assert [message_hash(message) for message in history] == [message_hash(message) for message in expected]
 
     async def test_list_runs_delegates_to_store(self) -> None:
         store = InMemoryStepStore()
