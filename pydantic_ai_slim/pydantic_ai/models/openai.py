@@ -642,23 +642,22 @@ def _instruction_cache_index(instruction_parts: Sequence[InstructionPart], syste
     The breakpoint goes after the last static instruction, so dynamic instructions that change every
     run stay outside the cached prefix. Instruction parts are sorted static-first.
     """
-    index = system_prompt_count + sum(1 for part in instruction_parts if not part.dynamic) - 1
-    return index if index >= 0 else None
-
-
-def _instructions_are_static(instruction_parts: Sequence[InstructionPart]) -> bool:
-    """Whether every instruction part is a literal string, i.e. identical on every request."""
-    return all(not part.dynamic for part in instruction_parts)
+    static_prefix_length = system_prompt_count + sum(1 for part in instruction_parts if not part.dynamic)
+    return static_prefix_length - 1 if static_prefix_length > 0 else None
 
 
 def _add_instruction_cache_breakpoint(
     message: chat.ChatCompletionMessageParam | responses.ResponseInputItemParam,
     text_type: Literal['text', 'input_text'],
 ) -> None:
-    """Move a leading message's text into a content block carrying an explicit cache breakpoint."""
+    """Replace a leading message's plain-string content with a block carrying a cache breakpoint."""
+    # The message TypedDicts vary by role, so a dict view is the simplest way to swap `content`.
     message_dict = cast('dict[str, Any]', message)
-    # Cast because the content part shape differs per API and only differs in the `type` literal.
-    content = cast('list[ChatCompletionContentPartParam]', [{'type': text_type, 'text': message_dict['content']}])
+    content: list[ChatCompletionContentPartParam | responses.ResponseInputContentParam] = (
+        [{'type': 'text', 'text': message_dict['content']}]
+        if text_type == 'text'
+        else [{'type': 'input_text', 'text': message_dict['content']}]
+    )
     _add_openai_prompt_cache_breakpoint(content)
     message_dict['content'] = content
 
@@ -2743,7 +2742,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         instruction_parts = (
             self._get_instruction_parts(messages, wire_request_parameters) or [] if cache_instructions else []
         )
-        cache_instructions_static = _instructions_are_static(instruction_parts) if cache_instructions else None
+        cache_instructions_static = all(not part.dynamic for part in instruction_parts) if cache_instructions else None
 
         previous_response_id, conversation_id, messages = self._resolve_server_side_state(
             model_settings, messages, cache_instructions_static=cache_instructions_static
@@ -2758,11 +2757,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         reasoning = self._translate_thinking(model_settings, model_request_parameters)
 
         if cache_instructions:
-            if (
-                not previous_response_id
-                and not conversation_id
-                and not any(message.get('type') == 'compaction' for message in openai_messages)
-            ):
+            compacted = any(message.get('type') == 'compaction' for message in openai_messages)
+            if not previous_response_id and not conversation_id and not compacted:
                 system_prompt_count = _leading_system_message_count(openai_messages, system_prompt_role)
                 if (index := _instruction_cache_index(instruction_parts, system_prompt_count)) is not None:
                     if instruction_parts:
