@@ -427,7 +427,8 @@ class _ClientToolCallEvent(BaseModel):
 class _ContextUsagePayload(BaseModel):
     model_config = ConfigDict(extra='allow')
 
-    model: str | None = None
+    # The payload also names the pipeline LLM (`model`); it is deliberately not read, see
+    # `ElevenLabsRealtimeConnection.model_name`.
     context_tokens: int | None = None
     context_limit_tokens: int | None = None
 
@@ -1232,9 +1233,6 @@ class ElevenLabsRealtimeConnection(RealtimeConnection):
         self._ws = ws
         self._conversation_id = conversation_id
         self._text_output = text_output
-        # The LLM the agent pipeline reported serving this conversation (from `context_usage`);
-        # the closest thing ElevenLabs has to a server-reported model id.
-        self._llm_model_name: str | None = None
         # Calls the agent fired without expecting a result (`expects_response=false`): the session
         # still settles them locally, but their `ToolResult` must never go back on the wire.
         self._fire_and_forget_tool_call_ids: set[str] = set()
@@ -1246,7 +1244,13 @@ class ElevenLabsRealtimeConnection(RealtimeConnection):
 
     @property
     def model_name(self) -> str | None:
-        return self._llm_model_name
+        """Always `None`: ElevenLabs reports no realtime model id, so responses carry the agent id.
+
+        The LLM behind the agent only surfaces in the opt-in `context_usage` event, which arrives
+        after the turn boundary, so it cannot be attributed to the response it served. The session
+        falls back to [`ElevenLabsRealtimeModel.model_name`][pydantic_ai.realtime.elevenlabs.ElevenLabsRealtimeModel.model_name].
+        """
+        return None
 
     @property
     def conversation_id(self) -> str | None:
@@ -1371,8 +1375,6 @@ class ElevenLabsRealtimeConnection(RealtimeConnection):
         if event_type == 'context_usage':
             event = _ContextUsageEvent.model_validate(data)
             usage = event.context_usage_event or _ContextUsagePayload.model_validate(data)
-            if usage.model:
-                self._llm_model_name = usage.model
             details = {'context_limit_tokens': usage.context_limit_tokens} if usage.context_limit_tokens else {}
             # ElevenLabs reports LLM context consumption only: no output tokens and no credits reach
             # the WebSocket. Conversation cost appears post-hoc on `GET /v1/convai/conversations/{id}`.

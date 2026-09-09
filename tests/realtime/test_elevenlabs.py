@@ -1729,8 +1729,9 @@ async def test_client_tool_call_string_parameters_pass_through() -> None:
     assert events == [ToolCall(tool_call_id='call_1', tool_name='get_weather', args='{"city": "Berlin"}')]
 
 
-async def test_context_usage_maps_to_session_usage_and_model_name() -> None:
+async def test_context_usage_maps_to_session_usage_and_leaves_model_name_unset() -> None:
     connection, _ = _connection()
+    assert connection.model_name is None
     frame = {
         'type': 'context_usage',
         'context_usage_event': {'model': 'gpt-5.2', 'context_tokens': 321, 'context_limit_tokens': 128000},
@@ -1743,15 +1744,14 @@ async def test_context_usage_maps_to_session_usage_and_model_name() -> None:
     # Verified live: `context_usage` arrives once per user turn, *after* the turn boundary, so it
     # cannot be attributed to a specific model response and stays run-level.
     assert usage_event.response_scoped is False
-    assert connection.model_name == 'gpt-5.2'
+    # The reported pipeline LLM is not adopted as the served model: responses keep the agent id.
+    assert connection.model_name is None
 
-    # Without a `model` in the payload, the last reported LLM stands.
     bare_frame = {'type': 'context_usage', 'context_usage_event': {'context_tokens': 400}}
     [bare_usage] = await connection._map_event(bare_frame)  # pyright: ignore[reportPrivateUsage]
     assert isinstance(bare_usage, SessionUsage)
     assert bare_usage.usage.input_tokens == 400
     assert bare_usage.usage.details == {}
-    assert connection.model_name == 'gpt-5.2'
 
 
 async def test_ping_is_answered_with_pong_and_yields_nothing() -> None:

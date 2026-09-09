@@ -33,7 +33,9 @@ to keep the REST calls and the WebSocket inside a region.
 The "model name" is an ElevenLabs agent id, e.g. `elevenlabs:agent_0101k2...`. Create the agent in
 the [ElevenLabs dashboard](https://elevenlabs.io/app/agents) (or via their API) first; the agent's
 own configuration decides the ASR setup, audio formats, turn-taking, and which per-conversation
-overrides are permitted.
+overrides are permitted. Every [`ModelResponse`][pydantic_ai.messages.ModelResponse] is stamped with
+the agent id as its `model_name`; the LLM the agent runs on is part of the agent's configuration and
+is not reported per response.
 
 ## Configuration ownership
 
