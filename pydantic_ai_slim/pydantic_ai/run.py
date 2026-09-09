@@ -5,9 +5,7 @@ import dataclasses
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from copy import deepcopy
 from datetime import datetime
-from typing import TYPE_CHECKING, Annotated, Any, Generic, Literal, overload
-
-from pydantic import Field
+from typing import TYPE_CHECKING, Any, Generic, Literal, overload
 
 from pydantic_graph import BaseNode, End, EndMarker, ErrorMarker, GraphRun, GraphRunContext, GraphTaskRequest, JoinItem
 from pydantic_graph.step import NodeStep
@@ -166,9 +164,9 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             self._graph_run.deps.new_message_index,
             self._traceparent(required=False),
         )
-        # Set after construction, not via the constructor: `_workspace` is an excluded field that
-        # carries the live handle; see the `workspace` property on `AgentRunResult`.
-        result._workspace = self._graph_run.deps.workspace  # pyright: ignore[reportPrivateUsage]
+        # Set outside the constructor because `workspace` is deliberately not a dataclass field: see
+        # the property on `AgentRunResult`.
+        result.__dict__['_workspace'] = self._graph_run.deps.workspace
         return result
 
     def all_messages(self) -> list[_messages.ModelMessage]:
@@ -654,11 +652,6 @@ class AgentRunResult(Generic[OutputDataT]):
     )
     _new_message_index: int = dataclasses.field(repr=False, compare=False, default=0)
     _traceparent_value: str | None = dataclasses.field(repr=False, compare=False, default=None)
-    # The live workspace handle. Typed `Any` and `Field(exclude=True)` so Pydantic never builds a
-    # schema for it or serializes it: a result is journaled whole by Temporal and Prefect, and the
-    # handle points at a live environment that cannot cross a serialized boundary. It deserializes
-    # back to `None`, which the `workspace` property turns into the unattached placeholder.
-    _workspace: Annotated[Any, Field(exclude=True)] = dataclasses.field(repr=False, compare=False, default=None)
 
     @property
     def workspace(self) -> Workspace:
@@ -671,9 +664,15 @@ class AgentRunResult(Generic[OutputDataT]):
         A result that did not come from a run — one deserialized from JSON, or built by hand — has
         a placeholder whose operations explain that no workspace is attached.
         """
-        if self._workspace is None:
-            self._workspace = unattached_workspace()
-        return self._workspace
+        # Deliberately not a dataclass field. Temporal serializes a whole result through
+        # `pydantic_core.to_json`, which walks `__dataclass_fields__` and cannot be told to skip a
+        # field (`Field(exclude=True)` needs a `TypeAdapter`/core schema, which that path does not
+        # build), so a declared field — even excluded — makes it try to serialize the live handle and
+        # fail. Storing it in `__dict__`, off `__dataclass_fields__`, keeps it out of every serializer.
+        workspace = self.__dict__.get('_workspace')
+        if workspace is None:
+            workspace = self.__dict__['_workspace'] = unattached_workspace()
+        return workspace
 
     @overload
     def _traceparent(self, *, required: Literal[False]) -> str | None: ...

@@ -4294,7 +4294,7 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
                 # task's cancellation counter (past the helper's `raise_if_cancelling` backstop).
                 if graph_deps.cancellation.cancel_requested:
                     raise asyncio.CancelledError('pydantic-ai: re-asserting a requested run cancellation')
-                result._workspace = graph_deps.workspace  # pyright: ignore[reportPrivateUsage]
+                result.__dict__['_workspace'] = graph_deps.workspace
                 agent_run._result_override = result  # pyright: ignore[reportPrivateUsage]
 
             def _extract_error(error: BaseException) -> BaseException:
