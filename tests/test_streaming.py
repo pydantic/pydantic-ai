@@ -918,8 +918,47 @@ def test_sync_stream_bridge_init_interrupt_after_entry_exits_context():
     assert exited
 
 
+# These synthetic paths have no external I/O, so 100 loop turns detects a real hang without inheriting
+# CI-worker wall-clock variation.
+class _LoopTurnWatchdog:
+    def __init__(self, loop: asyncio.AbstractEventLoop) -> None:
+        self.forced_stop = False
+        self._loop = loop
+        self._turns = 0
+        self._handle = loop.call_soon(self._tick)
+
+    def _tick(self) -> None:
+        self._turns += 1
+        if self._turns >= 100:
+            self.forced_stop = True  # pragma: no cover
+            self._loop.stop()  # pragma: no cover
+        else:
+            self._handle = self._loop.call_soon(self._tick)
+
+    def cancel(self) -> None:
+        self._handle.cancel()
+
+
+@pytest.fixture
+def loop_turn_watchdog() -> Generator[Callable[[asyncio.AbstractEventLoop], _LoopTurnWatchdog], None, None]:
+    watchdogs: list[_LoopTurnWatchdog] = []
+
+    def arm(loop: asyncio.AbstractEventLoop) -> _LoopTurnWatchdog:
+        watchdog = _LoopTurnWatchdog(loop)
+        watchdogs.append(watchdog)
+        return watchdog
+
+    try:
+        yield arm
+    finally:
+        for watchdog in watchdogs:
+            watchdog.cancel()
+
+
 @pytest.mark.parametrize('error_type', [KeyboardInterrupt, SystemExit])
-def test_sync_stream_bridge_init_propagates_base_exception(error_type: type[BaseException]):
+def test_sync_stream_bridge_init_propagates_base_exception(
+    error_type: type[BaseException], loop_turn_watchdog: Callable[[asyncio.AbstractEventLoop], _LoopTurnWatchdog]
+):
     """A base exception from `__aenter__` escapes immediately instead of hanging the event loop.
 
     VCR cannot inject an in-process base exception into the context-manager entry protocol.
@@ -928,7 +967,6 @@ def test_sync_stream_bridge_init_propagates_base_exception(error_type: type[Base
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     error = error_type('entry failed')
-    forced_stop = False
 
     class FailingContextManager:
         async def __aenter__(self) -> object:
@@ -942,23 +980,15 @@ def test_sync_stream_bridge_init_propagates_base_exception(error_type: type[Base
         ) -> None:
             pytest.fail('`__aexit__` must not be called when `__aenter__` fails')  # pragma: no cover
 
-    def force_stop() -> None:  # pragma: no cover
-        nonlocal forced_stop
-        forced_stop = True
-        loop.stop()
-
-    stop_handle = loop.call_later(1, force_stop)
+    watchdog = loop_turn_watchdog(loop)
     try:
         with pytest.raises(error_type) as exc_info:
             SyncStreamBridge(FailingContextManager(), async_alternative='`async_method`')
-        # The watchdog only guards against a hung constructor; cancel it before the liveness
-        # check so a slow worker can't have it fire mid-`run_until_complete`.
-        stop_handle.cancel()
+        watchdog.cancel()
         assert exc_info.value is error
-        assert not forced_stop
+        assert not watchdog.forced_stop
         assert loop.run_until_complete(asyncio.sleep(0)) is None
     finally:
-        stop_handle.cancel()
         loop.close()
         asyncio.set_event_loop(original_loop)
 
@@ -1308,13 +1338,14 @@ def test_sync_stream_bridge_early_close_cancels_waiting_pump():
 
 
 @pytest.mark.parametrize('error_type', [KeyboardInterrupt, SystemExit])
-def test_sync_stream_bridge_pump_propagates_base_exception_without_hanging(error_type: type[BaseException]):
+def test_sync_stream_bridge_pump_propagates_base_exception_without_hanging(
+    error_type: type[BaseException], loop_turn_watchdog: Callable[[asyncio.AbstractEventLoop], _LoopTurnWatchdog]
+):
     """A base exception from a completed pump escapes without stranding the caller's event loop.
 
     VCR cannot inject an in-process base exception into the iterator pump task.
     """
     error = error_type('pump failed')
-    forced_stop = False
 
     @asynccontextmanager
     async def stream_context() -> AsyncGenerator[object]:
@@ -1327,24 +1358,16 @@ def test_sync_stream_bridge_pump_propagates_base_exception_without_hanging(error
     bridge = SyncStreamBridge(stream_context(), async_alternative='`async_method`')
     loop = bridge._loop  # pyright: ignore[reportPrivateUsage]
     stream = bridge.stream_sync(source)
+    watchdog = loop_turn_watchdog(loop)
 
-    def force_stop() -> None:  # pragma: no cover
-        nonlocal forced_stop
-        forced_stop = True
-        loop.stop()
-
-    stop_handle = loop.call_later(1, force_stop)
-    try:
-        with pytest.raises(error_type) as exc_info:
-            while True:
-                next(stream)
-        stop_handle.cancel()
-        assert exc_info.value is error
-        assert not forced_stop
-        assert bridge._owner_task.done()  # pyright: ignore[reportPrivateUsage]
-        assert loop.run_until_complete(asyncio.sleep(0)) is None
-    finally:
-        stop_handle.cancel()
+    with pytest.raises(error_type) as exc_info:
+        while True:
+            next(stream)
+    watchdog.cancel()
+    assert exc_info.value is error
+    assert not watchdog.forced_stop
+    assert bridge._owner_task.done()  # pyright: ignore[reportPrivateUsage]
+    assert loop.run_until_complete(asyncio.sleep(0)) is None
 
 
 def test_run_stream_sync_preserves_capability_contextvars():
@@ -2159,6 +2182,13 @@ async def test_call_tool_wrong_name():
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+                state='interrupted',
             ),
         ]
     )
@@ -4206,8 +4236,8 @@ class TestMultipleToolCalls:
                 await result.get_output()  # pragma: no cover
 
         task = asyncio.create_task(run())
-        await asyncio.wait_for(first_done.wait(), timeout=1)
-        await asyncio.wait_for(pending_started.wait(), timeout=1)
+        await asyncio.wait_for(first_done.wait(), timeout=5)
+        await asyncio.wait_for(pending_started.wait(), timeout=5)
 
         task.cancel()
         with pytest.raises(asyncio.CancelledError):

@@ -62,7 +62,7 @@ print(dice_result.output)
 ```
 
 1. This is a pretty simple task, so we can use the fast and cheap Gemini flash model.
-2. We pass the user's name as the dependency, to keep things simple we use just the name as a string as the dependency.
+2. We pass the user's name as a string dependency to keep the example simple.
 3. This tool doesn't need any context, it just returns a random number. You could probably use dynamic instructions in this case.
 4. This tool needs the player's name, so it uses `RunContext` to access dependencies which are just the player's name in this case.
 5. Run the agent, passing the player's name as the dependency.
@@ -260,6 +260,11 @@ Function parameters are extracted from the function signature, and all parameter
 Even better, Pydantic AI extracts the docstring from functions and (thanks to [griffe](https://mkdocstrings.github.io/griffe/)) extracts parameter descriptions from the docstring and adds them to the schema.
 
 [Griffe supports](https://mkdocstrings.github.io/griffe/reference/docstrings/#docstrings) extracting parameter descriptions from `google`, `numpy`, and `sphinx` style docstrings. Pydantic AI will infer the format to use based on the docstring, but you can explicitly set it using [`docstring_format`][pydantic_ai.tools.DocstringFormat]. You can also enforce parameter requirements by setting `require_parameter_descriptions=True`. This will raise a [`UserError`][pydantic_ai.exceptions.UserError] if a parameter description is missing.
+
+Three parts of the docstring reach the model: the leading description, the parameter descriptions, and the
+first entry of the returns section. Other sections Griffe can parse, such as `Raises`, `Examples`, `Notes`,
+`Warnings` and `Yields`, are dropped, so anything the model needs to act on belongs in the
+leading description, a parameter description, or the first returns entry.
 
 To demonstrate a tool's schema, here we use [`FunctionModel`][pydantic_ai.models.function.FunctionModel] to print the schema a model would receive:
 

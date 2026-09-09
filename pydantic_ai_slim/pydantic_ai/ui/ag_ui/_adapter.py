@@ -237,14 +237,14 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
     ag_ui_version: str = DEFAULT_AG_UI_VERSION
     """AG-UI protocol version controlling behavior thresholds.
 
-    Accepts any version string (e.g. `'0.1.13'`). Defaults to the version detected from
+    Accepts any version string (e.g. `'0.1.11'`). Defaults to the version detected from
     the installed `ag-ui-protocol` package.
 
     Known thresholds:
 
-    - `< 0.1.13`: emits `THINKING_*` events during streaming, drops `ThinkingPart`
+    - `< 0.1.11`: emits `THINKING_*` events during streaming, drops `ThinkingPart`
       from `dump_messages` output.
-    - `>= 0.1.13`: emits `REASONING_*` events with encrypted metadata during streaming, and
+    - `>= 0.1.11`: emits `REASONING_*` events with encrypted metadata during streaming, and
       includes `ThinkingPart` as `ReasoningMessage` in `dump_messages` output for full round-trip
       fidelity of thinking signatures and provider metadata.
     - `>= 0.1.15`: emits typed multimodal input content (`ImageInputContent`, `AudioInputContent`,
@@ -778,9 +778,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         tool_messages: list[ToolMessage] = []
 
         version = parse_ag_ui_version(ag_ui_version)
-        # `ReasoningMessage` is a REASONING_* type (0.1.13+); the `tool_kind` carrier
-        # `ToolCall`/`ToolMessage.encrypted_value` landed earlier in 0.1.11 — see
-        # `tool_kind_encrypted_value`.
+        # `ReasoningMessage` and the `tool_kind` carrier `ToolCall`/`ToolMessage.encrypted_value`
+        # both landed in 0.1.11, so these two thresholds coincide — see `tool_kind_encrypted_value`.
         use_reasoning = version >= REASONING_VERSION
         use_encrypted_value = version >= ENCRYPTED_VALUE_VERSION
 
@@ -909,6 +908,9 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
 
         Note: The round-trip `dump_messages` -> `load_messages` is not fully lossless:
 
+        - `ModelRequest.metadata` and top-level `ModelResponse.provider_details` are lost. AG-UI has
+          no trusted message-level carrier for framework or provider state; general client-controlled
+          metadata must not be restored as server-side state.
         - `TextPart.id`, `.provider_name`, `.provider_details` are lost.
         - `ToolCallPart.id`, `.provider_name`, `.provider_details` are lost.
         - `ToolCallPart.args` and `NativeToolCallPart.args` that don't parse as a JSON object are
@@ -941,8 +943,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
           when `preserve_file_data=True`, which reloads as a separate `UserPromptPart`.
         - `MultiModalContent` items in `ToolReturnPart`/`NativeToolReturnPart.content` always round-trip,
           regardless of `preserve_file_data`: the full content (files as base64/URL dicts) is serialized
-          inline into the JSON `ToolMessage.content` and rehydrated on reload via the `ToolReturnContent`
-          discriminator. The same serialization is used for both history (`dump_messages`) and the live
+          inline into the JSON `ToolMessage.content` and rehydrated on reload through the `ToolReturnContent`
+          union. The same serialization is used for both history (`dump_messages`) and the live
           event stream (`ToolCallResultEvent.content`), so files survive either round-trip.
         - Part ordering within a `ModelResponse` may change when text follows tool calls.
 

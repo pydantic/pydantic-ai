@@ -48,6 +48,17 @@ class AbstractModel(ABC):
         return f'{self.system}:{self.model_name}'
 
     @property
+    def context_window(self) -> int | None:
+        """The maximum number of tokens the model can handle at once, input and output combined, or `None` when unknown.
+
+        Models with a profile read it from the profile's `context_window`, which is filled from
+        [genai-prices](https://github.com/pydantic/genai-prices) when no profile layer sets it. Wrapper
+        models report their wrapped model's; a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel]
+        reports the smallest among its candidates.
+        """
+        return None
+
+    @property
     def label(self) -> str:
         """Human-friendly display label for the model.
 

@@ -75,7 +75,13 @@ from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, TestEnv, try_import
 
 with try_import() as imports_successful:
     from botocore.client import BaseClient
-    from botocore.exceptions import ClientError
+    from botocore.exceptions import (
+        BotoCoreError,
+        ClientError,
+        EndpointConnectionError,
+        ParamValidationError,
+        ReadTimeoutError,
+    )
     from botocore.hooks import HierarchicalEmitter
     from mypy_boto3_bedrock_runtime import BedrockRuntimeClient
     from mypy_boto3_bedrock_runtime.type_defs import MessageUnionTypeDef, SystemContentBlockTypeDef, ToolTypeDef
@@ -96,7 +102,7 @@ pytestmark = [
 class _StubBedrockClient:
     """Minimal Bedrock client that always raises the provided error."""
 
-    def __init__(self, error: ClientError):
+    def __init__(self, error: ClientError | BotoCoreError):
         self._error = error
         self.meta = SimpleNamespace(endpoint_url='https://bedrock.stub', events=HierarchicalEmitter())
 
@@ -149,7 +155,7 @@ async def test_bedrock_client_property_can_be_reassigned(bedrock_provider: Bedro
 
 
 async def test_bedrock_model_blocks_requests_when_disabled():
-    model = _bedrock_model_with_client_error(ClientError({'Error': {'Code': 'TestError'}}, 'Converse'))
+    model = _bedrock_model_with_error(ClientError({'Error': {'Code': 'TestError'}}, 'Converse'))
     messages: list[ModelMessage] = [ModelRequest.user_text_prompt('hello')]
     model_request_parameters = ModelRequestParameters()
 
@@ -164,7 +170,7 @@ async def test_bedrock_model_blocks_requests_when_disabled():
         await model.count_tokens(messages, None, model_request_parameters)
 
 
-def _bedrock_model_with_client_error(error: ClientError) -> BedrockConverseModel:
+def _bedrock_model_with_error(error: ClientError | BotoCoreError) -> BedrockConverseModel:
     """Instantiate a BedrockConverseModel wired to always raise the given error."""
     return BedrockConverseModel(
         'us.amazon.nova-micro-v1:0',
@@ -608,7 +614,7 @@ async def test_bedrock_count_tokens_error(allow_model_requests: None, bedrock_pr
 
 async def test_bedrock_request_non_http_error(allow_model_requests: None):
     error = ClientError({'Error': {'Code': 'TestException', 'Message': 'broken connection'}}, 'converse')
-    model = _bedrock_model_with_client_error(error)
+    model = _bedrock_model_with_error(error)
     params = ModelRequestParameters()
 
     with pytest.raises(ModelAPIError) as exc_info:
@@ -621,7 +627,7 @@ async def test_bedrock_request_non_http_error(allow_model_requests: None):
 
 async def test_bedrock_count_tokens_non_http_error(allow_model_requests: None):
     error = ClientError({'Error': {'Code': 'TestException', 'Message': 'broken connection'}}, 'count_tokens')
-    model = _bedrock_model_with_client_error(error)
+    model = _bedrock_model_with_error(error)
     params = ModelRequestParameters()
 
     with pytest.raises(ModelAPIError) as exc_info:
@@ -630,6 +636,44 @@ async def test_bedrock_count_tokens_non_http_error(allow_model_requests: None):
     assert exc_info.value.message == snapshot(
         'An error occurred (TestException) when calling the count_tokens operation: broken connection'
     )
+
+
+async def test_bedrock_request_transport_error(allow_model_requests: None):
+    """Not a VCR test: a cassette replays a recorded response, it cannot make botocore time out or fail to connect."""
+    error = ReadTimeoutError(endpoint_url='https://bedrock.stub')
+    model = _bedrock_model_with_error(error)
+    params = ModelRequestParameters()
+
+    with pytest.raises(ModelAPIError) as exc_info:
+        await model.request([ModelRequest.user_text_prompt('hi')], None, params)
+
+    assert exc_info.value.message == snapshot('Read timeout on endpoint URL: "https://bedrock.stub"')
+    assert exc_info.value.model_name == 'us.amazon.nova-micro-v1:0'
+    assert exc_info.value.__cause__ is error
+
+
+async def test_bedrock_count_tokens_transport_error(allow_model_requests: None):
+    """Not a VCR test: a cassette replays a recorded response, it cannot make botocore time out or fail to connect."""
+    error = ReadTimeoutError(endpoint_url='https://bedrock.stub')
+    model = _bedrock_model_with_error(error)
+    params = ModelRequestParameters()
+
+    with pytest.raises(ModelAPIError) as exc_info:
+        await model.count_tokens([ModelRequest.user_text_prompt('hi')], None, params)
+
+    assert exc_info.value.message == snapshot('Read timeout on endpoint URL: "https://bedrock.stub"')
+
+
+async def test_bedrock_request_param_validation_error_not_wrapped(allow_model_requests: None):
+    """Only transport failures become `ModelAPIError`; client-side botocore errors still surface as themselves.
+
+    Not a VCR test: a real request never raises a client-side botocore error on demand.
+    """
+    error = ParamValidationError(report='bad params')
+    model = _bedrock_model_with_error(error)
+
+    with pytest.raises(ParamValidationError):
+        await model.request([ModelRequest.user_text_prompt('hi')], None, ModelRequestParameters())
 
 
 def _bedrock_arn(resource: str) -> str:
@@ -755,7 +799,7 @@ async def test_bedrock_count_tokens_tool_config(
 
 async def test_bedrock_stream_non_http_error(allow_model_requests: None):
     error = ClientError({'Error': {'Code': 'TestException', 'Message': 'broken connection'}}, 'converse_stream')
-    model = _bedrock_model_with_client_error(error)
+    model = _bedrock_model_with_error(error)
     params = ModelRequestParameters()
 
     with pytest.raises(ModelAPIError) as exc_info:
@@ -766,10 +810,24 @@ async def test_bedrock_stream_non_http_error(allow_model_requests: None):
     assert 'broken connection' in exc_info.value.message
 
 
+async def test_bedrock_stream_transport_error(allow_model_requests: None):
+    """Not a VCR test: a cassette replays a recorded response, it cannot make botocore time out or fail to connect."""
+    error = EndpointConnectionError(endpoint_url='https://bedrock.stub')
+    model = _bedrock_model_with_error(error)
+    params = ModelRequestParameters()
+
+    with pytest.raises(ModelAPIError) as exc_info:
+        async with model.request_stream([ModelRequest.user_text_prompt('hi')], None, params) as stream:
+            async for _ in stream:
+                pass
+
+    assert exc_info.value.message == snapshot('Could not connect to the endpoint URL: "https://bedrock.stub"')
+
+
 async def test_stub_provider_properties():
     # tests the test utility itself...
     error = ClientError({'Error': {'Code': 'TestException', 'Message': 'test'}}, 'converse')
-    model = _bedrock_model_with_client_error(error)
+    model = _bedrock_model_with_error(error)
     provider = model._provider  # pyright: ignore[reportPrivateUsage]
 
     assert provider.name == 'bedrock-stub'
@@ -6557,8 +6615,9 @@ async def test_bedrock_mistral_tool_return_image_deferred_to_separate_turn(bedro
             {
                 'role': 'user',
                 'content': [
-                    {'text': 'This is file d003ad:'},
+                    {'text': '<tool_result tool_name="get_photo" tool_call_id="getphoto1" file_id="d003ad">'},
                     {'image': {'format': 'jpeg', 'source': {'s3Location': {'uri': 's3://bucket/photo.jpg'}}}},
+                    {'text': '</tool_result>'},
                 ],
             },
         ]
@@ -6613,10 +6672,12 @@ async def test_bedrock_mistral_two_tool_returns_images_grouped_then_deferred(bed
             {
                 'role': 'user',
                 'content': [
-                    {'text': 'This is file d003ad:'},
+                    {'text': '<tool_result tool_name="get_photo" tool_call_id="getphoto1" file_id="d003ad">'},
                     {'image': {'format': 'jpeg', 'source': {'s3Location': {'uri': 's3://bucket/photo.jpg'}}}},
-                    {'text': 'This is file d003ad:'},
+                    {'text': '</tool_result>'},
+                    {'text': '<tool_result tool_name="get_photo" tool_call_id="getphoto2" file_id="d003ad">'},
                     {'image': {'format': 'jpeg', 'source': {'s3Location': {'uri': 's3://bucket/photo.jpg'}}}},
+                    {'text': '</tool_result>'},
                 ],
             },
         ]
@@ -6661,7 +6722,7 @@ async def test_bedrock_nova_tool_return_media_stays_colocated(bedrock_provider: 
                             'status': 'success',
                         }
                     },
-                    {'text': 'This is file 49d492:'},
+                    {'text': '<tool_result tool_name="get_report" tool_call_id="t1" file_id="49d492">'},
                     {
                         'document': {
                             'name': 'Document 1',
@@ -6669,6 +6730,7 @@ async def test_bedrock_nova_tool_return_media_stays_colocated(bedrock_provider: 
                             'source': {'s3Location': {'uri': 's3://bucket/report.csv'}},
                         }
                     },
+                    {'text': '</tool_result>'},
                 ],
             },
         ]
@@ -6854,3 +6916,139 @@ async def test_bedrock_anthropic_message_history_starting_with_response(
             ),
         ]
     )
+
+
+def test_bedrock_anthropic_5_api_rejects_sampling_settings(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """Bedrock itself rejects the sampling settings on a Claude 5 model, which is why they are dropped.
+
+    Sent through the raw client rather than the model, so this records the API's own behavior and
+    cannot drift with our filtering: cassettes are matched on the URL, not the body, so a recording
+    made through the model would keep replaying if the settings ever started riding along again.
+    `test_bedrock_anthropic_5_drops_sampling_settings` is what catches that by matching the newly
+    generated request body against its recording during playback.
+    """
+    model = BedrockConverseModel('eu.anthropic.claude-opus-5', provider=bedrock_provider)
+
+    with pytest.raises(ClientError) as exc_info:
+        model.client.converse(
+            modelId='eu.anthropic.claude-opus-5',
+            messages=[{'role': 'user', 'content': [{'text': 'What is 2+2?'}]}],
+            inferenceConfig={'maxTokens': 16, 'temperature': 0.2},
+        )
+
+    # Asserted on the status and message rather than `Error.Code`: botocore derives the code from
+    # the `x-amzn-errortype` response header, which the cassette's header filtering does not keep,
+    # so on replay it falls back to the HTTP status. `response` is a `TypedDict` whose keys are all
+    # optional, so it is read as a plain mapping.
+    response = cast(dict[str, Any], exc_info.value.response)
+    assert response['ResponseMetadata']['HTTPStatusCode'] == 400
+    assert response['Error']['Message'] == snapshot(
+        'The model returned the following errors: `temperature` is deprecated for this model.'
+    )
+
+
+@pytest.mark.vcr(additional_matchers=['body'])
+async def test_bedrock_anthropic_5_drops_sampling_settings(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette
+):
+    """A Claude 5 model on Bedrock warns and drops the sampling settings instead of failing with a 400.
+
+    Mirrors `AnthropicModel`, which honors the same `anthropic_disallows_sampling_settings` profile
+    flag. The body matcher makes playback fail if the newly generated request differs from the
+    recording; the snapshots keep the expected wire shape visible in the test. `temperature` and
+    `top_p` must not reach `inferenceConfig`, and unified `top_k` must not reach
+    `additionalModelRequestFields`.
+    """
+    settings = BedrockModelSettings(max_tokens=16, temperature=0.2, top_p=0.3, top_k=5)
+    model = BedrockConverseModel('eu.anthropic.claude-opus-5', provider=bedrock_provider)
+    agent = Agent(model, model_settings=settings)
+
+    with pytest.warns(UserWarning, match='Sampling parameters') as recorded:
+        result = await agent.run('What is 2+2? Answer with the number only.')
+
+    assert result.output.strip() == snapshot('4')
+    sampling_warnings = [str(w.message) for w in recorded if 'Sampling parameters' in str(w.message)]
+    assert sampling_warnings == snapshot(
+        [
+            "Sampling parameters ['temperature', 'top_p', 'top_k'] are not supported by "
+            "'eu.anthropic.claude-opus-5'. These settings will be ignored."
+        ]
+    )
+
+    sent = single_request_body(vcr)
+    assert sent['inferenceConfig'] == snapshot({'maxTokens': 16})
+    assert 'additionalModelRequestFields' not in sent
+    # Filtering happens on a copy, so the caller's own settings dict is left intact.
+    assert settings == snapshot({'max_tokens': 16, 'temperature': 0.2, 'top_p': 0.3, 'top_k': 5})
+
+
+@pytest.mark.vcr(additional_matchers=['body'])
+async def test_bedrock_non_flagged_model_keeps_sampling_settings(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette
+):
+    """The drop is gated on the profile flag: a model without it still receives the settings.
+
+    Without this, a filter that over-reached would look identical to a working one. `top_p` is left
+    out because the model rejects it alongside `temperature` with "`temperature` and `top_p` cannot
+    both be specified for this model"; all three settings travel the same path, so one of the pair is
+    enough to pin it (the same reason `test_anthropic_sampling_settings_reach_the_wire` omits it).
+    The body matcher proves the newly generated request still matches this expected wire shape.
+    """
+    settings = BedrockModelSettings(max_tokens=16, temperature=0.2, top_k=5)
+    model = BedrockConverseModel('eu.anthropic.claude-haiku-4-5-20251001-v1:0', provider=bedrock_provider)
+    agent = Agent(model, model_settings=settings)
+
+    await agent.run('What is 2+2? Answer with the number only.')
+
+    sent = single_request_body(vcr)
+    assert sent['inferenceConfig'] == snapshot({'maxTokens': 16, 'temperature': 0.2})
+    assert sent['additionalModelRequestFields'] == snapshot({'top_k': 5})
+
+
+class _CountTokensCapturingClient:
+    """Records the `count_tokens` params instead of calling Bedrock."""
+
+    def __init__(self):
+        self.calls: list[dict[str, Any]] = []
+        self.meta = SimpleNamespace(endpoint_url='https://bedrock.stub', events=HierarchicalEmitter())
+
+    def count_tokens(self, **kwargs: Any) -> dict[str, int]:
+        self.calls.append(kwargs)
+        return {'inputTokens': 3}
+
+
+async def test_bedrock_anthropic_5_count_tokens_drops_sampling_settings(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """`count_tokens` drops them too, because it routes through the same `prepare_request`.
+
+    Captured from a stub client rather than recorded: no model that sets the flag supports Bedrock's
+    CountTokens operation today (it answers "The provided model doesn't support counting tokens."),
+    so there is no live exchange to record. The profile still comes from the real provider.
+    """
+    client = _CountTokensCapturingClient()
+    settings = BedrockModelSettings(max_tokens=16, temperature=0.2, top_p=0.3, top_k=5)
+    model = BedrockConverseModel('eu.anthropic.claude-opus-5', provider=bedrock_provider)
+    model.client = cast(Any, client)
+
+    with pytest.warns(UserWarning, match='Sampling parameters'):
+        result = await model.count_tokens(
+            [ModelRequest.user_text_prompt('Hello, world!')], settings, ModelRequestParameters()
+        )
+
+    assert result.input_tokens == 3
+    assert 'additionalModelRequestFields' not in client.calls[0]['input']['converse']
+
+
+def test_bedrock_anthropic_5_no_sampling_settings_pass_through_silently(
+    bedrock_provider: BedrockProvider, recwarn: pytest.WarningsRecorder
+):
+    """A flagged model whose settings carry no sampling parameters is left alone, with no warning."""
+    model = BedrockConverseModel('eu.anthropic.claude-opus-5', provider=bedrock_provider)
+
+    prepared, _ = model.prepare_request(BedrockModelSettings(max_tokens=16), ModelRequestParameters())
+
+    assert prepared == snapshot({'max_tokens': 16})
+    assert not [w for w in recwarn if 'Sampling parameters' in str(w.message)]

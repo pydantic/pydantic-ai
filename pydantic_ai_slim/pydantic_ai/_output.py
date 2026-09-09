@@ -32,7 +32,7 @@ from .output import (
     _OutputSpecItem,  # type: ignore[reportPrivateUsage]
 )
 from .tools import DeferredToolRequests, GenerateToolJsonSchema, ObjectJsonSchema, ToolDefinition
-from .toolsets.abstract import AbstractToolset, ToolsetTool
+from .toolsets.abstract import OUTPUT_TOOLSET_ID, AbstractToolset, ToolsetTool
 
 if TYPE_CHECKING:
     from .capabilities.abstract import AbstractCapability, RawOutput
@@ -865,7 +865,7 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
             # Extract the function's input type (what the model produces) for output_type
             type_hints = _utils.get_function_type_hints(output)
             for hint_name, hint_type in type_hints.items():  # pragma: no branch
-                if hint_name != 'return' and not _function_schema._is_call_ctx(hint_type):  # pyright: ignore[reportPrivateUsage]
+                if hint_name != 'return' and not _function_schema.is_call_ctx(hint_type):
                     self.output_type = hint_type
                     break
         else:
@@ -1502,7 +1502,7 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
 
     @property
     def id(self) -> str | None:
-        return '<output>'
+        return OUTPUT_TOOLSET_ID
 
     @property
     def label(self) -> str:

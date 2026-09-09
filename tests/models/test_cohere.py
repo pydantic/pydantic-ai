@@ -774,6 +774,7 @@ async def test_cohere_model_thinking_part(allow_model_requests: None, co_api_key
         model=co_model,
         message_history=result.all_messages(),
     )
+    # Cohere does not charge per-token API rates for Command A Reasoning, so no cost is calculated.
     assert result.new_messages() == snapshot(
         [
             ModelRequest(
@@ -796,7 +797,6 @@ async def test_cohere_model_thinking_part(allow_model_requests: None, co_api_key
                     input_tokens=2190,
                     output_tokens=1257,
                     details={'input_tokens': 431, 'output_tokens': 661},
-                    cost=Decimal('0.018045'),
                 ),
                 model_name='command-a-reasoning-08-2025',
                 timestamp=IsDatetime(),

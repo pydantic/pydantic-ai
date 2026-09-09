@@ -96,9 +96,9 @@ def prefectify_toolset(
         )
 
     if isinstance(toolset, DynamicToolset):
-        # The deprecated `PrefectAgent` still accepts anonymous dynamic toolsets and
-        # must retain its existing inline behavior. The capability path validates IDs
-        # before dispatching here.
+        # Only the deprecated `PrefectAgent` reaches this module now (`PrefectDurability`
+        # builds its toolsets on the shared durable base), and it still accepts anonymous
+        # dynamic toolsets, which must retain their existing inline behavior.
         if toolset.id is None:
             return toolset
         from ._dynamic_toolset import prefectify_dynamic_toolset

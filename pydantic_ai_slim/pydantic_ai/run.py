@@ -19,6 +19,7 @@ from . import (
 )
 from ._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority
 from ._instrumentation import current_otel_traceparent
+from ._run_context import CustomEventT
 from .output import OutputDataT
 from .tools import AgentDepsT
 
@@ -338,8 +339,13 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         self.ctx.deps.cancellation.bind()
         cap = self.ctx.deps.root_capability
         try:
-            result = await cap.wrap_node_run(run_context, node=node, handler=step_fn)
+            if cap._has_wrap_node_run:  # pyright: ignore[reportPrivateUsage]
+                result = await cap.wrap_node_run(run_context, node=node, handler=step_fn)
+            else:
+                result = await step_fn(node)
         except Exception as e:
+            if not cap._has_on_node_run_error:  # pyright: ignore[reportPrivateUsage]
+                raise
             result = await cap.on_node_run_error(run_context, node=node, error=e)
             # on_node_run_error recovered by returning a result.
             # The graph runner is in ErrorMarker state; update it to match.
@@ -479,7 +485,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         streamed, so streaming is enabled for it here the same way `agent.run()` enables it.
         `node.stream()` applies the capability chain itself, so draining it is all that's needed.
         """
-        if self.ctx.deps.root_capability.has_wrap_run_event_stream:
+        if self.ctx.deps.root_capability.has_wrap_run_event_stream or self.ctx.deps.root_capability.has_on_event:
             await _agent_graph.drain_node_event_stream(node, self.ctx)
         return await self._advance_graph(node)
 
@@ -510,6 +516,42 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         Exposed for inspection / debugging; use [`enqueue`][pydantic_ai.run.AgentRun.enqueue] to add messages.
         """
         return self._graph_run.state.pending_messages
+
+    async def emit(self, event: CustomEventT, /) -> CustomEventT:
+        """Emit a [`CustomEvent`][pydantic_ai.messages.CustomEvent] into this run's event stream.
+
+        Lets code driving [`Agent.iter`][pydantic_ai.agent.AbstractAgent.iter] inject application-defined
+        events (e.g. from an external harness or event bus) into the stream, alongside events emitted from
+        tools via [`RunContext.emit`][pydantic_ai.tools.RunContext.emit].
+        The event surfaces on the next pull from the run's node stream.
+
+        Designed to be called from the same event loop driving `agent.iter()`. If you're forwarding events
+        from a different thread, submit the coroutine to the agent's loop
+        (e.g. `asyncio.run_coroutine_threadsafe(agent_run.emit(event), loop)`).
+
+        Args:
+            event: The [`CustomEvent`][pydantic_ai.messages.CustomEvent] to emit.
+
+        Returns:
+            The event as emitted.
+
+        Raises:
+            UserError: If the run has already ended (no stream remains to deliver the event), or if
+                passed a [`CapabilityEvent`][pydantic_ai.messages.CapabilityEvent]: those belong
+                to capabilities, and code driving the run is application code.
+        """
+        if self.result is not None:
+            raise exceptions.UserError(
+                '`emit` cannot be called after the run has ended: nothing remains to deliver the event.'
+            )
+        if isinstance(event, _messages.CapabilityEvent):
+            raise exceptions.UserError(
+                'Capability events belong to capabilities and can only be emitted from a capability hook or '
+                'capability-contributed tool. Application code should emit a `CustomEvent`; it can re-emit a '
+                'received capability event as one.'
+            )
+        self._graph_run.state.event_stream_buffer.append(event)
+        return event
 
     def enqueue(
         self,

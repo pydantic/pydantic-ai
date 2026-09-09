@@ -1,0 +1,64 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '202'
+      content-type:
+      - application/json
+      copilot-integration-id:
+      - vscode-chat
+      editor-plugin-version:
+      - copilot-chat/0.26.7
+      editor-version:
+      - vscode/1.95.0
+      host:
+      - api.githubcopilot.com
+      openai-intent:
+      - conversation-panel
+    method: POST
+    parsed_body:
+      messages:
+      - content: Be concise.
+        role: system
+      - content: What is the capital of France?
+        role: user
+      model: gpt-5.4
+      stream: true
+      stream_options:
+        include_usage: true
+    uri: https://api.githubcopilot.com/chat/completions
+  response:
+    body:
+      string: |+
+        data: {"choices":[{"index":0,"delta":{"content":"","role":"assistant"}}],"created":1788482753,"id":"chatcmpl-EKCLxkhFThycWUbcAmta2jmCvsFCH","model":"gpt-5.4"}
+
+        data: {"choices":[{"index":0,"delta":{"content":"Paris"}}],"created":1788482753,"id":"chatcmpl-EKCLxkhFThycWUbcAmta2jmCvsFCH","model":"gpt-5.4"}
+
+        data: {"choices":[{"index":0,"delta":{"content":"."}}],"created":1788482753,"id":"chatcmpl-EKCLxkhFThycWUbcAmta2jmCvsFCH","model":"gpt-5.4"}
+
+        data: {"choices":[{"finish_reason":"stop","index":0,"delta":{"content":null}}],"created":1788482753,"id":"chatcmpl-EKCLxkhFThycWUbcAmta2jmCvsFCH","usage":{"completion_tokens":5,"completion_tokens_details":{"accepted_prediction_tokens":0,"rejected_prediction_tokens":0},"prompt_tokens":20,"prompt_tokens_details":{"cached_tokens":0},"total_tokens":25},"model":"gpt-5.4","copilot_usage":{"token_details":[{"batch_size":1000000,"cost_per_batch":250000000000,"model":"gpt-5.4","token_count":20,"token_type":"input"},{"batch_size":1000000,"cost_per_batch":25000000000,"model":"gpt-5.4","token_count":0,"token_type":"cache_read"},{"batch_size":1000000,"cost_per_batch":0,"model":"gpt-5.4","token_count":0,"token_type":"cache_write"},{"batch_size":1000000,"cost_per_batch":1500000000000,"model":"gpt-5.4","token_count":5,"token_type":"output"}],"total_nano_aiu":12500000}}
+
+        data: [DONE]
+
+    headers:
+      cache-control:
+      - no-cache
+      content-security-policy:
+      - default-src 'none'; sandbox
+      content-type:
+      - text/event-stream
+      strict-transport-security:
+      - max-age=31536000
+      transfer-encoding:
+      - chunked
+    status:
+      code: 200
+      message: OK
+version: 1
+...

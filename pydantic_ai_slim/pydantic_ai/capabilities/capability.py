@@ -6,9 +6,16 @@ from typing import Any, overload
 
 from pydantic.json_schema import GenerateJsonSchema
 
-from pydantic_ai._instructions import AgentInstructions, normalize_instructions
+from pydantic_ai._instructions import (
+    AgentInstructions,
+    SourcedInstruction,
+    normalize_instructions,
+    validate_instruction_id_segment,
+    validate_instruction_name,
+)
 from pydantic_ai._run_context import AgentDepsT, RunContext
 from pydantic_ai.capabilities.abstract import AbstractCapability, CapabilityDescription
+from pydantic_ai.messages import CapabilityInstructionSource, InstructionId
 from pydantic_ai.tools import (
     ArgsValidatorFunc,
     DocstringFormat,
@@ -56,7 +63,7 @@ class Capability(AbstractCapability[AgentDepsT]):
     """
 
     _function_toolset: FunctionToolset[AgentDepsT] = field(init=False, repr=False)
-    _instructions: list[str | SystemPromptFunc[AgentDepsT]] = field(init=False, repr=False, default_factory=lambda: [])
+    _instructions: list[SourcedInstruction[AgentDepsT]] = field(init=False, repr=False, default_factory=lambda: [])
     _description: CapabilityDescription[AgentDepsT] | None = field(init=False, repr=False, default=None)
 
     def __init__(
@@ -73,7 +80,9 @@ class Capability(AbstractCapability[AgentDepsT]):
 
         Args:
             instructions: Static instructions and/or instruction function(s), available via
-                `get_instructions()`. Register more with the
+                `get_instructions()`. Pass an [`InstructionPart`][pydantic_ai.messages.InstructionPart]
+                to declare a part's [`name`][pydantic_ai.messages.InstructionPart.name] or mark it
+                [`dynamic`][pydantic_ai.messages.InstructionPart.dynamic]. Register more with the
                 [`instructions`][pydantic_ai.capabilities.Capability.instructions] decorator.
             toolsets: Toolsets to register with the agent.
             tools: Function tools to register with the agent.
@@ -89,6 +98,8 @@ class Capability(AbstractCapability[AgentDepsT]):
             resolved_toolsets = tuple(toolsets)
         else:
             resolved_toolsets = ()
+        if id is not None:
+            validate_instruction_id_segment(id, kind='Capability id')
         self.id = id
         self.description = description if isinstance(description, str) else None
         self._description = description
@@ -99,7 +110,9 @@ class Capability(AbstractCapability[AgentDepsT]):
         # durable execution, which wraps leaf toolsets by `id` at construction time (see
         # `docs/capabilities/`). User-provided `toolsets=` keep their own ids and are never overwritten.
         self._function_toolset = FunctionToolset[AgentDepsT](tools, id=id)
-        self._instructions = list(normalize_instructions(instructions))
+        self._instructions = [
+            self._attribute_instruction(instruction) for instruction in normalize_instructions(instructions)
+        ]
 
     @classmethod
     def get_serialization_name(cls) -> str | None:
@@ -112,25 +125,50 @@ class Capability(AbstractCapability[AgentDepsT]):
         return self._description
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
-        return list(self._instructions) if self._instructions else None
+        return [sourced.instruction for sourced in self._instructions] or None
+
+    def _collect_instructions(self) -> list[SourcedInstruction[AgentDepsT]]:
+        if type(self).get_instructions is not Capability.get_instructions:
+            # A subclass computes its own instructions, so there are no declared names to resolve.
+            return super()._collect_instructions()
+        return list(self._instructions)
 
     def get_toolset(self) -> AgentToolset[AgentDepsT] | None:
-        toolsets: list[AgentToolset[AgentDepsT]] = []
-        if self._function_toolset.tools:
-            toolsets.append(self._function_toolset)
-        toolsets.extend(self.toolsets)
+        # Numbered over `self.toolsets` alone, so whether `tools=` happens to be populated when
+        # this is called doesn't shift the ids of the callables the user passed.
+        leaves: list[AbstractToolset[AgentDepsT]] = [
+            ts
+            if isinstance(ts, AbstractToolset)
+            else DynamicToolset[AgentDepsT](toolset_func=ts, id=self._toolset_id(index))
+            for index, ts in enumerate(self.toolsets)
+        ]
+        materialized: list[AbstractToolset[AgentDepsT]] = (
+            [self._function_toolset, *leaves] if self._function_toolset.tools else leaves
+        )
 
-        if not toolsets:
+        if not materialized:
             # Return the live (currently-empty) function toolset rather than `None` so tools
             # registered after construction via `@tool`/`@tool_plain` still surface: the agent
             # wires in this reference once, and `None` would drop it and hide late additions.
             return self._function_toolset
-        if len(toolsets) == 1:
-            return toolsets[0]
-        materialized: list[AbstractToolset[AgentDepsT]] = [
-            ts if isinstance(ts, AbstractToolset) else DynamicToolset[AgentDepsT](toolset_func=ts) for ts in toolsets
-        ]
+        if len(materialized) == 1:
+            return materialized[0]
         return CombinedToolset[AgentDepsT](materialized)
+
+    def _toolset_id(self, index: int) -> str | None:
+        """The `id` for the leaf toolset this capability builds around the callable at `index`.
+
+        Durable execution identifies a leaf toolset by `id`, so a capability the user named has to
+        pass that name down or the toolset it contributes stays anonymous and unusable there
+        (#7274). One capability can contribute several leaves, though -- `tools=` builds a
+        `FunctionToolset` that already took the bare `id` -- so the position within this
+        capability's own arguments distinguishes them. That position is stable because it is the
+        order the user wrote in `toolsets=`, not an order the run happened to compose, and not one
+        that shifts when a `@tool` is registered later.
+
+        Pass a `DynamicToolset` with its own `id` instead of a bare callable to name one yourself.
+        """
+        return None if self.id is None else f'{self.id}_{index}'
 
     @overload
     def tool_plain(self, func: ToolFuncPlain[ToolParams], /) -> ToolFuncPlain[ToolParams]: ...
@@ -289,12 +327,16 @@ class Capability(AbstractCapability[AgentDepsT]):
     def instructions(self, func: Callable[[], Awaitable[str | None]], /) -> Callable[[], Awaitable[str | None]]: ...
 
     @overload
-    def instructions(self, /) -> Callable[[SystemPromptFunc[AgentDepsT]], SystemPromptFunc[AgentDepsT]]: ...
+    def instructions(
+        self, /, *, name: str | None = None
+    ) -> Callable[[SystemPromptFunc[AgentDepsT]], SystemPromptFunc[AgentDepsT]]: ...
 
     def instructions(
         self,
         func: SystemPromptFunc[AgentDepsT] | None = None,
         /,
+        *,
+        name: str | None = None,
     ) -> Callable[[SystemPromptFunc[AgentDepsT]], SystemPromptFunc[AgentDepsT]] | SystemPromptFunc[AgentDepsT]:
         """Decorator to register an instructions function on this capability.
 
@@ -313,16 +355,33 @@ class Capability(AbstractCapability[AgentDepsT]):
         async def dynamic(ctx: RunContext[str]) -> str:
             return f'extra: {ctx.deps}'
         ```
+
+        Args:
+            func: The instructions function to register.
+            name: An optional name for the instruction part this function produces, keyed as
+                `'capability:<capability id>:<name>'` on
+                [`InstructionPart.id`][pydantic_ai.messages.InstructionPart.id] so an application can
+                address this part specifically, where the capability's own key addresses everything it
+                contributes. Requires the capability to have an
+                [`id`][pydantic_ai.capabilities.AbstractCapability.id] — without one there is no source
+                key to qualify the name against, so the part stays unaddressable. See
+                [instruction parts](../agent.md#instruction-parts).
         """
-        if func is None:
+        if name is not None:
+            validate_instruction_name(name)
 
-            def decorator(
-                func_: SystemPromptFunc[AgentDepsT],
-            ) -> SystemPromptFunc[AgentDepsT]:
-                self._instructions.append(func_)
-                return func_
+        def decorator(
+            func_: SystemPromptFunc[AgentDepsT],
+        ) -> SystemPromptFunc[AgentDepsT]:
+            source = CapabilityInstructionSource(self.id) if self.id is not None else None
+            self._instructions.append(
+                SourcedInstruction(
+                    func_,
+                    name=name,
+                    id=InstructionId(source, name=name) if source is not None else None,
+                    dynamic=True,
+                )
+            )
+            return func_
 
-            return decorator
-        else:
-            self._instructions.append(func)
-            return func
+        return decorator if func is None else decorator(func)

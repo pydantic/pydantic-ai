@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from dataclasses import fields, is_dataclass
 from typing import Any, TypeGuard
 
@@ -8,7 +9,7 @@ from pydantic import BaseModel
 
 from pydantic_ai import ToolsetTool
 from pydantic_ai._utils import TOOL_CALL_ID_PREFIX
-from pydantic_ai.tools import RunContext
+from pydantic_ai.tools import RunContext, ToolDefinition
 
 _NON_SERIALIZABLE = '<non-serializable>'
 
@@ -27,6 +28,10 @@ def _is_tuple(obj: Any) -> TypeGuard[tuple[Any, ...]]:
 
 def _is_toolset_tool(obj: Any) -> TypeGuard[ToolsetTool]:
     return isinstance(obj, ToolsetTool)
+
+
+def _is_tool_definition(obj: Any) -> TypeGuard[ToolDefinition]:
+    return isinstance(obj, ToolDefinition)
 
 
 def _is_run_context(obj: Any) -> TypeGuard[RunContext[object]]:
@@ -71,13 +76,22 @@ def _replace_run_context(
     input to carry them the way the model-request task's inputs do.
     `test_cache_key_run_context_projection_is_exhaustive` fails when a new field is neither
     projected here nor consciously categorized as cache-irrelevant.
+
+    Recurses into the containers a task's bound parameters may nest them in: the durable base
+    passes an operation's logical inputs as one `*args` tuple, so a `RunContext` is not always a
+    top-level parameter. It still has to be projected there — hashing a raw `RunContext` fails
+    outright (`Unable to create hash`) whenever `deps` holds something unserializable like a
+    client, a pool, or a lock, which is exactly what `_cacheable_value` exists to absorb.
     """
     for key, value in inputs.items():
-        if _is_run_context(value):
+        if _is_container(value):
+            inputs[key] = _map_container(value, lambda item: _replace_run_context({'_': item})['_'])
+        elif _is_run_context(value):
             inputs[key] = {
                 'deps': _cacheable_value(value.deps),
                 'agent': value.agent.name if value.agent is not None else None,
                 'model': value.model.model_id,
+                '_model_id': value.model_id,
                 'retries': value.retries,
                 # Keyed verbatim, unlike the framework-generated tool call IDs inside `messages`:
                 # those are normalized so an identical history hashes the same across runs, but the
@@ -168,6 +182,19 @@ def _strip_cache_excluded_fields(
     return obj
 
 
+def _is_container(obj: Any) -> bool:
+    return _is_list(obj) or _is_tuple(obj) or _is_dict(obj)
+
+
+def _map_container(container: Any, project: Callable[[Any], Any]) -> Any:
+    """Apply `project` to each item of a list/tuple/dict, preserving the container type."""
+    if _is_dict(container):
+        return {key: project(item) for key, item in container.items()}
+    if _is_tuple(container):
+        return tuple(project(item) for item in container)
+    return [project(item) for item in container]
+
+
 def _replace_toolset_tools(
     inputs: dict[str, Any],
 ) -> Any:
@@ -187,13 +214,27 @@ def _replace_toolset_tools(
     distinguishes two toolsets that expose an identically defined tool: every toolset's tool task is
     the same function, so `TASK_SOURCE` doesn't tell them apart, and a tool's name is only unique
     within its own toolset.
+
+    Recurses into containers for the same reason as [`_replace_run_context`][]: the durable base
+    passes an operation's logical inputs as one `*args` tuple, so a `ToolsetTool` is not always a
+    top-level parameter.
+
+    A dynamic toolset's tool call carries a bare `ToolDefinition` instead of a `ToolsetTool`
+    (`_DynamicCallToolCacheIdentity` projects `params.tool_def`), so those are projected too. Their
+    `metadata` is where per-tool config lives and may hold a live resource, which `hash_objects`
+    cannot serialize at all -- without the sentinel `compute_key` raises rather than degrading.
     """
-    return {
-        key: {'toolset': value.toolset.id, 'tool_def': _cacheable_value(value.tool_def)}
-        if _is_toolset_tool(value)
-        else value
-        for key, value in inputs.items()
-    }
+
+    def project(value: Any) -> Any:
+        if _is_container(value):
+            return _map_container(value, project)
+        if _is_toolset_tool(value):
+            return {'toolset': value.toolset.id, 'tool_def': _cacheable_value(value.tool_def)}
+        if _is_tool_definition(value):
+            return _cacheable_value(value)
+        return value
+
+    return {key: project(value) for key, value in inputs.items()}
 
 
 class PrefectAgentInputs(CachePolicy):

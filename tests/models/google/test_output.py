@@ -4,7 +4,7 @@ On supported models (Gemini 2.5+), `VALIDATED` is the default — it enforces th
 schema rewrites, so it's a safe silent improvement — and a caller opts a tool out with `strict=False`.
 
 Test organization:
-1. Mode resolution (unit, against a `MagicMock` client)
+1. Mode resolution (unit, against an offline `genai.Client`)
 2. `strict` resolution via `GoogleJsonSchemaTransformer`
 3. End-to-end wire contract (live recording)
 """
@@ -14,7 +14,6 @@ from __future__ import annotations as _annotations
 import json
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
-from unittest.mock import MagicMock
 
 import httpx2
 import pytest
@@ -28,6 +27,8 @@ from ..._inline_snapshot import snapshot
 from ...conftest import try_import
 
 with try_import() as imports_successful:
+    from google.genai import Client
+
     from pydantic_ai.models.google import GoogleModel
     from pydantic_ai.providers.google import GoogleProvider
 
@@ -130,7 +131,7 @@ def test_google_strict_tools_upgrade_auto_to_validated(case: dict[str, Any]):
     Asserted on the request shape directly rather than via VCR: a cassette replay can't catch the mode we send,
     since it replays a recorded response without re-validating the request against the API.
     """
-    m = GoogleModel(case['model'], provider=GoogleProvider(client=MagicMock()))
+    m = GoogleModel(case['model'], provider=GoogleProvider(client=Client(vertexai=False, api_key='mock-api-key')))
     params = ModelRequestParameters(
         function_tools=case['function_tools'],
         output_tools=case.get('output_tools', []),
@@ -152,7 +153,7 @@ def test_google_strict_resolution_via_transformer():
     """`GoogleJsonSchemaTransformer` treats every schema as `VALIDATED`-compatible (the mode needs no schema
     rewrites): `strict=None` resolves to `True` (VALIDATED-eligible), and an explicit `strict=False` is
     preserved as the per-tool opt-out."""
-    m = GoogleModel('gemini-2.5-flash', provider=GoogleProvider(client=MagicMock()))
+    m = GoogleModel('gemini-2.5-flash', provider=GoogleProvider(client=Client(vertexai=False, api_key='mock-api-key')))
 
     # `strict` left as `None` resolves to `True`: default-on, VALIDATED-eligible.
     params = m.customize_request_parameters(

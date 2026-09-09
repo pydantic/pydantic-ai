@@ -17,10 +17,25 @@ Send mono PCM16 at `session.audio_input_sample_rate` and play it at
 In push-to-talk mode, call `commit_audio()` and then `create_response()` after sending audio. See
 [push-to-talk](turns.md#push-to-talk).
 
+## The model says the same thing twice
+
+`send('...')` already asks the model to reply. Do not follow it with `create_response()`, which asks
+for a second response. See [text turns](turns.md#text-turns).
+
 ## The model interrupts itself
 
 The microphone is probably hearing speaker output. Add echo cancellation in the device/WebRTC
 layer and stop local playback on real [barge-in](turns.md#barge-in).
+
+## The greeting never plays, or the model replies twice when the visitor speaks
+
+Speaker echo or microphone transients probably cancelled the greeting while the audio path opened.
+Keep the microphone closed until the greeting has played; see [Speaking first](turns.md#speaking-first).
+To confirm the cause, iterate the event stream and look for a
+[`RealtimeResponseInterruptedEvent`][pydantic_ai.realtime.RealtimeResponseInterruptedEvent] on the
+first response and any
+[`RealtimeSessionErrorEvent`][pydantic_ai.realtime.RealtimeSessionErrorEvent], or inspect the
+[Logfire trace](observability.md#logfire-instrumentation).
 
 ## Tools seem to stall
 

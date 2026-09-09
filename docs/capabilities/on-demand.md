@@ -54,6 +54,8 @@ Loading activates the whole bundle, not just instructions: the capability's func
 !!! note "Deferred instructions reach client-facing message history"
     A deferred capability's instructions come back as the `load_capability` tool *result*, so they land in the run's message history — including the copy a [UI adapter](../ui/overview.md) serializes to the client. Instructions on an always-on capability stay in the server-side system prompt instead. If a capability's instructions shouldn't be exposed to the client, keep it always-on rather than deferred.
 
+    Because they arrive as tool-result text rather than as [`InstructionPart`s][pydantic_ai.messages.InstructionPart], they are also not addressable by [`id`][pydantic_ai.messages.InstructionPart.id]: a `before_model_request` hook that rewrites `ModelRequestParameters.instruction_parts` never sees them, so anything built on that — including remote instruction overrides — reaches an always-on capability's instructions but not a deferred one's. Keep a capability always-on if its instructions need to stay addressable.
+
 ## What you can defer
 
 Every part of a capability bundle activates together as a single unit:

@@ -1,0 +1,134 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '110'
+      content-type:
+      - application/json
+      host:
+      - api.z.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is 2 + 2?
+        role: user
+      model: glm-4-32b-0414-128k
+      stream: false
+    uri: https://api.z.ai/api/paas/v4/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=3600
+      connection:
+      - keep-alive
+      content-length:
+      - '365'
+      content-type:
+      - application/json; charset=UTF-8
+      ga-traceid:
+      - f32c521ed349065db40c40326a0475b6
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          content: 2 + 2 equals 4.
+          role: assistant
+      created: 1788037042
+      id: 2026083004572282c9d5adad984a9d
+      model: glm-4-32b-0414-128k
+      object: chat.completion
+      request_id: 2026083004572282c9d5adad984a9d
+      usage:
+        completion_tokens: 10
+        prompt_tokens: 13
+        total_tokens: 23
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '149'
+      content-type:
+      - application/json
+      host:
+      - api.z.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is 2 + 2?
+        role: user
+      model: glm-4-32b-0414-128k
+      stream: false
+      thinking:
+        clear_thinking: false
+    uri: https://api.z.ai/api/paas/v4/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=3600
+      connection:
+      - keep-alive
+      content-length:
+      - '365'
+      content-type:
+      - application/json; charset=UTF-8
+      ga-traceid:
+      - 0c14db497dcb04c0dc3d20517664b8bc
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          content: 2 + 2 equals 4.
+          role: assistant
+      created: 1788037043
+      id: 202608300457236f73f173721f4706
+      model: glm-4-32b-0414-128k
+      object: chat.completion
+      request_id: 202608300457236f73f173721f4706
+      usage:
+        completion_tokens: 10
+        prompt_tokens: 13
+        total_tokens: 23
+    status:
+      code: 200
+      message: OK
+version: 1

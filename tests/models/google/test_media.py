@@ -51,6 +51,13 @@ def mapping_model() -> GoogleModel:
     return GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
 
 
+@pytest.fixture
+def vertex_mapping_model(vertex_client_google_provider: GoogleProvider) -> GoogleModel:
+    """Like `mapping_model`, but Google Cloud (Vertex) — built the way #6792 reports,
+    so transport (not the provider name) drives the mapping."""
+    return GoogleModel('gemini-1.5-flash', provider=vertex_client_google_provider)
+
+
 # =============================================================================
 # Per-Part `media_resolution` forwarding via `vendor_metadata`
 # =============================================================================
@@ -61,8 +68,8 @@ class MediaResolutionCase:
     id: str
     content: BinaryContent | ImageUrl | DocumentUrl | UploadedFile
     expected: dict[str, object]
-    system: str | None = None
-    """When set, patch `GoogleModel.system` (e.g. 'google-cloud' for gs:// URIs)."""
+    google_cloud: bool = False
+    """When True, run against the Vertex-backed model (needed for gs:// URIs)."""
 
 
 MEDIA_RESOLUTION_CASES = [
@@ -117,7 +124,7 @@ MEDIA_RESOLUTION_CASES = [
             'file_data': {'file_uri': 'gs://bucket/image.png', 'mime_type': 'image/png'},
             'media_resolution': {'level': 'MEDIA_RESOLUTION_ULTRA_HIGH'},
         },
-        system='google-cloud',
+        google_cloud=True,
     ),
     MediaResolutionCase(
         id='document_url_media_resolution',
@@ -129,7 +136,7 @@ MEDIA_RESOLUTION_CASES = [
             'file_data': {'file_uri': 'gs://bucket/report.pdf', 'mime_type': 'application/pdf'},
             'media_resolution': {'level': 'MEDIA_RESOLUTION_HIGH'},
         },
-        system='google-cloud',
+        google_cloud=True,
     ),
     MediaResolutionCase(
         id='uploaded_file_media_resolution_and_video_metadata',
@@ -157,18 +164,17 @@ MEDIA_RESOLUTION_CASES = [
 
 @pytest.mark.parametrize('case', [pytest.param(c, id=c.id) for c in MEDIA_RESOLUTION_CASES])
 async def test_media_resolution_forwarding(
-    case: MediaResolutionCase, mapping_model: GoogleModel, mocker: MockerFixture
+    case: MediaResolutionCase, mapping_model: GoogleModel, vertex_mapping_model: GoogleModel
 ):
     """`vendor_metadata['media_resolution']` is lifted to the per-Part `media_resolution`
     field for every file type, remaining keys still route to `video_metadata`, and the
     user's `vendor_metadata` dict is never mutated (the mapper works on a copy).
     """
-    if case.system is not None:
-        mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value=case.system)
+    model = vertex_mapping_model if case.google_cloud else mapping_model
 
     original_vendor_metadata = deepcopy(case.content.vendor_metadata)
 
-    content = await mapping_model._map_user_prompt(UserPromptPart(content=[case.content]))  # pyright: ignore[reportPrivateUsage]
+    content = await model._map_user_prompt(UserPromptPart(content=[case.content]))  # pyright: ignore[reportPrivateUsage]
 
     assert content == [case.expected]
     assert case.content.vendor_metadata == original_vendor_metadata
@@ -218,13 +224,12 @@ async def test_uploaded_file_invalid_file_id(allow_model_requests: None, mapping
         await agent.run(['Analyze this file', UploadedFile(file_id='file-abc123', provider_name='google')])
 
 
-async def test_uploaded_file_vertex_requires_gs_uri(mapping_model: GoogleModel, mocker: MockerFixture):
+async def test_uploaded_file_vertex_requires_gs_uri(vertex_mapping_model: GoogleModel):
     """Vertex `UploadedFile` must use a gs:// URI (not Files API https URLs)."""
-    mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-cloud')
 
     https_files_api = 'https://generativelanguage.googleapis.com/v1beta/files/abc123'
     with pytest.raises(UserError, match='must use a GCS URI'):
-        await mapping_model._map_user_prompt(  # pyright: ignore[reportPrivateUsage]
+        await vertex_mapping_model._map_user_prompt(  # pyright: ignore[reportPrivateUsage]
             UserPromptPart(
                 content=[UploadedFile(file_id=https_files_api, provider_name='google-cloud')],
             )
@@ -273,19 +278,18 @@ async def test_youtube_video_url_without_vendor_metadata(mapping_model: GoogleMo
 # =============================================================================
 
 
-async def test_gcs_video_url_with_vendor_metadata_on_google_cloud(mapping_model: GoogleModel, mocker: MockerFixture):
+async def test_gcs_video_url_with_vendor_metadata_on_google_cloud(vertex_mapping_model: GoogleModel):
     """GCS URIs use file_uri with video_metadata on google-cloud (Vertex).
 
     This is the main fix - GCS URIs were previously falling through to FileUrl
     handling which doesn't pass vendor_metadata as video_metadata.
     """
-    mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-cloud')
 
     video = VideoUrl(
         url='gs://bucket/video.mp4',
         vendor_metadata={'start_offset': '300s', 'end_offset': '330s'},
     )
-    content = await mapping_model._map_user_prompt(UserPromptPart(content=[video]))  # pyright: ignore[reportPrivateUsage]
+    content = await vertex_mapping_model._map_user_prompt(UserPromptPart(content=[video]))  # pyright: ignore[reportPrivateUsage]
 
     assert len(content) == 1
     assert content[0] == {
@@ -341,15 +345,14 @@ async def test_http_video_url_downloads_on_google(mapping_model: GoogleModel, mo
     ]
 
 
-async def test_http_video_url_uses_file_uri_on_google_cloud(mapping_model: GoogleModel, mocker: MockerFixture):
+async def test_http_video_url_uses_file_uri_on_google_cloud(vertex_mapping_model: GoogleModel):
     """HTTP VideoUrls use file_uri directly on google-cloud (Vertex) with video_metadata."""
-    mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-cloud')
 
     video = VideoUrl(
         url='https://example.com/video.mp4',
         vendor_metadata={'start_offset': '10s', 'end_offset': '20s'},
     )
-    content = await mapping_model._map_user_prompt(UserPromptPart(content=[video]))  # pyright: ignore[reportPrivateUsage]
+    content = await vertex_mapping_model._map_user_prompt(UserPromptPart(content=[video]))  # pyright: ignore[reportPrivateUsage]
 
     assert len(content) == 1
     assert content[0] == {
@@ -388,20 +391,18 @@ async def test_http_video_url_uses_file_uri_on_google_cloud(mapping_model: Googl
     ],
 )
 async def test_file_url_in_tool_return_on_vertex(
-    mocker: MockerFixture, file_url: VideoUrl | ImageUrl, expected: dict[str, object]
+    vertex_client_google_provider: GoogleProvider, file_url: VideoUrl | ImageUrl, expected: dict[str, object]
 ):
     """Test file URLs use file_data (not download) in tool returns on Vertex."""
-    model = GoogleModel('gemini-3-flash-preview', provider=GoogleProvider(api_key='test-key'))
-    mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-cloud')
+    model = GoogleModel('gemini-3-flash-preview', provider=vertex_client_google_provider)
 
     result = await model._map_file_to_function_response_part(file_url)  # pyright: ignore[reportPrivateUsage]
 
     assert result == expected
 
 
-async def test_map_user_prompt_with_text_content(mapping_model: GoogleModel, mocker: MockerFixture):
+async def test_map_user_prompt_with_text_content(mapping_model: GoogleModel):
     """Test that _map_user_prompt correctly handles a mix of text content and str."""
-    mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google')
 
     user_prompt_part = UserPromptPart(
         content=['Hi', TextContent(content='This is some context', metadata={'source': 'user'})]

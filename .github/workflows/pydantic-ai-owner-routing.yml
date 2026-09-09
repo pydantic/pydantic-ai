@@ -17,6 +17,9 @@ on:
     secrets:
       PYDANTIC_AI_TRIAGE_SLACK_WEBHOOK_URL:
         required: true
+      # Optional: callers without a Logfire project simply skip telemetry.
+      LOGFIRE_TRIAGE_WRITE_TOKEN:
+        required: false
 
 permissions: {}
 
@@ -44,16 +47,25 @@ jobs:
             .github/scripts/issue_pr_attention_monitor.py
             .github/scripts/semantic_owner_router.py
             .github/scripts/triage_models.py
+            .github/scripts/triage_telemetry.py
           sparse-checkout-cone-mode: false
-      - name: Install the typed-boundary dependency
-        # Pinned exactly: these jobs hold write-scoped tokens, so a
-        # compromised new release must never reach them.
-        run: python3 -m pip install --quiet 'pydantic==2.13.4'
+      - name: Install pinned script dependencies
+        # pydantic is required (the typed boundary); logfire is telemetry and
+        # stays best-effort — a registry outage must not stop the GitHub write
+        # path. Exact pins keep a compromised new release away from jobs
+        # holding write-scoped tokens.
+        run: |
+          python3 -m pip install --quiet 'pydantic==2.13.4'
+          python3 -m pip install --quiet 'logfire==4.40.0' || echo "logfire unavailable; telemetry disabled"
       - name: Select routing decisions
         id: select
         env:
           GITHUB_TOKEN: ${{ github.token }}
           ROUTING_COMMUNITY_RECOVERY: ${{ github.event.schedule == '40 7 * * *' || inputs.community_recovery }}
+          LOGFIRE_TRIAGE_WRITE_TOKEN: ${{ secrets.LOGFIRE_TRIAGE_WRITE_TOKEN }}
+          # Self-hosted Logfire; resolves from the calling repository's
+          # variables, and empty keeps the token's own routing.
+          LOGFIRE_URL: ${{ vars.LOGFIRE_URL }}
         run: python .github/scripts/semantic_owner_router.py select
 
   route:
@@ -86,11 +98,16 @@ jobs:
             .github/scripts/issue_pr_attention_monitor.py
             .github/scripts/semantic_owner_router.py
             .github/scripts/triage_models.py
+            .github/scripts/triage_telemetry.py
           sparse-checkout-cone-mode: false
-      - name: Install the typed-boundary dependency
-        # Pinned exactly: these jobs hold write-scoped tokens, so a
-        # compromised new release must never reach them.
-        run: python3 -m pip install --quiet 'pydantic==2.13.4'
+      - name: Install pinned script dependencies
+        # pydantic is required (the typed boundary); logfire is telemetry and
+        # stays best-effort — a registry outage must not stop the GitHub write
+        # path. Exact pins keep a compromised new release away from jobs
+        # holding write-scoped tokens.
+        run: |
+          python3 -m pip install --quiet 'pydantic==2.13.4'
+          python3 -m pip install --quiet 'logfire==4.40.0' || echo "logfire unavailable; telemetry disabled"
       - name: Revalidate and prepare canonical routing intent
         id: prepare
         env:
@@ -119,6 +136,8 @@ jobs:
           ROUTE_NUMBER: ${{ matrix.route.number }}
           ROUTE_OWNER: ${{ matrix.route.owner }}
           ROUTE_EVIDENCE: ${{ matrix.route.evidence }}
+          LOGFIRE_TRIAGE_WRITE_TOKEN: ${{ secrets.LOGFIRE_TRIAGE_WRITE_TOKEN }}
+          LOGFIRE_URL: ${{ vars.LOGFIRE_URL }}
         run: >-
           python .github/scripts/semantic_owner_router.py assign
           --number "$ROUTE_NUMBER"

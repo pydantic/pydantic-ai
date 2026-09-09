@@ -26,8 +26,27 @@ from typing import Annotated, Any, Literal, TypedDict, cast  # noqa: TID251
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, field_validator
 from triage_models import AgentItem, IssueEvent, agent_items, item_labels, parse_time, snapshot_candidates
 
+try:
+    from triage_telemetry import emit as _emit_event
+except ImportError:  # sparse checkouts that omit the telemetry module stay silent
+    # Emission is optional everywhere; every workflow that only reads or writes
+    # GitHub state must keep working without the telemetry file on disk.
+    def _emit_event(name: str, **attributes: object) -> None:
+        return
+
+
 _API = 'https://api.github.com'
 _SLA = dt.timedelta(days=3)
+# Applied only by the community-demand sweep; scripts trust the label.
+COMMUNITY_LABEL = 'community-backed'
+# Assigned P1/P2 issues are kept in the attention queue by `reconcile`; the
+# owner is pinged once *they* have been inactive past the window. Community
+# demand may still open the assignment gate, but does not interrupt owners.
+_REMINDER_SLAS = {
+    'p:1-highest': dt.timedelta(days=3),
+    'p:2-high': dt.timedelta(days=5),
+}
+_SLA_MARK_LIMIT = 10
 _RESURFACE_AFTER = dt.timedelta(days=7)
 _RECENT_ACTIVITY_WINDOW = dt.timedelta(days=45)
 _CANDIDATE_LIMIT = 10
@@ -65,6 +84,9 @@ ROUTING_UNASSIGN_BACKOFF_DAYS = 14
 _OVERRIDE_SCAN_LIMIT = 30
 _OVERRIDE_WINDOW_DAYS = 7
 _OVERRIDE_LINE_LIMIT = 30
+# One hour of overlap between daily census runs; the GitHub event id attribute
+# lets Logfire queries deduplicate corrections seen by two consecutive runs.
+_CORRECTION_WINDOW = dt.timedelta(hours=25)
 _MAINTAINER_NAMES = {
     'adtyavrdhn': 'Aditya',
     'dsfaccini': 'David SF',
@@ -83,6 +105,7 @@ _LABELS = {
     _PINGED_LABEL: ('fbca04', 'The assigned maintainer has received one reminder'),
     _ESCALATED_LABEL: ('d93f0b', 'The maintainer attention request is cooling down after escalation'),
     _DELIVERED_LABEL: ('ededed', 'A delivered channel escalation is waiting for GitHub state cleanup'),
+    COMMUNITY_LABEL: ('0e8a16', 'Real users are asking for this; it opens the assignment routing gate'),
 }
 _SLACK_MENTION = re.compile(r'<@[UW][A-Z0-9]+>')
 _SEARCH_SUMMARY_QUERY = """
@@ -363,7 +386,7 @@ def _candidate_context(
     ], pr_context
 
 
-def _rotated_search(
+def rotated_search(
     client: GitHubClient,
     query: str,
     *,
@@ -371,6 +394,7 @@ def _rotated_search(
     limit: int,
     slot: int,
 ) -> list[dict[str, Any]]:
+    """Return one slot-rotated page of results so bounded sweeps cover the whole pool."""
     encoded = urllib.parse.quote_plus(query)
     first = cast(
         dict[str, Any],
@@ -396,7 +420,7 @@ def _candidate_page(client: GitHubClient, repo: str, *, now: dt.datetime) -> lis
     slot = int(now.timestamp()) // int(_SLA.total_seconds() / 12)
     recent_after = (now - _RECENT_ACTIVITY_WINDOW).date()
     stale_through = cutoff_date - dt.timedelta(days=1)
-    recent = _rotated_search(
+    recent = rotated_search(
         client,
         # GitHub Search does not intersect repeated `updated:` qualifiers; a
         # single range is required or the lower bound silently wins.
@@ -405,7 +429,7 @@ def _candidate_page(client: GitHubClient, repo: str, *, now: dt.datetime) -> lis
         limit=_RECENT_CANDIDATE_LIMIT,
         slot=slot,
     )
-    backlog = _rotated_search(
+    backlog = rotated_search(
         client,
         f'{base_query} updated:<{recent_after.isoformat()}',
         order='asc',
@@ -579,10 +603,63 @@ def _first_maintainer_in_discussion(
     return None, complete and not probe.exhausted
 
 
+def _resolve_recipients(
+    client: GitHubClient,
+    repo: str,
+    current: Mapping[str, Any],
+    labels: set[str],
+    maintainers: list[str],
+    *,
+    now: dt.datetime,
+) -> tuple[list[str] | None, str | None]:
+    """Return the notice recipients, or a completion line when the lane stands down.
+
+    A reminder-labeled item's assignment is a routing or human decision, never
+    the monitor's own placeholder: notify exactly the current owners, and stand
+    down entirely once a human removes them. Only the agent-marked lane uses
+    the placeholder heuristic in `_ensure_recipients`.
+    """
+    if not labels.intersection(_REMINDER_SLAS):
+        return _ensure_recipients(client, repo, current, now=now), None
+    number = int(current['number'])
+    if not maintainers:
+        _complete(client, repo, number, labels)
+        return None, f'#{number}: stood down after its owner was unassigned'
+    return maintainers, None
+
+
+def _recent_human_unassignment(
+    client: GitHubClient, repo: str, events: Sequence[dict[str, Any]], *, now: dt.datetime
+) -> bool:
+    """Whether a person took a maintainer off this item inside the back-off window.
+
+    Unlike the census veto's static roster, maintainership is probed live: the
+    placeholder heuristic recognizes any maintainer with push access, so its
+    back-off must recognize the same people it might otherwise re-assign.
+    """
+    probe = _MaintainerProbe(client, repo)
+    for event in (IssueEvent.model_validate(value) for value in events):
+        if event.event != 'unassigned':
+            continue
+        if not event.created_at or now - parse_time(event.created_at) >= dt.timedelta(
+            days=ROUTING_UNASSIGN_BACKOFF_DAYS
+        ):
+            continue
+        # GitHub types app principals as `Bot`; login naming is a convention,
+        # not a contract. An unattributable event cannot count as a decision.
+        if not event.assigner.login or event.assigner.type == 'Bot':
+            continue
+        if probe.login(event.assignee.login):
+            return True
+    return False
+
+
 def _ensure_recipients(
     client: GitHubClient,
     repo: str,
     item: Mapping[str, Any],
+    *,
+    now: dt.datetime,
 ) -> list[str] | None:
     """Return who to notify, or None when ownership could not be decided."""
     number = int(item['number'])
@@ -596,6 +673,19 @@ def _ensure_recipients(
     logins = [login.casefold() for login in current_maintainers]
     if current_maintainers and logins != [_FALLBACK_OWNER.casefold()]:
         return current_maintainers
+
+    # Pull requests are never auto-assigned: a human assigns one when an issue
+    # warrants it. Any maintainer already on the PR was a human's choice and
+    # owns it; without one the item stays tracked silently.
+    if 'pull_request' in current:
+        return current_maintainers or None
+
+    # A recent unassignment is a decision too: the placeholder heuristic must
+    # not hand the item straight back to whoever a human just took off it.
+    # Mirrors the router's back-off window.
+    events = client.last_pages(f'/repos/{repo}/issues/{number}/events', count=2)
+    if _recent_human_unassignment(client, repo, events, now=now):
+        return None
 
     found, conclusive = _first_maintainer_in_discussion(client, repo, current)
     if found is None and not conclusive:
@@ -626,7 +716,9 @@ def _remove_label(client: GitHubClient, repo: str, number: int, label: str) -> N
             raise
 
 
-def apply_decisions(client: GitHubClient, repo: str, output_path: str, snapshot_path: str) -> list[str]:
+def apply_decisions(
+    client: GitHubClient, repo: str, output_path: str, snapshot_path: str, *, now: dt.datetime
+) -> list[str]:
     """Revalidate allowlisted model decisions, then assign and label them."""
     candidates = snapshot_candidates(snapshot_path, limit=_CANDIDATE_LIMIT)
     decisions = agent_items(output_path, Decision, tag='record_attention_decision', limit=_CANDIDATE_LIMIT)
@@ -662,7 +754,7 @@ def apply_decisions(client: GitHubClient, repo: str, output_path: str, snapshot_
             attention_item = cast(dict[str, Any], client.get(f'/repos/{repo}/issues/{number}'))
             if attention_item.get('state') != 'open' or _ACTION_LABEL not in item_labels(attention_item):
                 raise RuntimeError('Attention state changed while applying the request')
-            recipients = _ensure_recipients(client, repo, attention_item)
+            recipients = _ensure_recipients(client, repo, attention_item, now=now)
             if recipients is None:
                 lines.append(f'#{number}: deferred until its owner can be identified')
                 continue
@@ -994,6 +1086,9 @@ def _reconcile_item(
         return f'#{number}: completed after the item was closed', None
     if _finish_delivery_receipt(client, repo, number, labels, events, transition):
         return f'#{number}: finished delivered channel escalation', None
+    if current_stage == 1 and not labels.intersection(_REMINDER_SLAS):
+        _complete(client, repo, number, labels)
+        return f'#{number}: completed after losing reminder priority', None
     current_stage_label = _STAGE_LABELS[current_stage - 1] if current_stage else None
     for label in labels.intersection(_STAGE_LABELS):
         if label != current_stage_label:
@@ -1004,17 +1099,51 @@ def _reconcile_item(
     if _acknowledged(client, repo, timeline, acknowledged_since, maintainers or [_FALLBACK_OWNER]):
         _complete(client, repo, number, labels)
         return f'#{number}: maintainer acknowledged the request', None
-    recipients = _ensure_recipients(client, repo, current)
+    recipients, stood_down = _resolve_recipients(client, repo, current, labels, maintainers, now=now)
+    if stood_down is not None:
+        return stood_down, None
     if recipients is None:
         return None
+    return _queue_stage_notice(
+        client, repo, number, labels, current_stage, transition, recipients, acknowledged_since, now=now
+    )
+
+
+def _queue_stage_notice(
+    client: GitHubClient,
+    repo: str,
+    number: int,
+    labels: set[str],
+    current_stage: Literal[0, 1, 2],
+    transition: tuple[dt.datetime, dict[str, Any]],
+    recipients: list[str],
+    acknowledged_since: dt.datetime,
+    *,
+    now: dt.datetime,
+) -> tuple[str, Notice | None] | None:
+    """Re-check settlement, apply the interrupt gates, and queue one notice."""
+    transition_at = transition[0]
     timeline = client.last_pages(f'/repos/{repo}/issues/{number}/timeline', count=3)
     if _closed_since(timeline, transition_at) or _acknowledged(client, repo, timeline, acknowledged_since, recipients):
         _complete(client, repo, number, labels)
         return f'#{number}: maintainer acknowledged the request', None
     # Stage 2 is the existing durable "terminal Slack delivery pending" state.
     # Keeping that meaning makes the channel cutover safe for in-flight items.
-    if current_stage != 2 and now - transition_at < _SLA:
+    # Stage 1 waits its window between the ping and the channel escalation.
+    if current_stage == 1 and now - transition_at < _sla_for(labels):
         return None
+    if current_stage == 0:
+        # Only assigned P1/P2 issues enter the interrupt pipeline: anything
+        # else the triage agent marks stays tracked, visible in the Monday
+        # digest, and silent.
+        if not labels.intersection(_REMINDER_SLAS):
+            return None
+        # Items reach stage 0 from several lanes (the reminder sweep, agent
+        # classification, escalation resurface), so the owner-quiet window is
+        # enforced here, at the one seam every ping passes through: a lane
+        # cannot ping early, and owner activity after marking holds the ping.
+        if not _owner_quiet_since(timeline, recipients, since=now - _sla_for(labels)):
+            return None
     kind: Literal['reminder', 'escalation'] = 'reminder' if current_stage == 0 else 'escalation'
     notice = _notice_if_current(
         client,
@@ -1060,13 +1189,113 @@ def _sweep_escalated_item(client: GitHubClient, repo: str, number: int, *, now: 
         return f'#{number}: restored attention eligibility after new activity'
     if now - transition[0] >= _RESURFACE_AFTER:
         # Add the active marker first so a partial GitHub failure cannot leave
-        # unresolved work in neither state. Its label event starts a fresh SLA.
+        # unresolved work in neither state; the notice seam's owner-quiet
+        # check then decides when the next ping is due.
         _add_labels(client, repo, number, [_ACTION_LABEL])
         _remove_label(client, repo, number, _ESCALATED_LABEL)
         reactivated = cast(dict[str, Any], client.get(f'/repos/{repo}/issues/{number}'))
-        _ensure_recipients(client, repo, reactivated)
+        # The reminder lanes own their assignment: only the agent-marked lane
+        # may re-run the placeholder heuristic on resurface.
+        _, stood_down = _resolve_recipients(
+            client,
+            repo,
+            reactivated,
+            item_labels(reactivated),
+            _maintainer_assignees(client, repo, reactivated),
+            now=now,
+        )
+        if stood_down is not None:
+            return stood_down
         return f'#{number}: returned unresolved attention to the active queue'
     return None
+
+
+def _sla_for(labels: set[str]) -> dt.timedelta:
+    """The reminder window for an item: tightest matching label wins."""
+    windows = [window for label, window in _REMINDER_SLAS.items() if label in labels]
+    return min(windows) if windows else _SLA
+
+
+def _owner_quiet_since(timeline: Sequence[dict[str, Any]], owners: Sequence[str], *, since: dt.datetime) -> bool:
+    """Whether the owners took no visible action in the timeline since `since`.
+
+    Counts the same actions as `_acknowledged` — any owner-attributed event
+    except the passive kinds — so "quiet enough to remind" and "responded
+    after the reminder" can never disagree and loop. When the fetched pages
+    do not reach back to `since`, the owners' action may have been pushed off
+    by newer noise: treated as not quiet, never as a false reminder. (On
+    `assigned` events GitHub mirrors the assignee into `actor`, so being
+    assigned counts as that owner's activity with no special case.)
+    """
+    # The coverage anchor is the first event *with* a time: PR timelines open
+    # with `committed` events that carry none and must not read as "active".
+    anchor = next((when for event in timeline if (when := _event_time(event)) is not None), None)
+    if timeline and (anchor is None or anchor > since):
+        return False
+    keys = {owner.casefold() for owner in owners}
+    return not any(
+        (event_time := _event_time(event)) is not None
+        and event_time >= since
+        and event.get('event') not in _NON_ACK_EVENTS
+        and _actor(event).casefold() in keys
+        for event in timeline
+    )
+
+
+def _mark_assigned_reminders(
+    client: GitHubClient, repo: str, *, slot: int, now: dt.datetime
+) -> tuple[list[str], list[str]]:
+    """Keep every assigned P1/P2 issue inside the attention queue.
+
+    An issue is marked once its owner has gone quiet past the label's window
+    (`_owner_quiet_since` — the same activity rule acknowledgment uses), so
+    community chatter can never cause a false reminder; only a flood that
+    pushes the owner's actions past the fetched timeline pages can delay one.
+    Owner activity acknowledges and clears the cycle, which re-arms the next
+    one. One label's failure never blocks the rest.
+    """
+    lines: list[str] = []
+    failures: list[str] = []
+    excluded = ' '.join(f'-label:"{label}"' for label in (_ACTION_LABEL, *_LIFECYCLE_LABELS))
+    for reminder_label in _REMINDER_SLAS:
+        try:
+            matches = rotated_search(
+                client,
+                f'repo:{repo} is:open is:issue label:"{reminder_label}" {excluded}',
+                order='asc',
+                limit=_SLA_MARK_LIMIT,
+                slot=slot,
+            )
+        except (urllib.error.URLError, RuntimeError, ValueError) as exc:
+            if isinstance(exc, urllib.error.HTTPError):
+                exc.close()
+            failures.append(f'{reminder_label} marking: {type(exc).__name__}: {exc}')
+            continue
+        for match in matches:
+            number = int(match['number'])
+            try:
+                # The search index lags: revalidate against live state so a
+                # just-unassigned or just-deprioritized issue is never marked.
+                current = cast(dict[str, Any], client.get(f'/repos/{repo}/issues/{number}'))
+                labels = item_labels(current)
+                maintainers = _maintainer_assignees(client, repo, current)
+                if (
+                    str(current.get('state') or '').casefold() != 'open'
+                    or reminder_label not in labels
+                    or labels.intersection((_ACTION_LABEL, *_LIFECYCLE_LABELS))
+                    or not maintainers
+                ):
+                    continue
+                timeline = client.last_pages(f'/repos/{repo}/issues/{number}/timeline', count=3)
+                if not _owner_quiet_since(timeline, maintainers, since=now - _sla_for(labels)):
+                    continue
+                _add_labels(client, repo, number, [_ACTION_LABEL])
+                lines.append(f'#{number}: queued assigned {reminder_label} issue for owner attention')
+            except (urllib.error.URLError, RuntimeError, ValueError) as exc:
+                if isinstance(exc, urllib.error.HTTPError):
+                    exc.close()
+                failures.append(f'#{number} marking: {type(exc).__name__}: {exc}')
+    return lines, failures
 
 
 def reconcile(
@@ -1079,14 +1308,17 @@ def reconcile(
     """
     ensure_labels(client, repo)
     slot = int(now.timestamp()) // int(_SLA.total_seconds() / 12)
-    closed = _rotated_search(
+    lines: list[str] = []
+    marked, failures = _mark_assigned_reminders(client, repo, slot=slot, now=now)
+    lines.extend(marked)
+    closed = rotated_search(
         client,
         f'repo:{repo} is:closed label:"{_ACTION_LABEL}"',
         order='asc',
         limit=_CLOSED_CLEANUP_LIMIT,
         slot=slot,
     )
-    active = _rotated_search(
+    active = rotated_search(
         client,
         f'repo:{repo} is:open label:"{_ACTION_LABEL}"',
         order='asc',
@@ -1095,8 +1327,6 @@ def reconcile(
     )
     items = [*closed, *active]
     processed = {int(item['number']) for item in items}
-    lines: list[str] = []
-    failures: list[str] = []
     for item in items:
         number = int(item['number'])
         try:
@@ -1111,7 +1341,7 @@ def reconcile(
             failures.append(f'#{number}: {type(exc).__name__}: {exc}')
     if len(closed) == _CLOSED_CLEANUP_LIMIT or len(active) == _ACTIVE_OPEN_LIMIT:
         lines.append('additional attention items remain for a later rotated batch')
-    dormant = _rotated_search(
+    dormant = rotated_search(
         client,
         # No is:open qualifier so a dormant item closed while escalated still
         # sheds its marker instead of carrying it forever.
@@ -1147,15 +1377,34 @@ def _slack_escape(value: str) -> str:
     return normalized.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
 
 
-def _write_notices(repo: str, notices: Sequence[Notice]) -> None:
+def _notice_mentions(failures: list[str] | None = None) -> dict[str, str]:
+    """The per-maintainer Slack mentions, or plain names when unconfigured.
+
+    A configured-but-invalid map degrades to plain names, which ping nobody;
+    recording the failure turns that into a failure alert instead of a silent
+    loss of every owner notification.
+    """
+    raw = os.environ.get('PYDANTIC_AI_TRIAGE_SLACK_MENTIONS')
+    if not raw:
+        return {}
+    try:
+        return slack_mentions(raw, _FALLBACK_OWNER)
+    except ValueError as exc:
+        if failures is not None:
+            failures.append(f'mention map: {exc}')
+        return {}
+
+
+def _write_notices(repo: str, notices: Sequence[Notice], failures: list[str] | None = None) -> None:
     if output_path := os.environ.get('GITHUB_OUTPUT'):
         reasons = {
-            'reminder': 'no maintainer has acted for three days',
-            'escalation': 'the previous reminder has had no maintainer response for three more days',
+            'reminder': 'it has been waiting on its owner past the reminder window',
+            'escalation': 'the earlier reminder got no maintainer response',
         }
+        mentions = _notice_mentions(failures)
         details: list[str] = []
         for notice in notices:
-            owners = ', '.join(f'@{_slack_escape(login)}' for login in notice['recipients'])
+            owners = ', '.join(mentions.get(login) or f'@{_slack_escape(login)}' for login in notice['recipients'])
             title = _slack_escape(notice['title']) or '(untitled)'
             details.append(
                 f'• *{notice["kind"].title()}*: '
@@ -1167,7 +1416,7 @@ def _write_notices(repo: str, notices: Sequence[Notice]) -> None:
         payload = {
             'text': '\n'.join(
                 [
-                    f'<!channel> *Maintainer attention requested in {_slack_escape(repo)}*',
+                    f'*Maintainer attention requested in {_slack_escape(repo)}*',
                     *details,
                     '',
                     '*Expected action:* Open each item and make its next maintainer decision there. Reply, review, '
@@ -1365,6 +1614,39 @@ def census(client: GitHubClient, repo: str, *, now: dt.datetime, urgent_mention:
         or (oldest is not None and now - oldest[1] > dt.timedelta(days=1))
         or pull_intake > 100
     )
+    # The correction scan runs before the breach-mention validation below: a
+    # misconfigured mention must not cost a day of correction events.
+    records, scanned, scan_total = _override_scan(client, repo, now=now, window=_CORRECTION_WINDOW)
+    # An unassignment only corrects the automation when the automation made
+    # the assignment; human-undoes-human and unknowable cases are emitted for
+    # the record but kept out of the correction count.
+    corrections = [record for record in records if record['kind'] != 'unassigned' or record['bot_origin'] is True]
+    for record in records:
+        _emit_event(
+            'triage.correction',
+            repo=repo,
+            number=record['number'],
+            kind=record['kind'],
+            actor=record['actor'],
+            detail=record['detail'],
+            event_id=record['event_id'],
+            bot_origin=record['bot_origin'],
+        )
+    _emit_event(
+        'census.run',
+        repo=repo,
+        active=active,
+        cooling=cooling,
+        gate_unassigned=gate_total,
+        gate_oldest_age_days=oldest_age if oldest else None,
+        untriaged=untriaged,
+        pull_intake=pull_intake,
+        breach=breach,
+        corrections=len(corrections),
+        correction_records=len(records),
+        correction_scan_scanned=scanned,
+        correction_scan_total=scan_total,
+    )
     if breach and (urgent_mention is None or _SLACK_MENTION.fullmatch(urgent_mention) is None):
         raise ValueError('A valid Aditya Slack mention is required for an intake breach')
     prefix = f'{urgent_mention} :rotating_light:' if breach else ':telescope:'
@@ -1374,10 +1656,18 @@ def census(client: GitHubClient, repo: str, *, now: dt.datetime, urgent_mention:
         else f'{gate_total} priority issues unassigned'
     )
     saturation = ' — intake search saturated' if pull_intake > 100 else ''
+    # The Monday digest carries the who-changed-what detail for the same corrections.
+    numbers = sorted({record['number'] for record in corrections})
+    listed = ', '.join(f'#{number}' for number in numbers[:5]) + ('…' if len(numbers) > 5 else '')
+    partial = f' (scanned {scanned} of {scan_total} updated items)' if scan_total > scanned else ''
+    correction_note = (
+        f' Maintainer corrections in the last day: {len(corrections)} on {listed}{partial}.' if corrections else ''
+    )
     return (
         f'{prefix} Attention coverage for {_slack_escape(repo)} — '
         f'queue: {active} active, {cooling} cooling; assignment gate: {gate}; '
-        f'triage pool: {untriaged} unlabeled issues; PR intake: {pull_intake} unowned{saturation}. '
+        f'triage pool: {untriaged} unlabeled issues; PR intake: {pull_intake} unowned{saturation}.'
+        f'{correction_note} '
         'The Monday digest covers assigned, legacy, and draft work.'
     )
 
@@ -1481,24 +1771,56 @@ def _legacy_items(
     return lines
 
 
-def _override_lines(client: GitHubClient, repo: str, *, now: dt.datetime) -> list[str]:
-    """List maintainer corrections from the past week: priority relabels and unassignments.
+class OverrideRecord(TypedDict):
+    """One maintainer correction to an automation decision, from an issue's event log."""
 
-    These are the calibration signal for the triage automation, so the report names
-    who changed what, as metadata only, without pinging anyone.
+    number: int
+    kind: Literal['labeled', 'unlabeled', 'unassigned']
+    actor: str
+    detail: str
+    event_id: int | str | None
+    bot_origin: bool | None
+
+
+def _bot_assignment_origin(prior: Sequence[dict[str, Any]], login: str) -> bool | None:
+    """Whether the removed assignment was made by automation.
+
+    `None` when the matching `assigned` event predates the fetched history, so
+    a human undoing another human's assignment is never counted as a correction.
     """
-    since = now - dt.timedelta(days=_OVERRIDE_WINDOW_DAYS)
+    key = login.casefold()
+    for event in (IssueEvent.model_validate(value) for value in reversed(prior)):
+        if event.event != 'assigned' or event.assignee.login.casefold() != key:
+            continue
+        # On (un)assigned events the performer is `assigner`, not `actor`. All
+        # our triage automation (router and monitor) assigns through the
+        # workflow token, so this assigner means "the bot assigned it"; other
+        # bots' assignments are not ours to correct.
+        return event.assigner.login == 'github-actions[bot]'
+    return None
+
+
+def _override_scan(
+    client: GitHubClient, repo: str, *, now: dt.datetime, window: dt.timedelta
+) -> tuple[list[OverrideRecord], int, int]:
+    """Collect maintainer corrections in the window: priority relabels and unassignments.
+
+    These are the calibration signal for the triage automation, so each record names
+    who changed what, as metadata only, without quoting any issue prose.
+    """
+    since = now - window
     total, matches = _search_summary(
         client,
         f'repo:{repo} updated:>={since.date().isoformat()} sort:updated-desc',
         first=_OVERRIDE_SCAN_LIMIT,
     )
     owner_keys = {owner.casefold() for owner in MAINTAINER_OWNERS}
-    lines: list[str] = []
+    records: list[OverrideRecord] = []
     for match in matches:
         number = int(match['number'])
-        raw_events = client.last_pages(f'/repos/{repo}/issues/{number}/events', count=2)
-        for event in (IssueEvent.model_validate(value) for value in raw_events):
+        # Two pages: mention/subscribe noise can push a correction off the last one.
+        events = client.last_pages(f'/repos/{repo}/issues/{number}/events', count=2)
+        for index, event in enumerate(IssueEvent.model_validate(value) for value in events):
             kind = event.event
             if kind not in ('labeled', 'unlabeled', 'unassigned'):
                 continue
@@ -1510,27 +1832,50 @@ def _override_lines(client: GitHubClient, repo: str, *, now: dt.datetime) -> lis
             if performer.casefold() not in owner_keys:
                 continue
             if kind == 'unassigned':
-                target = event.assignee.login
+                detail = event.assignee.login
                 # Routing only ever assigns maintainer owners, so only those
                 # unassignments correct the automation; removing a stale
                 # contributor or bot assignee is routine cleanup.
-                if target.casefold() not in owner_keys:
+                if detail.casefold() not in owner_keys:
                     continue
-                lines.append(f'• #{number}: @{_slack_escape(performer)} unassigned @{_slack_escape(target)}')
+                bot_origin = _bot_assignment_origin(events[:index], detail)
             else:
-                name = event.label.name
-                if not name.startswith('p:'):
+                detail = event.label.name
+                if not detail.startswith('p:'):
                     continue
-                verb = 'added' if kind == 'labeled' else 'removed'
-                lines.append(f'• #{number}: @{_slack_escape(performer)} {verb} `{_slack_escape(name)}`')
+                bot_origin = None
+            records.append(
+                OverrideRecord(
+                    number=number,
+                    kind=kind,
+                    actor=performer,
+                    detail=detail,
+                    event_id=event.id,
+                    bot_origin=bot_origin,
+                )
+            )
+    return records, len(matches), total
+
+
+def _override_lines(client: GitHubClient, repo: str, *, now: dt.datetime) -> list[str]:
+    """Render the weekly maintainer-corrections report from the past week's records."""
+    records, scanned, total = _override_scan(client, repo, now=now, window=dt.timedelta(days=_OVERRIDE_WINDOW_DAYS))
+    lines: list[str] = []
+    for record in records:
+        number, actor = record['number'], _slack_escape(record['actor'])
+        if record['kind'] == 'unassigned':
+            lines.append(f'• #{number}: @{actor} unassigned @{_slack_escape(record["detail"])}')
+        else:
+            verb = 'added' if record['kind'] == 'labeled' else 'removed'
+            lines.append(f'• #{number}: @{actor} {verb} `{_slack_escape(record["detail"])}`')
     # Bound the section so a relabel-heavy week cannot push the digest past the
     # Slack payload limit and suppress the whole Monday report.
     if len(lines) > _OVERRIDE_LINE_LIMIT:
         omitted = len(lines) - _OVERRIDE_LINE_LIMIT
         del lines[_OVERRIDE_LINE_LIMIT:]
         lines.append(f'…and {omitted} more corrections')
-    if total > len(matches):
-        lines.append(f'…covering the {len(matches)} most recently updated of {total} changed items')
+    if total > scanned:
+        lines.append(f'…covering the {scanned} most recently updated of {total} changed items')
     return lines
 
 
@@ -1774,17 +2119,17 @@ def main() -> int:
     elif args.mode == 'apply':
         if not args.agent_output:
             parser.error('--agent-output is required')
-        lines = apply_decisions(client, repo, args.agent_output, args.snapshot_path)
+        lines = apply_decisions(client, repo, args.agent_output, args.snapshot_path, now=now)
     elif args.mode == 'reconcile':
         notices: list[Notice] = []
         lines, failures = reconcile(client, repo, now=now, notices=notices)
-        _write_notices(repo, notices)
+        _write_notices(repo, notices, failures)
     elif args.mode == 'prepare':
         source = os.environ.get('ATTENTION_NOTICES')
         if source is None:
             parser.error('ATTENTION_NOTICES is required')
         notices = prepare_notices(client, repo, _notice_refs(json.loads(source)), now=now)
-        _write_notices(repo, notices)
+        _write_notices(repo, notices, failures)
         lines = [f'prepared {len(notices)} current attention notice(s)']
     elif args.mode == 'census':
         mention = None

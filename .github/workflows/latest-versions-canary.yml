@@ -64,6 +64,11 @@ concurrency:
 
 env:
   COLUMNS: 150
+  # `ci.yml` sets this at workflow level, which does not cross the `workflow_call` boundary
+  # (#7847), so the called workflow needs its own copy. Inert while this matrix is 3.10/3.14 --
+  # both managed downloads -- but it stops a future matrix entry silently resolving to a
+  # system interpreter.
+  UV_PYTHON_PREFERENCE: only-managed
 
 jobs:
   latest-versions:

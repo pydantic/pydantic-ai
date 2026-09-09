@@ -11,7 +11,7 @@ The [`VercelAIAdapter`][pydantic_ai.ui.vercel_ai.VercelAIAdapter] class is respo
 
 If you're using a Starlette-based web framework like FastAPI, you can use the [`VercelAIAdapter.dispatch_request()`][pydantic_ai.ui.UIAdapter.dispatch_request] class method from an endpoint function to directly handle a request and return a streaming response of Vercel AI events. This is demonstrated in the next section.
 
-If you're using a web framework not based on Starlette (e.g. Django or Flask) or need fine-grained control over the input or output, you can create a `VercelAIAdapter` instance and directly use its methods. This is demonstrated in "Advanced Usage" section below.
+If you're using a web framework not based on Starlette (e.g. Django or Flask) or need fine-grained control over the input or output, you can create a `VercelAIAdapter` instance and directly use its methods. This is demonstrated in the "Advanced Usage" section below.
 
 ### Usage with Starlette/FastAPI
 
@@ -55,8 +55,12 @@ When a run ends in [first-party cancellation](../agent.md#cancelling-a-run) — 
 !!! note "Client disconnects are external cancellation"
     Calling `stop()` on the client aborts the browser's request, which the server sees as a *disconnect*, not a first-party cancellation. That tears the run down as an external `asyncio.CancelledError` (see [the two kinds of cancellation](../agent.md#cancelling-a-run)), so no `abort` chunk is emitted and `on_cancel` does not fire — and the client has disconnected anyway. To get the `abort` chunk and run `on_cancel` on a stop gesture, keep the stream connected and cancel the run *first-party*: give the run a [`CancellationToken`][pydantic_ai.CancellationToken] and expose a separate endpoint (e.g. `POST /chat/{id}/cancel`) that calls `token.cancel()`.
 
+!!! note
+    The in-memory token registry below requires a single server process or sticky routing. In a multi-worker deployment, route the cancel request to the worker that owns the run using shared coordination such as a message broker.
+
 ```py {title="run_stream.py"}
 import json
+from collections.abc import AsyncIterator
 from http import HTTPStatus
 
 from fastapi import FastAPI
@@ -64,7 +68,7 @@ from fastapi.requests import Request
 from fastapi.responses import Response, StreamingResponse
 from pydantic import ValidationError
 
-from pydantic_ai import Agent, RunCancelled
+from pydantic_ai import Agent, CancellationToken, RunCancelled
 from pydantic_ai.ui import SSE_CONTENT_TYPE
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 
@@ -72,14 +76,16 @@ agent = Agent('openai:gpt-5.2')
 
 app = FastAPI()
 
+cancellation_tokens: dict[str, CancellationToken] = {}
+
 
 async def on_cancel(cancelled: RunCancelled) -> None:
     messages = cancelled.all_messages()  # (1)!
     print(f'cancelled after {len(messages)} messages')
 
 
-@app.post('/chat')
-async def chat(request: Request) -> Response:
+@app.post('/chat/{chat_id}')
+async def chat(chat_id: str, request: Request) -> Response:
     accept = request.headers.get('accept', SSE_CONTENT_TYPE)
     try:
         run_input = VercelAIAdapter.build_run_input(await request.body())
@@ -91,24 +97,91 @@ async def chat(request: Request) -> Response:
         )
 
     adapter = VercelAIAdapter(agent=agent, run_input=run_input, accept=accept)
-    event_stream = adapter.run_stream(on_cancel=on_cancel)
+    cancellation_token = CancellationToken()
+    cancellation_tokens[chat_id] = cancellation_token
+    event_stream = adapter.run_stream(
+        cancellation_token=cancellation_token, on_cancel=on_cancel
+    )
 
-    sse_event_stream = adapter.encode_stream(event_stream)
-    return StreamingResponse(sse_event_stream, media_type=accept)
+    async def encode_stream() -> AsyncIterator[str]:
+        try:
+            async for event in adapter.encode_stream(event_stream):
+                yield event
+        finally:
+            if cancellation_tokens.get(chat_id) is cancellation_token:
+                cancellation_tokens.pop(chat_id, None)
+
+    return StreamingResponse(encode_stream(), media_type=accept)
+
+
+@app.post('/chat/{chat_id}/cancel', status_code=HTTPStatus.NO_CONTENT)
+async def cancel_chat(chat_id: str) -> None:
+    if token := cancellation_tokens.get(chat_id):
+        token.cancel()
 ```
 
 1. The resumable history to persist -- pass it as `message_history` to a later run to resume the conversation.
 
 ### Data Chunks
 
-Pydantic AI tools can send [Vercel AI data stream chunks](https://ai-sdk.dev/docs/ai-sdk-ui/stream-protocol#data-stream-protocol) by returning a
+To send data to the client while a run is in progress — for example progress updates from a long-running tool — emit a [`CustomEvent`](../agent.md#custom-events) via [`ctx.emit()`][pydantic_ai.tools.RunContext.emit]:
+
+```python {title="vercel_ai_custom_events.py"}
+from dataclasses import dataclass
+
+from pydantic_ai import Agent, CustomEvent, RunContext
+
+agent = Agent('openai:gpt-5.2')
+
+
+@dataclass(kw_only=True)
+class FileUploadProgressEvent(CustomEvent):
+    done: int
+    total: int
+
+
+@agent.tool
+async def upload_files(ctx: RunContext, total: int) -> str:
+    for done in range(1, total + 1):
+        # Do a unit of work, then tell the frontend how far along we are.
+        await ctx.emit(FileUploadProgressEvent(done=done, total=total))
+    return f'Uploaded {total} files'
+```
+
+Each event reaches the client as a [`DataChunk`][pydantic_ai.ui.vercel_ai.response_types.DataChunk] with `type` set to `data-{name}` and the result of [`to_payload()`][pydantic_ai.messages.CustomEvent.to_payload] as its `data` — here, `type='data-file_upload_progress'` and `data={'done': 1, 'total': 3}`. Chunks arrive as the events are emitted, while the tool is still running.
+
+The `data` shape is the same whether or not the event was emitted from inside a tool call, so a frontend written against one shape doesn't break when the same event class is later emitted from somewhere else. Override [`to_payload()`][pydantic_ai.messages.CustomEvent.to_payload] to control the shape — to name the fields the way the frontend expects, or to put the tool attribution on the wire:
+
+```python {title="vercel_ai_custom_event_payload.py"}
+from dataclasses import dataclass
+from typing import Any
+
+from pydantic_ai import CustomEvent
+
+
+@dataclass(kw_only=True)
+class FileUploadPhaseEvent(CustomEvent):
+    done: int
+    total: int
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            'completed': self.done,
+            'total': self.total,
+            'toolCallId': self.tool_call_id,
+        }
+```
+
+Returning a data-carrying chunk (see below) from `to_payload()` sends that chunk verbatim instead. An event class declared [`ui=False`](../agent.md#custom-events) is never forwarded, so events meant only for server-side consumers stay off the wire; nor is an event whose class this process never imported, since its opt-out travels on the class rather than the wire.
+
+Pydantic AI tools can also attach [Vercel AI data stream chunks](https://ai-sdk.dev/docs/ai-sdk-ui/stream-protocol#data-stream-protocol) to a **tool result**, by returning a
 [`ToolReturn`](../tools-advanced.md#advanced-tool-returns) object with a data-carrying chunk
 (or a list of chunks) as `metadata`.
 The supported chunk types are [`DataChunk`][pydantic_ai.ui.vercel_ai.response_types.DataChunk],
 [`SourceUrlChunk`][pydantic_ai.ui.vercel_ai.response_types.SourceUrlChunk],
 [`SourceDocumentChunk`][pydantic_ai.ui.vercel_ai.response_types.SourceDocumentChunk],
 and [`FileChunk`][pydantic_ai.ui.vercel_ai.response_types.FileChunk].
-This is useful for attaching structured data to the frontend alongside the tool result, such as source URLs or custom data payloads.
+Unlike emitted events, these are part of the message and survive a message-history round-trip, which is what you want for data the frontend must be able to rebuild, such as the source URLs behind an answer; the trade-off is that they are sent when the tool returns rather than while it runs.
 
 ```python {title="vercel_ai_tool_chunks.py"}
 from pydantic_ai import Agent, ToolReturn
@@ -140,19 +213,19 @@ async def search_docs(query: str) -> ToolReturn:
 
 ### Files from client-side tools
 
-Vercel AI SDK [client-side tools](https://ai-sdk.dev/docs/ai-sdk-ui/chatbot-tool-usage#client-side-tools) run in the browser and submit their result back to the server, where Pydantic AI resolves them as [external tool calls](../deferred-tools.md#external-tool-execution). Such a tool can return a file by putting a shape in its output that matches one of Pydantic AI's [multimodal content types](../input.md); Pydantic AI deserializes it into that type (via the same `ToolReturnContent` discriminator used for round-tripping) before the run continues. Use the type's snake_case field names — these are validated as Pydantic AI models, not Vercel-cased payloads, so `media_type` deserializes but `mediaType` stays an opaque dict. Three shapes are supported:
+Vercel AI SDK [client-side tools](https://ai-sdk.dev/docs/ai-sdk-ui/chatbot-tool-usage#client-side-tools) run in the browser and submit their result back to the server, where Pydantic AI resolves them as [external tool calls](../deferred-tools.md#external-tool-execution). Such a tool can return a file by putting a shape in its output that matches one of Pydantic AI's [multimodal content types](../input.md); Pydantic AI deserializes it into that type (via the same `ToolReturnContent` union used for round-tripping) before the run continues. Use the type's snake_case field names — these are validated as Pydantic AI models, not Vercel-cased payloads, so `media_type` deserializes but `mediaType` stays an opaque dict. A URL shape may carry `media_type`; when it doesn't, the adapter infers one from the URL, and a URL it can't infer a media type from reaches the agent as an ordinary mapping instead of as a file. An output that does spell out one of the shapes below *is* that file, and the keys the type doesn't declare are dropped with the mapping — so keep `kind` off any output you want handed back verbatim. Three shapes are supported:
 
 - **Inline bytes** — a [`BinaryContent`][pydantic_ai.messages.BinaryContent] shape, `{ kind: 'binary', media_type: 'image/png', data: <bytes> }` (image media types become [`BinaryImage`][pydantic_ai.messages.BinaryImage]). The `data` field accepts a base64 string, or the raw byte shapes a JavaScript frontend produces when it forwards a `Uint8Array` or Node `Buffer` through `JSON.stringify` without encoding it first (`{ "0": 137, "1": 80, ... }` or `{ "type": "Buffer", "data": [137, 80, ...] }`) — all normalized to bytes at the wire boundary, so a client-side tool can return binary data without base64-encoding it by hand.
-- **A file URL** — a [`FileUrl`][pydantic_ai.messages.FileUrl] shape such as `{ kind: 'image-url', url: 'https://...' }` or `{ kind: 'document-url', url: 'https://...' }`. This is often more efficient than inlining the bytes, since only the reference crosses the wire and the provider fetches the file directly — a good fit when the file already lives at a URL the frontend trusts. The URL is honored only if its scheme passes the adapter's [`allowed_file_url_schemes`][pydantic_ai.ui.UIAdapter.allowed_file_url_schemes] allowlist (`http`/`https` by default); see the [trust model](#trust-model).
+- **A file URL** — a [`FileUrl`][pydantic_ai.messages.FileUrl] shape such as `{ kind: 'image-url', url: 'https://example.com/chart.png' }` or `{ kind: 'document-url', url: 'https://example.com/report.pdf' }`. This is often more efficient than inlining the bytes, since only the reference crosses the wire and the provider fetches the file directly — a good fit when the file already lives at a URL the frontend trusts. The URL is honored only if its scheme passes the adapter's [`allowed_file_url_schemes`][pydantic_ai.ui.UIAdapter.allowed_file_url_schemes] allowlist (`http`/`https` by default); see the [trust model](#trust-model).
 - **A provider-hosted file** — an [`UploadedFile`][pydantic_ai.messages.UploadedFile] shape, `{ kind: 'uploaded-file', file_id: 'file-123', provider_name: 'openai' }`, referencing a file already uploaded to the provider's storage. Honored only when [`allow_uploaded_files`][pydantic_ai.ui.UIAdapter.allow_uploaded_files] is `True`, since the server resolves it against the provider's file API using its own credentials.
 
 ## Message metadata
 
-[`VercelAIAdapter.dump_messages`][pydantic_ai.ui.vercel_ai.VercelAIAdapter.dump_messages] writes [`ModelRequest.metadata`][pydantic_ai.messages.ModelRequest.metadata] and [`ModelResponse.metadata`][pydantic_ai.messages.ModelResponse.metadata] into Vercel AI [`UIMessage.metadata`](https://ai-sdk.dev/docs/ai-sdk-ui/message-metadata), and stores the message `timestamp` under a reserved `pydantic_ai` key so it survives the round-trip. [`VercelAIAdapter.load_messages`][pydantic_ai.ui.vercel_ai.VercelAIAdapter.load_messages] restores it on the way back.
+[`VercelAIAdapter.dump_messages`][pydantic_ai.ui.vercel_ai.VercelAIAdapter.dump_messages] writes application keys from [`ModelRequest.metadata`][pydantic_ai.messages.ModelRequest.metadata] and [`ModelResponse.metadata`][pydantic_ai.messages.ModelResponse.metadata] into Vercel AI [`UIMessage.metadata`](https://ai-sdk.dev/docs/ai-sdk-ui/message-metadata), and stores the message `timestamp` under a reserved `pydantic_ai` key so it survives the round-trip. [`VercelAIAdapter.load_messages`][pydantic_ai.ui.vercel_ai.VercelAIAdapter.load_messages] restores those application keys and the timestamp on the way back. The framework-reserved `__pydantic_ai__` namespace is excluded in both directions.
 
 When streaming, the timestamp is also emitted as a Vercel AI `message-metadata` chunk after the final step, so frontends using AI SDK UI can persist it with the assistant message. Request-side messages have no analogous chunk — frontends rebuilding history purely from streamed chunks see timestamps only on assistant responses, whereas `dump_messages` populates both sides.
 
-`UIMessage.metadata` is fully client-controlled, so only `timestamp` is round-tripped: server-side fields such as `usage`, `model_name`, and `provider_*` are deliberately excluded — dumping them could leak infrastructure details, and restoring them would trust client-submitted history for values the server owns. Broadening the round-trip behind an explicit user-controlled opt-in is tracked in [issue #5174](https://github.com/pydantic/pydantic-ai/issues/5174).
+`UIMessage.metadata` is fully client-controlled, so `timestamp` is the only server-owned field that is round-tripped. The `__pydantic_ai__` namespace and fields such as `usage`, `model_name`, and `provider_*` are deliberately excluded — dumping them could leak infrastructure details, and restoring them would trust client-submitted history for values the server owns. Keep framework and provider state in trusted server-side storage instead. Broadening the round-trip behind an explicit user-controlled opt-in is tracked in [issue #5174](https://github.com/pydantic/pydantic-ai/issues/5174).
 
 ## Trust model
 

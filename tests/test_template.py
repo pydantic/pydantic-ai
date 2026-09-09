@@ -220,7 +220,7 @@ class TestAgentFromSpecDeps:
             deps_type=MyDeps,
         )
         # Instructions with templates are stored as TemplateStr
-        assert isinstance(agent._instructions[0], TemplateStr)  # pyright: ignore[reportPrivateUsage]
+        assert isinstance(agent._instructions[0].instruction, TemplateStr)  # pyright: ignore[reportPrivateUsage]
 
     def test_from_spec_without_deps_type_returns_agent_none(self) -> None:
         """Without deps_type, from_spec returns Agent[object, str]."""
@@ -259,15 +259,17 @@ class TestAgentSpecTemplateFields:
             {'model': 'test', 'instructions': 'Hello {{name}}'},
             deps_type=MyDeps,
         )
-        assert len(agent._instructions) == 1  # pyright: ignore[reportPrivateUsage]
-        assert isinstance(agent._instructions[0], TemplateStr)  # pyright: ignore[reportPrivateUsage]
+        instructions = [sourced.instruction for sourced in agent._instructions]  # pyright: ignore[reportPrivateUsage]
+        assert len(instructions) == 1
+        assert isinstance(instructions[0], TemplateStr)
 
     def test_spec_instructions_plain_string(self) -> None:
         """Plain strings in spec instructions stay as plain strings."""
         agent = Agent.from_spec({'model': 'test', 'instructions': 'Hello world'})
-        assert len(agent._instructions) == 1  # pyright: ignore[reportPrivateUsage]
-        assert isinstance(agent._instructions[0], str)  # pyright: ignore[reportPrivateUsage]
-        assert not isinstance(agent._instructions[0], TemplateStr)  # pyright: ignore[reportPrivateUsage]
+        instructions = [sourced.instruction for sourced in agent._instructions]  # pyright: ignore[reportPrivateUsage]
+        assert len(instructions) == 1
+        assert isinstance(instructions[0], str)
+        assert not isinstance(instructions[0], TemplateStr)
 
     def test_spec_instructions_list_with_templates(self) -> None:
         """List of instructions can mix templates and plain strings."""
@@ -275,7 +277,7 @@ class TestAgentSpecTemplateFields:
             {'model': 'test', 'instructions': ['Hello {{name}}', 'Be helpful']},
             deps_type=MyDeps,
         )
-        instructions = agent._instructions  # pyright: ignore[reportPrivateUsage]
+        instructions = [sourced.instruction for sourced in agent._instructions]  # pyright: ignore[reportPrivateUsage]
         assert len(instructions) == 2
         assert isinstance(instructions[0], TemplateStr)
         assert isinstance(instructions[1], str)

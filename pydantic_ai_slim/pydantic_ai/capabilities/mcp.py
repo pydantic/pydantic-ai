@@ -84,7 +84,19 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
 
         self.url = url
         self.native = native
-        self.id = id
+        # A server's identity is its URL, so the capability takes the same derived id its toolset
+        # does rather than leaving the capability anonymous and the leaf named. Without it the run
+        # falls back to a positional `mcp` / `mcp_2`, which reorders when the capability list does
+        # -- no use as a durable-operation name or an instruction key, and nothing a user could
+        # write down. `None` stays `None` when there is nothing to derive from (a local client that
+        # carries its own connection, with no `url=` and no explicit `native=MCPServerTool(...)`).
+        #
+        # Not derived for a deferred capability, which keeps needing an explicit `id`. A deferred
+        # capability's id is listed for the model in the `load_capability` catalog, and the derived
+        # one carries the URL's last path segment -- a signed path or a token-in-path server would
+        # be disclosing that segment to the model. Deriving an id is for naming a durable operation,
+        # which is ours to see; putting one in the prompt is the user's call to make deliberately.
+        self.id = id if id is not None else (None if defer_loading else self._derive_id(url))
         # Non-string runtime `local=` inputs the base class doesn't recognize (Path, transport,
         # FastMCP server, pre-built `fastmcp.Client`, `AnyUrl`, etc.) are wrapped into an
         # `MCPToolset` here. Strings flow through `_resolve_local_strategy` below; pre-built
@@ -116,7 +128,7 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
         Returns `None` only when there's nothing to derive from — no `id`, no native `MCPServerTool`,
         and `url is None` (e.g. a non-URL `local=` client that carries its own connection).
         """
-        if self.id:
+        if self.id is not None:
             return self.id
         # An explicit `native=MCPServerTool(id=...)` carries its own id; key off it so the local
         # fallback's `unless_native` marker matches the native tool that's actually advertised.

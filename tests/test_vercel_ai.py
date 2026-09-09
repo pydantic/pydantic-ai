@@ -5,13 +5,14 @@ import json
 import uuid
 import warnings
 from collections.abc import AsyncIterator, MutableMapping
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Literal, cast
 
 import pytest
 from pydantic import ValidationError
 
-from pydantic_ai import Agent, capture_run_messages
+from pydantic_ai import Agent, CancellationToken, RunCancelled, capture_run_messages
 from pydantic_ai._deferred_capabilities import (
     parse_loaded_capabilities,
 )
@@ -24,7 +25,9 @@ from pydantic_ai.messages import (
     AudioUrl,
     BinaryContent,
     BinaryImage,
+    CapabilityEvent,
     CompactionPart,
+    CustomEvent,
     DocumentUrl,
     FilePart,
     FunctionToolCallEvent,
@@ -33,6 +36,7 @@ from pydantic_ai.messages import (
     LoadCapabilityCallPart,
     LoadCapabilityReturnPart,
     ModelMessage,
+    ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
     NativeToolCallPart,
@@ -58,6 +62,7 @@ from pydantic_ai.messages import (
     ToolReturn,
     ToolReturnContent,
     ToolReturnPart,
+    UnknownCustomEvent,
     UploadedFile,
     UserPromptPart,
     VideoUrl,
@@ -1741,6 +1746,181 @@ async def test_tool_call_delta_dict_args_are_serialized_compactly():
     ]
 
 
+@dataclass(kw_only=True)
+class VercelProgressEvent(CustomEvent, name='vercel_progress'):
+    payload: Any = None
+
+
+@dataclass(kw_only=True)
+class VercelPassthroughEvent(CustomEvent, name='vercel_passthrough'):
+    """Overrides `to_payload` so a `DataChunk` payload is passed through to the frontend verbatim."""
+
+    chunk: Any = None
+
+    def to_payload(self) -> Any:
+        return self.chunk
+
+
+async def test_custom_event_maps_to_data_chunk():
+    """A `CustomEvent` maps to a `data-{name}` chunk carrying the bare payload, tool-scoped or not.
+
+    A frontend written against one shape must not break when the same event class is later emitted
+    from inside a tool, so attribution is omitted unless the event's `to_payload` includes it.
+    """
+
+    async def event_generator():
+        yield VercelProgressEvent(payload={'pct': 50})
+        yield VercelProgressEvent(payload={'pct': 100}, tool_call_id='call_1')
+
+    request = SubmitMessage(id='foo', messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='go')])])
+    event_stream = VercelAIEventStream(run_input=request)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'data-vercel_progress', 'data': {'payload': {'pct': 50}}},
+            {'type': 'data-vercel_progress', 'data': {'payload': {'pct': 100}}},
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+            '[DONE]',
+        ]
+    )
+
+
+async def test_capability_event_is_not_forwarded():
+    """Capability coordination events are dropped by the Vercel AI adapter by default."""
+
+    @dataclass(kw_only=True)
+    class VercelCapabilityEvent(CapabilityEvent, namespace='vercel_test'):
+        value: int
+
+    async def event_generator():
+        yield VercelCapabilityEvent(value=1, capability_id='test')
+
+    request = SubmitMessage(id='foo', messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='go')])])
+    event_stream = VercelAIEventStream(run_input=request)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+    assert events == snapshot([{'type': 'start'}, {'type': 'finish-step'}, {'type': 'finish'}, '[DONE]'])
+
+
+async def test_typed_custom_event_maps_to_data_chunk():
+    """A typed `CustomEvent` subclass maps its own fields as the `data-{name}` chunk data."""
+
+    @dataclass(kw_only=True)
+    class VercelSyncEvent(CustomEvent, name='vercel_sync'):
+        done: int
+        total: int
+
+    async def event_generator():
+        yield VercelSyncEvent(done=3, total=9)
+
+    request = SubmitMessage(id='foo', messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='go')])])
+    event_stream = VercelAIEventStream(run_input=request)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'data-vercel_sync', 'data': {'done': 3, 'total': 9}},
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+            '[DONE]',
+        ]
+    )
+
+
+async def test_custom_event_with_ui_false_is_not_forwarded():
+    """A `CustomEvent` subclass declared `ui=False` never reaches the frontend."""
+
+    @dataclass(kw_only=True)
+    class VercelInternalEvent(CustomEvent, name='vercel_internal', ui=False):
+        done: int
+
+    @dataclass(kw_only=True)
+    class VercelShownEvent(CustomEvent, name='vercel_shown'):
+        done: int
+
+    async def event_generator():
+        yield VercelInternalEvent(done=1)
+        yield VercelShownEvent(done=2)
+
+    request = SubmitMessage(id='foo', messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='go')])])
+    event_stream = VercelAIEventStream(run_input=request)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'data-vercel_shown', 'data': {'done': 2}},
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+            '[DONE]',
+        ]
+    )
+
+
+async def test_unknown_custom_event_is_not_forwarded():
+    """An event whose class this process never imported can't be known to be frontend-safe."""
+    unknown = UnknownCustomEvent(name='never_imported', data={'token': 's3cr3t'})
+
+    async def event_generator():
+        yield unknown
+
+    request = SubmitMessage(id='foo', messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='go')])])
+    event_stream = VercelAIEventStream(run_input=request)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    # The payload would otherwise ride out as `data-never_imported`.
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+            '[DONE]',
+        ]
+    )
+
+
+async def test_custom_event_passes_through_data_chunk():
+    """A `CustomEvent` whose payload is already a data-carrying chunk is passed through verbatim."""
+
+    async def event_generator():
+        yield VercelPassthroughEvent(chunk=DataChunk(type='data-custom', data={'key': 'value'}))
+
+    request = SubmitMessage(id='foo', messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='go')])])
+    event_stream = VercelAIEventStream(run_input=request)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'data-custom', 'data': {'key': 'value'}},
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+            '[DONE]',
+        ]
+    )
+
+
 async def test_event_stream_thinking_end_with_full_metadata():
     """Test handle_thinking_end with all metadata fields (signature, provider_name, provider_details, id)."""
 
@@ -3257,6 +3437,55 @@ async def test_run_stream_cancelled():
     assert not any(isinstance(event, dict) and event['type'] in {'error', 'finish'} for event in events)
 
 
+async def test_run_stream_native_cancellation_token():
+    token = CancellationToken()
+    token.cancel()
+    adapter = VercelAIAdapter(
+        Agent(model=TestModel()),
+        SubmitMessage(
+            id='foo',
+            messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Hello')])],
+        ),
+    )
+
+    with pytest.raises(RunCancelled):
+        async for _ in adapter.run_stream_native(cancellation_token=token):
+            pass
+
+
+async def test_run_stream_cancellation_token():
+    token = CancellationToken()
+    token.cancel()
+    adapter = VercelAIAdapter(
+        Agent(model=TestModel()),
+        SubmitMessage(
+            id='foo',
+            messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Hello')])],
+        ),
+    )
+    cancelled: list[RunCancelled] = []
+
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(
+            adapter.run_stream(cancellation_token=token, on_cancel=cancelled.append)
+        )
+    ]
+
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'abort', 'reason': 'The agent run was cancelled.'},
+            {'type': 'finish-step'},
+            '[DONE]',
+        ]
+    )
+    assert len(cancelled) == 1
+    assert cancelled[0].all_messages() == snapshot(
+        [ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())])]
+    )
+
+
 async def test_adapter_uses_request_id_as_conversation_id():
     """The Vercel AI top-level `id` (chat ID) is wired through to `gen_ai.conversation.id`."""
     agent = Agent(model=TestModel())
@@ -4096,6 +4325,58 @@ async def test_adapter_dispatch_request():
     )
 
 
+async def test_adapter_dispatch_request_cancellation_token():
+    token = CancellationToken()
+    token.cancel()
+    run_input = SubmitMessage(
+        id='foo',
+        messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Hello')])],
+    )
+
+    async def receive() -> dict[str, Any]:
+        return {'type': 'http.request', 'body': run_input.model_dump_json().encode('utf-8')}
+
+    request = Request(
+        scope={
+            'type': 'http',
+            'method': 'POST',
+            'headers': [(b'content-type', b'application/json')],
+        },
+        receive=receive,
+    )
+    cancelled: list[RunCancelled] = []
+
+    response = await VercelAIAdapter.dispatch_request(
+        request,
+        agent=Agent(model=TestModel()),
+        cancellation_token=token,
+        on_cancel=cancelled.append,
+    )
+    assert isinstance(response, StreamingResponse)
+
+    chunks: list[str | dict[str, Any]] = []
+
+    async def send(data: MutableMapping[str, Any]) -> None:
+        body = cast(bytes, data.get('body', b'')).decode('utf-8').strip().removeprefix('data: ')
+        if body:
+            chunks.append('[DONE]' if body == '[DONE]' else json.loads(body))
+
+    await response.stream_response(send)
+
+    assert chunks == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'abort', 'reason': 'The agent run was cancelled.'},
+            {'type': 'finish-step'},
+            '[DONE]',
+        ]
+    )
+    assert len(cancelled) == 1
+    assert cancelled[0].all_messages() == snapshot(
+        [ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())])]
+    )
+
+
 async def test_adapter_dispatch_request_explicit_run_id():
     """`run_id=` passed to `dispatch_request` stamps the run result and agent messages.
 
@@ -4827,8 +5108,8 @@ async def test_adapter_dump_load_roundtrip_tool_return_multimodal(
     """Multimodal `ToolReturnPart.content` round-trips through `ToolOutputAvailablePart.output`.
 
     The `output` field always carries the dumped `ToolReturnContent` shape directly (no flag); on load,
-    `tool_return_content_ta` rehydrates `MultiModalContent` items via the explicit `Discriminator` lifted
-    onto the recursive alias.
+    `tool_return_content_ta` rehydrates `MultiModalContent` items by resolving the recursive
+    `ToolReturnContent` union.
     """
     contents: dict[str, Any] = {
         'single-image': tiny_image,
@@ -4979,10 +5260,10 @@ async def test_adapter_load_tool_return_binary_data_from_js_buffer_shape(data_pa
 async def test_adapter_load_tool_return_binary_data_unrecognized_shape_passes_through(data_payload: Any):
     """Unrecognized binary `data` shapes are left untouched by `_js_binary_to_bytes` (no `KeyError`/`TypeError`).
 
-    Because the merged `ToolReturnContent` discriminator wraps the multimodal branch in a passthrough
-    validator (`_validate_multimodal_or_passthrough`), a `kind: 'binary'` dict whose `data` fails bytes
-    validation isn't a hard error — it falls back to the raw mapping. So the helper only needs to avoid
-    crashing on malformed input; the content round-trips as the untouched dict.
+    Because `ToolReturnContent` resolves left to right, a `kind: 'binary'` dict whose `data` fails
+    bytes validation isn't a hard error — it fails the `MultiModalContent` arm and lands on `Mapping`.
+    So the helper only needs to avoid crashing on malformed input; the content round-trips as the
+    untouched dict.
     """
     ui_messages: list[UIMessage] = [
         UIMessage(id='m1', role='user', parts=[TextUIPart(text='go')]),
@@ -5014,8 +5295,8 @@ async def test_adapter_load_tool_return_binary_data_unrecognized_shape_passes_th
 
 async def test_adapter_load_tool_return_non_multimodal_binary_kind_dict_preserved():
     """A plain user mapping that merely reuses `kind: 'binary'` (no `media_type`) stays a mapping
-    with its nested `data` untouched — JS-binary coercion is gated on the same type-specific field
-    as the core `ToolReturnContent` discriminator, so it doesn't corrupt non-multimodal user dicts."""
+    with its nested `data` untouched — JS-binary coercion is gated on the type-specific field a real
+    `BinaryContent` carries, so it doesn't corrupt non-multimodal user dicts."""
     ui_messages: list[UIMessage] = [
         UIMessage(id='m1', role='user', parts=[TextUIPart(text='go')]),
         UIMessage(
@@ -5037,6 +5318,157 @@ async def test_adapter_load_tool_return_non_multimodal_binary_kind_dict_preserve
     tool_returns = list(iter_message_parts(reloaded, ModelRequest, ToolReturnPart))
     assert len(tool_returns) == 1
     assert tool_returns[0].content == snapshot({'kind': 'binary', 'data': {'0': 104, '1': 105}, 'label': 'foo'})
+
+
+@pytest.mark.parametrize(
+    'output,expected,expected_dump',
+    [
+        pytest.param(
+            {'kind': 'image-url', 'url': 'https://example.com/x.png', 'media_type': 'image/png'},
+            snapshot(ImageUrl(url='https://example.com/x.png', media_type='image/png')),
+            snapshot(
+                {
+                    'url': 'https://example.com/x.png',
+                    'force_download': False,
+                    'vendor_metadata': None,
+                    'kind': 'image-url',
+                    'media_type': 'image/png',
+                    'identifier': 'f27cce',
+                }
+            ),
+            id='file-url-naming-its-media-type',
+        ),
+        pytest.param(
+            {'kind': 'image-url', 'url': 'https://example.com/x.png'},
+            snapshot(ImageUrl(url='https://example.com/x.png', media_type='image/png')),
+            snapshot(
+                {
+                    'url': 'https://example.com/x.png',
+                    'force_download': False,
+                    'vendor_metadata': None,
+                    'kind': 'image-url',
+                    'media_type': 'image/png',
+                    'identifier': 'f27cce',
+                }
+            ),
+            id='file-url-media-type-inferred-from-url',
+        ),
+        pytest.param(
+            {'kind': 'image-url', 'url': 'https://example.com/x.png', 'media_type': ''},
+            snapshot(ImageUrl(url='https://example.com/x.png', media_type='image/png')),
+            snapshot(
+                {
+                    'url': 'https://example.com/x.png',
+                    'force_download': False,
+                    'vendor_metadata': None,
+                    'kind': 'image-url',
+                    'media_type': 'image/png',
+                    'identifier': 'f27cce',
+                }
+            ),
+            id='file-url-empty-media-type',
+        ),
+        pytest.param(
+            {'kind': 'image-url', 'url': 'https://example.com/x.png', 'media_type': None},
+            snapshot(ImageUrl(url='https://example.com/x.png', media_type='image/png')),
+            snapshot(
+                {
+                    'url': 'https://example.com/x.png',
+                    'force_download': False,
+                    'vendor_metadata': None,
+                    'kind': 'image-url',
+                    'media_type': 'image/png',
+                    'identifier': 'f27cce',
+                }
+            ),
+            id='file-url-null-media-type',
+        ),
+        pytest.param(
+            {'kind': 'video-url', 'url': 'https://youtu.be/lCdaVNyHtjU'},
+            snapshot(VideoUrl(url='https://youtu.be/lCdaVNyHtjU', media_type='video/mp4')),
+            snapshot(
+                {
+                    'url': 'https://youtu.be/lCdaVNyHtjU',
+                    'force_download': False,
+                    'vendor_metadata': None,
+                    'kind': 'video-url',
+                    'media_type': 'video/mp4',
+                    'identifier': '5ff549',
+                }
+            ),
+            id='video-url',
+        ),
+        pytest.param(
+            {'kind': 'image-url', 'url': 'https://e.com/report'},
+            snapshot({'kind': 'image-url', 'url': 'https://e.com/report'}),
+            snapshot({'kind': 'image-url', 'url': 'https://e.com/report'}),
+            id='file-url-media-type-not-inferable',
+        ),
+        pytest.param(
+            {'kind': 'image-url', 'url': 'https://example.com/x.png', 'vendor_metadata': 'nope'},
+            snapshot({'kind': 'image-url', 'url': 'https://example.com/x.png', 'vendor_metadata': 'nope'}),
+            snapshot({'kind': 'image-url', 'url': 'https://example.com/x.png', 'vendor_metadata': 'nope'}),
+            id='file-url-the-type-rejects',
+        ),
+        pytest.param(
+            {'kind': 'image-url', 'label': 'x'},
+            snapshot({'kind': 'image-url', 'label': 'x'}),
+            snapshot({'kind': 'image-url', 'label': 'x'}),
+            id='file-url-kind-without-a-url',
+        ),
+        pytest.param(
+            {'kind': 'uploaded-file', 'file_id': 'file-123', 'provider_name': 'openai'},
+            snapshot(UploadedFile(file_id='file-123', provider_name='openai')),
+            snapshot(
+                {
+                    'file_id': 'file-123',
+                    'provider_name': 'openai',
+                    'vendor_metadata': None,
+                    'kind': 'uploaded-file',
+                    'media_type': 'application/octet-stream',
+                    'identifier': '314ca6',
+                }
+            ),
+            id='uploaded-file',
+        ),
+    ],
+)
+async def test_adapter_load_tool_return_completes_documented_file_shapes(
+    output: Any, expected: Any, expected_dump: Any
+):
+    """A client-side tool's documented file shapes reach the agent as files, `media_type` and all.
+
+    A URL shape is documented without a `media_type`, so the adapter completes it from the URL the way
+    the type itself would — including when the client left the key `null` or empty, which is what
+    `File.type` gives a browser that cannot tell — and an `uploaded-file` shape needs nothing
+    completed. The dump is asserted for every case because it is the leg the completion protects: a
+    URL with no readable media type is left as the mapping it is, where reconstructing it would raise
+    `Could not infer media type` here. A mapping the type rejects keeps exactly the keys the client
+    sent: the completion validates the mapping as it stands, so it never writes a `media_type` into
+    something that stays a plain mapping.
+    """
+    ui_messages: list[UIMessage] = [
+        UIMessage(id='m1', role='user', parts=[TextUIPart(text='give me a file')]),
+        UIMessage(
+            id='m2',
+            role='assistant',
+            parts=[
+                ToolOutputAvailablePart(
+                    type='tool-get_file',
+                    tool_call_id='tc-1',
+                    state='output-available',
+                    input={},
+                    output=output,
+                )
+            ],
+        ),
+    ]
+
+    reloaded = VercelAIAdapter.load_messages(ui_messages)
+
+    tool_returns = list(iter_message_parts(reloaded, ModelRequest, ToolReturnPart))
+    assert tool_returns[0].content == expected
+    assert json.loads(ModelMessagesTypeAdapter.dump_json(reloaded))[-1]['parts'][0]['content'] == expected_dump
 
 
 async def test_adapter_tool_return_text_only_unchanged():
@@ -6036,11 +6468,13 @@ async def test_adapter_dump_load_roundtrip_without_timestamps():
 
 
 async def test_adapter_dump_load_roundtrip_with_message_metadata():
-    """`timestamp` and application `metadata` survive the dump/load round-trip; server fields don't.
+    """Request metadata survives the dump/load round-trip; response provider fields don't.
 
     The `pydantic_ai` metadata block is deliberately limited to `timestamp` (see
     `_PydanticAIMessageMetadata`): provider/usage/model fields are neither dumped to the
-    client nor restored from client-controlled history.
+    client nor restored from client-controlled history. The reserved `__pydantic_ai__` namespace
+    and response-confirmed recovery in `ModelResponse.provider_details` are both deliberately
+    excluded from the client-controlled wire.
     """
     request_timestamp = datetime(2026, 4, 15, 12, 0, tzinfo=timezone.utc)
     response_timestamp = datetime(2026, 4, 15, 12, 0, 45, tzinfo=timezone.utc)
@@ -6051,7 +6485,10 @@ async def test_adapter_dump_load_roundtrip_with_message_metadata():
                 UserPromptPart(content='User message'),
             ],
             timestamp=request_timestamp,
-            metadata={'createdAt': '2026-04-15T12:00:00Z'},
+            metadata={
+                'createdAt': '2026-04-15T12:00:00Z',
+                '__pydantic_ai__': {'anthropic_count_tokens_drop_stale_thinking_blocks': True},
+            },
         ),
         ModelResponse(
             parts=[TextPart(content='Response text')],
@@ -6060,7 +6497,11 @@ async def test_adapter_dump_load_roundtrip_with_message_metadata():
             timestamp=response_timestamp,
             provider_name='openai',
             provider_url='https://api.openai.com/v1',
-            provider_details={'tier': 'default'},
+            provider_details={
+                'input_transformations': [
+                    {'path': 'messages.1.content.0', 'reason': 'prefix_binding_mismatch', 'type': 'thinking_dropped'}
+                ]
+            },
             provider_response_id='resp-789',
             finish_reason='stop',
             metadata={'createdAt': '2026-04-15T12:00:45Z'},
@@ -6118,11 +6559,14 @@ async def test_adapter_message_metadata_application_only_roundtrip():
 
 
 async def test_adapter_load_application_only_metadata_without_pydantic_block():
-    """A `UIMessage.metadata` lacking the `pydantic_ai` key still surfaces application metadata."""
+    """Application metadata survives while a forged framework namespace is dropped."""
     ui_message = UIMessage(
         id='msg-1',
         role='assistant',
-        metadata={'createdAt': '2026-04-15T12:00:45Z'},
+        metadata={
+            'createdAt': '2026-04-15T12:00:45Z',
+            '__pydantic_ai__': {'anthropic_count_tokens_drop_stale_thinking_blocks': True},
+        },
         parts=[TextUIPart(text='Response text', state='done')],
     )
 

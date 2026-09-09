@@ -19,7 +19,12 @@ from typing_extensions import ParamSpec, TypedDict, assert_never
 
 try:
     from botocore.client import BaseClient
-    from botocore.exceptions import BotoCoreError, ClientError
+    from botocore.exceptions import (
+        BotoCoreError,
+        ClientError,
+        ConnectionError as BotocoreConnectionError,
+        HTTPClientError,
+    )
     from botocore.model import StructureShape
 except ImportError as _import_error:
     raise ImportError(
@@ -62,7 +67,10 @@ from pydantic_ai import (
 from pydantic_ai._output import DEFAULT_OUTPUT_TOOL_NAME
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
-from pydantic_ai.messages import is_multi_modal_content
+from pydantic_ai.messages import (
+    _tool_result_provenance_tags,  # pyright: ignore[reportPrivateUsage]
+    is_multi_modal_content,
+)
 from pydantic_ai.models import (
     Model,
     ModelRequestParameters,
@@ -76,7 +84,11 @@ from pydantic_ai.models import (
 from pydantic_ai.models._tool_choice import ResolvedToolChoice, resolve_tool_choice
 from pydantic_ai.native_tools import AbstractNativeTool, CodeExecutionTool
 from pydantic_ai.profiles import DEFAULT_THINKING_TAGS
-from pydantic_ai.profiles.anthropic import ANTHROPIC_THINKING_BUDGET_MAP, resolve_anthropic_effort
+from pydantic_ai.profiles.anthropic import (
+    ANTHROPIC_SAMPLING_PARAMS,
+    ANTHROPIC_THINKING_BUDGET_MAP,
+    resolve_anthropic_effort,
+)
 from pydantic_ai.profiles.openai import OPENAI_REASONING_EFFORT_MAP
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.providers.bedrock import BedrockModelProfile, remove_bedrock_geo_prefix
@@ -141,6 +153,9 @@ def _map_api_errors(model_name: str, model_id_namespace: str = 'bedrock') -> Gen
                 headers=metadata.get('HTTPHeaders'),
                 suggested_model_id=suggested_model_id,
             ) from e
+        raise ModelAPIError(model_name=model_name, message=str(e)) from e
+    except (HTTPClientError, BotocoreConnectionError) as e:
+        # botocore raises transport failures (timeouts, connection errors) as `BotoCoreError`, not `ClientError`.
         raise ModelAPIError(model_name=model_name, message=str(e)) from e
 
 
@@ -322,7 +337,9 @@ LatestBedrockModelNames = Literal[
     'us.anthropic.claude-sonnet-5',
     'global.anthropic.claude-sonnet-5',
     'us.anthropic.claude-fable-5',
+    'us.anthropic.claude-fable-5-1',
     'global.anthropic.claude-fable-5',
+    'global.anthropic.claude-fable-5-1',
     # Amazon Nova
     'us.amazon.nova-premier-v1:0',
     'global.amazon.nova-2-lite-v1:0',
@@ -701,7 +718,32 @@ class BedrockConverseModel(Model[BaseClient]):
                 model_request_parameters, output_object=replace(model_request_parameters.output_object, strict=True)
             )
         # Pass unmerged model_settings; base class does its own merge
-        return super().prepare_request(model_settings, model_request_parameters)
+        prepared_settings, model_request_parameters = super().prepare_request(model_settings, model_request_parameters)
+        if self.profile.get('anthropic_disallows_sampling_settings', False) and prepared_settings:
+            filtered: ModelSettings = {**prepared_settings}
+            self._drop_unsupported_sampling_settings(filtered)
+            prepared_settings = filtered or None
+        return prepared_settings, model_request_parameters
+
+    def _drop_unsupported_sampling_settings(self, model_settings: ModelSettings) -> None:
+        """Drop the sampling settings a flagged model rejects, warning like `AnthropicModel` does.
+
+        `temperature` and `top_p` would reach `inferenceConfig` and unified `top_k` would reach
+        `additionalModelRequestFields`; all three are rejected with a 400 by the models that set
+        `anthropic_disallows_sampling_settings`. A user's own
+        `bedrock_additional_model_requests_fields` is deliberately left alone: it is the raw
+        escape hatch, so a value placed there is addressed to Bedrock directly.
+        """
+        dropped = [setting for setting in ANTHROPIC_SAMPLING_PARAMS if setting in model_settings]
+        for setting in dropped:
+            model_settings.pop(setting, None)
+
+        if dropped:
+            warnings.warn(
+                f'Sampling parameters {dropped} are not supported by {self.model_name!r}. These settings will be ignored.',
+                UserWarning,
+                stacklevel=2,
+            )
 
     @property
     def _botocore_supports_strict_tool_param(self) -> bool:
@@ -1249,15 +1291,22 @@ class BedrockConverseModel(Model[BaseClient]):
                                     tool_result_content.append(file_block)
                                 else:
                                     tool_result_content.append({'text': f'See file {item.identifier}.'})
-                                    media_note: ContentBlockUnionTypeDef = {'text': f'This is file {item.identifier}:'}
+                                    # This media lands on a user turn, so it is framed with the call it
+                                    # came from — see `_tool_result_provenance_tags`.
+                                    open_tag, close_tag = _tool_result_provenance_tags(
+                                        part.tool_name, part.tool_call_id, item.identifier
+                                    )
+                                    framed_media: list[ContentBlockUnionTypeDef] = [
+                                        {'text': open_tag},
+                                        file_block,
+                                        {'text': close_tag},
+                                    ]
                                     if kind in colocatable_content:
                                         # This model allows the media alongside the `toolResult`; keep it in the same turn.
-                                        colocated_media_content.append(media_note)
-                                        colocated_media_content.append(file_block)
+                                        colocated_media_content.extend(framed_media)
                                     else:
                                         # The media can't share the `toolResult`'s turn; defer it to a later user turn.
-                                        deferred_media_content.append(media_note)
-                                        deferred_media_content.append(file_block)
+                                        deferred_media_content.extend(framed_media)
                             else:
                                 tool_result_content.append({'text': item} if isinstance(item, str) else {'json': item})
                         if not tool_result_content:

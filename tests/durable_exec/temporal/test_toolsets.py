@@ -32,6 +32,7 @@ from pydantic_ai import (
     RunContext,
     RunUsage,
     TextPart,
+    Tool,
     ToolCallPart,
     ToolReturn,
     ToolReturnPart,
@@ -48,6 +49,7 @@ from pydantic_ai.exceptions import (
     UserError,
 )
 from pydantic_ai.models import (
+    ModelRequestContext,
     ModelRequestParameters,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -96,12 +98,16 @@ try:
         resolve_tool_activity_config,
         toolset_temporal_activities,
     )
+    from pydantic_ai.durable_exec.temporal._transports import (
+        _CompactMessagesParams,  # pyright: ignore[reportPrivateUsage]
+    )
 
 except ImportError:  # pragma: lax no cover
     pytest.skip('temporal not installed', allow_module_level=True)
 
 
-# On 3.14 pytest skips at collection before importing this module, so the branch is unmeasured there.
+# The 3.14 durable-exec CI leg takes this skip; every other leg falls through. `lax` rather than
+# plain because which of the two arms a run measures depends on its Python version.
 if sys.version_info >= (3, 14):  # pragma: lax no cover
     pytest.skip(
         'temporalio sandbox is incompatible with Python 3.14: '
@@ -371,7 +377,12 @@ async def test_toolset_without_id():
     with pytest.raises(
         UserError,
         match=re.escape(
-            "Toolsets that are 'leaves' (i.e. those that implement their own tool listing and calling) need to have a unique `id` in order to be used with Temporal. The ID will be used to identify the toolset's activities within the workflow."
+            "Toolsets that are 'leaves' (i.e. those that implement their own tool listing and calling) "
+            'need to have a unique `id` in order to be used with Temporal. '
+            "The ID will be used to identify the toolset's activities within the workflow. "
+            'Set it on the toolset itself with `FunctionToolset(id=...)` or `MCPToolset(..., id=...)`, '
+            "or, when the toolset is contributed by a capability, set the capability's `id` "
+            "(for example, `WebSearch(local='duckduckgo', id='search')` or `MCP(url='...', id='...')`)."
         ),
     ):
         TemporalAgent(Agent(model=model, name='test_agent', toolsets=[FunctionToolset()]))  # pyright: ignore[reportDeprecated]
@@ -601,6 +612,51 @@ async def test_temporal_dynamic_toolset_rejects_activity_opt_out():
         await durable.call_tool('boom', {}, ctx, tool)
 
 
+async def test_temporalize_dynamic_toolset_runs_args_validator_in_activity() -> None:
+    from pydantic_ai.durable_exec._toolset import get_dynamic_tools
+
+    validated: list[int] = []
+
+    async def tool(value: int) -> int: ...  # pragma: no branch
+
+    def validator(ctx: RunContext[None], value: int) -> None:
+        validated.append(value)
+
+    dynamic = DynamicToolset(
+        lambda ctx: FunctionToolset([Tool(tool, args_validator=validator)]), id='legacy-validation'
+    )
+    durable = temporalize_dynamic_toolset(
+        dynamic,
+        activity_name_prefix='agent__legacy_validation',
+        activity_config={},
+        tool_activity_config={},
+        deps_type=type(None),
+    )
+    durable._in_durable_context = lambda: True  # pyright: ignore[reportPrivateUsage]
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+    activity_calls = 0
+
+    async def run_activity(*, activity: Callable[..., Any], args: Sequence[Any], **config: Any) -> Any:
+        nonlocal activity_calls
+        activity_calls += 1
+        if activity_calls == 1:
+            return await get_dynamic_tools(dynamic, ctx)
+        return await ActivityEnvironment().run(activity, *args)
+
+    with (
+        patch('pydantic_ai.durable_exec.temporal._dynamic_toolset.workflow.in_workflow', return_value=True),
+        patch('pydantic_ai.durable_exec.temporal._dynamic_toolset.execute_activity', run_activity),
+    ):
+        run_toolset = await durable.for_run(ctx)
+        tools = await run_toolset.get_tools(ctx)
+        assert tools
+        resolved = next(iter(tools.values()))
+        assert resolved.args_validator_func is not None
+        await resolved.args_validator_func(ctx, value=1)
+
+    assert validated == [1]
+
+
 # --- DynamicToolset instructions refresh across run steps (issue #5282 follow-up) ---
 # The per-run instructions cache is written by `get_tools` and read by `get_instructions` each
 # step; this guards against it serving a stale step-1 value on a later step.
@@ -823,11 +879,7 @@ async def test_temporal_agent_run_in_workflow_with_executing_toolsets(allow_mode
         with workflow_raises(
             UserError,
             snapshot(
-                'FunctionToolset cannot be passed to `run(toolsets=...)` at runtime with Temporal, because '
-                'toolsets that execute their own tools or resolve dynamically must be registered for durable '
-                'execution when the agent is constructed. Pass them to the agent constructor instead. '
-                'Non-executing toolsets like `ExternalToolset` can be passed at runtime. Async tools that '
-                "don't need durable wrapping can opt out with metadata={'temporal': False} to be allowed at runtime."
+                "FunctionToolset cannot be added at runtime with Temporal, because toolsets that execute their own tools or resolve dynamically must be registered for durable execution when the agent is constructed. Pass them to the agent constructor instead -- not to `run(toolsets=...)` or `override(toolsets=...)`, and not via a post-construction `@agent.toolset`. Non-executing toolsets like `ExternalToolset` can be passed at runtime. Async tools that don't need durable wrapping can opt out with metadata={'temporal': False} to be allowed at runtime."
             ),
         ):
             await client.execute_workflow(
@@ -1611,7 +1663,13 @@ async def heartbeat_probe_agent_tool() -> str:
     return 'probe agent tool ran'
 
 
-_heartbeat_function_toolset = FunctionToolset[None](tools=[heartbeat_probe_tool], id='hb_tools')
+async def _heartbeat_probe_args_validator(ctx: RunContext[None]) -> None:
+    await asyncio.sleep(0.01)
+
+
+_heartbeat_function_toolset = FunctionToolset[None](
+    tools=[Tool(heartbeat_probe_tool, args_validator=_heartbeat_probe_args_validator)], id='hb_tools'
+)
 
 _heartbeat_mcp_toolset = MCPToolset(
     StdioTransport(command='python', args=['-m', 'tests.mcp_server']),
@@ -1625,7 +1683,9 @@ _heartbeat_mcp_toolset = MCPToolset(
 
 async def _heartbeat_dynamic_toolset(ctx: RunContext[None]) -> AbstractToolset[None]:
     await asyncio.sleep(0.01)
-    return FunctionToolset[None](tools=[heartbeat_probe_tool], id='hb_dynamic_inner')
+    return FunctionToolset[None](
+        tools=[Tool(heartbeat_probe_tool, args_validator=_heartbeat_probe_args_validator)], id='hb_dynamic_inner'
+    )
 
 
 async def _heartbeat_event_stream_handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
@@ -1647,12 +1707,18 @@ class _HeartbeatProbeModel(FunctionModel):
     async def cancel_suspended_response(self, response: ModelResponse) -> None:
         await asyncio.sleep(0.01)
 
+    async def compact_messages(
+        self, request_context: ModelRequestContext, *, instructions: str | None = None
+    ) -> ModelResponse:
+        await asyncio.sleep(0.01)
+        return ModelResponse(parts=[TextPart('compacted')])
+
 
 _heartbeat_agent = Agent(
     _HeartbeatProbeModel(_heartbeat_model_fn, stream_function=_heartbeat_stream_model_fn),
     name='heartbeat_probe_agent',
     deps_type=type(None),
-    tools=[heartbeat_probe_agent_tool],
+    tools=[Tool(heartbeat_probe_agent_tool, args_validator=_heartbeat_probe_args_validator)],
     toolsets=[
         _heartbeat_function_toolset,
         _heartbeat_mcp_toolset,
@@ -1712,8 +1778,28 @@ async def test_every_registered_activity_heartbeats(allow_model_requests: None):
                 ),
                 None,
             ],
+            f'{prefix}__toolset__<agent>__validate_args': [
+                CallToolParams(
+                    name='heartbeat_probe_agent_tool',
+                    tool_args={},
+                    serialized_run_context=serialized_run_context,
+                    tool_def=agent_tool_def,
+                ),
+                None,
+            ],
             f'{prefix}__model_request': [request_params, None],
             f'{prefix}__model_request_stream': [request_params, None],
+            f'{prefix}__model_compact_messages': [
+                _CompactMessagesParams(
+                    messages=request_params.messages,
+                    model_settings=None,
+                    model_request_parameters=request_params.model_request_parameters,
+                    streaming=False,
+                    instructions='Keep decisions',
+                    serialized_run_context=serialized_run_context,
+                ),
+                None,
+            ],
             f'{prefix}__model_cancel_suspended_response': [
                 _CancelParams(
                     response=ModelResponse(parts=[TextPart('suspended')]),
@@ -1737,6 +1823,15 @@ async def test_every_registered_activity_heartbeats(allow_model_requests: None):
                 ),
                 None,
             ],
+            f'{prefix}__toolset__hb_tools__validate_args': [
+                CallToolParams(
+                    name='heartbeat_probe_tool',
+                    tool_args={},
+                    serialized_run_context=serialized_run_context,
+                    tool_def=function_tool_def,
+                ),
+                None,
+            ],
             f'{prefix}__mcp_server__hb_mcp__get_tools': [get_tools_params, None],
             f'{prefix}__mcp_server__hb_mcp__get_instructions': [get_tools_params, None],
             f'{prefix}__mcp_server__hb_mcp__call_tool': [
@@ -1750,6 +1845,15 @@ async def test_every_registered_activity_heartbeats(allow_model_requests: None):
             ],
             f'{prefix}__dynamic_toolset__hb_dynamic__get_tools': [get_tools_params, None],
             f'{prefix}__dynamic_toolset__hb_dynamic__call_tool': [
+                CallToolParams(
+                    name='heartbeat_probe_tool',
+                    tool_args={},
+                    serialized_run_context=serialized_run_context,
+                    tool_def=function_tool_def,
+                ),
+                None,
+            ],
+            f'{prefix}__dynamic_toolset__hb_dynamic__validate_args': [
                 CallToolParams(
                     name='heartbeat_probe_tool',
                     tool_args={},

@@ -10,8 +10,9 @@ import secrets
 import sys
 from collections.abc import AsyncIterator, Callable, Generator, Iterator, Sequence
 from contextlib import contextmanager, suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
+from decimal import Decimal
 from functools import cache, cached_property
 from pathlib import Path
 from types import ModuleType
@@ -21,13 +22,14 @@ import httpx
 import httpx2
 import pytest
 from _pytest.assertion.rewrite import AssertionRewritingHook
+from pydantic import JsonValue, TypeAdapter
 from pytest_mock import MockerFixture
 from vcr import VCR, request as vcr_request
 from vcr.record_mode import RecordMode
 
 import pydantic_ai._http
 import pydantic_ai.models
-from pydantic_ai import Agent, BinaryContent, BinaryImage, Embedder
+from pydantic_ai import Agent, BinaryContent, BinaryImage, Embedder, ImageGenerator
 from pydantic_ai.messages import (
     DocumentUrl,
     FilePart,
@@ -66,6 +68,7 @@ T = TypeVar('T')
 
 __all__ = (
     'IsDatetime',
+    'IsDecimal',
     'IsFloat',
     'IsNow',
     'IsStr',
@@ -110,6 +113,7 @@ if TYPE_CHECKING:
 
     def IsInstance(arg: type[T]) -> T: ...
     def IsDatetime(*args: Any, **kwargs: Any) -> datetime: ...
+    def IsDecimal(*args: Any, **kwargs: Any) -> Decimal: ...
     def IsFloat(*args: Any, **kwargs: Any) -> float: ...
     def IsInt(*args: Any, **kwargs: Any) -> int: ...
     def IsNow(*args: Any, **kwargs: Any) -> datetime: ...
@@ -118,7 +122,10 @@ if TYPE_CHECKING:
     def IsBytes(*args: Any, **kwargs: Any) -> bytes: ...
     def IsList(*args: T, **kwargs: Any) -> list[T]: ...
 else:
-    from dirty_equals import IsBytes, IsDatetime, IsFloat, IsInstance, IsInt, IsList, IsNow as _IsNow, IsStr
+    from dirty_equals import IsBytes, IsDatetime, IsFloat, IsInstance, IsInt, IsList, IsNow as _IsNow, IsNumeric, IsStr
+
+    class IsDecimal(IsNumeric[Decimal]):
+        allowed_types = Decimal
 
     def IsNow(*args: Any, **kwargs: Any):
         # Increase the default value of `delta` to 10 to reduce test flakiness on overburdened machines
@@ -348,8 +355,10 @@ def env() -> Iterator[TestEnv]:
 
 
 @pytest.fixture(scope='session')
-def anyio_backend():
-    return 'asyncio'
+def anyio_backend(pytestconfig: pytest.Config) -> str:
+    backend = pytestconfig.getoption('--anyio-backend')
+    assert isinstance(backend, str)
+    return backend
 
 
 # Calls that are allowed to block in the event loop, as (blockbuster function, file, functions).
@@ -593,6 +602,7 @@ def missing_event_loop() -> Iterator[asyncio.AbstractEventLoop]:
 def no_instrumentation_by_default():
     Agent.instrument_all(False)
     Embedder.instrument_all(False)
+    ImageGenerator.instrument_all(False)
 
 
 try:
@@ -609,7 +619,7 @@ try:
         logfire.shutdown(flush=False)
         # `test_examples.py` runs doc snippets that call the process-global `logfire.instrument_httpx()`,
         # which patches httpx via OTel and is never torn down. Reset it so it can't leak request spans
-        # into other tests sharing the xdist worker (e.g. stray `POST` spans in `test_temporal` snapshots).
+        # into other tests sharing the xdist worker (e.g. stray `POST` spans in `tests/durable_exec/temporal` snapshots).
         if _httpx_instrumentor._is_instrumented_by_opentelemetry:  # pyright: ignore[reportPrivateUsage]
             _httpx_instrumentor.uninstrument()
         # The worker's main-thread OTel context also persists across tests: an `attach` without a
@@ -665,7 +675,10 @@ def pytest_recording_configure(config: Any, vcr: VCR):
     vcr.register_matcher('path', path_matcher)
 
     def scrub_request(request: vcr_request.Request) -> vcr_request.Request | None:
-        if request.host == 'oauth2.googleapis.com' and request.path == '/token':
+        if (request.host, request.path) in {
+            ('oauth2.googleapis.com', '/token'),
+            ('auth.openai.com', '/oauth/token'),
+        }:
             return None
         request.uri = _AWS_ACCOUNT_ID_IN_ARN.sub(_SCRUBBED_AWS_ACCOUNT_ID, request.uri)
         return request
@@ -693,6 +706,12 @@ def pytest_recording_configure(config: Any, vcr: VCR):
 
 
 def pytest_addoption(parser: Any) -> None:
+    parser.addoption(
+        '--anyio-backend',
+        choices=('asyncio', 'trio'),
+        default='asyncio',
+        help='Select the async test backend without duplicating the suite (default: asyncio).',
+    )
     parser.addoption(
         '--xai-proto-include-json',
         action='store_true',
@@ -794,6 +813,78 @@ def fail_cache_prefix_violations(request: pytest.FixtureRequest, vcr: Cassette |
     if cassette_path_value is None or not (cassette_path := Path(cassette_path_value)).is_file():
         return
     check_cache_prefix_stability(request.node, cassette_path)
+
+
+# `validate_json` parses through pydantic-core rather than the stdlib, and types the result without a cast.
+_REQUEST_BODY_ADAPTER = TypeAdapter(dict[str, JsonValue])
+
+# What `httpx2.AsyncClient()` uses when no timeout is passed.
+_HTTPX_DEFAULT_TIMEOUT = 5.0
+
+
+@dataclass
+class RequestCapture:
+    """Outbound request bodies, as the live code built them.
+
+    A cassette records what was sent when it was recorded, and the default matchers ignore the body,
+    so a request whose payload has since drifted still replays against its recording. httpx event
+    hooks run inside `AsyncClient.send`, above the transport VCR patches, so they fire on replay too
+    and see what is actually going out. Pass `capture.client` as a provider's `http_client` and
+    snapshot a projection of `capture.body(...)` to pin the fields a test's claim rests on.
+    A provider that needs a longer deadline than httpx's default takes `capture.http_client(...)`.
+    """
+
+    paths: list[str] = field(default_factory=list[str])
+    raw_bodies: list[bytes] = field(default_factory=list[bytes])
+    headers: list[httpx2.Headers] = field(default_factory=list[httpx2.Headers])
+    client: httpx2.AsyncClient = field(init=False)
+
+    def __post_init__(self) -> None:
+        self.client = httpx2.AsyncClient(event_hooks={'request': [self._record]})
+
+    def http_client(self, *, timeout: float = _HTTPX_DEFAULT_TIMEOUT) -> httpx2.AsyncClient:
+        """`client`, with `timeout` as the read timeout, for a provider that reads it back out.
+
+        `GoogleProvider` reads the injected client's read timeout into google-genai's
+        `HttpOptions.timeout`, which becomes both the per-request httpx timeout and the
+        `X-Server-Timeout` deadline the API enforces. Gemini rejects a deadline under 10 seconds, and
+        httpx defaults to 5. The default here is httpx's own, so it leaves the client as `client` has
+        it; only a caller that needs a longer deadline passes a `timeout`.
+        """
+        self.client.timeout = timeout
+        return self.client
+
+    async def _record(self, request: httpx2.Request) -> None:
+        # Only the raw bytes are kept here: the hook runs on every request of every test that asks
+        # for a capture, while a test typically inspects one of them. Parsing happens in `body`.
+        self.paths.append(request.url.path)
+        self.raw_bodies.append(request.read())
+        # The cassette serializer strips `anthropic-*` headers, so the wire is the only place a test
+        # can see beta gating.
+        self.headers.append(request.headers)
+
+    def bodies(self, path_suffix: str = '') -> list[dict[str, JsonValue]]:
+        """Every captured body whose URL path ends with `path_suffix`, parsed on demand."""
+        return [
+            _REQUEST_BODY_ADAPTER.validate_json(raw)
+            for path, raw in zip(self.paths, self.raw_bodies)
+            if path.endswith(path_suffix)
+        ]
+
+    def body(self, path_suffix: str = '', index: int = 0) -> dict[str, JsonValue]:
+        """The `index`th captured body whose URL path ends with `path_suffix`, parsed on demand."""
+        matches = self.bodies(path_suffix)
+        assert matches, f'no captured request matching {path_suffix!r}; saw {self.paths}'
+        return matches[index]
+
+
+@pytest.fixture
+async def request_capture(anyio_backend: str) -> AsyncIterator[RequestCapture]:
+    capture = RequestCapture()
+    yield capture
+    # Built directly rather than through `create_async_httpx2_client`, so the autouse
+    # `close_httpx_clients` tracker never sees it and its pool would otherwise leak per test.
+    await capture.client.aclose()
 
 
 _HttpClient: TypeAlias = 'httpx.AsyncClient | httpx2.AsyncClient'
@@ -1102,6 +1193,11 @@ def crusoe_api_key() -> str:
 
 
 @pytest.fixture(scope='session')
+def github_copilot_api_key() -> str:
+    return os.getenv('GITHUB_COPILOT_API_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='session')
 def snowflake_account() -> str:
     return os.getenv('SNOWFLAKE_ACCOUNT', 'myorg-myaccount')
 
@@ -1125,7 +1221,7 @@ async def xai_provider(request: pytest.FixtureRequest) -> AsyncIterator[XaiProvi
     try:
         from pydantic_ai.providers.xai import XaiProvider
         from tests.models.xai_proto_cassettes import xai_proto_cassette_session
-    except ImportError:  # pragma: no cover
+    except ImportError:
         pytest.skip('xai_sdk not installed')
 
     cassette_name = sanitize_filename(request.node.name, 240)

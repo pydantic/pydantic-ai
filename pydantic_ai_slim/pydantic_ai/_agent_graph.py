@@ -21,10 +21,11 @@ from pydantic_ai._instrumentation import (
     DEFAULT_INSTRUMENTATION_VERSION,
     capture_current_context,
     get_instructions as _get_history_instructions,
+    get_instructions_source as _get_history_instructions_source,
     time_to_first_chunk_ctx,
 )
 from pydantic_ai._tool_execution import process_tool_calls
-from pydantic_ai._utils import cancel_and_drain, dataclasses_no_defaults_repr, fill_run_metadata, now_utc
+from pydantic_ai._utils import cancel_and_drain, dataclasses_no_defaults_repr, fill_run_metadata, is_str_dict, now_utc
 from pydantic_ai._uuid import uuid7
 from pydantic_ai.capabilities.abstract import AbstractCapability, ModelSelector
 from pydantic_ai.models import (
@@ -43,14 +44,13 @@ from pydantic_graph.basenode import NodeRunEndT
 
 from . import _enqueue, _output, _system_prompt, exceptions, messages as _messages, models, result, usage as _usage
 from ._cancel import RunCancellation
-from ._cost import best_effort_price, fill_response_cost
 from ._deferred_capabilities import (
     _parse_loaded_capabilities,  # pyright: ignore[reportPrivateUsage]
     parse_loaded_capabilities,
     registered_loaded_capability_ids,
 )
-from ._instructions import normalize_toolset_instructions
-from ._run_context import AnchoredEvidence, set_current_run_context
+from ._genai_prices import best_effort_price, fill_response_cost
+from ._run_context import AnchoredEvidence, EventStreamBuffer, dispatch_event_stream, set_current_run_context
 from .exceptions import ToolRetryError
 
 # `_ContinuationStreamedResponse` is an intentionally-exported member of the private
@@ -74,6 +74,7 @@ from .tools import (
     RunContext,
     ToolDefinition,
 )
+from .toolsets._instruction_collection import collect_toolset_instructions
 
 if TYPE_CHECKING:
     from .agent import Agent
@@ -97,6 +98,7 @@ __all__ = (
 T = TypeVar('T')
 S = TypeVar('S')
 NoneType = type(None)
+_PYDANTIC_AI_METADATA_KEY = '__pydantic_ai__'
 EndStrategy = Literal['early', 'graceful', 'exhaustive']
 """How to handle function tool calls a model requests alongside a result that ends the run.
 
@@ -185,12 +187,15 @@ async def _with_event_stream_buffer(
     stream: AsyncIterator[_messages.AgentStreamEvent],
     event_stream_buffer: list[_messages.AgentStreamEvent],
 ) -> AsyncIterator[_messages.AgentStreamEvent]:
-    """Drain buffered run events around each event from a node stream, preserving order."""
+    """Drain buffered run events at the start and end of a node stream.
+
+    Events buffered while the node stream is live are yielded by the stream itself, as soon as they
+    are emitted (see `_iter_completed_or_buffered`); draining them here as well could yield them
+    ahead of an earlier event the stream is about to deliver, inverting emission order.
+    """
     while event_stream_buffer:
         yield event_stream_buffer.pop(0)
     async for event in stream:
-        while event_stream_buffer:
-            yield event_stream_buffer.pop(0)
         yield event
     while event_stream_buffer:
         yield event_stream_buffer.pop(0)
@@ -325,9 +330,7 @@ class GraphAgentState:
     pending_messages: list[_enqueue.PendingMessage] = dataclasses.field(default_factory=list[_enqueue.PendingMessage])
     """Internal: queue used by [`PendingMessageDrainCapability`][pydantic_ai.capabilities._pending_messages.PendingMessageDrainCapability]
     for messages enqueued via [`enqueue`][pydantic_ai.tools.RunContext.enqueue] or [`AgentRun.enqueue`][pydantic_ai.run.AgentRun.enqueue]."""
-    event_stream_buffer: list[_messages.AgentStreamEvent] = dataclasses.field(
-        default_factory=list[_messages.AgentStreamEvent]
-    )
+    event_stream_buffer: list[_messages.AgentStreamEvent] = dataclasses.field(default_factory=EventStreamBuffer)
     """Internal: run event buffer, shared by reference into every `RunContext` this run (see `build_run_context`)
     as the private `_event_stream_buffer` field. Framework code appends events to it (e.g.
     [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent]s from
@@ -431,6 +434,23 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
 
     cancellation: RunCancellation = dataclasses.field(default_factory=RunCancellation, repr=False)
     """The run's first-party cancellation controller. Runtime-only: holds a live task reference."""
+
+    pending_immediate_dispatches: dict[int, list[asyncio.Event]] = dataclasses.field(
+        default_factory=dict[int, list[asyncio.Event]], repr=False
+    )
+    """Settlement signals for buffered events dispatched immediately, keyed by `id(event)`.
+
+    Runtime-only, deliberately not on `GraphAgentState`: raw object ids are meaningless in a revived
+    process (a stale persisted id could even collide with a new event's address), so a revived run
+    starts empty and buffered events degrade to dispatching at stream position."""
+
+    event_stream_replacements: dict[int, _messages.AgentStreamEvent] = dataclasses.field(
+        default_factory=dict[int, _messages.AgentStreamEvent], repr=False
+    )
+    """Legacy `hooks.on.event` replacements to apply at the consumer-facing stream position.
+
+    Runtime-only and id-keyed like `pending_immediate_dispatches`, and excluded from persistence for
+    the same reason."""
 
     model_id: str | None = None
     """The model-id string `model` was resolved from, if the run's model came from a string.
@@ -756,10 +776,25 @@ async def _get_instructions(
     if base:
         parts.extend(base)
 
-    toolset_result = await ctx.deps.tool_manager.toolset.get_instructions(run_context)
-    parts.extend(normalize_toolset_instructions(toolset_result))
+    parts.extend(await collect_toolset_instructions(ctx.deps.tool_manager.toolset, run_context))
 
     return parts or None
+
+
+def _apply_instruction_parts(
+    request: _messages.ModelRequest, instruction_parts: list[_messages.InstructionPart] | None
+) -> None:
+    """Render the instruction parts being sent onto the request that records them.
+
+    `ModelRequestParameters.instruction_parts` is what the model reads, so a `before_model_request`
+    hook that rewrites the parts would otherwise leave message history and OTel reporting
+    instructions the model never received.
+
+    `None` means "unset" rather than "no instructions" — it's what makes `Model._get_instruction_parts`
+    fall back to the request's own `instructions` — so it leaves the request alone.
+    """
+    if instruction_parts is not None:
+        request.instructions = _messages.InstructionPart.join(instruction_parts)
 
 
 async def _prepare_request_parameters(
@@ -1138,7 +1173,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         return await self._make_request(ctx)
 
     @asynccontextmanager
-    async def stream(
+    async def stream(  # noqa: C901
         self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, T]],
     ) -> AsyncGenerator[result.AgentStream[DepsT, T]]:
@@ -1225,13 +1260,16 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         wrap_request_context.model_id = ctx.deps.model_id
         # Signal to hooks that the agent loop expects a real event stream.
         wrap_request_context.streaming = True
-        wrap_task = asyncio.create_task(
-            ctx.deps.root_capability.wrap_model_request(
+        root_capability = ctx.deps.root_capability
+        if root_capability._has_wrap_model_request:  # pyright: ignore[reportPrivateUsage]
+            wrap_awaitable = root_capability.wrap_model_request(
                 run_context,
                 request_context=wrap_request_context,
                 handler=_streaming_handler,
             )
-        )
+        else:
+            wrap_awaitable = _streaming_handler(wrap_request_context)
+        wrap_task = asyncio.create_task(wrap_awaitable)
 
         # Wait for handler to start or wrap to complete (short-circuit).
         # If outer cancellation arrives during this wait, drain both tasks before re-raising
@@ -1334,7 +1372,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                         except exceptions.ModelRetry:
                             raise  # Propagate to outer handler
                         except Exception as e:
-                            model_response = await ctx.deps.root_capability.on_model_request_error(
+                            if not root_capability._has_on_model_request_error:  # pyright: ignore[reportPrivateUsage]
+                                raise
+                            model_response = await root_capability.on_model_request_error(
                                 run_context, request_context=wrap_request_context, error=e
                             )
                     except exceptions.ModelRetry as e:
@@ -1421,19 +1461,25 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             model_request_parameters=model_request_parameters,
         )
         request_context.model_id = ctx.deps.model_id
+        root_capability = ctx.deps.root_capability
         try:
             try:
-                model_response = await ctx.deps.root_capability.wrap_model_request(
-                    run_context,
-                    request_context=request_context,
-                    handler=model_handler,
-                )
+                if root_capability._has_wrap_model_request:  # pyright: ignore[reportPrivateUsage]
+                    model_response = await root_capability.wrap_model_request(
+                        run_context,
+                        request_context=request_context,
+                        handler=model_handler,
+                    )
+                else:
+                    model_response = await model_handler(request_context)
             except exceptions.SkipModelRequest as e:
                 model_response = e.response
             except exceptions.ModelRetry:
                 raise  # Propagate to outer handler
             except Exception as e:
-                model_response = await ctx.deps.root_capability.on_model_request_error(
+                if not root_capability._has_on_model_request_error:  # pyright: ignore[reportPrivateUsage]
+                    raise
+                model_response = await root_capability.on_model_request_error(
                     run_context, request_context=request_context, error=e
                 )
         except exceptions.ModelRetry as e:
@@ -1531,6 +1577,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # Fill in framework metadata the history processors may have left unset on a new `ModelRequest`.
         fill_run_metadata(messages[-1], run_id=ctx.state.run_id, conversation_id=ctx.state.conversation_id)
 
+        # The hook may have rewritten the instruction parts the model will actually be sent, so bring
+        # the request that records them back in step. It's the request this step created and set
+        # instructions on above, which is not necessarily the last message anymore: a hook can append
+        # further messages (e.g. `ToolSearch`'s auto-load synthesizes a call/return pair).
+        _apply_instruction_parts(self.request, model_request_parameters.instruction_parts)
+
         if self.is_resuming_without_prompt:
             # No separate user-prompt request this run: the trailing request that arrived via
             # `message_history` *is* the request being sent, so it's prior context, not new. Track it
@@ -1604,7 +1656,42 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # Copy to avoid modifying the original usage object with the counted usage
             usage = deepcopy(usage)
 
+            outgoing_request = next(
+                message for message in reversed(messages) if isinstance(message, _messages.ModelRequest)
+            )
+            raw_outgoing_namespace_before = (outgoing_request.metadata or {}).get(_PYDANTIC_AI_METADATA_KEY)
+            outgoing_namespace_before: dict[str, Any] = (
+                dict(raw_outgoing_namespace_before) if is_str_dict(raw_outgoing_namespace_before) else {}
+            )
             counted_usage = await model.count_tokens(messages, model_settings, model_request_parameters)
+
+            # Counting models may persist framework-only state on the request they counted. When
+            # normalization merged consecutive requests, that request is temporary, so copy only keys
+            # added or changed by `count_tokens()` back to the durable trailing request. Application
+            # metadata keeps the existing normalization contract and is never propagated this way.
+            outgoing_namespace = (outgoing_request.metadata or {}).get(_PYDANTIC_AI_METADATA_KEY)
+            updates = (
+                {
+                    key: value
+                    for key, value in outgoing_namespace.items()
+                    if key not in outgoing_namespace_before or outgoing_namespace_before[key] != value
+                }
+                if is_str_dict(outgoing_namespace)
+                else {}
+            )
+            if updates:
+                durable_request = next(
+                    message
+                    for message in reversed(ctx.state.message_history)
+                    if isinstance(message, _messages.ModelRequest)
+                )
+                if durable_request is not outgoing_request:
+                    durable_request.metadata = durable_request.metadata or {}
+                    durable_namespace = durable_request.metadata.get(_PYDANTIC_AI_METADATA_KEY)
+                    if not is_str_dict(durable_namespace):
+                        durable_namespace = {}
+                        durable_request.metadata[_PYDANTIC_AI_METADATA_KEY] = durable_namespace
+                    durable_namespace.update(updates)
             # Price this request's input tokens so the accumulated cost reflects them. Output tokens don't
             # exist yet, so this is a lower bound: it only catches a request whose input alone exceeds the limit.
             counted_price = best_effort_price(
@@ -1707,6 +1794,16 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 ctx.deps.resumed_request_index = index
                 break
 
+        # A hook's rewrite has to land on the message that records the instructions this
+        # continuation echoes back, which is the one they were read from — not necessarily the
+        # resumed request. A trailing tool-return-only request carries none of its own (which is
+        # why `_get_history_instructions` looks past it), so stamping that one would put
+        # instructions on a message that was sent without any. Falling back to the resumed request
+        # covers a hook adding instructions where the history had none to source.
+        instructions_target = _get_history_instructions_source(base_messages) or ctx.deps.resumed_request
+        if instructions_target is not None:
+            _apply_instruction_parts(instructions_target, model_request_parameters.instruction_parts)
+
         # `ctx.state.message_history` is the same list used by `capture_run_messages`, so
         # replace its contents (dropping the suspended response) rather than the reference;
         # `_finish_handling` then appends the final merged response after the base history.
@@ -1770,9 +1867,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 return exc.response
             if isinstance(exc, exceptions.ModelRetry):
                 raise exc
-            return await ctx.deps.root_capability.on_model_request_error(
-                run_context, request_context=request_context, error=exc
-            )
+            root_capability = ctx.deps.root_capability
+            if not root_capability._has_on_model_request_error:  # pyright: ignore[reportPrivateUsage]
+                raise exc
+            return await root_capability.on_model_request_error(run_context, request_context=request_context, error=exc)
         return result_or_exc
 
     @staticmethod
@@ -1882,19 +1980,22 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         stream, duplicating whatever setup or teardown it does outside its own iteration.
         """
         if self._wrapped_events_iterator is None:
-            inner = _with_event_stream_buffer(self._run_stream(ctx), ctx.state.event_stream_buffer)
+            run_context = build_run_context(ctx)
+            inner = dispatch_event_stream(
+                run_context, _with_event_stream_buffer(self._run_stream(ctx), ctx.state.event_stream_buffer)
+            )
             self._wrapped_events_iterator = aiter(
-                ctx.deps.root_capability.wrap_run_event_stream(build_run_context(ctx), stream=inner)
+                ctx.deps.root_capability.wrap_run_event_stream(run_context, stream=inner)
             )
         return self._wrapped_events_iterator
 
     async def _run_stream(  # noqa: C901
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
-    ) -> AsyncIterator[_messages.HandleResponseEvent]:
+    ) -> AsyncIterator[_messages.AgentStreamEvent]:
         # `_wrapped_stream` builds this generator once per node, so there is no caching to do here.
         output_schema = ctx.deps.output_schema
 
-        async def _run_stream() -> AsyncIterator[_messages.HandleResponseEvent]:  # noqa: C901
+        async def _run_stream() -> AsyncIterator[_messages.AgentStreamEvent]:  # noqa: C901
             if self.model_response.state == 'suspended':
                 # A suspended turn is not a completed response to handle: its partial parts could
                 # match an output schema and end the run on mid-turn output while the provider's
@@ -2078,7 +2179,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         tool_calls: list[_messages.ToolCallPart],
         *,
         response_output: tuple[str, list[_messages.BinaryContent]] | None = None,
-    ) -> AsyncIterator[_messages.HandleResponseEvent]:
+    ) -> AsyncIterator[_messages.AgentStreamEvent]:
         # Re-derive reveals now that the response is in history: a provider-side tool search
         # reveals a tool *inside* the response that goes on to call it, and the model saw that
         # schema before emitting the call. The step-start refresh ran before the response existed.
@@ -2159,16 +2260,21 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
             # Capture the partial tool returns collected so far. State is 'interrupted'
             # so `capture_run_messages` consumers can detect partial state. The user prompt
             # is intentionally omitted: this request was never sent to the model.
-            if output_parts:
-                ctx.state.message_history.append(
-                    _messages.ModelRequest(
-                        parts=list(output_parts),
-                        run_id=ctx.state.run_id,
-                        conversation_id=ctx.state.conversation_id,
-                        timestamp=now_utc(),
-                        state='interrupted',
-                    )
+            #
+            # It's appended even when no tool finished and it's therefore empty: this node only runs
+            # for a response that made tool calls, so the marker is what tells the resume path that
+            # those calls will never be answered and need synthesized `'interrupted'` returns.
+            # Without it, a run cancelled during its first (or only) tool call would leave a history
+            # that can't take a new prompt.
+            ctx.state.message_history.append(
+                _messages.ModelRequest(
+                    parts=list(output_parts),
+                    run_id=ctx.state.run_id,
+                    conversation_id=ctx.state.conversation_id,
+                    timestamp=now_utc(),
+                    state='interrupted',
                 )
+            )
             raise
 
         if output_final_result:
@@ -2341,6 +2447,7 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         deps=ctx.deps.user_deps,
         agent=ctx.deps.agent,
         model=ctx.deps.model,
+        _model_id=ctx.deps.model_id,
         usage=ctx.state.usage,
         usage_limits=ctx.deps.usage_limits,
         prompt=ctx.deps.prompt,
@@ -2364,6 +2471,8 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         pending_messages=ctx.state.pending_messages,
         _cancellation=ctx.deps.cancellation,
         _event_stream_buffer=ctx.state.event_stream_buffer,
+        _pending_immediate_dispatches=ctx.deps.pending_immediate_dispatches,
+        _event_stream_replacements=ctx.deps.event_stream_replacements,
         _mcp_tool_defs_cache=ctx.state.mcp_tool_defs_cache,
     )
     validation_context = build_validation_context(ctx.deps.validation_context, run_context)
@@ -2925,19 +3034,29 @@ def _merge_consecutive_messages(messages: list[_messages.ModelMessage]) -> list[
                     or not message.instructions
                     or last_message.instructions == message.instructions
                 )
-                # We intentionally don't block merging when `conversation_id` or `metadata` differ,
-                # nor try to preserve them across the merge. These fields are only bookkeeping for
-                # callers; they're never part of what gets sent to the model. Refusing to merge on a
-                # mismatch would leave two consecutive requests where the model expects one, breaking
-                # providers (and provider-side conversation state) that require a single request per
-                # turn -- a real regression -- just to preserve fields the model request node never reads.
+                # We intentionally don't block merging when `conversation_id` or application metadata
+                # differ. These fields are only bookkeeping for callers; they're never part of what gets
+                # sent to the model. Refusing to merge on a mismatch would leave two consecutive requests
+                # where the model expects one. Framework protocol state in `__pydantic_ai__` is different:
+                # model implementations read it, so combine only that reserved namespace below.
             ):
                 parts = [*last_message.parts, *message.parts]
                 parts.sort(key=_messages._tool_results_first_sort_key)  # pyright: ignore[reportPrivateUsage]
+                metadata: dict[str, Any] | None = None
+                last_namespace = (last_message.metadata or {}).get(_PYDANTIC_AI_METADATA_KEY)
+                namespace = (message.metadata or {}).get(_PYDANTIC_AI_METADATA_KEY)
+                if is_str_dict(last_namespace) or is_str_dict(namespace):
+                    metadata = {
+                        _PYDANTIC_AI_METADATA_KEY: {
+                            **(last_namespace if is_str_dict(last_namespace) else {}),
+                            **(namespace if is_str_dict(namespace) else {}),
+                        }
+                    }
                 merged_message = _messages.ModelRequest(
                     parts=parts,
                     instructions=last_message.instructions or message.instructions,
                     timestamp=message.timestamp or last_message.timestamp,
+                    metadata=metadata,
                 )
                 clean_messages[-1] = merged_message
             else:

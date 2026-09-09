@@ -20,7 +20,7 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, CostCalculationFailedWarning
-from pydantic_ai._cost import best_effort_price
+from pydantic_ai._genai_prices import best_effort_price, lookup_context_window
 from pydantic_ai.messages import ModelResponse
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RequestUsage, RunUsage
@@ -146,7 +146,7 @@ async def test_cost_invalid_usage_is_silent(allow_model_requests: None, monkeypa
     def _raise(*args: object, **kwargs: object) -> object:
         raise ValueError('inconsistent usage')
 
-    monkeypatch.setattr('pydantic_ai._cost.calc_price', _raise)
+    monkeypatch.setattr('pydantic_ai._genai_prices.calc_price', _raise)
     agent = Agent(TestModel())
     with warnings.catch_warnings():
         warnings.simplefilter('error', CostCalculationFailedWarning)
@@ -160,7 +160,7 @@ async def test_cost_unexpected_failure_warns(allow_model_requests: None, monkeyp
     def _raise(*args: object, **kwargs: object) -> object:
         raise RuntimeError('boom')
 
-    monkeypatch.setattr('pydantic_ai._cost.calc_price', _raise)
+    monkeypatch.setattr('pydantic_ai._genai_prices.calc_price', _raise)
     agent = Agent(TestModel())
     with pytest.warns(CostCalculationFailedWarning, match='RuntimeError: boom'):
         result = await agent.run('hello')
@@ -195,6 +195,33 @@ def test_run_usage_cost_arithmetic():
     assert usage.cost == Decimal('5.5')
 
 
+def test_run_usage_subtraction():
+    """`RunUsage` subtraction includes custom counters in details from either side."""
+    before = RunUsage(requests=1, input_tokens=2, details={'cached': 3, 'custom_units': 2}, cost=Decimal('1.5'))
+    after = RunUsage(
+        requests=3,
+        tool_calls=1,
+        input_tokens=7,
+        output_tokens=4,
+        details={'cached': 5, 'reasoning': 2, 'custom_units': 7},
+        cost=Decimal('4'),
+    )
+
+    delta = after - before
+    expected = RunUsage(
+        requests=2,
+        tool_calls=1,
+        input_tokens=5,
+        output_tokens=4,
+        details={'cached': 2, 'reasoning': 2, 'custom_units': 5},
+        cost=Decimal('2.5'),
+    )
+    assert delta == expected
+    unchanged = before - before
+    assert unchanged.details == {'cached': 0, 'custom_units': 0}
+    assert (RunUsage() - before).details['custom_units'] == -2
+
+
 def test_model_response_cost_requires_model_name():
     """`ModelResponse.cost()` is the public entry point, so it owns the "can this be priced at all?" guard.
 
@@ -203,3 +230,20 @@ def test_model_response_cost_requires_model_name():
     """
     with pytest.raises(AssertionError, match='Model name is required to calculate price'):
         ModelResponse(parts=[]).cost()
+
+
+def test_lookup_context_window_by_url_or_provider_name():
+    """Matches on the API URL when genai-prices knows it; an unknown URL falls back to the provider name."""
+    by_name = lookup_context_window('gpt-5', provider_name='openai')
+    assert by_name is not None
+    assert lookup_context_window('gpt-5', provider_api_url='https://api.openai.com/v1') == by_name
+    assert (
+        lookup_context_window('gpt-5', provider_api_url='https://example.invalid/v1', provider_name='openai') == by_name
+    )
+
+
+def test_lookup_context_window_unknown_model_and_provider():
+    """Unknown models and providers degrade to `None`, as do lookups with nothing to match on."""
+    assert lookup_context_window('potato-gpt', provider_name='openai') is None
+    assert lookup_context_window('gpt-5', provider_name='not-a-provider') is None
+    assert lookup_context_window('gpt-5') is None

@@ -3,9 +3,13 @@
 
 Issues enter routing only once triage has applied a priority label
 (`p:1-highest` or `p:2-high`); everything else stays unassigned, on the
-triage automation's plate. The one exception is community pressure: an item
-ignored for two weeks while people kept commenting or reacting may also be
-assigned.
+triage automation's plate. The one exception is community pressure: the
+weekly community-demand sweep judges old-but-active unassigned issues and
+applies `community-backed`, which also opens the gate.
+
+Pull requests are never triaged on gated repositories — a human assigns one
+when an issue warrants it. Ungated repositories blanket-route new intake,
+issues and pull requests alike, to their default owner.
 """
 
 from __future__ import annotations
@@ -18,10 +22,19 @@ import sys
 import urllib.error
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Any, Literal, TypedDict, cast  # noqa: TID251
 
 import issue_pr_attention_monitor as attention
+
+try:
+    from triage_telemetry import emit as _emit_event
+except ImportError:  # sparse checkouts that omit the telemetry module stay silent
+    # Emission is optional everywhere; every workflow that only reads or writes
+    # GitHub state must keep working without the telemetry file on disk.
+    def _emit_event(name: str, **attributes: object) -> None:
+        return
+
 
 _REPOSITORIES = attention.REPOSITORIES
 _OWNERS = frozenset(attention.MAINTAINER_OWNERS)
@@ -30,9 +43,7 @@ _RECOVERY_EPOCH = attention.ROUTING_RECOVERY_EPOCH
 _PRIORITY_LABELS = frozenset(attention.PRIORITY_GATE_LABELS)
 _RECENT_BATCH_LIMIT = 3
 _COMMUNITY_BATCH_LIMIT = 3
-_COMMUNITY_IGNORED_DAYS = 14
-_COMMUNITY_MIN_INTERACTIONS = 3
-_FILE_LIMIT = 100
+_COMMUNITY_LABEL = attention.COMMUNITY_LABEL
 _ASSIGNEE_LIMIT = 10
 _MAX_ITEM_NUMBER = 2_147_483_647
 # Must match the `last:` on both `timelineItems` connections below.
@@ -43,9 +54,7 @@ query RoutingItem($owner: String!, $name: String!, $number: Int!) {
     issueOrPullRequest(number: $number) {
       __typename
       ... on Issue {
-        number state createdAt
-        comments { totalCount }
-        reactions { totalCount }
+        number state
         timelineItems(itemTypes: [UNASSIGNED_EVENT], last: 10) {
           nodes { ... on UnassignedEvent { createdAt actor { __typename } } }
         }
@@ -53,14 +62,13 @@ query RoutingItem($owner: String!, $name: String!, $number: Int!) {
         assignees(first: 10) { nodes { login } pageInfo { hasNextPage } }
       }
       ... on PullRequest {
-        number state isDraft changedFiles
+        number state isDraft
         author { login }
         timelineItems(itemTypes: [UNASSIGNED_EVENT], last: 10) {
           nodes { ... on UnassignedEvent { createdAt actor { __typename } } }
         }
         labels(first: 50) { nodes { name } pageInfo { hasNextPage } }
         assignees(first: 10) { nodes { login } pageInfo { hasNextPage } }
-        files(first: 100) { nodes { path } pageInfo { hasNextPage } }
       }
     }
   }
@@ -84,27 +92,12 @@ class Rule:
 
     owner: str
     labels: tuple[str, ...] = ()
-    paths: tuple[str, ...] = ()
 
 
 _UI_LABELS = ('AG-UI', 'UI adapters', 'area:ui-adapters', 'vercel-ai', 'web-ui')
-_UI_PATHS = (
-    'pydantic_ai_slim/pydantic_ai/ui/',
-    'docs/ui/',
-    'docs/api/ui/',
-    'docs/examples/ag-ui.md',
-    'examples/pydantic_ai_examples/ag_ui/',
-)
 _RULES: dict[str, tuple[Rule, ...]] = {
     'pydantic/pydantic-ai': (
-        Rule(
-            'adtyavrdhn',
-            ('streaming', 'run_stream'),
-            (
-                'pydantic_ai_slim/pydantic_ai/realtime/',
-                'pydantic_ai_slim/pydantic_ai/_cancel.py',
-            ),
-        ),
+        Rule('adtyavrdhn', ('streaming', 'run_stream')),
         Rule(
             'dsfaccini',
             (
@@ -115,48 +108,20 @@ _RULES: dict[str, tuple[Rule, ...]] = {
                 'cross-model-provider-mapping',
                 'provider-parity',
             ),
-            (
-                'pydantic_ai_slim/pydantic_ai/models/',
-                'pydantic_ai_slim/pydantic_ai/providers/',
-                'pydantic_ai_slim/pydantic_ai/profiles/',
-                'pydantic_ai_slim/pydantic_ai/messages.py',
-                'pydantic_ai_slim/pydantic_ai/mcp.py',
-                'pydantic_ai_slim/pydantic_ai/_mcp.py',
-                'pydantic_ai_slim/pydantic_ai/_mcp_compat.py',
-            ),
         ),
         # UI protocols are more specific than cross-cutting signals such as
         # streaming, so a streaming AG-UI/Vercel item remains David's.
-        Rule(
-            'dsfaccini',
-            _UI_LABELS,
-            _UI_PATHS,
-        ),
-        Rule(
-            'DouweM',
-            ('durable exec', 'temporal', 'DBOS', 'deferred-tools'),
-            (
-                'pydantic_ai_slim/pydantic_ai/durable_exec/',
-                'pydantic_ai_slim/pydantic_ai/capabilities/',
-                'pydantic_ai_slim/pydantic_ai/_deferred.py',
-                'pydantic_ai_slim/pydantic_ai/_enqueue.py',
-            ),
-        ),
+        Rule('dsfaccini', _UI_LABELS),
+        Rule('DouweM', ('durable exec', 'temporal', 'DBOS', 'deferred-tools')),
     ),
-    'pydantic/pydantic-ai-harness': (
-        Rule(
-            'adtyavrdhn',
-            ('cap:code-mode', 'cap:acp', 'upstream-compat'),
-            (
-                'pydantic_ai_harness/code_mode/',
-                'pydantic_ai_harness/acp/',
-                'pydantic_ai_harness/runtime_authoring/',
-            ),
-        ),
-        Rule('dsfaccini', ('cap:compaction',), ('pydantic_ai_harness/compaction/',)),
-        Rule('DouweM', ('durable-exec', 'cap:step-persistence'), ('pydantic_ai_harness/step_persistence/',)),
-    ),
+    'pydantic/pydantic-ai-harness': (),
 }
+# Repos where one maintainer currently owns all intake. Harness has no triage
+# labeler, so its issues skip the priority gate and route straight here.
+_DEFAULT_OWNERS = {'pydantic/pydantic-ai-harness': 'mpfaffenberger'}
+# Repos whose issues are triaged and priority-labeled; only these apply the
+# priority gate before assignment.
+_GATED_REPOS = frozenset({'pydantic/pydantic-ai'})
 
 
 class Decision(TypedDict):
@@ -251,84 +216,25 @@ def _recently_unassigned(item: Mapping[str, Any]) -> bool:
     return False
 
 
-def _community_backed(item: Mapping[str, Any]) -> bool:
-    """True when the item sat ignored for two weeks while people kept engaging."""
-    now = dt.datetime.now(dt.timezone.utc)
-    created_at = _graphql_time(item.get('createdAt'))
-    if created_at is None or now - created_at < dt.timedelta(days=_COMMUNITY_IGNORED_DAYS):
-        return False
-    interactions = 0
-    for field in ('comments', 'reactions'):
-        value = item.get(field)
-        count = cast(Mapping[str, object], value).get('totalCount') if isinstance(value, Mapping) else None
-        if type(count) is not int or count < 0:
-            return False
-        interactions += count
-    return interactions > _COMMUNITY_MIN_INTERACTIONS
-
-
-def _valid_path(value: str) -> bool:
-    if not value or len(value) > 300 or not value.isascii() or '\\' in value or value.startswith('/'):
-        return False
-    if any(ord(character) < 32 or ord(character) == 127 for character in value):
-        return False
-    parts = PurePosixPath(value).parts
-    return bool(parts) and all(part not in {'', '.', '..'} for part in parts)
-
-
-def _path_rule(repo: str, filename: str) -> tuple[str, str] | None:
-    matches: list[tuple[int, str, str]] = []
-    for rule in _RULES[repo]:
-        for prefix in rule.paths:
-            if filename == prefix or (prefix.endswith('/') and filename.startswith(prefix)):
-                matches.append((len(prefix), rule.owner, prefix))
-    if not matches:
-        return None
-    longest = max(length for length, _, _ in matches)
-    owners = {(owner, prefix) for length, owner, prefix in matches if length == longest}
-    if len({owner for owner, _ in owners}) != 1:
-        return None
-    owner, prefix = min(owners)
-    return owner, f'path:{prefix}'
-
-
-def _route(repo: str, labels: set[str], filenames: Sequence[str] | None) -> tuple[str, str]:
+def _route(repo: str, labels: set[str]) -> tuple[str, str]:
     signals: set[tuple[str, str]] = set()
     for rule in _RULES[repo]:
         for label in rule.labels:
             if label.casefold() in labels:
                 signals.add((rule.owner, f'label:{label}'))
-    if filenames is not None:
-        for filename in filenames:
-            if not _valid_path(filename):
-                return _MANUAL_OWNER, 'manual:invalid-file-list'
-            if signal := _path_rule(repo, filename):
-                signals.add(signal)
-            elif not _neutral_path(filename):
-                return _MANUAL_OWNER, 'manual:unowned-production-path'
     has_ui_signal = any(
-        owner == 'dsfaccini'
-        and (
-            evidence in {f'path:{path}' for path in _UI_PATHS} or evidence in {f'label:{label}' for label in _UI_LABELS}
-        )
-        for owner, evidence in signals
+        owner == 'dsfaccini' and evidence in {f'label:{label}' for label in _UI_LABELS} for owner, evidence in signals
     )
     if has_ui_signal:
         signals -= {('adtyavrdhn', 'label:streaming'), ('adtyavrdhn', 'label:run_stream')}
     owners = {owner for owner, _ in signals}
     if len(owners) != 1:
+        if not owners and (default := _DEFAULT_OWNERS.get(repo)):
+            return default, 'default:repo-intake'
         return _MANUAL_OWNER, 'manual:conflict-or-unknown'
     owner = owners.pop()
     evidence = min(evidence for signal_owner, evidence in signals if signal_owner == owner)
     return owner, evidence
-
-
-def _neutral_path(filename: str) -> bool:
-    return (
-        filename.startswith(('tests/', 'docs/', 'examples/', '.github/'))
-        or '/tests/' in filename
-        or filename.endswith(('.md', '.rst', '.lock'))
-    )
 
 
 def _maintainer_assignees(
@@ -415,19 +321,18 @@ def _pull_request_precedence(
         key = author_login.casefold()
         owner = next((candidate for candidate in _OWNERS if candidate.casefold() == key), None)
         if owner is not None and client.maintainer_login(repo, owner, refresh=True) is not None:
-            return Selection(
-                number=number,
-                decision=Decision(number=number, owner=owner, evidence=f'author:{owner}'),
-                status='route',
-            )
+            # A maintainer's own pull request is already their responsibility:
+            # no assignment and no ping, not even to the author.
+            return Selection(number=number, decision=None, status='maintainer-author')
     return None
 
 
-def _issue_gate(item: Mapping[str, Any], normalized: Mapping[str, Any], number: int) -> Selection | None:
+def _issue_gate(repo: str, normalized: Mapping[str, Any], number: int) -> Selection | None:
     """Decide whether an issue may be routed at all; None means proceed."""
     # A gate label missing from a truncated first page counts as absent, which
-    # fails toward leaving the issue unassigned.
-    if not _labels(normalized) & _PRIORITY_LABELS and not _community_backed(item):
+    # fails toward leaving the item unassigned. `community-backed` (a judged
+    # community-demand verdict, see `community_demand.py`) opens the gate too.
+    if repo in _GATED_REPOS and not _labels(normalized) & (_PRIORITY_LABELS | {_COMMUNITY_LABEL}):
         return Selection(number=number, decision=None, status='awaiting-triage')
     return None
 
@@ -441,6 +346,12 @@ def decision_for(client: attention.GitHubClient, repo: str, number: int) -> Sele
         return Selection(number=number, decision=None, status='closed')
     if item.get('number') != number or item.get('__typename') not in {'Issue', 'PullRequest'}:
         raise RuntimeError('GitHub returned mismatched routing metadata')
+    is_pull_request = item.get('__typename') == 'PullRequest'
+    # Pull requests are never triaged on gated repositories: a human assigns
+    # one when an issue warrants it. Only ungated blanket-intake repositories
+    # route pull requests, to their default owner.
+    if is_pull_request and repo in _GATED_REPOS:
+        return Selection(number=number, decision=None, status='pull-request')
     labels = item.get('labels')
     assignees = item.get('assignees')
     if not _connection_complete(assignees):
@@ -454,8 +365,7 @@ def decision_for(client: attention.GitHubClient, repo: str, number: int) -> Sele
     # hours after a maintainer removed them.
     if _recently_unassigned(item):
         return Selection(number=number, decision=None, status='recently-unassigned')
-    is_pull_request = item.get('__typename') == 'PullRequest'
-    if not is_pull_request and (gated := _issue_gate(item, normalized, number)) is not None:
+    if (gated := _issue_gate(repo, normalized, number)) is not None:
         return gated
     if _maintainer_assignees(client, repo, normalized):
         return Selection(number=number, decision=None, status='maintainer-present')
@@ -463,40 +373,13 @@ def decision_for(client: attention.GitHubClient, repo: str, number: int) -> Sele
         return Selection(number=number, decision=None, status='assignee-capacity')
     if is_pull_request and (precedence := _pull_request_precedence(client, repo, number, item)) is not None:
         return precedence
-    filenames: list[str] | None = None
-    if is_pull_request:
-        changed_files = item.get('changedFiles')
-        files = item.get('files')
-        entries = _connection_nodes(files)
-        page_info = cast(Mapping[str, object], files).get('pageInfo') if isinstance(files, Mapping) else None
-        filenames = []
-        complete = (
-            type(changed_files) is int
-            and 0 <= changed_files <= _FILE_LIMIT
-            and len(entries) == changed_files
-            and isinstance(page_info, Mapping)
-            and cast(Mapping[str, object], page_info).get('hasNextPage') is False
-        )
-        if complete:
-            for entry in entries:
-                path = cast(Mapping[str, object], entry).get('path') if isinstance(entry, Mapping) else None
-                if not isinstance(path, str):
-                    complete = False
-                    break
-                filenames.append(path)
-        if not complete:
-            return Selection(
-                number=number,
-                decision=_decision(client, repo, number, _MANUAL_OWNER, 'manual:incomplete-file-list'),
-                status='route',
-            )
     if not _connection_complete(labels):
         return Selection(
             number=number,
             decision=_decision(client, repo, number, _MANUAL_OWNER, 'manual:incomplete-labels'),
             status='route',
         )
-    owner, evidence = _route(repo, _labels(normalized), filenames)
+    owner, evidence = _route(repo, _labels(normalized))
     return Selection(
         number=number,
         decision=_decision(client, repo, number, owner, evidence),
@@ -535,23 +418,27 @@ def _qualified_owners(client: attention.GitHubClient, repo: str) -> tuple[str, .
 
 
 def _gated_numbers(client: attention.GitHubClient, repo: str, qualified: Sequence[str]) -> list[int]:
-    """List candidates, priority-labeled issues before pull requests."""
+    """List routing candidates.
+
+    Gated repos search priority-labeled issues only; ungated repos search
+    all new intake, issues before pull requests.
+    """
     negatives = ' '.join(f'-assignee:{owner}' for owner in qualified)
-    priorities = ','.join(f'"{label}"' for label in sorted(_PRIORITY_LABELS))
-    issues = f'repo:{repo} is:open is:issue label:{priorities} {negatives} sort:created-asc'
+    if repo in _GATED_REPOS:
+        # Pull requests are never triaged on gated repositories, so the sweep
+        # does not search them at all.
+        priorities = ','.join(f'"{label}"' for label in sorted(_PRIORITY_LABELS))
+        issues = f'repo:{repo} is:open is:issue label:{priorities} {negatives} sort:created-asc'
+        return _search_numbers(client, issues)
+    # Blanket intake covers new items going forward, not the backlog.
+    issues = f'repo:{repo} is:open is:issue created:>={_RECOVERY_EPOCH} {negatives} sort:created-asc'
     pulls = f'repo:{repo} is:open is:pr -draft:true created:>={_RECOVERY_EPOCH} {negatives} sort:created-asc'
     return list(dict.fromkeys(_search_numbers(client, issues) + _search_numbers(client, pulls)))
 
 
 def _community_numbers(client: attention.GitHubClient, repo: str) -> list[int]:
-    """List unassigned items ignored for two weeks despite community interactions."""
-    # `created:` has date granularity, so search one day wide of the threshold and
-    # let `_community_backed` apply the precise two-week check per item.
-    cutoff = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=_COMMUNITY_IGNORED_DAYS - 1)).date().isoformat()
-    query = (
-        f'repo:{repo} is:open -draft:true created:<{cutoff} no:assignee '
-        f'interactions:>{_COMMUNITY_MIN_INTERACTIONS} sort:updated-desc'
-    )
+    """List unassigned items the triage agent judged to have genuine community demand."""
+    query = f'repo:{repo} is:open is:issue no:assignee label:"{_COMMUNITY_LABEL}" sort:updated-desc'
     return _search_numbers(client, query)
 
 
@@ -561,11 +448,22 @@ def _select_numbers(
     numbers: Sequence[int],
     *,
     limit: int,
+    lane: str,
 ) -> list[Selection]:
     selected: list[Selection] = []
     for number in numbers:
         selection = decision_for(client, repo, number)
-        if selection['decision'] is not None:
+        decision = selection['decision']
+        _emit_event(
+            'router.decision',
+            repo=repo,
+            lane=lane,
+            number=number,
+            status=selection['status'],
+            owner=decision['owner'] if decision else None,
+            evidence=decision['evidence'] if decision else None,
+        )
+        if decision is not None:
             selected.append(selection)
             if len(selected) == limit:
                 break
@@ -581,10 +479,18 @@ def select_batch(
     """Select a bounded gated batch, or a community batch when the gate is quiet."""
     repo = _repository(repo)
     qualified = _qualified_owners(client, repo)
-    gated = _select_numbers(client, repo, _gated_numbers(client, repo, qualified), limit=_RECENT_BATCH_LIMIT)
-    if gated or not community_recovery:
+    gated_numbers = _gated_numbers(client, repo, qualified)
+    gated = _select_numbers(client, repo, gated_numbers, limit=_RECENT_BATCH_LIMIT, lane='gate')
+    _emit_event('router.sweep', repo=repo, lane='gate', candidates=len(gated_numbers), selected=len(gated))
+    # The community-demand judge runs only on gated repos, so the community
+    # lane must not run elsewhere: on an ungated repo it would sweep backlog
+    # items past the new-intake epoch on a hand-applied label.
+    if gated or not community_recovery or repo not in _GATED_REPOS:
         return gated
-    return _select_numbers(client, repo, _community_numbers(client, repo), limit=_COMMUNITY_BATCH_LIMIT)
+    community_numbers = _community_numbers(client, repo)
+    community = _select_numbers(client, repo, community_numbers, limit=_COMMUNITY_BATCH_LIMIT, lane='community')
+    _emit_event('router.sweep', repo=repo, lane='community', candidates=len(community_numbers), selected=len(community))
+    return community
 
 
 def assign(client: attention.GitHubClient, repo: str, expected: Decision) -> bool:
@@ -624,14 +530,13 @@ def assign(client: attention.GitHubClient, repo: str, expected: Decision) -> boo
     return True
 
 
-def _routing_reason(decision: Decision, mention: str) -> str:
+def _routing_reason(decision: Decision) -> str:
     evidence = decision['evidence']
-    owner = decision['owner']
-    if evidence == f'author:{owner}':
-        return f'{mention} authored this pull request.'
     source, separator, detail = evidence.partition(':')
-    if separator and detail and source in {'label', 'path'}:
+    if separator and detail and source == 'label':
         return f'Matched ownership {source} `{detail}`.'
+    if evidence == 'default:repo-intake':
+        return 'All intake for this repository is currently routed to one owner.'
     if evidence.startswith('manual:'):
         return 'Automatic routing could not determine an available semantic owner, so this needs manual triage.'
     return 'Matched the semantic ownership policy.'
@@ -645,15 +550,20 @@ def _slack_payload(
 ) -> str:
     """Build one canonical Slack assignment notice."""
     repo = _repository(repo)
-    mentions = attention.slack_mentions(mentions_value, decision['owner'])
-    mention = mentions[decision['owner']]
+    if decision['evidence'] == 'default:repo-intake':
+        # Blanket intake routing would ping the same person on every drained
+        # item; the channel record keeps the plain name and GitHub's own
+        # assignment notification does the alerting.
+        mention = decision['owner']
+    else:
+        mention = attention.slack_mentions(mentions_value, decision['owner'])[decision['owner']]
     if item_type == 'Issue':
         kind, path = 'Issue', 'issues'
     else:
         kind, path = 'Pull request', 'pull'
     number = decision['number']
     item = f'<https://github.com/{repo}/{path}/{number}|{repo}#{number}>'
-    text = f'Routing intent: {kind} {item} → {mention}\nWhy: {_routing_reason(decision, mention)}'
+    text = f'Routing intent: {kind} {item} → {mention}\nWhy: {_routing_reason(decision)}'
     return json.dumps({'text': text}, separators=(',', ':'))
 
 
@@ -740,6 +650,14 @@ def main() -> int:
             parser.error('assign requires --number, --owner, and --evidence')
         expected = Decision(number=_item_number(args.number), owner=args.owner, evidence=args.evidence)
         did_assign = assign(client, repo, expected)
+        _emit_event(
+            'router.assigned',
+            repo=repo,
+            number=expected['number'],
+            owner=expected['owner'],
+            evidence=expected['evidence'],
+            did_assign=did_assign,
+        )
         _output(
             {
                 'did_assign': str(did_assign).lower(),

@@ -34,13 +34,13 @@ if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AbstractAgent
 
 
-@dataclass
+@dataclass(kw_only=True)
 @with_config(ConfigDict(arbitrary_types_allowed=True))
 class GetToolsParams:
     serialized_run_context: Any
 
 
-@dataclass
+@dataclass(kw_only=True)
 @with_config(ConfigDict(arbitrary_types_allowed=True))
 class CallToolParams:
     name: str

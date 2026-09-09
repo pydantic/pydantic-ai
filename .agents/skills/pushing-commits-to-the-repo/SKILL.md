@@ -56,6 +56,9 @@ applied automatically — don't set them.
   the user's instructions override this.
 - Run `pre-push-review`. Address every finding, commit the fixes, and repeat the review until it
   returns no findings. This applies before the first PR push and between every later PR iteration.
+- A `pre-push-review` verdict belongs to the diff it read. Any later commit voids it — re-run against
+  the new diff instead of carrying the earlier pass forward, and name the commit range each verdict
+  covers when you report it.
 - Never force-push an open PR branch. Push follow-up commits so previous reviews remain valid;
   maintainers can squash them when merging.
 - Attempt the push. If it fails, read the real error — do not preemptively decide you lack
@@ -100,9 +103,11 @@ before handing the PR back or requesting merge:
 - **How:** `gh pr edit <number> --add-label douwebot`. This requires triage permission on the repo
   (Pydantic team members and their agents). If it fails, quote the actual error — don't skip it
   based on an assumed lack of permission.
-- **Known refusal:** the job fails without reviewing if the PR touches `AGENTS.md`, `CLAUDE.md`, or
-  anything under `.claude/` — a security guard against a PR editing the reviewer's own
-  instructions. Don't apply the label to those PRs; the red check is the guard working.
+- **Known refusal:** the job fails without reviewing if the PR touches an `AGENTS.md` or `CLAUDE.md`
+  at any depth, `CLAUDE.local.md`, `.mcp.json`, or anything under `.claude/`, `.agents/` or
+  `agent_docs/` — a security guard against a PR editing the reviewer's own instructions. The guard
+  is skipped for an author with write or admin access on the repo. Don't apply the label to a PR the
+  guard covers; the red check is the guard working.
 - **Afterwards, re-enter the loop.** The review posts comments that need the same triage as any
   other.
 

@@ -1,7 +1,7 @@
 interactions:
 - request:
-    body: "--86117cdfa87f1f8fc315d8d5f936190d\r\nContent-Disposition: form-data; name=\"file\"; filename=\"data.csv\"\r\nContent-Type:
-      text/csv\r\n\r\nitem,value\napple,30\nbanana,70\n\r\n--86117cdfa87f1f8fc315d8d5f936190d--\r\n"
+    body: "--9432fa5ab398de6d052436b5dbc17619\r\nContent-Disposition: form-data; name=\"file\"; filename=\"data.csv\"\r\nContent-Type:
+      text/csv\r\n\r\nitem,value\napple,30\nbanana,70\n\r\n--9432fa5ab398de6d052436b5dbc17619--\r\n"
     headers:
       accept:
       - application/json
@@ -12,7 +12,7 @@ interactions:
       content-length:
       - '198'
       content-type:
-      - multipart/form-data; boundary=86117cdfa87f1f8fc315d8d5f936190d
+      - multipart/form-data; boundary=9432fa5ab398de6d052436b5dbc17619
       host:
       - api.anthropic.com
     method: POST
@@ -28,7 +28,7 @@ interactions:
       content-type:
       - application/json
       server-timing:
-      - x-originResponse;dur=247
+      - x-originResponse;dur=199
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       transfer-encoding:
@@ -36,10 +36,10 @@ interactions:
       vary:
       - Accept-Encoding
     parsed_body:
-      created_at: '2026-06-30T22:59:04.056000Z'
+      created_at: '2026-08-28T00:16:16.903511Z'
       downloadable: false
       filename: data.csv
-      id: file_011CcaGpPS2JA1AMya8VxEMh
+      id: file_01BeCSCtZDPZErAmERU52211
       mime_type: text/csv
       size_bytes: 30
       type: file
@@ -70,7 +70,7 @@ interactions:
             type: ephemeral
           text: Use the code execution tool to read the uploaded CSV file and report the sum of the `value` column.
           type: text
-        - file_id: file_011CcaGpPS2JA1AMya8VxEMh
+        - file_id: file_01BeCSCtZDPZErAmERU52211
           type: container_upload
         role: user
       model: claude-sonnet-4-6
@@ -174,7 +174,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1572'
+      - '1560'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
@@ -182,17 +182,17 @@ interactions:
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-09309a81bc889cc35ac140de539eec95-2423c71b9af061d2-01
+      - 00-db17b5d0c1c46db18f0960fba683fc59-0313af7ab977e6a1-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
     parsed_body:
       container:
-        expires_at: '2026-06-30T23:59:10.070549Z'
-        id: container_01DkM2tuE2qrrMc9mNthDSiM
+        expires_at: '2026-08-28T01:16:27.603647Z'
+        id: container_01BJ5L1vFYC3PeFzWk8BWrwp
       content:
-      - id: srvtoolu_016YGoALEy9W75g5fM2BjcPz
+      - id: srvtoolu_01At9knkP9tVWruipsG1HSR3
         input:
           command: |
             python3 -c "
@@ -215,10 +215,10 @@ interactions:
             Columns: ['item', 'value']
             Sum of value column: 100
           type: bash_code_execution_result
-        tool_use_id: srvtoolu_016YGoALEy9W75g5fM2BjcPz
+        tool_use_id: srvtoolu_01At9knkP9tVWruipsG1HSR3
         type: bash_code_execution_tool_result
       - text: |-
-          Here are the results from reading `data.csv`:
+          Here are the results from reading **data.csv**:
 
           | item   | value |
           |--------|-------|
@@ -227,9 +227,9 @@ interactions:
 
           **Sum of the `value` column: 100**
 
-          The dataset contains 2 rows. The values are 30 (apple) and 70 (banana), which add up exactly to **100**.
+          The file contains 2 rows. The values 30 (apple) and 70 (banana) add up exactly to **100**.
         type: text
-      id: msg_01FBFsLZTGtz2TEFkXPEQhsy
+      id: msg_011CeUBd4Wm1LuBxFkXiW8P4
       model: claude-sonnet-4-6
       role: assistant
       stop_details: null
@@ -244,7 +244,7 @@ interactions:
         cache_read_input_tokens: 4332
         inference_geo: global
         input_tokens: 10
-        output_tokens: 211
+        output_tokens: 210
         server_tool_use:
           web_fetch_requests: 0
           web_search_requests: 0
@@ -261,24 +261,24 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '11752'
+      - '11814'
       content-type:
       - application/json
       host:
       - api.anthropic.com
     method: POST
     parsed_body:
-      container: container_01DkM2tuE2qrrMc9mNthDSiM
+      container: container_01BJ5L1vFYC3PeFzWk8BWrwp
       max_tokens: 4096
       messages:
       - content:
         - text: Use the code execution tool to read the uploaded CSV file and report the sum of the `value` column.
           type: text
-        - file_id: file_011CcaGpPS2JA1AMya8VxEMh
+        - file_id: file_01BeCSCtZDPZErAmERU52211
           type: container_upload
         role: user
       - content:
-        - id: srvtoolu_016YGoALEy9W75g5fM2BjcPz
+        - id: srvtoolu_01At9knkP9tVWruipsG1HSR3
           input:
             command: |
               python3 -c "
@@ -301,10 +301,10 @@ interactions:
               Columns: ['item', 'value']
               Sum of value column: 100
             type: bash_code_execution_result
-          tool_use_id: srvtoolu_016YGoALEy9W75g5fM2BjcPz
+          tool_use_id: srvtoolu_01At9knkP9tVWruipsG1HSR3
           type: bash_code_execution_tool_result
         - text: |-
-            Here are the results from reading `data.csv`:
+            Here are the results from reading **data.csv**:
 
             | item   | value |
             |--------|-------|
@@ -313,7 +313,7 @@ interactions:
 
             **Sum of the `value` column: 100**
 
-            The dataset contains 2 rows. The values are 30 (apple) and 70 (banana), which add up exactly to **100**.
+            The file contains 2 rows. The values 30 (apple) and 70 (banana) add up exactly to **100**.
           type: text
         role: assistant
       - content:
@@ -322,6 +322,8 @@ interactions:
             type: ephemeral
           text: Use the code execution tool again to report the average of the `value` column.
           type: text
+        - file_id: file_01BeCSCtZDPZErAmERU52211
+          type: container_upload
         role: user
       model: claude-sonnet-4-6
       stream: false
@@ -424,7 +426,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1329'
+      - '1330'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
@@ -432,17 +434,17 @@ interactions:
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-5081f958df76a37a660d49d6c425af91-d6c45f5d4a508c60-01
+      - 00-a2d82f7811b157a200c74a1844f169d4-b6bd12d96a0284bb-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
     parsed_body:
       container:
-        expires_at: '2026-06-30T23:59:20.752917Z'
-        id: container_01DkM2tuE2qrrMc9mNthDSiM
+        expires_at: '2026-08-28T01:16:33.769693Z'
+        id: container_01BJ5L1vFYC3PeFzWk8BWrwp
       content:
-      - id: srvtoolu_01VKgjMiz4hq1SoqTc3QuE9o
+      - id: srvtoolu_01VwNkoWV5ubuzdYYS57M3p2
         input:
           command: |
             python3 -c "
@@ -459,14 +461,14 @@ interactions:
           stdout: |
             Average of value column: 50.0
           type: bash_code_execution_result
-        tool_use_id: srvtoolu_01VKgjMiz4hq1SoqTc3QuE9o
+        tool_use_id: srvtoolu_01VwNkoWV5ubuzdYYS57M3p2
         type: bash_code_execution_tool_result
       - text: |-
           **Average of the `value` column: 50.0**
 
           This is calculated by dividing the sum of the values (30 + 70 = 100) by the number of rows (2), giving exactly **50.0**.
         type: text
-      id: msg_01CF6QBkHqJu5KfrMkqdq75k
+      id: msg_011CeUBe2PJ5iVeZiDNswXLC
       model: claude-sonnet-4-6
       role: assistant
       stop_details: null
@@ -476,11 +478,11 @@ interactions:
       usage:
         cache_creation:
           ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 237
-        cache_creation_input_tokens: 237
-        cache_read_input_tokens: 9134
+          ephemeral_5m_input_tokens: 242
+        cache_creation_input_tokens: 242
+        cache_read_input_tokens: 9133
         inference_geo: global
-        input_tokens: 4
+        input_tokens: 10
         output_tokens: 156
         server_tool_use:
           web_fetch_requests: 0
@@ -503,7 +505,7 @@ interactions:
       host:
       - api.anthropic.com
     method: DELETE
-    uri: https://api.anthropic.com/v1/files/file_011CcaGpPS2JA1AMya8VxEMh?beta=true
+    uri: https://api.anthropic.com/v1/files/file_01BeCSCtZDPZErAmERU52211?beta=true
   response:
     headers:
       connection:
@@ -515,7 +517,7 @@ interactions:
       content-type:
       - application/json
       server-timing:
-      - x-originResponse;dur=433
+      - x-originResponse;dur=192
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       transfer-encoding:
@@ -523,7 +525,7 @@ interactions:
       vary:
       - Accept-Encoding
     parsed_body:
-      id: file_011CcaGpPS2JA1AMya8VxEMh
+      id: file_01BeCSCtZDPZErAmERU52211
       type: file_deleted
     status:
       code: 200

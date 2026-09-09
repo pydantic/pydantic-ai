@@ -13,6 +13,7 @@ from pydantic import AliasChoices, BeforeValidator, Field, GetCoreSchemaHandler,
 from pydantic_core import SchemaSerializer, core_schema
 
 from . import _utils
+from ._genai_prices import iter_provider_references
 from ._warnings import CostNotFoundWarning
 from .exceptions import UsageLimitExceeded
 
@@ -131,7 +132,8 @@ class UsageBase:
     """Best-effort cost in USD, or `None` if no cost could be determined.
 
     Calculated with [genai-prices](https://github.com/pydantic/genai-prices). `None` (rather than zero) when the
-    model or provider can't be priced, so "unknown" stays distinguishable from a genuine zero cost.
+    model or provider can't be priced, so "unknown" stays distinguishable from a genuine zero cost. Models released
+    after your install can be priced by calling [`update_in_background()`][pydantic_ai.prices.update_in_background].
     """
 
     def __init__(self, *, details: dict[str, int] | None = None, **kwargs: Any):
@@ -324,7 +326,9 @@ class RequestUsage(UsageBase):
             details: Becomes the `details` field on the returned `RequestUsage` for convenience.
         """
         details = details or {}
-        for provider_id, provider_api_url in [(None, provider_url), (provider, None), (provider_fallback, None)]:
+        for provider_id, provider_api_url in iter_provider_references(
+            provider_api_url=provider_url, provider_id=provider, provider_fallback=provider_fallback
+        ):
             try:
                 provider_obj = get_snapshot().find_provider(None, provider_id, provider_api_url)
                 _model_ref, extracted_usage = provider_obj.extract_usage(data, api_flavor=api_flavor)
@@ -388,6 +392,30 @@ class RunUsage(UsageBase):
         new_usage = copy(self)
         new_usage.incr(other)
         return new_usage
+
+    def __sub__(self, other: RunUsage) -> RunUsage:
+        """Return the field-by-field usage accumulated since `other`.
+
+        This is useful when a nested operation shares a run's mutable usage object and needs to
+        report only the requests, tool calls, tokens, details, and cost added by that operation.
+        Unknown costs remain `None`; an unchanged known cost also produces `None`.
+        """
+        details = {
+            name: self.details.get(name, 0) - other.details.get(name, 0) for name in self.details | other.details
+        }
+        return RunUsage(
+            requests=self.requests - other.requests,
+            tool_calls=self.tool_calls - other.tool_calls,
+            input_tokens=self.input_tokens - other.input_tokens,
+            cache_write_tokens=self.cache_write_tokens - other.cache_write_tokens,
+            cache_read_tokens=self.cache_read_tokens - other.cache_read_tokens,
+            output_tokens=self.output_tokens - other.output_tokens,
+            input_audio_tokens=self.input_audio_tokens - other.input_audio_tokens,
+            cache_audio_read_tokens=self.cache_audio_read_tokens - other.cache_audio_read_tokens,
+            output_audio_tokens=self.output_audio_tokens - other.output_audio_tokens,
+            details=details,
+            cost=self.cost - (other.cost or 0) if self.cost is not None and self.cost != other.cost else None,
+        )
 
 
 def _incr_usage_cost(slf: RunUsage | RequestUsage, incr_usage: RunUsage | RequestUsage) -> None:
@@ -530,7 +558,8 @@ class UsageLimits:
             warnings.warn(
                 CostNotFoundWarning(
                     'A `cost_limit` is set but cannot be enforced because no cost was calculated for this run. '
-                    'This usually means genai-prices has no pricing data for the model or provider in use.'
+                    'This usually means there is no pricing data for the model or provider in use. If the model is newer '
+                    'than your install, `pydantic_ai.prices.update_in_background()` can download current prices.'
                 )
             )
 

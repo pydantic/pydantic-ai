@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, cast
 
 from typing_extensions import TypeVar, assert_never
 
+from pydantic_ai._run_context import EventStreamBuffer
 from pydantic_ai._utils import cancel_and_drain
 from pydantic_ai.tool_manager import ToolManager, ValidatedToolCall
 from pydantic_graph import GraphRunContext
@@ -25,6 +26,58 @@ if TYPE_CHECKING:
     from ._agent_graph import GraphAgentDeps, GraphAgentState
 
 DepsT = TypeVar('DepsT')
+TaskResultT = TypeVar('TaskResultT')
+
+
+async def _iter_completed_or_buffered(
+    pending: set[asyncio.Task[TaskResultT]],
+    event_stream_buffer: list[_messages.AgentStreamEvent],
+) -> AsyncIterator[_messages.AgentStreamEvent | asyncio.Task[TaskResultT]]:
+    """Yield tasks as they complete, interleaving run events buffered while waiting.
+
+    Buffered events (e.g. `ctx.emit` from a running tool) are yielded as soon as they land,
+    so stream consumers see a progress event while the emitting tool is still running instead of
+    at the tool's completion. Events buffered before a task completion is yielded come first, so
+    an event emitted inside a tool body always precedes that tool's result event.
+
+    A buffer that can't signal appends (a plain list revived from graph-state persistence) degrades
+    to plain completion-order waiting, with buffered events surfacing at stream position instead.
+    """
+    if not isinstance(event_stream_buffer, EventStreamBuffer):
+        while pending:
+            done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+            for task in done:
+                yield task
+        return
+
+    waiters = event_stream_buffer.waiters
+    signal = asyncio.Event()
+    waiters.append(signal)
+    try:
+        while pending:
+            while event_stream_buffer:
+                yield event_stream_buffer.pop(0)
+            # Clearing after the drain rather than before it can't lose a wake-up: `emit` is async,
+            # so appends land on this event loop, and no `await` separates the empty-buffer check
+            # from the clear. An event appended while an earlier one is being yielded above is seen
+            # by the next iteration of that same loop.
+            signal.clear()
+            # Typed `Task[Any]` so the mixed `asyncio.wait` set unifies with the task set; the
+            # sentinel is discarded from both result sets before tasks are yielded.
+            signal_wait: asyncio.Task[Any] = asyncio.ensure_future(signal.wait())
+            try:
+                done, not_done = await asyncio.wait({*pending, signal_wait}, return_when=asyncio.FIRST_COMPLETED)
+            finally:
+                signal_wait.cancel()
+            done.discard(signal_wait)
+            pending = {task for task in not_done if task is not signal_wait}
+            while event_stream_buffer:
+                yield event_stream_buffer.pop(0)
+            for task in done:
+                yield task
+    finally:
+        waiters.remove(signal)
+
 
 # Status messages synthesized as the `content` of an output/function tool's `ToolReturnPart`
 # when the tool isn't run (or its result isn't used). Centralized so the same wording is shared
@@ -261,7 +314,7 @@ async def process_tool_calls(
     ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
     output_parts: list[_messages.ModelRequestPart],
     output_final_result: deque[result.FinalResult[NodeRunEndT]] | None = None,
-) -> AsyncIterator[_messages.HandleResponseEvent]:
+) -> AsyncIterator[_messages.AgentStreamEvent]:
     """Process a model response's tool calls, honoring the `end_strategy`.
 
     Output and function tools are classified by kind and executed per strategy:
@@ -439,7 +492,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
     def is_executable_function(self, index: int) -> bool:
         return self.call_kinds[index] in self.executable_function_kinds and self._is_resume_eligible(index)
 
-    async def run(self) -> AsyncIterator[_messages.HandleResponseEvent]:
+    async def run(self) -> AsyncIterator[_messages.AgentStreamEvent]:
         """Run the configured strategy, then apply retry-wins and resolve deferred calls."""
         # Check tool-call usage limits up front for the full count of function-kind calls.
         if self.ctx.deps.usage_limits.tool_calls_limit is not None and self.function_indices:
@@ -455,7 +508,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             yield event
 
     @abstractmethod
-    def _run_strategy(self) -> AsyncIterator[_messages.HandleResponseEvent]:
+    def _run_strategy(self) -> AsyncIterator[_messages.AgentStreamEvent]:
         """Execute this strategy's tool calls, building up `final_result` and `output_parts`."""
         raise NotImplementedError
 
@@ -535,7 +588,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         self.winning_output_part = self._status_part(call, _FINAL_RESULT_PROCESSED)
         yield from self._record_output_part(call, self.winning_output_part, args_valid=True)
 
-    async def _run_output(self, call: _messages.ToolCallPart) -> AsyncIterator[_messages.HandleResponseEvent]:
+    async def _run_output(self, call: _messages.ToolCallPart) -> AsyncIterator[_messages.AgentStreamEvent]:
         """Run a single output tool call (or stub it if a final result was already chosen)."""
         if self.final_result is not None and self.final_result.tool_call_id == call.tool_call_id:
             for event in self._emit_winning_output(call):
@@ -581,7 +634,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
 
     async def _validate_function_calls(
         self, calls: list[_messages.ToolCallPart], *, validated_calls: dict[str, ValidatedToolCall[DepsT]]
-    ) -> AsyncIterator[_messages.HandleResponseEvent]:
+    ) -> AsyncIterator[_messages.AgentStreamEvent]:
         """Validate a batch of function/unknown calls, emitting their `FunctionToolCallEvent`s.
 
         Populates `validated_calls`. On resume, a supplied result that isn't a `ToolApproved`
@@ -624,7 +677,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
 
     async def _run_function_calls(
         self, calls: list[_messages.ToolCallPart]
-    ) -> AsyncIterator[_messages.HandleResponseEvent]:
+    ) -> AsyncIterator[_messages.AgentStreamEvent]:
         """Validate a batch of function/unknown calls upfront, then execute via `_call_tools`."""
         if not calls:
             return
@@ -741,7 +794,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         validated_calls: dict[str, ValidatedToolCall[DepsT]],
         deferred_calls: dict[Literal['external', 'unapproved'], list[_messages.ToolCallPart]],
         deferred_metadata: dict[str, dict[str, Any]],
-    ) -> AsyncIterator[_messages.HandleResponseEvent]:
+    ) -> AsyncIterator[_messages.AgentStreamEvent]:
         tool_parts_by_index: dict[int, _FunctionCallParts] = {}
         user_parts_by_index: dict[int, _messages.UserPromptPart] = {}
         deferred_calls_by_index: dict[int, Literal['external', 'unapproved']] = {}
@@ -798,43 +851,42 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
 
         try:
             for segment in segments:
-                if len(segment) == 1:
-                    # A barrier (or sole call): run inline, event in completion order.
-                    index = segment[0]
-                    if event := await handle_call_or_result(call_tool(index), index):
-                        yield event
-                else:
-                    tasks_by_index = {
-                        index: asyncio.create_task(call_tool(index), name=tool_calls[index].tool_name)
-                        for index in segment
-                    }
-                    index_by_task = {task: index for index, task in tasks_by_index.items()}
-                    try:
-                        if ordered_events:
-                            # Wait for the whole segment, then yield events in emission order.
-                            await asyncio.wait(tasks_by_index.values(), return_when=asyncio.ALL_COMPLETED)
-                            for index in segment:
-                                if event := await handle_call_or_result(tasks_by_index[index], index):
-                                    yield event
-                        else:
-                            pending: set[
-                                asyncio.Task[tuple[_FunctionCallParts, str | Sequence[_messages.UserContent] | None]]
-                            ] = set(tasks_by_index.values())
-                            while pending:
-                                done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
-                                for task in done:
-                                    if event := await handle_call_or_result(task, index_by_task[task]):
-                                        yield event
-                    except asyncio.CancelledError as e:
-                        await cancel_and_drain(*tasks_by_index.values(), msg=e.args[0] if len(e.args) != 0 else None)
-                        raise
-                    except BaseException:
-                        # Cancel any still-running sibling tasks so they don't become
-                        # orphaned asyncio tasks when a non-CancelledError exception
-                        # (e.g. RuntimeError, ConnectionError) propagates out of
-                        # handle_call_or_result().
-                        await cancel_and_drain(*tasks_by_index.values())
-                        raise
+                tasks_by_index = {
+                    index: asyncio.create_task(call_tool(index), name=tool_calls[index].tool_name) for index in segment
+                }
+                index_by_task = {task: index for index, task in tasks_by_index.items()}
+                try:
+                    # Even a barrier (or sole) call runs as a task, so events it emits
+                    # surface to stream consumers while it is still executing.
+                    async for item in _iter_completed_or_buffered(
+                        set(tasks_by_index.values()), self.ctx.state.event_stream_buffer
+                    ):
+                        if not isinstance(item, asyncio.Task):
+                            # A buffered run event; `parallel_ordered_events` only defers
+                            # function-tool result events, so this streams live in both modes
+                            # (same split as the exhaustive path).
+                            yield item
+                        elif not ordered_events:
+                            if event := await handle_call_or_result(item, index_by_task[item]):
+                                yield event
+                    if ordered_events:
+                        # Settle the segment in emission order once every task is done. Ordering the
+                        # results here rather than as tasks complete is the whole point of the mode:
+                        # it also pins which sibling's exception propagates, which a durable runtime
+                        # (DBOS defaults to this mode) has to replay identically.
+                        for index in segment:
+                            if event := await handle_call_or_result(tasks_by_index[index], index):
+                                yield event
+                except asyncio.CancelledError as e:
+                    await cancel_and_drain(*tasks_by_index.values(), msg=e.args[0] if len(e.args) != 0 else None)
+                    raise
+                except BaseException:
+                    # Cancel any still-running sibling tasks so they don't become
+                    # orphaned asyncio tasks when a non-CancelledError exception
+                    # (e.g. RuntimeError, ConnectionError) propagates out of
+                    # handle_call_or_result().
+                    await cancel_and_drain(*tasks_by_index.values())
+                    raise
         finally:
             # Populate output_parts even on exception so partial tool returns surface
             # to the outer capture in `CallToolsNode._handle_tool_calls`. We append the
@@ -907,7 +959,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         self.output_parts[idx] = dataclasses.replace(self.winning_output_part, content=_RETRY_WINS)
         self.final_result = None
 
-    async def _finalize_deferred(self) -> AsyncIterator[_messages.HandleResponseEvent]:
+    async def _finalize_deferred(self) -> AsyncIterator[_messages.AgentStreamEvent]:
         """Stub, collect, or inline-resolve deferred (`external`/`unapproved`) tool calls."""
         # Collect deferred calls (unless they were already included in the run because results were provided).
         if self.tool_call_results is None:
@@ -918,7 +970,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             async for event in self._resolve_deferred_calls():
                 yield event
 
-    async def _collect_deferred_calls(self) -> AsyncIterator[_messages.HandleResponseEvent]:
+    async def _collect_deferred_calls(self) -> AsyncIterator[_messages.AgentStreamEvent]:
         """Stub deferred calls (a final result was reached) or validate-and-collect them for resolution."""
         # Grouping by kind (all `external`, then all `unapproved`) is intentional and distinct from the
         # emission-order execution used elsewhere: deferred tools are resolved externally, so the order in
@@ -961,7 +1013,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                         self.output_parts.append(part)
                         yield _messages.FunctionToolResultEvent(part)
 
-    async def _resolve_deferred_calls(self) -> AsyncIterator[_messages.HandleResponseEvent]:
+    async def _resolve_deferred_calls(self) -> AsyncIterator[_messages.AgentStreamEvent]:
         """Resolve collected deferred calls via capability handlers, else set the `DeferredToolRequests` result."""
         # Deferred calls are returned to the caller and later matched back to results by `tool_call_id`.
         # Duplicate ids would make that matching ambiguous, so reject them before handing the requests out.
@@ -1054,7 +1106,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
 class _EarlyProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
     """`'early'`: run all output tools first; run function tools only if every output failed."""
 
-    async def _run_strategy(self) -> AsyncIterator[_messages.HandleResponseEvent]:
+    async def _run_strategy(self) -> AsyncIterator[_messages.AgentStreamEvent]:
         for i in self.output_indices:
             # `_run_output` always yields ≥1 event, so the empty-iterator branch can't happen.
             async for event in self._run_output(self.tool_calls[i]):  # pragma: no branch
@@ -1082,10 +1134,10 @@ class _EarlyProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
 class _GracefulProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
     """`'graceful'`: walk in emission order, running pending function-tool batches before each output tool."""
 
-    async def _run_strategy(self) -> AsyncIterator[_messages.HandleResponseEvent]:
+    async def _run_strategy(self) -> AsyncIterator[_messages.AgentStreamEvent]:
         pending_functions: list[_messages.ToolCallPart] = []
 
-        async def flush_pending() -> AsyncIterator[_messages.HandleResponseEvent]:
+        async def flush_pending() -> AsyncIterator[_messages.AgentStreamEvent]:
             nonlocal pending_functions
             if pending_functions:
                 batch = pending_functions
@@ -1118,7 +1170,7 @@ class _ExhaustiveProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
     stream as each task completes.
     """
 
-    async def _run_strategy(self) -> AsyncIterator[_messages.HandleResponseEvent]:  # noqa: C901
+    async def _run_strategy(self) -> AsyncIterator[_messages.AgentStreamEvent]:  # noqa: C901
         externally_won_id = self.final_result.tool_call_id if self.final_result is not None else None
 
         # Upfront-validate function calls in emission order, emitting their call events.
@@ -1179,11 +1231,13 @@ class _ExhaustiveProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
             for segment in segments:
                 tasks = [asyncio.create_task(run_one(i), name=self.tool_calls[i].tool_name) for i in segment]
                 try:
-                    pending: set[asyncio.Task[tuple[int, _ToolCallPayload[NodeRunEndT]]]] = set(tasks)
-                    while pending:
-                        done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
-                        for task in done:
-                            index, payload = task.result()
+                    async for item in _iter_completed_or_buffered(set(tasks), self.ctx.state.event_stream_buffer):
+                        if not isinstance(item, asyncio.Task):
+                            # A buffered run event; `parallel_ordered_events` only defers
+                            # function-tool result events, so this streams live in both modes.
+                            yield item
+                        else:
+                            index, payload = item.result()
                             if isinstance(payload, _OutputCallResult):
                                 output_results[index] = payload
                             elif isinstance(payload, exceptions.CallDeferred):

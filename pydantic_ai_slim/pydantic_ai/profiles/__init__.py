@@ -154,6 +154,14 @@ class ModelProfile(TypedDict, total=False):
     supported_native_tools: frozenset[type[AbstractNativeTool]]
     """The set of native tool types that this model/profile supports. Default: `SUPPORTED_NATIVE_TOOLS` (all)."""
 
+    context_window: int | None
+    """The maximum number of tokens the model can handle in a single request, input and output combined. Default: `None` (unknown).
+
+    When no profile layer sets this, `Model.profile` fills it in from
+    [genai-prices](https://github.com/pydantic/genai-prices) data if the model is known there.
+    Set it explicitly for custom or local models, e.g. `profile={'context_window': 128_000}`.
+    """
+
     tool_deferral_mode: ToolDeferralMode | None
     """When the provider permits a `tools` entry whose schema is withheld. Default: `None`.
 
@@ -230,6 +238,7 @@ DEFAULT_PROFILE: ModelProfile = {
     'thinking_tags': DEFAULT_THINKING_TAGS,
     'ignore_streamed_leading_whitespace': False,
     'supported_native_tools': SUPPORTED_NATIVE_TOOLS,
+    'context_window': None,
     'tool_deferral_mode': None,
     'tool_addition_mode': None,
 }

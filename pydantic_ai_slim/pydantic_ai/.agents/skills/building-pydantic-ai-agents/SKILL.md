@@ -194,6 +194,8 @@ async def log_request(ctx: RunContext, request_context: ModelRequestContext) -> 
 agent = Agent('openai:gpt-5.2', name='hooks_agent', capabilities=[hooks])
 ```
 
+For a custom capability hook that performs I/O under Temporal, DBOS, or Prefect, mark a fixed method with `@durable_operation(name='...')`. The required name becomes part of persisted durable-unit names, so keep it stable even if the Python method is renamed. For dynamically contributed handlers, return them from `get_durable_operations()` and invoke a typed handle with `ctx.durable_operation(self, name, handler)`. Always set a stable capability `id`; without a durability capability both forms call the original async handler directly. Arguments and results must be serializable like durable tool inputs and outputs.
+
 ### Define Agent from YAML Spec
 
 Use `Agent.from_file` to load agents from YAML or JSON — no Python agent construction code needed.
@@ -223,7 +225,9 @@ session to consume the **same part/event vocabulary as a streamed run** — `Par
 `FunctionToolCallEvent` / `FunctionToolResultEvent`, plus realtime control events (`RealtimeInputSpeechStartEvent`,
 `RealtimeInputSpeechEndEvent`, `RealtimeResponseInterruptedEvent`, ...). Use `RealtimeTurnCompleteEvent` as the exchange
 boundary, when generation and tool work are complete. This is not always the end of audible speech:
-on WebRTC sidebands, track playback with `RealtimeOutputSpeechStartEvent` and `RealtimeOutputSpeechEndEvent`.
+on WebRTC sidebands, track playback with `RealtimeOutputSpeechStartEvent` and `RealtimeOutputSpeechEndEvent`. Before
+passing raw microphone bytes to `send_audio`, convert them to mono PCM16 at `session.audio_input_sample_rate`; raw
+chunks carry no sample-rate metadata.
 
 ```python {test="skip"}
 from pydantic_ai import Agent
@@ -244,7 +248,8 @@ async def main(microphone_chunk: bytes):
     async with agent.realtime(
         'openai:gpt-realtime', model_settings=settings
     ).session() as session:
-        await session.send_audio(microphone_chunk)  # PCM16 bytes
+        # The chunk must already be mono PCM16 at `session.audio_input_sample_rate`.
+        await session.send_audio(microphone_chunk)
         await session.commit_audio()
         await session.create_response()
         # Input transcription can finish after the model's response.
@@ -259,7 +264,8 @@ async def main(microphone_chunk: bytes):
                     user_turn_complete = True
                 case RealtimeTurnCompleteEvent():
                     turn_complete = True
-                case RealtimeSessionErrorEvent(message=message):
+                case RealtimeSessionErrorEvent(message=message, recoverable=True):
+                    # The connection remains usable, but this turn may not complete.
                     raise RuntimeError(message)
             if turn_complete and user_turn_complete:
                 break
@@ -271,6 +277,9 @@ async def main(microphone_chunk: bytes):
 
 Key facts for building realtime agents:
 
+- **A string sent with `session.send()` solicits a response**: use `respond=False` to add passive
+  text context. Images are context-only by default; use `respond=True` to ask for a response to an
+  image. Never pair `session.send('...')` with `session.create_response()`, because that asks twice.
 - **History handoff is the marquee integration**: `session.all_messages()` / `session.new_messages()`
   return real `ModelMessage`s; seed with `realtime(model, message_history=...).session()`. Transcripts
   are what carry over; OpenAI and Azure can also replay retained transcript-less *user* audio, Gemini
@@ -290,9 +299,23 @@ Key facts for building realtime agents:
   `google_vad` only for finer provider-specific control; when present, they fully override the shared
   setting. Automatic detection is on by default (`True`); set `turn_detection=False` for push-to-talk
   (OpenAI/Azure/xAI only — Gemini has no manual turn controls and raises).
+- **Barge-in** (the user speaking over the model): pass `handle_barge_in=True` to `.session()` and
+  the session owns the local half — flushing the audio the user will never hear, truncating the
+  provider's transcript to what was played, and adding a client cancel only on providers whose own
+  turn detection isn't already cancelling. Off by default, and it needs playback to drain a single
+  device-paced `stream_audio()` iterator (the position it tracks); with none or several it stands
+  down. To keep the trigger yourself, `session.interrupt(played_bytes=session.played_audio_bytes)`
+  gets the same treatment on your own signal. A playback layer that buffers ahead of the device
+  makes `played_audio_bytes` read too far: count real device consumption and pass `played_ms`.
 - **Tools**: every tool runs in the background, so a slow tool never blocks the session. Whether
   the model keeps speaking meanwhile is provider-specific (OpenAI/Azure do; Gemini needs
-  `google_async_tool_calls=True` on a native-audio model).
+  `google_async_tool_calls=True` on a native-audio model). An unhandled tool exception is raised
+  from session iteration; when only `stream_audio()` or `stream_transcripts()` is consumed, it ends
+  those views and is raised when the session context closes. An `on_tool_execute_error` capability
+  can return a replacement result or raise `ModelRetry` to keep the session running. To end the call
+  from a tool, await `ctx.realtime_session.close()` for a clean hang-up (the tool does not resume and
+  its call is recorded as interrupted), or call `ctx.cancel()` to make the session context raise
+  `RunCancelled`.
 - **Browser WebRTC (OpenAI and Azure OpenAI)**: for browser voice agents, relay the browser's SDP
   offer server-side with `agent.realtime(model).answer_webrtc_offer(sdp_offer)` — the agent's
   resolved instructions and tools are baked in and the API key stays on the server — then attach a
@@ -317,7 +340,7 @@ Load only the most relevant reference first. Read additional references only if 
 | Work with multimodal input, message history, `run_id` / `conversation_id`, or context trimming | [Input and History](./references/INPUT-AND-HISTORY.md) |
 | Test or debug agent behavior | [Testing and Debugging](./references/TESTING-AND-DEBUGGING.md) |
 | Coordinate multiple agents or build graph workflows | [Orchestration and Integrations](./references/ORCHESTRATION-AND-INTEGRATIONS.md#coordinate-multiple-agents) |
-| Call the model directly, expose A2A, use durable execution, embeddings, evals, or third-party integrations | [Orchestration and Integrations](./references/ORCHESTRATION-AND-INTEGRATIONS.md) |
+| Call the model directly, expose A2A, use durable execution, embeddings, image generation, evals, or third-party integrations | [Orchestration and Integrations](./references/ORCHESTRATION-AND-INTEGRATIONS.md) |
 | Compare abstractions, output modes, decorators, or model-string patterns | [Architecture and Decision Guide](./references/ARCHITECTURE.md) |
 | Follow an older link into `COMMON-TASKS.md` | [Task Reference Map](./references/COMMON-TASKS.md) |
 
@@ -368,6 +391,6 @@ Load exactly one of these unless the task clearly spans multiple families:
 | Approval, retries, failed tool results, validators, timeouts, rich tool returns, tool search, and tool-level deferred loading | [Tools Advanced](./references/TOOLS-ADVANCED.md) |
 | Multimodal input, message history, `run_id` / `conversation_id`, history processors | [Input and History](./references/INPUT-AND-HISTORY.md) |
 | Testing, request inspection, and Logfire debugging | [Testing and Debugging](./references/TESTING-AND-DEBUGGING.md) |
-| Multi-agent patterns, graphs, direct API, A2A, durable execution, embeddings, evals, third-party integrations | [Orchestration and Integrations](./references/ORCHESTRATION-AND-INTEGRATIONS.md) |
+| Multi-agent patterns, graphs, direct API, A2A, durable execution, embeddings, image generation, evals, third-party integrations | [Orchestration and Integrations](./references/ORCHESTRATION-AND-INTEGRATIONS.md) |
 
 Use [Task Reference Map](./references/COMMON-TASKS.md) only for compatibility with older links or when you need a pointer from an old section name to the new file.

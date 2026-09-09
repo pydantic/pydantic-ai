@@ -11,7 +11,7 @@
 </div>
 <div align="center">
   <a href="https://github.com/pydantic/pydantic-ai/actions/workflows/ci.yml?query=branch%3Amain"><img src="https://github.com/pydantic/pydantic-ai/actions/workflows/ci.yml/badge.svg?event=push" alt="CI"></a>
-  <a href="https://coverage-badge.samuelcolvin.workers.dev/redirect/pydantic/pydantic-ai"><img src="https://coverage-badge.samuelcolvin.workers.dev/pydantic/pydantic-ai.svg" alt="Coverage"></a>
+  <a href="https://coverage-badge.samuelcolvin.workers.dev/redirect/pydantic/pydantic-ai"><img src="https://img.shields.io/badge/coverage-100%25-brightgreen.svg" alt="Coverage"></a>
   <a href="https://pypi.python.org/pypi/pydantic-ai"><img src="https://img.shields.io/pypi/v/pydantic-ai.svg" alt="PyPI"></a>
   <a href="https://github.com/pydantic/pydantic-ai"><img src="https://img.shields.io/pypi/pyversions/pydantic-ai.svg" alt="versions"></a>
   <a href="https://github.com/pydantic/pydantic-ai/blob/main/LICENSE"><img src="https://img.shields.io/github/license/pydantic/pydantic-ai.svg?v" alt="license"></a>
@@ -23,7 +23,7 @@
 
 ---
 
-**Pydantic AI** is the Python AI SDK: a typed, [extensible](https://pydantic.dev/docs/ai/guides/extensibility/) agent loop with [every model](https://pydantic.dev/docs/ai/models/overview/) a string swap away. The same agent [runs everywhere you need it](https://pydantic.dev/docs/ai/overview/interfaces/): behind a [web frontend](https://pydantic.dev/docs/ai/integrations/ui/overview/), in the [terminal](https://pydantic.dev/docs/ai/integrations/cli/), on a [voice call](https://pydantic.dev/docs/ai/realtime/overview/), on a [durable background queue](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/), or as a plain object you call [`run()`](https://pydantic.dev/docs/ai/core-concepts/agent/#running-agents) on. [Image generation](https://pydantic.dev/docs/ai/capabilities/image-generation/) and [embeddings](https://pydantic.dev/docs/ai/guides/embeddings/) come in the same box.
+**Pydantic AI** is the Python AI SDK: a typed, [extensible](https://pydantic.dev/docs/ai/guides/extensibility/) agent loop with [every model](https://pydantic.dev/docs/ai/models/overview/) a string swap away. The same agent [runs everywhere you need it](https://pydantic.dev/docs/ai/overview/interfaces/): behind a [web frontend](https://pydantic.dev/docs/ai/integrations/ui/overview/), in the [terminal](https://pydantic.dev/docs/ai/integrations/cli/), on a [voice call](https://pydantic.dev/docs/ai/realtime/overview/), on a [durable background queue](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/), or as a plain object you call [`run()`](https://pydantic.dev/docs/ai/core-concepts/agent/#running-agents) on. [Image generation](https://pydantic.dev/docs/ai/guides/image-generation/) and [embeddings](https://pydantic.dev/docs/ai/guides/embeddings/) come in the same box.
 
 **[Pydantic AI Harness](https://github.com/pydantic/pydantic-ai-harness)** has everything an agent needs for complex, long-running work, snapped on as [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/), from [memory](https://pydantic.dev/docs/ai/harness/memory/), [sub-agents](https://pydantic.dev/docs/ai/harness/subagents/), and [context management](https://pydantic.dev/docs/ai/harness/compaction/) to a complete [coding agent](https://pydantic.dev/docs/ai/harness/coder/).
 
@@ -113,44 +113,9 @@ The [`@agent.tool`](https://pydantic.dev/docs/ai/tools-toolsets/tools/) function
 
 **Build this →** [Agents](https://pydantic.dev/docs/ai/core-concepts/agent/), [Function Tools](https://pydantic.dev/docs/ai/tools-toolsets/tools/), and [Structured Output](https://pydantic.dev/docs/ai/core-concepts/output/)
 
-### Realtime voice
+### Durable workflow
 
-Put the same agent on a live voice session, [tools](https://pydantic.dev/docs/ai/realtime/tools/) and [capabilities](https://pydantic.dev/docs/ai/realtime/capabilities/) included:
-
-```bash
-uv add "pydantic-ai[openai-realtime]"
-```
-
-```python
-import asyncio
-
-from pydantic_ai import Agent
-from pydantic_ai.capabilities import MCP
-
-agent = Agent(
-    instructions='You are a helpful voice assistant.',
-    capabilities=[MCP('https://internal.example.com/mcp')],  # capabilities work in voice too
-)
-
-@agent.tool_plain
-def order_status(order_id: str) -> str:
-    """Look up the status of an order."""
-    return f'Order {order_id}: shipped, arriving Thursday.'
-
-async with agent.realtime('openai:gpt-realtime-2.1').session() as session:
-    microphone = asyncio.create_task(stream_microphone(session))  # chunks → session.send_audio()
-    speaker = asyncio.create_task(play_audio(session.stream_audio()))  # model audio → your speaker
-    async for part in session.stream_transcripts():
-        print(f'{part.speaker}: {part.transcript}')
-```
-
-The model calls your tools mid-conversation while it keeps talking, and every session is [instrumented](https://pydantic.dev/docs/ai/integrations/logfire/); voice is just another frontend, on OpenAI Realtime, Gemini Live, Azure, and xAI Grok Voice.
-
-**Build this →** [Realtime Voice](https://pydantic.dev/docs/ai/realtime/overview/)
-
-### Durable background agent
-
-Attach [`TemporalDurability`](https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/) and the same agent runs inside a [Temporal](https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/) workflow: every model and tool call becomes a durable activity, so a run working through a background queue survives restarts, failures, and long waits:
+Attach [`TemporalDurability`](https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/) and the same agent runs inside a [Temporal](https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/) workflow under [durable execution](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/): every model and tool call becomes a durable activity, so a run working through a background queue survives restarts, failures, and long waits:
 
 ```bash
 uv add "pydantic-ai[temporal]"
@@ -185,9 +150,44 @@ class ResearchWorkflow(PydanticAIWorkflow):
 
 **Build this →** [Durable Execution](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/)
 
+### Realtime voice
+
+Put the same agent on a live voice session, [tools](https://pydantic.dev/docs/ai/realtime/tools/) and [capabilities](https://pydantic.dev/docs/ai/realtime/capabilities/) included:
+
+```bash
+uv add "pydantic-ai[openai-realtime]"
+```
+
+```python
+import asyncio
+
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import MCP
+
+agent = Agent(
+    instructions='You are a helpful voice assistant.',
+    capabilities=[MCP('https://internal.example.com/mcp')],  # capabilities work in voice too
+)
+
+@agent.tool_plain
+def order_status(order_id: str) -> str:
+    """Look up the status of an order."""
+    return f'Order {order_id}: shipped, arriving Thursday.'
+
+async with agent.realtime('openai:gpt-realtime-2.1').session() as session:
+    microphone = asyncio.create_task(session.send_audio(microphone_chunks()))  # your microphone → the model
+    speaker = asyncio.create_task(play_audio(session.stream_audio()))  # model audio → your speaker
+    async for part in session.stream_transcripts():
+        print(f'{part.speaker}: {part.transcript}')
+```
+
+The model calls your tools mid-conversation while it keeps talking, and every session is [instrumented](https://pydantic.dev/docs/ai/integrations/logfire/); voice is just another frontend, on OpenAI Realtime, Gemini Live, Azure, and xAI Grok Voice.
+
+**Build this →** [Realtime Voice](https://pydantic.dev/docs/ai/realtime/overview/)
+
 ### Image generation
 
-Ask for an image and make it the run's typed [output](https://pydantic.dev/docs/ai/core-concepts/output/):
+Generate an image with a dedicated image model, no agent run required:
 
 ```bash
 uv add pydantic-ai
@@ -196,37 +196,16 @@ uv add pydantic-ai
 ```python
 from pathlib import Path
 
-from pydantic_ai import Agent, BinaryImage
+from pydantic_ai import ImageGenerator
 
-agent = Agent('openai:gpt-5.6-sol', output_type=BinaryImage)
-result = agent.run_sync('Generate a minimalist logo for a coffee shop called Extract.')
-Path('logo.png').write_bytes(result.output.data)
+generator = ImageGenerator('openai:gpt-image-2')
+result = generator.generate_sync('A minimalist logo for a coffee shop called Extract.')
+Path('logo.png').write_bytes(result.image.data)
 ```
 
-[Provider-native generation](https://pydantic.dev/docs/ai/tools-toolsets/native-tools/#image-generation-tool) on models that support it (like this one), a [subagent fallback](https://pydantic.dev/docs/ai/capabilities/image-generation/) you can configure for the rest, and a [standalone image API](https://github.com/pydantic/pydantic-ai/pull/5357) on the way.
+That [standalone image API](https://pydantic.dev/docs/ai/guides/image-generation/) is for when your application decides; when an agent run decides, there is [provider-native generation](https://pydantic.dev/docs/ai/tools-toolsets/native-tools/#image-generation-tool) with `output_type=BinaryImage` for a typed image [output](https://pydantic.dev/docs/ai/core-concepts/output/#image-output), and the [`ImageGeneration` capability](https://pydantic.dev/docs/ai/capabilities/image-generation/) with its fallbacks for models that generate no images of their own.
 
-**Build this →** [Image Generation](https://pydantic.dev/docs/ai/capabilities/image-generation/)
-
-<!-- Embeddings section parked (bd54): restore by removing this comment.
-
-### Embeddings
-
-Embed documents and queries for semantic search or a [RAG pipeline](https://pydantic.dev/docs/ai/examples/data-analytics/rag/):
-
-```python
-from pydantic_ai import Embedder
-
-embedder = Embedder('openai:text-embedding-3-small')
-result = embedder.embed_query_sync('What is machine learning?')
-print(len(result.embeddings[0]))
-#> 1536
-```
-
-Seven providers behind one typed API, [instrumented](https://pydantic.dev/docs/ai/integrations/logfire/) like everything else. It lives next to the agent that will use the results.
-
-**Build this →** [Embeddings](https://pydantic.dev/docs/ai/guides/embeddings/)
-
--->
+**Build this →** [Image Generation](https://pydantic.dev/docs/ai/guides/image-generation/)
 
 ## Why Pydantic AI
 
@@ -240,7 +219,7 @@ Seven providers behind one typed API, [instrumented](https://pydantic.dev/docs/a
 
 - **[Every interface](https://pydantic.dev/docs/ai/overview/interfaces/).** One agent definition runs as a [CLI](https://pydantic.dev/docs/ai/integrations/cli/), a [built-in web chat](https://pydantic.dev/docs/ai/guides/web/), or [realtime speech](https://pydantic.dev/docs/ai/realtime/overview/) (OpenAI Realtime, Gemini Live, Azure, xAI Grok Voice); [UI event streams](https://pydantic.dev/docs/ai/integrations/ui/overview/) (AG-UI, Vercel AI) connect it to your own frontend or anything else; and [ACP](https://pydantic.dev/docs/ai/harness/acp/) *(experimental)* serves it as an editor agent.
 
-- **Durable execution.** First-party, co-maintained [durable execution](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/) on Temporal, DBOS, or Prefect, with [Restate, Kitaru, and Airflow](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/) integrations and more coming. Agents survive restarts and run for days on the engine you already operate, with [human-in-the-loop approval](https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/#human-in-the-loop-tool-approval) built in.
+- **Durable execution.** First-party, co-maintained [durable execution](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/) on Temporal, DBOS, Prefect, and Restate, plus external SDK integrations for Kitaru and Airflow. Agents survive restarts and run for days on the engine you already operate, with [human-in-the-loop approval](https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/#human-in-the-loop-tool-approval) built in.
 
 Built by the [Pydantic](https://docs.pydantic.dev) team: [Pydantic Validation](https://pydantic.dev/docs/) is the validation layer of the OpenAI SDK, the Anthropic SDK, the Google ADK, LangChain, and most of the AI ecosystem (and the foundation FastAPI was built on). Pydantic AI brings that same feeling to agents.
 
