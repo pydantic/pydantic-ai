@@ -422,6 +422,12 @@ must contain a `{messages}` placeholder), and `instructions` sets the internal a
 which Pydantic AI sends in the request's system prompt. Override `instructions` when the summarizer
 endpoint requires a fixed leading instruction.
 
+The messages served into that template are rendered to text, and each tool return is capped per return at
+`tool_return_max_chars` (default 500) characters using the same explicit truncation marker as kept user
+turns. Raise it, or set it to `None` to render each return whole, when the summarizer's context window is
+large enough to absorb the payloads. `max_tokens` and `keep_tokens` control when compaction runs and which
+history messages are retained; they do not cap the summary-request payload.
+
 ## Usage accounting
 
 The summary call is a real request to the model, so its full usage -- tokens **and** the request
@@ -599,4 +605,6 @@ outcome changes what compaction keeps or drops.
 
 These strategies compress or drop context *inside* the window. Moving large tool outputs *out* of the
 window -- overflowing them to a file the agent (or a subagent) can query on demand -- is a separate
-capability, not lossy truncation. Prefer it over capping individual tool outputs.
+capability, not lossy truncation. Within `SummarizingCompaction`, `tool_return_max_chars` makes the
+summarizer's per-return cap tunable (or `None` to render returns whole), but the summary request still
+reads a lossy rendering; prefer tool output limits when a payload must be queryable in full.

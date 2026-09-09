@@ -156,8 +156,27 @@ def _model_family(model: str | AbstractModel | None) -> str | None:
     return tail or None
 
 
-def _format_messages(messages: Sequence[ModelMessage], *, skip_previous_summary: bool = False) -> str:
-    """Render messages into a human-readable string for summarization."""
+def _truncate_with_marker(text: str, max_chars: int) -> str:
+    """Truncate *text* to *max_chars* characters, an explicit marker counted within the cap."""
+    if len(text) <= max_chars:
+        return text
+    marker = '[...]'
+    if max_chars <= len(marker):
+        return marker[:max_chars]
+    return f'{text[: max_chars - len(marker)]}{marker}'
+
+
+def _format_messages(
+    messages: Sequence[ModelMessage],
+    *,
+    skip_previous_summary: bool = False,
+    tool_return_max_chars: int | None = 500,
+) -> str:
+    """Render messages into a human-readable string for summarization.
+
+    Tool returns are truncated to `tool_return_max_chars` characters with the shared
+    truncation marker; `None` renders them whole.
+    """
     lines: list[str] = []
     for msg in messages:
         if isinstance(msg, ModelRequest):
@@ -171,9 +190,9 @@ def _format_messages(messages: Sequence[ModelMessage], *, skip_previous_summary:
                 ):
                     lines.append(f'System: {part.content}')
                 elif isinstance(part, ToolReturnPart):
-                    content_str = str(part.content)[:500]
-                    if len(str(part.content)) > 500:
-                        content_str += '...'
+                    content_str = str(part.content)
+                    if tool_return_max_chars is not None:
+                        content_str = _truncate_with_marker(content_str, tool_return_max_chars)
                     lines.append(f'Tool [{part.tool_name}]: {content_str}')
         else:
             for part in msg.parts:
@@ -395,6 +414,10 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
     """Per-message character cap for ``keep_user_messages``; oversized messages are truncated
     with an explicit marker (the shared truncation-marker convention)."""
 
+    tool_return_max_chars: int | None = field(default=500, kw_only=True)
+    """Per-return character cap when rendering tool results for the summarizer. `None` renders
+    them whole."""
+
     receipts: bool = False
     """When ``True``, append a deterministic compaction receipt after the summary noting how
     much history was summarized, that the summary is secondhand, and -- when a
@@ -420,6 +443,8 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
             raise ValueError('keep_tokens must be non-negative.')
         if self.keep_user_messages_max_chars < 1:
             raise ValueError('keep_user_messages_max_chars must be positive.')
+        if self.tool_return_max_chars is not None and self.tool_return_max_chars < 1:
+            raise ValueError('tool_return_max_chars must be positive.')
 
     def with_focus(self, focus: str) -> SummarizingCompaction[AgentDepsT]:
         """Return a copy whose summary prompt prioritizes `focus`.
@@ -525,12 +550,7 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
 
     def _truncate(self, text: str, max_chars: int | None = None) -> str:
         limit = self.keep_user_messages_max_chars if max_chars is None else max_chars
-        if len(text) <= limit:
-            return text
-        marker = '[...]'
-        if limit <= len(marker):
-            return marker[:limit]
-        return f'{text[: limit - len(marker)]}{marker}'
+        return _truncate_with_marker(text, limit)
 
     def _bound_sequence(self, content: Sequence[UserContent]) -> tuple[list[UserContent], bool]:
         """Apply the same per-part character budget to a sequence-shaped user prompt.
@@ -648,7 +668,11 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
         """Generate a summary for the given messages using the configured model."""
         from pydantic_ai import Agent
 
-        formatted = _format_messages(messages, skip_previous_summary=previous_summary is not None)
+        formatted = _format_messages(
+            messages,
+            skip_previous_summary=previous_summary is not None,
+            tool_return_max_chars=self.tool_return_max_chars,
+        )
         prompt = self.summary_prompt.format(messages=formatted)
 
         if previous_summary is not None:

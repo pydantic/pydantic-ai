@@ -739,6 +739,14 @@ class TestCompaction:
         with pytest.raises(ValueError, match='keep_tokens must be non-negative'):
             SummarizingCompaction(model='test', max_messages=10, keep_tokens=-1)
 
+    def test_validation_bad_tool_return_max_chars(self):
+        with pytest.raises(ValueError, match='tool_return_max_chars must be positive'):
+            SummarizingCompaction(model='test', max_messages=10, tool_return_max_chars=0)
+
+    def test_tool_return_max_chars_none_is_accepted(self):
+        comp = SummarizingCompaction(model='test', max_messages=10, tool_return_max_chars=None)
+        assert comp.tool_return_max_chars is None
+
     @pytest.mark.anyio
     async def test_no_compaction_below_threshold(self):
         comp = SummarizingCompaction(model='test', max_messages=100)
@@ -937,7 +945,18 @@ class TestFormatMessages:
     def test_long_tool_return_truncated(self):
         msgs: list[ModelMessage] = [_tool_return('fn', 'tc1', 'x' * 600)]
         text = _format_messages(msgs)
-        assert '...' in text
+        # Default cap of 500, marker counted within the cap, like kept user turns.
+        assert text == 'Tool [fn]: ' + 'x' * 495 + '[...]'
+
+    def test_tool_return_custom_max_chars(self):
+        msgs: list[ModelMessage] = [_tool_return('fn', 'tc1', 'x' * 600)]
+        text = _format_messages(msgs, tool_return_max_chars=10)
+        assert text == 'Tool [fn]: ' + 'x' * 5 + '[...]'
+
+    def test_tool_return_none_renders_full(self):
+        msgs: list[ModelMessage] = [_tool_return('fn', 'tc1', 'x' * 600)]
+        text = _format_messages(msgs, tool_return_max_chars=None)
+        assert text == 'Tool [fn]: ' + 'x' * 600
 
 
 # ---------------------------------------------------------------------------
@@ -3917,6 +3936,59 @@ class TestStructuralFeaturesThroughAgent:
             if isinstance(message, ModelRequest)
             for part in message.parts
         )
+
+    @pytest.mark.anyio
+    async def test_tool_return_max_chars_threads_through_summarize(self):
+        """The field reaches `_format_messages` via `_summarize` in a real run."""
+        prompts: list[str] = []
+        agent = Agent(
+            _recording_model([]),
+            capabilities=[
+                SummarizingCompaction(
+                    model=_recording_summarizer(prompts),
+                    max_messages=3,
+                    keep_messages=1,
+                    tool_return_max_chars=10,
+                )
+            ],
+        )
+        await agent.run(
+            'go',
+            message_history=[
+                _tool_call('read', 'c1'),
+                _tool_return('read', 'c1', 'z' * 600),
+                _assistant('b'),
+                _user('recent'),
+            ],
+        )
+        assert len(prompts) == 1
+        assert f'Tool [read]: {"z" * 5}[...]' in prompts[0]
+
+    @pytest.mark.anyio
+    async def test_tool_return_max_chars_none_renders_whole_return(self):
+        prompts: list[str] = []
+        agent = Agent(
+            _recording_model([]),
+            capabilities=[
+                SummarizingCompaction(
+                    model=_recording_summarizer(prompts),
+                    max_messages=3,
+                    keep_messages=1,
+                    tool_return_max_chars=None,
+                )
+            ],
+        )
+        await agent.run(
+            'go',
+            message_history=[
+                _tool_call('read', 'c1'),
+                _tool_return('read', 'c1', 'z' * 600),
+                _assistant('b'),
+                _user('recent'),
+            ],
+        )
+        assert len(prompts) == 1
+        assert f'Tool [read]: {"z" * 600}' in prompts[0]
 
     @pytest.mark.anyio
     async def test_summary_events_reach_a_caller_supplied_handler(self):
