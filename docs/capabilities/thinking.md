@@ -51,6 +51,7 @@ The `Thinking` capability maps each effort value to the selected provider's nati
 | Cerebras | `reasoning_effort` omitted (reasons by default) | `reasoning_effort` omitted | `thinking=False` → `reasoning_effort='none'`; gpt-oss reasons always-on, so `thinking=False` is silently ignored |
 | Snowflake Cortex | `reasoning={'effort': 'medium'}` | `reasoning={'effort': 'high'}` | Claude models only (via `extra_body`); sets `temperature=1` automatically; other families ignore `thinking` |
 | Crusoe | `reasoning_effort='medium'` | `reasoning_effort='high'` | Inherited from `OpenAIChatModel`; follows the vendor-prefixed model profile (`zai/`, `deepseek-ai/`, …). `thinking=False` → `'none'` only where that profile accepts it |
+| GitHub Copilot | `reasoning_effort='medium'` | `reasoning_effort='high'` | Inherited from `OpenAIChatModel` with no client-side gate: every value is forwarded and Copilot enforces its own per-id list, so a level an id doesn't offer comes back as `400 invalid_reasoning_effort`. `thinking=False` → `'none'`, which the `claude-` and `gemini-` ids reject. Those two families return reasoning in `reasoning_text`, mapped to a `ThinkingPart`; `gpt-5.4` and `kimi-k3` reason but return no reasoning text |
 | Ollama | `reasoning_effort='medium'` | `reasoning_effort='high'` | Inherited from `OpenAIChatModel`, so it follows the resolved model profile: `deepseek-r1` reasons, `gpt-oss` on Ollama sends nothing. `thinking=False` → `'none'` only on profiles that accept it |
 | Z.AI | `thinking={'type': 'enabled'}` | `thinking={'type': 'enabled'}`, plus `reasoning_effort='high'` on GLM-5.2 and GLM-5.3 | Via `extra_body`; `thinking=False` → `type='disabled'`. GLM-5.3 always reasons and ignores `thinking=False` (dropped rather than sent as `type='disabled'`) and accepts only `low`/`high`/`max` (per Z.AI's docs and the error message returned when disabling thinking on it), mapping the other unified levels to the nearest one |
 | xAI | `reasoning_effort` omitted on Grok 4.3 (uses its default) | `reasoning_effort='high'` | Grok 4.3 supports `'none'`, `'low'`, `'medium'`, and `'high'`, and `thinking=True` omits the parameter so the model applies its own default; Grok 3 Mini only supports `'low'` and `'high'` (so `thinking=True` → `'high'`) and silently ignores `thinking=False`; Grok 4.5 supports `'low'`, `'medium'`, and `'high'` but not `'none'`, so it reasons always-on (`thinking=True` → `'medium'`) and silently ignores `thinking=False` |
@@ -312,6 +313,12 @@ settings = ZaiModelSettings(thinking=True, zai_clear_thinking=False)
 agent = Agent(model, model_settings=settings)
 ...
 ```
+
+## GitHub Copilot
+
+Copilot takes the unified [`thinking`][pydantic_ai.settings.ModelSettings.thinking] setting as `reasoning_effort`, inherited from [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel]. Whether a given id accepts it, and which levels, is a per-model fact Copilot reports in its own catalog and enforces itself; [`GitHubCopilotModel`][pydantic_ai.models.github_copilot.GitHubCopilotModel] adds no gate of its own.
+
+Copilot's Anthropic and Google ids return their reasoning in a non-standard `reasoning_text` field, which Pydantic AI maps to a [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] and sends back in the same field on later turns. Its OpenAI and MoonshotAI ids accept the setting and reason on it, but Copilot returns no reasoning text for them, so they yield no `ThinkingPart`. The Anthropic ids reason adaptively besides, so the effort is a ceiling rather than an instruction and an easy question may come back with no reasoning at all. Their `reasoning_effort` list also has no `none`, so `thinking=False` goes out as `reasoning_effort='none'` and Copilot answers `400 invalid_reasoning_effort`. See [GitHub Copilot](../models/github-copilot.md#thinking).
 
 ## Snowflake Cortex
 

@@ -27,6 +27,7 @@ with try_import() as imports_successful:
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.models.bedrock import BedrockConverseModel
     from pydantic_ai.models.cohere import CohereModel
+    from pydantic_ai.models.github_copilot import GitHubCopilotModel
     from pydantic_ai.models.google import GoogleModel
     from pydantic_ai.models.groq import GroqModel
     from pydantic_ai.models.mistral import MistralModel
@@ -203,6 +204,14 @@ TEST_CASES = [
         'github',
         'openai',
         OpenAIChatModel,
+    ),
+    pytest.param(
+        {'GITHUB_COPILOT_API_KEY': 'github-copilot-api-key'},
+        'github-copilot:claude-haiku-4.5',
+        'claude-haiku-4.5',
+        'github-copilot',
+        'github_copilot',
+        GitHubCopilotModel,
     ),
     pytest.param(
         {'MOONSHOTAI_API_KEY': 'moonshotai-api-key'},
