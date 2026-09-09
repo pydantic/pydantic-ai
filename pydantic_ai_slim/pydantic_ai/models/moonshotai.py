@@ -70,10 +70,10 @@ class MoonshotAIModel(OpenAIChatModel):
         rendered: set[str] = set()
         # The base tool-choice mapper already validates names and warns once for partial matches.
         tool_choice = model_settings.get('tool_choice')
-        allowed_names: list[str] | None = None
+        allowed_names: list[str] | None = [] if tool_choice == 'none' else None
         if isinstance(tool_choice, ToolOrOutput):
             allowed_names = tool_choice.function_tools
-        elif isinstance(tool_choice, list) and tool_choice:
+        elif isinstance(tool_choice, list):
             allowed_names = tool_choice
         tool_defs = {
             tool.name: tool

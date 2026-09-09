@@ -260,6 +260,26 @@ async def test_plain_chat_mapping_is_unchanged(
     assert moonshot_api.requests[0] == moonshot_api.requests[1]
 
 
+async def test_disabling_function_tools_preserves_output_tools(
+    allow_model_requests: None, moonshot_provider: MoonshotAIProvider, moonshot_api: MoonshotAPI
+):
+    model = MoonshotAIModel('kimi-k3', provider=moonshot_provider)
+    params = ModelRequestParameters(
+        function_tools=[ToolDefinition(name='weather', defer_loading=True)],
+        output_tools=[ToolDefinition(name='final_result')],
+        output_mode='tool',
+        revealed_tool_names={'weather'},
+    )
+    await model.request(
+        [ModelRequest(parts=[UserPromptPart('hello'), ToolAvailabilityDeltaPart(tools_added=['weather'])])],
+        {'tool_choice': 'none'},
+        params,
+    )
+    body = moonshot_api.requests[0]
+    assert [tool['function']['name'] for tool in body['tools']] == ['final_result']
+    assert not any('tools' in message for message in body['messages'])
+
+
 def test_native_channel_is_provider_and_adapter_scoped(moonshot_provider: MoonshotAIProvider):
     assert MoonshotAIModel('kimi-k3', provider=moonshot_provider).tool_addition_mode == 'with_definitions'
     assert MoonshotAIModel('kimi-k2.6', provider=moonshot_provider).tool_addition_mode is None
