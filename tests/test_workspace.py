@@ -645,9 +645,9 @@ async def test_binary_sniff_failure_falls_back_to_the_filesystem_read() -> None:
             env: Mapping[str, str] | None = None,
             timeout: float | None = None,
         ) -> FakeWorkspaceResult:
-            if not isinstance(command, str) and list(command[:2]) == ['head', '-c']:
-                return FakeWorkspaceResult(exit_code=1, stderr='head: unavailable')
-            return await super().run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
+            # The shell probe fails, so `read_file` cannot classify via the shell and falls back to
+            # the authoritative filesystem read. The sniff is the only command it issues first.
+            return FakeWorkspaceResult(exit_code=1, stderr='head: unavailable')
 
     backend = SniffFails('sniff-fail', {'/workspace/data.txt': b'one\ntwo\nthree\n'})
 
@@ -669,9 +669,9 @@ async def test_binary_sniff_error_falls_back_to_the_filesystem_read() -> None:
             env: Mapping[str, str] | None = None,
             timeout: float | None = None,
         ) -> FakeWorkspaceResult:
-            if not isinstance(command, str) and list(command[:2]) == ['head', '-c']:
-                raise OSError('head crashed')
-            return await super().run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
+            # The shell probe raises, so `read_file` falls back to the authoritative filesystem read.
+            # The sniff is the only command it issues first.
+            raise OSError('head crashed')
 
     backend = SniffRaises('sniff-raise', {'/workspace/data.txt': b'one\ntwo\n'})
 

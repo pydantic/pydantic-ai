@@ -96,9 +96,8 @@ class FakeWorkspace(WorkspaceBackend, SupportsFilesystem):
             _, _, expression, path = shlex.split(sed_part)
             match = _SED_WINDOW.match(expression)
             assert match is not None
-            if path not in self.files:
-                # A pipeline exits with `head`'s status; `sed`'s failure surfaces on stderr.
-                return FakeWorkspaceResult(exit_code=0, stderr=f'sed: {path}: No such file or directory')
+            # The window read only runs after the `head` sniff has already found the file, so a path
+            # reaching the `sed` pipeline always exists.
             text = self.files[path].decode('utf-8', errors='replace')
             lines = text.split('\n')
             if lines[-1] == '':
