@@ -103,6 +103,7 @@ from ..profiles.openai import (
     OPENAI_REASONING_EFFORT_MAP,
     SAMPLING_PARAMS,
     OpenAIModelProfile,
+    OpenAISystemPromptRole,
     validate_openai_profile,
 )
 from ..providers import Provider, infer_provider
@@ -601,6 +602,7 @@ class _ResponsesRequestParams:
     text: responses.ResponseTextConfigParam | Omit
     truncation: Literal['auto', 'disabled'] | Omit
     context_management: list[ContextManagement] | Omit
+    instructions_relocated: bool = False
 
 
 class OpenAIPromptCacheOptions(TypedDict, total=False):
@@ -634,6 +636,15 @@ def _add_openai_prompt_cache_breakpoint(
 def _leading_system_message_count(messages: Sequence[Mapping[str, Any]], system_prompt_role: str) -> int:
     """Number of leading messages holding system prompts, which is where instructions belong."""
     return next((i for i, message in enumerate(messages) if message.get('role') != system_prompt_role), len(messages))
+
+
+def _stamp_instructions_relocated(response: ModelResponse, relocated: bool) -> ModelResponse:
+    """Stamp ``instructions_relocated`` on a response so future chains know instructions live in input."""
+    if relocated:
+        if response.provider_details is None:
+            response.provider_details = {}
+        response.provider_details['instructions_relocated'] = True
+    return response
 
 
 def _has_dynamic_system_prompt(messages: Sequence[ModelMessage]) -> bool:
@@ -1744,7 +1755,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             static_count = sum(1 for part in instruction_parts if not part.dynamic)
             breakpoint_index = system_prompt_count + static_count - 1
             if breakpoint_index >= 0:
-                target = cast('dict[str, Any]', openai_messages[breakpoint_index])
+                target = cast(dict[str, Any], openai_messages[breakpoint_index])
                 target['content'] = [
                     {'type': 'text', 'text': target['content'], 'prompt_cache_breakpoint': {'mode': 'explicit'}}
                 ]
@@ -2269,31 +2280,36 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             # `_get_continuation_info` already rejected the continuation with `UserError`.
             response_id, _, _ = info
             response = await self._responses_retrieve(response_id, settings)
+            if isinstance(response, ModelResponse):
+                return response
+            return self._process_response(response, settings, model_request_parameters)
         elif self.profile.get('openai_responses_requires_streaming', False):
             # Stream-only backend (e.g. Codex subscription auth): drain a forced stream via the
             # streamed-response path, which handles `response.completed` arriving with an empty `output`.
             # Note: if a higher-level path to enforce streaming is ever added, this branch belongs there instead.
-            stream = await self._responses_create(
+            result, instructions_relocated = await self._responses_create(
                 messages, stream=True, model_settings=settings, model_request_parameters=model_request_parameters
             )
-            if isinstance(stream, ModelResponse):
+            if isinstance(result, ModelResponse):
                 # A handled rejection (e.g. an Azure content filter) arrives as a finished
                 # response, not a stream; same guard as `request_stream` below.
-                return stream
-            async with stream:
-                streamed_response = await self._process_streamed_response(stream, settings, model_request_parameters)
+                return _stamp_instructions_relocated(result, instructions_relocated)
+            async with result:
+                streamed_response = await self._process_streamed_response(result, settings, model_request_parameters)
                 async for _ in streamed_response:
                     pass
-            return streamed_response.get()
+            return _stamp_instructions_relocated(streamed_response.get(), instructions_relocated)
         else:
-            response = await self._responses_create(
+            result, instructions_relocated = await self._responses_create(
                 messages, stream=False, model_settings=settings, model_request_parameters=model_request_parameters
             )
 
-        if isinstance(response, ModelResponse):
-            return response
+            if isinstance(result, ModelResponse):
+                return _stamp_instructions_relocated(result, instructions_relocated)
 
-        return self._process_response(response, settings, model_request_parameters)
+            return _stamp_instructions_relocated(
+                self._process_response(result, settings, model_request_parameters), instructions_relocated
+            )
 
     async def count_tokens(
         self,
@@ -2366,6 +2382,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             model_request_parameters,
         )
         settings = cast(OpenAIResponsesModelSettings, model_settings or {})
+        instructions_relocated = False
 
         if info := self._get_continuation_info(messages, settings):
             response_id, last_sequence_number, previous_model_name = info
@@ -2387,15 +2404,16 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         else:
             previous_model_name = None
             expected_response_id = None
-            response = await self._responses_create(
+            result, instructions_relocated = await self._responses_create(
                 messages, stream=True, model_settings=settings, model_request_parameters=model_request_parameters
             )
-        if isinstance(response, ModelResponse):
-            yield _ModelResponseStreamedResponse(
-                model_request_parameters=model_request_parameters,
-                _model_response=response,
-            )
-            return
+            if isinstance(result, ModelResponse):
+                yield _ModelResponseStreamedResponse(
+                    model_request_parameters=model_request_parameters,
+                    _model_response=_stamp_instructions_relocated(result, instructions_relocated),
+                )
+                return
+            response = result
         async with response:
             sr = await self._process_streamed_response(
                 response,
@@ -2404,6 +2422,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 expected_model_name=previous_model_name,
                 expected_response_id=expected_response_id,
             )
+            if instructions_relocated:
+                sr.provider_details = {**(sr.provider_details or {}), 'instructions_relocated': True}
             yield sr
 
     def _process_response(  # noqa: C901
@@ -2738,6 +2758,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             and not _has_dynamic_system_prompt(messages)
         )
 
+        # Save a reference to the full history before server-side state resolution trims it;
+        # the chained response lookup needs the original list to find provider_details stamps.
+        all_messages = messages
         if cache_instructions:
             # Read instruction parts from the untrimmed history before resolving server-side state,
             # since instructions live on the current request and survive the state trim.
@@ -2746,7 +2769,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             prev_id_setting = model_settings.get('openai_previous_response_id')
             conv_id_setting = model_settings.get('openai_conversation_id')
 
-            if prev_id_setting is not None and prev_id_setting != 'auto' and conv_id_setting is None:
+            if instruction_parts and prev_id_setting is not None and prev_id_setting != 'auto' and conv_id_setting is None:
                 raise UserError(
                     '`openai_cache_instructions` moves the instructions into the request input so a '
                     'cache breakpoint can sit on them, but an explicit `openai_previous_response_id` '
@@ -2777,11 +2800,21 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         )
         reasoning = self._translate_thinking(model_settings, model_request_parameters)
 
+        instructions_relocated = False
         if cache_instructions:
-            instructions, openai_messages = self._apply_instruction_caching(
+            chained_instructions_relocated = False
+            if previous_response_id:
+                for m in reversed(all_messages):
+                    if isinstance(m, ModelResponse) and m.provider_response_id == previous_response_id:
+                        chained_instructions_relocated = bool(
+                            m.provider_details and m.provider_details.get('instructions_relocated')
+                        )
+                        break
+            instructions, openai_messages, instructions_relocated = self._apply_instruction_caching(
                 instructions, openai_messages, instruction_parts, system_prompt_role,
                 previous_response_id=previous_response_id,
                 conversation_id=conversation_id,
+                chained_instructions_relocated=chained_instructions_relocated,
             )
 
         text: responses.ResponseTextConfigParam | Omit = OMIT
@@ -2846,6 +2879,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             context_management=OMIT
             if 'openai_context_management' in unsupported_settings
             else model_settings.get('openai_context_management', OMIT),
+            instructions_relocated=instructions_relocated,
         )
 
     @staticmethod
@@ -2853,41 +2887,47 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         instructions: str | Omit,
         openai_messages: list[responses.ResponseInputItemParam],
         instruction_parts: list[InstructionPart],
-        system_prompt_role: str,
+        system_prompt_role: OpenAISystemPromptRole,
         *,
         previous_response_id: str | None,
         conversation_id: str | None,
-    ) -> tuple[str | Omit, list[responses.ResponseInputItemParam]]:
+        chained_instructions_relocated: bool = False,
+    ) -> tuple[str | Omit, list[responses.ResponseInputItemParam], bool]:
         """Relocate instructions into input messages and mark a cache breakpoint.
 
         The top-level ``instructions`` field cannot carry a breakpoint, so instructions are sent as
-        leading input messages instead. When the request chains to a previous response, the
-        relocated instructions are already replayed from the chained response's input.
+        leading input messages instead. When the request chains to a previous response whose
+        ``provider_details`` confirms the instructions were relocated, they are already replayed
+        from the chained response's input and can be omitted here.
+
+        Returns:
+            A 3-tuple of (instructions, openai_messages, instructions_relocated).
         """
         compacted = any(
             isinstance(message, dict) and message.get('type') == 'compaction' for message in openai_messages
         )
+        instructions_relocated = False
         if not previous_response_id and not conversation_id and not compacted:
             system_prompt_count = _leading_system_message_count(openai_messages, system_prompt_role)
             static_count = sum(1 for part in instruction_parts if not part.dynamic)
             breakpoint_index = system_prompt_count + static_count - 1
             if breakpoint_index >= 0:
                 if instruction_parts:
-                    role = cast('Literal["user", "assistant", "system", "developer"]', system_prompt_role)
                     openai_messages[system_prompt_count:system_prompt_count] = [
-                        responses.EasyInputMessageParam(role=role, content=part.content)
+                        responses.EasyInputMessageParam(role=system_prompt_role, content=part.content)
                         for part in instruction_parts
                     ]
                     instructions = OMIT
-                target = cast('dict[str, Any]', openai_messages[breakpoint_index])
+                    instructions_relocated = True
+                assert isinstance(openai_messages[breakpoint_index], dict)
+                target = cast(dict[str, Any], openai_messages[breakpoint_index])
+                assert isinstance(target['content'], str)
                 target['content'] = [
                     {'type': 'input_text', 'text': target['content'], 'prompt_cache_breakpoint': {'mode': 'explicit'}}
                 ]
-        elif previous_response_id:
-            # Chained: the relocated instructions are already replayed from the chained response's
-            # input, so resending them here would send them twice.
+        elif previous_response_id and chained_instructions_relocated:
             instructions = OMIT
-        return instructions, openai_messages
+        return instructions, openai_messages, instructions_relocated
 
     @staticmethod
     def _build_request_options(
@@ -2913,7 +2953,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         stream: Literal[False],
         model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
-    ) -> responses.Response: ...
+    ) -> tuple[responses.Response | ModelResponse, bool]: ...
 
     @overload
     async def _responses_create(
@@ -2922,7 +2962,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         stream: Literal[True],
         model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
-    ) -> AsyncStream[responses.ResponseStreamEvent]: ...
+    ) -> tuple[AsyncStream[responses.ResponseStreamEvent] | ModelResponse, bool]: ...
 
     async def _responses_create(
         self,
@@ -2930,7 +2970,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         stream: bool,
         model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
-    ) -> responses.Response | AsyncStream[responses.ResponseStreamEvent] | ModelResponse:
+    ) -> tuple[responses.Response | AsyncStream[responses.ResponseStreamEvent] | ModelResponse, bool]:
         profile = self.profile
 
         include = self._build_include(model_settings)
@@ -2953,9 +2993,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # OpenAI SDK type stubs incorrectly use 'in-memory' but API requires 'in_memory', so we have to use `Any` to not hit type errors
         prompt_cache_retention: Any = model_settings.get('openai_prompt_cache_retention', OMIT)
 
+        relocated = request_params.instructions_relocated
         with _map_api_errors(self.model_name, self._provider.model_id_namespace):
             try:
-                return await self.client.responses.create(
+                result = await self.client.responses.create(
                     model=request_params.model,
                     input=request_params.input,
                     instructions=request_params.instructions,
@@ -2986,9 +3027,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     extra_headers=extra_headers,
                     extra_body=model_settings.get('extra_body'),
                 )
+                return result, relocated
             except APIStatusError as e:
                 if model_response := _check_azure_content_filter(e, self.client, self.system, self.model_name):
-                    return model_response
+                    return model_response, relocated
                 raise
 
     def _get_continuation_info(
