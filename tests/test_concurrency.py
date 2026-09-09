@@ -12,6 +12,9 @@ import pytest
 from pydantic_ai import Agent, ConcurrencyLimit, ConcurrencyLimiter, ConcurrencyLimitExceeded
 from pydantic_ai.concurrency import get_concurrency_context, normalize_to_limiter
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.messages import ModelResponse, TextPart
+from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
+from pydantic_ai.models.concurrency import ConcurrencyLimitedModel
 from pydantic_ai.models.test import TestModel
 
 if TYPE_CHECKING:
@@ -347,8 +350,6 @@ class TestConcurrencyLimitedModel:
 
     async def test_basic_concurrency_limit(self):
         """Test that ConcurrencyLimitedModel limits concurrent requests."""
-        from pydantic_ai.models.concurrency import ConcurrencyLimitedModel
-
         request_count = 0
         max_concurrent = 0
         lock = anyio.Lock()
@@ -381,24 +382,18 @@ class TestConcurrencyLimitedModel:
 
     async def test_with_int_limiter(self):
         """Test ConcurrencyLimitedModel with int limiter."""
-        from pydantic_ai.models.concurrency import ConcurrencyLimitedModel
-
         model = ConcurrencyLimitedModel(TestModel(), limiter=5)
         assert model._limiter.max_running == 5
         assert model._limiter._max_queued is None
 
     async def test_with_concurrency_limit(self):
         """Test ConcurrencyLimitedModel with ConcurrencyLimit."""
-        from pydantic_ai.models.concurrency import ConcurrencyLimitedModel
-
         model = ConcurrencyLimitedModel(TestModel(), limiter=ConcurrencyLimit(max_running=5, max_queued=10))
         assert model._limiter.max_running == 5
         assert model._limiter._max_queued == 10
 
     async def test_with_shared_limiter(self):
         """Test ConcurrencyLimitedModel with shared ConcurrencyLimiter."""
-        from pydantic_ai.models.concurrency import ConcurrencyLimitedModel
-
         shared_limiter = ConcurrencyLimiter(max_running=3, name='shared-pool')
         model1 = ConcurrencyLimitedModel(TestModel(), limiter=shared_limiter)
         model2 = ConcurrencyLimitedModel(TestModel(), limiter=shared_limiter)
@@ -409,8 +404,6 @@ class TestConcurrencyLimitedModel:
 
     async def test_shared_limiter_limits_across_models(self):
         """Test that shared limiter limits concurrent requests across multiple models."""
-        from pydantic_ai.models.concurrency import ConcurrencyLimitedModel
-
         request_count = 0
         max_concurrent = 0
         lock = anyio.Lock()
@@ -454,7 +447,7 @@ class TestConcurrencyLimitedModel:
 
     async def test_limit_model_concurrency_helper(self):
         """Test the limit_model_concurrency helper function."""
-        from pydantic_ai.models.concurrency import ConcurrencyLimitedModel, limit_model_concurrency
+        from pydantic_ai.models.concurrency import limit_model_concurrency
 
         # With limiter
         model = limit_model_concurrency(TestModel(), limiter=5)
@@ -471,8 +464,6 @@ class TestConcurrencyLimitedModel:
 
     async def test_model_properties_delegated(self):
         """Test that model properties are properly delegated to wrapped model."""
-        from pydantic_ai.models.concurrency import ConcurrencyLimitedModel
-
         base_model = TestModel(model_name='custom-test')
         model = ConcurrencyLimitedModel(base_model, limiter=5)
 
@@ -650,14 +641,60 @@ class TestConcurrencyLimiterWithTracer:
 
 
 class TestConcurrencyLimitedModelMethods:
-    """Tests for ConcurrencyLimitedModel count_tokens and request_stream methods."""
+    """Tests for concurrency limiting across model methods."""
+
+    @pytest.mark.parametrize('raise_error', [False, True])
+    async def test_compact_messages(self, raise_error: bool):
+        """Use a local model to deterministically hold a compaction slot, without provider timing."""
+        entered = anyio.Event()
+        release = anyio.Event()
+        response = ModelResponse(parts=[TextPart('compacted')])
+
+        class CompactionModel(TestModel):
+            async def compact_messages(
+                self, request_context: ModelRequestContext, *, instructions: str | None = None
+            ) -> ModelResponse:
+                assert request_context is context
+                assert instructions == 'Preserve tool results'
+                entered.set()
+                await release.wait()
+                if raise_error:
+                    raise ValueError('compaction failed')
+                return response
+
+        limiter = ConcurrencyLimiter(max_running=1, max_queued=0)
+        model = ConcurrencyLimitedModel(CompactionModel(), limiter=limiter)
+        other_model = ConcurrencyLimitedModel(TestModel(), limiter=limiter)
+        parameters = ModelRequestParameters()
+        context = ModelRequestContext(
+            model=model, messages=[], model_settings=None, model_request_parameters=parameters
+        )
+
+        async def compact():
+            if raise_error:
+                with pytest.raises(ValueError, match='compaction failed'):
+                    await model.compact_messages(context, instructions='Preserve tool results')
+            else:
+                assert await model.compact_messages(context, instructions='Preserve tool results') is response
+
+        with anyio.fail_after(5):
+            async with anyio.create_task_group() as tg:
+                tg.start_soon(compact)
+                await entered.wait()
+                assert limiter.running_count == 1
+                with pytest.raises(ConcurrencyLimitExceeded):
+                    await other_model.request([], None, parameters)
+                with pytest.raises(ConcurrencyLimitExceeded):
+                    await model.compact_messages(context)
+                release.set()
+
+        assert limiter.running_count == 0
+        await other_model.request([], None, parameters)
 
     async def test_count_tokens(self):
         """Test that count_tokens delegates to wrapped model with concurrency limiting."""
         from unittest.mock import AsyncMock
 
-        from pydantic_ai.models import ModelRequestParameters
-        from pydantic_ai.models.concurrency import ConcurrencyLimitedModel
         from pydantic_ai.usage import RequestUsage
 
         base_model = TestModel()
@@ -672,9 +709,6 @@ class TestConcurrencyLimitedModelMethods:
 
     async def test_request_stream(self):
         """Test that request_stream is called with concurrency limiting."""
-        from pydantic_ai.models import ModelRequestParameters
-        from pydantic_ai.models.concurrency import ConcurrencyLimitedModel
-
         base_model = TestModel()
         model = ConcurrencyLimitedModel(base_model, limiter=5)
 
