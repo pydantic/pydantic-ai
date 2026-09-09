@@ -19,6 +19,10 @@ if TYPE_CHECKING:
 
     from logfire.testing import CaptureLogfire
 
+    from pydantic_ai.messages import ModelMessage, ModelResponse
+    from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
+    from pydantic_ai.settings import ModelSettings
+
 logfire_installed = importlib.util.find_spec('logfire') is not None
 
 pytestmark = pytest.mark.anyio
@@ -649,8 +653,34 @@ class TestConcurrencyLimiterWithTracer:
         assert limiter._get_tracer() is custom_tracer
 
 
+class RecordingCompactionModel(TestModel):
+    """TestModel that records limiter availability during compact_messages and request calls."""
+
+    def __init__(self, limiter: ConcurrencyLimiter) -> None:
+        super().__init__()
+        self.limiter = limiter
+        self.observations: list[str] = []
+
+    async def compact_messages(
+        self, request_context: ModelRequestContext, *, instructions: str | None = None
+    ) -> ModelResponse:
+        from pydantic_ai.messages import ModelResponse, TextPart
+
+        self.observations.append(f'compact:{self.limiter.available_count}')
+        return ModelResponse(parts=[TextPart('compact')])
+
+    async def request(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        self.observations.append(f'request:{self.limiter.available_count}')
+        return await super().request(messages, model_settings, model_request_parameters)
+
+
 class TestConcurrencyLimitedModelMethods:
-    """Tests for ConcurrencyLimitedModel count_tokens and request_stream methods."""
+    """Tests for ConcurrencyLimitedModel count_tokens, request_stream, and compact_messages methods."""
 
     async def test_count_tokens(self):
         """Test that count_tokens delegates to wrapped model with concurrency limiting."""
@@ -683,3 +713,97 @@ class TestConcurrencyLimitedModelMethods:
             # Consume the stream
             async for _ in stream:
                 pass
+
+    async def test_compact_messages_raises_when_limiter_saturated(self):
+        """Test that compact_messages raises ConcurrencyLimitExceeded when the limiter is saturated."""
+        from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
+        from pydantic_ai.models.concurrency import ConcurrencyLimitedModel
+
+        limiter = ConcurrencyLimiter(max_running=1, max_queued=0)
+        recorder = RecordingCompactionModel(limiter)
+        model = ConcurrencyLimitedModel(recorder, limiter=limiter)
+        request_context = ModelRequestContext(
+            model=recorder,
+            messages=[],
+            model_settings=None,
+            model_request_parameters=ModelRequestParameters(),
+        )
+
+        holder_started = anyio.Event()
+        release_slot = anyio.Event()
+
+        async def hold() -> None:
+            async with get_concurrency_context(limiter, 'test:holder'):
+                holder_started.set()
+                await release_slot.wait()
+
+        with anyio.fail_after(2):
+            async with anyio.create_task_group() as tg:
+                tg.start_soon(hold)
+                await holder_started.wait()
+                with pytest.raises(ConcurrencyLimitExceeded):
+                    await model.compact_messages(request_context)
+                release_slot.set()
+
+        # The compaction was rejected without reaching the wrapped model.
+        assert recorder.observations == []
+
+    async def test_compact_messages_releases_slot_before_request(self):
+        """Test that compact_messages holds and releases the limiter slot around the wrapped call."""
+        from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
+        from pydantic_ai.models.concurrency import ConcurrencyLimitedModel
+
+        limiter = ConcurrencyLimiter(max_running=1)
+        recorder = RecordingCompactionModel(limiter)
+        model = ConcurrencyLimitedModel(recorder, limiter=limiter)
+        request_context = ModelRequestContext(
+            model=recorder,
+            messages=[],
+            model_settings=None,
+            model_request_parameters=ModelRequestParameters(),
+        )
+
+        with anyio.fail_after(2):
+            await model.compact_messages(request_context)
+            await model.request([], None, ModelRequestParameters())
+
+        # Compaction observed 0 available tokens (its own acquisition held the only
+        # slot), and the ordinary request observed the same after the release.
+        assert recorder.observations == ['compact:0', 'request:0']
+
+    async def test_compact_messages_queues_behind_held_slot(self):
+        """Test that compact_messages queues behind a held slot and proceeds on release without raising."""
+        from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
+        from pydantic_ai.models.concurrency import ConcurrencyLimitedModel
+
+        limiter = ConcurrencyLimiter(max_running=1, max_queued=1)
+        recorder = RecordingCompactionModel(limiter)
+        model = ConcurrencyLimitedModel(recorder, limiter=limiter)
+        request_context = ModelRequestContext(
+            model=recorder,
+            messages=[],
+            model_settings=None,
+            model_request_parameters=ModelRequestParameters(),
+        )
+        holder_started = anyio.Event()
+        release_slot = anyio.Event()
+
+        async def hold() -> None:
+            async with get_concurrency_context(limiter, 'test:holder'):
+                holder_started.set()
+                await release_slot.wait()
+
+        async def compact() -> None:
+            await model.compact_messages(request_context)
+
+        with anyio.fail_after(2):
+            async with anyio.create_task_group() as tg:
+                tg.start_soon(hold)
+                await holder_started.wait()
+                tg.start_soon(compact)
+                await anyio.sleep(0.05)
+                # Compaction is queued behind the holder, not executed or rejected.
+                assert recorder.observations == []
+                release_slot.set()
+
+        assert recorder.observations == ['compact:0']

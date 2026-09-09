@@ -19,7 +19,7 @@ from ..concurrency import (
 from ..messages import ModelMessage, ModelResponse
 from ..settings import ModelSettings
 from ..usage import RequestUsage
-from . import KnownModelName, Model, ModelRequestParameters, StreamedResponse
+from . import KnownModelName, Model, ModelRequestContext, ModelRequestParameters, StreamedResponse
 from .wrapper import WrapperModel
 
 
@@ -109,6 +109,13 @@ class ConcurrencyLimitedModel(WrapperModel):
                 messages, model_settings, model_request_parameters, run_context
             ) as response_stream:
                 yield response_stream
+
+    async def compact_messages(
+        self, request_context: ModelRequestContext, *, instructions: str | None = None
+    ) -> ModelResponse:
+        """Make a compaction request to the model with concurrency limiting."""
+        async with get_concurrency_context(self._limiter, f'model:{self.model_name}'):
+            return await self.wrapped.compact_messages(request_context, instructions=instructions)
 
 
 def limit_model_concurrency(
