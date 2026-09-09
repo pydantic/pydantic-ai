@@ -2002,11 +2002,13 @@ def test_tool_return_content_json_paths_make_no_per_node_python_calls():
     thousands of Rust→Python crossings, paid on every message-history load, UI adapter round-trip, and
     Temporal activity resolution and replay.
 
-    Counting Python calls rather than timing is what makes this pin usable in CI: the count is
-    deterministic and machine-independent, where a wall-clock threshold would either flake on a noisy
-    runner or be loose enough to catch nothing. The bound is generous on purpose — the regression it
-    guards adds tens of thousands of calls, so a handful of tolerance costs no signal and removes any
-    dependence on ambient interpreter activity. `cProfile` rather than a `sys.setprofile` callback
+    Counting Python calls rather than timing is what makes this pin usable in CI: the count is far
+    steadier than a wall-clock threshold, which would either flake on a noisy runner or be loose
+    enough to catch nothing. It is not perfectly machine-independent, though — the delta is 0 on a
+    developer machine but around 110 on some CI runners, from something ambient that has never been
+    tracked down — so the bound has to clear that. The gap it separates is enormous: a per-node
+    Python call costs ~2,770 extra calls here, one per JSON value node in the larger payload, so a
+    bound of 1,000 sits an order of magnitude above the noise and well under the regression. `cProfile` rather than a `sys.setprofile` callback
     because the interpreter does not trace the callback's own body, leaving it unmeasurable by
     coverage.
 
@@ -2047,7 +2049,7 @@ def test_tool_return_content_json_paths_make_no_per_node_python_calls():
     for dump in (False, True):
         small, large = python_calls(payload(2), dump), python_calls(payload(200), dump)
         direction = 'dump_json' if dump else 'validate_json'
-        assert large - small < 100, f'{direction} cost {large - small} extra Python calls for a 100x larger payload'
+        assert large - small < 1_000, f'{direction} cost {large - small} extra Python calls for a 100x larger payload'
 
 
 def test_multimodal_nested_in_kind_colliding_mapping_rehydrates():
