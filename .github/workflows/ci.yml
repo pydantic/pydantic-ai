@@ -252,6 +252,13 @@ jobs:
           # per core swaps. A runner has the memory, and this step is the longest in the job, so
           # CI opts back in.
           PYRIGHT_THREADS: auto
+          # Fail a passing pyright run that outlasts this many seconds, so a change that makes
+          # pyright itself slow fails its own PR instead of `main`. #8077 made pyright slow and
+          # nothing caught it (see #8177): the hook ran 328 to 490 s over the five `main` runs
+          # between those two. 110 is 1.1x the p99 (98.4 s) of the hook's own duration over the 60
+          # successful `main` push runs before that regression (mean 83.8 s, max 99.2 s), rounded up;
+          # derived in https://github.com/pydantic/pydantic-ai/issues/8182#issuecomment-5575016259.
+          PYRIGHT_TIME_BUDGET: "110"
           # pre-commit hooks shell out via `uv run`; without this they would
           # re-sync the venv and drop the out-of-band harness install above.
           UV_NO_SYNC: "1"

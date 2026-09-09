@@ -2374,6 +2374,31 @@ def test_dump_load_roundtrip_basic() -> None:
     assert reloaded == original
 
 
+def test_dump_load_roundtrip_drops_message_level_recovery_metadata() -> None:
+    """AG-UI does not trust a client round-trip with framework or provider response state."""
+    original: list[ModelMessage] = [
+        ModelRequest(
+            parts=[UserPromptPart(content='Hello')],
+            metadata={'__pydantic_ai__': {'anthropic_count_tokens_drop_stale_thinking_blocks': True}},
+        ),
+        ModelResponse(
+            parts=[TextPart(content='Hi!')],
+            provider_details={
+                'input_transformations': [
+                    {'path': 'messages.1.content.0', 'reason': 'prefix_binding_mismatch', 'type': 'thinking_dropped'}
+                ]
+            },
+        ),
+    ]
+
+    request, response = AGUIAdapter.load_messages(AGUIAdapter.dump_messages(original))
+
+    assert isinstance(request, ModelRequest)
+    assert request.metadata is None
+    assert isinstance(response, ModelResponse)
+    assert response.provider_details is None
+
+
 @requires_ag_ui('0.1.11')
 def test_dump_load_roundtrip_thinking() -> None:
     """Test full round-trip for thinking parts with all metadata."""
