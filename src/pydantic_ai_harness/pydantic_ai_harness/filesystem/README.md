@@ -100,7 +100,10 @@ applies the same rule to absolute symlink targets.
   binary bytes into the model context.
 - **Optimistic concurrency.** `write_file`/`edit_file` accept an
   `expected_hash` so an agent operating on a stale read is told to re-read
-  rather than silently overwriting newer content.
+  rather than silently overwriting newer content. Content hashes identify
+  the file's bytes decoded without newline translation, so `read_file`,
+  `write_file`, `edit_file`, and `file_info` agree regardless of line
+  endings.
 - **Regular write targets.** `write_file` rejects an existing target that is
   not a regular file. On POSIX, it opens the final target descriptor in
   non-blocking mode and checks that descriptor's type before truncating, so a

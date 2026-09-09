@@ -142,6 +142,29 @@ class TestFileSystemEvents:
             )
         ]
 
+    async def test_write_crlf_emits_hash_of_written_bytes(self, tmp_path: Path) -> None:
+        """A `\\r\\n` write event mirrors the on-disk text, not a translated view."""
+        content = 'alpha\r\nbeta\r\n'
+        events = await _run_and_collect(tmp_path, 'write_file', '{"path":"crlf.txt","content":"alpha\\r\\nbeta\\r\\n"}')
+
+        assert (tmp_path / 'crlf.txt').read_bytes() == content.encode()
+        written = [event for event in events if isinstance(event, FileWrittenEvent)]
+        assert len(written) == 1
+        assert written[0].content_hash == _hash(content)
+
+    async def test_edit_crlf_preserves_bytes_and_event_hash(self, tmp_path: Path) -> None:
+        """Editing a CRLF file leaves `\\r\\n` intact and reports its canonical hash."""
+        (tmp_path / 'target.txt').write_bytes(b'old\r\n')
+
+        events = await _run_and_collect(
+            tmp_path, 'edit_file', '{"path":"target.txt","old_text":"old","new_text":"new"}'
+        )
+
+        assert (tmp_path / 'target.txt').read_bytes() == b'new\r\n'
+        written = [event for event in events if isinstance(event, FileWrittenEvent)]
+        assert len(written) == 1
+        assert written[0].content_hash == _hash('new\r\n')
+
     async def test_subdirectory_root_is_carried_on_the_event(self, tmp_path: Path) -> None:
         project = tmp_path / 'project'
         project.mkdir()

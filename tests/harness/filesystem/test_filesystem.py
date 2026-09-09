@@ -29,6 +29,11 @@ from pydantic_ai_harness.filesystem._toolset import (
 )
 
 
+def _reported_hash(result: str) -> str:
+    """Extract the content hash a tool reports, from a `[hash:xxxx]` suffix."""
+    return result.partition('hash:')[2].split()[0].rstrip(']')
+
+
 class TestFormatLines:
     def test_basic_formatting(self) -> None:
         text = 'line1\nline2\nline3\n'
@@ -608,6 +613,65 @@ class TestEditFile:
     async def test_edit_returns_new_hash(self, toolset: FileSystemToolset[None]) -> None:
         result = await toolset.edit_file('hello.txt', 'Hello, world!', 'Goodbye!')
         assert 'hash:' in result
+
+
+class TestContentHashNewlineAgreement:
+    """`read_file`, `write_file`, and `edit_file` hashes must agree on `\\r\\n` files.
+
+    Before the #821 fix, `edit_file` and `write_file` hashed a
+    universal-newline-translated view while `read_file` hashed the raw bytes
+    decoded without translation, so the optimistic-concurrency handshake
+    rejected CRLF files that had not changed. All tools now hash the same
+    canonical bytes-on-disk view.
+    """
+
+    async def test_crlf_read_edit_round_trip_hashes_agree(
+        self, toolset: FileSystemToolset[None], fs_root: Path
+    ) -> None:
+        (fs_root / 'crlf.txt').write_bytes(b'line one\r\nline two\r\n')
+        read_hash = _reported_hash(await toolset.read_file('crlf.txt'))
+
+        edit_result = await toolset.edit_file('crlf.txt', 'line one', 'line ONE', expected_hash=read_hash)
+        edit_hash = _reported_hash(edit_result)
+
+        assert _reported_hash(await toolset.read_file('crlf.txt')) == edit_hash
+        assert (fs_root / 'crlf.txt').read_bytes() == b'line ONE\r\nline two\r\n'
+
+    async def test_crlf_edit_preserves_carriage_returns(self, toolset: FileSystemToolset[None], fs_root: Path) -> None:
+        """Editing a CRLF file keeps `\\r\\n` byte-for-byte instead of writing `\\r\\r\\n` on Windows."""
+        (fs_root / 'crlf.txt').write_bytes(b'a\r\nb\r\n')
+        await toolset.edit_file('crlf.txt', 'a', 'A')
+        assert (fs_root / 'crlf.txt').read_bytes() == b'A\r\nb\r\n'
+
+    async def test_crlf_write_hash_matches_read_and_file_info(
+        self, toolset: FileSystemToolset[None], fs_root: Path
+    ) -> None:
+        content = 'alpha\r\nbeta\r\n'
+        write_hash = _reported_hash(await toolset.write_file('crlf-new.txt', content))
+        assert write_hash == _content_hash(content)
+
+        read_result = await toolset.read_file('crlf-new.txt')
+        assert _reported_hash(read_result) == write_hash
+
+        info = await toolset.file_info('crlf-new.txt')
+        assert f'hash: {write_hash}' in info
+
+    async def test_crlf_write_expected_hash_handshake(self, toolset: FileSystemToolset[None], fs_root: Path) -> None:
+        """`write_file` accepts the hash `read_file` reports for a CRLF file."""
+        await toolset.write_file('crlf-cc.txt', 'alpha\r\nbeta\r\n')
+        read_hash = _reported_hash(await toolset.read_file('crlf-cc.txt'))
+
+        result = await toolset.write_file('crlf-cc.txt', 'gamma\r\ndelta\r\n', expected_hash=read_hash)
+        assert _reported_hash(result) == _content_hash('gamma\r\ndelta\r\n')
+        assert (fs_root / 'crlf-cc.txt').read_bytes() == b'gamma\r\ndelta\r\n'
+
+    async def test_lf_write_still_writes_plain_newlines(self, toolset: FileSystemToolset[None], fs_root: Path) -> None:
+        """LF content is untouched by the no-translation write path."""
+        content = 'alpha\nbeta\n'
+        write_hash = _reported_hash(await toolset.write_file('lf-new.txt', content))
+        assert write_hash == _content_hash(content)
+        assert (fs_root / 'lf-new.txt').read_bytes() == b'alpha\nbeta\n'
+        assert _reported_hash(await toolset.read_file('lf-new.txt')) == write_hash
 
 
 class TestListDirectory:

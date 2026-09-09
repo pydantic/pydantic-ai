@@ -170,8 +170,28 @@ def _matching_lines(text: str, compiled: re.Pattern[str], rel_str: str, limit: i
 
 
 def _content_hash(content: str) -> str:
-    """Compute a short content hash for conflict detection."""
+    """Compute a short content hash for conflict detection.
+
+    The hash is defined over the file's text as decoded from its bytes with
+    no newline translation, the view `read_file` returns. Every tool that
+    reports a hash (`read_file`, `write_file`, `edit_file`, `file_info`)
+    computes it over that same view, so a hash from any of them identifies
+    the same bytes on disk and the optimistic-concurrency handshake holds
+    regardless of line endings.
+    """
     return hashlib.sha256(content.encode('utf-8')).hexdigest()[:12]
+
+
+def _read_canonical_text(path: Path) -> str:
+    """Read a text file as the canonical hash view, without newline translation.
+
+    `Path.open` is used because `Path.read_text` only accepts `newline` on
+    Python 3.13+, while `open` has had it since 3.10. Keep `errors` strict,
+    matching `read_text`'s default, so invalid UTF-8 surfaces the same way
+    it did before the `newline` handling was made explicit.
+    """
+    with path.open(encoding='utf-8', newline='') as f:
+        return f.read()
 
 
 class FileSystemToolset(FunctionToolset[AgentDepsT]):
@@ -441,8 +461,10 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         # expected hash before changing the file. POSIX non-blocking mode keeps
         # a FIFO swapped into place from waiting for a reader; O_NOFOLLOW keeps
         # a final-component symlink swap from redirecting the descriptor. Windows
-        # has no filesystem FIFO equivalent, and O_BINARY leaves newline handling
-        # to the text wrapper just as Path.write_text does.
+        # has no filesystem FIFO equivalent, and O_BINARY plus `newline=''` on
+        # the text wrapper means the written bytes reproduce the content
+        # argument exactly: no newline translation, so the reported hash always
+        # matches the bytes a later `read_file` hashes.
         platform_flags = os.O_BINARY if os.name == 'nt' else os.O_NONBLOCK | os.O_NOFOLLOW
         access_flags = os.O_RDWR if expected_hash is not None else os.O_WRONLY
         created = False
@@ -478,7 +500,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
                 raise ModelRetry(f'Path {path!r} exists and is not a regular file.')
 
             mode = 'r+' if expected_hash is not None else 'w'
-            text_file = os.fdopen(descriptor, mode, encoding='utf-8', newline=None)
+            text_file = os.fdopen(descriptor, mode, encoding='utf-8', newline='')
             descriptor = -1
             with text_file:
                 if expected_hash is not None and not created:
@@ -547,7 +569,11 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         if not resolved.is_file():
             raise FileNotFoundError(f'File not found: {path}')
 
-        text = resolved.read_text(encoding='utf-8')
+        # Reading and writing with `newline=''` disables universal-newline
+        # translation, so the text is the canonical bytes-on-disk view that
+        # `read_file` hashes, and the replacement preserves `\r\n` exactly
+        # instead of writing `\r\r\n` through a translating writer on Windows.
+        text = _read_canonical_text(resolved)
         current_hash = _content_hash(text)
 
         # Optimistic concurrency check
@@ -566,7 +592,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             )
 
         new_content = text.replace(old_text, new_text, 1)
-        resolved.write_text(new_content, encoding='utf-8')
+        resolved.write_text(new_content, encoding='utf-8', newline='')
         new_hash = _content_hash(new_content)
         if ctx is not None:
             await ctx.emit(FileWrittenEvent(**self._event_location(resolved), content_hash=new_hash))
