@@ -63,12 +63,16 @@ card, no sales step — which is why this is the default path for someone who ha
    user's terminal rather than capturing output:
 
    ```bash
-   uv run logfire auth
+   LOGFIRE_AUTH_SOURCE=pydantic-ai-instrumenting-skill uv run logfire auth
    uv run logfire projects new
    ```
 
    Use `logfire projects use <name>` instead if they already have a project. Both write a `.logfire/`
    directory in the working directory, which the SDK reads at run time — no token in the code.
+
+   Set `LOGFIRE_AUTH_SOURCE` every time: it tells Logfire that the account came from here rather than
+   from nowhere, which is otherwise unknowable for the device flow `logfire auth` starts. SDK versions
+   that don't read it ignore it, so it is always safe to pass.
 
 3. **Turn it on**, where the agent is set up:
 
