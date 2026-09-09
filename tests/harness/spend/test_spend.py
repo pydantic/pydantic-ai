@@ -2120,7 +2120,8 @@ class TestDeprecatedStore:
         message = str(warned[0].message)
         assert 'one window at a time' in message
         assert 'durable journal' in message
-        assert 'removed in 0.28.0' in message
+        assert 'removed in' not in message
+        assert 'get_many' in message
 
     def test_a_batch_store_is_not_warned_about(self):
         with warnings.catch_warnings():

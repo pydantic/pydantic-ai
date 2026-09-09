@@ -287,7 +287,7 @@ class RedisSpendStore:
         warn_unreachable_overrides(self, RedisSpendStore)
 
     async def get(self, key: str) -> Spent:
-        """What `key` has accumulated. Deprecated in favour of `get_many`, removed in 0.28.0."""
+        """What `key` has accumulated. Deprecated in favour of `get_many`."""
         return (await self.get_many([key]))[key]
 
     async def add(
@@ -300,7 +300,7 @@ class RedisSpendStore:
         unpriced: int,
         ttl: timedelta | None,
     ) -> Spent:
-        """Add to `key` and return the result. Deprecated in favour of `add_many`, removed in 0.28.0.
+        """Add to `key` and return the result. Deprecated in favour of `add_many`.
 
         One window per call, so a response counting against a day and a month budget is
         two calls and a failure between them leaves the day counted and the month not.
