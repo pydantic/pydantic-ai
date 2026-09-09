@@ -13,10 +13,14 @@ Long agentic runs drift: the model loses track of what it set out to do and what
 
 ## The solution
 
-`Planning` gives the model a small toolset that owns the plan. The current plan is surfaced back to the model as an *ephemeral* reminder appended to the tail of each request, with a cache breakpoint after its stable opening tag:
+`Planning` gives the model a small toolset that owns the plan. The current plan is surfaced back to the model as an *ephemeral* reminder appended to the tail of each request, with the single cache breakpoint anchored on the last durable user content:
 
 - The reminder is added after the durable history is persisted, so it reaches the model but is never written to `message_history`. No reminders accumulate across turns.
-- A `CachePoint` follows the stable `<plan-reminder>` opening tag, so the cached prefix (tools + system + real conversation + that tag) stays byte-identical turn over turn. Only the mutable reminder content falls outside the cache.
+- The `CachePoint` sits on the last durable user content, so the prefix it saves is a prefix of the next request and cache hits survive turn over turn. The reminder carries no breakpoint, so re-sending its mutable content never invalidates the cache.
+
+As with all capability cache breakpoints, provider mapping applies: OpenAI models only receive the `CachePoint` when the model profile enables explicit cache control, and with no durable user content to anchor on the reminder is sent without a breakpoint.
+
+Note that the anchor lands on the last `UserPromptPart` present in the request. A capability listed before `Planning` that appends user content each request (for example `SystemReminders`) displaces the anchor onto that part, so the prefix stays cache-stable only while that content is stable across turns.
 
 So the plan stays current in the model's view while the cached prefix is never invalidated; the only added cost is re-reading the reminder each turn.
 
@@ -156,7 +160,7 @@ from pydantic_ai_harness import Planning
 
 Planning(
     guidance=None,           # static system-prompt guidance; None = default, '' = omit
-    cache_ttl='5m',          # TTL for the cache breakpoint after the stable opening tag ('5m' | '1h')
+    cache_ttl='5m',          # TTL for the cache breakpoint anchored on the last durable user content ('5m' | '1h')
     store=None,              # None = fresh in-memory plan per run; or a PlanStore to persist
     enable_subtasks=False,   # add subtask/dependency tools and the 'blocked' status
     inject=True,             # surface the current plan as a cache-safe tail reminder

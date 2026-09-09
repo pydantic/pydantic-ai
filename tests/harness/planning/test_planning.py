@@ -12,6 +12,7 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    TextContent,
     TextPart,
     ToolCallPart,
     UserPromptPart,
@@ -952,13 +953,32 @@ class TestReminder:
         original = ModelRequest(parts=[UserPromptPart('hi')])
         seen, _ = await self._run_hook(cap, [original])
         assert len(original.parts) == 1  # append-only
+        anchor = cast(UserPromptPart, seen[-1].parts[0])
+        assert anchor is not original.parts[0]  # durable content is copied, never mutated
+        anchor_content = anchor.content
+        assert isinstance(anchor_content, list)
+        assert anchor_content[0] == 'hi'
+        assert isinstance(anchor_content[1], CachePoint)
+        assert anchor_content[1].ttl == '1h'
         reminder = cast(UserPromptPart, seen[-1].parts[-1])
         content = reminder.content
         assert isinstance(content, list)
         assert content[0] == '<plan-reminder>\n'
-        assert isinstance(content[1], CachePoint)
-        assert content[1].ttl == '1h'
-        assert 'Do X' in cast(str, content[2])
+        assert not any(isinstance(item, CachePoint) for item in content)
+        assert 'Do X' in cast(str, content[1])
+
+    async def test_breakpoint_anchors_list_content(self) -> None:
+        store = InMemoryPlanStore()
+        cap = Planning[None](store=store)
+        await store.add_item(PlanItem(content='Do X'))
+        seen, _ = await self._run_hook(cap, [ModelRequest(parts=[UserPromptPart(content=['hello world'])])])
+        anchor = cast(UserPromptPart, seen[-1].parts[0])
+        anchor_content = anchor.content
+        assert isinstance(anchor_content, list)
+        assert anchor_content[0] == 'hello world'
+        assert isinstance(anchor_content[1], CachePoint)
+        reminder = cast(UserPromptPart, seen[-1].parts[-1])
+        assert not any(isinstance(item, CachePoint) for item in reminder.content)
 
     async def test_last_not_model_request_passthrough(self) -> None:
         store = InMemoryPlanStore()
@@ -967,6 +987,36 @@ class TestReminder:
         prior = ModelResponse(parts=[TextPart('prior')])
         seen, _ = await self._run_hook(cap, [prior])
         assert seen[-1] is prior
+
+    async def test_breakpoint_omitted_without_durable_user_content(self) -> None:
+        store = InMemoryPlanStore()
+        cap = Planning[None](store=store)
+        await store.add_item(PlanItem(content='Do X'))
+
+        def cache_points(messages: list[ModelMessage]) -> list[CachePoint]:
+            return [
+                item
+                for message in messages
+                for part in message.parts
+                if isinstance(part, UserPromptPart) and not isinstance(part.content, str)
+                for item in part.content
+                if isinstance(item, CachePoint)
+            ]
+
+        histories: list[list[ModelMessage]] = [
+            [ModelRequest(parts=[])],
+            [ModelRequest(parts=[UserPromptPart('')])],
+            [ModelRequest(parts=[UserPromptPart(content=[''])])],
+            [ModelRequest(parts=[UserPromptPart(content=[CachePoint(ttl='5m')])])],
+        ]
+        for history in histories:
+            seen, _ = await self._run_hook(cap, history)
+            assert cache_points(seen) == cache_points(history)
+            reminder = cast(UserPromptPart, seen[-1].parts[-1])
+            content = reminder.content
+            assert isinstance(content, list)
+            assert content[0] == '<plan-reminder>\n'
+            assert 'Do X' in cast(str, content[1])
 
 
 # --- End to end -------------------------------------------------------------
@@ -1020,8 +1070,8 @@ class TestEndToEnd:
             and '<plan-reminder>\n' in part.content
         )
         assert reminder.content[0] == '<plan-reminder>\n'
-        assert isinstance(reminder.content[1], CachePoint)
-        assert 'Step A' in cast(str, reminder.content[2])
+        assert not any(isinstance(item, CachePoint) for item in reminder.content)
+        assert 'Step A' in cast(str, reminder.content[1])
         # ephemeral: never written to durable history
         durable = '\n'.join(
             part.content
@@ -1030,3 +1080,82 @@ class TestEndToEnd:
             if isinstance(part, UserPromptPart) and isinstance(part.content, str)
         )
         assert '<plan-reminder>' not in durable
+
+    async def test_plan_reminder_prefix_stable_across_turns(self) -> None:
+        captured: list[list[ModelMessage]] = []
+        calls = 0
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal calls
+            calls += 1
+            if calls in (1, 3):
+                item = 'Step A' if calls == 1 else 'Step B'
+                return ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            'write_plan',
+                            {'items': [{'content': item, 'status': 'in_progress'}]},
+                            tool_call_id=f'c{calls}',
+                        )
+                    ]
+                )
+            captured.append(messages)
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent: Agent[None, str] = Agent(FunctionModel(model_fn), capabilities=[Planning()])
+        result_1 = await agent.run('go')
+        assert result_1.output == 'done'
+        result_2 = await agent.run('continue', message_history=result_1.all_messages())
+        assert result_2.output == 'done'
+        assert calls == 4
+
+        def breakpoints(messages: list[ModelMessage]) -> list[CachePoint]:
+            return [
+                item
+                for message in messages
+                for part in message.parts
+                if isinstance(part, UserPromptPart) and not isinstance(part.content, str)
+                for item in part.content
+                if isinstance(item, CachePoint)
+            ]
+
+        def durable_prefix(messages: list[ModelMessage]) -> list[str]:
+            prefix: list[str] = []
+            for message in messages:
+                for part in message.parts:
+                    if not isinstance(part, UserPromptPart):
+                        continue
+                    for item in [part.content] if isinstance(part.content, str) else list(part.content):
+                        if isinstance(item, CachePoint):
+                            return prefix
+                        if isinstance(item, str):
+                            prefix.append(item)
+            raise AssertionError('request carries no CachePoint')
+
+        for messages in captured:
+            assert len(breakpoints(messages)) == 1
+            reminder = next(
+                part
+                for message in messages
+                for part in message.parts
+                if isinstance(part, UserPromptPart)
+                and isinstance(part.content, list)
+                and '<plan-reminder>\n' in part.content
+            )
+            assert not any(isinstance(item, CachePoint) for item in reminder.content)
+
+        prefixes = [durable_prefix(messages) for messages in captured]
+        assert prefixes[0] == ['go']
+        assert prefixes[1] == ['go', 'continue']
+        assert prefixes[1][: len(prefixes[0])] == prefixes[0]
+        prefix = durable_prefix(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content=[TextContent(content='tagged'), 'after', CachePoint(ttl='5m')])]
+                )
+            ]
+        )
+        assert prefix == ['after']
+        with pytest.raises(AssertionError, match='no CachePoint'):
+            durable_prefix([ModelRequest(parts=[UserPromptPart('no breakpoint')])])
+        assert breakpoints([*result_1.all_messages(), *result_2.all_messages()]) == []
