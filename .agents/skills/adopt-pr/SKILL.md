@@ -96,6 +96,7 @@ BASE_REF_NAME=$(gh pr view "$PR_NUMBER" --json baseRefName -q .baseRefName)
 [ -n "$BASE_REF_NAME" ] || { echo "no base ref; stop"; exit 1; }
 git fetch upstream "$BASE_REF_NAME" || git fetch origin "$BASE_REF_NAME"
 POLICY_BASE_SHA=$(git rev-parse FETCH_HEAD)
+CANDIDATE_DIR="$(git rev-parse --show-toplevel)"
 POLICY_BASE_DIR="$(mktemp -d)/policy-base"
 git worktree add --detach "$POLICY_BASE_DIR" "$POLICY_BASE_SHA"
 # ... adopt the PR, reading instructions from "$POLICY_BASE_DIR" ...
@@ -106,9 +107,13 @@ Bind the ref before you fetch and stop when it is empty. `git fetch <remote> ""`
 fetches the remote's `HEAD`, so an unbound variable silently makes the default branch your policy
 base and reports success. Fall back to `origin` because a plain clone has no `upstream`.
 
-Put the directory outside the candidate worktree. Note its literal path — later steps run in fresh
-shells where `$POLICY_BASE_DIR` is gone — and remove it by that path on every exit, including the
-stops in Startup and Step 2. Read instructions as ordinary files under `$POLICY_BASE_DIR`; never
+Put the directory outside the candidate worktree. Note both literal paths — later steps run in
+fresh shells where `$CANDIDATE_DIR` and `$POLICY_BASE_DIR` are gone — and remove the policy base by
+its path on every exit, including the stops in Startup and Step 2. Bind `CANDIDATE_DIR` before
+`git worktree add`, and open Steps 4, 5 and 6 with `cd "$CANDIDATE_DIR"`: the helpers write to
+whatever worktree `git rev-parse --show-toplevel` names, and inside the policy base that is the
+policy base, whose `.claude/skills/branch-context/` also exists — the writes succeed there and the
+removal on exit deletes them. Read instructions as ordinary files under `$POLICY_BASE_DIR`; never
 with `git show "$POLICY_BASE_SHA":<path>`, because an unset variable makes that `git show :<path>`,
 which is index syntax — it returns the candidate's file and exits zero, so a poisoned branch reads
 as clean.
@@ -162,7 +167,7 @@ Inspect the diff to map the changes:
 
 ## Step 4 — Write `issue-brief.md`
 
-Use the same schema as `/initialize-worktree` Step 3 (see
+Start with `cd "$CANDIDATE_DIR"`. Use the same schema as `/initialize-worktree` Step 3 (see
 `$POLICY_BASE_DIR/.agents/skills/initialize-worktree/SKILL.md` — an instruction, so read it there). Specific adaptations for adoption:
 
 - `related_pr`: the PR URL (not `TBD` — the PR already exists)
@@ -190,7 +195,7 @@ Create the log first — `append-pr-decision.sh` exits rather than creating one,
 checkout only the template is present:
 
 ```bash
-cd "$(git rev-parse --show-toplevel)"
+cd "$CANDIDATE_DIR"
 [ -f .claude/skills/branch-context/pr-decisions.md ] || \
   cp "$POLICY_BASE_DIR"/.agents/skills/branch-context/pr-decisions.template.md \
      .claude/skills/branch-context/pr-decisions.md
@@ -251,6 +256,7 @@ Decision budget: **aim for ≤10 entries**. If there are more resolved threads t
 
 Append one final entry documenting the adoption itself:
 ```bash
+cd "$CANDIDATE_DIR"
 "$POLICY_BASE_DIR"/.agents/skills/branch-context/append-pr-decision.sh \
   "adopted PR #<N> at <DATE>" \
   "Branch-context bootstrapped from existing PR + issue(s). Decisions prior to this entry are backfilled from resolved threads." \
