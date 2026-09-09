@@ -182,6 +182,7 @@ class WebSearchTool(AbstractNativeTool):
     Supported by:
 
     * Anthropic, see <https://docs.anthropic.com/en/docs/build-with-claude/tool-use/web-search-tool#domain-filtering>
+    * Google, see <https://ai.google.dev/gemini-api/docs/google-search>
     * Groq, see <https://console.groq.com/docs/agentic-tooling#search-settings>
     * xAI, see <https://docs.x.ai/docs/guides/tools/search-tools#web-search-parameters>
     * OpenRouter, see <https://openrouter.ai/docs/guides/features/server-tools/web-search#configuration>

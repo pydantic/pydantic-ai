@@ -2551,6 +2551,36 @@ async def test_google_timeout_zero_in_config():
     assert config_dict['http_options']['timeout'] == 0
 
 
+async def test_google_web_search_tool_blocked_domains_in_config():
+    """`WebSearchTool.blocked_domains` maps to `GoogleSearch.exclude_domains`."""
+    m = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
+
+    _, config = await m._build_content_and_config(  # pyright: ignore[reportPrivateUsage]
+        messages=[ModelRequest(parts=[UserPromptPart(content='Hello')])],
+        model_settings=GoogleModelSettings(),
+        model_request_parameters=ModelRequestParameters(
+            native_tools=[WebSearchTool(blocked_domains=['example.com', 'spam.example'])]
+        ),
+    )
+
+    config_dict = cast(dict[str, Any], config)
+    assert config_dict['tools'] == [{'google_search': {'exclude_domains': ['example.com', 'spam.example']}}]
+
+
+async def test_google_web_search_tool_without_blocked_domains_in_config():
+    """Without domain filters the search tool is still sent, with no extra keys."""
+    m = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
+
+    _, config = await m._build_content_and_config(  # pyright: ignore[reportPrivateUsage]
+        messages=[ModelRequest(parts=[UserPromptPart(content='Hello')])],
+        model_settings=GoogleModelSettings(),
+        model_request_parameters=ModelRequestParameters(native_tools=[WebSearchTool()]),
+    )
+
+    config_dict = cast(dict[str, Any], config)
+    assert config_dict['tools'] == [{'google_search': {}}]
+
+
 async def test_google_extra_headers(allow_model_requests: None, google_provider: GoogleProvider):
     m = GoogleModel('gemini-1.5-flash', provider=google_provider)
     agent = Agent(m, model_settings=GoogleModelSettings(extra_headers={'Extra-Header-Key': 'Extra-Header-Value'}))
