@@ -21,6 +21,7 @@ from typing import Any
 import pytest
 from inline_snapshot import snapshot
 
+from pydantic_ai import UnexpectedModelBehavior
 from pydantic_ai.messages import (
     ModelResponse,
     ModelResponsePart,
@@ -47,6 +48,7 @@ with try_import() as imports_successful:
     from pydantic_ai.models.google import (
         GeminiStreamedResponse,
         _content_model_response,  # pyright: ignore[reportPrivateUsage]
+        _is_media_processing_native_part,  # pyright: ignore[reportPrivateUsage]
         _process_response_from_parts,  # pyright: ignore[reportPrivateUsage]
     )
 
@@ -287,6 +289,8 @@ def _stream_chunk(parts: list[dict[str, Any]], grounding: dict[str, Any] | None 
 
 async def _drive_stream(
     chunks: list[GenerateContentResponse],
+    *,
+    agentic_video_processing: bool = False,
 ) -> tuple[list[ModelResponseStreamEvent], list[ModelResponsePart]]:
     async def stream() -> AsyncIterator[GenerateContentResponse]:
         for chunk in chunks:
@@ -299,9 +303,82 @@ async def _drive_stream(
         _provider_name='google-gla',
         _model_id_namespace='google',
         _provider_url='https://generativelanguage.googleapis.com/',
+        _agentic_video_processing=agentic_video_processing,
     )
     events = [event async for event in streamed]
     return events, list(streamed.get().parts)
+
+
+def test_vertex_agentic_video_bare_signatures_are_scoped_and_paired():
+    parts = [Part(thought_signature=b'call'), Part(thought_signature=b'return'), Part(text='done')]
+
+    def process(*, agentic_video_processing: bool = False) -> ModelResponse:
+        return _process_response_from_parts(
+            parts=parts,
+            grounding_metadata=None,
+            model_name='gemini-3.7-flash',
+            provider_name='google-vertex',
+            provider_url='https://aiplatform.googleapis.com/',
+            usage=RequestUsage(),
+            provider_response_id='response-id',
+            agentic_video_processing=agentic_video_processing,
+        )
+
+    with pytest.raises(UnexpectedModelBehavior, match='Unsupported response from Gemini'):
+        process()
+
+    response = process(agentic_video_processing=True)
+    call, result, text = response.parts
+    assert isinstance(call, NativeToolCallPart)
+    assert isinstance(result, NativeToolReturnPart)
+    assert isinstance(text, TextPart)
+    assert call.tool_name == result.tool_name == 'media_processing'
+    assert call.tool_call_id == result.tool_call_id
+    assert call.provider_details == {'thought_signature': 'Y2FsbA=='}
+    assert result.provider_details == {'thought_signature': 'cmV0dXJu'}
+
+
+def test_agentic_video_parts_do_not_hide_metadata_native_tools():
+    assert not _is_media_processing_native_part(Part(text='done'))
+
+    response = _process_response_from_parts(
+        parts=[
+            Part.model_validate({'tool_call': {'id': 'processing', 'args': None}}),
+            Part.model_validate({'tool_response': {'id': 'processing', 'response': None}}),
+            Part(text='done'),
+        ],
+        grounding_metadata=GroundingMetadata.model_validate(_FILE_SEARCH_GROUNDING_METADATA),
+        model_name='gemini-3.7-flash',
+        provider_name='google-gla',
+        provider_url='https://generativelanguage.googleapis.com/',
+        usage=RequestUsage(),
+        provider_response_id='response-id',
+        agentic_video_processing=True,
+    )
+
+    assert [part.tool_name for part in response.parts if isinstance(part, NativeToolCallPart)] == [
+        'file_search',
+        'media_processing',
+    ]
+
+
+@pytest.mark.anyio
+async def test_vertex_agentic_video_bare_signatures_streaming():
+    _, parts = await _drive_stream(
+        [
+            _stream_chunk([{'thought_signature': b'call'}]),
+            _stream_chunk([{'thought_signature': b'return'}]),
+            _stream_chunk([{'text': 'done'}]),
+        ],
+        agentic_video_processing=True,
+    )
+
+    call, result, text = parts
+    assert isinstance(call, NativeToolCallPart)
+    assert isinstance(result, NativeToolReturnPart)
+    assert isinstance(text, TextPart)
+    assert call.tool_name == result.tool_name == 'media_processing'
+    assert call.tool_call_id == result.tool_call_id
 
 
 def _file_search_returns(parts: list[ModelResponsePart]) -> list[NativeToolReturnPart]:
