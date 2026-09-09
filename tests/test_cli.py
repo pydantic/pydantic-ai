@@ -1504,6 +1504,10 @@ def test_clai_web_answers_to_the_host_it_binds_to(mocker: MockerFixture, env: Te
     assert mock_uvicorn.call_args.kwargs['host'] == 'devbox.example'
 
 
+LOGO_MARKER = _display._LOGO_LINES[-1]  # pyright: ignore[reportPrivateUsage]
+"""The logo's closing row, standing in for the whole banner having landed in the output."""
+
+
 @pytest.fixture
 def terminal_clai(env: TestEnv) -> Iterator[None]:
     """A `clai` session that believes it owns a terminal, and starts with the banner unclaimed."""
@@ -1545,7 +1549,7 @@ def test_clai_intro_shows_banner(capfd: CaptureFixture[str], mocker: MockerFixtu
     assert cli(['hello']) == 0
 
     output = _plain(capfd.readouterr().out)
-    assert '·.______|______.·' in output
+    assert LOGO_MARKER in output
     # clai shows the same banner a script gets, rather than heading it with its own name and version.
     assert f'pydantic-ai v{__version__}' in output
     assert 'clai - Pydantic AI CLI' not in output
@@ -1566,7 +1570,7 @@ def test_clai_nested_in_an_agent_still_opens_with_a_banner(
     assert cli(['hello']) == 0
 
     output = capfd.readouterr().out
-    assert '·.______|______.·' in output
+    assert LOGO_MARKER in output
     # Nothing renders the codes for a pipe, so the console leaves them out rather than writing them raw.
     assert '\x1b[' not in output
 
@@ -1697,17 +1701,22 @@ def test_clai_intro_counts_tools_from_an_override(
 def test_run_chat_opens_even_if_the_banner_cannot_be_written(
     mocker: MockerFixture, tmp_path: Path, terminal_clai: None
 ):
-    """A terminal whose encoding can't take the logo shouldn't take the session down with it."""
+    """A terminal whose encoding can't take the banner shouldn't take the session down with it."""
 
-    class NoLogoIO(StringIO):
-        """Rejects the logo's own character the way an ASCII terminal rejects everything unencodable."""
+    class NoSeparatorIO(StringIO):
+        """Rejects the separator between the banner's details, as an ASCII terminal rejects it.
+
+        The logo itself is plain ASCII, so the banner's own unencodable characters are what a
+        terminal under `LC_ALL=C` chokes on. Narrowed to this one rather than all of them, so that
+        the rest of the session still writes and the test can show it survived.
+        """
 
         def write(self, s: str) -> int:
-            if '·' in s:
+            if _display._INFO_SEPARATOR in s:  # pyright: ignore[reportPrivateUsage]
                 raise UnicodeEncodeError('ascii', s, 0, 1, 'ordinal not in range(128)')
             return super().write(s)
 
-    io = NoLogoIO()
+    io = NoSeparatorIO()
     console = Console(file=io, force_terminal=True)
 
     with create_pipe_input() as inp:
@@ -1715,7 +1724,7 @@ def test_run_chat_opens_even_if_the_banner_cannot_be_written(
         assert anyio.run(run_chat, True, Agent(TestModel()), console, 'monokai', 'pydantic-ai', tmp_path) == 0
 
     # The chat opened and ran to its `/exit` without a header, rather than not at all.
-    assert '______' not in io.getvalue()
+    assert LOGO_MARKER not in io.getvalue()
     assert 'Exiting' in _plain(io.getvalue())
 
 
@@ -1730,7 +1739,7 @@ def test_clai_intro_falls_back_to_one_line_when_banner_is_suppressed(
 
     # The one-liner clai has always printed, styled per-segment, so ANSI codes sit between the words.
     output = capfd.readouterr().out
-    assert '·.______|______.·' not in output
+    assert LOGO_MARKER not in output
     assert 'observability' not in output
     assert 'clai - Pydantic AI CLI' in output
     assert 'openai:gpt-5' in output
@@ -1743,7 +1752,7 @@ def test_clai_run_does_not_print_a_second_banner(capfd: CaptureFixture[str], env
     assert cli(['--model', 'test', 'hello']) == 0
 
     # `ask_agent` claims the banner, so the run inside it has nothing left to print.
-    assert capfd.readouterr().out.count('·.______|______.·') == 1
+    assert capfd.readouterr().out.count(LOGO_MARKER) == 1
 
 
 def test_clai_web_does_not_print_a_banner(mocker: MockerFixture, env: TestEnv, terminal_clai: None):
@@ -1776,7 +1785,7 @@ def test_run_chat_shows_banner_for_a_users_own_agent(mocker: MockerFixture, tmp_
         anyio.run(run_chat, True, agent, console, 'monokai', 'pydantic-ai', tmp_path)
 
     output = _plain(io.getvalue())
-    assert '·.______|______.·' in output
+    assert LOGO_MARKER in output
     # A user's own agent gets the same banner a script does, not clai's.
     assert 'Pydantic AI CLI' not in output
     assert f'pydantic-ai v{__version__}' in output
@@ -1791,7 +1800,7 @@ def test_run_chat_without_a_model_shows_no_banner(mocker: MockerFixture, tmp_pat
         _exit_immediately(mocker, inp)
         anyio.run(run_chat, True, Agent(), console, 'monokai', 'pydantic-ai', tmp_path)
 
-    assert '·.______|______.·' not in io.getvalue()
+    assert LOGO_MARKER not in io.getvalue()
 
 
 def test_run_chat_on_a_wrapped_agent_shows_no_banner(mocker: MockerFixture, tmp_path: Path, terminal_clai: None):
@@ -1803,7 +1812,7 @@ def test_run_chat_on_a_wrapped_agent_shows_no_banner(mocker: MockerFixture, tmp_
         _exit_immediately(mocker, inp)
         anyio.run(run_chat, True, agent, console, 'monokai', 'pydantic-ai', tmp_path)
 
-    assert '·.______|______.·' not in io.getvalue()
+    assert LOGO_MARKER not in io.getvalue()
 
 
 def test_clai_chat_session_does_not_print_a_second_banner(
@@ -1817,7 +1826,7 @@ def test_clai_chat_session_does_not_print_a_second_banner(
         with cli_agent.override(model=TestModel(custom_output_text='hi')):
             assert cli([]) == 0
 
-    assert capfd.readouterr().out.count('·.______|______.·') == 1
+    assert capfd.readouterr().out.count(LOGO_MARKER) == 1
 
 
 def test_auto_suggest_completes_a_slash_command():

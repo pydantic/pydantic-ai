@@ -102,44 +102,44 @@ _SUPPRESSING_ENV_VARS = frozenset({'PYDANTIC_AI_NO_BANNER', 'CI', 'PYTEST_VERSIO
 
 def test_render_banner(render: Callable[..., str]):
     assert render() == snapshot("""\
-                      HEADING
+                 HEADING
 
-         / \\          agent: support_agent • model: openai:gpt-5.6-sol • tools: 2 • capabilities: 0
-       /     \\
-     /____.____\\      observability: off — to see every model and tool call live with its cost, ask
-   /      |      \\      an agent to read https://pydantic.dev/ai-setup.md and instrument Pydantic AI
- /        |        \\    Pydantic Logfire gives you 10M free spans every month without a credit card,
-  ·.______|______.·     or you can point the Logfire SDK at any other OpenTelemetry backend
+      / \\        agent: support_agent • model: openai:gpt-5.6-sol • tools: 2 • capabilities: 0
+     /   \\
+   /___.___\\     observability: off — to see every model and tool call live with its cost, ask an
+  /    |    \\      agent to read https://pydantic.dev/ai-setup.md and instrument Pydantic AI
+/      |      \\    Pydantic Logfire gives you 10M free spans every month without a credit card, or
+`--.___|___.--'    you can point the Logfire SDK at any other OpenTelemetry backend
 
-                      hide this dev-only banner: set up observability or set PYDANTIC_AI_NO_BANNER=1\
+                 hide this dev-only banner: set up observability or set PYDANTIC_AI_NO_BANNER=1\
 """)
 
 
 def test_render_banner_for_an_unnamed_agent(render: Callable[..., str]):
     # An agent with no name of its own drops the `agent:` segment rather than inventing a name.
     assert render(name=None, output_type=list[str], capabilities=3) == snapshot("""\
-                      HEADING
+                 HEADING
 
-         / \\          model: openai:gpt-5.6-sol • output: list[str] • tools: 2 • capabilities: 3
-       /     \\
-     /____.____\\      observability: off — to see every model and tool call live with its cost, ask
-   /      |      \\      an agent to read https://pydantic.dev/ai-setup.md and instrument Pydantic AI
- /        |        \\    Pydantic Logfire gives you 10M free spans every month without a credit card,
-  ·.______|______.·     or you can point the Logfire SDK at any other OpenTelemetry backend
+      / \\        model: openai:gpt-5.6-sol • output: list[str] • tools: 2 • capabilities: 3
+     /   \\
+   /___.___\\     observability: off — to see every model and tool call live with its cost, ask an
+  /    |    \\      agent to read https://pydantic.dev/ai-setup.md and instrument Pydantic AI
+/      |      \\    Pydantic Logfire gives you 10M free spans every month without a credit card, or
+`--.___|___.--'    you can point the Logfire SDK at any other OpenTelemetry backend
 
-                      hide this dev-only banner: set up observability or set PYDANTIC_AI_NO_BANNER=1\
+                 hide this dev-only banner: set up observability or set PYDANTIC_AI_NO_BANNER=1\
 """)
 
 
 def test_render_banner_without_observability(render: Callable[..., str]):
     """What `clai` shows: the same banner, minus advice it has already acted on."""
     assert render(observability=False) == snapshot("""\
-         / \\
-       /     \\        HEADING
-     /____.____\\
-   /      |      \\    agent: support_agent • model: openai:gpt-5.6-sol • tools: 2 • capabilities: 0
- /        |        \\
-  ·.______|______.·\
+      / \\
+     /   \\       HEADING
+   /___.___\\
+  /    |    \\    agent: support_agent • model: openai:gpt-5.6-sol • tools: 2 • capabilities: 0
+/      |      \\
+`--.___|___.--'\
 """)
 
 
@@ -150,12 +150,12 @@ def test_render_banner_wraps_long_details(render: Callable[..., str]):
         model='bedrock:us.anthropic.claude-fable-5-20260101-v1:0',
         observability=False,
     ) == snapshot("""\
-         / \\          HEADING
-       /     \\
-     /____.____\\      agent: the-agent-that-has-a-rather-long-name
-   /      |      \\      model: bedrock:us.anthropic.claude-fable-5-20260101-v1:0 • tools: 2
- /        |        \\    capabilities: 0
-  ·.______|______.·\
+      / \\        HEADING
+     /   \\
+   /___.___\\     agent: the-agent-that-has-a-rather-long-name
+  /    |    \\      model: bedrock:us.anthropic.claude-fable-5-20260101-v1:0 • tools: 2
+/      |      \\    capabilities: 0
+`--.___|___.--'\
 """)
 
 
@@ -167,12 +167,12 @@ def test_render_banner_elides_a_detail_too_wide_for_the_column(render: Callable[
     )
 
     assert banner == snapshot("""\
-         / \\          HEADING
-       /     \\
-     /____.____\\      agent: support_agent
-   /      |      \\      model: bedrock:arn:aws:bedrock:us-east-1:…e/us.anthropic.claude-fable-5-v1:0
- /        |        \\    tools: 2 • capabilities: 0
-  ·.______|______.·\
+      / \\        HEADING
+     /   \\
+   /___.___\\     agent: support_agent
+  /    |    \\      model: bedrock:arn:aws:bedrock:us-east-1:12…file/us.anthropic.claude-fable-5-v1:0
+/      |      \\    tools: 2 • capabilities: 0
+`--.___|___.--'\
 """)
     # Both ends survive, so the banner still names a provider and a model rather than an account.
     assert 'bedrock:arn' in banner
@@ -193,12 +193,12 @@ def test_render_banner_wraps_a_version_line_too_wide_for_the_column(
     banner = render(observability=False)
 
     assert banner == snapshot("""\
-         / \\
-       /     \\        pydantic-ai v2.35.1.dev17+65fcb1d83 • pydantic-ai-harness v0.7.0 • Python
-     /____.____\\        3.14.3
-   /      |      \\
- /        |        \\  agent: support_agent • model: openai:gpt-5.6-sol • tools: 2 • capabilities: 0
-  ·.______|______.·\
+      / \\
+     /   \\       pydantic-ai v2.35.1.dev17+65fcb1d83 • pydantic-ai-harness v0.7.0 • Python 3.14.3
+   /___.___\\
+  /    |    \\    agent: support_agent • model: openai:gpt-5.6-sol • tools: 2 • capabilities: 0
+/      |      \\
+`--.___|___.--'\
 """)
     assert max(map(len, banner.splitlines())) <= 100
 
@@ -207,7 +207,8 @@ def test_render_banner_colors_the_logo_and_identity(monkeypatch: pytest.MonkeyPa
     """The logo takes `clai`'s magenta, and what identifies the agent takes the green it used."""
     banner = render(color=True, observability=False)
 
-    assert '\x1b[35m         / \\\x1b[0m' in banner
+    # Taken off the logo rather than spelled out, so redrawing it doesn't rewrite this assertion.
+    assert f'\x1b[35m{_display._LOGO_LINES[0]}\x1b[0m' in banner  # pyright: ignore[reportPrivateUsage]
     assert 'agent: \x1b[32msupport_agent\x1b[0m • model: \x1b[32mopenai:gpt-5.6-sol\x1b[0m' in banner
     # What the agent was given is counted plainly; only its identity is highlighted.
     assert 'tools: 2 • capabilities: 0' in banner

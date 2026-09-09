@@ -19,12 +19,18 @@ _banner_lock = Lock()
 BANNER_ENABLED = True
 
 _LOGO = """\
-         / \\
-       /     \\
-     /____.____\\
-   /      |      \\
- /        |        \\
-  ·.______|______.·"""
+      / \\
+     /   \\
+   /___.___\\
+  /    |    \\
+/      |      \\
+`--.___|___.--'"""
+"""The Pydantic kite: a Penrose kite deflated into two kites and a dart.
+
+The `.` on the crossbar is the dart's notch, which juts up between the two upper panels, and the
+closing row falls from the shoulders to a centre vertex — `` ` `` and `'` sit at the top of a
+character cell, `-` in the middle, `.` low and `_` on the floor.
+"""
 
 _LOGO_LINES = _LOGO.splitlines()
 _LOGO_WIDTH = max(map(len, _LOGO_LINES))
