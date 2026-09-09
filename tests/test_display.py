@@ -103,15 +103,14 @@ _SUPPRESSING_ENV_VARS = frozenset({'PYDANTIC_AI_NO_BANNER', 'CI', 'PYTEST_VERSIO
 def test_render_banner(render: Callable[..., str]):
     assert render() == snapshot("""\
                  HEADING
+      / \\
+     /   \\       agent: support_agent • model: openai:gpt-5.6-sol • tools: 2 • capabilities: 0
+   /___.___\\
+  /    |    \\    observability: off — see every model and tool call live, with cost
+/      |      \\    ask your agent to read https://pydantic.dev/ai-setup.md and set it up
+`--.___|___.--'    free with Logfire and a GitHub login, or use any OpenTelemetry backend
 
-      / \\        agent: support_agent • model: openai:gpt-5.6-sol • tools: 2 • capabilities: 0
-     /   \\
-   /___.___\\     observability: off — to see every model and tool call live with its cost, ask an
-  /    |    \\      agent to read https://pydantic.dev/ai-setup.md and instrument Pydantic AI
-/      |      \\    Pydantic Logfire gives you 10M free spans every month without a credit card, or
-`--.___|___.--'    you can point the Logfire SDK at any other OpenTelemetry backend
-
-                 hide this dev-only banner: set up observability or set PYDANTIC_AI_NO_BANNER=1\
+                 hide: PYDANTIC_AI_NO_BANNER=1\
 """)
 
 
@@ -119,15 +118,14 @@ def test_render_banner_for_an_unnamed_agent(render: Callable[..., str]):
     # An agent with no name of its own drops the `agent:` segment rather than inventing a name.
     assert render(name=None, output_type=list[str], capabilities=3) == snapshot("""\
                  HEADING
+      / \\
+     /   \\       model: openai:gpt-5.6-sol • output: list[str] • tools: 2 • capabilities: 3
+   /___.___\\
+  /    |    \\    observability: off — see every model and tool call live, with cost
+/      |      \\    ask your agent to read https://pydantic.dev/ai-setup.md and set it up
+`--.___|___.--'    free with Logfire and a GitHub login, or use any OpenTelemetry backend
 
-      / \\        model: openai:gpt-5.6-sol • output: list[str] • tools: 2 • capabilities: 3
-     /   \\
-   /___.___\\     observability: off — to see every model and tool call live with its cost, ask an
-  /    |    \\      agent to read https://pydantic.dev/ai-setup.md and instrument Pydantic AI
-/      |      \\    Pydantic Logfire gives you 10M free spans every month without a credit card, or
-`--.___|___.--'    you can point the Logfire SDK at any other OpenTelemetry backend
-
-                 hide this dev-only banner: set up observability or set PYDANTIC_AI_NO_BANNER=1\
+                 hide: PYDANTIC_AI_NO_BANNER=1\
 """)
 
 

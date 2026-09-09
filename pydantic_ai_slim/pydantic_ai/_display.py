@@ -162,15 +162,8 @@ def render_banner(
         # Both halves of this are advice for someone who hasn't set observability up, so a session
         # that has stays out of it entirely rather than being told to do what it has already done.
         lines += ['', *_observability_lines()]
-        lines += [
-            '',
-            *wrap(
-                'hide this dev-only banner: set up observability or set PYDANTIC_AI_NO_BANNER=1',
-                width=_TEXT_WIDTH,
-                subsequent_indent='  ',
-                break_on_hyphens=False,
-            ),
-        ]
+        # Only what the block above doesn't already say: it opens by telling them to set it up.
+        lines += ['', 'hide: PYDANTIC_AI_NO_BANNER=1']
 
     banner = _beside_logo(lines)
     return banner if color else _COLOR_PATTERN.sub('', banner)
@@ -318,13 +311,20 @@ def _observability_lines() -> list[str]:
     """How to see what the agent actually did, for someone who hasn't set that up yet."""
     return [
         *wrap(
-            'observability: off — to see every model and tool call live with its cost, ask an agent to read https://pydantic.dev/ai-setup.md and instrument Pydantic AI',
+            'observability: off — see every model and tool call live, with cost',
             width=_TEXT_WIDTH,
             subsequent_indent='  ',
             break_on_hyphens=False,
         ),
         *wrap(
-            'Pydantic Logfire gives you 10M free spans every month without a credit card, or you can point the Logfire SDK at any other OpenTelemetry backend',
+            'ask your agent to read https://pydantic.dev/ai-setup.md and set it up',
+            width=_TEXT_WIDTH,
+            initial_indent='  ',
+            subsequent_indent='  ',
+            break_on_hyphens=False,
+        ),
+        *wrap(
+            'free with Logfire and a GitHub login, or use any OpenTelemetry backend',
             width=_TEXT_WIDTH,
             initial_indent='  ',
             subsequent_indent='  ',
