@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import shlex
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -81,14 +82,23 @@ class FakeWorkspace(WorkspaceBackend, SupportsFilesystem):
         timeout: float | None = None,
     ) -> FakeWorkspaceResult:
         await self.ensure_ready()
-        if not isinstance(command, str) and list(command[:2]) == ['sed', '-n']:
+        if not isinstance(command, str) and list(command[:2]) == ['head', '-c']:
+            count, path = int(command[2]), command[3]
+            if path not in self.files:
+                return FakeWorkspaceResult(exit_code=1, stderr=f'head: {path}: No such file or directory')
+            return FakeWorkspaceResult(stdout=self.files[path][:count].decode('utf-8', errors='replace'))
+        if isinstance(command, str) and command.startswith('sed -n '):
+            # The facade sends the bounded window as `sed -n '<expr>' <path> | head -c <bytes>`.
             if not self._sed:
                 return FakeWorkspaceResult(exit_code=127, stderr='sed: not found')
-            expression, path = command[2], command[3]
+            sed_part, _, head_bytes = command.partition(' | head -c ')
+            max_bytes = int(head_bytes)
+            _, _, expression, path = shlex.split(sed_part)
             match = _SED_WINDOW.match(expression)
             assert match is not None
             if path not in self.files:
-                return FakeWorkspaceResult(exit_code=2, stderr=f'sed: {path}: No such file or directory')
+                # A pipeline exits with `head`'s status; `sed`'s failure surfaces on stderr.
+                return FakeWorkspaceResult(exit_code=0, stderr=f'sed: {path}: No such file or directory')
             text = self.files[path].decode('utf-8', errors='replace')
             lines = text.split('\n')
             if lines[-1] == '':
@@ -98,7 +108,7 @@ class FakeWorkspace(WorkspaceBackend, SupportsFilesystem):
             stdout = '\n'.join(selected)
             if selected and (start + len(selected) < len(lines) or text.endswith('\n')):
                 stdout += '\n'
-            return FakeWorkspaceResult(stdout=stdout)
+            return FakeWorkspaceResult(stdout=stdout.encode('utf-8')[:max_bytes].decode('utf-8', errors='replace'))
         self.commands.append(command)
         return FakeWorkspaceResult(stdout='connected')
 

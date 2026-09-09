@@ -138,8 +138,11 @@ class LocalWorkspace(WorkspaceBackend, SupportsFilesystem):
             # from abandoning the filesystem operation before its result is recorded: otherwise
             # a created temporary directory has no owner and can never be cleaned up.
             async def acquire_root() -> None:
-                # A shielded child owns the blocking call and is drained by `gather`: raw
-                # `asyncio.Task.cancel()` must not abandon a created directory before `_live` records it.
+                # Run the shielded blocking call as a `gather` task-group child, not inline with
+                # `await`: an `anyio` shield guards anyio cancellation but not a raw
+                # `asyncio.Task.cancel()`, which would interrupt this task at the `await` and abandon a
+                # created directory before `_live` records it. As a child task the shield keeps it alive
+                # until the group drains it.
                 with anyio.CancelScope(shield=True):
                     if self._given_root is None:
                         self._live = await run_in_executor(
@@ -162,7 +165,9 @@ class LocalWorkspace(WorkspaceBackend, SupportsFilesystem):
         # blocked on the lock could otherwise recreate a root mid-teardown that nothing
         # would ever remove.
         async def cleanup() -> None:
-            # Drain the shielded child so raw cancellation cannot abandon an in-flight removal.
+            # Runs as a `gather` task-group child for the same reason as `_get_root`: a raw
+            # `asyncio.Task.cancel()` would interrupt the in-flight `rmtree` despite the shield if it
+            # were awaited inline, leaving the root behind.
             with anyio.CancelScope(shield=True):
                 async with self._lock:
                     if self._owns_root and self._live is not None:
@@ -354,9 +359,11 @@ class LocalWorkspace(WorkspaceBackend, SupportsFilesystem):
             raise WorkspaceError('local workspace could not capture the command output pipes')
         stdout_buffer = bytearray()
         stderr_buffer = bytearray()
-        # Plain tasks rather than an anyio task group: a reader that trips the output ceiling
-        # raises `WorkspaceError`, and a task group would deliver it wrapped in a
-        # `BaseExceptionGroup`, changing the exception callers and tests see.
+        # Two readers, drained concurrently: stdout and stderr are separate OS pipes, and reading one
+        # to completion while the other fills its buffer deadlocks the child. Plain tasks rather than
+        # an anyio task group because a reader that trips the output ceiling raises `WorkspaceError`,
+        # and a task group would deliver it wrapped in a `BaseExceptionGroup`, changing the exception
+        # callers and tests see.
         reader_tasks = [
             asyncio.create_task(self._read_stream(stdout_pipe, stdout_buffer, stderr_buffer)),
             asyncio.create_task(self._read_stream(stderr_pipe, stderr_buffer, stdout_buffer)),
