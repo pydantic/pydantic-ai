@@ -1108,7 +1108,7 @@ async def test_openai_responses_cache_instructions_explicit_previous_response_id
     model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
     settings = OpenAIResponsesModelSettings(openai_cache_instructions=True, openai_previous_response_id='resp_abc')
 
-    with pytest.raises(UserError, match='cannot be combined with an explicit'):
+    with pytest.raises(UserError, match='moves the instructions into the request input'):
         await Agent(model, instructions='Support policies.', model_settings=settings).run('Where is order 1234?')
 
 

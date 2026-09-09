@@ -3377,10 +3377,11 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             # the two features have to be reconciled.
             if previous_response_id_setting is not None and previous_response_id_setting != 'auto':
                 raise UserError(
-                    '`openai_cache_instructions` cannot be combined with an explicit '
-                    '`openai_previous_response_id`. Use `openai_previous_response_id="auto"` or '
-                    'leave it unset so the instruction cache breakpoint can be placed on the first '
-                    'request and reused across the chain.'
+                    '`openai_cache_instructions` moves the instructions into the request input so a '
+                    'cache breakpoint can sit on them, but an explicit `openai_previous_response_id` '
+                    'points at a stored response that may not contain them. Use '
+                    '`openai_previous_response_id="auto"` or leave it unset so the breakpoint is '
+                    'placed on the first request and reused across the chain.'
                 )
             if cache_instructions_static is False and previous_response_id_setting == 'auto':
                 # Dynamic instructions change per request, so a chained response would replay stale
