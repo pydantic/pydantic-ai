@@ -405,15 +405,23 @@ def test_a_banner_that_cannot_be_written_is_dropped(monkeypatch: pytest.MonkeyPa
     assert result.output == snapshot('success (no tool calls)')
 
 
+@pytest.mark.parametrize('watching', [False, True], ids=['unwatched', 'agent-watching'])
 def test_a_banner_is_not_written_to_a_stderr_that_is_not_there(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    watching: bool, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ):
-    """`sys.stderr` is `None` under `pythonw`, where `print(file=None)` would divert to `stdout`."""
+    """`sys.stderr` is `None` under `pythonw`, where `print(file=None)` would divert to `stdout`.
+
+    An agent reading the output doesn't have to be at a terminal, so it gets past the check that
+    used to rule this out; having a reader says nothing about there being somewhere to write.
+    """
     monkeypatch.setattr(sys, 'stderr', None)
+    if watching:
+        monkeypatch.setenv('AI_AGENT', 'some-harness')
 
     display_banner()
 
     assert capsys.readouterr().out == ''
+    assert _display.banner_pending() is False
 
 
 def test_a_stderr_that_cannot_be_asked_is_not_a_terminal(monkeypatch: pytest.MonkeyPatch):

@@ -185,12 +185,19 @@ def display_agent_banner(
     if instrumented:
         return
 
+    stderr = sys.stderr
     is_terminal = _stderr_is_terminal()
-    if not banner_available(is_terminal=is_terminal):
-        # Whatever turned it away — a suppressing environment, `stderr` that is neither a terminal
-        # nor read by an agent — is not something a process changes its mind about, so spend the
-        # claim. Without this, every run in a non-interactive process would gather a banner's
-        # details all over again only to throw them away here.
+    # Someone being there to read is not the same question as there being somewhere to write:
+    # `pythonw` and some frozen interpreters have no `stderr` at all, and `print(file=None)` would
+    # divert the banner to `stdout`, into whatever the program is actually writing there. Asking
+    # whether `stderr` is a terminal used to rule that out on its own; an agent reading a pipe
+    # doesn't have to be at one, so the destination is now checked in its own right.
+    #
+    # Whatever turns the banner away — a suppressing environment, no reader, nowhere to write — is
+    # not something a process changes its mind about, so spend the claim. Without this, every run
+    # in a non-interactive process would gather a banner's details all over again only to throw
+    # them away here.
+    if stderr is None or not banner_available(is_terminal=is_terminal):
         claim_banner()
         return
 
@@ -205,7 +212,8 @@ def display_agent_banner(
             # belongs to a terminal, and an agent reading `stderr` back would get the codes raw.
             color=is_terminal and 'NO_COLOR' not in os.environ,
         )
-        print(banner, file=sys.stderr)
+        # Written to the stream that was checked, rather than to whatever `sys.stderr` is by now.
+        print(banner, file=stderr)
     except Exception:
         # A banner is a courtesy, and a courtesy that fails is not worth an agent run. A terminal
         # whose encoding can't take the logo (`LC_ALL=C`) raises here, as does a `stderr` that has
