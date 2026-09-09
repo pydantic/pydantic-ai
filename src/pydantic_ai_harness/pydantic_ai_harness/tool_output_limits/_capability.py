@@ -374,7 +374,10 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
             if unit.binary:
                 return await self._fallback(ctx, call, action.then, unit)
             assert unit.text is not None
-            return truncate_text(unit.text, action.max_chars, action.strategy), None
+            return (
+                truncate_text(unit.text, action.max_chars, action.strategy, keep_tail_lines=action.keep_tail_lines),
+                None,
+            )
 
         if isinstance(action, Spill):
             return await self._spill(ctx, call, action, unit)

@@ -147,26 +147,51 @@ def _sketch_sequence(items: Sequence[object]) -> str:
     return f'[{len(items)} items of {elem}]'
 
 
-def truncate_text(text: str, max_chars: int, strategy: TruncationStrategy) -> str:
+def _tail_line_start(text: str, count: int) -> int:
+    """Find the last N LF/CRLF lines without splitting the entire payload."""
+    end = len(text) - int(text.endswith('\n'))
+    for _ in range(count):
+        end = text.rfind('\n', 0, end)
+        if end < 0:
+            return 0
+    return end + 1
+
+
+def truncate_text(text: str, max_chars: int, strategy: TruncationStrategy, *, keep_tail_lines: int = 0) -> str:
     """Limit `text` to `max_chars`, including the truncation marker.
 
-    If the budget cannot fit both retained content and a complete marker, return the
-    selected slice without a marker.
+    Omit the marker when it cannot fit alongside the retained content. Reserved tail
+    lines take priority over both the marker and the remaining content.
     """
     if max_chars <= 0:
         return ''
     total = len(text)
     if total <= max_chars:
         return text
-    if strategy is TruncationStrategy.tail:
+    tail_chars = total - _tail_line_start(text, keep_tail_lines) if keep_tail_lines else 0
+    if tail_chars > max_chars:
         return truncate_tail(text, max_chars)
+    if tail_chars == max_chars:
+        return text[-max_chars:]
+    if strategy is TruncationStrategy.tail:
+        truncated = truncate_tail(text, max_chars)
+        if tail_chars and not truncated.endswith(text[total - tail_chars :]):
+            return text[-max_chars:]
+        return truncated
+
+    return _truncate_head_and_tail(text, max_chars, strategy, tail_chars)
+
+
+def _truncate_head_and_tail(text: str, max_chars: int, strategy: TruncationStrategy, tail_chars: int) -> str:
+    total = len(text)
+    head_share = 5 if strategy is TruncationStrategy.head else 2
 
     # Check each count: digit and thousands-separator changes can shorten the marker.
-    for retained in range(max_chars, 0, -1):
-        if strategy is TruncationStrategy.head:
+    for retained in range(max_chars, max(1, tail_chars) - 1, -1):
+        head_chars = (retained - tail_chars) * head_share // 5
+        if strategy is TruncationStrategy.head and not tail_chars:
             marker = f'\n\n[truncated: showing first {retained:,} of {total:,} chars]'
         else:
-            head_chars = retained * 2 // 5
             marker = (
                 f'\n\n[truncated: {total - retained:,} chars omitted from the middle; '
                 f'showing first {head_chars:,} + last {retained - head_chars:,} of {total:,} chars]\n\n'
@@ -174,9 +199,9 @@ def truncate_text(text: str, max_chars: int, strategy: TruncationStrategy) -> st
         if retained + len(marker) <= max_chars:
             break
     else:
+        if tail_chars:
+            return text[-max_chars:]
         retained, marker = max_chars, ''
+        head_chars = retained * head_share // 5
 
-    if strategy is TruncationStrategy.head:
-        return text[:retained] + marker
-    head_chars = retained * 2 // 5
-    return text[:head_chars] + marker + text[-(retained - head_chars) :]
+    return text[:head_chars] + marker + text[total - (retained - head_chars) :]
