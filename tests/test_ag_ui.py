@@ -4372,7 +4372,7 @@ async def test_builtin_tool_return_non_string_content_passthrough() -> None:
 async def test_builtin_tool_return_non_string_scalar_content_passthrough() -> None:
     """A non-string, non-mapping/sequence `content` (a scalar) passes through untouched.
 
-    Only mappings/sequences can nest multimodal items, so the discriminator is skipped for a scalar and
+    Only mappings/sequences can nest multimodal items, so a scalar skips the union entirely and
     the value is returned as-is rather than coerced.
     """
     tool_msg = ToolMessage.model_construct(
@@ -5750,7 +5750,7 @@ def test_dump_load_roundtrip_tool_return_multimodal(
 
     `ag_ui.core.ToolMessage.content` is a plain `str`, but it already carries JSON for structured returns,
     so the full content — files serialized as base64/URL dicts included — is written inline and rehydrated
-    on load via the `ToolReturnContent` discriminator. No sidecar `ActivityMessage` and no `preserve_file_data`
+    on load through the `ToolReturnContent` union. No sidecar `ActivityMessage` and no `preserve_file_data`
     flag are involved: inline content round-trips verbatim through any frontend, whereas a custom sidecar
     only round-trips if the frontend echoes it back. A file nested in a mapping (unreachable by
     `BaseToolReturnPart.files`) round-trips too.
@@ -5813,8 +5813,8 @@ def test_tool_return_json_scalar_string_stays_string(content: str) -> None:
     """A string return that happens to be a valid JSON *scalar* must not change type on the round-trip.
 
     `ToolMessage.content` is text-only on the AG-UI wire, so a string return is dumped verbatim. Re-parsing it
-    through the discriminator would turn `'123'` into `123`, `'true'` into `True`, etc. The rehydrator only runs the
-    discriminator on a parsed mapping/sequence (where nested multimodal items can live), leaving scalars as strings.
+    through the union would turn `'123'` into `123`, `'true'` into `True`, etc. The rehydrator only re-runs the
+    union on a parsed mapping/sequence (where nested multimodal items can live), leaving scalars as strings.
     A container-shaped string (`'[1, 2]'`) is wire-indistinguishable from a real list return, so it does rehydrate —
     that ambiguity is inherent to the text-only wire and only the scalar coercion is recoverable.
     """
