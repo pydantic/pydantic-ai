@@ -27,9 +27,9 @@ _LOGO = """\
 `--.___|___.--'"""
 """The Pydantic kite: a Penrose kite deflated into two kites and a dart.
 
-The `.` on the crossbar is the dart's notch, which juts up between the two upper panels, and the
-closing row falls from the shoulders to a centre vertex — `` ` `` and `'` sit at the top of a
-character cell, `-` in the middle, `.` low and `_` on the floor.
+The `.` on the crossbar is the dart's notch, which juts up between the two upper panels. The closing
+row falls from the shoulders to a centre vertex by glyph height rather than position: a backtick and
+an apostrophe sit at the top of a character cell, `-` in the middle, `.` low, and `_` on the floor.
 """
 
 _LOGO_LINES = _LOGO.splitlines()
