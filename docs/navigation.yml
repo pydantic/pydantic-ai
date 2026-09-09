@@ -599,6 +599,10 @@ navigation:
         path: "acp.md"
         source: "harness"
         slug: "harness/acp"
+      - page: "GitHub Agentic Workflows"
+        path: "gh-aw.md"
+        source: "harness"
+        slug: "harness/gh-aw"
   - section: "Guides"
     slug: ""
     top-level: true
