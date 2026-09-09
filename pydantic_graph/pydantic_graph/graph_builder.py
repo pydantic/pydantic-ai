@@ -212,7 +212,6 @@ class Graph(Generic[StateT, DepsT, InputT, OutputT]):
         Returns:
             None
         """
-
         if infer_name and self.name is None:
             # Base depth = 1: `infer_obj_name` is called inside `_set_graph_name`.
             graph_name = infer_obj_name(self, depth=1 + extra_depth)
