@@ -1,5 +1,6 @@
 #!/bin/bash
-# Append one decision entry to the adjacent pr-decisions.md.
+# Append one decision entry to .claude/skills/branch-context/pr-decisions.md in the worktree
+# this is called from (the working directory's toplevel), not the one the script lives in.
 #
 # Preferred (named flags — resistant to arg-order mistakes):
 #   append-pr-decision.sh \
