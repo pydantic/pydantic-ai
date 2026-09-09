@@ -11,6 +11,7 @@ from collections.abc import (
     Callable,
     Generator,
     Iterable,
+    Mapping,
     Sequence,
 )
 from contextlib import asynccontextmanager, contextmanager
@@ -51,6 +52,7 @@ from ..messages import (
     FilePart,
     FinishReason,
     ImageUrl,
+    InstructionPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -621,11 +623,44 @@ def _add_openai_prompt_cache_breakpoint(
     if not content:
         raise UserError(
             'CachePoint cannot be the first content in a user message - '
-            'there must be previous content to attach the cache breakpoint to.'
+            'there must be previous content to attach the cache breakpoint to. '
+            'To cache system instructions, use the `openai_cache_instructions` setting instead.'
         )
 
     cache_breakpoint: _OpenAIPromptCacheBreakpoint = {'mode': 'explicit'}
     content[-1]['prompt_cache_breakpoint'] = cache_breakpoint
+
+
+def _leading_system_message_count(messages: Sequence[Mapping[str, Any]], system_prompt_role: str) -> int:
+    """Number of leading messages holding system prompts, which is where instructions belong."""
+    return next((i for i, message in enumerate(messages) if message.get('role') != system_prompt_role), len(messages))
+
+
+def _instruction_cache_index(instruction_parts: Sequence[InstructionPart], system_prompt_count: int) -> int | None:
+    """Index of the leading message that should carry the instruction cache breakpoint.
+
+    The breakpoint goes after the last static instruction, so dynamic instructions that change every
+    run stay outside the cached prefix. Instruction parts are sorted static-first.
+    """
+    index = system_prompt_count + sum(1 for part in instruction_parts if not part.dynamic) - 1
+    return index if index >= 0 else None
+
+
+def _instructions_are_static(instruction_parts: Sequence[InstructionPart]) -> bool:
+    """Whether every instruction part is a literal string, i.e. identical on every request."""
+    return all(not part.dynamic for part in instruction_parts)
+
+
+def _add_instruction_cache_breakpoint(
+    message: chat.ChatCompletionMessageParam | responses.ResponseInputItemParam,
+    text_type: Literal['text', 'input_text'],
+) -> None:
+    """Move a leading message's text into a content block carrying an explicit cache breakpoint."""
+    message_dict = cast('dict[str, Any]', message)
+    # Cast because the content part shape differs per API and only differs in the `type` literal.
+    content = cast('list[ChatCompletionContentPartParam]', [{'type': text_type, 'text': message_dict['content']}])
+    _add_openai_prompt_cache_breakpoint(content)
+    message_dict['content'] = content
 
 
 class OpenAIChatModelSettings(ModelSettings, total=False):
@@ -716,6 +751,26 @@ class OpenAIChatModelSettings(ModelSettings, total=False):
     OpenAI applies the request-wide `ttl` to every breakpoint and ignores `CachePoint.ttl`.
     The `ttl` here is independent of the `openai_prompt_cache_retention` setting, which OpenAI deprecates
     for GPT-5.6 and later models.
+
+    See the [OpenAI prompt caching documentation](https://developers.openai.com/api/docs/guides/prompt-caching)
+    for more information.
+    """
+
+    openai_cache_instructions: bool
+    """Whether to add a prompt cache breakpoint after the last static instruction.
+
+    Supported by GPT-5.6 and later models; other models ignore it. OpenAI applies the request-wide
+    `ttl` from `openai_prompt_cache_options`. OpenAI writes at most four breakpoints per request and
+    drops the earliest first, so if `CachePoint` markers push a request over that limit, the
+    instruction breakpoint is the first one dropped.
+
+    On the Responses API the instructions are sent as leading input messages, because the top-level
+    `instructions` field cannot carry a breakpoint. With `openai_previous_response_id='auto'` and
+    static instructions the breakpoint is placed on the first request and reused by the chained
+    responses that follow; with dynamic instructions the full history is sent each request instead,
+    since a chained response would replay stale instructions. An explicit `openai_previous_response_id`
+    cannot be combined with this setting and raises. When `openai_conversation_id` is set or the
+    history has been compacted, the instructions stay in the top-level field and no breakpoint is added.
 
     See the [OpenAI prompt caching documentation](https://developers.openai.com/api/docs/guides/prompt-caching)
     for more information.
@@ -1667,10 +1722,9 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             else:
                 assert_never(message)
         system_prompt_role = profile.get('openai_system_prompt_role', None) or 'system'
-        if instruction_parts := self._get_instruction_parts(messages, model_request_parameters):
-            system_prompt_count = next(
-                (i for i, m in enumerate(openai_messages) if m.get('role') != system_prompt_role), len(openai_messages)
-            )
+        system_prompt_count = _leading_system_message_count(openai_messages, system_prompt_role)
+        instruction_parts = self._get_instruction_parts(messages, model_request_parameters) or []
+        if instruction_parts:
             if system_prompt_role == 'developer':
                 instruction_messages: list[chat.ChatCompletionMessageParam] = [
                     chat.ChatCompletionDeveloperMessageParam(role='developer', content=part.content)
@@ -1686,6 +1740,17 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     for part in instruction_parts
                 ]
             openai_messages[system_prompt_count:system_prompt_count] = instruction_messages
+        if (
+            model_settings
+            and model_settings.get('openai_cache_instructions')
+            and profile.get('openai_supports_prompt_cache_breakpoints', False)
+            # A `'user'` system prompt role can't be told apart from a real user turn, and merging
+            # the leading messages collapses the boundary into one block, so neither can carry it.
+            and system_prompt_role != 'user'
+            and profile.get('openai_chat_supports_multiple_system_messages', True)
+            and (index := _instruction_cache_index(instruction_parts, system_prompt_count)) is not None
+        ):
+            _add_instruction_cache_breakpoint(openai_messages[index], 'text')
         if not self.profile.get('openai_chat_supports_multiple_system_messages', True):
             openai_messages = _merge_leading_system_messages(openai_messages, system_prompt_role)
         return openai_messages
@@ -2666,7 +2731,23 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         if not tools and not history_declared_tool_names:
             tool_choice = None
 
-        previous_response_id, conversation_id, messages = self._resolve_server_side_state(model_settings, messages)
+        system_prompt_role = profile.get('openai_system_prompt_role', None) or 'system'
+        cache_instructions = (
+            bool(model_settings.get('openai_cache_instructions'))
+            and profile.get('openai_supports_prompt_cache_breakpoints', False)
+            # A `'user'` system prompt role can't be told apart from a real user turn.
+            and system_prompt_role != 'user'
+        )
+        # Instructions live on the current request, which survives the server-side-state trim, so
+        # their static/dynamic makeup can be read from the untrimmed history before resolving.
+        instruction_parts = (
+            self._get_instruction_parts(messages, wire_request_parameters) or [] if cache_instructions else []
+        )
+        cache_instructions_static = _instructions_are_static(instruction_parts) if cache_instructions else None
+
+        previous_response_id, conversation_id, messages = self._resolve_server_side_state(
+            model_settings, messages, cache_instructions_static=cache_instructions_static
+        )
 
         instructions, openai_messages = await self._map_messages(
             messages,
@@ -2675,6 +2756,28 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             previous_response_id=previous_response_id,
         )
         reasoning = self._translate_thinking(model_settings, model_request_parameters)
+
+        if cache_instructions:
+            if (
+                not previous_response_id
+                and not conversation_id
+                and not any(message.get('type') == 'compaction' for message in openai_messages)
+            ):
+                system_prompt_count = _leading_system_message_count(openai_messages, system_prompt_role)
+                if (index := _instruction_cache_index(instruction_parts, system_prompt_count)) is not None:
+                    if instruction_parts:
+                        # The top-level `instructions` field cannot carry a cache breakpoint, so the
+                        # instructions are sent as leading input messages instead.
+                        openai_messages[system_prompt_count:system_prompt_count] = [
+                            responses.EasyInputMessageParam(role=system_prompt_role, content=part.content)
+                            for part in instruction_parts
+                        ]
+                        instructions = OMIT
+                    _add_instruction_cache_breakpoint(openai_messages[index], 'input_text')
+            elif previous_response_id:
+                # A static-instruction chain: the relocated instructions are already replayed from
+                # the chained response's input, so resending them here would send them twice.
+                instructions = OMIT
 
         text: responses.ResponseTextConfigParam | Omit = OMIT
         if model_request_parameters.output_mode == 'native':
@@ -2689,15 +2792,13 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             # Without this trick, we'd hit this error:
             # > Response input messages must contain the word 'json' in some form to use 'text.format' of type 'json_object'.
             # Apparently they're only checking input messages for "JSON", not instructions.
-            assert isinstance(instructions, str)
-            system_prompt_role = profile.get('openai_system_prompt_role', None) or 'system'
-            system_prompt_count = next(
-                (i for i, m in enumerate(openai_messages) if m.get('role') != system_prompt_role), len(openai_messages)
-            )
-            openai_messages.insert(
-                system_prompt_count, responses.EasyInputMessageParam(role=system_prompt_role, content=instructions)
-            )
-            instructions = OMIT
+            # `openai_cache_instructions` may already have moved them into the input messages.
+            if isinstance(instructions, str):
+                system_prompt_count = _leading_system_message_count(openai_messages, system_prompt_role)
+                openai_messages.insert(
+                    system_prompt_count, responses.EasyInputMessageParam(role=system_prompt_role, content=instructions)
+                )
+                instructions = OMIT
 
         if verbosity := model_settings.get('openai_text_verbosity'):
             text_with_verbosity: responses.ResponseTextConfigParam = text if isinstance(text, dict) else {}
@@ -3239,7 +3340,11 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             return None, messages
 
     def _resolve_server_side_state(
-        self, model_settings: OpenAIResponsesModelSettings, messages: list[ModelMessage]
+        self,
+        model_settings: OpenAIResponsesModelSettings,
+        messages: list[ModelMessage],
+        *,
+        cache_instructions_static: bool | None = None,
     ) -> tuple[str | None, str | None, list[ModelMessage]]:
         previous_response_id_setting = model_settings.get('openai_previous_response_id')
         conversation_id_setting = model_settings.get('openai_conversation_id')
@@ -3248,6 +3353,22 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 '`openai_previous_response_id` and `openai_conversation_id` cannot both be set because '
                 'the OpenAI Responses API does not support `previous_response_id` with `conversation`.'
             )
+
+        if cache_instructions_static is not None and conversation_id_setting is None:
+            # `openai_cache_instructions` relocates the instructions into the input messages so a
+            # cache breakpoint can be placed; a chained response replays those input messages, so
+            # the two features have to be reconciled.
+            if previous_response_id_setting is not None and previous_response_id_setting != 'auto':
+                raise UserError(
+                    '`openai_cache_instructions` cannot be combined with an explicit '
+                    '`openai_previous_response_id`. Use `openai_previous_response_id="auto"` or '
+                    'leave it unset so the instruction cache breakpoint can be placed on the first '
+                    'request and reused across the chain.'
+                )
+            if cache_instructions_static is False and previous_response_id_setting == 'auto':
+                # Dynamic instructions change per request, so a chained response would replay stale
+                # instructions. Send the full history instead; caching would not help here anyway.
+                return None, None, messages
 
         if conversation_id_setting is not None:
             conversation_id, messages = self._resolve_conversation_id(conversation_id_setting, messages)
