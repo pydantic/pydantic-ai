@@ -83,7 +83,7 @@ class RedisPlanStore:
         await self._client.set(self._key, payload, ex=self._expire_seconds)
 
     async def get_items(self) -> list[PlanItem]:
-        """Return every step for this session in insertion order."""
+        """Return every step for this session in insertion order, as detached objects."""
         return await self._load()
 
     async def set_items(self, items: list[PlanItem]) -> None:

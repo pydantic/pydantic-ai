@@ -123,7 +123,7 @@ class PostgresPlanStore:
         )
 
     async def get_items(self) -> list[PlanItem]:
-        """Return every step for this session in insertion order."""
+        """Return every step for this session in insertion order, as detached objects."""
         await self._ensure_schema()
         async with self._pool.acquire() as connection:
             rows = await connection.fetch(
