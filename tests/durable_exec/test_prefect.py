@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import sys
 import threading
 import uuid
 import warnings
@@ -21,7 +22,7 @@ from unittest.mock import MagicMock, patch
 
 import httpx2
 import pytest
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, JsonValue
 from pydantic.errors import PydanticUserError
 from pydantic_core import PydanticSerializationError
 
@@ -150,7 +151,7 @@ except ImportError:  # pragma: lax no cover
 try:
     from fastmcp.client.transports import StdioTransport
 
-    from pydantic_ai.mcp import MCPToolset
+    from pydantic_ai.mcp import CallToolFunc, MCPToolset, ToolResult
 except ImportError:  # pragma: lax no cover
     pytest.skip('mcp not installed', allow_module_level=True)
 
@@ -3921,23 +3922,71 @@ async def test_prefect_durability_identical_capability_operations_execute_twice_
     assert calls == 2
 
 
-async def test_prefect_task_wrapped_tool_rejects_enqueue() -> None:
+@pytest.mark.parametrize('priority', ['asap', 'when_idle'])
+@pytest.mark.parametrize('kind', ['function', 'mcp'])
+async def test_prefect_task_wrapped_tool_replays_enqueued_messages(
+    priority: Literal['asap', 'when_idle'], kind: Literal['function', 'mcp']
+) -> None:
+    tool_calls = 0
+
     async def enqueue(ctx: RunContext[object]) -> str:
-        ctx.enqueue('later')
+        nonlocal tool_calls
+        tool_calls += 1
+        ctx.enqueue('later', priority=priority)
         return 'done'
 
-    durability: PrefectDurability[object] = PrefectDurability()
-    agent = Agent(TestModel(), deps_type=object, name='prefect_enqueue', tools=[enqueue], capabilities=[durability])
+    async def process_tool_call(
+        ctx: RunContext[object], call_tool: CallToolFunc, name: str, args: dict[str, JsonValue]
+    ) -> ToolResult:
+        await enqueue(ctx)
+        return await call_tool(name, args)
 
-    @flow
+    toolset: FunctionToolset[object] | MCPToolset[object]
+    if kind == 'mcp':
+        toolset = MCPToolset(
+            StdioTransport(
+                command=sys.executable,
+                args=['-m', 'tests.mcp_server'],
+                env={key: value for key, value in os.environ.items() if not key.startswith('COVERAGE_')},
+            ),
+            id='enqueue_mcp',
+            process_tool_call=process_tool_call,
+        )
+    else:
+        toolset = FunctionToolset([enqueue], id='enqueue_function')
+
+    agent = Agent(
+        TestModel(call_tools=['celsius_to_fahrenheit'] if kind == 'mcp' else ['enqueue']),
+        deps_type=object,
+        name='prefect_enqueue',
+        toolsets=[toolset],
+        capabilities=[PrefectDurability()],
+    )
+
+    attempts = 0
+
+    @flow(retries=1)
     async def run_agent() -> None:
-        await agent.run('run')
+        nonlocal attempts
+        attempts += 1
+        result = await agent.run('run')
+        assert [
+            part.content
+            for message in result.all_messages()
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, UserPromptPart)
+        ] == ['run', 'later']
+        if attempts == 1:
+            raise RuntimeError('retry after recording the tool result')
 
-    with pytest.raises(UserError, match='enqueued messages would be dropped'):
-        await run_agent()
+    await run_agent()
+    assert attempts == 2
+    assert tool_calls == 1
 
     # Outside a flow the tool runs inline and enqueueing keeps working.
     await agent.run('run')
+    assert tool_calls == 2
 
 
 @dataclass(kw_only=True)
@@ -3953,10 +4002,10 @@ class PrefectCheckpointEvent(CapabilityEvent, namespace='prefect_test', name='ch
 async def test_prefect_task_wrapped_tool_emit_is_not_replayed() -> None:
     """`ctx.emit()` inside a durable task is a side effect of running it, not part of its result.
 
-    Unlike `ctx.enqueue()`, which is rejected because dropping it would change what the model sees,
-    an emitted event only notifies observers, so it's allowed. This pins what that costs: on a flow
-    retry the tool's recorded result is replayed without re-running the body, so the flow-level
-    observer sees the tool's call and result events again but not the event the tool emitted.
+    An emitted event only notifies observers, so it's allowed without being recorded. This pins
+    what that costs: on a flow retry the tool's recorded result is replayed without re-running
+    the body, so the flow-level observer sees the tool's call and result events again but not
+    the event the tool emitted.
     """
     attempts = 0
     tool_bodies: list[str] = []

@@ -2677,15 +2677,13 @@ async def test_dbos_mcp_step_rejects_enqueue_in_workflow(dbos: DBOS, monkeypatch
     assert len(outside_context.pending_messages or []) == 1
 
 
-async def test_dbos_dynamic_tool_rejects_enqueue_in_workflow(dbos: DBOS) -> None:
-    """`ctx.enqueue()` inside a step-wrapped dynamic tool raises instead of silently dropping.
-
-    Recovery replays the recorded step output without re-executing the tool, so in-step
-    enqueued messages would be lost. Outside a workflow the step degrades to a plain call
-    and enqueueing keeps working.
-    """
+async def test_dbos_dynamic_tool_replays_enqueued_messages(dbos: DBOS) -> None:
+    """Fork from after the recorded steps so a new run has to reconstruct the queued messages."""
+    tool_calls = 0
 
     async def enqueue(ctx: RunContext[object]) -> str:
+        nonlocal tool_calls
+        tool_calls += 1
         ctx.enqueue('later')
         return 'done'
 
@@ -2697,14 +2695,32 @@ async def test_dbos_dynamic_tool_rejects_enqueue_in_workflow(dbos: DBOS) -> None
         capabilities=[DBOSDurability()],
     )
 
+    attempts = 0
+
     @DBOS.workflow()
     async def run_workflow() -> None:
-        await agent.run('run')
+        nonlocal attempts
+        attempts += 1
+        result = await agent.run('run')
+        assert [
+            part.content
+            for message in result.all_messages()
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, UserPromptPart)
+        ] == ['run', 'later']
 
-    with pytest.raises(UserError, match='enqueued messages would be dropped'):
+    workflow_id = str(uuid.uuid4())
+    with SetWorkflowID(workflow_id):
         await run_workflow()
+    steps = await DBOS.list_workflow_steps_async(workflow_id)
+    fork = await DBOS.fork_workflow_async(workflow_id, max(step['function_id'] for step in steps) + 1)
+    await fork.get_result()
+    assert attempts == 2
+    assert tool_calls == 1
 
     await agent.run('run')
+    assert tool_calls == 2
 
 
 @dataclass(kw_only=True)
@@ -2749,10 +2765,9 @@ async def test_dbos_workflow_level_emit_reaches_durable_handler(dbos: DBOS) -> N
 
 
 async def test_dbos_step_emit_is_allowed(dbos: DBOS) -> None:
-    """`ctx.emit()` from inside a step is allowed, unlike `ctx.enqueue()`.
+    """`ctx.emit()` from inside a step is allowed without being recorded.
 
-    Enqueueing is rejected because a replayed step drops the message and changes what the model
-    sees; an emitted event only notifies observers, so it's a side effect of running the step, like
+    An emitted event only notifies observers, so it's a side effect of running the step, like
     a log line. That costs re-delivery on recovery, which replays the step's recorded output without
     re-running the body -- pinned for the equivalent Prefect cache hit in
     `test_prefect_task_wrapped_tool_emit_is_not_replayed`, since a real DBOS recovery would need the
@@ -3717,7 +3732,7 @@ async def test_dbos_durability_event_stream_handler(dbos: DBOS) -> None:
 
 
 async def test_dbos_durability_event_stream_handler_rejects_enqueue(dbos: DBOS) -> None:
-    """An `event_stream_handler` that enqueues inside a durable step raises, like a tool would.
+    """An `event_stream_handler` cannot record enqueued messages in its durable step.
 
     The handler runs inside a durable step for both model events (the model-request step) and
     graph events (the `__event_stream_handler` step); either step's recorded result is replayed

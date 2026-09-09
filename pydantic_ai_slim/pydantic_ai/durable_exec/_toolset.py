@@ -357,7 +357,7 @@ def unwrap_tool_call_result(result: CallToolResult) -> Any:
 
 
 class EnqueueGuard(list[PendingMessage]):
-    """Replaces `ctx.pending_messages` inside a durable unit, where enqueueing can't be supported.
+    """Replaces `ctx.pending_messages` inside a durable unit that does not record messages.
 
     A durable unit's recorded output is replayed on recovery (DBOS), cache hit (Prefect), or
     across the activity boundary (Temporal) without re-running the code, so messages enqueued

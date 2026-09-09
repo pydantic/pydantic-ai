@@ -258,6 +258,6 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         """Apply the configured parallel-execution mode for every entry point."""
         agent = self._agent
         if agent is None:  # pragma: no cover
-            return await handler()
+            return await super().wrap_run(ctx, handler=handler)
         with agent.parallel_tool_call_execution_mode(self._parallel_execution_mode):
-            return await handler()
+            return await super().wrap_run(ctx, handler=handler)

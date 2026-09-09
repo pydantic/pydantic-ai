@@ -20,7 +20,8 @@ from pydantic_ai.durable_exec._operation import (
     ToolsetCallToolParams,
     ToolsetGetToolsParams,
 )
-from pydantic_ai.durable_exec._toolset import CallToolResult, DynamicToolsResult
+from pydantic_ai.durable_exec._tool_messages import RecordedToolCallResult
+from pydantic_ai.durable_exec._toolset import DynamicToolsResult
 from pydantic_ai.durable_exec._utils import StreamedActivityResult
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import AgentStreamEvent, ModelMessage, ModelResponse
@@ -57,7 +58,7 @@ __all__ = (
 
 class _FunctionCallTransport(TemporalParameterTransport[ToolsetCallToolParams, tuple[CallToolParams, Any]]):
     wire_type = CallToolParams
-    result_type = CallToolResult
+    result_type = RecordedToolCallResult
 
     def __init__(self, durability: TemporalDurability[Any], toolset: FunctionToolset[Any]) -> None:
         self._durability = durability
@@ -116,7 +117,7 @@ class _GetToolsTransport(TemporalParameterTransport[ToolsetGetToolsParams, tuple
 
 class _MCPCallTransport(TemporalParameterTransport[ToolsetCallToolParams, tuple[CallToolParams, Any]]):
     wire_type = CallToolParams
-    result_type = CallToolResult
+    result_type = RecordedToolCallResult
 
     def __init__(self, durability: TemporalDurability[Any], toolset: Any) -> None:
         self._durability = durability
@@ -148,7 +149,7 @@ class _MCPCallTransport(TemporalParameterTransport[ToolsetCallToolParams, tuple[
 
 class _DynamicCallTransport(TemporalParameterTransport[DynamicToolsetCallToolParams, tuple[CallToolParams, Any]]):
     wire_type = CallToolParams
-    result_type = CallToolResult
+    result_type = RecordedToolCallResult
 
     def __init__(self, durability: TemporalDurability[Any]) -> None:
         self._durability = durability

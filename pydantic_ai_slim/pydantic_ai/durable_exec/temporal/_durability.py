@@ -467,7 +467,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             return await handler()
 
         with disable_threads(), set_agent_graph_sleep(workflow.sleep):
-            return await handler()
+            return await super().wrap_run(ctx, handler=handler)
 
     async def on_run_error(self, ctx: RunContext[AgentDepsT], *, error: BaseException) -> AgentRunResult[Any]:
         """Explain a serialization failure raised while scheduling an activity.

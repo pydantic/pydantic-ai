@@ -3505,13 +3505,13 @@ async def _enqueue_guard_handler(ctx: RunContext[object], stream: AsyncIterable[
         _enqueue_handler_boundaries.add(boundary)
 
 
-_enqueue_guard_tool_queue: list[str] = []
+_enqueue_tool_calls: list[str] = []
 _enqueue_guard_model_queue: list[str] = []
 
 
-async def _enqueue_guard_tool(ctx: RunContext[Deps]) -> str:
-    while _enqueue_guard_tool_queue:
-        ctx.enqueue(_enqueue_guard_tool_queue.pop())
+async def _enqueue_tool(ctx: RunContext[Deps]) -> str:
+    _enqueue_tool_calls.append('called')
+    ctx.enqueue('later')
     return 'done'
 
 
@@ -3545,7 +3545,7 @@ _enqueue_tool_agent = Agent(
     TestModel(),
     deps_type=Deps,
     name='temporal_tool_enqueue',
-    tools=[_enqueue_guard_tool],
+    tools=[_enqueue_tool],
     capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
 )
 _enqueue_model_agent = Agent(
@@ -3569,10 +3569,17 @@ class EnqueueGuardHandlerWorkflow:
 
 
 @workflow.defn
-class EnqueueGuardToolWorkflow:
+class EnqueuedToolMessagesWorkflow:
     @workflow.run
     async def run(self) -> None:
-        await _enqueue_tool_agent.run('run', deps=Deps(country='test'))
+        result = await _enqueue_tool_agent.run('run', deps=Deps(country='test'))
+        assert [
+            part.content
+            for message in result.all_messages()
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, UserPromptPart)
+        ] == ['run', 'later']
 
 
 @workflow.defn
@@ -3638,24 +3645,33 @@ async def test_temporal_event_stream_handler_rejects_enqueue(client: Client) -> 
     assert _enqueue_handler_boundaries == {'model', 'agent'}
 
 
-async def test_temporal_tool_rejects_enqueue(client: Client) -> None:
-    _enqueue_guard_tool_queue[:] = ['later']
+async def test_temporal_tool_replays_enqueued_messages(client: Client) -> None:
+    _enqueue_tool_calls.clear()
+    workflow_id = f'{EnqueuedToolMessagesWorkflow.__name__}-{uuid.uuid4()}'
     async with Worker(
         client,
         task_queue=TASK_QUEUE,
-        workflows=[EnqueueGuardToolWorkflow],
+        workflows=[EnqueuedToolMessagesWorkflow],
         plugins=[AgentPlugin(_enqueue_tool_agent)],
     ):
-        with workflow_activity_raises(UserError, _ENQUEUE_GUARD_ERROR):
-            await client.execute_workflow(
-                EnqueueGuardToolWorkflow.run,
-                id=EnqueueGuardToolWorkflow.__name__,
-                task_queue=TASK_QUEUE,
-            )
+        await client.execute_workflow(
+            EnqueuedToolMessagesWorkflow.run,
+            id=workflow_id,
+            task_queue=TASK_QUEUE,
+            execution_timeout=timedelta(seconds=60),
+        )
+        history = await client.get_workflow_handle(workflow_id).fetch_history()
 
-    _enqueue_guard_tool_queue[:] = ['later']
+    assert _enqueue_tool_calls == ['called']
+    await Replayer(
+        workflows=[EnqueuedToolMessagesWorkflow],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+        data_converter=pydantic_data_converter,
+    ).replay_workflow(history)
+    assert _enqueue_tool_calls == ['called']
+
     await _enqueue_tool_agent.run('run', deps=Deps(country='test'))
-    assert not _enqueue_guard_tool_queue
+    assert _enqueue_tool_calls == ['called', 'called']
 
 
 async def test_temporal_non_streaming_model_request_rejects_enqueue(client: Client) -> None:

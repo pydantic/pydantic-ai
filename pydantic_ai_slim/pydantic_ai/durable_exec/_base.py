@@ -98,6 +98,12 @@ from ._runtime_toolsets import (
     reject_unsupported_runtime_toolsets,
 )
 from ._spec import DurabilityEngineSpec
+from ._tool_messages import (
+    RecordedToolCallResult,
+    record_tool_call_result,
+    replay_tool_messages,
+    tool_message_replay_scope,
+)
 from ._toolset import (
     CallToolResult,
     DurableDynamicToolset,
@@ -808,12 +814,15 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         *,
         handler: WrapRunHandler,
     ) -> AgentRunResult[Any]:
-        """Force sequential tool execution when required by a sequence-keyed durable engine."""
-        agent = self._agent
-        if not self.engine_spec.sequential_tools_in_durable_context or agent is None or not self.in_durable_context:
+        """Scope message replay to this run and apply the engine's tool execution order."""
+        if not self.in_durable_context:
             return await handler()
-        with agent.parallel_tool_call_execution_mode('sequential'):
-            return await handler()
+        with tool_message_replay_scope():
+            agent = self._agent
+            if not self.engine_spec.sequential_tools_in_durable_context or agent is None:
+                return await handler()
+            with agent.parallel_tool_call_execution_mode('sequential'):
+                return await handler()
 
     def _normalize_unit_config(self, config: Any) -> Any:
         """Post-process a resolved config (e.g. Prefect/Temporal ensure non-retryable errors)."""
@@ -981,12 +990,12 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
     def _build_function_toolset(self, toolset: FunctionToolset[AgentDepsT]) -> DurableFunctionToolset[AgentDepsT]:
         base_config = self._toolset_operation_config('function', cast(str, toolset.id))
 
-        async def call_tool_handler(params: ToolsetCallToolParams) -> CallToolResult:
+        async def call_tool_handler(params: ToolsetCallToolParams) -> RecordedToolCallResult:
             params = await self._prepare_function_call_params(toolset, params)
             assert params.tool is not None
             with self._tool_run_context_scope(params.ctx) as durable_ctx:
-                return await wrap_tool_call_result(
-                    toolset.call_tool(params.name, params.tool_args, durable_ctx, params.tool)
+                return await record_tool_call_result(
+                    durable_ctx, toolset.call_tool(params.name, params.tool_args, durable_ctx, params.tool)
                 )
 
         backend = self.get_durable_operation_backend()
@@ -995,7 +1004,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             handler=call_tool_handler,
             parameter_transport=self._function_call_parameter_transport(toolset),
             cache_identity=_FunctionCallToolCacheIdentity(),
-            result_codec=self._typed_result_codec(CallToolResult),
+            result_codec=self._typed_result_codec(RecordedToolCallResult),
             config_role='tool',
             invocation_label=lambda params: params.name,
         )
@@ -1020,7 +1029,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                 payload = await call_tool(
                     ToolsetCallToolParams(name, tool_args=tool_args, ctx=ctx, tool=tool), config=config
                 )
-            return self._unwrap_tool_result(payload)
+            return self._unwrap_tool_result(replay_tool_messages(payload, ctx))
 
         async def validate_args_operation(
             name: str,
@@ -1055,9 +1064,10 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             with self._tool_run_context_scope(params.ctx) as durable_ctx:
                 return await get_dynamic_tools(toolset, durable_ctx)
 
-        async def call_tool_handler(params: DynamicToolsetCallToolParams) -> CallToolResult:
+        async def call_tool_handler(params: DynamicToolsetCallToolParams) -> RecordedToolCallResult:
             with self._tool_run_context_scope(params.ctx) as durable_ctx:
-                return await wrap_tool_call_result(
+                return await record_tool_call_result(
+                    durable_ctx,
                     call_dynamic_tool(
                         toolset,
                         params.name,
@@ -1065,7 +1075,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                         durable_ctx,
                         tool_def=params.tool_def,
                         validation_context=self._validation_context,
-                    )
+                    ),
                 )
 
         backend = self.get_durable_operation_backend()
@@ -1084,7 +1094,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             handler=call_tool_handler,
             parameter_transport=self._dynamic_call_parameter_transport(toolset),
             cache_identity=_DynamicCallToolCacheIdentity(),
-            result_codec=self._typed_result_codec(CallToolResult),
+            result_codec=self._typed_result_codec(RecordedToolCallResult),
             config_role='tool',
             invocation_label=lambda params: params.name,
         )
@@ -1116,7 +1126,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                     DynamicToolsetCallToolParams(name, tool_args=tool_args, ctx=ctx, tool_def=tool.tool_def),
                     config=config,
                 )
-            return self._unwrap_tool_result(payload)
+            return self._unwrap_tool_result(replay_tool_messages(payload, ctx))
 
         async def validate_args_operation(
             name: str,
@@ -1243,11 +1253,11 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         get_instructions_operation: Callable[[RunContext[AgentDepsT]], Awaitable[Instructions]],
         discovery_registrations: list[Callable[..., Any]],
     ) -> DurableMCPToolset[AgentDepsT]:
-        async def call_tool_handler(params: ToolsetCallToolParams) -> CallToolResult:
+        async def call_tool_handler(params: ToolsetCallToolParams) -> RecordedToolCallResult:
             assert params.tool is not None
-            with self._durable_run_context_scope(params.ctx) as durable_ctx:
-                return await wrap_tool_call_result(
-                    toolset.call_tool(params.name, params.tool_args, durable_ctx, params.tool)
+            with self._tool_run_context_scope(params.ctx) as durable_ctx:
+                return await record_tool_call_result(
+                    durable_ctx, toolset.call_tool(params.name, params.tool_args, durable_ctx, params.tool)
                 )
 
         backend = self.get_durable_operation_backend()
@@ -1256,7 +1266,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             handler=call_tool_handler,
             parameter_transport=self._mcp_call_parameter_transport(toolset),
             cache_identity=_FunctionCallToolCacheIdentity(),
-            result_codec=self._typed_result_codec(CallToolResult),
+            result_codec=self._typed_result_codec(RecordedToolCallResult),
             config_role='tool',
             invocation_label=lambda params: params.name,
         )
@@ -1286,7 +1296,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                 payload = await call_tool(
                     ToolsetCallToolParams(name, tool_args=tool_args, ctx=ctx, tool=tool), config=config
                 )
-            return self._unwrap_tool_result(payload)
+            return self._unwrap_tool_result(replay_tool_messages(payload, ctx))
 
         return DurableMCPToolset(
             toolset,
