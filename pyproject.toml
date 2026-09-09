@@ -270,6 +270,8 @@ include = [
     "clai/**/*.py",
     "tests/**/*.py",
     "docs/**/*.py",
+    "scripts/typecheck_changed.py",
+    "scripts/test_typecheck_changed.py",
     ".github/scripts/ci_duration.py",
     ".github/scripts/check_api_compatibility.py",
     ".github/scripts/test_ci_duration.py",
@@ -356,6 +358,7 @@ quote-style = "single"
 ".github/scripts/test_agent_spend_report.py" = ["D"]
 ".github/scripts/test_docs_navigation_workflow.py" = ["D"]
 ".github/scripts/test_protect_github_dir.py" = ["D"]
+"scripts/test_typecheck_changed.py" = ["D"]
 
 [tool.pyright]
 pythonVersion = "3.10"
@@ -371,6 +374,8 @@ include = [
     "tests",
     "examples",
     "clai",
+    "scripts/typecheck_changed.py",
+    "scripts/test_typecheck_changed.py",
     ".github/scripts/ci_duration.py",
     ".github/scripts/check_api_compatibility.py",
     ".github/scripts/test_ci_duration.py",
@@ -398,6 +403,11 @@ executionEnvironments = [
     { root = ".github/scripts/test_ci_duration.py", extraPaths = [".github/scripts"], reportUnusedFunction = false, reportPrivateImportUsage = false },
     { root = ".github/scripts/test_check_api_compatibility.py", extraPaths = [".github/scripts"], reportUnusedFunction = false, reportPrivateImportUsage = false },
     { root = ".github/scripts/test_pydantic_ai_runner.py", extraPaths = [".github/scripts"], reportUnusedFunction = false, reportPrivateImportUsage = false },
+    # `scripts/typecheck_changed.py` reads `tomllib`, which is 3.11+. These two are
+    # developer tooling rather than shipped code, and the script falls back to the full
+    # type check on an older interpreter, so they are analysed above the library's floor.
+    { root = "scripts/typecheck_changed.py", pythonVersion = "3.11" },
+    { root = "scripts/test_typecheck_changed.py", extraPaths = ["scripts"], pythonVersion = "3.11", reportUnusedFunction = false, reportPrivateImportUsage = false },
 ]
 exclude = [
     "examples/pydantic_ai_examples/weather_agent_gradio.py",

@@ -4,6 +4,7 @@ from abc import ABC
 from collections import Counter
 from collections.abc import AsyncIterable, Awaitable, Callable, Collection, Sequence
 from dataclasses import KW_ONLY, dataclass
+from functools import cached_property
 from itertools import chain
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypeAlias
 from weakref import WeakValueDictionary
@@ -235,14 +236,16 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     sensible defaults and typically don't need to be overridden.
     """
 
-    def _get_durable_operation_bindings(
-        self,
-    ) -> _DurableOperationBindings:
-        bindings = self.__dict__.get('_pydantic_ai_durable_operation_bindings')
-        if not isinstance(bindings, _DurableOperationBindings):
-            bindings = _DurableOperationBindings()
-            object.__setattr__(self, '_pydantic_ai_durable_operation_bindings', bindings)
-        return bindings
+    @cached_property
+    def _durable_operation_bindings(self) -> _DurableOperationBindings:
+        """Per-instance bindings a durability engine attaches, created on first use.
+
+        A `cached_property` rather than a hand-rolled `__dict__` entry so that merging two
+        capabilities under one `id` can find it: the merge refuses attributes it cannot enumerate,
+        and drops the ones the class can rebuild. These are rebuilt by whichever engine binds next,
+        so the merged capability starting without them is what it wants.
+        """
+        return _DurableOperationBindings()
 
     _safe_at_runtime: ClassVar[bool] = False
     """Whether this capability can be added per-run when a durability capability is bound.
@@ -1480,16 +1483,16 @@ def _combine_duplicate_capabilities(  # pyright: ignore[reportUnusedFunction]
         # layer mean -- and with a single survivor there is nothing to settle, so it isn't called.
         last_layer = max(duplicate.layer_index for duplicate in duplicates)
         surviving = [duplicate.capability for duplicate in duplicates if duplicate.layer_index == last_layer]
-        # Transparent wrappers name the same capability across layers, not the same mergeable
-        # class within a layer. Explicitly renamed wrappers keep their own identity.
+        # Transparent wrappers name the same capability across layers, not the same mergeable class
+        # within a layer, so a group confined to one layer is compared as written: there, a wrapper
+        # and what it wraps are two capabilities claiming one id. Across layers they are one
+        # capability named twice, so the wrappers come off and the comparison is between what they
+        # hold. Explicitly renamed wrappers keep their own identity either way.
+        spans_layers = last_layer != duplicates[0].layer_index
         identity_types: set[type[AbstractCapability[AgentDepsT]]] = set()
         for duplicate in duplicates:
             identity = duplicate.capability
-            while (
-                last_layer != duplicates[0].layer_index
-                and isinstance(identity, WrapperCapability)
-                and identity.id == identity.wrapped.id
-            ):
+            while spans_layers and isinstance(identity, WrapperCapability) and identity.id == identity.wrapped.id:
                 identity = identity.wrapped
             identity_types.add(type(identity))
         _reject_class_crossing_id(capability_id, identity_types)

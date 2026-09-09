@@ -1851,6 +1851,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         run_id: str | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         audio_retention: AudioRetention = 'transcript_only',
+        handle_barge_in: bool = False,
         retain_images_every_n: int = 1,
         retain_images_max: int | None = 100,
         provider_session: RealtimeProviderSession | None = None,
@@ -2247,6 +2248,7 @@ class AgentRealtime(Generic[AgentDepsT]):
         self,
         *,
         audio_retention: AudioRetention = 'transcript_only',
+        handle_barge_in: bool = False,
         retain_images_every_n: int = 1,
         retain_images_max: int | None = 100,
         provider_session: RealtimeProviderSession | None = None,
@@ -2262,6 +2264,17 @@ class AgentRealtime(Generic[AgentDepsT]):
             audio_retention: How much spoken audio the session retains in its history, on top of
                 transcripts. Defaults to `'transcript_only'` (drop audio bytes); see
                 [`AudioRetention`][pydantic_ai.realtime.AudioRetention].
+            handle_barge_in: Let the session handle the local half of barge-in itself. When the user
+                starts speaking over the model, the session discards the buffered audio the user
+                will never hear, truncates the provider's transcript to what was actually played,
+                and cancels the response — normalizing what each provider signals and supports, and
+                doing nothing when the previous reply was heard in full. Requires playback to drain
+                the session's single [`stream_audio()`][pydantic_ai.realtime.RealtimeSession.stream_audio]
+                iterator chunk by chunk at device pace (the setup behind
+                [`played_audio_bytes`][pydantic_ai.realtime.RealtimeSession.played_audio_bytes]);
+                any other playback topology should leave this off and call
+                [`interrupt()`][pydantic_ai.realtime.RealtimeSession.interrupt] itself. Defaults to
+                `False`.
             retain_images_every_n: Keep one of every `N` images sent during the session in message
                 history. Defaults to `1` (keep every image); increase for high-rate camera/screen streams.
             retain_images_max: Bound on how many images stay in message history; once exceeded, the
@@ -2289,6 +2302,7 @@ class AgentRealtime(Generic[AgentDepsT]):
             run_id=self._run_id,
             message_history=self._message_history,
             audio_retention=audio_retention,
+            handle_barge_in=handle_barge_in,
             retain_images_every_n=retain_images_every_n,
             retain_images_max=retain_images_max,
             provider_session=provider_session,

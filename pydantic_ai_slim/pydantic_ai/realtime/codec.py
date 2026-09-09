@@ -440,6 +440,18 @@ class RealtimeConnection(ABC):
         return True
 
     @property
+    def interrupts_response_on_speech(self) -> bool:
+        """Whether the configured turn detection makes the *server* cancel the active response when user speech starts.
+
+        OpenAI-protocol server VAD with `interrupt_response` enabled (the default) cancels the
+        in-progress response on speech onset by itself. A client cancel sent at that same moment can
+        race the server's own cancellation and be applied to the *next* response instead, silencing
+        the reply to the barge-in — so the session's automatic barge-in handling sends only the
+        truncation when this is `True`. Defaults to `False`, which keeps the client-side cancel.
+        """
+        return False
+
+    @property
     def reconnect_restores_in_flight_state(self) -> bool:
         """Whether a reconnect continues the response and tool calls that were in flight when the socket dropped.
 
