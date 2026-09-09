@@ -189,6 +189,11 @@ need.
   `from pydantic_ai_harness.filesystem._toolset import _content_hash`). When a
   branch is only reachable by calling a private helper directly, mark it
   `# pragma: no cover` rather than reaching into the helper from a test.
+- Test async behavior directly, following `agent_docs/concurrency.md`: assert
+  the cancellation, the ordering, or the cleanup itself rather than the output
+  it happens to produce; order steps with `Event`s instead of sleeps; and reach
+  the real trigger (a real outer `anyio` cancel scope, the Trio parametrization
+  where the suite has it) rather than a stand-in.
 
 ## Contributing rules for AICAs
 

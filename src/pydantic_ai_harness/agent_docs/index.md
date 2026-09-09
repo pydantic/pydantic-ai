@@ -17,6 +17,9 @@ For any code change:
 - Working on (or refreshing) a capability that wraps an external service, image,
   or CLI: `capability-authoring.md` "External-Service Assumptions And Refresh"
 - New or changed tests: `testing-capabilities.md`
+- Spawning tasks or subprocesses, task groups or cancel scopes, locks, events,
+  streams, async context managers or generators, thread or event-loop
+  boundaries, or testing any of those: `concurrency.md`
 - Unsure whether behavior belongs in harness or Pydantic AI core: `core-boundary.md`
 - Adding a retry, fallback or error-handling field to a capability that takes a
   pluggable dependency: `capability-authoring.md` "Policy Lives In The Pluggable
