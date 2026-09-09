@@ -667,6 +667,29 @@ async def test_openai_chat_cache_instructions_ignored_without_support(allow_mode
     )
 
 
+async def test_openai_chat_cache_instructions_skipped_for_dynamic_system_prompt(allow_model_requests: None):
+    """A dynamic system prompt renders in the cached prefix, so marking it would miss the cache every
+    run; the breakpoint is skipped and nothing is marked."""
+    mock_client = MockOpenAI.create_mock(chat_completion())
+    model = OpenAIChatModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
+    settings = OpenAIChatModelSettings(openai_cache_instructions=True)
+    agent = Agent(model, instructions='Follow the rules.', model_settings=settings)
+
+    @agent.system_prompt(dynamic=True)
+    def current_policies() -> str:
+        return 'Support policies.'
+
+    await agent.run('Where is order 1234?')
+
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'] == snapshot(
+        [
+            {'role': 'system', 'content': 'Support policies.'},
+            {'role': 'system', 'content': 'Follow the rules.'},
+            {'role': 'user', 'content': 'Where is order 1234?'},
+        ]
+    )
+
+
 async def test_openai_responses_cache_instructions(allow_model_requests: None):
     """The top-level `instructions` field cannot carry a breakpoint, so instructions move into `input`."""
     mock_client = MockOpenAIResponses.create_mock(responses_completion())
@@ -790,6 +813,28 @@ async def test_openai_responses_cache_instructions_ignored_without_support(allow
     request = get_mock_responses_kwargs(mock_client)[0]
     assert request['instructions'] == 'Support policies.'
     assert request['input'] == [{'role': 'user', 'content': 'Where is order 1234?'}]
+
+
+async def test_openai_responses_cache_instructions_skipped_for_dynamic_system_prompt(allow_model_requests: None):
+    """A dynamic system prompt renders in the cached prefix, so the instructions stay in the top-level
+    field and no breakpoint is added."""
+    mock_client = MockOpenAIResponses.create_mock(responses_completion())
+    model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
+    settings = OpenAIResponsesModelSettings(openai_cache_instructions=True)
+    agent = Agent(model, instructions='Follow the rules.', model_settings=settings)
+
+    @agent.system_prompt(dynamic=True)
+    def current_policies() -> str:
+        return 'Support policies.'
+
+    await agent.run('Where is order 1234?')
+
+    request = get_mock_responses_kwargs(mock_client)[0]
+    assert request['instructions'] == 'Follow the rules.'
+    assert request['input'] == [
+        {'role': 'system', 'content': 'Support policies.'},
+        {'role': 'user', 'content': 'Where is order 1234?'},
+    ]
 
 
 async def test_openai_responses_cache_instructions_skipped_with_conversation_id(allow_model_requests: None):

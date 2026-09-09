@@ -662,6 +662,20 @@ def _add_instruction_cache_breakpoint(
     message_dict['content'] = content
 
 
+def _has_dynamic_system_prompt(messages: Sequence[ModelMessage]) -> bool:
+    """Whether any system prompt is dynamic, i.e. its content can change between requests.
+
+    A dynamic system prompt renders ahead of the instructions in the cached prefix, so its changing
+    content would silently invalidate the cache; the breakpoint is skipped when one is present.
+    """
+    return any(
+        isinstance(part, SystemPromptPart) and part.dynamic_ref is not None
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+    )
+
+
 class OpenAIChatModelSettings(ModelSettings, total=False):
     """Settings used for an OpenAI model request."""
 
@@ -770,6 +784,9 @@ class OpenAIChatModelSettings(ModelSettings, total=False):
     since a chained response would replay stale instructions. An explicit `openai_previous_response_id`
     cannot be combined with this setting and raises. When `openai_conversation_id` is set or the
     history has been compacted, the instructions stay in the top-level field and no breakpoint is added.
+
+    No breakpoint is added when a dynamic system prompt precedes the instructions either, since its
+    per-request content would sit inside the cached prefix and miss the cache on every run.
 
     See the [OpenAI prompt caching documentation](https://developers.openai.com/api/docs/guides/prompt-caching)
     for more information.
@@ -1747,6 +1764,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             # the leading messages collapses the boundary into one block, so neither can carry it.
             and system_prompt_role != 'user'
             and profile.get('openai_chat_supports_multiple_system_messages', True)
+            # A dynamic system prompt changes between requests, so it can't sit in the cached prefix.
+            and not _has_dynamic_system_prompt(messages)
             and (index := _instruction_cache_index(instruction_parts, system_prompt_count)) is not None
         ):
             _add_instruction_cache_breakpoint(openai_messages[index], 'text')
@@ -2736,6 +2755,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             and profile.get('openai_supports_prompt_cache_breakpoints', False)
             # A `'user'` system prompt role can't be told apart from a real user turn.
             and system_prompt_role != 'user'
+            # A dynamic system prompt changes between requests, so it can't sit in the cached prefix.
+            and not _has_dynamic_system_prompt(messages)
         )
         # Instructions live on the current request, which survives the server-side-state trim, so
         # their static/dynamic makeup can be read from the untrimmed history before resolving.
