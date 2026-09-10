@@ -135,7 +135,7 @@ def test_render_banner(render: Callable[..., str]):
      /   \\       agent: support_agent • model: openai:gpt-5.6-sol • tools: 2 • capabilities: 0
    /___.___\\
   /    |    \\    observability: off — see every model and tool call live, with cost
-/      |      \\    ask your agent to read https://pydantic.dev/ai-setup.md and set it up
+/      |      \\    ask your agent to set it up: https://pydantic.dev/ai-setup.md
 `--.___|___.--'    free with Logfire and a GitHub login, or use any OpenTelemetry backend
 
                  hide: PYDANTIC_AI_NO_BANNER=1\
@@ -150,7 +150,7 @@ def test_render_banner_for_an_unnamed_agent(render: Callable[..., str]):
      /   \\       model: openai:gpt-5.6-sol • output: list[str] • tools: 2 • capabilities: 3
    /___.___\\
   /    |    \\    observability: off — see every model and tool call live, with cost
-/      |      \\    ask your agent to read https://pydantic.dev/ai-setup.md and set it up
+/      |      \\    ask your agent to set it up: https://pydantic.dev/ai-setup.md
 `--.___|___.--'    free with Logfire and a GitHub login, or use any OpenTelemetry backend
 
                  hide: PYDANTIC_AI_NO_BANNER=1\

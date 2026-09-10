@@ -378,7 +378,7 @@ def _observability_lines() -> list[str]:
             break_on_hyphens=False,
         ),
         *wrap(
-            'ask your agent to read https://pydantic.dev/ai-setup.md and set it up',
+            'ask your agent to set it up: https://pydantic.dev/ai-setup.md',
             width=_TEXT_WIDTH,
             initial_indent='  ',
             subsequent_indent='  ',
