@@ -81,7 +81,7 @@ installed.
 | Framework | Strongest at | Where it stops |
 |---|---|---|
 | LangChain and LangGraph | An integration catalogue far larger than ours; checkpointed workflows and time travel; Deep Agents as a shipped harness | Pausing anywhere their middleware doesn't already pause means `interrupt()`, which replays the enclosing node's work; stopping a run needs their experimental v3 stream; trusted state isn't separate from the conversation |
-| OpenAI Agents SDK | OpenAI features first; hosted sessions and tracing; `after_turn` is a genuinely nice stop | Continuity is a session rather than history you own; no first-party crash recovery |
+| OpenAI Agents SDK | OpenAI features first; hosted sessions and tracing; `after_turn` stops at a turn boundary | Continuity is a session rather than history you own; no first-party crash recovery |
 | Claude Agent SDK | Claude Code's behaviour, immediately, including permissions and rewind | The loop is a `claude` subprocess; Anthropic only; tests are integration tests |
 | CrewAI | A role-and-task vocabulary that gets a multi-agent demo running quickly; memory and knowledge included; plenty of tutorial material | Orchestration is a DSL; no stop method on a crew; limits are per agent rather than per run |
 | smolagents | The smallest way to let a model write and run code, with honest sandboxing | Synchronous, so tool calls don't overlap; stopping leaves an error, not a resumable run |

@@ -5,13 +5,13 @@ If you remember AG2 as the community continuation of AutoGen — `ConversableAge
 the top level any more. Anything you read in an AutoGen-era tutorial no longer applies, which is worth
 knowing before you either adopt it or inherit a codebase that uses it.
 
-What replaced it is genuinely interesting, because it landed on a lot of the same ideas we did. AG2
+What replaced it landed on a lot of the same ideas we did. AG2
 1.0.4 has `Agent`, a durable `Task` with a checkpoint store and `resume_from`, an `AgentSpec` that
 describes an agent as data, typed dependency injection through `Inject` and `Depends`,
 `ResponseSchema` for structured output, `Task.cancel()`, and a `TestConfig` for scripting a model
 offline. Plus first-party modules for the Agent Client Protocol, agent-to-agent messaging,
-human-in-the-loop, evaluation and knowledge. You get the picture: this is the closest framework here
-to how we think.
+human-in-the-loop, evaluation and knowledge. You get the picture: of everything on these pages, AG2
+landed nearest to where we did.
 
 So this isn't a comparison between a typed framework and an untyped one. Both are typed. The
 differences are narrower and mostly about how far the types reach and where durability comes from.
@@ -127,7 +127,7 @@ It won't run on AG2 1.x unchanged either — the classic API is gone. If a rewri
 regardless, that's the moment to compare rather than assume.
 
 **What does AG2 do better?**
-Durable tasks with no infrastructure behind them, and a genuinely broad first-party protocol story for
+Durable tasks with no infrastructure behind them, and a broad first-party protocol story for
 a project of its size.
 
 **Are the two AgentSpecs compatible?**

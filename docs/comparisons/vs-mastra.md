@@ -5,8 +5,7 @@ workflows with snapshots and time travel, a memory system with several kinds of 
 scorers, a sandboxed way to run model-written TypeScript, a local dev server with a playground, and a
 hosted Studio and Cloud if you want them.
 
-It's a genuinely strong product, and if your stack is TypeScript it should be on your shortlist ahead
-of this page's conclusion. Pydantic AI is Python, so for a TypeScript team the honest answer is usually
+If your stack is TypeScript it belongs on your shortlist. Pydantic AI is Python, so for a TypeScript team the honest answer is usually
 Mastra or the Vercel AI SDK, and the rest of this page is for people whose agent is going to be in
 Python either way.
 
@@ -32,7 +31,6 @@ at once, adding a tool and auditing what the run emits:
 The auditor is not a separate observability product bolted on; it is the same
 extension unit that carries the tool, watching the events the run emits.
 """
-import asyncio
 from collections.abc import AsyncIterable
 
 from pydantic_ai import Agent, AgentStreamEvent, RunContext
@@ -75,9 +73,6 @@ async def main():
     #> the capability ran its own tool: True
     print('and saw the whole run:', len(refunds.seen), 'events')
     #> and saw the whole run: 7 events
-
-
-asyncio.run(main())
 ```
 
 

@@ -11,7 +11,7 @@ picked up useful things since we last looked: `max_budget_usd` caps what a run m
 permission handling, session resumption and hook events are all configurable.
 
 Pydantic AI runs the loop in your own process, on any model, with your own Python functions as tools.
-These are genuinely different tools and we're not going to pretend otherwise. The way to choose is to
+These are different tools and we're not going to pretend otherwise. The way to choose is to
 work out which side of one line your project sits on.
 
 ## The line: whose process is it

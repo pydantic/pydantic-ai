@@ -3,8 +3,8 @@
 smolagents takes an unusual position and takes it seriously: instead of asking the model for
 structured tool calls, it asks the model to write Python, then runs that Python. A `CodeAgent` loops —
 model writes code, sandbox runs it, output goes back — until the code calls `final_answer`. It's a
-small library with few dependencies, it's honest about its limits, and it's a genuinely good fit when
-the task is computational.
+small library with few dependencies, it's clear about its limits, and it fits when the task is
+computational.
 
 Its default sandbox is a restricted interpreter, not a container, and it says so. Running
 `import os` gets you *"Import of os is not allowed. Authorized imports are: collections, datetime,
@@ -29,26 +29,25 @@ thread. In Pydantic AI the tools are `async def` and the model can ask for sever
 ```python {title="parallel_tool_calls.py"}
 """Parallel tool calls in one turn.
 
-The model asks for three slow calls in one response; the async loop runs
-them concurrently. Wall time tracks the slowest, not the sum.
+The model asks for three slow calls in one response. The async loop starts all
+three before any of them finishes, so they overlap instead of queueing up.
 """
 import asyncio
-import time
 
-from pydantic_ai import Agent, capture_run_messages
+from pydantic_ai import Agent
 from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import FunctionModel
 
-started: list[str] = []
+events: list[str] = []
 
 
 async def model(messages, info):
     if len(messages) == 1:
         return ModelResponse(
             parts=[
-                ToolCallPart('slow', {'name': 'a', 'ms': 250}),
-                ToolCallPart('slow', {'name': 'b', 'ms': 250}),
-                ToolCallPart('slow', {'name': 'c', 'ms': 250}),
+                ToolCallPart('slow', {'name': 'a'}),
+                ToolCallPart('slow', {'name': 'b'}),
+                ToolCallPart('slow', {'name': 'c'}),
             ]
         )
     return ModelResponse(parts=[TextPart('done')])
@@ -58,34 +57,25 @@ agent = Agent(FunctionModel(model))
 
 
 @agent.tool
-async def slow(ctx, name: str, ms: int) -> str:
-    await asyncio.sleep(ms / 1000)
-    started.append(name)
+async def slow(ctx, name: str) -> str:
+    events.append(f'start:{name}')
+    await asyncio.sleep(0.01)
+    events.append(f'end:{name}')
     return f'{name}:done'
 
 
 async def main():
-    t0 = time.perf_counter()
-    with capture_run_messages() as msgs:
-        await agent.run('run the three jobs')
-    wall = time.perf_counter() - t0
-    seen = {p.content for m in msgs for p in m.parts if hasattr(p, 'content') and 'done' in str(getattr(p, 'content', ''))}
-    print(f'completed in parallel: {sorted(seen)}')
-    #> completed in parallel: ['a:done', 'b:done', 'c:done', 'done']
-    print(f'wall time: {wall:.2f}s (the three calls would take ~0.75s one after another)')
-    #> wall time: 0.26s (the three calls would take ~0.75s one after another)
-    assert {'a:done', 'b:done', 'c:done'} <= seen
-    assert wall < 0.7
-
-
-asyncio.run(main())
-
-
+    await agent.run('run the three jobs')
+    print('first three events:', events[:3])
+    #> first three events: ['start:a', 'start:b', 'start:c']
+    print('all started before any finished:', events[:3] == ['start:a', 'start:b', 'start:c'])
+    #> all started before any finished: True
 ```
 
 
-Three calls that would take about three quarters of a second in sequence finish in a quarter, because
-they actually overlapped.
+All three calls entered before any of them came back. Run them one at a time and the log reads
+`start:a`, `end:a`, `start:b` instead. That difference is the whole of it: three slow lookups cost you
+one slow lookup of wall time.
 
 The second is stopping. smolagents does have a stop: `agent.interrupt()` sets a flag the loop checks
 between steps. It works, but because the run is blocking you need another thread to call it, and what
@@ -120,7 +110,7 @@ Prefect, Restate, Kitaru, or Airflow without changing the agent.
 | Stopping a run | `interrupt()` sets a flag checked between steps; needs another thread | `CancellationToken`, `ctx.cancel()`, `RunCancelled` with resumable history |
 | Trusted state | Nothing separate from the prompt | `deps_type`, read by tools, invisible to the model |
 | Crash recovery | None in core | Six engines wrap the agent object |
-| Testing offline | Subclass `Model` yourself; it's a genuine place to plug in | `TestModel` calls your tools with no scripting; `FunctionModel` scripts them |
+| Testing offline | Subclass `Model` yourself | `TestModel` calls your tools with no scripting; `FunctionModel` scripts them |
 | Tracing | OpenInference spans under its own attribute names; zero `gen_ai.*` | The GenAI semantic conventions, 36 `gen_ai.*` attributes |
 | Budgets | Step caps; no money limit | `cost_limit` in USD across 41 providers, checked before the next request |
 | Evals | None in core | `pydantic-evals` in your test suite |

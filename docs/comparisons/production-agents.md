@@ -21,8 +21,6 @@ can't name it or ask for it.
 The password lives in deps. Only the tool may read it. The model only ever
 receives tool definitions; its request payload contains no secret.
 """
-import asyncio
-
 from pydantic_ai import Agent, capture_run_messages
 from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import FunctionModel
@@ -55,9 +53,6 @@ async def main():
     #> request payload contained the db password: False
     print(f'tool executed with deps ({result.output!r}); model saw only tool definitions')
     #> tool executed with deps ('done'); model saw only tool definitions
-
-
-asyncio.run(main())
 ```
 
 
@@ -123,9 +118,6 @@ def main() -> None:
     print('tools offered after load_capability:', seen[2][0])
     #> tools offered after load_capability: ['load_capability', 'refund_status']
     assert 'refund_status' not in seen[0][0], 'deferred tool was offered before loading'
-
-
-main()
 ```
 
 
@@ -174,7 +166,6 @@ def main():
         print('cancellation is a typed, catchable, resumable outcome')
         #> cancellation is a typed, catchable, resumable outcome
         assert len(history) >= 1
-main()
 ```
 
 
@@ -197,16 +188,14 @@ async def model(messages, info):
     await asyncio.sleep(3600)  # model appears to hang
 
 
-token = CancellationToken()
-agent = Agent(FunctionModel(model))
-
-
-def stop_handler():
-    time.sleep(0.5)
-    token.cancel()  # thread-safe: delivered onto the run's loop
-
-
 def main() -> None:
+    token = CancellationToken()
+    agent = Agent(FunctionModel(model))
+
+    def stop_handler():
+        time.sleep(0.1)
+        token.cancel()  # thread-safe: delivered onto the run's loop
+
     stop = threading.Thread(target=stop_handler)
     stop.start()
     try:
@@ -216,10 +205,6 @@ def main() -> None:
         stop.join()
         print('blocked run_sync interrupted from another thread -> RunCancelled')
         #> blocked run_sync interrupted from another thread -> RunCancelled
-        #> blocked run_sync interrupted from another thread -> RunCancelled
-
-
-main()
 ```
 
 
@@ -281,9 +266,6 @@ def main() -> None:
         print(f'tool executions that happened: {len(side_effects)}')
         #> tool executions that happened: 0
         assert not side_effects, 'a side effect ran despite the budget'
-
-
-main()
 ```
 
 
@@ -330,9 +312,6 @@ def main() -> None:
     print(f'unpriced model under a cost budget -> {names}')
     #> unpriced model under a cost budget -> ['CostNotFoundWarning']
     assert 'CostNotFoundWarning' in names
-
-
-main()
 ```
 
 
@@ -349,8 +328,6 @@ A run that dies mid-tool leaves a dangling tool call. The next run closes
 that call out (outcome=<interrupted>) before the request goes out, so the
 provider never rejects the history as malformed.
 """
-import asyncio
-
 from pydantic_ai import Agent, capture_run_messages
 from pydantic_ai.messages import (
     ModelRequest,
@@ -389,11 +366,7 @@ async def main():
     ]
     print('dangling tool call was repaired before the request went out:', bool(repaired))
     #> dangling tool call was repaired before the request went out: True
-    #> dangling tool call was repaired before the request went out: True
     assert repaired, 'the dangling tool call was not repaired'
-
-
-asyncio.run(main())
 ```
 
 
@@ -450,9 +423,6 @@ def main() -> None:
     print('the corrected spec loads:', agent.name)
     #> the corrected spec loads: support
     assert agent.name == 'support'
-
-
-main()
 ```
 
 
@@ -470,8 +440,6 @@ the final answer — and you consume them with a normal `async for`:
 Part deltas, tool calls, results, and the final result — all typed, all
 streamed. No framework opinion on what you do with them.
 """
-import asyncio
-
 from pydantic_ai import Agent
 from pydantic_ai.models.function import DeltaToolCall, FunctionModel
 
@@ -504,9 +472,6 @@ async def main():
     print('final output:', final)
     #> final output: 42
     assert 'FunctionToolCallEvent' in kinds
-
-
-asyncio.run(main())
 ```
 
 
@@ -558,10 +523,9 @@ Those spans went to a plain OpenTelemetry exporter, not to us. Point them at Log
 first-party view, or at Datadog, Honeycomb or Grafana, and the agent shows up in the GenAI dashboards
 those vendors already ship — because the attribute names match.
 
-For comparison, we counted distinct `gen_ai.*` attributes in each framework's source. Google ADK is a
-peer here and does this properly. The rest emit spans through third-party instrumentation that uses
-its own namespace — `llm.model_name`, `openinference.span.kind` — so a standards-based GenAI dashboard
-stays empty:
+We counted distinct `gen_ai.*` attributes in each framework's source. Google ADK emits them too. The
+rest go through third-party instrumentation using its own namespace — `llm.model_name`,
+`openinference.span.kind` — so a standards-based GenAI dashboard stays empty:
 
 | | Distinct `gen_ai.*` attributes |
 |---|---|
@@ -617,11 +581,7 @@ def main() -> None:
     averages = report.averages()
     print(f'assertions passed: {averages.assertions * 100:.0f}%')
     #> assertions passed: 100%
-    #> assertions passed: 100%
     assert averages.assertions == 1.0
-
-
-main()
 ```
 
 

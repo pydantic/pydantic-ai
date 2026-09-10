@@ -93,9 +93,6 @@ async def main():
     assert used
 
 
-asyncio.run(main())
-
-
 ```
 
 

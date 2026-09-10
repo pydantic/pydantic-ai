@@ -7,8 +7,8 @@ well documented, and it gets new OpenAI features first.
 
 It has grown a lot too. Version 0.22.2 puts guardrails on input, on output, and now on tool calls
 going both ways. Handoffs can filter and nest history. Streamed runs stop with
-`cancel(mode='immediate')` or `cancel(mode='after_turn')`, and `after_turn` is a nicer stop than
-anything we offer. Structured output is clean: hand it an `output_type` and it validates the model's
+`cancel(mode='immediate')` or `cancel(mode='after_turn')`, and we don't have an equivalent of
+`after_turn`. Structured output is clean: hand it an `output_type` and it validates the model's
 JSON into your type, no forced tool call.
 
 So what's actually left to argue about? Two things. Where your agent is allowed to run, and what

@@ -3,13 +3,13 @@
 Google's Agent Development Kit is the Gemini-native way to build agents in Python. You define an
 `LlmAgent`, hand it to a `Runner` with a session service, and the rest of Google's stack is close by:
 a web dev UI, first-party Google Search and MCP tools, planners, evaluation, agent-to-agent messaging,
-code executors, and deployment to Vertex AI. If your organisation is on Google Cloud, that adjacency
-is worth a lot.
+code executors, and deployment to Vertex AI. If your organisation is already on Google Cloud, that
+adjacency saves you real work.
 
 Version 2.8.0 is a big kit. Alongside `LlmAgent` you get `LoopAgent` and `ParallelAgent` for
 composing runs, and the `Runner` has picked up a resumability config and a `rewind_async` for stepping
-a session back. ADK is also one of only two frameworks here that emits the OpenTelemetry GenAI
-semantic conventions properly, which we'll come back to, because credit where it's due.
+a session back. ADK also emits the OpenTelemetry GenAI semantic conventions, which most of this
+field doesn't; we come back to that below.
 
 Pydantic AI is smaller and isn't tied to a cloud. The difference you hit first in production is what
 happens when somebody hits stop.
@@ -54,10 +54,7 @@ async def main():
     results = await asyncio.gather(*tasks, return_exceptions=True)
     print(f'runs cancelled by one token: {sum(isinstance(r, RunCancelled) for r in results)}/{CONCURRENT}')
     #> runs cancelled by one token: 3/3
-    #> runs cancelled by one token: 3/3
     assert all(isinstance(r, RunCancelled) for r in results)
-
-asyncio.run(main())
 
 
 ```
@@ -98,7 +95,7 @@ Airflow.
 | Crash recovery | Sessions plus resumability config and `rewind_async` | Six engines wrap the agent object, and the engine is your choice |
 | Testing offline | Subclass `BaseLlm` yourself | `TestModel` and `FunctionModel` included; real calls blockable globally |
 | Evals | An evaluation module tied to their tooling | `pydantic-evals` in your test suite using the agent's own types |
-| Tracing | The GenAI semantic conventions, done properly — 49 `gen_ai.*` attributes | The same conventions, 36 attributes; the one row here where we're peers |
+| Tracing | The GenAI semantic conventions, 49 `gen_ai.*` attributes | The same conventions, 36 attributes |
 | Deployment | Vertex AI is the paved road | Anywhere; it's a library |
 
 ## Choose Google ADK when

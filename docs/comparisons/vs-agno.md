@@ -4,7 +4,7 @@ Agno is two products that ship together. There's the library — `Agent`, `Team`
 knowledge, guardrails — and there's **AgentOS**, a runtime you deploy: a FastAPI application with
 prebuilt endpoints for sessions, memory, knowledge and evals, a control-plane UI, JWT auth with
 role-based access, storage, and background runs. If what you want is an agent service running by
-Friday, that combination is hard to beat, and nothing in Pydantic AI competes with it directly.
+Friday, that combination gets you there, and we don't ship anything that competes with it directly.
 
 Pydantic AI is only the library half. There's no runtime to deploy, no control plane, and no UI. You
 put the agent inside whatever you already run.
@@ -70,7 +70,7 @@ Restate, Kitaru, and Airflow have equivalents. You use whichever your company al
 ## What the tools are allowed to do
 
 Agno positions itself for coding agents and ships shell, file, and Python tools to match. Their
-defaults are worth understanding before you turn them on, and Agno documents them honestly — the shell
+defaults are worth understanding before you turn them on, and Agno documents them — the shell
 tool's own docstring says the command "is executed directly on the host OS" and tells you to gate it
 with `requires_confirmation_tools=["run_shell_command"]`.
 

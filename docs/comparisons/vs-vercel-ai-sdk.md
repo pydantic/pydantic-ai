@@ -3,7 +3,7 @@
 The Vercel AI SDK is the default way to talk to models from TypeScript, and its real strength isn't
 the agent loop — it's the wire between your server and your React app. Streaming text into a UI,
 rendering tool calls as they happen, asking the user to approve one, resuming after they answer: it
-does all of that well, and nothing in the Python ecosystem, ours included, matches it.
+does all of that well, and no Python library matches it, ours included.
 
 Version 7 has grown agent machinery too. There's a `ToolLoopAgent`, helpers for building an agent UI
 stream, a provider registry, middleware, tool approval errors as first-class types, and
@@ -91,7 +91,7 @@ without changing the agent.
 | | Vercel AI SDK 7.0.97 | Pydantic AI 2.42 |
 |---|---|---|
 | Language | TypeScript | Python |
-| Streaming to a UI | Its whole reason for existing, and excellent | Adapters, including for the AI SDK's protocol |
+| Streaming to a UI | Its whole reason for existing | Adapters, including for the AI SDK's protocol |
 | The agent loop | `ToolLoopAgent`, with `stopWhen` for control | The loop is a value; `agent.iter()` drives it step by step |
 | Stopping a run | `abortSignal` aborts the request | `RunCancelled` carries the conversation; resume is a normal run |
 | Trusted state | A loosely typed runtime context | `deps_type`, read by tools, invisible to the model |
