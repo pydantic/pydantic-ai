@@ -1,30 +1,20 @@
 # Pydantic AI vs smolagents
 
-**smolagents** is the smallest loop that runs agents — the model writes Python, a
-sandboxed executor runs it (with an allowlist of 11 stdlib modules, Docker/E2B/Modal/Blaxel options
-for real isolation), and the loop ends when the model calls `final_answer`.
+You're choosing a Python agent framework and have narrowed it to [Pydantic AI](../agent.md) and smolagents.
+This page makes the call — and lets you check the evidence yourself: every snippet runs offline,
+no API keys.
 
-**Pydantic AI** is a structured, async-first loop with a typed deps boundary, exact
-budgets, typed cancellation, and evals — the same seams for any provider.
+## Pydantic AI fits if you need
 
-*Verified against `smolagents 1.26.0` (2026-09-10). Pydantic AI claims below are self-contained
-scripts — offline, no API keys — re-executed by this repository's test suite.*
+- **structured async**: parallel tool calls, budgets, cancellation, event streams
+- a **deps boundary** — bounding what the model knows, not just where code runs
+- **evals in CI**, and seams that hold for every provider, not just Python-executing models
 
-## Quick comparison
+## Why the answers differ
 
-| What you get | smolagents | Pydantic AI |
-|---|---|---|
-| Runtime | Sync-only — the loop owns your thread; zero `asyncio`/`anyio` reference (grep-verified) | Async-first; concurrent tool calls run in parallel (proven below) |
-| Model interaction | Writes and executes Python in a sandbox | Calls typed tools with validated arguments |
-| Isolation | Code sandbox: `import os` and `open()` are forbidden; 11-module allowlist | Typed deps — the model cannot choose or see trusted state; tools hold the boundary |
-| Stopping | Only `final_answer` (model-driven) | Typed cancellation: `ctx.cancel()`, thread-safe token, catchable `RunCancelled` with resumable history |
-| Extension | Tools + the Model ABC (a real seam) | Capabilities: tools + instructions + hooks, deferrable, serializable |
-| Evals | Not first-party | Typed datasets + evaluators, CI-runnable offline |
+Their loop executes the code the model writes inside a sandbox; ours bounds the model itself with typed deps, and the loop is structured enough to limit, cancel, and observe. Different problems — the proof shows the concurrency their sync loop cannot have.
 
-## Prove it yourself
-
-Their loop is sequential by construction. Ours runs a model's batch of tool calls concurrently —
-three 250 ms calls finish in ~0.26 s, not ~0.75 s:
+## See it work
 
 ```python {title="parallel_tool_calls.py"}
 """Parallel tool calls in one turn.
@@ -77,6 +67,7 @@ async def main():
 
 
 asyncio.run(main())
+
 ```
 
 ```text
@@ -84,34 +75,24 @@ completed in parallel: ['a:done', 'b:done', 'c:done', 'done']
 wall time: 0.26s (the three calls would take ~0.75s one after another)
 ```
 
-Concurrency is not the point by itself — it's why budgets, cancellation, and event streams work at
-all: the loop is structured, so it can be limited, interrupted, and observed.
+## The details
 
-## Key differences
+| What you get | smolagents | Pydantic AI |
+|---|---|---|
+|---|---|---|
+| Runtime | Sync-only — the loop owns your thread; zero `asyncio`/`anyio` reference (grep-verified) | Async-first; concurrent tool calls run in parallel (proven below) |
+| Model interaction | Writes and executes Python in a sandbox | Calls typed tools with validated arguments |
+| Isolation | Code sandbox: `import os` and `open()` are forbidden; 11-module allowlist | Typed deps — the model cannot choose or see trusted state; tools hold the boundary |
+| Stopping | Only `final_answer` (model-driven) | Typed cancellation: `ctx.cancel()`, thread-safe token, catchable `RunCancelled` with resumable history |
+| Extension | Tools + the Model ABC (a real seam) | Capabilities: tools + instructions + hooks, deferrable, serializable |
+| Evals | Not first-party | Typed datasets + evaluators, CI-runnable offline |
 
-**smolagents.** agentic code execution with real sandboxing options is a genuinely different model —
-and their allowlist is a sane default for it.
+## If this answer doesn't fit you
 
-**Pydantic AI.** the boundary is about *what the model is allowed to know and do*, not only where code runs.
-A typed deps boundary, budgets that halt before side effects, resumable cancellation, and evals in
-CI all exist because the loop is structured async — and they hold for every provider, not just
-Python-executing models.
+If your agent's job is writing and running Python, smolagents is the minimal, focused solution, and its sandboxing story (allowlist; Docker/E2B/Modal/Blaxel) is real. That's a different axis from production loop control — this page demonstrates the axis it doesn't cover.
 
-## When to choose smolagents
+---
 
-Your agent's job is writing and running Python, and you want the smallest thing that does that —
-with their sandboxing story.
+---
 
-## When to choose Pydantic AI
-
-You want a production loop: parallel execution, exact budgets, typed cancellation, offline tests —
-and the model's reach bounded by deps, not just a sandbox wall.
-
-## Summary
-
-Their loop is a sandbox for the code the model writes; ours is a structured loop that bounds the
-model itself. Three 250 ms calls finished in 0.26 s.
-
-*smolagents behavior pinned to 1.26.0 (installed, probed); records in the
-[framework-comparison series](https://github.com/pydantic/pydantic-ai-notes). Pydantic AI verified
-on 2.42.0, 2026-09-10.*
+*Versions: smolagents 1.26.0; Pydantic AI 2.42.0 — 2026-09-10. Snippets re-executed by this repository's tests.*

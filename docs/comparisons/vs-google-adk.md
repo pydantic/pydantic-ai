@@ -1,31 +1,20 @@
 # Pydantic AI vs Google ADK
 
-**Google ADK** is a full-surface agent framework from a cloud vendor — `LlmAgent` config,
-workflows with a builder, in-memory services, code executors (including subprocess interpreters via
-anyio), and A2A for interop.
+You're choosing a Python agent framework and have narrowed it to [Pydantic AI](../agent.md) and Google ADK.
+This page makes the call — and lets you check the evidence yourself: every snippet runs offline,
+no API keys.
 
-**Pydantic AI** is a typed loop with cancellation as a first-class, resumable outcome —
-plus capabilities, deps, budgets, evals, and durability wraps.
+## Pydantic AI fits if you need
 
-*Verified against Google ADK 2026-09 (adk-venv install; docs-grounded where noted). Pydantic AI
-claims below are self-contained scripts — offline, no API keys — re-executed by this repository's
-test suite.*
+- a **stop gesture that interrupts cleanly** — from a thread, a tool, or one token governing many runs
+- interruption that **resumes with history intact**
+- cancellation as a typed outcome, plus deps, budgets, and evals
 
-## Quick comparison
+## Why the answers differ
 
-| What you get | Google ADK | Pydantic AI |
-|---|---|---|
-| Foundation | Deeply anyio-internal (task groups, `fail_after`, interceptors) — arguably the closest to us in the anyio world | asyncio-native with the same anyio primitives at the seams |
-| Cancellation | **No user cancellation API**: `def cancel` exists only in the A2A executor; the runner surfaces nothing | Typed: `CancellationToken` (thread-safe, one token = many runs — proven below), `ctx.cancel()`, catchable `RunCancelled` |
-| Extension | Agent/Workflow classes + code executors | Capabilities: one unit, deferrable, serializable, event-stream-aware |
-| Trusted state | Handlers receive app context | `deps_type` boundary — the model cannot choose or see it |
-| Durable | Workflows; checkpointing is your responsibility | Six engine wraps on the public interface (Temporal/DBOS/Prefect/Restate/Kitaru/Airflow) |
-| Evals | `evaluation` module exists | Typed datasets + evaluators, CI-runnable offline |
+ADK runs deep anyio — the primitives exist — but its runner exposes no user cancellation API that we could find. We ship cancellation as a product on the same primitives: typed, thread-safe, resumable. One token cancelling three concurrent runs is the small version.
 
-## Prove it yourself
-
-They have the primitives (anyio task groups) but no user-facing cancel. Here one token stops three
-concurrent runs:
+## See it work
 
 ```python {title="one_token_many_runs.py"}
 """One stop gesture, many runs: a CancellationToken governs every run it was
@@ -55,38 +44,31 @@ async def main():
     assert all(isinstance(r, RunCancelled) for r in results)
 
 asyncio.run(main())
+
 ```
 
 ```text
 runs cancelled by one token: 3/3
 ```
 
+## The details
 
-The cancellation machinery is ours because the loop is ours — attribution between your cancel and an
-external `CancelledError` (external wins), plus the resumable history, are part of the same seam.
+| What you get | Google ADK | Pydantic AI |
+|---|---|---|
+|---|---|---|
+| Foundation | Deeply anyio-internal (task groups, `fail_after`, interceptors) — arguably the closest to us in the anyio world | asyncio-native with the same anyio primitives at the seams |
+| Cancellation | **No user cancellation API**: `def cancel` exists only in the A2A executor; the runner surfaces nothing | Typed: `CancellationToken` (thread-safe, one token = many runs — proven below), `ctx.cancel()`, catchable `RunCancelled` |
+| Extension | Agent/Workflow classes + code executors | Capabilities: one unit, deferrable, serializable, event-stream-aware |
+| Trusted state | Handlers receive app context | `deps_type` boundary — the model cannot choose or see it |
+| Durable | Workflows; checkpointing is your responsibility | Six engine wraps on the public interface (Temporal/DBOS/Prefect/Restate/Kitaru/Airflow) |
+| Evals | `evaluation` module exists | Typed datasets + evaluators, CI-runnable offline |
 
-## Key differences
+## If this answer doesn't fit you
 
-**Google ADK.** the vendor surface is real — workflows, code executors, service layers, A2A — and
-their anyio depth is genuinely close to ours.
+If you want a vendor-maintained full-surface framework on the Google stack — workflows builder, code executors, A2A — ADK is a deliberate choice, and its anyio depth is real. Its runner's lack of a user cancellation surface is the specific gap this page's proof addresses.
 
-**Pydantic AI.** on top of the same primitives we ship cancellation as a product: typed, thread-safe,
-multi-run, resumable. ADK's own anyio task groups could do it — but the API isn't shipped.
+---
 
-## When to choose Google ADK
+---
 
-You want a vendor-maintained full-surface framework — workflows builder, code executors, A2A — and
-cancellation is not your product concern (or you're already on the Google stack).
-
-## When to choose Pydantic AI
-
-A stop gesture, a quota check, or a human approval must interrupt the run cleanly — and resume with
-history intact. One token cancelling 3 concurrent runs is the small version of that.
-
-## Summary
-
-Their anyio internals are infrastructure; our cancellation is an outcome. 3/3.
-
-*Google ADK behavior docs/install-grounded 2026-09; records in the
-[framework-comparison series](https://github.com/pydantic/pydantic-ai-notes). Pydantic AI verified on
-2.42.0, 2026-09-10.*
+*Versions: Google ADK (install/docs); Pydantic AI 2.42.0 — 2026-09. Snippets re-executed by this repository's tests.*

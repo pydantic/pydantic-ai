@@ -1,29 +1,20 @@
 # Pydantic AI vs Mastra
 
-**Mastra** is a batteries-included TS/Node framework — agents, tools, workflows,
-observability, and evals under one roof, with a processor-style extension model.
+You're choosing a Python agent framework and have narrowed it to [Pydantic AI](../agent.md) and Mastra.
+This page makes the call — and lets you check the evidence yourself: every snippet runs offline,
+no API keys.
 
-**Pydantic AI** is one extension unit — a capability can carry tools, defer, and observe
-or transform the run's event stream — on a typed, async-first Python loop.
+## Pydantic AI fits if you need
 
-*Verified against Mastra docs 2026-09 (TS framework; docs-grounded). Pydantic AI claims below are
-self-contained scripts — offline, no API keys — re-executed by this repository's test suite.*
+- a **Python** agent
+- **one extension unit** that reaches the seams — including the event stream
+- deps, budgets, cancellation, and evals on the same loop
 
-## Quick comparison
+## Why the answers differ
 
-| What you get | Mastra | Pydantic AI |
-|---|---|---|
-| Stack | TS/Node; agents + workflows + tools in one package | Python 3.10+; packages split: core, evals, graph |
-| Extension | Processors/guardrails/workflow concepts | Capabilities: one unit (tools + instructions + hooks), deferrable, serializable |
-| Observability | Built-in (a real strength) | OTel + Logfire instrumentation; your capability can also see the stream (proven below) |
-| Typed seams | Zod at boundaries | `deps_type` through construction, tools, specs, tests, evals |
-| Cancellation | TS `AbortSignal` norm | Typed: `ctx.cancel()`, thread-safe token, catchable `RunCancelled` with resumable history |
-| Tests/evals | Vitest + their evals | Offline `TestModel`/`FunctionModel` + typed datasets, CI-runnable |
+Their observability is a module; our auditor is a capability — the same unit that bundles tools can wrap the run's events. Same concern, one product ship versus one extension noun.
 
-## Prove it yourself
-
-An auditor that sees every tool call and result is not a separate observability product — it's a
-capability, the same unit that bundles tools:
+## See it work
 
 ```python {title="capability_observes_events.py"}
 """Your auditor is just a capability.
@@ -73,39 +64,31 @@ async def main():
     assert 'FinalResultEvent' in aud.seen
 
 asyncio.run(main())
+
 ```
 
 ```text
 auditor (a capability) observed: ['PartStartEvent', 'PartEndEvent', 'FunctionToolCallEvent', 'FunctionToolResultEvent', 'PartStartEvent', 'FinalResultEvent', 'PartEndEvent']
 ```
 
+## The details
 
-One extension model, and it reaches the event stream: your auditor, your UI adapter, your approval
-gate are all just capabilities.
+| What you get | Mastra | Pydantic AI |
+|---|---|---|
+|---|---|---|
+| Stack | TS/Node; agents + workflows + tools in one package | Python 3.10+; packages split: core, evals, graph |
+| Extension | Processors/guardrails/workflow concepts | Capabilities: one unit (tools + instructions + hooks), deferrable, serializable |
+| Observability | Built-in (a real strength) | OTel + Logfire instrumentation; your capability can also see the stream (proven below) |
+| Typed seams | Zod at boundaries | `deps_type` through construction, tools, specs, tests, evals |
+| Cancellation | TS `AbortSignal` norm | Typed: `ctx.cancel()`, thread-safe token, catchable `RunCancelled` with resumable history |
+| Tests/evals | Vitest + their evals | Offline `TestModel`/`FunctionModel` + typed datasets, CI-runnable |
 
-## Key differences
+## If this answer doesn't fit you
 
-**Mastra.** the all-in-one TS package with built-in observability and workflows is a genuinely
-batteries-included offer for the JS ecosystem.
+If your stack is TypeScript and agents + workflows + observability from one package is the offer you want, Mastra is built for that. For a Python loop where the extension unit reaches the event stream, this page shows what that looks like.
 
-**Pydantic AI.** extension is one noun with prod reach — the capability that adds a tool can also wrap the
-run's events, defer loading, and serialize into a spec. Observability is a capability, not a module
-you bolt on the side.
+---
 
-## When to choose Mastra
+---
 
-Your stack is TypeScript and you want agents + workflows + observability from one package.
-
-## When to choose Pydantic AI
-
-You want the loop in Python where the extension unit reaches the seams — including the event stream
-— and the production checklist (deps, budgets, cancellation, evals).
-
-## Summary
-
-Their observability is a module; our auditor is a capability. The same unit that observes
-'['PartStartEvent', 'PartEndEvent', 'FunctionToolCallEvent', 'FunctionToolResultEvent', 'PartStartEvent', 'FinalResultEvent', 'PartEndEvent']' was built-in to the agent — no extra product.
-
-*Mastra behavior docs-grounded 2026-09; records in the
-[framework-comparison series](https://github.com/pydantic/pydantic-ai-notes). Pydantic AI verified
-on 2.42.0, 2026-09-10.*
+*Versions: Mastra (docs); Pydantic AI 2.42.0 — 2026-09. Snippets re-executed by this repository's tests.*

@@ -1,30 +1,20 @@
 # Pydantic AI vs AG2
 
-**AG2** is the protocol-rich framework — the v1 rewrite ships a checkpointed `Task` state
-machine (`checkpoint_store`, `resume_from`), its own `AgentSpec`, `Inject`/`Depends` typed inputs,
-`ResponseSchema`, and envelopes for cancel/expire/fail.
+You're choosing a Python agent framework and have narrowed it to [Pydantic AI](../agent.md) and AG2.
+This page makes the call — and lets you check the evidence yourself: every snippet runs offline,
+no API keys.
 
-**Pydantic AI** is an agent that is data — a spec that fails at load, serializes with a
-companion schema, and runs offline — plus durable wraps and typed, repairable history.
+## Pydantic AI fits if you need
 
-*Verified against `ag2 1.0.4` (2026-09-10). Pydantic AI claims below are self-contained scripts —
-offline, no API keys — re-executed by this repository's test suite.*
+- the **agent as data**: a spec validated against types at load, shipped as YAML + schema, run offline
+- **typed, repairable history** on an ordinary loop
+- durability by wrapping six engines — not adopting one state machine
 
-## Quick comparison
+## Why the answers differ
 
-| What you get | AG2 | Pydantic AI |
-|---|---|---|
-| Agent as data | `AgentSpec` + `ResponseSchema` (the closest spec story among competitors) | `AgentSpec`: templates validated against typed deps at load; YAML + JSON schema + round-trip (proven below) |
-| Durability | Checkpointed `Task` with `resume_from` — a durable *state machine* | Six engine wraps; the run stays an ordinary coroutine |
-| Cancellation | Durable envelope: `Task.cancel()` flips metadata, emits `TaskCancelled`; no in-flight abort | Typed in-process cancel (`ctx.cancel()`, token) + durable units raise an explanatory error (replay-safety) |
-| Typed inputs | `Inject`/`Depends`/`ResponseSchema` | One `deps_type` from construction through tools, specs, tests, evals |
-| History | Task state | Typed, repairable message history |
+Both treat the agent as data — AG2 as a checkpointed task protocol, ours as a validated spec on an ordinary loop. Where it shows: validation at load, a file + schema, and offline execution.
 
-## Prove it yourself
-
-Their spec protocol is the closest to ours — so prove the difference where it matters: validation at
-load, a file + companion schema, and an agent that runs offline from that file. YAML round-trips need
-the optional `spec` extra for PyYAML (`pip install 'pydantic-ai[spec]'`):
+## See it work
 
 ```python {title="spec_data_roundtrip.py"}
 """The agent is data: spec -> YAML + JSON schema -> a running agent.
@@ -66,6 +56,7 @@ print(f'spec -> YAML + schema file (exists={exists}) -> running agent, offline')
 print(f'loaded-from-file output: {result.output!r}')
 assert exists
 assert result.output == 'success (no tool calls)'
+
 ```
 
 ```text
@@ -73,32 +64,23 @@ spec -> YAML + schema file (exists=True) -> running agent, offline
 loaded-from-file output: 'success (no tool calls)'
 ```
 
+## The details
 
-## Key differences
+| What you get | AG2 | Pydantic AI |
+|---|---|---|
+|---|---|---|
+| Agent as data | `AgentSpec` + `ResponseSchema` (the closest spec story among competitors) | `AgentSpec`: templates validated against typed deps at load; YAML + JSON schema + round-trip (proven below) |
+| Durability | Checkpointed `Task` with `resume_from` — a durable *state machine* | Six engine wraps; the run stays an ordinary coroutine |
+| Cancellation | Durable envelope: `Task.cancel()` flips metadata, emits `TaskCancelled`; no in-flight abort | Typed in-process cancel (`ctx.cancel()`, token) + durable units raise an explanatory error (replay-safety) |
+| Typed inputs | `Inject`/`Depends`/`ResponseSchema` | One `deps_type` from construction through tools, specs, tests, evals |
+| History | Task state | Typed, repairable message history |
 
-**AG2.** the v1 rewrite is genuinely different — a durable task state machine with envelopes
-is the right shape when the *whole system* is checkpointed, and their protocol surface (ACP, A2A,
-hitl, live) is broad.
+## If this answer doesn't fit you
 
-**Pydantic AI.** the spec is validated against typed deps at load (dict/YAML path), serializes with a schema
-file, and the loaded agent runs offline. Durable units wrap the same ordinary run; `ctx.cancel()`
-inside a unit raises an explanatory error instead of replay-diverging.
+If your system is built around checkpointed task state machines and envelopes across protocols (ACP/A2A/live), AG2's v1 design is the deliberate architecture for that. Their spec protocol is the closest competitor to what this page demonstrates — the difference is what validated agent at load time.
 
-## When to choose AG2
+---
 
-You are building a checkpointed, protocol-spanning system (multi-agent with ACP/A2A/live) and your
-durable unit of truth is the task state machine.
+---
 
-## When to choose Pydantic AI
-
-You want an agent that is data you can validate, ship, and run — with the loop staying yours, typed
-history, and durable engines you choose.
-
-## Summary
-
-Both treat the agent as data. Ours validates it against deps at load and runs it offline:
-'success (no tool calls)'.
-
-*AG2 behavior pinned to 1.0.4 (installed, probed); records in the
-[framework-comparison series](https://github.com/pydantic/pydantic-ai-notes). Pydantic AI verified
-on 2.42.0, 2026-09-10.*
+*Versions: ag2 1.0.4; Pydantic AI 2.42.0 — 2026-09-10. Snippets re-executed by this repository's tests.*

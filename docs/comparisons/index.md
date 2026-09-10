@@ -1,12 +1,17 @@
 # Pydantic AI vs other agent frameworks
 
-Pydantic AI is the de facto, Pythonic way to write agents in Python. These pages compare it against
-the agent frameworks people actually reach for. Each page compares what the frameworks
-actually ship, with every claim runnable on your laptop and framework versions documented on the page.
+You're choosing an agent framework, and you've likely got a shortlist. This series is how you decide.
 
-We ship **primitives, not decisions**: typed, composable seams (capabilities, events, dependencies,
-durability engines) that you wire yourself. We don't pick your architecture. Most comparisons below
-prove that in under 25 lines of code you can run offline — no API keys.
+- **Narrowed it to two?** Pick that page below — each one starts with the answer, then proves it
+  with code you can run offline in seconds, no API keys.
+- **Deciding broadly?** Start with [the production checklist](production-agents.md) — what a shipped
+  agent actually requires, demonstrated row by row. Hold every framework you're considering to that
+  list, including us.
+
+The thread through all of it: we ship **primitives, not decisions** — typed, composable seams
+(dependencies, capabilities, events, durable engines) that you wire yourself. We don't pick your
+architecture, and we don't expect you to take our word; every claim on these pages runs on your
+laptop. Framework versions are documented on each page.
 
 ## The comparisons
 

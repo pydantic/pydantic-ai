@@ -1,33 +1,22 @@
 # Pydantic AI vs Claude Agent SDK
 
-**Claude Agent SDK** is the harness that powers Claude Code as a library — you configure
-the `claude` process (skills, hooks, permissions, substitutions) and drive it over a subprocess
-protocol.
+You're choosing a Python agent framework and have narrowed it to [Pydantic AI](../agent.md) and Claude Agent SDK.
+This page makes the call — and lets you check the evidence yourself: every snippet runs offline,
+no API keys.
 
-**Pydantic AI** is the loop is an object in *your* process — typed, testable,
-cancellable, wrap-able — and the same seams (deps, capabilities, cancellation, evals) that work for
-any provider.
+## Pydantic AI fits if you need
 
-*Verified against `claude-agent-sdk 0.2.87` / `claude` CLI (2026-09-10). Pydantic AI claims below are
-self-contained scripts — offline, no API keys — re-executed by this repository's test suite.*
+- the loop **in your process** — typed, cancellable, testable, wrap-able
+- a **deps boundary** and budgets that halt before side effects
+- **offline tests** that need no subprocess
+- Claude models available, plus your choice of any other provider
+- durability by wrapping (a subprocess cannot be wrapped)
 
-## Quick comparison
+## Why the answers differ
 
-| What you get | Claude Agent SDK | Pydantic AI |
-|---|---|---|
-| Runtime | A `claude` **subprocess** driven over a JSON protocol | The run is a value in your process (proven below) |
-| Extension | Config surface — hooks, plugins, skills for *their* harness | Typed capabilities in your code, deferrable + serializable |
-| Trusted state | Environment / context handed to the harness | `deps_type` — a boundary the model cannot cross |
-| Cancellation | Stop = kill the subprocess | Typed: `CancellationToken` (thread-safe), `ctx.cancel()`, catchable `RunCancelled` with resumable history |
-| History | Resume by session id (the CLI's state) | Typed, repairable history you can pass between runs |
-| Offline tests | Their harness; stub-level control is theirs to expose | `TestModel` / `FunctionModel` drive the whole pipeline |
-| Events | JSON protocol: `SystemMessage` → `AssistantMessage` → `ResultMessage` | Typed stream (part/tool/result/final), transformable by capabilities |
-| Cascade | Prompt caching, Claude models, harness default behaviors | You can use Claude models too ([`anthropic` provider](../models/anthropic.md)) — but the loop is yours |
+Theirs is a harness you configure — skills, hooks, permissions for their process. Ours is a value you drive; the proof below runs the loop node by node inside your own PID. The difference is who owns the process.
 
-## Prove it yourself
-
-Two claims, one script. The run has node structure you can drive — and it executes in your pid, not
-in a child process you configure and kill.
+## See it work
 
 ```python {title="in_process_loop.py"}
 """The loop is an object in your process — not a harness you configure.
@@ -70,6 +59,7 @@ async def main():
 
 
 asyncio.run(main())
+
 ```
 
 ```text
@@ -77,34 +67,26 @@ nodes: UserPromptNode -> ModelRequestNode -> CallToolsNode -> ModelRequestNode -
 the loop ran in your own process: True
 ```
 
-That's the whole difference in one word: **ownership**. Theirs is a harness you configure; ours is a
-value you drive. You keep your signals, your exits, your profilers, your process supervision around
-the loop — nothing is spawned to run the agent.
+## The details
 
-## Key differences
+| What you get | Claude Agent SDK | Pydantic AI |
+|---|---|---|
+|---|---|---|
+| Runtime | A `claude` **subprocess** driven over a JSON protocol | The run is a value in your process (proven below) |
+| Extension | Config surface — hooks, plugins, skills for *their* harness | Typed capabilities in your code, deferrable + serializable |
+| Trusted state | Environment / context handed to the harness | `deps_type` — a boundary the model cannot cross |
+| Cancellation | Stop = kill the subprocess | Typed: `CancellationToken` (thread-safe), `ctx.cancel()`, catchable `RunCancelled` with resumable history |
+| History | Resume by session id (the CLI's state) | Typed, repairable history you can pass between runs |
+| Offline tests | Their harness; stub-level control is theirs to expose | `TestModel` / `FunctionModel` drive the whole pipeline |
+| Events | JSON protocol: `SystemMessage` → `AssistantMessage` → `ResultMessage` | Typed stream (part/tool/result/final), transformable by capabilities |
+| Cascade | Prompt caching, Claude models, harness default behaviors | You can use Claude models too ([`anthropic` provider](../models/anthropic.md)) — but the loop is yours |
 
-**Claude Agent SDK.** the product is real — Claude Code's skills, hooks, and subprocess isolation are
-battle-tested behaviors, and prompt caching with their models is a first-party advantage.
+## If this answer doesn't fit you
 
-**Pydantic AI.** everything meaningful about the run is inspectable and changeable from your code: typed
-deps, budgets that halt before side effects, cancellation that is a catchable, resumable exception,
-evals in CI, and durability by wrapping — none of which exist for a loop you can't reach into.
+If what you want is the Claude Code harness — its skills, hooks, and subprocess isolation — their SDK gives you that product directly, and no loop-level feature here replaces the harness's defaults. What the harness can't give you is a loop you can reach into; this page is the difference.
 
-## When to choose Claude Agent SDK
+---
 
-Your agent *is* the Claude Code process: you want its skills, hooks, and default behaviors, or you
-are building for Studio/IDE surfaces and want the subprocess isolation it gives you.
+---
 
-## When to choose Pydantic AI
-
-You want the loop in your process with typed seams and your choice of provider, models included.
-The harness boundaries exist for exactly this reason: a CLI is great until you need to read the run.
-
-## Summary
-
-They ship a harness you configure; we ship a loop you drive. Same family of models available either
-way — the difference is who owns the process.
-
-*Claude SDK behavior pinned to 0.2.87; probe records in the
-[framework-comparison series](https://github.com/pydantic/pydantic-ai-notes). Pydantic AI behavior
-verified on 2.42.0, 2026-09-10.*
+*Versions: claude-agent-sdk 0.2.87; Pydantic AI 2.42.0 — 2026-09-10. Snippets re-executed by this repository's tests.*

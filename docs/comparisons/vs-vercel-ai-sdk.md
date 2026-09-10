@@ -1,28 +1,20 @@
 # Pydantic AI vs Vercel AI SDK
 
-**Vercel AI SDK** is the JS/TS standard for AI apps — `generateText`, tool loops,
-streaming UI helpers, `AbortSignal` as the cancellation norm, and provider-agnostic adapters.
+You're choosing a Python agent framework and have narrowed it to [Pydantic AI](../agent.md) and Vercel AI SDK.
+This page makes the call — and lets you check the evidence yourself: every snippet runs offline,
+no API keys.
 
-**Pydantic AI** is a typed Python loop where the wire semantics of the result are
-explicit, cancellation is a typed resumable outcome, and every seam is a type.
+## Pydantic AI fits if you need
 
-*Verified against Vercel AI SDK 5 (specVersion `v2`; 2026-09-10). Pydantic AI claims below are
-self-contained scripts — offline, no API keys — re-executed by this repository's test suite.*
+- a **Python 3.10+** agent
+- **result semantics declared by the framework** — a transform, a schema, native parts — not interpreted by your handler
+- the Python-side checklist: deps boundary, budgets, resumable cancellation
 
-## Quick comparison
+## Why the answers differ
 
-| What you get | Vercel AI SDK | Pydantic AI |
-|---|---|---|
-| Language/runtime | TS/JS + your framework (Next/Express) | Python 3.10+, asyncio-native |
-| Result shape | `generateText` returns data; your handler decides | Output **transports** are explicit: a transform, a schema, a tool, native parts (proven below) |
-| Cancellation | `AbortSignal` — the JS norm, forwarded into providers | Typed: `ctx.cancel()`, thread-safe token, catchable `RunCancelled` with resumable history |
-| Extensions | Providers, tool sets, experimental agents | Capabilities: one unit, deferrable, serializable |
-| Durable | Your infrastructure | Six engine wraps on the public interface |
+Their loop is the norm for TypeScript; ours is a typed contract for Python. Where it shows: what a response *becomes* is part of the agent's type, not a post-processing decision.
 
-## Prove it yourself
-
-Their `generateText` hands you a result object; ours lets you declare what a response *becomes* —
-a transform or a schema-validated dict:
+## See it work
 
 ```python {title="output_transports.py"}
 """Wire semantics are explicit: the output transport decides how a response
@@ -56,6 +48,7 @@ out = agent2.run_sync('q').output
 print(f'StructuredDict: {out!r} is a {type(out).__name__}')
 assert agent.run_sync('q').output == 'HELLO WORLD'
 assert out == {'n': 7}
+
 ```
 
 ```text
@@ -63,33 +56,23 @@ TextOutput(fn): HELLO WORLD
 StructuredDict: {'n': 7} is a dict
 ```
 
+## The details
 
-The shape of your result is part of the agent's type — the same type that flows into tests and evals.
+| What you get | Vercel AI SDK | Pydantic AI |
+|---|---|---|
+|---|---|---|
+| Language/runtime | TS/JS + your framework (Next/Express) | Python 3.10+, asyncio-native |
+| Result shape | `generateText` returns data; your handler decides | Output **transports** are explicit: a transform, a schema, a tool, native parts (proven below) |
+| Cancellation | `AbortSignal` — the JS norm, forwarded into providers | Typed: `ctx.cancel()`, thread-safe token, catchable `RunCancelled` with resumable history |
+| Extensions | Providers, tool sets, experimental agents | Capabilities: one unit, deferrable, serializable |
+| Durable | Your infrastructure | Six engine wraps on the public interface |
 
-## Key differences
+## If this answer doesn't fit you
 
-**Vercel AI SDK.** it is the standard for TS teams with real UI ergonomics (streaming, AgentCost usage,
-skills protocol, approvals) on the platform you already deploy.
+If your application is TypeScript, Vercel AI SDK is the ecosystem default with real UI ergonomics — streaming, tool loops, provider adapters, skills protocol. This page is about the Python loop, and the semantics your framework should own for you.
 
-**Pydantic AI.** the Python loop is typed end to end — explicit output transports, a deps boundary, budgets
-that halt before side effects, cancellation that resumes. If your stack is Python (or your team is),
-the seams are stronger than what the JS norm provides.
+---
 
-## When to choose Vercel AI SDK
+---
 
-Your app is TypeScript and you want the ecosystem default — streaming UI, tool loops, provider
-adapters.
-
-## When to choose Pydantic AI
-
-Your agent is Python and the result semantics matter: a response that is explicitly transformed
-(`HELLO WORLD`) or validated (`{'n': 7}` is a dict) rather than an object you interpret.
-
-## Summary
-
-Their loop is the norm for TS; ours is a typed contract for Python. `TextOutput(fn)` → HELLO WORLD
-StructuredDict: {'n': 7} is a dict; `StructuredDict` → {'n': 7} is a dict.
-
-*Vercel AI SDK behavior pinned (docs + probe); records in the
-[framework-comparison series](https://github.com/pydantic/pydantic-ai-notes). Pydantic AI verified
-on 2.42.0, 2026-09-10.*
+*Versions: Vercel AI SDK 5; Pydantic AI 2.42.0 — 2026-09-10. Snippets re-executed by this repository's tests.*

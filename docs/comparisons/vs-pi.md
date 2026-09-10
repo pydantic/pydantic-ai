@@ -1,29 +1,20 @@
 # Pydantic AI vs Pi
 
-**Pi** is a shipped coding agent — a polished CLI (TUI, skills, memory, provider
-catalog) built on the same harness primitives, with a deliberate no-sandbox security stance.
+You're choosing a Python agent framework and have narrowed it to [Pydantic AI](../agent.md) and Pi.
+This page makes the call — and lets you check the evidence yourself: every snippet runs offline,
+no API keys.
 
-**Pydantic AI / pydantic-ai-harness** is the harness as a library — `CodeMode` (Monty),
-`FileSystem`, `Shell`, subagents, compaction, skills, memory, and ACP, each a replaceable
-capability, on the typed, durable loop.
+## Pydantic AI fits if you need
 
-*Verified against pi (installed CLI) and pydantic-harness @ `1ad638f8` (2026-09-10). Pydantic AI
-claims below are self-contained scripts — offline, no API keys — re-executed by this repository's
-test suite.*
+- you are **building the product**: the loop in your process, harness capabilities as libraries, durable execution under it
+- pydantic-ai-harness: `CodeMode`, `FileSystem`, `Shell`, subagents, compaction, skills, ACP — replaceable
+- the same primitives across agents and coding
 
-## Quick comparison
+## Why the answers differ
 
-| What you get | Pi | Pydantic AI |
-|---|---|---|
-| Shape | A CLI you run | A library you build into your product |
-| The loop | Shipped, in the app | Yours: drive it, wrap it, cancel it (proven below) |
-| Extensions | Skills (frontmatter), your config | Capabilities: replaceable and composable, same units as any agent |
-| Security | No-sandbox stance, documented | Sandbox/harness isolation is a composable choice (Harness) |
-| Durable | — | Six engine wraps on the public interface |
+Pi is the harness shipped as a CLI; Pydantic AI is the harness as a library. Same family — the difference is ownership: you run Pi; you build with us.
 
-## Prove it yourself
-
-The loop that a CLI ships is an object in your process when you need it to be:
+## See it work
 
 ```python {title="in_process_loop.py"}
 """The loop is an object in your process — not a harness you configure.
@@ -66,6 +57,7 @@ async def main():
 
 
 asyncio.run(main())
+
 ```
 
 ```text
@@ -73,30 +65,23 @@ nodes: UserPromptNode -> ModelRequestNode -> CallToolsNode -> ModelRequestNode -
 the loop ran in your own process: True
 ```
 
-Pi is a product built on these primitives; the harness is the primitives themselves, ran anywhere.
+## The details
 
-## Key differences
+| What you get | Pi | Pydantic AI |
+|---|---|---|
+|---|---|---|
+| Shape | A CLI you run | A library you build into your product |
+| The loop | Shipped, in the app | Yours: drive it, wrap it, cancel it (proven below) |
+| Extensions | Skills (frontmatter), your config | Capabilities: replaceable and composable, same units as any agent |
+| Security | No-sandbox stance, documented | Sandbox/harness isolation is a composable choice (Harness) |
+| Durable | — | Six engine wraps on the public interface |
 
-**Pi.** pi is a genuinely good product — TUI, skills, memory, provider compatibility table,
-a no-sandbox stance stated plainly.
+## If this answer doesn't fit you
 
-**Pydantic AI.** the same affordances as a rewirable, typed library on a durable loop. Any capability a CLI
-hides is one you can replace; any step it takes is one you can observe, cancel, or make durable.
+If you want a working coding agent today and will take a product's decisions for you, Pi is the product — and it is built on the same primitives. If you're building the product, the harness as a library is the starting point.
 
-## When to choose Pi
+---
 
-You want a working coding agent today, CLI-first, and you'll take the product's decisions.
+---
 
-## When to choose Pydantic AI (or pydantic-ai-harness)
-
-You are building the product: the loop in your process, harness capabilities as libraries, durable
-execution under it, and the same primitives across agents and coding.
-
-## Summary
-
-Pi is the harness shipped as a CLI; Pydantic AI is the harness as a library. The loop ran in your
-process: True.
-
-*Pi behavior pinned to installed CLI; harness pinned to `1ad638f8`; records in the
-[framework-comparison series](https://github.com/pydantic/pydantic-ai-notes). Pydantic AI verified
-on 2.42.0, 2026-09-10.*
+*Versions: pi installed CLI / pydantic-harness @ 1ad638f8; Pydantic AI 2.42.0 — 2026-09-10. Snippets re-executed by this repository's tests.*

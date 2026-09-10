@@ -1,28 +1,20 @@
 # Pydantic AI vs CrewAI
 
-**CrewAI** is the orchestration DSL — agents with roles, goals, and backstories, crews
-run by `process='sequential'` or `'hierarchical'`, plus knowledge sources and memory.
+You're choosing a Python agent framework and have narrowed it to [Pydantic AI](../agent.md) and CrewAI.
+This page makes the call — and lets you check the evidence yourself: every snippet runs offline,
+no API keys.
 
-**Pydantic AI** is orchestration-as-code — chained and fanned-out agents with a type at
-every seam, plus the production checklist (deps, budgets, cancellation, evals).
+## Pydantic AI fits if you need
 
-*Verified against `crewai 1.15.21` (2026-09-10). Pydantic AI claims below are self-contained scripts
-— offline, no API keys — re-executed by this repository's test suite.*
+- orchestration with **branches, joins, or retries you can see and control**
+- **typed seams at every stage** — fan-out returns ints, sums flow into deps
+- the production checklist on top: cancellation, budgets, offline tests
 
-## Quick comparison
+## Why the answers differ
 
-| What you get | CrewAI | Pydantic AI |
-|---|---|---|
-| Orchestration | A DSL: `Agent(role=..., goal=..., backstory=...)`, `Crew(process=...)` | Plain async code: chain agents, fan out with `asyncio.gather`, branch with normal control flow |
-| Typed seams | `inputs` dicts; output models via Pydantic | `deps_type` boundary; typed tool signatures and returns at every seam (proven below) |
-| Loop access | A `kickoff()` you run; stopping = kill your thread | Typed cancellation + resumable history; `iter()` drives the loop node-by-node |
-| Memory/knowledge | Built-in memory + `StringKnowledgeSource` | Your memory: deps + history processors are yours to wire |
-| Evals | Not first-party in the core loop | Typed datasets + evaluators, CI-runnable offline |
+Their crew is a DSL the framework interprets; ours is ordinary async code with a type at every seam. Same multi-agent shape, far more visibility.
 
-## Prove it yourself
-
-A "crew" is a fan-out, a join, and a downstream agent — as ordinary async code with a type between
-each step:
+## See it work
 
 ```python {title="chain_as_code.py"}
 """A crew is code: chained and fanned-out agents with types between them.
@@ -90,6 +82,7 @@ async def main():
 
 
 asyncio.run(main())
+
 ```
 
 ```text
@@ -97,33 +90,23 @@ typed chain: branch(a)=21, branch(b)=22, sum=43
 downstream agent received the typed sum as deps: True
 ```
 
-The orchestration is the code — visible, debuggable, and subject to your normal review — not a DSL
-the framework interprets.
+## The details
 
-## Key differences
+| What you get | CrewAI | Pydantic AI |
+|---|---|---|
+|---|---|---|
+| Orchestration | A DSL: `Agent(role=..., goal=..., backstory=...)`, `Crew(process=...)` | Plain async code: chain agents, fan out with `asyncio.gather`, branch with normal control flow |
+| Typed seams | `inputs` dicts; output models via Pydantic | `deps_type` boundary; typed tool signatures and returns at every seam (proven below) |
+| Loop access | A `kickoff()` you run; stopping = kill your thread | Typed cancellation + resumable history; `iter()` drives the loop node-by-node |
+| Memory/knowledge | Built-in memory + `StringKnowledgeSource` | Your memory: deps + history processors are yours to wire |
+| Evals | Not first-party in the core loop | Typed datasets + evaluators, CI-runnable offline |
 
-**CrewAI.** the role DSL compresses common multi-agent shapes into a few lines, and memory +
-knowledge are included — real batteries for the crew-of-specialists pattern.
+## If this answer doesn't fit you
 
-**Pydantic AI.** orchestration-as-code keeps every step typed and inspectable (the fan-out returns ints, the
-sum flows into deps), and the production checklist applies: the same runs are cancellable,
-budgeted, and testable offline.
+If the crew-of-specialists pattern with shipped memory and knowledge is exactly your shape, CrewAI's DSL compresses it well. The code-visible alternative this page shows is for orchestration you need to read, review, and control.
 
-## When to choose CrewAI
+---
 
-You want the crew-of-roles pattern with memory and knowledge shipped — and your orchestration fits
-their sequential/hierarchical processes.
+---
 
-## When to choose Pydantic AI
-
-Your multi-agent flow has branches, joins, or retries you need to see and control — or you want
-typed seams and the production checklist on top of the same fan-out shape.
-
-## Summary
-
-Their crew is a DSL the framework interprets; ours is code with types at the seams. The fan-out
-returned ints 21 and 22; the downstream agent received the sum (43) as deps.
-
-*CrewAI behavior pinned to 1.15.21 (installed, construction-probed); records in the
-[framework-comparison series](https://github.com/pydantic/pydantic-ai-notes). Pydantic AI verified
-on 2.42.0, 2026-09-10.*
+*Versions: crewai 1.15.21; Pydantic AI 2.42.0 — 2026-09-10. Snippets re-executed by this repository's tests.*

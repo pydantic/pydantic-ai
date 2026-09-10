@@ -1,33 +1,21 @@
 # Pydantic AI vs OpenAI Agents SDK
 
-**OpenAI Agents SDK** is the first-party SDK for the platform most of the industry runs
-on — guardrails, handoffs, sessions, structured outputs, and a streamed run you can cancel with
-`mode='after_turn'`.
+You're choosing a Python agent framework and have narrowed it to [Pydantic AI](../agent.md) and OpenAI Agents SDK.
+This page makes the call — and lets you check the evidence yourself: every snippet runs offline,
+no API keys.
 
-**Pydantic AI** is one extension noun instead of categories — a capability carries tools,
-instructions, settings, and hooks together — plus a typed deps boundary, durable wraps, and
-cancellation that ends in a catchable, resumable exception.
+## Pydantic AI fits if you need
 
-*Verified against `openai-agents 0.17.3` (2026-09-10). Pydantic AI claims below are self-contained
-scripts — offline, no API keys — re-executed by this repository's test suite.*
+- one extension noun — a capability (tools + instructions + settings + hooks, deferrable, serializable)
+- a **deps boundary** the model cannot cross
+- **cancellation that resumes**: stop the run, keep the history, continue as an ordinary run
+- durability by wrapping, offline tests, or a choice of providers
 
-## Quick comparison
+## Why the answers differ
 
-| What you get | OpenAI Agents SDK | Pydantic AI |
-|---|---|---|
-| Extension model | Separate categories: **guardrails** (functions), **handoffs** (tools named `transfer_to_<name>`), hooks | **One noun**: a capability bundles tools + instructions + settings + hooks, orderable, deferrable, serializable into `AgentSpec` |
-| Trusted state | `TContext` flows through the loop | `deps_type` — the model cannot choose or see it |
-| Cancellation | Streamed-run `cancel(mode='immediate'\|'after_turn')` | Typed: `CancellationToken` (thread-safe, multi-run), `ctx.cancel()`, `RunCancelled` carrying resumable history |
-| Resume | Sessions / `previous_response_id` — platform continuity | The exception carries history; resume is a normal run (proven below) |
-| Durability | Engine-side adapters (the Temporal contrib exists) | First-party wraps on the public interface — Temporal, DBOS, Prefect, Restate, Kitaru, Airflow |
-| Output | Plain JSON validated into typed models via `tools=[]` | Output transports: text, tool, native, structured — wire semantics are yours |
-| Events | Run items — platform-shaped | Typed event stream (part/tool/result/final); capabilities can transform it |
-| Offline tests | Pluggable `Model`, no first-party test model | `TestModel` / `FunctionModel` drive the whole pipeline deterministically |
+Their framework organizes the agent into platform-shaped categories (guardrails, handoffs, sessions); ours has one typed unit that carries the same concerns. Their resume is a session on their platform; ours is an exception that carries the history to the next run.
 
-## Prove it yourself
-
-Their resume is a session on their platform. Ours is luggage: cancel the run, keep the history,
-resume as an ordinary run that completes the remaining work.
+## See it work
 
 ```python {title="cancel_then_resume.py"}
 """Cancellation, then resume: the exception carries the work; the next run continues.
@@ -96,6 +84,7 @@ def main():
 
 
 main()
+
 ```
 
 ```text
@@ -103,40 +92,26 @@ first run cancelled; completed work preserved: True
 resumed run output: run resumed and completed
 ```
 
-The note that matters: the stop interrupt hit the *in-flight model request*, so history ends marked
-`interrupted`, and the next run repairs it automatically — that's why the proof passes `all_messages()`
-straight to resume. Cancelling *from inside a tool* is different: `ctx.cancel()` discards that tool's
-result and leaves its pending call in history without one (verified on 2.42.0), and `message_history`
-repair applies where the interruption is marked — check the
-[message-history docs](../message-history.md) and test your resume path.
+## The details
 
-## Key differences
+| What you get | OpenAI Agents SDK | Pydantic AI |
+|---|---|---|
+|---|---|---|
+| Extension model | Separate categories: **guardrails** (functions), **handoffs** (tools named `transfer_to_<name>`), hooks | **One noun**: a capability bundles tools + instructions + settings + hooks, orderable, deferrable, serializable into `AgentSpec` |
+| Trusted state | `TContext` flows through the loop | `deps_type` — the model cannot choose or see it |
+| Cancellation | Streamed-run `cancel(mode='immediate'\|'after_turn')` | Typed: `CancellationToken` (thread-safe, multi-run), `ctx.cancel()`, `RunCancelled` carrying resumable history |
+| Resume | Sessions / `previous_response_id` — platform continuity | The exception carries history; resume is a normal run (proven below) |
+| Durability | Engine-side adapters (the Temporal contrib exists) | First-party wraps on the public interface — Temporal, DBOS, Prefect, Restate, Kitaru, Airflow |
+| Output | Plain JSON validated into typed models via `tools=[]` | Output transports: text, tool, native, structured — wire semantics are yours |
+| Events | Run items — platform-shaped | Typed event stream (part/tool/result/final); capabilities can transform it |
+| Offline tests | Pluggable `Model`, no first-party test model | `TestModel` / `FunctionModel` drive the whole pipeline deterministically |
 
-**OpenAI Agents SDK.** the platform is the product — Responses API continuity, sessions, memory, tracing,
-and `after_turn` is a genuine turn-granularity grace on streamed runs.
+## If this answer doesn't fit you
 
-**Pydantic AI.** the seams are typed and local. One capability noun pays for itself across all four of
-their categories (their handoffs are tools with a reserved name; our non-tool capabilities hide
-tools until loaded). The deps boundary, a cancellation that is a catchable exception, and durability
-wraps on the public interface all exist because the run is a normal coroutine — nothing platform-
-shaped hides inside it.
+If your application is all-in on the OpenAI platform — Responses API continuity, sessions, platform tracing — their SDK is the natural layer, and `after_turn` is a genuine stop-grace. None of that changes what this page demonstrates: the seams listed on the left are what the platform shape doesn't give you, and OpenAI models work here too.
 
-## When to choose OpenAI Agents SDK
+---
 
-You are all-in on the OpenAI platform — Responses API, sessions, platform tracing, and their
-streaming UI behavior are your product. `after_turn` covers your stop-grace case.
+---
 
-## When to choose Pydantic AI
-
-You want the run in your process with typed seams: a deps boundary, cancellation you can resume,
-durability by wrapping, offline tests, and one extension noun. You can still use OpenAI models — the
-[`openai` provider](../models/openai.md) is first-class.
-
-## Summary
-
-Their categories work because their platform is one system. Ours compose because they're one noun.
-Their resume is a session; ours is an exception you pass to the next run.
-
-*OpenAI SDK behavior pinned to 0.17.3; probe records in the
-[framework-comparison series](https://github.com/pydantic/pydantic-ai-notes). Pydantic AI behavior
-verified on 2.42.0, 2026-09-10.*
+*Versions: openai-agents 0.17.3; Pydantic AI 2.42.0 — 2026-09-10. Snippets re-executed by this repository's tests.*

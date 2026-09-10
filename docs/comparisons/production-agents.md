@@ -1,12 +1,11 @@
-# The production agent
+# The production agent checklist
 
-Every framework demo can run an agent. Production needs more. This page walks the checklist that
-matters when the agent ships. Each row is a **complete, self-contained script** — offline, no API
-keys, deterministic — and this repository's test suite executes every one of them, so what you see
-printed below is what the code prints today.
+Before you pick a framework, decide what a shipped agent actually requires. Each row below is one
+such requirement, demonstrated as a **complete, self-contained script** — offline, no API keys,
+deterministic — and this repository's test suite executes every one of them, so what you see printed
+is what the code prints today.
 
-Competitor frameworks that lack a row are named per row; their best features are stated on their
-own pages.
+Use it as the bar: tick every row against the frameworks you're considering — including us.
 
 
 ## 1. Trusted state: a boundary the model cannot cross
