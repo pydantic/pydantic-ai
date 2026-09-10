@@ -1,7 +1,7 @@
 # Pydantic AI vs Vercel AI SDK
 
-You're choosing a Python agent framework and you're down to
-[Pydantic AI](../agent.md) and the Vercel AI SDK. This page is the tiebreaker — the answer first, then code
+Choosing an agent framework and you're down to
+[Pydantic AI](../agent.md) and the Vercel AI SDK? They sit on different sides of the language line (TypeScript vs Python) — if your service doesn't bind you to either, this page is the tiebreaker — the answer first, then code
 you can run in seconds.
 
 ## Pydantic AI fits if you need

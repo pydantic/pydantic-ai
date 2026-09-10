@@ -1,7 +1,7 @@
 # Pydantic AI vs Mastra
 
-You're choosing a Python agent framework and you're down to
-[Pydantic AI](../agent.md) and Mastra. This page is the tiebreaker — the answer first, then code
+Choosing an agent framework and you're down to
+[Pydantic AI](../agent.md) and Mastra? Mastra is TypeScript, Pydantic AI is Python — if your service doesn't bind you to either, this page is the tiebreaker — the answer first, then code
 you can run in seconds.
 
 ## Pydantic AI fits if you need

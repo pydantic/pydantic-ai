@@ -1,6 +1,6 @@
 # Pydantic AI vs AG2
 
-You're choosing a Python agent framework and you're down to
+Choosing an agent framework and you're down to
 [Pydantic AI](../agent.md) and AG2. This page is the tiebreaker — the answer first, then code
 you can run in seconds.
 
