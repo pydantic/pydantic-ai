@@ -35,3 +35,33 @@ To compact on any model, edit the message history yourself with a [history proce
 ## Pydantic AI Harness
 
 [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) packages a menu of ready-made, model-agnostic [compaction strategies](https://pydantic.dev/docs/ai/harness/compaction/): mostly zero-LLM history editing (sliding-window trimming, clearing old tool results, deduplicating repeated file reads, clamping oversized message parts) plus LLM summarization for when that's not enough, and a `TieredCompaction` orchestrator (the recommended default) that escalates from cheap to expensive strategies only as far as needed to fit the target.
+
+## Compaction events
+
+Compaction is a memory wipe: whatever it drops, the model can never get back. So that other capabilities and application code can react — or object — the compaction capabilities that run client-side announce their work through one shared [capability event](overview.md#capability-events) family (a [history processor](#model-agnostic-compaction) you write yourself doesn't emit these automatically, but it can emit the same family):
+
+- [`CompactionStartEvent`][pydantic_ai.capabilities.CompactionStartEvent] is emitted before compaction runs. It is [dispatched immediately](overview.md#reacting-to-events), and any listener may call [`cancel()`][pydantic_ai.capabilities.CompactionStartEvent.cancel] to skip this attempt — for example, a capability that is mid-activity and needs the full history intact for one more turn. Cancelling is per-attempt: the compacting capability re-attempts the next time its trigger condition is met.
+- [`CompactionEndEvent`][pydantic_ai.capabilities.CompactionEndEvent] is emitted after history was actually compacted, with before/after message counts (and token sizes, when the emitter knows them).
+
+A capability subscribes with [`@on_event`][pydantic_ai.capabilities.on_event]; application code can use [`hooks.on.event`](../hooks.md):
+
+```python {title="hold_compaction.py"}
+from typing import Any
+
+from pydantic_ai import RunContext
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    CompactionStartEvent,
+    on_event,
+)
+
+
+class KeepFullHistory(AbstractCapability[Any]):
+    @on_event(CompactionStartEvent)
+    async def _hold(
+        self, ctx: RunContext[Any], event: CompactionStartEvent
+    ) -> None:
+        event.cancel('history must stay intact')
+```
+
+The events are emitted wherever the compacting code runs client-side and can observe (or decide) the compaction: [`OpenAICompaction`][pydantic_ai.models.openai.OpenAICompaction] in stateless mode emits both, around its `/responses/compact` call. Server-side compaction — Anthropic's, and OpenAI's stateful mode — is decided and performed by the provider inside the model response itself, so there is no client-side moment to cancel; it surfaces as a [`CompactionPart`][pydantic_ai.messages.CompactionPart] in the response stream instead.
