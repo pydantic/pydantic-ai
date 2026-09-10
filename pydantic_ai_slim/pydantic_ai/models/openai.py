@@ -2760,35 +2760,12 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # the chained response lookup needs the original list to find provider_details stamps.
         all_messages = messages
         if cache_instructions:
-            # Read instruction parts from the untrimmed history before resolving server-side state,
-            # since instructions live on the current request and survive the state trim.
-            instruction_parts = self._get_instruction_parts(messages, wire_request_parameters) or []
-            all_static = all(not part.dynamic for part in instruction_parts)
-            prev_id_setting = model_settings.get('openai_previous_response_id')
-            conv_id_setting = model_settings.get('openai_conversation_id')
-
-            if instruction_parts and prev_id_setting is not None and prev_id_setting != 'auto' and conv_id_setting is None:
-                raise UserError(
-                    '`openai_cache_instructions` moves the instructions into the request input so a '
-                    'cache breakpoint can sit on them, but an explicit `openai_previous_response_id` '
-                    'points at a stored response that may not contain them. Use '
-                    '`openai_previous_response_id="auto"` or leave it unset so the breakpoint is '
-                    'placed on the first request and reused across the chain.'
-                )
-
-            if not all_static and prev_id_setting == 'auto' and conv_id_setting is None:
-                # Dynamic instructions change per request, so a chained response would replay stale
-                # ones. Send the full history instead of chaining.
-                previous_response_id, conversation_id, messages = None, None, messages
-            else:
-                previous_response_id, conversation_id, messages = self._resolve_server_side_state(
-                    model_settings, messages
-                )
+            instruction_parts, previous_response_id, conversation_id, messages = (
+                self._resolve_state_for_instruction_caching(messages, model_settings, wire_request_parameters)
+            )
         else:
             instruction_parts = []
-            previous_response_id, conversation_id, messages = self._resolve_server_side_state(
-                model_settings, messages
-            )
+            previous_response_id, conversation_id, messages = self._resolve_server_side_state(model_settings, messages)
 
         instructions, openai_messages = await self._map_messages(
             messages,
@@ -2809,7 +2786,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                         )
                         break
             instructions, openai_messages, instructions_relocated = self._apply_instruction_caching(
-                instructions, openai_messages, instruction_parts, system_prompt_role,
+                instructions,
+                openai_messages,
+                instruction_parts,
+                system_prompt_role,
                 previous_response_id=previous_response_id,
                 conversation_id=conversation_id,
                 chained_instructions_relocated=chained_instructions_relocated,
@@ -2879,6 +2859,41 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             else model_settings.get('openai_context_management', OMIT),
             instructions_relocated=instructions_relocated,
         )
+
+    def _resolve_state_for_instruction_caching(
+        self,
+        messages: list[ModelRequest | ModelResponse],
+        model_settings: OpenAIResponsesModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> tuple[list[InstructionPart], str | None, str | None, list[ModelMessage]]:
+        """Resolve server-side state for a request that caches its instructions.
+
+        Returns:
+            A 4-tuple of (instruction_parts, previous_response_id, conversation_id, messages).
+        """
+        # Read instruction parts from the untrimmed history before resolving server-side state,
+        # since instructions live on the current request and survive the state trim.
+        instruction_parts = self._get_instruction_parts(messages, model_request_parameters) or []
+        prev_id_setting = model_settings.get('openai_previous_response_id')
+        conv_id_setting = model_settings.get('openai_conversation_id')
+
+        if instruction_parts and prev_id_setting is not None and prev_id_setting != 'auto' and conv_id_setting is None:
+            raise UserError(
+                '`openai_cache_instructions` moves the instructions into the request input so a '
+                'cache breakpoint can sit on them, but an explicit `openai_previous_response_id` '
+                'points at a stored response that may not contain them. Use '
+                '`openai_previous_response_id="auto"` or leave it unset so the breakpoint is '
+                'placed on the first request and reused across the chain.'
+            )
+
+        all_static = all(not part.dynamic for part in instruction_parts)
+        if not all_static and prev_id_setting == 'auto' and conv_id_setting is None:
+            # Dynamic instructions change per request, so a chained response would replay stale
+            # ones. Send the full history instead of chaining.
+            return instruction_parts, None, None, messages
+
+        previous_response_id, conversation_id, messages = self._resolve_server_side_state(model_settings, messages)
+        return instruction_parts, previous_response_id, conversation_id, messages
 
     @staticmethod
     def _apply_instruction_caching(

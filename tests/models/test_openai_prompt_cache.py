@@ -109,9 +109,7 @@ async def test_openai_chat_cache_point_and_options(
         model = OpenAIChatModel('openai/gpt-5.6-sol', provider=OpenRouterProvider(openai_client=mock_client))
     settings = OpenAIChatModelSettings(openai_prompt_cache_options={'mode': 'explicit', 'ttl': '30m'})
 
-    await Agent(model, model_settings=settings).run(
-        ['Stable context.', CachePoint(ttl='1h'), 'Use the context.']
-    )
+    await Agent(model, model_settings=settings).run(['Stable context.', CachePoint(ttl='1h'), 'Use the context.'])
 
     request = get_mock_chat_completion_kwargs(mock_client)[0]
     assert request['prompt_cache_options'] == {'mode': 'explicit', 'ttl': '30m'}
