@@ -38,6 +38,13 @@ agent = Agent(model)
 
 `MoonshotAIModel` accepts [`OpenAIChatModelSettings`][pydantic_ai.models.openai.OpenAIChatModelSettings].
 
+### Parameter limits {#parameter-limits}
+
+Accepted values depend on the model. On `kimi-k3`, `temperature` is fixed at `1.0`,
+`top_p` at `0.95`, and `presence_penalty` and `frequency_penalty` at `0`.
+Omit these settings: sending other values returns an API error. See the
+[Kimi parameter reference](https://platform.kimi.ai/docs/api/models-overview) for the limits of each model.
+
 ## Dynamic tool loading
 
 On `kimi-k3`, [deferred tools](../tools-advanced.md#tool-search) and tools from

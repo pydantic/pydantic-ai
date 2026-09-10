@@ -2,15 +2,17 @@ from __future__ import annotations as _annotations
 
 from collections.abc import AsyncIterable, Callable
 from dataclasses import replace
+from itertools import groupby
 from typing import Literal, cast
 
 from typing_extensions import TypedDict, override
 
-from ..messages import ModelRequest, ModelRequestPart, ToolAvailabilityDeltaPart, ToolSearchReturnPart
+from ..messages import ModelRequest, ModelRequestPart, RetryPromptPart, ToolAvailabilityDeltaPart, ToolReturnPart
 from ..profiles import ModelProfileSpec
 from ..providers import Provider
 from ..providers.moonshotai import MoonshotAIModelName
 from ..settings import ModelSettings, ToolOrOutput
+from ..toolsets._tool_search import discovered_tool_names_in_order
 from . import ModelRequestParameters
 from .openai import OpenAIChatModel, OpenAIChatModelSettings
 
@@ -84,26 +86,41 @@ class MoonshotAIModel(OpenAIChatModel):
 
         async def map_user_message(message: ModelRequest) -> AsyncIterable[chat.ChatCompletionMessageParam]:
             pending: list[ModelRequestPart] = []
-            for part in message.parts:
-                if not isinstance(part, ToolAvailabilityDeltaPart):
-                    pending.append(part)
-                if isinstance(part, ToolAvailabilityDeltaPart | ToolSearchReturnPart):
-                    names = (
-                        part.tools_added
-                        if isinstance(part, ToolAvailabilityDeltaPart)
-                        else [tool['name'] for tool in part.discovered_tools]
-                    )
-                    tools: list[chat.ChatCompletionToolParam] = []
-                    for name in names:
-                        if name not in rendered and (tool := tool_defs.get(name)) is not None:
-                            tools.append(self._map_tool_definition(tool, model_settings))
-                            rendered.add(name)
-                    if tools:
-                        if pending:
-                            async for item in self._map_user_message(replace(message, parts=pending)):
-                                yield item
-                            pending = []
-                        addition = _ToolAdditionMessage(role='system', tools=tools)
+            # Keep parallel results and their media together. A later user prompt is a stable
+            # boundary even when consecutive ModelRequests are merged while resuming a run.
+            for _, group in groupby(
+                message.parts,
+                key=lambda part: (
+                    isinstance(part, ToolReturnPart | ToolAvailabilityDeltaPart)
+                    or (isinstance(part, RetryPromptPart) and part.tool_name is not None)
+                ),
+            ):
+                parts = list(group)
+                pending.extend(part for part in parts if not isinstance(part, ToolAvailabilityDeltaPart))
+                additions: list[_ToolAdditionMessage] = []
+                for part in parts:
+                    # Use the same typed and legacy discovery contract as visibility resolution.
+                    names = [
+                        name
+                        for name in discovered_tool_names_in_order([replace(message, parts=[part])])
+                        if name not in rendered and name in tool_defs
+                    ]
+                    if names:
+                        additions.append(
+                            _ToolAdditionMessage(
+                                role='system',
+                                tools=[self._map_tool_definition(tool_defs[name], model_settings) for name in names],
+                            )
+                        )
+                        rendered.update(names)
+                if additions:
+                    if pending:
+                        async for item in self._map_user_message(replace(message, parts=pending)):
+                            yield item
+                        pending = []
+                    # Keep separate reveal records separate, so appending another delta cannot
+                    # rewrite the tools array of a declaration sent in an earlier request.
+                    for addition in additions:
                         # The OpenAI SDK requires `content` on system messages; Kimi's extension
                         # requires its absence. Keep that wire-only mismatch at the SDK boundary.
                         yield cast(chat.ChatCompletionMessageParam, addition)

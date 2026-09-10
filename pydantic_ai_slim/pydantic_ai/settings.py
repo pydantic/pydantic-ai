@@ -161,7 +161,7 @@ class ModelSettings(TypedDict, total=False):
     * HuggingFace
     * Cerebras
     * Crusoe
-    * Moonshot AI
+    * Moonshot AI (fixed on Kimi K3; see [parameter limits](../models/moonshotai.md#parameter-limits))
     * GitHub Copilot (not sent for the Anthropic models that reject sampling settings, e.g.
       `claude-opus-4.8`)
     * Ollama
@@ -191,7 +191,7 @@ class ModelSettings(TypedDict, total=False):
     * HuggingFace
     * Cerebras
     * Crusoe
-    * Moonshot AI
+    * Moonshot AI (fixed on Kimi K3; see [parameter limits](../models/moonshotai.md#parameter-limits))
     * GitHub Copilot (not sent for the Anthropic models that reject sampling settings, e.g.
       `claude-opus-4.8`)
     * Ollama
@@ -343,7 +343,7 @@ class ModelSettings(TypedDict, total=False):
     * HuggingFace
     * Cerebras
     * Crusoe
-    * Moonshot AI
+    * Moonshot AI (fixed on Kimi K3; see [parameter limits](../models/moonshotai.md#parameter-limits))
     * GitHub Copilot
     * Ollama
     * OpenRouter
@@ -366,7 +366,7 @@ class ModelSettings(TypedDict, total=False):
     * HuggingFace
     * Cerebras
     * Crusoe
-    * Moonshot AI
+    * Moonshot AI (fixed on Kimi K3; see [parameter limits](../models/moonshotai.md#parameter-limits))
     * GitHub Copilot
     * Ollama
     * OpenRouter

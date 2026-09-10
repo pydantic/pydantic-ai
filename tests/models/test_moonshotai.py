@@ -9,13 +9,13 @@ from __future__ import annotations
 import json
 from collections.abc import AsyncIterator
 from copy import deepcopy
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 import httpx2
 import pytest
 
-from pydantic_ai import Agent, BinaryContent, Tool, ToolReturn
+from pydantic_ai import Agent, BinaryContent, ModelAPIError, ModelRetry, Tool, ToolReturn, capture_run_messages
 from pydantic_ai.capabilities import Toolset
 from pydantic_ai.messages import (
     ModelMessage,
@@ -25,8 +25,11 @@ from pydantic_ai.messages import (
     ModelResponse,
     NativeToolSearchCallPart,
     NativeToolSearchReturnPart,
+    RetryPromptPart,
     ToolAvailabilityDeltaPart,
+    ToolCallPart,
     ToolReturnPart,
+    ToolSearchCallPart,
     ToolSearchReturnPart,
     UserPromptPart,
 )
@@ -53,10 +56,13 @@ pytestmark = [pytest.mark.anyio, pytest.mark.skipif(not imports_successful(), re
 class MoonshotAPI:
     messages: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
     requests: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
+    fail_on_request: int | None = None
 
     def __call__(self, request: httpx2.Request) -> httpx2.Response:
         body = json.loads(request.content)
         self.requests.append(body)
+        if len(self.requests) == self.fail_on_request:
+            raise httpx2.ReadTimeout('Response lost', request=request)
         message: dict[str, Any] = self.messages.pop(0) if self.messages else {'role': 'assistant', 'content': 'done'}
         finish_reason = 'tool_calls' if message.get('tool_calls') else 'stop'
         response = {
@@ -336,24 +342,43 @@ async def test_ignored_reveal_preserves_tool_media_grouping(
     assert moonshot_api.requests[0] == moonshot_api.requests[1]
 
 
-@pytest.mark.parametrize('origin', ['anthropic', 'openai'])
-async def test_native_search_history_replays_on_kimi(
+@pytest.mark.parametrize('origin', ['anthropic', 'openai', 'local', 'legacy', 'delta'])
+async def test_tool_reveal_history_replays_on_kimi(
     allow_model_requests: None, moonshot_provider: MoonshotAIProvider, moonshot_api: MoonshotAPI, origin: str
 ):
-    history: list[ModelMessage] = [
-        ModelRequest(parts=[UserPromptPart('Find the weather tool.')]),
-        ModelResponse(
-            parts=[
-                NativeToolSearchCallPart(args={'queries': ['weather']}, tool_call_id='search', provider_name=origin),
-                NativeToolSearchReturnPart(
-                    content={'discovered_tools': [{'name': 'weather'}]},
-                    tool_call_id='search',
-                    provider_name=origin,
-                ),
-            ],
-            provider_name=origin,
-        ),
-    ]
+    history: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('Find the weather tool.')])]
+    if origin in ('anthropic', 'openai'):
+        history.append(
+            ModelResponse(
+                parts=[
+                    NativeToolSearchCallPart(
+                        args={'queries': ['weather']}, tool_call_id='search', provider_name=origin
+                    ),
+                    NativeToolSearchReturnPart(
+                        content={'discovered_tools': [{'name': 'weather'}]},
+                        tool_call_id='search',
+                        provider_name=origin,
+                    ),
+                ],
+                provider_name=origin,
+            )
+        )
+    elif origin == 'delta':
+        history.append(ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['weather'])]))
+    else:
+        call = (
+            ToolSearchCallPart(args={'queries': ['weather']}, tool_call_id='search')
+            if origin == 'local'
+            else ToolCallPart('search_tools', {'queries': ['weather']}, tool_call_id='search')
+        )
+        result_part = (
+            ToolSearchReturnPart(content={'discovered_tools': [{'name': 'weather'}]}, tool_call_id='search')
+            if origin == 'local'
+            else ToolReturnPart(
+                'search_tools', 'Found weather.', tool_call_id='search', metadata={'discovered_tools': ['weather']}
+            )
+        )
+        history.extend([ModelResponse(parts=[call]), ModelRequest(parts=[result_part])])
     reloaded = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(history))
 
     def weather() -> str:
@@ -368,3 +393,103 @@ async def test_native_search_history_replays_on_kimi(
     assert len(additions) == 1
     assert [tool['function']['name'] for tool in additions[0]['tools']] == ['weather']
     assert all(tool['function']['name'] != 'weather' for tool in body['tools'])
+
+
+@pytest.mark.parametrize('stream', [False, True])
+@pytest.mark.parametrize('retry', [False, True])
+async def test_reveal_preserves_parallel_tool_results_and_media(
+    allow_model_requests: None,
+    moonshot_provider: MoonshotAIProvider,
+    moonshot_api: MoonshotAPI,
+    stream: bool,
+    retry: bool,
+):
+    def weather() -> str:
+        return 'sunny'
+
+    def load_weather() -> ToolReturn:
+        return ToolReturn(return_value=[BinaryContent(data=b'first image', media_type='image/png')], tools=['weather'])
+
+    def second() -> ToolReturn:
+        if retry:
+            raise ModelRetry('Try again.')
+        return ToolReturn(return_value=[BinaryContent(data=b'second image', media_type='image/png')])
+
+    calls = tool_call('load_weather')
+    calls['tool_calls'].extend(tool_call('second')['tool_calls'])
+    moonshot_api.messages = [calls, tool_call('weather')]
+    agent = Agent(
+        MoonshotAIModel('kimi-k3', provider=moonshot_provider),
+        tools=[load_weather, second, Tool(weather, defer_loading=True)],
+    )
+    if stream:
+        async with agent.run_stream('Load weather and call second.') as result:
+            assert await result.get_output() == 'done'
+            history = result.all_messages()
+    else:
+        result = await agent.run('Load weather and call second.')
+        assert result.output == 'done'
+        history = result.all_messages()
+
+    body = moonshot_api.requests[1]
+    assert [message['role'] for message in body['messages']] == ['user', 'assistant', 'tool', 'tool', 'user', 'system']
+    media = body['messages'][-2]['content']
+    expected_images = ['data:image/png;base64,Zmlyc3QgaW1hZ2U=']
+    if not retry:
+        expected_images.append('data:image/png;base64,c2Vjb25kIGltYWdl')
+    assert [part['image_url']['url'] for part in media if part['type'] == 'image_url'] == expected_images
+    assert [tool['function']['name'] for tool in body['messages'][-1]['tools']] == ['weather']
+    await agent.run('Continue.', message_history=history)
+    assert moonshot_api.requests[-1]['messages'][: len(body['messages'])] == body['messages']
+
+
+async def test_resume_after_lost_response_keeps_reveal_position(
+    allow_model_requests: None, moonshot_provider: MoonshotAIProvider, moonshot_api: MoonshotAPI
+):
+    moonshot_provider.client.max_retries = 0
+    moonshot_api.fail_on_request = 2
+    moonshot_api.messages = [tool_call('load_weather'), tool_call('weather')]
+
+    def weather() -> str:
+        return 'sunny'
+
+    def load_weather() -> ToolReturn:
+        return ToolReturn(return_value='loaded', tools=['weather'])
+
+    agent = Agent(
+        MoonshotAIModel('kimi-k3', provider=moonshot_provider), tools=[load_weather, Tool(weather, defer_loading=True)]
+    )
+    with capture_run_messages() as history:
+        with pytest.raises(ModelAPIError):
+            await agent.run('Load weather.')
+    before = moonshot_api.requests[-1]
+    assert any('tools' in message for message in before['messages'])
+    reloaded = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(history))
+    result = await agent.run('Continue.', message_history=reloaded)
+    assert result.output == 'done'
+    after = moonshot_api.requests[-1]
+    assert after['tools'] == before['tools']
+    assert after['messages'][: len(before['messages'])] == before['messages']
+
+
+@pytest.mark.parametrize('separator', [None, UserPromptPart('Continue.'), RetryPromptPart('Correct the output.')])
+async def test_appending_a_reveal_preserves_prior_definitions(
+    allow_model_requests: None,
+    moonshot_provider: MoonshotAIProvider,
+    moonshot_api: MoonshotAPI,
+    separator: ModelRequestPart | None,
+):
+    model = MoonshotAIModel('kimi-k3', provider=moonshot_provider)
+    params = ModelRequestParameters(
+        function_tools=[ToolDefinition(name=name, defer_loading=True) for name in ('weather', 'clock')],
+        revealed_tool_names={'weather'},
+    )
+    parts: list[ModelRequestPart] = [UserPromptPart('hello'), ToolAvailabilityDeltaPart(tools_added=['weather'])]
+    await model.request([ModelRequest(parts=parts)], None, params)
+    if separator is not None:
+        parts.append(separator)
+    parts.append(ToolAvailabilityDeltaPart(tools_added=['clock']))
+    await model.request([ModelRequest(parts=parts)], None, replace(params, revealed_tool_names={'weather', 'clock'}))
+    before, after = moonshot_api.requests
+    assert after['messages'][: len(before['messages'])] == before['messages']
+    assert [tool['function']['name'] for tool in after['messages'][-1]['tools']] == ['clock']
