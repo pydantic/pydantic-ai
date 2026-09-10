@@ -33,6 +33,9 @@ def cassette_dict_base():
                     'headers': {
                         'Content-Type': ['application/json'],
                         'Date': ['some-date-string'],  # Should be filtered out
+                        'Msh-Org-Id': ['moonshot-private-org'],
+                        'Msh-Project-Id': ['moonshot-private-project'],
+                        'Msh-Uid': ['moonshot-private-user'],
                     },
                     'body': {'string': '{"response": "line3\\nline4"}'},
                 },
@@ -51,6 +54,7 @@ def test_filtered_headers_removed(cassette_dict_base: dict[str, Any]):
     assert 'authorization:' not in output, "Expected 'Authorization' to be filtered out."
     assert 'date:' not in output, "Expected 'Date' to be filtered out."
     assert 'x-test:' not in output, "Expected 'X-Test' to be filtered out."
+    assert 'moonshot-private-' not in output
 
 
 def test_oauth_credentials_are_scrubbed():

@@ -57,7 +57,7 @@ else:
     except ImportError:  # pragma: no cover
         from yaml import Dumper, SafeLoader
 
-FILTERED_HEADER_PREFIXES = ['anthropic-', 'cf-', 'x-']
+FILTERED_HEADER_PREFIXES = ['anthropic-', 'cf-', 'msh-', 'x-']
 FILTERED_HEADERS = {
     'authorization',
     'chatgpt-account-id',

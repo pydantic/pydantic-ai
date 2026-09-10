@@ -1,0 +1,421 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1382'
+      content-type:
+      - application/json
+      host:
+      - api.moonshot.cn
+    method: POST
+    parsed_body:
+      max_completion_tokens: 1024
+      messages:
+      - content: Call load_weather, then call weather exactly once. Reply with only the weather result.
+        role: system
+      - content: Get the weather.
+        role: user
+      model: kimi-k3
+      reasoning_effort: low
+      stream: true
+      stream_options:
+        include_usage: true
+      tool_choice: auto
+      tools:
+      - function:
+          description: Load the weather tool.
+          name: load_weather
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: Search first for a standalone deferred tool when current tools and catalog descriptions do not name
+            the requested operation. A capability id used as an ordinary domain word does not request that capability. This
+            cannot find capability-owned tools; load a listed capability by id instead. If no tools are found, do not retry.
+          name: search_tools
+          parameters:
+            additionalProperties: false
+            properties:
+              queries:
+                description: List of search queries to match against tool names and descriptions. Use specific words likely
+                  to appear in tool names or descriptions to narrow down relevant tools. Each query is independently tokenized;
+                  matches across queries are unioned.
+                items:
+                  type: string
+                type: array
+            required:
+            - queries
+            type: object
+          strict: true
+        type: function
+    uri: https://api.moonshot.cn/v1/chat/completions
+  response:
+    body:
+      string: |+
+        data: {"id":"chatcmpl-6aa2e1628ed72801a752d1e7","object":"chat.completion.chunk","created":1789059431,"model":"kimi-k3","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}],"system_fingerprint":"fpv0_aad12a13"}
+
+        data: {"id":"chatcmpl-6aa2e1628ed72801a752d1e7","object":"chat.completion.chunk","created":1789059431,"model":"kimi-k3","choices":[{"index":0,"delta":{"reasoning_content":"The"},"finish_reason":null}],"system_fingerprint":"fpv0_aad12a13"}
+
+        data: {"id":"chatcmpl-6aa2e1628ed72801a752d1e7","object":"chat.completion.chunk","created":1789059431,"model":"kimi-k3","choices":[{"index":0,"delta":{"reasoning_content":" user"},"finish_reason":null}],"system_fingerprint":"fpv0_aad12a13"}
+
+        data: {"id":"chatcmpl-6aa2e1628ed72801a752d1e7","object":"chat.completion.chunk","created":1789059431,"model":"kimi-k3","choices":[{"index":0,"delta":{"reasoning_content":" asks"},"finish_reason":null}],"system_fingerprint":"fpv0_aad12a13"}
+
+        data: {"id":"chatcmpl-6aa2e1628ed72801a752d1e7","object":"chat.completion.chunk","created":1789059431,"model":"kimi-k3","choices":[{"index":0,"delta":{"reasoning_content":" to"},"finish_reason":null}],"system_fingerprint":"fpv0_aad12a13"}
+
+        data: {"id":"chatcmpl-6aa2e1628ed72801a752d1e7","object":"chat.completion.chunk","created":1789059431,"model":"kimi-k3","choices":[{"index":0,"delta":{"reasoning_content":" get"},"finish_reason":null}],"system_fingerprint":"fpv0_aad12a13"}
+
+        data: {"id":"chatcmpl-6aa2e1628ed72801a752d1e7","object":"chat.completion.chunk","created":1789059431,"model":"kimi-k3","choices":[{"index":0,"delta":{"reasoning_content":" the"},"finish_reason":null}],"system_fingerprint":"fpv0_aad12a13"}
+
+        data: {"id":"chatcmpl-6aa2e1628ed72801a752d1e7","object":"chat.completion.chunk","created":1789059431,"model":"kimi-k3","choices":[{"index":0,"delta":{"reasoning_content":" weather"},"finish_reason":null}],"system_fingerprint":"fpv0_aad12a13"}
+
+        data: {"id":"chatcmpl-6aa2e1628ed72801a752d1e7","object":"chat.completion.chunk","created":1789059431,"model":"kimi-k3","choices":[{"index":0,"delta":{"reasoning_content":"."},"finish_reason":null}],"system_fingerprint":"fpv0_aad12a13"}
+
+        data: {"id":"chatcmpl-6aa2e1628ed72801a752d1e7","object":"chat.completion.chunk","created":1789059431,"model":"kimi-k3","choices":[{"index":0,"delta":{"reasoning_content":" The"},"finish_reason":null}],"system_fingerprint":"fpv0_aad12a13"}
+
+        data: {"id":"chatcmpl-6aa2e1628ed72801a752d1e7","object":"chat.completion.chunk","created":1789059431,"model":"kimi-k3","choices":[{"index":0,"delta":{"reasoning_content":" instructions"},"finish_reason":null}],"system_fingerprint":"fpv0_aad12a13"}
+
+        data: {"id":"chatcmpl-6aa2e1628ed72801a752d1e7","object":"chat.completion.chunk","created":1789059431,"model":"kimi-k3","choices":[{"index":0,"delta":{"reasoning_content":" say"},"finish_reason":null}],"system_fingerprint":"fpv0_aad12a13"}
+
+        data: {"id":"chatcmpl-6aa2e1628ed72801a752d1e7","object":"chat.completion.chunk","created":1789059431,"model":"kimi-k3","choices":[{"index":0,"delta":{"reasoning_content":" to"},"finish_reason":null}],"system_fingerprint":"fpv0_aad12a13"}
+
+        data: {"id":"chatcmpl-6aa2e1628ed72801a752d1e7","object":"chat.completion.chunk","created":1789059431,"model":"kimi-k3","choices":[{"index":0,"delta":{"reasoning_content":" call"},"finish_reason":null}],"system_fingerprint":"fpv0_aad12a13"}
+
+        data: {"id":"chatcmpl-6aa2e1628ed72801a752d1e7","object":"chat.completion.chunk","created":1789059431,"model":"kimi-k3","choices":[{"index":0,"delta":{"reasoning_content":" load"},"finish_reason":null}],"system_fingerprint":"fpv0_aad12a13"}
+
+        data: {"id":"chatcmpl-6aa2e1628ed72801a752d1e7","object":"chat.completion.chunk","created":1789059431,"model":"kimi-k3","choices":[{"index":0,"delta":{"reasoning_content":"_we"},"finish_reason":null}],"system_fingerprint":"fpv0_aad12a13"}
+
+        data: {"id":"chatcmpl-6aa2e1628ed72801a752d1e7","object":"chat.completion.chunk","created":1789059431,"model":"kimi-k3","choices":[{"index":0,"delta":{"reasoning_content":"ather"},"finish_reason":null}],"system_fingerprint":"fpv0_aad12a13"}
+
+        data: {"id":"chatcmpl-6aa2e1628ed72801a752d1e7","object":"chat.completion.chunk","created":1789059431,"model":"kimi-k3","choices":[{"index":0,"delta":{"reasoning_content":","},"finish_reason":null}],"system_fingerprint":"fpv0_aad12a13"}
+
+        data: {"id":"chatcmpl-6aa2e1628ed72801a752d1e7","object":"chat.completion.chunk","created":1789059431,"model":"kimi-k3","choices":[{"index":0,"delta":{"reasoning_content":" then"},"finish_reason":null}],"system_fingerprint":"fpv0_aad12a13"}
+
+        data: {"id":"chatcmpl-6aa2e1628ed72801a752d1e7","object":"chat.completion.chunk","created":1789059431,"model":"kimi-k3","choices":[{"index":0,"delta":{"reasoning_content":" call"},"finish_reason":null}],"system_fingerprint":"fpv0_aad12a13"}
+
+        data: {"id":"chatcmpl-6aa2e1628ed72801a752d1e7","object":"chat.completion.chunk","created":1789059431,"model":"kimi-k3","choices":[{"index":0,"delta":{"reasoning_content":" weather"},"finish_reason":null}],"system_fingerprint":"fpv0_aad12a13"}
+
+        data: {"id":"chatcmpl-6aa2e1628ed72801a752d1e7","object":"chat.completion.chunk","created":1789059431,"model":"kimi-k3","choices":[{"index":0,"delta":{"reasoning_content":" exactly"},"finish_reason":null}],"system_fingerprint":"fpv0_aad12a13"}
+
+        data: {"id":"chatcmpl-6aa2e1628ed72801a752d1e7","object":"chat.completion.chunk","created":1789059431,"model":"kimi-k3","choices":[{"index":0,"delta":{"reasoning_content":" once"},"finish_reason":null}],"system_fingerprint":"fpv0_aad12a13"}
+
+        data: {"id":"chatcmpl-6aa2e1628ed72801a752d1e7","object":"chat.completion.chunk","created":1789059431,"model":"kimi-k3","choices":[{"index":0,"delta":{"reasoning_content":"."},"finish_reason":null}],"system_fingerprint":"fpv0_aad12a13"}
+
+        data: {"id":"chatcmpl-6aa2e1628ed72801a752d1e7","object":"chat.completion.chunk","created":1789059431,"model":"kimi-k3","choices":[{"index":0,"delta":{"reasoning_content":" Let"},"finish_reason":null}],"system_fingerprint":"fpv0_aad12a13"}
+
+        data: {"id":"chatcmpl-6aa2e1628ed72801a752d1e7","object":"chat.completion.chunk","created":1789059431,"model":"kimi-k3","choices":[{"index":0,"delta":{"reasoning_content":" me"},"finish_reason":null}],"system_fingerprint":"fpv0_aad12a13"}
+
+        data: {"id":"chatcmpl-6aa2e1628ed72801a752d1e7","object":"chat.completion.chunk","created":1789059431,"model":"kimi-k3","choices":[{"index":0,"delta":{"reasoning_content":" do"},"finish_reason":null}],"system_fingerprint":"fpv0_aad12a13"}
+
+        data: {"id":"chatcmpl-6aa2e1628ed72801a752d1e7","object":"chat.completion.chunk","created":1789059431,"model":"kimi-k3","choices":[{"index":0,"delta":{"reasoning_content":" that"},"finish_reason":null}],"system_fingerprint":"fpv0_aad12a13"}
+
+        data: {"id":"chatcmpl-6aa2e1628ed72801a752d1e7","object":"chat.completion.chunk","created":1789059431,"model":"kimi-k3","choices":[{"index":0,"delta":{"reasoning_content":"."},"finish_reason":null}],"system_fingerprint":"fpv0_aad12a13"}
+
+        data: {"id":"chatcmpl-6aa2e1628ed72801a752d1e7","object":"chat.completion.chunk","created":1789059431,"model":"kimi-k3","choices":[{"index":0,"delta":{"reasoning_content":""},"finish_reason":null}],"system_fingerprint":"fpv0_aad12a13"}
+
+        data: {"id":"chatcmpl-6aa2e1628ed72801a752d1e7","object":"chat.completion.chunk","created":1789059431,"model":"kimi-k3","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"load_weather_0_d889145b","type":"function","function":{"name":"load_weather","arguments":""}}]},"finish_reason":null}],"system_fingerprint":"fpv0_aad12a13"}
+
+        data: {"id":"chatcmpl-6aa2e1628ed72801a752d1e7","object":"chat.completion.chunk","created":1789059431,"model":"kimi-k3","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{}"}}]},"finish_reason":null}],"system_fingerprint":"fpv0_aad12a13"}
+
+        data: {"id":"chatcmpl-6aa2e1628ed72801a752d1e7","object":"chat.completion.chunk","created":1789059431,"model":"kimi-k3","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls","usage":{"prompt_tokens":343,"completion_tokens":66,"total_tokens":409,"completion_tokens_details":{"reasoning_tokens":29}}}],"system_fingerprint":"fpv0_aad12a13"}
+
+        data: {"id":"chatcmpl-6aa2e1628ed72801a752d1e7","object":"chat.completion.chunk","created":1789059431,"model":"kimi-k3","choices":[],"usage":{"prompt_tokens":343,"completion_tokens":66,"total_tokens":409,"completion_tokens_details":{"reasoning_tokens":29}}}
+
+        data: [DONE]
+
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-length:
+      - '8474'
+      content-type:
+      - text/event-stream
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+      - Origin
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '2007'
+      content-type:
+      - application/json
+      host:
+      - api.moonshot.cn
+    method: POST
+    parsed_body:
+      max_completion_tokens: 1024
+      messages:
+      - content: Call load_weather, then call weather exactly once. Reply with only the weather result.
+        role: system
+      - content: Get the weather.
+        role: user
+      - content: null
+        reasoning_content: The user asks to get the weather. The instructions say to call load_weather, then call weather
+          exactly once. Let me do that.
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{}'
+            name: load_weather
+          id: load_weather_0_d889145b
+          type: function
+      - content: Weather tool loaded.
+        role: tool
+        tool_call_id: load_weather_0_d889145b
+      - role: system
+        tools:
+        - function:
+            description: Get the current weather.
+            name: weather
+            parameters:
+              additionalProperties: false
+              properties: {}
+              type: object
+          type: function
+      model: kimi-k3
+      reasoning_effort: low
+      stream: true
+      stream_options:
+        include_usage: true
+      tool_choice: auto
+      tools:
+      - function:
+          description: Load the weather tool.
+          name: load_weather
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: Search first for a standalone deferred tool when current tools and catalog descriptions do not name
+            the requested operation. A capability id used as an ordinary domain word does not request that capability. This
+            cannot find capability-owned tools; load a listed capability by id instead. If no tools are found, do not retry.
+          name: search_tools
+          parameters:
+            additionalProperties: false
+            properties:
+              queries:
+                description: List of search queries to match against tool names and descriptions. Use specific words likely
+                  to appear in tool names or descriptions to narrow down relevant tools. Each query is independently tokenized;
+                  matches across queries are unioned.
+                items:
+                  type: string
+                type: array
+            required:
+            - queries
+            type: object
+          strict: true
+        type: function
+    uri: https://api.moonshot.cn/v1/chat/completions
+  response:
+    body:
+      string: |+
+        data: {"id":"chatcmpl-6aa2e16aca909ed7b3745c9c","object":"chat.completion.chunk","created":1789059437,"model":"kimi-k3","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}],"system_fingerprint":"fpv0_aad12a13"}
+
+        data: {"id":"chatcmpl-6aa2e16aca909ed7b3745c9c","object":"chat.completion.chunk","created":1789059437,"model":"kimi-k3","choices":[{"index":0,"delta":{"reasoning_content":""},"finish_reason":null}],"system_fingerprint":"fpv0_aad12a13"}
+
+        data: {"id":"chatcmpl-6aa2e16aca909ed7b3745c9c","object":"chat.completion.chunk","created":1789059437,"model":"kimi-k3","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"weather_1_89bc0198","type":"function","function":{"name":"weather","arguments":""}}]},"finish_reason":null}],"system_fingerprint":"fpv0_aad12a13"}
+
+        data: {"id":"chatcmpl-6aa2e16aca909ed7b3745c9c","object":"chat.completion.chunk","created":1789059437,"model":"kimi-k3","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{}"}}]},"finish_reason":null}],"system_fingerprint":"fpv0_aad12a13"}
+
+        data: {"id":"chatcmpl-6aa2e16aca909ed7b3745c9c","object":"chat.completion.chunk","created":1789059437,"model":"kimi-k3","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls","usage":{"prompt_tokens":533,"completion_tokens":36,"total_tokens":569,"cached_tokens":256,"completion_tokens_details":{"reasoning_tokens":1},"prompt_tokens_details":{"cached_tokens":256}}}],"system_fingerprint":"fpv0_aad12a13"}
+
+        data: {"id":"chatcmpl-6aa2e16aca909ed7b3745c9c","object":"chat.completion.chunk","created":1789059437,"model":"kimi-k3","choices":[],"usage":{"prompt_tokens":533,"completion_tokens":36,"total_tokens":569,"cached_tokens":256,"completion_tokens_details":{"reasoning_tokens":1},"prompt_tokens_details":{"cached_tokens":256}}}
+
+        data: [DONE]
+
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-length:
+      - '1834'
+      content-type:
+      - text/event-stream
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+      - Origin
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '2266'
+      content-type:
+      - application/json
+      host:
+      - api.moonshot.cn
+    method: POST
+    parsed_body:
+      max_completion_tokens: 1024
+      messages:
+      - content: Call load_weather, then call weather exactly once. Reply with only the weather result.
+        role: system
+      - content: Get the weather.
+        role: user
+      - content: null
+        reasoning_content: The user asks to get the weather. The instructions say to call load_weather, then call weather
+          exactly once. Let me do that.
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{}'
+            name: load_weather
+          id: load_weather_0_d889145b
+          type: function
+      - content: Weather tool loaded.
+        role: tool
+        tool_call_id: load_weather_0_d889145b
+      - role: system
+        tools:
+        - function:
+            description: Get the current weather.
+            name: weather
+            parameters:
+              additionalProperties: false
+              properties: {}
+              type: object
+          type: function
+      - content: null
+        reasoning_content: ''
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{}'
+            name: weather
+          id: weather_1_89bc0198
+          type: function
+      - content: sunny
+        role: tool
+        tool_call_id: weather_1_89bc0198
+      model: kimi-k3
+      reasoning_effort: low
+      stream: true
+      stream_options:
+        include_usage: true
+      tool_choice: auto
+      tools:
+      - function:
+          description: Load the weather tool.
+          name: load_weather
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: Search first for a standalone deferred tool when current tools and catalog descriptions do not name
+            the requested operation. A capability id used as an ordinary domain word does not request that capability. This
+            cannot find capability-owned tools; load a listed capability by id instead. If no tools are found, do not retry.
+          name: search_tools
+          parameters:
+            additionalProperties: false
+            properties:
+              queries:
+                description: List of search queries to match against tool names and descriptions. Use specific words likely
+                  to appear in tool names or descriptions to narrow down relevant tools. Each query is independently tokenized;
+                  matches across queries are unioned.
+                items:
+                  type: string
+                type: array
+            required:
+            - queries
+            type: object
+          strict: true
+        type: function
+    uri: https://api.moonshot.cn/v1/chat/completions
+  response:
+    body:
+      string: |+
+        data: {"id":"chatcmpl-6aa2e1710377c1ad643a6c15","object":"chat.completion.chunk","created":1789059441,"model":"kimi-k3","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}],"system_fingerprint":"fpv0_aad12a13"}
+
+        data: {"id":"chatcmpl-6aa2e1710377c1ad643a6c15","object":"chat.completion.chunk","created":1789059441,"model":"kimi-k3","choices":[{"index":0,"delta":{"reasoning_content":"The"},"finish_reason":null}],"system_fingerprint":"fpv0_aad12a13"}
+
+        data: {"id":"chatcmpl-6aa2e1710377c1ad643a6c15","object":"chat.completion.chunk","created":1789059441,"model":"kimi-k3","choices":[{"index":0,"delta":{"reasoning_content":" instruction"},"finish_reason":null}],"system_fingerprint":"fpv0_aad12a13"}
+
+        data: {"id":"chatcmpl-6aa2e1710377c1ad643a6c15","object":"chat.completion.chunk","created":1789059441,"model":"kimi-k3","choices":[{"index":0,"delta":{"reasoning_content":" says"},"finish_reason":null}],"system_fingerprint":"fpv0_aad12a13"}
+
+        data: {"id":"chatcmpl-6aa2e1710377c1ad643a6c15","object":"chat.completion.chunk","created":1789059441,"model":"kimi-k3","choices":[{"index":0,"delta":{"reasoning_content":" to"},"finish_reason":null}],"system_fingerprint":"fpv0_aad12a13"}
+
+        data: {"id":"chatcmpl-6aa2e1710377c1ad643a6c15","object":"chat.completion.chunk","created":1789059441,"model":"kimi-k3","choices":[{"index":0,"delta":{"reasoning_content":" reply"},"finish_reason":null}],"system_fingerprint":"fpv0_aad12a13"}
+
+        data: {"id":"chatcmpl-6aa2e1710377c1ad643a6c15","object":"chat.completion.chunk","created":1789059441,"model":"kimi-k3","choices":[{"index":0,"delta":{"reasoning_content":" with"},"finish_reason":null}],"system_fingerprint":"fpv0_aad12a13"}
+
+        data: {"id":"chatcmpl-6aa2e1710377c1ad643a6c15","object":"chat.completion.chunk","created":1789059441,"model":"kimi-k3","choices":[{"index":0,"delta":{"reasoning_content":" only"},"finish_reason":null}],"system_fingerprint":"fpv0_aad12a13"}
+
+        data: {"id":"chatcmpl-6aa2e1710377c1ad643a6c15","object":"chat.completion.chunk","created":1789059441,"model":"kimi-k3","choices":[{"index":0,"delta":{"reasoning_content":" the"},"finish_reason":null}],"system_fingerprint":"fpv0_aad12a13"}
+
+        data: {"id":"chatcmpl-6aa2e1710377c1ad643a6c15","object":"chat.completion.chunk","created":1789059441,"model":"kimi-k3","choices":[{"index":0,"delta":{"reasoning_content":" weather"},"finish_reason":null}],"system_fingerprint":"fpv0_aad12a13"}
+
+        data: {"id":"chatcmpl-6aa2e1710377c1ad643a6c15","object":"chat.completion.chunk","created":1789059441,"model":"kimi-k3","choices":[{"index":0,"delta":{"reasoning_content":" result"},"finish_reason":null}],"system_fingerprint":"fpv0_aad12a13"}
+
+        data: {"id":"chatcmpl-6aa2e1710377c1ad643a6c15","object":"chat.completion.chunk","created":1789059441,"model":"kimi-k3","choices":[{"index":0,"delta":{"reasoning_content":"."},"finish_reason":null}],"system_fingerprint":"fpv0_aad12a13"}
+
+        data: {"id":"chatcmpl-6aa2e1710377c1ad643a6c15","object":"chat.completion.chunk","created":1789059441,"model":"kimi-k3","choices":[{"index":0,"delta":{"reasoning_content":""},"finish_reason":null}],"system_fingerprint":"fpv0_aad12a13"}
+
+        data: {"id":"chatcmpl-6aa2e1710377c1ad643a6c15","object":"chat.completion.chunk","created":1789059441,"model":"kimi-k3","choices":[{"index":0,"delta":{"content":"s"},"finish_reason":null}],"system_fingerprint":"fpv0_aad12a13"}
+
+        data: {"id":"chatcmpl-6aa2e1710377c1ad643a6c15","object":"chat.completion.chunk","created":1789059441,"model":"kimi-k3","choices":[{"index":0,"delta":{"content":"unny"},"finish_reason":null}],"system_fingerprint":"fpv0_aad12a13"}
+
+        data: {"id":"chatcmpl-6aa2e1710377c1ad643a6c15","object":"chat.completion.chunk","created":1789059441,"model":"kimi-k3","choices":[{"index":0,"delta":{},"finish_reason":"stop","usage":{"prompt_tokens":597,"completion_tokens":29,"total_tokens":626,"cached_tokens":512,"completion_tokens_details":{"reasoning_tokens":12},"prompt_tokens_details":{"cached_tokens":512}}}],"system_fingerprint":"fpv0_aad12a13"}
+
+        data: {"id":"chatcmpl-6aa2e1710377c1ad643a6c15","object":"chat.completion.chunk","created":1789059441,"model":"kimi-k3","choices":[],"usage":{"prompt_tokens":597,"completion_tokens":29,"total_tokens":626,"cached_tokens":512,"completion_tokens_details":{"reasoning_tokens":12},"prompt_tokens_details":{"cached_tokens":512}}}
+
+        data: [DONE]
+
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-length:
+      - '4354'
+      content-type:
+      - text/event-stream
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+      - Origin
+    status:
+      code: 200
+      message: OK
+version: 1
+...
