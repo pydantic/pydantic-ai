@@ -233,7 +233,15 @@ def render_banner(
         # that has stays out of it entirely rather than being told to do what it has already done.
         lines += ['', *_observability_lines()]
         # Only what the block above doesn't already say: it opens by telling them to set it up.
-        lines += ['', 'hide: PYDANTIC_AI_NO_BANNER=1']
+        lines += [
+            '',
+            *wrap(
+                'goes away once observability is on — or PYDANTIC_AI_NO_BANNER=1',
+                width=_TEXT_WIDTH,
+                subsequent_indent='  ',
+                break_on_hyphens=False,
+            ),
+        ]
 
     banner = _beside_logo(lines)
     return banner if color else _COLOR_PATTERN.sub('', banner)

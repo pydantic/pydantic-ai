@@ -140,7 +140,7 @@ def test_render_banner(render: Callable[..., str]):
 /      |      \\    ask your agent to set it up: https://pydantic.dev/ai-setup.md
 `---.._|_..---'    free with Logfire and a GitHub login, or use any OpenTelemetry backend
 
-                 hide: PYDANTIC_AI_NO_BANNER=1\
+                 goes away once observability is on — or PYDANTIC_AI_NO_BANNER=1\
 """)
 
 
@@ -155,7 +155,7 @@ def test_render_banner_for_an_unnamed_agent(render: Callable[..., str]):
 /      |      \\    ask your agent to set it up: https://pydantic.dev/ai-setup.md
 `---.._|_..---'    free with Logfire and a GitHub login, or use any OpenTelemetry backend
 
-                 hide: PYDANTIC_AI_NO_BANNER=1\
+                 goes away once observability is on — or PYDANTIC_AI_NO_BANNER=1\
 """)
 
 
