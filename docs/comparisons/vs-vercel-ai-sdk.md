@@ -97,7 +97,7 @@ without changing the agent.
 | Trusted state | A loosely typed runtime context | `deps_type`, read by tools, invisible to the model |
 | Structured output | Chosen for you | You choose: tool call, native, or transformed text |
 | Skills | `uploadSkill` to a provider | Capabilities that load on demand and round-trip to YAML |
-| Budgets | `stopWhen` on steps | Requests, tool calls, and tokens, checked before the next call |
+| Budgets | `stopWhen` on steps; no money limit | Requests, tool calls, tokens, and `cost_limit` in USD, priced across 41 providers by `genai-prices`, checked before the next request |
 | Crash recovery | Not first-party | Six engines wrap the agent object |
 | Testing offline | Subclass their provider spec yourself; it works well | `TestModel` and `FunctionModel` included |
 | Evals | Not first-party | `pydantic-evals` in your test suite using the agent's own types |

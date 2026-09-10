@@ -94,7 +94,7 @@ framework: mark it `requires_approval=True` and the run pauses and hands you the
 | Structured output | `output_schema` — note that `output_model` means the parser model | `output_type`, with explicit control over how it goes over the wire |
 | Memory and knowledge | Built in and well developed | Bring your own; ours is thinner |
 | Evals | `AccuracyEval`, `ReliabilityEval`, `PerformanceEval`, agent-as-judge — importable without AgentOS | `pydantic-evals` in your test suite, using the agent's own types |
-| Tracing | OpenTelemetry spans, exported to their database for the control plane to read | OpenTelemetry spans, exported wherever you already send them |
+| Tracing | OpenTelemetry spans via OpenInference, under `llm.*` and `openinference.*` names; zero `gen_ai.*` attributes | OpenTelemetry GenAI semantic conventions (36 `gen_ai.*` attributes) — your existing dashboards read them |
 
 ## Choose Agno when
 
@@ -131,6 +131,7 @@ and we haven't.
 *Checked against agno 3.0.9 and Pydantic AI 2.42 on 2026-09-10. The tool behaviour comes from reading
 the installed package: `ShellTools.run_shell_command` and its docstring, `PythonTools`, and the
 `restrict_to_base_dir` default. AgentOS claims are from Agno's documentation, not run. The Pydantic AI
-example is executed by this repository's test suite. We recheck this page's
+example is executed by this repository's test suite. The `gen_ai.*` counts are distinct semantic-convention attribute names found in each installed
+package's source; ours were also captured from a live run through a plain OpenTelemetry exporter. We recheck this page's
 version pins and behaviour claims each time Pydantic AI ships a minor release; if something here has
 gone stale, [tell us](https://github.com/pydantic/pydantic-ai/issues/new) and we'll correct it.*

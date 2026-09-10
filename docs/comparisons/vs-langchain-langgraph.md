@@ -242,7 +242,9 @@ and in use.
 | Trusted state | `context_schema`, part of the state the loop reads | `deps_type`, a separate typed argument tools read and the model cannot see |
 | Cancellation | `abort()` on the experimental `stream_events(version='v3')` stream; nothing on `invoke()` or `stream()` | `CancellationToken`, `ctx.cancel()`, `RunCancelled` with resumable history, from any entry point |
 | Extending the agent | Middleware, wrapping in LIFO order around each pass | Capabilities, bundling tools, instructions, settings, and hooks as one unit that can also load on demand |
-| Testing offline | Subclass their `ChatModel` and a dozen lines drives the whole loop; there's no test model included, and `GenericFakeChatModel` raises `NotImplementedError` on `bind_tools` | `TestModel` and `FunctionModel` ship with the library; `ALLOW_MODEL_REQUESTS = False` blocks real providers globally |
+| Testing offline | Three fake chat models ship in `langchain-core`, and all three raise `NotImplementedError` on `bind_tools`, so none can drive an agent; a dozen-line `BaseChatModel` subclass does work | `TestModel` calls your tools with no scripting; `FunctionModel` scripts them; `ALLOW_MODEL_REQUESTS = False` blocks real providers globally |
+| Tracing | LangSmith is the paved road; OpenInference spans are available but carry zero `gen_ai.*` attributes | The OpenTelemetry GenAI semantic conventions, 36 `gen_ai.*` attributes, straight into the dashboards you already have |
+| Budgets | `recursion_limit` caps graph depth; no token or money ceiling on the run | Requests, tool calls and tokens per run, plus `cost_limit` in USD across 41 providers, checked before the next request |
 | Evals | Datasets and experiments in LangSmith | `pydantic-evals` in your test suite, sharing the agent's own types, no platform |
 | Deploying an agent as config | Graphs are code | `AgentSpec` round-trips to YAML and validates prompt templates against `deps_type` at load |
 
@@ -306,6 +308,7 @@ reached by calling `stream_events(version='v3')` on a compiled graph and confirm
 `LangChainBetaWarning`; `invoke()` and `stream()` were checked for a stop method and have none. The probes are the ones
 shown above, and they need nothing beyond those two packages and no network. The Pydantic AI snippet
 on this page is executed by this repository's test suite on every commit, so its output is what it
-printed. We recheck this page's
+printed. The `gen_ai.*` counts are distinct semantic-convention attribute names found in each installed
+package's source; ours were also captured from a live run through a plain OpenTelemetry exporter. We recheck this page's
 version pins and behaviour claims each time Pydantic AI ships a minor release; if something here has
 gone stale, [tell us](https://github.com/pydantic/pydantic-ai/issues/new) and we'll correct it.*

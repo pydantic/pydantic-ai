@@ -120,7 +120,9 @@ Prefect, Restate, Kitaru, or Airflow without changing the agent.
 | Stopping a run | `interrupt()` sets a flag checked between steps; needs another thread | `CancellationToken`, `ctx.cancel()`, `RunCancelled` with resumable history |
 | Trusted state | Nothing separate from the prompt | `deps_type`, read by tools, invisible to the model |
 | Crash recovery | None in core | Six engines wrap the agent object |
-| Testing offline | Subclass `Model` yourself; it's a genuine place to plug in | `TestModel` and `FunctionModel` included |
+| Testing offline | Subclass `Model` yourself; it's a genuine place to plug in | `TestModel` calls your tools with no scripting; `FunctionModel` scripts them |
+| Tracing | OpenInference spans under its own attribute names; zero `gen_ai.*` | The GenAI semantic conventions, 36 `gen_ai.*` attributes |
+| Budgets | Step caps; no money limit | `cost_limit` in USD across 41 providers, checked before the next request |
 | Evals | None in core | `pydantic-evals` in your test suite |
 
 ## Choose smolagents when
@@ -158,6 +160,7 @@ and that's a real virtue.
 *Checked against smolagents 1.26.0 and Pydantic AI 2.42 on 2026-09-10. The sandbox messages are the
 actual errors from running `import os` and `open(...)` through its local executor; the absence of an
 async run and the behaviour of `interrupt()` come from reading the installed package. The Pydantic AI
-example is executed by this repository's test suite, and the timing shown is from that run. We recheck this page's
+example is executed by this repository's test suite, and the timing shown is from that run. The `gen_ai.*` counts are distinct semantic-convention attribute names found in each installed
+package's source; ours were also captured from a live run through a plain OpenTelemetry exporter. We recheck this page's
 version pins and behaviour claims each time Pydantic AI ships a minor release; if something here has
 gone stale, [tell us](https://github.com/pydantic/pydantic-ai/issues/new) and we'll correct it.*

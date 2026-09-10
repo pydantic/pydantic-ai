@@ -97,7 +97,7 @@ Airflow.
 | Crash recovery | Sessions plus resumability config and `rewind_async` | Six engines wrap the agent object, and the engine is your choice |
 | Testing offline | Subclass `BaseLlm` yourself | `TestModel` and `FunctionModel` included; real calls blockable globally |
 | Evals | An evaluation module tied to their tooling | `pydantic-evals` in your test suite using the agent's own types |
-| Tracing | Google's telemetry and Vertex | OpenTelemetry to wherever you send everything else |
+| Tracing | The GenAI semantic conventions, done properly — 49 `gen_ai.*` attributes | The same conventions, 36 attributes; the one row here where we're peers |
 | Deployment | Vertex AI is the paved road | Anywhere; it's a library |
 
 ## Choose Google ADK when
@@ -131,6 +131,7 @@ ADK removes work we can't remove for you.
 *Checked against google-adk 2.8.0 and Pydantic AI 2.42 on 2026-09-10. The ADK facts come from reading
 the installed package: the absence of any cancel, stop, or abort method on `Runner` and `LlmAgent`,
 the `Runner` method list, and the contents of `google.adk.models`. Its runtime behaviour needs a live
-model and was not run. The Pydantic AI example is executed by this repository's test suite. We recheck this page's
+model and was not run. The Pydantic AI example is executed by this repository's test suite. The `gen_ai.*` counts are distinct semantic-convention attribute names found in each installed
+package's source; ours were also captured from a live run through a plain OpenTelemetry exporter. We recheck this page's
 version pins and behaviour claims each time Pydantic AI ships a minor release; if something here has
 gone stale, [tell us](https://github.com/pydantic/pydantic-ai/issues/new) and we'll correct it.*

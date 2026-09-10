@@ -101,6 +101,7 @@ picks up where it stopped.
 | Durability | `Task` with a checkpoint store and `resume_from` | Six engines wrap the agent; you pick which |
 | Stopping a run | `Task.cancel()` on the task envelope | `CancellationToken` across runs, `ctx.cancel()` in a tool, resumable history |
 | Testing offline | `TestConfig` scripts model events, including tool calls and errors | `TestModel` and `FunctionModel`, plus a global block on real calls |
+| Budgets | No money limit | `cost_limit` in USD across 41 providers, checked before the next request |
 | Protocols | ACP and A2A first-party | ACP through the harness |
 | Migration | The AutoGen-era API is gone at 1.0 | — |
 

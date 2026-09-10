@@ -38,20 +38,35 @@ lines-of-code comparisons apart and shows what's actually being measured.
 
 ## The short version
 
-Pydantic AI is a library, not a platform. An agent is a typed Python value; the run is an ordinary
-coroutine; and the things production needs — approval pauses, spend ceilings, cancellation, crash
-recovery, evals — attach to that value instead of changing its shape. Nothing here decides your
-architecture for you, which is the trade: less is done for you, and less is decided for you.
+People first came to Pydantic AI for strong primitives: a typed agent, a real validation layer, and
+nothing between you and the model you didn't ask for. That hasn't changed. What changed is the size of
+the pieces.
 
-Concretely, four things show up on almost every page:
+A capability is one object that can carry tools, instructions, model settings, lifecycle hooks and
+event-stream handling together, and arrive only when the model asks for it — 63 hooks in all, with a
+matching `before_`, `after_`, `wrap_` and error handler at every stage of the run. That's the trade
+we're offering: bigger blocks, not a bigger world to live in. Your agent stays a value in your
+application rather than an application that hosts your values.
 
-- **The model can't reach your credentials.** Trusted state lives in a separate typed argument that
-  tools read and the model never sees.
-- **Stopping a run gives you the conversation back.** It raises, the exception carries the history, and
-  resuming is a normal run.
-- **Budgets are checked before the next call**, not totted up afterwards.
-- **Crash recovery is an engine you already run** — Temporal, DBOS, Prefect, Restate, Kitaru, or
-  Airflow — rather than a runtime of ours you have to adopt.
+Five things that follow from that, each with a proof you can run:
+
+- **Traces your existing tools already understand.** We emit the OpenTelemetry
+  [GenAI semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/) — 36 distinct
+  `gen_ai.*` attributes — so the agent appears in the dashboards your vendor already ships. Google ADK
+  does this too. LangChain, the OpenAI Agents SDK, Agno and smolagents emit zero.
+- **A ceiling in money, not tokens.** `cost_limit` is priced by
+  [genai-prices](https://github.com/pydantic/genai-prices) across 41 providers and 1,646 models, and
+  checked before the next request goes out. No other framework can stop a run on spend across
+  providers.
+- **The whole loop runs offline.** `TestModel` calls your tools with no scripting. LangChain ships
+  three fake chat models and all three refuse to bind tools, so none of them can test an agent.
+- **Stopping gives you the conversation back.** Cancellation raises, the exception carries the
+  history, and resuming is a normal run.
+- **Crash recovery from an engine you already operate** — Temporal, DBOS and Prefect in-tree, and
+  Restate and Apache Airflow through integrations those projects maintain themselves.
+- **The model can't reach your credentials.** Trusted state is a separate typed argument that tools
+  read and the model never sees. Several frameworks pass context the model doesn't see; ours is the
+  one your type checker knows the shape of.
 
 ## Where each one is strong
 

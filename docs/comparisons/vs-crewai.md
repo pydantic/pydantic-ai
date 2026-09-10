@@ -121,7 +121,7 @@ which cover a lot but aren't a ceiling on the whole crew.
 |---|---|---|
 | How you describe work | Roles, goals, backstories, tasks, and a process mode | Ordinary async Python: call, branch, gather |
 | Trusted state | Crew inputs and values captured in tools | `deps_type`, a separate argument tools read and the model never sees |
-| Budgets | Per agent: iterations, time, tokens, requests per minute | Per run: model requests, tool calls, and tokens, checked before the next request |
+| Budgets | Per agent: iterations, time, tokens, requests per minute — no money limit | Per run: requests, tool calls, tokens, and `cost_limit` in USD, priced across 41 providers by `genai-prices`, checked before the next request |
 | Crash recovery | Built-in checkpoints on crews, flows, and agents | Six engines wrap the agent: Temporal, DBOS, Prefect, Restate, Kitaru, Airflow |
 | Stopping a run | No stop or cancel method on `Crew` | `CancellationToken` from another thread, or `ctx.cancel()` in a tool; the history survives and resumes |
 | Watching it work | Events and their platform | Typed event stream plus OpenTelemetry |

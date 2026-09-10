@@ -113,7 +113,7 @@ a session tells you what was said, not what was half-done.
 | Crash recovery | Not first-party; a Temporal contrib exists | Six engines wrap the agent: Temporal, DBOS, Prefect, Restate, Kitaru, Airflow |
 | Testing offline | Write your own `Model`; there's no test model included | `TestModel` and `FunctionModel` ship with it; `ALLOW_MODEL_REQUESTS = False` blocks real calls |
 | Evals | A separate product | `pydantic-evals` runs in your test suite using the agent's own types |
-| Tracing | Their dashboard | OpenTelemetry to wherever you send everything else |
+| Tracing | Their dashboard, or OpenInference spans under its own attribute names; zero `gen_ai.*` | OpenTelemetry GenAI semantic conventions (36 `gen_ai.*` attributes) — your existing dashboards read them |
 
 ## Choose the OpenAI SDK when
 
@@ -148,6 +148,7 @@ hosted tracing works the moment you install it.
 *Checked against openai-agents 0.22.2 and Pydantic AI 2.42 on 2026-09-10. The OpenAI SDK facts come
 from reading the installed package — method signatures, exported guardrail types, and `handoff()`
 parameters. The Pydantic AI example is run by this repository's test suite on every commit, so its
-output is what it printed. We recheck this page's
+output is what it printed. The `gen_ai.*` counts are distinct semantic-convention attribute names found in each installed
+package's source; ours were also captured from a live run through a plain OpenTelemetry exporter. We recheck this page's
 version pins and behaviour claims each time Pydantic AI ships a minor release; if something here has
 gone stale, [tell us](https://github.com/pydantic/pydantic-ai/issues/new) and we'll correct it.*

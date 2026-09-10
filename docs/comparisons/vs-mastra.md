@@ -20,7 +20,10 @@ workflow steps, scorers. Each is well shaped, and there are a lot of them.
 
 Pydantic AI has one extension: a capability. A capability can add tools, add instructions, change model
 settings, hook into the run's lifecycle, and watch or rewrite the stream of events — all as one unit,
-and it can wait to load until the model asks for it. Here's a single capability doing two of those jobs
+and it can wait to load until the model asks for it. It exposes 63 hooks, with a matching `before_`,
+`after_`, `wrap_` and error handler at each stage of the run: the model request, each node, tool
+validation, tool execution, output validation, output processing, and the run itself. One thing to
+learn, and it goes everywhere. Here's a single capability doing two of those jobs
 at once, adding a tool and auditing what the run emits:
 
 ```python {title="one_capability_two_jobs.py"}
@@ -119,7 +122,7 @@ provide.
 | Durability | Their workflow engine, or the Inngest variant | Six engines wrap the agent; you pick |
 | Memory | Working, observational, and semantic recall | Dependencies and history processors you wire up |
 | Evals | Scorers, with their tooling and Vitest | `pydantic-evals` in your test suite, using the agent's own types |
-| Tracing | Dev server, Studio, Cloud | OpenTelemetry to wherever you send everything else |
+| Tracing | Dev server, Studio, Cloud | OpenTelemetry GenAI semantic conventions (36 `gen_ai.*` attributes) — your existing dashboards read them |
 | Deployment | Their Cloud is the paved road | Anywhere; it's a library |
 
 ## Choose Mastra when

@@ -96,6 +96,7 @@ work rather than the transcript, and the wrapping doesn't change the agent.
 | Continuity | Sessions: resume, fork, rewind | Message history you own and store |
 | Crash recovery | Not the same thing as a session | Six engines wrap the agent object |
 | Testing offline | Launch the CLI; it's an integration test | `TestModel` and `FunctionModel`, no network |
+| Budgets | `max_budget_usd`, enforced by the CLI, for Claude models through it | `cost_limit` in USD across 41 providers and 1,646 models, whichever model you call |
 
 ## Choose the Claude Agent SDK when
 

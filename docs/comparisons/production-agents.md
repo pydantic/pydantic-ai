@@ -287,7 +287,17 @@ main()
 ```
 
 
-Spend works the same way, in money rather than tokens:
+Spend works the same way, in money rather than tokens. This is the one on this page that nothing else
+can do. A dollar budget needs prices for every model you might call, so it only works if the pricing
+data is part of the library: `cost_limit` is backed by [genai-prices](https://github.com/pydantic/genai-prices),
+which we maintain, covering 41 providers and 1,646 models. The check runs *before* the next request
+goes out, so the run stops instead of the number arriving on your bill.
+
+Two other frameworks accept a dollar figure — Agno and the Claude Agent SDK both take `max_budget_usd`
+— and in both cases it is the same thing: a value passed through to the Claude CLI's own budget. It
+works when your model is Claude, through that CLI. LangChain, LangGraph, the OpenAI Agents SDK, CrewAI,
+smolagents and Google ADK have no money limit at all; they cap tokens or iterations, which is a proxy
+that gets worse every time model pricing changes.
 
 ```python {title="cost_limit.py"}
 """Cost is a unit, not a rumor.
@@ -501,8 +511,64 @@ asyncio.run(main())
 
 
 A capability can also wrap that stream to filter or rewrite it, which is how you build an auditor that
-travels with the agent rather than a separate observability integration. Everything also goes out as
-OpenTelemetry, so agent traces sit next to your database and HTTP spans.
+travels with the agent rather than a separate observability integration.
+
+Everything also goes out as OpenTelemetry — and specifically, as the OpenTelemetry
+[GenAI semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/). That distinction is
+the whole point. Plenty of frameworks produce spans; what decides whether those spans are useful is
+whether they use the attribute names the rest of the industry agreed on, because that is what your
+existing dashboards, alerts and vendor integrations read:
+
+```python {title="otel_semconv.py" requires="event_stream.py"}
+"""Agent spans that your existing tooling already understands."""
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
+from pydantic_ai import Agent
+from pydantic_ai.models.instrumented import InstrumentationSettings
+from pydantic_ai.models.test import TestModel
+
+exporter = InMemorySpanExporter()
+provider = TracerProvider()
+provider.add_span_processor(SimpleSpanProcessor(exporter))
+
+support = Agent(TestModel(), name='support')
+support.instrument = InstrumentationSettings(tracer_provider=provider)
+
+
+@support.tool_plain
+def refund(order_id: str) -> str:
+    """Refund an order."""
+    return 'refunded'
+
+
+support.run_sync('refund A-1')
+spans = {s.name: s for s in exporter.get_finished_spans()}
+print('span names:', sorted(spans))
+#> span names: ['chat test', 'execute_tool refund', 'invoke_agent support']
+tool_span = spans['execute_tool refund']
+print('the tool span names the tool:', tool_span.attributes['gen_ai.tool.name'])
+#> the tool span names the tool: refund
+print('the model span reports usage:', 'gen_ai.usage.input_tokens' in spans['chat test'].attributes)
+#> the model span reports usage: True
+```
+
+Those spans went to a plain OpenTelemetry exporter, not to us. Point them at Logfire if you want the
+first-party view, or at Datadog, Honeycomb or Grafana, and the agent shows up in the GenAI dashboards
+those vendors already ship — because the attribute names match.
+
+For comparison, we counted distinct `gen_ai.*` attributes in each framework's source. Google ADK is a
+peer here and does this properly. The rest emit spans through third-party instrumentation that uses
+its own namespace — `llm.model_name`, `openinference.span.kind` — so a standards-based GenAI dashboard
+stays empty:
+
+| | Distinct `gen_ai.*` attributes |
+|---|---|
+| Google ADK 2.8.0 | 49 |
+| Pydantic AI 2.42 | 36 |
+| CrewAI 1.15.21 | 1 |
+| LangChain 1.4.0, openai-agents 0.22.2, Agno 3.0.9, smolagents 1.26.0 | 0 |
 
 ## 8. Evals in your test suite
 
