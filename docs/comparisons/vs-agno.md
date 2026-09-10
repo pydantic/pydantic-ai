@@ -75,7 +75,7 @@ sync='same result' async='same result' iter='same result'
 
 ## If this answer doesn't fit you
 
-If all-in-one plus a hosted runtime (AgentOS) and team orchestration is the product you want, Agno genuinely ships that. We chose the opposite trade: nothing to adopt, run where your app runs. This page is that trade, demonstrated.
+If all-in-one plus a hosted runtime (AgentOS) and team orchestration is the product you want, Agno genuinely ships that. We chose the opposite trade: nothing to adopt, run where your app runs. This page is that trade, demonstrated. The recurring community advice on r/AI_Agents is to try Agno and Pydantic AI back to back and keep the one that feels better — we agree with that advice. And if you came here from a comparison quoting creation-speed or memory numbers, we answer that claim head-on in [Tradeoffs, translated](under-the-hood.md) — measured, not argued.
 
 ---
 

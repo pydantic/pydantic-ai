@@ -12,7 +12,7 @@ you can run in seconds.
 
 ## Why the answers differ
 
-Their crew is a DSL the framework interprets; ours is ordinary async code with a type at every seam. Same multi-agent shape, far more visibility.
+Their crew is a DSL the framework interprets; ours is ordinary async code with a type at every seam. Same multi-agent shape, far more visibility. An independent review (Speakeasy, 2026-03) saw the production limits too: unit-testing individual agents is a documented gap (even `print`/`log` don't work inside Task callbacks), and uncapped loops have billed $414 in a single run — and it also names their strength, the broadest enterprise adoption of the group (PwC, DocuSign, IBM, PepsiCo).
 
 ## See it work
 

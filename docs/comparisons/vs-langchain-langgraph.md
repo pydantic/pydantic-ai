@@ -13,7 +13,7 @@ you can run in seconds.
 
 ## Why the answers differ
 
-LangGraph's structure is the graph you adopt; here the run is a value you drive. The consequences are the seams: their `interrupt()` resumes by re-running the enclosing node (the LLM call repeats); our pause sits at the tool call boundary. Deps, budgets, cancellation, and evals all hang off that difference.
+LangGraph's structure is the graph you adopt; here the run is a value you drive. The consequences are the seams: their `interrupt()` resumes by re-running the enclosing node (the LLM call repeats); our pause sits at the tool call boundary. Deps, budgets, cancellation, and evals all hang off that difference. An independent review (Speakeasy, 2026-03) puts the cost of their structure plainly: no token-budget management (context bloat silently degrades long runs), and a full copy of the graph state per step, so checkpoints grow with your payloads.
 
 One more data point, measured by someone else: an independent comparison (Speakeasy, 2026-03, [90-day five-framework benchmark](https://www.speakeasy.com)) scored developer experience 8/10 for Pydantic AI against 5/10 for LangChain, and credited type validation with catching 23 bugs in development that would have reached production.
 ## See it work

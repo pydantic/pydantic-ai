@@ -111,6 +111,7 @@ resumed run output: run resumed and completed
 | Cancellation | Streamed-run `cancel(mode='immediate'\|'after_turn')` | Typed: `CancellationToken` (thread-safe, multi-run), `ctx.cancel()`, `RunCancelled` carrying resumable history |
 | Resume | Sessions / `previous_response_id` — platform continuity | The exception carries history; resume is a normal run (proven below) |
 | Durability | Engine-side adapters (the Temporal contrib exists) | First-party wraps on the public interface — Temporal, DBOS, Prefect, Restate, Kitaru, Airflow |
+| Crash recovery | Not built in — their docs point at Temporal for durable paths (per Speakeasy 2026-03) | Engine wraps on the public interface, durable from the start |
 | Output | Plain JSON validated into typed models via `tools=[]` | Output transports: text, tool, native, structured — wire semantics are yours |
 | Events | Run items — platform-shaped | Typed event stream (part/tool/result/final); capabilities can transform it |
 | Offline tests | Pluggable `Model`, no first-party test model | `TestModel` / `FunctionModel` drive the whole pipeline deterministically |

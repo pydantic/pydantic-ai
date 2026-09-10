@@ -75,6 +75,8 @@ StructuredDict: {'n': 7} is a dict
 | Cancellation | `AbortSignal` — the JS norm, forwarded into providers | Typed: `ctx.cancel()`, thread-safe token, catchable `RunCancelled` with resumable history |
 | Extensions | Providers, tool sets, experimental agents | Capabilities: one unit, deferrable, serializable |
 | Durable | Your infrastructure | Six engine wraps on the public interface |
+| Run length | Hard function-timeout ceiling: 300 s (Pro) / 800 s (Enterprise) — long-horizon agents hit a wall (per Speakeasy 2026-03) | No loop timeouts; the run is yours |
+| SDK evolution | AI SDK 6 added an `Agent` interface and `DurableAgent` for resumable steps (per Speakeasy 2026-03; we verified 5) | Capabilities as one unit in 2.42.0 |
 
 ## If this answer doesn't fit you
 
@@ -101,4 +103,4 @@ that list; see Independent takes on the [overview](index.md).
 
 ---
 
-*Versions: Vercel AI SDK 5; Pydantic AI 2.42.0 — 2026-09-10. Snippets re-executed by this repository's tests.*
+*Versions: Vercel AI SDK 5 (verified by probe); AI SDK 6 claims per an independent review (Speakeasy, 2026-03) — re-verify before publishing against them. Pydantic AI 2.42.0 — 2026-09-10. Snippets re-executed by this repository's tests.*

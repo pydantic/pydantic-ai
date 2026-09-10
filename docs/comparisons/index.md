@@ -13,6 +13,8 @@ us, it's fine." Framework versions are documented on each page.
 - **Still deciding broadly?** Scan the landscape below, then start with [the production
   checklist](production-agents.md) — what a shipped agent actually needs, row by row — and hold
   every framework you're considering to it. Including us.
+- **Reading benchmark claims about us elsewhere?** [Tradeoffs, translated](under-the-hood.md) —
+  we take the speed/memory/lines-of-code comparisons head-on and show you the switch behind them.
 
 One thing we do believe: we ship **primitives, not decisions** — typed, composable seams
 (dependencies, capabilities, events, durable engines) that you wire yourself. We don't pick your

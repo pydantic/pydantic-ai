@@ -12,7 +12,7 @@ you can run in seconds.
 
 ## Why the answers differ
 
-ADK runs deep anyio — the primitives exist — but its runner exposes no user cancellation API that we could find. We ship cancellation as a product on the same primitives: typed, thread-safe, resumable. One token cancelling three concurrent runs is the small version.
+ADK runs deep anyio — the primitives exist — but its runner exposes no user cancellation API that we could find. We ship cancellation as a product on the same primitives: typed, thread-safe, resumable. One token cancelling three concurrent runs is the small version. Community experience matches the shape: ADK builds workflows fast, but a developer on r/AI_Agents (2025) hit rigidity trying to inject state into every chat message — the thing a `deps` boundary gives you for free here.
 
 ## See it work
 
