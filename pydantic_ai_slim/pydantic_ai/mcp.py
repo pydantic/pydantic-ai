@@ -830,6 +830,24 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
     or telemetry. See [`ProcessToolCallback`][pydantic_ai.mcp.ProcessToolCallback].
     """
 
+    stateless: bool
+    """Whether to connect in stateless mode, deferring the MCP `initialize` handshake until the
+    first real request.
+
+    When `True`, the toolset enters without calling `initialize`, which is useful for:
+
+    - Stateless HTTP servers behind load balancers or per-request deployments (Lambda-style)
+    - Multi-agent systems where you want to decouple agent instantiation from MCP server connections
+    - Health checks that shouldn't require MCP servers to be running
+
+    The `initialize` call (and capability exchange) happens lazily on the first actual operation
+    (`list_tools`, `call_tool`, etc.). This means `server_info`, `capabilities`, and `instructions`
+    properties are unavailable until that first operation completes.
+
+    Only applicable when constructing the toolset from a URL or transport — not when passing a
+    pre-built `fastmcp.Client`.
+    """
+
     sampling_model: models.Model | None
     """A Pydantic AI model that the server may sample from via the MCP `sampling/createMessage` flow.
 
@@ -880,6 +898,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         cache_prompts: bool = True,
         include_instructions: bool = False,
         include_return_schema: bool | None = None,
+        stateless: bool = False,
         # Sampling — high-level shortcut and low-level escape hatch
         sampling_model: models.Model | None = None,
         sampling_handler: SamplingHandler[Any, Any] | None = None,
@@ -928,6 +947,9 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 [`MCPToolset.include_instructions`][pydantic_ai.mcp.MCPToolset.include_instructions].
             include_return_schema: Whether to include return schemas in tool definitions. See
                 [`MCPToolset.include_return_schema`][pydantic_ai.mcp.MCPToolset.include_return_schema].
+            stateless: Whether to connect in stateless mode, deferring the MCP `initialize`
+                handshake until the first real request. See
+                [`MCPToolset.stateless`][pydantic_ai.mcp.MCPToolset.stateless].
             sampling_model: A Pydantic AI model the server may sample from. Mutually exclusive with
                 `sampling_handler`.
             sampling_handler: A FastMCP-shaped sampling handler. Use for full control over the
@@ -995,6 +1017,10 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 conflicts.append('init_timeout')
             if read_timeout is not _UNSET:
                 conflicts.append('read_timeout')
+            # `stateless` controls `auto_initialize` on the Client, so it can't be passed alongside
+            # a pre-built Client.
+            if stateless:
+                conflicts.append('stateless')
             if conflicts:
                 names = ', '.join(repr(n) for n in conflicts)
                 raise ValueError(
@@ -1003,6 +1029,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 )
             self.client = client
             self._user_message_handler = None
+            self.stateless = False  # Pre-built clients manage their own initialization
         else:
             if sampling_handler is not None and sampling_model is not None:
                 raise ValueError('Pass either `sampling_model` or `sampling_handler`, not both.')
@@ -1031,6 +1058,14 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
 
             wrapped_message_handler = _build_message_handler(self, message_handler)
 
+            # `auto_initialize=False` opens a live session whose server-initiated handlers are
+            # dispatchable immediately, and deferring the handshake makes that window unbounded
+            # rather than momentary, so in stateless mode those handlers refuse until the deferred
+            # initialization has run (no-op when `stateless` is False).
+            resolved_sampling_handler, elicitation_handler = _guard_server_initiated_handlers(
+                self, stateless, resolved_sampling_handler, elicitation_handler
+            )
+
             self.client = FastMCPClient[Any](
                 transport=transport,
                 sampling_handler=resolved_sampling_handler,
@@ -1042,12 +1077,14 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 init_timeout=init_timeout,
                 timeout=read_timeout,
                 roots=roots,
+                auto_initialize=not stateless,
             )
             self._user_message_handler = message_handler
             if resolved_sampling_handler is not None:
                 self._server_initiated_handlers.append('sampling_model' if sampling_model else 'sampling_handler')
             if elicitation_handler is not None:
                 self._server_initiated_handlers.append('elicitation_handler')
+            self.stateless = stateless
 
         self._id = id
         self.max_retries = max_retries
@@ -1145,7 +1182,14 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             handlers[handlers.index('sampling_handler')] = 'sampling_model'
         elif 'sampling_model' not in handlers:
             handlers.append('sampling_model')
-        self.client.set_sampling_callback(_build_sampling_handler(model))  # pyright: ignore[reportUnknownMemberType]
+        # Re-apply the stateless pre-initialization guard: a raw callback installed here would
+        # otherwise be reachable before the deferred handshake, undoing what `__init__` set up.
+        handler = _build_sampling_handler(model)
+        if self.stateless:
+            # Re-apply the pre-initialization guard: a raw callback installed here would otherwise
+            # be reachable before the deferred handshake, undoing what `__init__` set up.
+            handler = cast('SamplingHandler[Any, Any]', _guard_until_initialized(self, handler, 'sampling'))
+        self.client.set_sampling_callback(handler)  # pyright: ignore[reportUnknownMemberType]
 
     @property
     def _initialized(self) -> bool:
@@ -1162,6 +1206,138 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
     def _invalidate_prompts_cache(self) -> None:
         self._cached_prompts = None
 
+    async def _ensure_initialized(self) -> None:
+        """Ensure server metadata is available, performing the deferred handshake if needed.
+
+        With [`stateless`][pydantic_ai.mcp.MCPToolset.stateless] enabled the client connects with
+        `auto_initialize=False`, and the first real operation lands here to do the postponed work:
+        on a handshake-era (legacy) session that means sending the deferred `initialize` request,
+        while a modern (sessionless) session has no handshake to defer — its era-neutral metadata
+        is readable as soon as the client connects. Either way the read itself is the shared
+        `_read_server_metadata()`, so stateless mode gets exactly the same modern-session
+        handling, warnings, and `log_level` behavior as the eager path.
+
+        Idempotent and concurrency-safe — concurrent callers serialize on the enter lock, so only
+        one performs the handshake.
+        """
+        if self._initialized:
+            return
+        if not self.is_running:
+            raise ValueError(
+                f'`{self.__class__.__name__}._ensure_initialized` called before entering the toolset context'
+            )
+        async with self._enter_lock:
+            # Re-check after acquiring the lock (another coroutine may have initialized,
+            # or __aexit__ may have closed the session while we waited). The lock is held
+            # across the handshake round-trip below by design: single-flight initialization
+            # is the point, and every caller behind us needs its result anyway.
+            if self._initialized:
+                return
+            if not self.is_running:  # pragma: no cover
+                return
+            if self.client.initialize_result is None and not isinstance(
+                getattr(self.client, 'server_capabilities', None), mcp_types.ServerCapabilities
+            ):
+                # The client connected without negotiating (`auto_initialize=False`, the
+                # stateless case): run the deferred negotiation. On a handshake-era session
+                # `initialize()` performs the handshake and returns its result. On FastMCP 4
+                # in modern mode it negotiates the era first and then raises, because a modern
+                # (`server/discover`) session carries no `InitializeResult` — the negotiation
+                # itself has still happened, so the era-neutral properties become readable and
+                # the raise is our cue to read those instead. Any other `RuntimeError` (not
+                # connected, timeout) leaves no metadata behind and is re-raised.
+                try:
+                    await self.client.initialize()
+                except RuntimeError:
+                    if not isinstance(getattr(self.client, 'server_capabilities', None), mcp_types.ServerCapabilities):
+                        raise
+            await self._read_server_metadata()
+
+    async def _read_server_metadata(self) -> None:
+        """Read server identity, capabilities, and instructions off the connected client.
+
+        Shared by the eager path (`__aenter__`) and the deferred one (`_ensure_initialized`, when
+        [`stateless`][pydantic_ai.mcp.MCPToolset.stateless] is enabled), so both get identical
+        modern-session handling. Assignment to `self` is ordered so `_server_capabilities` — the
+        `_initialized` key — is written last: a failure partway through leaves the toolset
+        observably uninitialized rather than half-populated.
+        """
+        # A modern (sessionless) session has no `initialize` handshake, so server
+        # metadata comes from era-neutral client properties; older clients only populate
+        # `initialize_result`.
+        init_result = self.client.initialize_result
+        if init_result is None:
+            if not _MCP_SDK_V2:
+                # FastMCP 3 always initializes on connect unless the client was built
+                # with `auto_initialize=False`, so this is an uninitialized client, not
+                # a session generation.
+                raise exceptions.UserError(
+                    'The FastMCP client connected but never initialized — was it built '
+                    'with `auto_initialize=False`? `MCPToolset` needs an initialized client.'
+                )
+            raw_server_info = getattr(self.client, 'server_info', None)
+            capabilities = getattr(self.client, 'server_capabilities', None)
+            raw_instructions = getattr(self.client, 'instructions', None)
+            if not isinstance(capabilities, mcp_types.ServerCapabilities):
+                raise exceptions.UserError(
+                    'This client opened without an `initialize` handshake and exposes no '
+                    '`server_capabilities` to read server metadata from. If the client was '
+                    'built with `auto_initialize=False`, remove that; otherwise upgrade '
+                    '`fastmcp` to a version that provides era-neutral server metadata.'
+                )
+            # On modern sessions `serverInfo` is an optional display-only stamp the
+            # server may omit, so an absent identity must not fail the connection.
+            server_info = raw_server_info if isinstance(raw_server_info, mcp_types.Implementation) else None
+            instructions = raw_instructions if isinstance(raw_instructions, str) else None
+        else:
+            server_info = mcp_field(init_result, 'server_info', mcp_types.Implementation)
+            capabilities = init_result.capabilities
+            instructions = init_result.instructions
+        server_capabilities = ServerCapabilities.from_mcp_sdk(capabilities)
+        # SEP-2575 made MCP stateless, so a modern session holds no connection for the
+        # server to issue requests back over: it refuses sampling and elicitation, and
+        # `logging/setLevel` is handshake-era only.
+        modern_session = init_result is None
+        if self._server_initiated_handlers and modern_session:
+            # With `fastmcp-tasks` loaded, a task parked on `input_required` is answered
+            # through the elicitation handler (`tasks/get` polling + `tasks/update`), so
+            # on a modern session that handler can still fire — for task input only.
+            dead_handlers = [
+                name
+                for name in self._server_initiated_handlers
+                if name != 'elicitation_handler' or self._call_tool_task is None
+            ]
+            if dead_handlers:
+                names = ', '.join(f'`{name}`' for name in dead_handlers)
+                warnings.warn(
+                    f'{names} will never be called: {self.label} negotiated a modern MCP session, '
+                    'which holds no connection for the server to issue sampling or elicitation '
+                    'requests over.',
+                    UserWarning,
+                    stacklevel=2,
+                )
+        if self.log_level is not None:
+            if modern_session:
+                warnings.warn(
+                    f'`log_level` was not applied: {self.label} negotiated a modern MCP session, '
+                    'and the modern MCP protocol has no `logging/setLevel` request — the server '
+                    'sends every level and leaves filtering to the client. Filter by level in '
+                    '`log_handler` instead.',
+                    UserWarning,
+                    stacklevel=2,
+                )
+            else:
+                with warnings.catch_warnings():
+                    warnings.filterwarnings(
+                        'ignore',
+                        message='The logging capability is deprecated.*',
+                        category=Warning,
+                    )
+                    await self.client.session.set_logging_level(self.log_level)
+        self._server_info = server_info
+        self._instructions = instructions
+        self._server_capabilities = server_capabilities
+
     async def __aenter__(self) -> Self:
         async with self._enter_lock:
             if self._running_count == 0:
@@ -1172,82 +1348,11 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 # session that got torn down mid-setup.
                 async with AsyncExitStack() as exit_stack:
                     await exit_stack.enter_async_context(self.client)
-                    # A modern (sessionless) session has no `initialize` handshake, so server
-                    # metadata comes from era-neutral client properties; older clients only populate
-                    # `initialize_result`.
-                    init_result = self.client.initialize_result
-                    if init_result is None:
-                        if not _MCP_SDK_V2:
-                            # FastMCP 3 always initializes on connect unless the client was built
-                            # with `auto_initialize=False`, so this is an uninitialized client, not
-                            # a session generation.
-                            raise exceptions.UserError(
-                                'The FastMCP client connected but never initialized — was it built '
-                                'with `auto_initialize=False`? `MCPToolset` needs an initialized client.'
-                            )
-                        raw_server_info = getattr(self.client, 'server_info', None)
-                        capabilities = getattr(self.client, 'server_capabilities', None)
-                        raw_instructions = getattr(self.client, 'instructions', None)
-                        if not isinstance(capabilities, mcp_types.ServerCapabilities):
-                            raise exceptions.UserError(
-                                'This client opened without an `initialize` handshake and exposes no '
-                                '`server_capabilities` to read server metadata from. If the client was '
-                                'built with `auto_initialize=False`, remove that; otherwise upgrade '
-                                '`fastmcp` to a version that provides era-neutral server metadata.'
-                            )
-                        # On modern sessions `serverInfo` is an optional display-only stamp the
-                        # server may omit, so an absent identity must not fail the connection.
-                        server_info = raw_server_info if isinstance(raw_server_info, mcp_types.Implementation) else None
-                        instructions = raw_instructions if isinstance(raw_instructions, str) else None
-                    else:
-                        server_info = mcp_field(init_result, 'server_info', mcp_types.Implementation)
-                        capabilities = init_result.capabilities
-                        instructions = init_result.instructions
-                    server_capabilities = ServerCapabilities.from_mcp_sdk(capabilities)
-                    # SEP-2575 made MCP stateless, so a modern session holds no connection for the
-                    # server to issue requests back over: it refuses sampling and elicitation, and
-                    # `logging/setLevel` is handshake-era only.
-                    modern_session = init_result is None
-                    if self._server_initiated_handlers and modern_session:
-                        # With `fastmcp-tasks` loaded, a task parked on `input_required` is answered
-                        # through the elicitation handler (`tasks/get` polling + `tasks/update`), so
-                        # on a modern session that handler can still fire — for task input only.
-                        dead_handlers = [
-                            name
-                            for name in self._server_initiated_handlers
-                            if name != 'elicitation_handler' or self._call_tool_task is None
-                        ]
-                        if dead_handlers:
-                            names = ', '.join(f'`{name}`' for name in dead_handlers)
-                            warnings.warn(
-                                f'{names} will never be called: {self.label} negotiated a modern MCP session, '
-                                'which holds no connection for the server to issue sampling or elicitation '
-                                'requests over.',
-                                UserWarning,
-                                stacklevel=2,
-                            )
-                    if self.log_level is not None:
-                        if modern_session:
-                            warnings.warn(
-                                f'`log_level` was not applied: {self.label} negotiated a modern MCP session, '
-                                'and the modern MCP protocol has no `logging/setLevel` request — the server '
-                                'sends every level and leaves filtering to the client. Filter by level in '
-                                '`log_handler` instead.',
-                                UserWarning,
-                                stacklevel=2,
-                            )
-                        else:
-                            with warnings.catch_warnings():
-                                warnings.filterwarnings(
-                                    'ignore',
-                                    message='The logging capability is deprecated.*',
-                                    category=Warning,
-                                )
-                                await self.client.session.set_logging_level(self.log_level)
+                    if not self.stateless:
+                        await self._read_server_metadata()
+                    # In stateless mode the metadata read (and any handshake it needs) is
+                    # deferred to `_ensure_initialized()` on the first real operation.
                     self._exit_stack = exit_stack.pop_all()
-                    self._server_info = server_info
-                    self._server_capabilities = server_capabilities
-                    self._instructions = instructions
             self._running_count += 1
         return self
 
@@ -1271,11 +1376,19 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         """Return the server's instructions if `include_instructions` is enabled."""
         if not self.include_instructions:
             return None
-        if not self._initialized or self._instructions is None:
+        if not self.is_running:
             return None
-        # Instructions are captured once during `__aenter__` and don't change across runs while
-        # the toolset stays entered — so they're static from the agent's perspective, not dynamic.
-        return messages.InstructionPart(content=self._instructions, dynamic=False)
+        # Hold a running count (like every other operation) so a concurrent final `__aexit__`
+        # can't tear the session down between the check above and the deferred initialization.
+        async with self:
+            await self._ensure_initialized()
+            instructions = self._instructions
+        if instructions is None:
+            return None
+        # Instructions are captured once per session — during `__aenter__`, or on the first
+        # operation in stateless mode — and don't change across runs while the toolset stays
+        # entered, so they're static from the agent's perspective, not dynamic.
+        return messages.InstructionPart(content=instructions, dynamic=False)
 
     async def list_tools(self) -> list[mcp_types.Tool]:
         """Retrieve the tools currently exposed by the server.
@@ -1283,10 +1396,14 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         When [`cache_tools`][pydantic_ai.mcp.MCPToolset.cache_tools] is enabled (default), results
         are cached and invalidated by `notifications/tools/list_changed` or the toolset's last
         `__aexit__`.
+
+        In stateless mode, this is the point where lazy initialization occurs if the MCP
+        `initialize` handshake hasn't happened yet.
         """
         if self.cache_tools and self._cached_tools is not None:
             return self._cached_tools
         async with self:
+            await self._ensure_initialized()
             tools = await self.client.list_tools()
             if self.cache_tools:
                 self._cached_tools = tools
@@ -1394,6 +1511,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             ImportError: If `use_task=True` on FastMCP 4 and `fastmcp-tasks` is not installed.
         """
         async with self:
+            await self._ensure_initialized()
             try:
                 if use_task:
                     result = await self._call_tool_as_task(name, args, metadata)
@@ -1491,6 +1609,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         if self.cache_prompts and self._cached_prompts is not None:
             return self._cached_prompts
         async with self:
+            await self._ensure_initialized()
             if not self.capabilities.prompts:
                 return []
             try:
@@ -1514,6 +1633,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 an error response.
         """
         async with self:
+            await self._ensure_initialized()
             if not self.capabilities.prompts:
                 raise MCPError(
                     message=f'Server does not advertise the `prompts` capability; cannot get prompt {name!r}.',
@@ -1546,6 +1666,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         if self.cache_resources and self._cached_resources is not None:
             return self._cached_resources
         async with self:
+            await self._ensure_initialized()
             if not self.capabilities.resources:
                 return []
             try:
@@ -1566,6 +1687,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             MCPError: If the server returns an error.
         """
         async with self:
+            await self._ensure_initialized()
             if not self.capabilities.resources:
                 return []
             try:
@@ -1600,6 +1722,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         """
         resource_uri = uri if isinstance(uri, str) else uri.uri
         async with self:
+            await self._ensure_initialized()
             try:
                 contents = await self.client.read_resource(AnyUrl(resource_uri))
             except McpError as e:
@@ -1709,6 +1832,54 @@ def _make_httpx_client_factory(
         return http_client
 
     return factory
+
+
+_PRE_INIT_REFUSAL = (
+    '{label} received a server-initiated `{kind}` request before initialization. The toolset was '
+    'built with `stateless=True`, so the MCP handshake is deferred to the first operation and no '
+    'capabilities have been negotiated yet; server-initiated requests are refused until then.'
+)
+
+
+def _guard_until_initialized(toolset: MCPToolset[Any], handler: Any, kind: str) -> Any:
+    """Wrap one server-initiated handler so it refuses requests before initialization has run."""
+
+    async def guarded(*args: Any, **kwargs: Any) -> Any:
+        if not toolset._initialized:  # pyright: ignore[reportPrivateUsage]
+            raise exceptions.UserError(_PRE_INIT_REFUSAL.format(label=toolset.label, kind=kind))
+        return await handler(*args, **kwargs)
+
+    return guarded
+
+
+def _guard_server_initiated_handlers(
+    toolset: MCPToolset[Any],
+    stateless: bool,
+    sampling_handler: SamplingHandler[Any, Any] | None,
+    elicitation_handler: ElicitationHandler[Any, Any] | None,
+) -> tuple[SamplingHandler[Any, Any] | None, ElicitationHandler[Any, Any] | None]:
+    """Guard the server-initiated handlers of a stateless toolset; a no-op otherwise.
+
+    In stateless mode `auto_initialize=False` opens a session whose handlers the SDK will dispatch
+    to straight away, and deferring the handshake turns the momentary pre-handshake window into an
+    open-ended one. A server that jumps the gun — or a hostile one — would otherwise reach a
+    configured sampling model or elicitation prompt before any capability negotiation.
+
+    Note that statically configured `roots` are held and served by the SDK itself, so they are
+    outside this guard's reach.
+    """
+    if not stateless:
+        return sampling_handler, elicitation_handler
+    return (
+        None
+        if sampling_handler is None
+        else cast('SamplingHandler[Any, Any]', _guard_until_initialized(toolset, sampling_handler, 'sampling')),
+        None
+        if elicitation_handler is None
+        else cast(
+            'ElicitationHandler[Any, Any]', _guard_until_initialized(toolset, elicitation_handler, 'elicitation')
+        ),
+    )
 
 
 def _build_sampling_handler(sampling_model: models.Model) -> SamplingHandler[Any, Any]:
