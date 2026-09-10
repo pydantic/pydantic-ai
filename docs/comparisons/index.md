@@ -12,17 +12,17 @@ prove that in under 25 lines of code you can run offline — no API keys.
 
 | Framework | What you'll see |
 |---|---|
-| [LangChain & LangGraph](langchain-langgraph.md) | Graph DSL vs plain async; interrupt (node replay) vs cancellation; middleware vs capabilities |
-| [OpenAI Agents SDK](openai-agents-sdk.md) | One capability noun vs guardrail/handoff categories; typed deps; durable wraps |
-| [Claude Agent SDK](claude-agent-sdk.md) | Config surface for a subprocess harness vs a typed, in-process loop |
-| [smolagents](smolagents.md) | Sync-only loop vs structured async; sandbox limits vs a typed boundary |
-| [CrewAI](crewai.md) | Role/process orchestration vs orchestration-as-code |
-| [Google ADK](google-adk.md) | anyio-deep internals without a user cancellation API |
-| [AG2](ag2.md) | Checkpointed task state machines and envelope cancellation |
-| [Vercel AI SDK](vercel-ai-sdk.md) | The TS ecosystem norm (AbortSignal) vs typed Python cancellation |
-| [Mastra](mastra.md) | TS/Node processors architecture vs typed capabilities |
-| [Agno](agno.md) | A bundled runtime vs a library with runtime choice |
-| [Pi](pi-coding-agent.md) | A shipped CLI vs the harness as a library |
+| [vs LangChain & LangGraph](vs-langchain-langgraph.md) | Graph DSL vs plain async; interrupt (node replay) vs cancellation; middleware vs capabilities |
+| [vs OpenAI Agents SDK](vs-openai-agents-sdk.md) | One capability noun vs guardrail/handoff categories; typed deps; durable wraps |
+| [vs Claude Agent SDK](vs-claude-agent-sdk.md) | Config surface for a subprocess harness vs a typed, in-process loop |
+| [vs smolagents](vs-smolagents.md) | Sync-only loop vs structured async; sandbox limits vs a typed boundary |
+| [vs CrewAI](vs-crewai.md) | Role/process orchestration vs orchestration-as-code |
+| [vs Google ADK](vs-google-adk.md) | anyio-deep internals without a user cancellation API |
+| [vs AG2](vs-ag2.md) | Checkpointed task state machines and envelope cancellation |
+| [vs Vercel AI SDK](vs-vercel-ai-sdk.md) | The TS ecosystem norm (AbortSignal) vs typed Python cancellation |
+| [vs Mastra](vs-mastra.md) | TS/Node processors architecture vs typed capabilities |
+| [vs Agno](vs-agno.md) | A bundled runtime vs a library with runtime choice |
+| [vs Pi](vs-pi.md) | A shipped CLI vs the harness as a library |
 
 ## The flagship
 

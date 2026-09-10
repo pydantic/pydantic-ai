@@ -5,7 +5,7 @@ matters when the agent ships — each row is a runnable snippet, offline, no API
 with:
 
 ```bash
-uv run -m pydantic_ai_examples.comparisons.<name>
+uv run -m pydantic_ai_examples.comparisons.production_agent.<name>
 ```
 
 (Individual steps don't need side-by-side comparison: the point is which framework ships the seam at
@@ -17,7 +17,7 @@ own pages.)
 The DB password lives in `deps`. Only the tool may read it. The model receives tool definitions —
 nothing else — and its request payload never contains the secret.
 
-```snippet {path="/examples/pydantic_ai_examples/comparisons/deps_boundary.py"}
+```snippet {path="/examples/pydantic_ai_examples/comparisons/production_agent/deps_boundary.py"}
 ```
 
 ```
@@ -34,7 +34,7 @@ ADK invocation context).
 Request 1: the refund tool is absent from the request payload. Request 2: the model asks to load the
 capability. Request 3: the tool exists. The model cannot touch what it hasn't loaded.
 
-```snippet {path="/examples/pydantic_ai_examples/comparisons/deferred_capability.py"}
+```snippet {path="/examples/pydantic_ai_examples/comparisons/production_agent/deferred_capability.py"}
 ```
 
 ```
@@ -56,7 +56,7 @@ transform the run's event stream.
 A tool may stop the run. `ctx.cancel()` requests it; the run ends in a catchable `RunCancelled`
 carrying everything completed before the stop — resume by passing that history to the next run.
 
-```snippet {path="/examples/pydantic_ai_examples/comparisons/cancel_from_tool.py"}
+```snippet {path="/examples/pydantic_ai_examples/comparisons/production_agent/cancel_from_tool.py"}
 ```
 
 ```
@@ -66,7 +66,7 @@ cancellation is a typed, catchable, resumable outcome
 
 And from outside: a stop button in another thread interrupts a blocked synchronous run.
 
-```snippet {path="/examples/pydantic_ai_examples/comparisons/cancel_token_thread.py"}
+```snippet {path="/examples/pydantic_ai_examples/comparisons/production_agent/cancel_token_thread.py"}
 ```
 
 ```
@@ -82,7 +82,7 @@ thread; Google ADK exposes no user cancellation API; AG2 cancels via a durable e
 The model asks for two tool calls in one response; the limit allows one. The whole batch is
 rejected — `UsageLimitExceeded` — and *neither* tool ran.
 
-```snippet {path="/examples/pydantic_ai_examples/comparisons/usage_limits_atomic.py"}
+```snippet {path="/examples/pydantic_ai_examples/comparisons/production_agent/usage_limits_atomic.py"}
 ```
 
 ```
@@ -98,7 +98,7 @@ and calls it a limit.
 A run that dies mid-tool leaves a dangling tool call — invalid for any provider. The next run closes
 it out before the request goes out.
 
-```snippet {path="/examples/pydantic_ai_examples/comparisons/history_repair.py"}
+```snippet {path="/examples/pydantic_ai_examples/comparisons/production_agent/history_repair.py"}
 ```
 
 ```
@@ -110,7 +110,7 @@ history was provider-valid: no malformed pairing sent to the model
 
 A template typo errors against the typed deps schema at construction, naming the field:
 
-```snippet {path="/examples/pydantic_ai_examples/comparisons/spec_validation.py"}
+```snippet {path="/examples/pydantic_ai_examples/comparisons/production_agent/spec_validation.py"}
 ```
 
 ```
@@ -127,7 +127,7 @@ dict/YAML path (a pre-built Python `AgentSpec` object skips it: validate via `fr
 Parts, tool calls, results, the final result — typed events, streamed. No opinion about what you do
 with them: your auditor, your UI, your SSE adapter, or a capability transforming the stream.
 
-```snippet {path="/examples/pydantic_ai_examples/comparisons/event_stream.py"}
+```snippet {path="/examples/pydantic_ai_examples/comparisons/production_agent/event_stream.py"}
 ```
 
 ```
@@ -139,7 +139,7 @@ final output: '42' (streamed while it happened)
 
 Same types as the agent, same harness as CI: dataset → evaluators → report.
 
-```snippet {path="/examples/pydantic_ai_examples/comparisons/evals_ci.py"}
+```snippet {path="/examples/pydantic_ai_examples/comparisons/production_agent/evals_ci.py"}
 ```
 
 ```
@@ -152,7 +152,7 @@ assertions passed: 100%
 One agent source; the engine is the import. Temporal, DBOS, and Prefect agents wrap the same
 definition. This one needs the engine installed — it's a reference, not an offline proof:
 
-```snippet {path="/examples/pydantic_ai_examples/comparisons/durability_wrap.py"}
+```snippet {path="/examples/pydantic_ai_examples/comparisons/production_agent/durability_wrap.py"}
 ```
 
 ```

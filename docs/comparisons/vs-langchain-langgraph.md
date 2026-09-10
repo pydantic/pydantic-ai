@@ -7,7 +7,7 @@ provider, a huge community, and durable workflows through LangGraph.
 value — no graph DSL, no runtime to adopt, capabilities you wire yourself.
 
 *Verified against langchain 1.3.1 / langgraph 1.2.1 (2026-09-10). Pydantic AI claims below run
-offline: `uv run -m pydantic_ai_examples.comparisons.graph_is_a_value`.*
+offline: `uv run -m pydantic_ai_examples.comparisons.vs_langchain_langgraph.graph_is_a_value`.*
 
 ## Quick comparison
 
@@ -26,7 +26,7 @@ offline: `uv run -m pydantic_ai_examples.comparisons.graph_is_a_value`.*
 
 The loop is a value, not an abstraction to adopt. One run, iterated node by node, offline:
 
-```snippet {path="/examples/pydantic_ai_examples/comparisons/graph_is_a_value.py"}
+```snippet {path="/examples/pydantic_ai_examples/comparisons/vs_langchain_langgraph/graph_is_a_value.py"}
 ```
 
 ```
