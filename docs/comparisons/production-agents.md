@@ -316,7 +316,67 @@ Budget checks precede execution. A framework that stops mid-batch lets the first
 and calls it a limit.
 
 
-## 5. History repairs itself
+## 5. Cost is a unit, not a rumor
+
+Token prices come from [genai-prices](https://github.com/pydantic/genai-prices) (first-party, the
+same package that feeds the model docs) — each request's tokens resolve to a best-effort **USD
+cost** (`RunUsage.cost`), and a **dollar budget is enforced like any other usage limit**:
+`UsageLimits(cost_limit=...)` stops the run before the next request when it would exceed the
+budget. Prices refresh behind the scenes via `genai_prices.UpdatePrices` (one shared background
+task).
+
+When a model can't be priced, you hear about it — you don't get a silently unconstrained run:
+
+```python {title="cost_limit.py"}
+"""Cost is a unit, not a rumor.
+
+Per-request USD comes from genai-prices (first-party). A dollar budget is
+enforced like any other usage limit - and when a model can't be priced,
+you get a warning, not a silently unconstrained run.
+"""
+import warnings
+
+from pydantic_ai import Agent, UsageLimits
+from pydantic_ai.models.function import FunctionModel
+from pydantic_ai.messages import ModelResponse, TextPart
+
+
+async def model(messages, info):
+    return ModelResponse(parts=[TextPart('ok')])
+
+
+agent = Agent(FunctionModel(model))
+
+
+def main() -> None:
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter('always')
+        agent.run_sync('hi', usage_limits=UsageLimits(cost_limit=0.10))
+    names = sorted({type(x.message).__name__ for x in w if 'Cost' in type(x.message).__name__})
+    print('run completed; per-request USD cost is tracked (genai-prices)')
+    print(f'unpriced model under a cost budget -> {names}')
+    assert 'CostNotFoundWarning' in names
+
+
+main()
+```
+
+```text
+run completed; per-request USD cost is tracked (genai-prices)
+unpriced model under a cost budget -> ['CostNotFoundWarning']
+```
+
+The docs are honest about the seam: `cost_limit` is best-effort, not a billing guarantee — pair it
+with `request_limit` or your provider's own spend controls.
+
+Where everyone else sits on pricing: OpenAI SDK returns usage, cost lives in the platform dashboard;
+LangGraph/LangSmith track spend platform-side, not in the loop; CrewAI has no built-in token budget
+(a single uncapped loop has billed $414 — independent review, 2026-03); Mastra shows cost metrics
+in Studio (visibility, not enforcement) while its Observational Memory bills hidden LLM calls; the
+Vercel AI SDK tracks cost on the Vercel platform and caps runs at 300-800 s; smolagents, ADK, AG2,
+Agno, and Pi have no in-loop cost enforcement surfaced.
+
+## 6. History repairs itself
 
 Crashes are normal; hand them to a framework that cleans up. A run that dies mid-tool leaves a dangling tool call — invalid for any provider. The next run
 closes it out before the request goes out.
@@ -379,7 +439,7 @@ outgoing request carried a synthesized result for t1: ['The tool call was interr
 history was provider-valid: no malformed pairing sent to the model
 ```
 
-## 6. Specs fail at load, not at 3 a.m.
+## 7. Specs fail at load, not at 3 a.m.
 
 Catch the typo when you build the agent, not when it's in production. A template typo errors against the typed deps schema at construction, naming the field:
 
@@ -440,7 +500,7 @@ dict/YAML path; a pre-built Python `AgentSpec` object skips it, so validate via
 `Agent.from_spec(spec_dict, deps_type=...)`.
 
 
-## 7. The run is an event stream you can observe or transform
+## 8. The run is an event stream you can observe or transform
 
 Your auditor, your UI, your approval gate — they're consumers of a typed stream, not bolt-ons. Parts, tool calls, results, the final result — typed events, streamed. No opinion about what you do
 with them: your auditor, your UI, your SSE adapter, or a capability transforming the stream.
@@ -491,7 +551,7 @@ events observed: ['PartStartEvent', 'PartEndEvent', 'FunctionToolCallEvent', 'Fu
 final output: '42' (streamed while it happened)
 ```
 
-## 8. Evals in CI, typed, offline
+## 9. Evals in CI, typed, offline
 
 If your evaluation needs a network call, it's not a CI test. Same types as the agent, same harness as CI: dataset → evaluators → report.
 
@@ -547,7 +607,7 @@ main()
 assertions passed: 100%
 ```
 
-## 9. Durability is attached at run time, not written into the agent
+## 10. Durability is attached at run time, not written into the agent
 
 One agent definition; the engine is chosen where it runs, not baked into your code. the engine is chosen where it runs. The attach API differs per engine and has
 changed (wrapper classes are deprecated in favor of durability capabilities) — the

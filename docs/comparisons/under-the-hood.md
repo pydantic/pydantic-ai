@@ -70,7 +70,7 @@ framework makes this tradeoff; ours just puts the missing half on the page as ru
 and a full copy of the state per step, so checkpoints grow with your payloads.
 
 **The tradeoff:** their durability comes with a shape you must adopt. Ours wraps the same loop you
-already drive — [the run stays plain, the engines attach](production-agents.md#9-durability-is-attached-at-run-time-not-written-into-the-agent).
+already drive — [the run stays plain, the engines attach](production-agents.md#10-durability-is-attached-at-run-time-not-written-into-the-agent).
 The difference is whose architecture the agent lives in.
 
 ## "Memory that just works"
