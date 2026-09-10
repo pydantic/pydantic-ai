@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import signal
 import sys
+import threading
 from collections.abc import Callable
 from importlib import metadata
 from io import StringIO
@@ -34,19 +36,19 @@ def _agent_env_vars_in_scope() -> set[str]:
     """
     names: set[str] = set(_display._NAMED_AGENT_ENV_VARS)  # pyright: ignore[reportPrivateUsage]
     for _, signals in _CODING_AGENTS:
-        for signal in signals:
-            if signal.endswith('*'):
-                names.update(name for name in os.environ if name.startswith(signal[:-1]))
+        for env_signal in signals:
+            if env_signal.endswith('*'):
+                names.update(name for name in os.environ if name.startswith(env_signal[:-1]))
             else:
-                names.add(signal.partition('=')[0])
+                names.add(env_signal.partition('=')[0])
     return names
 
 
-def agent_env(signal: str) -> tuple[str, str]:
-    """A `(name, value)` pair that makes `signal` match, whichever of the three forms it is."""
-    if signal.endswith('*'):
-        return f'{signal[:-1]}SOMETHING', '1'
-    name, _, value = signal.partition('=')
+def agent_env(env_signal: str) -> tuple[str, str]:
+    """A `(name, value)` pair that makes `env_signal` match, whichever of the three forms it is."""
+    if env_signal.endswith('*'):
+        return f'{env_signal[:-1]}SOMETHING', '1'
+    name, _, value = env_signal.partition('=')
     return name, value or '1'
 
 
@@ -355,12 +357,16 @@ def test_a_banner_that_can_never_be_shown_stops_being_offered(
 
 
 @pytest.mark.parametrize(
-    ('agent', 'signal'),
-    [pytest.param(agent, signal, id=f'{agent}-{signal}') for agent, signals in _CODING_AGENTS for signal in signals],
+    ('agent', 'env_signal'),
+    [
+        pytest.param(agent, env_signal, id=f'{agent}-{env_signal}')
+        for agent, signals in _CODING_AGENTS
+        for env_signal in signals
+    ],
 )
-def test_every_signal_in_the_table_names_its_agent(agent: str, signal: str, monkeypatch: pytest.MonkeyPatch):
+def test_every_signal_in_the_table_names_its_agent(agent: str, env_signal: str, monkeypatch: pytest.MonkeyPatch):
     """Each row is a claim about a variable some agent sets; a typo in one would silently stop matching."""
-    monkeypatch.setenv(*agent_env(signal))
+    monkeypatch.setenv(*agent_env(env_signal))
 
     assert _display.detect_coding_agent() == agent
 
@@ -404,12 +410,14 @@ def test_a_value_matched_signal_does_not_match_another_value(monkeypatch: pytest
     assert _display.detect_coding_agent() is None
 
 
-@pytest.mark.parametrize('agent, signal', [(agent, signals[0]) for agent, signals in _CODING_AGENTS])
-def test_a_coding_agent_reading_stderr_is_shown_the_banner(agent: str, signal: str, monkeypatch: pytest.MonkeyPatch):
+@pytest.mark.parametrize('agent, env_signal', [(agent, signals[0]) for agent, signals in _CODING_AGENTS])
+def test_a_coding_agent_reading_stderr_is_shown_the_banner(
+    agent: str, env_signal: str, monkeypatch: pytest.MonkeyPatch
+):
     """An agent's `stderr` is a pipe it reads back, so the terminal check alone would reach none of them."""
     stderr = StringIO()
     monkeypatch.setattr(sys, 'stderr', stderr)
-    monkeypatch.setenv(*agent_env(signal))
+    monkeypatch.setenv(*agent_env(env_signal))
 
     display_banner()
 
@@ -464,6 +472,56 @@ def test_an_instrumented_run_leaves_the_banner_for_another_agent(monkeypatch: py
 
     display_banner(name='uninstrumented_agent')
     assert 'agent: uninstrumented_agent' in stderr.getvalue()
+
+
+def test_the_fork_handler_hands_back_a_lock_nobody_holds():
+    """Asserted directly as well as through a fork, which runs it in a child that reports no coverage."""
+    original = _display._banner_lock  # pyright: ignore[reportPrivateUsage]
+    original.acquire()  # the state a `fork` can copy into the child
+    try:
+        _display._replace_lock_inherited_from_fork()  # pyright: ignore[reportPrivateUsage]
+        replacement = _display._banner_lock  # pyright: ignore[reportPrivateUsage]
+        assert replacement is not original
+        assert not replacement.locked()
+    finally:
+        original.release()
+        _display._banner_lock = original  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.skipif(not hasattr(os, 'fork'), reason='fork is POSIX-only')
+def test_a_banner_does_not_hang_a_process_forked_mid_claim():
+    """`fork` clones one thread, so a lock another was holding is held forever in the child.
+
+    Run in a child of our own rather than with a fake lock, because the bug is in what `fork`
+    actually copies: the child inherits the acquired lock with no thread left to release it, and
+    its first `claim_banner()` blocks for good.
+    """
+    held, release = threading.Event(), threading.Event()
+
+    def hold_the_lock() -> None:
+        with _display._banner_lock:  # pyright: ignore[reportPrivateUsage]
+            held.set()
+            release.wait(10)
+
+    threading.Thread(target=hold_the_lock, daemon=True).start()
+    assert held.wait(5), 'the holder never got the lock'
+
+    pid = os.fork()
+    if pid == 0:  # pragma: no cover  # the child never reports back to coverage
+        signal.alarm(5)
+        try:
+            claimed = _display.claim_banner()
+        except BaseException:
+            os._exit(42)
+        os._exit(0 if claimed else 1)
+
+    try:
+        _, status = os.waitpid(pid, 0)
+    finally:
+        release.set()
+
+    # A blocked child is killed by its own `SIGALRM`; anything else means it got through.
+    assert os.waitstatus_to_exitcode(status) == 0
 
 
 class BrokenStream(TTYStream):

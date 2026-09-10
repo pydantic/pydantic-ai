@@ -18,6 +18,22 @@ _banner_displayed = False
 _banner_lock = Lock()
 BANNER_ENABLED = True
 
+
+def _replace_lock_inherited_from_fork() -> None:
+    """Give the child a lock of its own, since `fork` can copy this one already held.
+
+    `fork` clones only the thread that called it, so a lock another thread was inside at that moment
+    stays held in the child by a thread that no longer exists, and nothing will ever release it. The
+    child's first `claim_banner()` would block for good — a banner hanging an agent run, which is
+    the one thing it must never do.
+    """
+    global _banner_lock
+    _banner_lock = Lock()
+
+
+if hasattr(os, 'register_at_fork'):  # pragma: no branch  # absent only on Windows, which can't fork
+    os.register_at_fork(after_in_child=_replace_lock_inherited_from_fork)
+
 _LOGO = """\
       / \\
      /   \\
