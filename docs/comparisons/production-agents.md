@@ -12,8 +12,9 @@ Tick every row against whatever you're considering. Then decide.
 
 ## 1. Trusted state: a boundary the model cannot cross
 
-Your credentials shouldn't be part of a conversation the model can read. The DB password lives in `deps`. Only the tool may read it. The model receives tool definitions —
-nothing else — and its request payload never contains the secret.
+Your credentials shouldn't be part of a conversation the model can read. The DB password lives in
+`deps`; only the tool may read it. The model receives tool definitions — nothing else — and its
+request payload never contains the secret.
 
 
 ```python {title="deps_boundary.py"}
