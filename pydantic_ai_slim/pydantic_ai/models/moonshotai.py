@@ -77,6 +77,10 @@ class MoonshotAIModel(OpenAIChatModel):
             allowed_names = tool_choice.function_tools
         elif isinstance(tool_choice, list):
             allowed_names = tool_choice
+        # Without output tools, the API's `none` choice disables all calls. Preserve historical
+        # declarations in that case so toggling tool use does not rewrite the cached prefix.
+        if allowed_names == [] and not model_request_parameters.output_tools:
+            allowed_names = None
         tool_defs = {
             tool.name: tool
             for tool in model_request_parameters.function_tools
@@ -91,7 +95,7 @@ class MoonshotAIModel(OpenAIChatModel):
             for _, group in groupby(
                 message.parts,
                 key=lambda part: (
-                    isinstance(part, ToolReturnPart | ToolAvailabilityDeltaPart)
+                    isinstance(part, (ToolReturnPart, ToolAvailabilityDeltaPart))
                     or (isinstance(part, RetryPromptPart) and part.tool_name is not None)
                 ),
             ):

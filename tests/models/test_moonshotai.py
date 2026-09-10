@@ -223,7 +223,7 @@ async def test_reveals_deduplicate_and_respect_visibility(
     assert body['messages'][-1] == {'role': 'user', 'content': 'next'}
 
 
-@pytest.mark.parametrize('tool_choice', ['none', [], ToolOrOutput(['weather']), ['weather']])
+@pytest.mark.parametrize('tool_choice', ['none', [], ToolOrOutput([]), ToolOrOutput(['weather']), ['weather']])
 async def test_tool_choice_applies_to_history_tools(
     allow_model_requests: None,
     moonshot_provider: MoonshotAIProvider,
@@ -237,23 +237,77 @@ async def test_tool_choice_applies_to_history_tools(
         function_tools=[ToolDefinition(name=name, defer_loading=True) for name in ('weather', 'other')],
         revealed_tool_names={'weather', 'other'},
     )
-    await model.request(
-        [
-            ModelRequest(parts=[UserPromptPart('hello')]),
-            ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['weather', 'other'])]),
-        ],
-        {'tool_choice': tool_choice, 'parallel_tool_calls': False},
-        params,
-    )
-    body = moonshot_api.requests[0]
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('hello')]),
+        ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['weather', 'other'])]),
+    ]
+    for choice in (None, tool_choice, 'auto'):
+        await model.request(messages, {'tool_choice': choice, 'parallel_tool_calls': False}, params)
+    before, body, after = moonshot_api.requests
     assert 'tools' not in body
     assert body['parallel_tool_calls'] is False
     if tool_choice == ['weather']:
         assert body['tool_choice'] == {'type': 'function', 'function': {'name': 'weather'}}
     else:
-        assert body['tool_choice'] == ('auto' if isinstance(tool_choice, ToolOrOutput) else 'none')
-    if isinstance(tool_choice, ToolOrOutput) or tool_choice == ['weather']:
-        assert [tool['function']['name'] for tool in body['messages'][-1]['tools']] == ['weather']
+        assert body['tool_choice'] == ('auto' if tool_choice == ToolOrOutput(['weather']) else 'none')
+    expected_names = ['weather', 'other'] if body['tool_choice'] == 'none' else ['weather']
+    assert [tool['function']['name'] for tool in body['messages'][-1]['tools']] == expected_names
+    if body['tool_choice'] == 'none':
+        assert body['messages'] == before['messages'] == after['messages']
+
+
+@pytest.mark.parametrize('tool_choice', ['none', ToolOrOutput([])])
+@pytest.mark.parametrize('stream', [False, True])
+async def test_disabling_and_reenabling_tools_preserves_request_prefix(
+    allow_model_requests: None,
+    moonshot_provider: MoonshotAIProvider,
+    moonshot_api: MoonshotAPI,
+    tool_choice: ToolChoice,
+    stream: bool,
+):
+    def weather() -> str:
+        return 'sunny'
+
+    def load_weather() -> ToolReturn:
+        return ToolReturn(return_value='loaded', tools=['weather'])
+
+    agent = Agent(
+        MoonshotAIModel('kimi-k3', provider=moonshot_provider), tools=[load_weather, Tool(weather, defer_loading=True)]
+    )
+    history: list[ModelMessage] = []
+    steps: list[tuple[str, ToolChoice, list[dict[str, Any]]]] = [
+        ('Load weather and use it.', None, [tool_call('load_weather'), tool_call('weather')]),
+        ('Summarize without tools.', tool_choice, []),
+        ('Use weather again.', 'auto', [tool_call('weather')]),
+    ]
+    for prompt, choice, responses in steps:
+        moonshot_api.messages = responses
+        if stream:
+            async with agent.run_stream(
+                prompt, message_history=history, model_settings={'tool_choice': choice}
+            ) as result:
+                assert await result.get_output() == 'done'
+                history = result.all_messages()
+        else:
+            result = await agent.run(prompt, message_history=history, model_settings={'tool_choice': choice})
+            assert result.output == 'done'
+            history = result.all_messages()
+        history = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(history))
+
+    first, revealed, called, disabled, reenabled, final = moonshot_api.requests
+    assert [body['tool_choice'] for body in moonshot_api.requests] == ['auto', 'auto', 'auto', 'none', 'auto', 'auto']
+    assert [message for message in first['messages'] if 'tools' in message] == []
+    additions = [message for message in revealed['messages'] if 'tools' in message]
+    assert len(additions) == 1
+    assert [tool['function']['name'] for tool in additions[0]['tools']] == ['weather']
+    for body in (called, disabled, reenabled, final):
+        assert [message for message in body['messages'] if 'tools' in message] == additions
+    for before, after in zip(moonshot_api.requests, moonshot_api.requests[1:]):
+        assert after['tools'] == before['tools']
+        assert json.dumps(after['messages'][: len(before['messages'])]) == json.dumps(before['messages'])
+    for body in (called, final):
+        assert body['messages'][-1]['role'] == 'tool'
+        assert body['messages'][-1]['content'] == 'sunny'
 
 
 @pytest.mark.parametrize('model_name', ['kimi-k2.6', 'kimi-k3'])
@@ -266,10 +320,16 @@ async def test_plain_chat_mapping_is_unchanged(
     assert moonshot_api.requests[0] == moonshot_api.requests[1]
 
 
+@pytest.mark.parametrize('tool_choice', ['none', [], ToolOrOutput([])])
 async def test_disabling_function_tools_preserves_output_tools(
-    allow_model_requests: None, moonshot_provider: MoonshotAIProvider, moonshot_api: MoonshotAPI
+    allow_model_requests: None,
+    moonshot_provider: MoonshotAIProvider,
+    moonshot_api: MoonshotAPI,
+    tool_choice: ToolChoice,
 ):
-    model = MoonshotAIModel('kimi-k3', provider=moonshot_provider)
+    model = MoonshotAIModel(
+        'kimi-k3', provider=moonshot_provider, profile=OpenAIModelProfile(openai_supports_tool_choice_required=True)
+    )
     params = ModelRequestParameters(
         function_tools=[ToolDefinition(name='weather', defer_loading=True)],
         output_tools=[ToolDefinition(name='final_result')],
@@ -278,10 +338,11 @@ async def test_disabling_function_tools_preserves_output_tools(
     )
     await model.request(
         [ModelRequest(parts=[UserPromptPart('hello'), ToolAvailabilityDeltaPart(tools_added=['weather'])])],
-        {'tool_choice': 'none'},
+        {'tool_choice': tool_choice},
         params,
     )
     body = moonshot_api.requests[0]
+    assert body['tool_choice'] == 'auto'
     assert [tool['function']['name'] for tool in body['tools']] == ['final_result']
     assert not any('tools' in message for message in body['messages'])
 
