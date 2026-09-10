@@ -1,8 +1,8 @@
 # Pydantic AI vs Claude Agent SDK
 
-You're choosing a Python agent framework and have narrowed it to [Pydantic AI](../agent.md) and Claude Agent SDK.
-This page makes the call — and lets you check the evidence yourself: every snippet runs offline,
-no API keys.
+You're choosing a Python agent framework and you're down to
+[Pydantic AI](../agent.md) and the Claude Agent SDK. This page is the tiebreaker — the answer first, then code
+you can run in seconds.
 
 ## Pydantic AI fits if you need
 

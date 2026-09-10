@@ -1,17 +1,22 @@
 # Pydantic AI vs other agent frameworks
 
-You're choosing an agent framework, and you've likely got a shortlist. This series is how you decide.
+If you're here, you likely want to know how we stack up against the other agent frameworks
+demanding your attention. Lucky for you, we've done that for you :)
 
-- **Narrowed it to two?** Pick that page below — each one starts with the answer, then proves it
-  with code you can run offline in seconds, no API keys.
-- **Deciding broadly?** Start with [the production checklist](production-agents.md) — what a shipped
-  agent actually requires, demonstrated row by row. Hold every framework you're considering to that
-  list, including us.
+We have comparisons with all of the agent frameworks our users compare us with. Each one starts
+with the answer, then proves it with code you can run yourself in seconds — no API keys, no "trust
+us, it's fine." Framework versions are documented on each page.
 
-The thread through all of it: we ship **primitives, not decisions** — typed, composable seams
+**How to use this:**
+
+- **Narrowed it down to two?** Jump to that page. The answer comes first.
+- **Still deciding broadly?** Start with [the production checklist](production-agents.md) — what a
+  shipped agent actually needs, row by row — and hold every framework you're considering to it.
+  Including us.
+
+One thing we do believe: we ship **primitives, not decisions** — typed, composable seams
 (dependencies, capabilities, events, durable engines) that you wire yourself. We don't pick your
-architecture, and we don't expect you to take our word; every claim on these pages runs on your
-laptop. Framework versions are documented on each page.
+architecture; that's your job.
 
 ## The comparisons
 
@@ -36,12 +41,10 @@ row demonstrated by a runnable snippet: a deps boundary the model can't cross, c
 typed resumable outcome, budgets that halt *before* side effects, self-repairing history, specs that
 fail at load, evals in CI.
 
-## Method
+## The fine print
 
-- Every claim on a page is either a **self-contained code block on that page** (offline, no API
-  keys, deterministic — the repository's test suite executes each one) or carries a pinned version
-  of the framework it describes.
-- Competitor pages state each framework's capabilities factually; our gaps are stated in the same
-tone as theirs.
-- Page sources and probe records live in the [`pydantic-ai-notes`](https://github.com/pydantic/pydantic-ai-notes)
-  repository's framework-comparison series; versions last verified 2026-09-10.
+- Every snippet on these pages is a self-contained block that runs offline and deterministically;
+the repository's test suite executes each one, so what you see printed is what the code prints today.
+- Where we state something another framework does or doesn't do, there's a pinned version and a
+verification record behind it (in [`pydantic-ai-notes`](https://github.com/pydantic/pydantic-ai-notes)).
+- We're not perfect: pages say so where we're not the answer.
