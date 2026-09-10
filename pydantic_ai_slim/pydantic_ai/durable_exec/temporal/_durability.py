@@ -370,7 +370,10 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         base_config = self._toolset_operation_config('function', toolset_id)
         config = resolve_tool_activity_config(cast(ToolsetTool[Any] | None, tool), name, {})
         if config is False:
-            from pydantic_ai.mcp import MCPToolset
+            try:
+                from pydantic_ai.mcp import MCPToolset
+            except ImportError:  # pragma: no cover
+                MCPToolset = None  # type: ignore[assignment,misc]
 
             if (
                 isinstance(operation_id, (ToolsetCallToolId, ToolsetValidateToolArgumentsId))
@@ -382,7 +385,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                     'toolset and calling the tool may perform I/O. Remove the opt-out, or move the tool to a static '
                     '`FunctionToolset` (async tools there may opt out of activities).'
                 )
-            if isinstance(cast(ToolsetTool[Any], tool).toolset, MCPToolset):
+            if MCPToolset is not None and isinstance(cast(ToolsetTool[Any], tool).toolset, MCPToolset):
                 raise UserError(
                     f'Temporal activity config for MCP tool {name!r} has been explicitly set to `False` (activity disabled), '
                     'but MCP tools require the use of IO and so cannot be run outside of an activity.'
