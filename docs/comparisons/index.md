@@ -60,16 +60,16 @@ installed.
 
 | Framework | Strongest at | Where it stops |
 |---|---|---|
-| LangChain and LangGraph | The largest ecosystem in agent tooling; checkpointed workflows and time travel; Deep Agents as a shipped harness | Pausing anywhere their middleware doesn't already pause means `interrupt()`, which replays the enclosing node's work; stopping a run needs their experimental v3 stream; trusted state isn't separate from the conversation |
+| LangChain and LangGraph | An integration catalogue far larger than ours; checkpointed workflows and time travel; Deep Agents as a shipped harness | Pausing anywhere their middleware doesn't already pause means `interrupt()`, which replays the enclosing node's work; stopping a run needs their experimental v3 stream; trusted state isn't separate from the conversation |
 | OpenAI Agents SDK | OpenAI features first; hosted sessions and tracing; `after_turn` is a genuinely nice stop | Continuity is a session rather than history you own; no first-party crash recovery |
 | Claude Agent SDK | Claude Code's behaviour, immediately, including permissions and rewind | The loop is a `claude` subprocess; Anthropic only; tests are integration tests |
-| CrewAI | Fastest route to a working multi-agent demo; memory and knowledge included; the biggest tutorial library | Orchestration is a DSL; no stop method on a crew; limits are per agent rather than per run |
+| CrewAI | A role-and-task vocabulary that gets a multi-agent demo running quickly; memory and knowledge included; plenty of tutorial material | Orchestration is a DSL; no stop method on a crew; limits are per agent rather than per run |
 | smolagents | The smallest way to let a model write and run code, with honest sandboxing | Synchronous, so tool calls don't overlap; stopping leaves an error, not a resumable run |
 | Google ADK | Gemini, Vertex, A2A, and Google's tooling with no glue | No cancellation API anywhere in the runner; trusted state isn't separate |
 | AG2 | Durable checkpointed tasks with no infrastructure to run; broad first-party protocols | The AutoGen-era API is gone at 1.0; specs aren't validated against your types at load |
 | Agno | A deployable agent service with auth, roles, and a UI, out of the box | A runtime to adopt; shell and Python tools run on the host by default |
 | Mastra | TypeScript all-in-one: workflows, memory, evals, a real dev experience | JavaScript only; tracing and deployment lean on their platform |
-| Vercel AI SDK | Streaming state shared with a React front end — nobody does it better | JavaScript only; no first-party crash recovery |
+| Vercel AI SDK | Streaming state shared with a React front end, which is what it was built for | JavaScript only; no first-party crash recovery |
 | Pi | A finished coding agent that you can also embed | TypeScript; deliberately no sandbox of its own; changing its behaviour means forking |
 
 ## What other people say

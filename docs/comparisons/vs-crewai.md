@@ -1,11 +1,11 @@
 # Pydantic AI vs CrewAI
 
 CrewAI asks you to describe a team. Each agent gets a role, a goal, and a backstory; each unit of work
-is a `Task`; a `Crew` runs them in order or puts one agent in charge of the others. It reads well, it
-demos well, and it has the largest tutorial library of any Python agent framework. It also has the
-widest enterprise adoption of this group: [its own front page](https://www.crewai.com/) names
-DocuSign, IBM, and PepsiCo, and [its case studies](https://www.crewai.com/case-studies) add PwC and
-AWS.
+is a `Task`; a `Crew` runs them in order or puts one agent in charge of the others. It reads well and
+it demos well, and if the work you're modelling really is a sequence of handoffs between specialists,
+that vocabulary does a lot of the thinking for you. It also has a large body of tutorial material,
+which matters more than it sounds: when you get stuck at 2am, someone has often already written up
+your exact problem.
 
 Version 1.15.21 is more than the role DSL people remember. Crews, flows, and agents can checkpoint
 automatically and restart from a checkpoint, agents carry limits for iterations, wall-clock time,
