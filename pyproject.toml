@@ -249,7 +249,7 @@ coverage = [
 ]
 lint = [
     "griffecli>=2.1.0,<3",
-    "mypy>=1.11.2",
+    "mypy>=2.3.1",
     "pyright>=1.1.413",
     "ruff>=0.14.14",
 ]
