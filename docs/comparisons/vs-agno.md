@@ -79,6 +79,23 @@ If all-in-one plus a hosted runtime (AgentOS) and team orchestration is the prod
 
 ---
 
+## FAQ
+
+**Is Pydantic AI a drop-in replacement for Agno?**
+Drop-in, no — the loop and the seams are different, even though the ideas carry over (tools,
+prompts, outputs). If you're weighing a move, that honesty is the point of this page: read the fits
+list and run the proof before you decide.
+
+**When should I use Agno on its own?**
+When you want the all-in-one with a hosted runtime (AgentOS) and team orchestration out of the box.
+
+**Why do people pick Pydantic AI over Agno?**
+Because the loop is yours end to end — typed deps, cancellation that resumes, budgets that stop side
+effects before they start, evals in CI — and every one of those claims is a snippet on this page you
+can run in seconds. Community threads on r/AI_Agents add "documentation" and "low abstraction" to
+that list; see Independent takes on the [overview](index.md).
+
+
 ---
 
 *Versions: agno 3.0.x; Pydantic AI 2.42.0 — 2026-09-10. Snippets re-executed by this repository's tests.*

@@ -78,6 +78,23 @@ If you want a vendor-maintained, full-surface framework on the Google stack — 
 
 ---
 
+## FAQ
+
+**Is Pydantic AI a drop-in replacement for Google ADK?**
+Drop-in, no — the loop and the seams are different, even though the ideas carry over (tools,
+prompts, outputs). If you're weighing a move, that honesty is the point of this page: read the fits
+list and run the proof before you decide.
+
+**When should I use Google ADK on its own?**
+When you want a vendor-maintained full-surface framework on the Google stack — workflows, code executors, A2A — and cancellation isn't your product concern.
+
+**Why do people pick Pydantic AI over Google ADK?**
+Because the loop is yours end to end — typed deps, cancellation that resumes, budgets that stop side
+effects before they start, evals in CI — and every one of those claims is a snippet on this page you
+can run in seconds. Community threads on r/AI_Agents add "documentation" and "low abstraction" to
+that list; see Independent takes on the [overview](index.md).
+
+
 ---
 
 *Versions: Google ADK (install/docs); Pydantic AI 2.42.0 — 2026-09. Snippets re-executed by this repository's tests.*

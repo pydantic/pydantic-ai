@@ -109,6 +109,23 @@ framework underneath the coding layer (typed, cancellable, budgeted, durable, ev
 coding capabilities composed in, that's the harness. Both directions are fine; they're just
 different centers of gravity.
 
+## FAQ
+
+**Is Pydantic AI a drop-in replacement for Pi?**
+Drop-in, no — the loop and the seams are different, even though the ideas carry over (tools,
+prompts, outputs). If you're weighing a move, that honesty is the point of this page: read the fits
+list and run the proof before you decide.
+
+**When should I use Pi on its own?**
+When your product is TypeScript, or you want Pi's opinionated session-and-compaction stack as its foundation — that's what its core is for.
+
+**Why do people pick Pydantic AI over Pi?**
+Because the loop is yours end to end — typed deps, cancellation that resumes, budgets that stop side
+effects before they start, evals in CI — and every one of those claims is a snippet on this page you
+can run in seconds. Community threads on r/AI_Agents add "documentation" and "low abstraction" to
+that list; see Independent takes on the [overview](index.md).
+
+
 ---
 
 *Versions: pi 0.85.1 (exports verified), pydantic-harness @ 1ad638f8; Pydantic AI 2.42.0 — 2026-09-10.

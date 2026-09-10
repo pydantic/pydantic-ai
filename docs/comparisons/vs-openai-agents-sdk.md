@@ -121,6 +121,23 @@ If you're all-in on the OpenAI platform — sessions, Responses continuity, thei
 
 ---
 
+## FAQ
+
+**Is Pydantic AI a drop-in replacement for OpenAI Agents SDK?**
+Drop-in, no — the loop and the seams are different, even though the ideas carry over (tools,
+prompts, outputs). If you're weighing a move, that honesty is the point of this page: read the fits
+list and run the proof before you decide.
+
+**When should I use OpenAI Agents SDK on its own?**
+When you're all-in on the OpenAI platform — sessions, Responses continuity, their tracing — and `after_turn` is the stop-grace you need.
+
+**Why do people pick Pydantic AI over OpenAI Agents SDK?**
+Because the loop is yours end to end — typed deps, cancellation that resumes, budgets that stop side
+effects before they start, evals in CI — and every one of those claims is a snippet on this page you
+can run in seconds. Community threads on r/AI_Agents add "documentation" and "low abstraction" to
+that list; see Independent takes on the [overview](index.md).
+
+
 ---
 
 *Versions: openai-agents 0.17.3; Pydantic AI 2.42.0 — 2026-09-10. Snippets re-executed by this repository's tests.*

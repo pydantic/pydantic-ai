@@ -95,6 +95,22 @@ One summary claim we'll stand behind, because each proof is two clicks away: of 
 above, ours is the one where the loop stays yours end to end — and six durable engines wrap the
 same agent without changing it.
 
+## Independent takes
+
+We cite people we don't control; that's the point.
+
+- **Developer experience**: an independent 90-day, five-framework benchmark, reported in
+  [Speakeasy's framework comparison](https://www.speakeasy.com) (2026-03), scored Pydantic AI 8/10 —
+  the highest of the five — against 5/10 for LangChain, and credited type validation with catching
+  23 bugs during development that would have reached production.
+- **Cost**: the same report measured a 90-day build at $390 total with Pydantic AI (zero license
+  fees) versus $1,088 with CrewAI.
+- **Community**: the "which framework" threads on [r/AI_Agents](https://www.reddit.com/r/AI_Agents/)
+  name our documentation and our low abstraction as the reasons ("easy to make custom behaviours").
+- **And the criticism worth hearing from us first**: heavy generics make for noisy tracebacks — a
+  repeated community gripe. We read it, we're working on the developer experience, and we'd rather
+  you meet that complaint here than in production.
+
 ## The fine print
 
 - Every snippet on these pages is a self-contained block that runs offline and deterministically;

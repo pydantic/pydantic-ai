@@ -15,6 +15,7 @@ you can run in seconds.
 
 LangGraph's structure is the graph you adopt; here the run is a value you drive. The consequences are the seams: their `interrupt()` resumes by re-running the enclosing node (the LLM call repeats); our pause sits at the tool call boundary. Deps, budgets, cancellation, and evals all hang off that difference.
 
+One more data point, measured by someone else: an independent comparison (Speakeasy, 2026-03, [90-day five-framework benchmark](https://www.speakeasy.com)) scored developer experience 8/10 for Pydantic AI against 5/10 for LangChain, and credited type validation with catching 23 bugs in development that would have reached production.
 ## See it work
 
 Say you need a loop with a human-safe pause.
@@ -90,6 +91,23 @@ the loop is a plain value: iterate it, drive it manually, or let a capability tr
 If your product genuinely lives in the LangChain ecosystem — its integration breadth, its community patterns, its checkpointed workflows — that's a real thing to build on, and we're not going to argue you out of it. What this page does is name what the ecosystem doesn't hand you: the seams on the left. And if you're on board with those and want to transform your project, we have the skills to walk you over — [skills-langchain-to-pydantic-ai](https://github.com/pydantic/skills-langchain-to-pydantic-ai), plus a [Deep Agents migration playbook](https://github.com/pydantic/skills-deepagents-migration) if that's your flavor.
 
 ---
+
+## FAQ
+
+**Is Pydantic AI a drop-in replacement for LangChain & LangGraph?**
+Drop-in, no — the loop and the seams are different, even though the ideas carry over (tools,
+prompts, outputs). If you're weighing a move, that honesty is the point of this page: read the fits
+list and run the proof before you decide.
+
+**When should I use LangChain & LangGraph on its own?**
+When your product genuinely lives in the LangChain ecosystem — the integration breadth, the community patterns, the checkpointed workflows — that's a real thing to build on, and it's not what this page is arguing against.
+
+**Why do people pick Pydantic AI over LangChain & LangGraph?**
+Because the loop is yours end to end — typed deps, cancellation that resumes, budgets that stop side
+effects before they start, evals in CI — and every one of those claims is a snippet on this page you
+can run in seconds. Community threads on r/AI_Agents add "documentation" and "low abstraction" to
+that list; see Independent takes on the [overview](index.md).
+
 
 ---
 

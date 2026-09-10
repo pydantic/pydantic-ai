@@ -116,6 +116,23 @@ If crew-of-roles with memory and knowledge out of the box is exactly your shape,
 
 ---
 
+## FAQ
+
+**Is Pydantic AI a drop-in replacement for CrewAI?**
+Drop-in, no — the loop and the seams are different, even though the ideas carry over (tools,
+prompts, outputs). If you're weighing a move, that honesty is the point of this page: read the fits
+list and run the proof before you decide.
+
+**When should I use CrewAI on its own?**
+When crew-of-roles with memory and knowledge out of the box is exactly your shape, and the DSL's opinion matches your design.
+
+**Why do people pick Pydantic AI over CrewAI?**
+Because the loop is yours end to end — typed deps, cancellation that resumes, budgets that stop side
+effects before they start, evals in CI — and every one of those claims is a snippet on this page you
+can run in seconds. Community threads on r/AI_Agents add "documentation" and "low abstraction" to
+that list; see Independent takes on the [overview](index.md).
+
+
 ---
 
 *Versions: crewai 1.15.21; Pydantic AI 2.42.0 — 2026-09-10. Snippets re-executed by this repository's tests.*
