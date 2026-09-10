@@ -1521,6 +1521,49 @@ async def test_durability_resolves_supported_and_rejected_tool_activity_opt_outs
         )
 
 
+async def test_durability_resolves_function_tool_opt_outs_without_mcp(monkeypatch: pytest.MonkeyPatch):
+    """Function-tool activity opt-outs do not require the optional MCP extra."""
+
+    async def async_tool() -> str: ...  # pragma: no branch
+
+    def sync_tool() -> str: ...  # pragma: no branch
+
+    toolset = FunctionToolset[None](id='opt_out_without_mcp')
+    toolset.add_function(async_tool, metadata={'temporal': False})
+    toolset.add_function(sync_tool, metadata={'temporal': False})
+    agent = Agent(
+        TestModel(),
+        name='opt_out_without_mcp',
+        deps_type=type(None),
+        toolsets=[toolset],
+        capabilities=[TemporalDurability()],
+    )
+    durability = TemporalDurability.from_agent(agent)
+    assert durability is not None
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+    tools = await toolset.get_tools(ctx)
+
+    class BlockMCP:
+        def find_spec(self, name: str, path: object = None, target: object = None) -> object:
+            if name == 'pydantic_ai.mcp':
+                raise ImportError(f'No module named {name!r}')
+            return None
+
+    monkeypatch.setattr(sys, 'meta_path', [BlockMCP(), *sys.meta_path])
+    monkeypatch.delitem(sys.modules, 'pydantic_ai.mcp', raising=False)
+
+    assert (
+        durability._resolve_temporal_tool_config(  # pyright: ignore[reportPrivateUsage]
+            ToolsetCallToolId('function', toolset_id='opt_out_without_mcp'), tools['async_tool'], 'async_tool'
+        )
+        is False
+    )
+    with pytest.raises(UserError, match='non-async tools are run in threads'):
+        durability._resolve_temporal_tool_config(  # pyright: ignore[reportPrivateUsage]
+            ToolsetCallToolId('function', toolset_id='opt_out_without_mcp'), tools['sync_tool'], 'sync_tool'
+        )
+
+
 async def test_durability_mcp_instructions_use_operation_activity_summary(monkeypatch: pytest.MonkeyPatch):
     """The common MCP instructions operation retains Temporal's legacy activity summary."""
     mcp_toolset = MCPToolset(
