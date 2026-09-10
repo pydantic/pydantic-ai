@@ -158,9 +158,9 @@ more complete out of the box than ours.
 
 ---
 
-*Checked against crewai 1.15.21 and Pydantic AI 2.42 on 2026-09-10. The CrewAI facts come from reading
-the installed package — `Crew` and `Agent` fields, `kickoff` parameters, checkpoint configuration, and
-the absence of any cancel method. Its runtime behaviour needs a live model and was not run. The
-Pydantic AI example is executed by this repository's test suite on every commit. We recheck this page's
-version pins and behaviour claims each time Pydantic AI ships a minor release; if something here has
-gone stale, [tell us](https://github.com/pydantic/pydantic-ai/issues/new) and we'll correct it.*
+*Checked against crewai 1.15.21 and Pydantic AI 2.42 on 2026-09-10. The CrewAI facts come from reading the
+installed package — `Crew` and `Agent` fields, `kickoff` parameters, checkpoint configuration, and the absence
+of any cancel method. Its runtime behaviour needs a live model and was not run. The Pydantic AI example is
+executed by this repository's test suite on every commit. We recheck this page's version pins and behaviour
+claims each time Pydantic AI ships a minor release; if something here has gone stale, [tell
+us](https://github.com/pydantic/pydantic-ai/issues/new) and we'll correct it.*

@@ -63,9 +63,9 @@ assert sync_result == async_result == iter_result
 Same agent, same answer, three shapes — which matters when the agent has to live inside a Django view,
 a Celery task, a Lambda handler, or a websocket server you already have.
 
-For crash recovery, same idea: instead of a durable API that belongs to the runtime, a
-durable engine is a capability you add. `capabilities=[TemporalDurability()]` is the whole change, and DBOS, Prefect,
-Restate, Kitaru, and Airflow have equivalents. You use whichever your company already runs.
+For crash recovery, same idea: instead of a durable API that belongs to the runtime, a durable engine
+is a capability you add. `capabilities=[TemporalDurability()]` is the whole change, and DBOS, Prefect,
+Restate, Kitaru and Airflow have equivalents. You use whichever your company already runs.
 
 ## What the tools are allowed to do
 
@@ -132,10 +132,11 @@ and we haven't.
 
 ---
 
-*Checked against agno 3.0.9 and Pydantic AI 2.42 on 2026-09-10. The tool behaviour comes from reading
-the installed package: `ShellTools.run_shell_command` and its docstring, `PythonTools`, and the
-`restrict_to_base_dir` default. AgentOS claims are from Agno's documentation, not run. The Pydantic AI
-example is executed by this repository's test suite. The `gen_ai.*` counts are distinct semantic-convention attribute names found in each installed
-package's source; ours were also captured from a live run through a plain OpenTelemetry exporter. We recheck this page's
-version pins and behaviour claims each time Pydantic AI ships a minor release; if something here has
-gone stale, [tell us](https://github.com/pydantic/pydantic-ai/issues/new) and we'll correct it.*
+*Checked against agno 3.0.9 and Pydantic AI 2.42 on 2026-09-10. The tool behaviour comes from reading the
+installed package: `ShellTools.run_shell_command` and its docstring, `PythonTools`, and the
+`restrict_to_base_dir` default. AgentOS claims are from Agno's documentation, not run. The Pydantic AI example
+is executed by this repository's test suite. The `gen_ai.*` counts are distinct semantic-convention attribute
+names found in each installed package's source; ours were also captured from a live run through a plain
+OpenTelemetry exporter. We recheck this page's version pins and behaviour claims each time Pydantic AI ships a
+minor release; if something here has gone stale, [tell us](https://github.com/pydantic/pydantic-ai/issues/new)
+and we'll correct it.*

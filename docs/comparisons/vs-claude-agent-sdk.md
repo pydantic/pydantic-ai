@@ -130,10 +130,10 @@ interface. Pydantic AI keeps trusted state out of the model's reach entirely, pa
 
 ---
 
-*Checked against claude-agent-sdk 0.2.152 and Pydantic AI 2.42 on 2026-09-10. `interrupt()` was read
-in `client.py` and `_internal/query.py`, where it sends an `interrupt` control request over the
-transport rather than signalling the process. The subprocess behaviour
-and the `ClaudeAgentOptions` fields, including `max_budget_usd`, come from reading the installed
-package. The Pydantic AI example is executed by this repository's test suite. We recheck this page's
-version pins and behaviour claims each time Pydantic AI ships a minor release; if something here has
-gone stale, [tell us](https://github.com/pydantic/pydantic-ai/issues/new) and we'll correct it.*
+*Checked against claude-agent-sdk 0.2.152 and Pydantic AI 2.42 on 2026-09-10. `interrupt()` was read in
+`client.py` and `_internal/query.py`, where it sends an `interrupt` control request over the transport rather
+than signalling the process. The subprocess behaviour and the `ClaudeAgentOptions` fields, including
+`max_budget_usd`, come from reading the installed package. The Pydantic AI example is executed by this
+repository's test suite. We recheck this page's version pins and behaviour claims each time Pydantic AI ships
+a minor release; if something here has gone stale, [tell
+us](https://github.com/pydantic/pydantic-ai/issues/new) and we'll correct it.*

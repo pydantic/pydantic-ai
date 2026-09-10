@@ -135,9 +135,9 @@ No. Same idea, different shape. Translating one is mechanical but manual.
 
 ---
 
-*Checked against ag2 1.0.4 and Pydantic AI 2.42 on 2026-09-10. The AG2 facts come from reading the
-installed package: top-level exports, `Task` parameters including `checkpoint_store` and `resume_from`,
-`Task.cancel`, and `TestConfig`. A full scripted `Task.run()` was not completed, so runtime behaviour
-is not claimed here. The Pydantic AI example is executed by this repository's test suite. We recheck this page's
-version pins and behaviour claims each time Pydantic AI ships a minor release; if something here has
-gone stale, [tell us](https://github.com/pydantic/pydantic-ai/issues/new) and we'll correct it.*
+*Checked against ag2 1.0.4 and Pydantic AI 2.42 on 2026-09-10. The AG2 facts come from reading the installed
+package: top-level exports, `Task` parameters including `checkpoint_store` and `resume_from`, `Task.cancel`,
+and `TestConfig`. A full scripted `Task.run()` was not completed, so runtime behaviour is not claimed here.
+The Pydantic AI example is executed by this repository's test suite. We recheck this page's version pins and
+behaviour claims each time Pydantic AI ships a minor release; if something here has gone stale, [tell
+us](https://github.com/pydantic/pydantic-ai/issues/new) and we'll correct it.*

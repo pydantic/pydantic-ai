@@ -110,7 +110,7 @@ tracebacks. We're working on it, and we'd rather you heard it here.
 
 ---
 
-*All pages checked on 2026-09-10 against Pydantic AI 2.42. Framework versions are named at the bottom
-of each page, along with how the claims were checked. We recheck every page against current releases
-each time Pydantic AI ships a minor version; if something here has gone stale, please
-[open an issue](https://github.com/pydantic/pydantic-ai/issues/new) and we'll fix it.*
+*All pages checked on 2026-09-10 against Pydantic AI 2.42. Framework versions are named at the bottom of each
+page, along with how the claims were checked. We recheck every page against current releases each time
+Pydantic AI ships a minor version; if something here has gone stale, please [open an
+issue](https://github.com/pydantic/pydantic-ai/issues/new) and we'll fix it.*

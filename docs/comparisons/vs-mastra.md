@@ -5,9 +5,9 @@ workflows with snapshots and time travel, a memory system with several kinds of 
 scorers, a sandboxed way to run model-written TypeScript, a local dev server with a playground, and a
 hosted Studio and Cloud if you want them.
 
-If your stack is TypeScript it belongs on your shortlist. Pydantic AI is Python, so for a TypeScript team the honest answer is usually
-Mastra or the Vercel AI SDK, and the rest of this page is for people whose agent is going to be in
-Python either way.
+If your stack is TypeScript it belongs on your shortlist. Pydantic AI is Python, so for a TypeScript
+team the honest answer is usually Mastra or the Vercel AI SDK, and the rest of this page is for people
+whose agent is going to be in Python either way.
 
 Two things are still worth comparing across that line, because they're design choices and not
 language ones.
@@ -150,10 +150,10 @@ first two are why people like it.
 
 ---
 
-*Mastra versions checked on the npm registry on 2026-09-10 (`mastra` 1.28.0, `@mastra/core` 1.65.0).
-Unlike the other pages in this series, the Mastra behaviour described here comes from their published
-documentation rather than from code we ran — it's TypeScript and we didn't install it. Treat those
-claims as their documentation's, and tell us if any have gone stale. The Pydantic AI example is
-executed by this repository's test suite on every commit. We recheck this page's
-version pins and behaviour claims each time Pydantic AI ships a minor release; if something here has
-gone stale, [tell us](https://github.com/pydantic/pydantic-ai/issues/new) and we'll correct it.*
+*Mastra versions checked on the npm registry on 2026-09-10 (`mastra` 1.28.0, `@mastra/core` 1.65.0). Unlike
+the other pages in this series, the Mastra behaviour described here comes from their published documentation
+rather than from code we ran — it's TypeScript and we didn't install it. Treat those claims as their
+documentation's, and tell us if any have gone stale. The Pydantic AI example is executed by this repository's
+test suite on every commit. We recheck this page's version pins and behaviour claims each time Pydantic AI
+ships a minor release; if something here has gone stale, [tell
+us](https://github.com/pydantic/pydantic-ai/issues/new) and we'll correct it.*

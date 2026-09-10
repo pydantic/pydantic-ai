@@ -299,16 +299,16 @@ tracing dashboard that works the day you install it, LangSmith is a product and 
 
 ---
 
-*Measured 2026-09-10 against langchain 1.4.0, langgraph 1.2.11, langchain-core 1.6.2, deepagents
-0.7.13, and Pydantic AI 2.42. Both LangGraph traces come from scripts that log every model call and
-side effect across a pause and a resume — one through `HumanInTheLoopMiddleware`, one through a
-hand-written `interrupt()` — run against a stub chat model with no network. The dependency and
-`create_agent` return-type claims are read from the installed distributions. `GraphRunStream.abort()` was
-reached by calling `stream_events(version='v3')` on a compiled graph and confirmed to raise a
-`LangChainBetaWarning`; `invoke()` and `stream()` were checked for a stop method and have none. The probes are the ones
-shown above, and they need nothing beyond those two packages and no network. The Pydantic AI snippet
-on this page is executed by this repository's test suite on every commit, so its output is what it
-printed. The `gen_ai.*` counts are distinct semantic-convention attribute names found in each installed
-package's source; ours were also captured from a live run through a plain OpenTelemetry exporter. We recheck this page's
-version pins and behaviour claims each time Pydantic AI ships a minor release; if something here has
-gone stale, [tell us](https://github.com/pydantic/pydantic-ai/issues/new) and we'll correct it.*
+*Measured 2026-09-10 against langchain 1.4.0, langgraph 1.2.11, langchain-core 1.6.2, deepagents 0.7.13, and
+Pydantic AI 2.42. Both LangGraph traces come from scripts that log every model call and side effect across a
+pause and a resume — one through `HumanInTheLoopMiddleware`, one through a hand-written `interrupt()` — run
+against a stub chat model with no network. The dependency and `create_agent` return-type claims are read from
+the installed distributions. `GraphRunStream.abort()` was reached by calling `stream_events(version='v3')` on
+a compiled graph and confirmed to raise a `LangChainBetaWarning`; `invoke()` and `stream()` were checked for a
+stop method and have none. The probes are the ones shown above, and they need nothing beyond those two
+packages and no network. The Pydantic AI snippet on this page is executed by this repository's test suite on
+every commit, so its output is what it printed. The `gen_ai.*` counts are distinct semantic-convention
+attribute names found in each installed package's source; ours were also captured from a live run through a
+plain OpenTelemetry exporter. We recheck this page's version pins and behaviour claims each time Pydantic AI
+ships a minor release; if something here has gone stale, [tell
+us](https://github.com/pydantic/pydantic-ai/issues/new) and we'll correct it.*

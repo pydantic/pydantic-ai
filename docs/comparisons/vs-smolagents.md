@@ -147,10 +147,11 @@ and that's a real virtue.
 
 ---
 
-*Checked against smolagents 1.26.0 and Pydantic AI 2.42 on 2026-09-10. The sandbox messages are the
-actual errors from running `import os` and `open(...)` through its local executor; the absence of an
-async run and the behaviour of `interrupt()` come from reading the installed package. The Pydantic AI
-example is executed by this repository's test suite, and the timing shown is from that run. The `gen_ai.*` counts are distinct semantic-convention attribute names found in each installed
-package's source; ours were also captured from a live run through a plain OpenTelemetry exporter. We recheck this page's
-version pins and behaviour claims each time Pydantic AI ships a minor release; if something here has
-gone stale, [tell us](https://github.com/pydantic/pydantic-ai/issues/new) and we'll correct it.*
+*Checked against smolagents 1.26.0 and Pydantic AI 2.42 on 2026-09-10. The sandbox messages are the actual
+errors from running `import os` and `open(...)` through its local executor; the absence of an async run and
+the behaviour of `interrupt()` come from reading the installed package. The Pydantic AI example is executed by
+this repository's test suite, and the timing shown is from that run. The `gen_ai.*` counts are distinct
+semantic-convention attribute names found in each installed package's source; ours were also captured from a
+live run through a plain OpenTelemetry exporter. We recheck this page's version pins and behaviour claims each
+time Pydantic AI ships a minor release; if something here has gone stale, [tell
+us](https://github.com/pydantic/pydantic-ai/issues/new) and we'll correct it.*

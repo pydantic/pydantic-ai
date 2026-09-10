@@ -657,8 +657,8 @@ Framework by framework, with what each does better:
 
 ---
 
-*Pydantic AI 2.42, checked 2026-09-10. Every example on this page is executed by this repository's test
-suite on every commit, so the output shown is what it printed. Claims about other frameworks are
-checked on their pages against a pinned version. We recheck this page's
-version pins and behaviour claims each time Pydantic AI ships a minor release; if something here has
-gone stale, [tell us](https://github.com/pydantic/pydantic-ai/issues/new) and we'll correct it.*
+*Pydantic AI 2.42, checked 2026-09-10. Every example on this page is executed by this repository's test suite
+on every commit, so the output shown is what it printed. Claims about other frameworks are checked on their
+pages against a pinned version. We recheck this page's version pins and behaviour claims each time Pydantic AI
+ships a minor release; if something here has gone stale, [tell
+us](https://github.com/pydantic/pydantic-ai/issues/new) and we'll correct it.*
