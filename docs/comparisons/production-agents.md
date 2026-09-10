@@ -151,6 +151,19 @@ transform the run's event stream.
 "Stop generating" should be a thing your agent can do, not a thing you do to it. A tool may stop the run. `ctx.cancel()` requests it; the run ends in a catchable `RunCancelled`
 carrying everything completed before the stop — resume by passing that history to the next run.
 
+Fun fact: the agent can cancel its own run. The framework equivalent of an employee walking into
+the boss's office to resign — politely, two weeks' notice in hand, which here is a `RunCancelled`
+carrying everything completed so far.
+
+It's also a small sign of how agents changed. The first generation were scripts you ran: you started
+them, you stopped them, and stopping mid-run was a failure to handle. These are closer to coworkers
+with a task: the loop knows the task is pointless before the caller does — the customer was found,
+the quota hit, the premise was wrong. So the framework's job shifted from deciding when a run ends
+to *letting the run end itself when that's right*. Nothing here is automatic: `ctx.cancel()` is a
+primitive, and it works because your tool chose to call it. If you want the agent to have that kind
+of judgment, Pydantic AI lets you; if you'd rather it never did, the primitive sits unused. The
+decision stays yours.
+
 
 ```python {title="cancel_from_tool.py"}
 """A tool may stop the run. ctx.cancel() requests cancellation; the run ends

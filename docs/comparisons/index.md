@@ -18,6 +18,10 @@ One thing we do believe: we ship **primitives, not decisions** — typed, compos
 (dependencies, capabilities, events, durable engines) that you wire yourself. We don't pick your
 architecture; that's your job.
 
+And we trust agents a little more than the old playbook did: for example, a run is allowed to end
+itself when that's right — see the [cancellation row](production-agents.md#3-cancellation-is-a-typed-resumable-outcome)
+on the checklist. Every knob is still yours; we just ship the one that lets the loop say it's done.
+
 ## The comparisons
 
 | Framework | What you'll see |
