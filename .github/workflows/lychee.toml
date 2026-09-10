@@ -42,4 +42,7 @@ exclude = [
   "dash\\.voyageai\\.com",
   "spec\\.modelcontextprotocol\\.io",
   "customerioforms\\.com",
+  # Private repository: GitHub returns 404 to unauthenticated clients even
+  # though the link in `AGENTS.md` is valid for anyone with access.
+  "github\\.com/pydantic/unified-docs",
 ]
