@@ -1,16 +1,18 @@
 # The production agent checklist
 
-Before you pick a framework, decide what a shipped agent actually requires. Each row below is one
-such requirement, demonstrated as a **complete, self-contained script** — offline, no API keys,
-deterministic — and this repository's test suite executes every one of them, so what you see printed
-is what the code prints today.
+Every framework demo can run an agent. Shipping one is the harder part.
 
-Use it as the bar: tick every row against the frameworks you're considering — including us.
+If you're still deciding which framework to build on, this page is the bar we'd ask you to hold
+everyone to — including us. Each row below is one thing a shipped agent actually needs, demonstrated
+with a script you can run yourself in seconds (no API keys), re-executed by our test suite on every
+change. What you see printed is what the code prints today; we're not asking you to take our word.
+
+Tick every row against whatever you're considering. Then decide.
 
 
 ## 1. Trusted state: a boundary the model cannot cross
 
-The DB password lives in `deps`. Only the tool may read it. The model receives tool definitions —
+Your credentials shouldn't be part of a conversation the model can read. The DB password lives in `deps`. Only the tool may read it. The model receives tool definitions —
 nothing else — and its request payload never contains the secret.
 
 
@@ -68,7 +70,7 @@ ADK invocation context).
 
 ## 2. Capabilities that load on demand
 
-Request 1: the refund tool is absent from the request payload. Request 2: the model asks to load
+Least privilege, minus the ceremony. Request 1: the refund tool is absent from the request payload. Request 2: the model asks to load
 the capability. Request 3: the tool exists. The model cannot touch what it hasn't loaded.
 
 
@@ -145,7 +147,7 @@ transform the run's event stream.
 
 ## 3. Cancellation is a typed, resumable outcome
 
-A tool may stop the run. `ctx.cancel()` requests it; the run ends in a catchable `RunCancelled`
+"Stop generating" should be a thing your agent can do, not a thing you do to it. A tool may stop the run. `ctx.cancel()` requests it; the run ends in a catchable `RunCancelled`
 carrying everything completed before the stop — resume by passing that history to the next run.
 
 
@@ -242,7 +244,7 @@ thread; Google ADK exposes no user cancellation API; AG2 cancels via a durable e
 
 ## 4. Budgets halt before side effects, not after
 
-The model asks for two tool calls in one response; the limit allows one. The whole batch is
+A budget that stops after the side effect is a receipt, not a limit. The model asks for two tool calls in one response; the limit allows one. The whole batch is
 rejected — `UsageLimitExceeded` — and *neither* tool ran.
 
 
@@ -302,7 +304,7 @@ and calls it a limit.
 
 ## 5. History repairs itself
 
-A run that dies mid-tool leaves a dangling tool call — invalid for any provider. The next run
+Crashes are normal; hand them to a framework that cleans up. A run that dies mid-tool leaves a dangling tool call — invalid for any provider. The next run
 closes it out before the request goes out.
 
 
@@ -365,7 +367,7 @@ history was provider-valid: no malformed pairing sent to the model
 
 ## 6. Specs fail at load, not at 3 a.m.
 
-A template typo errors against the typed deps schema at construction, naming the field:
+Catch the typo when you build the agent, not when it's in production. A template typo errors against the typed deps schema at construction, naming the field:
 
 
 ```python {title="spec_validation.py"}
@@ -426,7 +428,7 @@ dict/YAML path; a pre-built Python `AgentSpec` object skips it, so validate via
 
 ## 7. The run is an event stream you can observe or transform
 
-Parts, tool calls, results, the final result — typed events, streamed. No opinion about what you do
+Your auditor, your UI, your approval gate — they're consumers of a typed stream, not bolt-ons. Parts, tool calls, results, the final result — typed events, streamed. No opinion about what you do
 with them: your auditor, your UI, your SSE adapter, or a capability transforming the stream.
 
 
@@ -477,7 +479,7 @@ final output: '42' (streamed while it happened)
 
 ## 8. Evals in CI, typed, offline
 
-Same types as the agent, same harness as CI: dataset → evaluators → report.
+If your evaluation needs a network call, it's not a CI test. Same types as the agent, same harness as CI: dataset → evaluators → report.
 
 
 ```python {title="evals_ci.py"}
@@ -533,7 +535,7 @@ assertions passed: 100%
 
 ## 9. Durability is attached at run time, not written into the agent
 
-One agent definition; the engine is chosen where it runs. The attach API differs per engine and has
+One agent definition; the engine is chosen where it runs, not baked into your code. the engine is chosen where it runs. The attach API differs per engine and has
 changed (wrapper classes are deprecated in favor of durability capabilities) — the
 [durable execution docs](../durable_execution/overview.md) are the source of truth per engine:
 
@@ -573,13 +575,15 @@ one agent definition; durability attached at run time (see docs/durable_executio
 agent definition changes: 0 lines
 ```
 
-## What we don't ship (same tone)
+## Where we're not the answer (we'll say it)
 
-- No first-party managed agent server.
-- No TS/JS framework; our UI story is adapters + agents writing JSON.
-- Curated integrations count, not exhaustive.
-- `run_sync` can't be nested inside async code; a worker-thread tool can't be force-stopped.
+- No managed agent server; your infra stays your infra.
+- No TS/JS framework. If your whole app is TypeScript, the [Vercel](vs-vercel-ai-sdk.md) and
+  [Mastra](vs-mastra.md) pages are the more honest read.
+- Curated integrations, not an exhaustive directory. If you need a rare one, you wire it.
+- `run_sync` can't nest inside async code, and a tool running in a worker thread can't be
+  force-stopped. Read those two before you build around them.
 
-*Snippets are self-contained, offline, deterministic, and re-executed by this repository's test
-suite on every change. Behavior verified against pydantic-ai 2.42.0 on 2026-09-10; probe records in
-the [framework-comparison series](https://github.com/pydantic/pydantic-ai-notes).*
+*Versions: pydantic-ai 2.42.0 / pydantic-evals 2.42.0 — 2026-09-10. Every snippet above is
+re-executed by this repository's tests on every change; verification records in the
+[framework-comparison series](https://github.com/pydantic/pydantic-ai-notes).*
