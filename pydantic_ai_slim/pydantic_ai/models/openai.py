@@ -639,7 +639,7 @@ def _leading_system_message_count(messages: Sequence[Mapping[str, Any]], system_
 
 
 def _stamp_instructions_relocated(response: ModelResponse, relocated: bool) -> ModelResponse:
-    """Stamp ``instructions_relocated`` on a response so future chains know instructions live in input."""
+    """Stamp `instructions_relocated` on a response so future chains know instructions live in input."""
     if relocated:
         if response.provider_details is None:
             response.provider_details = {}
@@ -2908,9 +2908,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     ) -> tuple[str | Omit, list[responses.ResponseInputItemParam], bool]:
         """Relocate instructions into input messages and mark a cache breakpoint.
 
-        The top-level ``instructions`` field cannot carry a breakpoint, so instructions are sent as
+        The top-level `instructions` field cannot carry a breakpoint, so instructions are sent as
         leading input messages instead. When the request chains to a previous response whose
-        ``provider_details`` confirms the instructions were relocated, they are already replayed
+        `provider_details` confirms the instructions were relocated, they are already replayed
         from the chained response's input and can be omitted here.
 
         Returns:
