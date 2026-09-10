@@ -9,7 +9,7 @@ Friday, that combination is hard to beat, and nothing in Pydantic AI competes wi
 Pydantic AI is only the library half. There's no runtime to deploy, no control plane, and no UI. You
 put the agent inside whatever you already run.
 
-That's the whole comparison, really — but it has two consequences worth spelling out.
+Two things come out of that, and both are worth spelling out.
 
 ## Nothing to adopt
 

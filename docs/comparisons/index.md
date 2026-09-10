@@ -39,20 +39,19 @@ lines-of-code comparisons apart and shows what's actually being measured.
 
 ## The short version
 
-People first came to Pydantic AI for strong primitives: a typed agent, a real validation layer, and
-nothing between you and the model you didn't ask for. That hasn't changed. What changed is the size of
-the pieces.
+People came to us for strong primitives: a typed agent, real validation, and nothing sitting between
+you and the model that you didn't ask for. We still really value that. We just give you bigger badder
+meaner blocks to work with now.
 
-The blocks got bigger, badder and meaner. A capability is one object that carries tools,
-instructions, model settings, lifecycle hooks and event-stream handling all together, and it can wait
-to show up until the model actually asks for it. Sixty-three hooks, with a matching `before_`,
-`after_`, `wrap_` and error handler at every stage of a run.
+A capability is one object. It carries tools, instructions, model settings, lifecycle hooks and
+event-stream handling, and it can wait to show up until the model actually asks for it. Sixty-three
+hooks, with a `before_`, `after_`, `wrap_` and error handler at every stage of a run.
 
-What didn't get bigger is how much of your life you have to hand over. That's the whole trade. You
-don't build a world around Pydantic AI. Your agent is a value inside your application; it never
-becomes an application that your values live inside.
+What we don't want is for you to build an entire world around Pydantic AI. We want to help you get
+your work done and then get out of your way, with as little friction as we can manage, while still
+giving you eyes on what the agent is doing. Your agent goes inside the application you already have.
 
-Six things follow from that, and every one has a proof you can run in a few seconds:
+Six things come out of that, and every one has a proof you can run in a few seconds:
 
 - **Traces your existing tools already understand.** We emit the OpenTelemetry
   [GenAI semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/) — 36 distinct
