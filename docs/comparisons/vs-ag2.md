@@ -16,6 +16,12 @@ Both treat the agent as data — AG2 as a checkpointed task protocol, ours as a 
 
 ## See it work
 
+Say your agent should be data — validated, shipped, run.
+
+AG2 ships its own agent-spec and response-schema protocol on a checkpointed task state machine (1.0.4).
+
+Your side, runs offline:
+
 ```python {title="spec_data_roundtrip.py"}
 """The agent is data: spec -> YAML + JSON schema -> a running agent.
 
@@ -57,12 +63,15 @@ print(f'loaded-from-file output: {result.output!r}')
 assert exists
 assert result.output == 'success (no tool calls)'
 
+
 ```
 
 ```text
 spec -> YAML + schema file (exists=True) -> running agent, offline
 loaded-from-file output: 'success (no tool calls)'
 ```
+
+**Notice:** Ours validates templates against typed deps at load, writes YAML plus a schema file, and the loaded agent runs offline. (YAML round-trips need `pip install "pydantic-ai[spec]"`.)
 
 ## The details
 

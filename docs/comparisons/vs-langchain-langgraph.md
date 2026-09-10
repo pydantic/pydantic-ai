@@ -17,6 +17,12 @@ LangGraph's structure is the graph you adopt; here the run is a value you drive.
 
 ## See it work
 
+Say you need a loop with a human-safe pause.
+
+In LangGraph, pausing is `interrupt()` — it's graph state, and resuming restarts the enclosing node, so the model call runs again (1.2.1, verified).
+
+Your side, runs offline:
+
 ```python {title="graph_is_a_value.py"}
 """The agent loop is a value you can drive — no graph DSL required.
 
@@ -55,12 +61,15 @@ async def main():
 
 asyncio.run(main())
 
+
 ```
 
 ```text
 nodes in one run: UserPromptNode -> ModelRequestNode -> CallToolsNode -> ModelRequestNode -> CallToolsNode -> End
 the loop is a plain value: iterate it, drive it manually, or let a capability transform it
 ```
+
+**Notice:** The nodes you just saw are a value you drive: the pause, the cancel, and every seam your app needs live on the loop — not inside a DSL you adopt.
 
 ## The details
 

@@ -16,6 +16,12 @@ Pi is the harness shipped as a CLI; Pydantic AI is the harness as a library. Sam
 
 ## See it work
 
+Say you're building a coding product, not running someone else's CLI.
+
+Pi ships a polished CLI you run — TUI, skills, memory, its decisions made for you.
+
+Your side, runs offline:
+
 ```python {title="in_process_loop.py"}
 """The loop is an object in your process — not a harness you configure.
 
@@ -58,12 +64,15 @@ async def main():
 
 asyncio.run(main())
 
+
 ```
 
 ```text
 nodes: UserPromptNode -> ModelRequestNode -> CallToolsNode -> ModelRequestNode -> CallToolsNode -> End
 the loop ran in your own process: True
 ```
+
+**Notice:** The loop is an object in your process: drive it, wrap it, cancel it. The product is yours to shape.
 
 ## The details
 

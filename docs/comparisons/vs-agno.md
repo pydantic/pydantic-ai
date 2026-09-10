@@ -16,6 +16,12 @@ Their value is the runtime they add; ours is that there is nothing to add. The s
 
 ## See it work
 
+Say your agent has to run where your app already runs.
+
+Agno bundles a runtime and offers the AgentOS hosted platform (3.0.x).
+
+Your side, runs offline:
+
 ```python {title="runtime_agnostic.py"}
 """No bundled runtime to adopt: the same agent runs sync, async, and driven
 node-by-node with iter() - whichever shape your application already uses."""
@@ -47,11 +53,14 @@ iter_result = asyncio.run(via_iter())
 print(f'sync={sync_result!r} async={async_result!r} iter={iter_result!r}')
 assert sync_result == async_result == iter_result
 
+
 ```
 
 ```text
 sync='same result' async='same result' iter='same result'
 ```
+
+**Notice:** Same agent, sync/async/iterated, same output. Nothing to adopt — and because the loop is plain code, every seam on the checklist applies.
 
 ## The details
 

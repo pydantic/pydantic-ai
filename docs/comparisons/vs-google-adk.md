@@ -16,6 +16,12 @@ ADK runs deep anyio — the primitives exist — but its runner exposes no user 
 
 ## See it work
 
+Say a user hits stop and the work has to actually stop.
+
+Google ADK runs deep anyio internally, but its runner surfaces no user cancellation API we could find (2026-09 install).
+
+Your side, runs offline:
+
 ```python {title="one_token_many_runs.py"}
 """One stop gesture, many runs: a CancellationToken governs every run it was
 given to, and cancelling the token cancels all of them.
@@ -45,11 +51,14 @@ async def main():
 
 asyncio.run(main())
 
+
 ```
 
 ```text
 runs cancelled by one token: 3/3
 ```
+
+**Notice:** One token, three concurrent runs, one gesture: all cancelled. Typed, thread-safe, and the history survives for resume.
 
 ## The details
 

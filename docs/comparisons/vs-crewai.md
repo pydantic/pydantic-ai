@@ -16,6 +16,12 @@ Their crew is a DSL the framework interprets; ours is ordinary async code with a
 
 ## See it work
 
+Say your multi-agent flow has branches and a join — and you need to read it like code.
+
+CrewAI expresses crews as roles plus a process mode (`sequential`/`hierarchical`); what the crew does is what the DSL decides (1.15.21).
+
+Your side, runs offline:
+
 ```python {title="chain_as_code.py"}
 """A crew is code: chained and fanned-out agents with types between them.
 
@@ -83,12 +89,15 @@ async def main():
 
 asyncio.run(main())
 
+
 ```
 
 ```text
 typed chain: branch(a)=21, branch(b)=22, sum=43
 downstream agent received the typed sum as deps: True
 ```
+
+**Notice:** Here the same shape is ordinary, reviewable code: the fan-out returns ints, and the join flows into the next agent's deps.
 
 ## The details
 

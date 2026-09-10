@@ -16,6 +16,12 @@ Their loop executes the code the model writes inside a sandbox; ours bounds the 
 
 ## See it work
 
+Say you want parallel work, not a loop that serializes.
+
+smolagents runs sync-only — zero `asyncio`/`anyio` reference in 1.26.0.
+
+Your side, runs offline:
+
 ```python {title="parallel_tool_calls.py"}
 """Parallel tool calls in one turn.
 
@@ -68,12 +74,15 @@ async def main():
 
 asyncio.run(main())
 
+
 ```
 
 ```text
 completed in parallel: ['a:done', 'b:done', 'c:done', 'done']
 wall time: 0.26s (the three calls would take ~0.75s one after another)
 ```
+
+**Notice:** Three 250 ms calls in one response finished together in ~0.26 s. Structured async is the prerequisite for budgets and cancellation that actually work.
 
 ## The details
 

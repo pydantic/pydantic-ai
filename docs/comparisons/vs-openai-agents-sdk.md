@@ -17,6 +17,12 @@ Their framework organizes the agent into platform-shaped categories (guardrails,
 
 ## See it work
 
+Say you need a stop button that doesn't destroy the conversation.
+
+In the OpenAI Agents SDK, streamed runs can stop (`cancel(mode='immediate'|'after_turn')`), and resume lives in platform sessions (0.17.3).
+
+Your side, runs offline:
+
 ```python {title="cancel_then_resume.py"}
 """Cancellation, then resume: the exception carries the work; the next run continues.
 
@@ -85,12 +91,15 @@ def main():
 
 main()
 
+
 ```
 
 ```text
 first run cancelled; completed work preserved: True
 resumed run output: run resumed and completed
 ```
+
+**Notice:** Here the stop is an exception that carries the history. The next run is ordinary code — and the completed work is already in it.
 
 ## The details
 

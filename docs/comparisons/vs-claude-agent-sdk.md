@@ -18,6 +18,12 @@ Theirs is a harness you configure — skills, hooks, permissions for their proce
 
 ## See it work
 
+Say you want your agent's loop inside your own process.
+
+The Claude Agent SDK configures a `claude` subprocess (hooks, permissions, JSON protocol) and drives it (0.2.87).
+
+Your side, runs offline:
+
 ```python {title="in_process_loop.py"}
 """The loop is an object in your process — not a harness you configure.
 
@@ -60,12 +66,15 @@ async def main():
 
 asyncio.run(main())
 
+
 ```
 
 ```text
 nodes: UserPromptNode -> ModelRequestNode -> CallToolsNode -> ModelRequestNode -> CallToolsNode -> End
 the loop ran in your own process: True
 ```
+
+**Notice:** Same process as your code, node by node. Nothing was spawned, nothing to kill, everything reachable.
 
 ## The details
 

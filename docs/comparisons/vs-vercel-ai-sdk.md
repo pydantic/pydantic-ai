@@ -16,6 +16,12 @@ Their loop is the norm for TypeScript; ours is a typed contract for Python. Wher
 
 ## See it work
 
+Say the shape of your result should be your framework's job, not your handler's puzzle.
+
+In the AI SDK, `generateText` hands you a result object that your code interprets (SDK 5).
+
+Your side, runs offline:
+
 ```python {title="output_transports.py"}
 """Wire semantics are explicit: the output transport decides how a response
 becomes your result — a transform, or a dict validated against a schema."""
@@ -49,12 +55,15 @@ print(f'StructuredDict: {out!r} is a {type(out).__name__}')
 assert agent.run_sync('q').output == 'HELLO WORLD'
 assert out == {'n': 7}
 
+
 ```
 
 ```text
 TextOutput(fn): HELLO WORLD
 StructuredDict: {'n': 7} is a dict
 ```
+
+**Notice:** Here a response *becomes* what you declared it to be — a transform or a schema-validated dict — and that type flows into tests and evals.
 
 ## The details
 

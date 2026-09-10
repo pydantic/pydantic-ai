@@ -16,60 +16,73 @@ Their observability is a module; our auditor is a capability — the same unit t
 
 ## See it work
 
-```python {title="capability_observes_events.py"}
-"""Your auditor is just a capability.
+Say you want to observe what your agent did in production — without a separate observability product.
 
-The same extension unit that bundles tools can also wrap the run's event
-stream: count every tool call and result without touching the loop.
+Mastra (TS) spreads this across surfaces: agent config, tools, processors, and an observability module (their docs).
+
+Your side, runs offline:
+
+```python {title="one_capability_two_jobs.py"}
+"""One capability, two jobs: add a tool and watch the stream.
+
+Your auditor is not a separate observability product; it is the same
+extension unit that carries tools. This capability both provides the
+tool the model calls and records every event it sees.
 """
 import asyncio
 from collections.abc import AsyncIterable
-from dataclasses import dataclass
-from typing import Any
 
 from pydantic_ai import Agent, AgentStreamEvent, RunContext
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import Capability
 from pydantic_ai.models.function import DeltaToolCall, FunctionModel
 
-@dataclass
-class Auditor(AbstractCapability[Any]):
-    seen: list[str]
+
+def refund_status(order_id: str) -> str:
+    """Look up a refund status (provided by the capability)."""
+    return f'Order {order_id}: refunded.'
+
+
+class Auditor(Capability):
+    def __init__(self):
+        super().__init__(id='auditor', description='watch and act', tools=[refund_status])
+        self.seen: list[str] = []
 
     async def wrap_run_event_stream(
-        self, ctx: RunContext[Any], *, stream: AsyncIterable[AgentStreamEvent]
+        self, ctx: RunContext[object], *, stream: AsyncIterable[AgentStreamEvent]
     ) -> AsyncIterable[AgentStreamEvent]:
         async for event in stream:
             self.seen.append(type(event).__name__)
             yield event
 
+
 async def stream(messages, info):
     if len(messages) == 1:
-        yield {0: DeltaToolCall(name='twice', json_args='{"n": 21}', tool_call_id='c1')}
+        yield {0: DeltaToolCall(name='refund_status', json_args='{"order_id": "X"}', tool_call_id='c1')}
     else:
-        yield '42'
+        yield 'done'
 
-aud = Auditor(seen=[])
+
+aud = Auditor()
 agent = Agent(FunctionModel(stream_function=stream), capabilities=[aud])
 
-@agent.tool
-def twice(ctx, n: int) -> int:
-    return n * 2
 
 async def main():
-    async with agent.run_stream_events('what is 21*2?') as run:
+    async with agent.run_stream_events('check my refund') as run:
         async for _ in run:
             pass
-    print('auditor (a capability) observed:', aud.seen)
+    print(f'tool from the capability executed; auditor (same unit) observed: {aud.seen}')
     assert 'FunctionToolCallEvent' in aud.seen
-    assert 'FinalResultEvent' in aud.seen
+
 
 asyncio.run(main())
+
 
 ```
 
 ```text
-auditor (a capability) observed: ['PartStartEvent', 'PartEndEvent', 'FunctionToolCallEvent', 'FunctionToolResultEvent', 'PartStartEvent', 'FinalResultEvent', 'PartEndEvent']
-```
+tool from the capability executed; auditor (same unit) observed: ['PartStartEvent', 'PartEndEvent', 'FunctionToolCallEvent', 'FunctionToolResultEvent', 'PartStartEvent', 'FinalResultEvent', 'PartEndEvent']```
+
+**Notice:** The same unit added the tool *and* watched the stream. One noun, both jobs — your auditor is just a capability.
 
 ## The details
 
