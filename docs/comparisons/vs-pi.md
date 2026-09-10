@@ -132,4 +132,6 @@ manage.
 
 *Pi behaviour described here comes from its CLI and its own documentation, checked at version 0.85.1;
 we did not run its embeddable core. The Pydantic AI example is executed by this repository's test suite
-on every commit. Pydantic AI 2.42, checked 2026-09-10.*
+on every commit. Pydantic AI 2.42, checked 2026-09-10. We recheck this page's
+version pins and behaviour claims each time Pydantic AI ships a minor release; if something here has
+gone stale, [tell us](https://github.com/pydantic/pydantic-ai/issues/new) and we'll correct it.*

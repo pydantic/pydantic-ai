@@ -227,11 +227,11 @@ Either way the run ends by raising `RunCancelled`, and that exception carries th
 resuming is just passing it to the next run. Cancellation from outside — an `asyncio.timeout()`, a task
 group shutting down — still behaves like normal Python cancellation.
 
-For comparison: the OpenAI SDK cancels a streamed run; the Claude SDK means killing the subprocess;
-LangGraph has no cancellation API, and `interrupt()` is a pause held in graph state, where an interrupt
-inside a node replays that node's work on resume; smolagents sets a flag checked between steps; CrewAI
-has no stop method at all; Google ADK exposes no cancellation API; AG2 cancels through a durable task
-envelope.
+Most of the others can stop a run; what differs is what you're holding afterwards. The OpenAI SDK
+cancels a streamed run. The Claude SDK sends an `interrupt()` control request, in streaming mode only.
+LangGraph's `abort()` lives on its experimental v3 stream and closes the graph iterator. smolagents
+sets a flag that's checked between steps. AG2 cancels through its durable task envelope. CrewAI has no
+stop method at all, and Google ADK exposes no cancellation API anywhere on `Runner` or `LlmAgent`.
 
 ## 4. Budgets that stop things before they happen
 
@@ -633,4 +633,6 @@ Framework by framework, with what each does better:
 
 *Pydantic AI 2.42, checked 2026-09-10. Every example on this page is executed by this repository's test
 suite on every commit, so the output shown is what it printed. Claims about other frameworks are
-checked on their pages against a pinned version.*
+checked on their pages against a pinned version. We recheck this page's
+version pins and behaviour claims each time Pydantic AI ships a minor release; if something here has
+gone stale, [tell us](https://github.com/pydantic/pydantic-ai/issues/new) and we'll correct it.*

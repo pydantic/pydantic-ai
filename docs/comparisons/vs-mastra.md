@@ -156,4 +156,6 @@ first two are why people like it.
 Unlike the other pages in this series, the Mastra behaviour described here comes from their published
 documentation rather than from code we ran — it's TypeScript and we didn't install it. Treat those
 claims as their documentation's, and tell us if any have gone stale. The Pydantic AI example is
-executed by this repository's test suite on every commit.*
+executed by this repository's test suite on every commit. We recheck this page's
+version pins and behaviour claims each time Pydantic AI ships a minor release; if something here has
+gone stale, [tell us](https://github.com/pydantic/pydantic-ai/issues/new) and we'll correct it.*

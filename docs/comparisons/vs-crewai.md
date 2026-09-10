@@ -2,8 +2,10 @@
 
 CrewAI asks you to describe a team. Each agent gets a role, a goal, and a backstory; each unit of work
 is a `Task`; a `Crew` runs them in order or puts one agent in charge of the others. It reads well, it
-demos well, and it has the largest tutorial library of any Python agent framework — plus the widest
-enterprise adoption of this group, with PwC, DocuSign, IBM, and PepsiCo among its users.
+demos well, and it has the largest tutorial library of any Python agent framework. It also has the
+widest enterprise adoption of this group: [its own front page](https://www.crewai.com/) names
+DocuSign, IBM, and PepsiCo, and [its case studies](https://www.crewai.com/case-studies) add PwC and
+AWS.
 
 Version 1.15.21 is more than the role DSL people remember. Crews, flows, and agents can checkpoint
 automatically and restart from a checkpoint, agents carry limits for iterations, wall-clock time,
@@ -102,14 +104,11 @@ a couple of functions, and type hints.
 
 ## What you can see while it runs
 
-The practical complaint people report about crews is visibility. `print` and log calls inside `Task`
-callbacks don't surface, so when a crew does something surprising you're reading the final output and
-guessing. One [practitioner write-up](https://ondrej-popelka.medium.com/crewai-practical-lessons-learned-b696baa67242)
-records a two-agent run reaching $414 before it was noticed.
-
 Pydantic AI emits a typed stream of events as the run happens — the model starting to speak, each tool
 call and its result, the final answer — and you consume it with a normal `async for`. It also emits
-OpenTelemetry, so the run shows up wherever your other traces go.
+OpenTelemetry, so the run shows up wherever your other traces go. CrewAI's equivalent is its event bus
+plus the third-party observability integrations it documents, which is a different shape: you subscribe
+to a bus rather than iterating the run.
 
 Budgets are the other half of that. `UsageLimits` caps model requests, tool calls, and tokens, and the
 check happens *before* the next request goes out, so a runaway loop stops rather than being noticed on
@@ -128,7 +127,7 @@ which cover a lot but aren't a ceiling on the whole crew.
 | Watching it work | Events and their platform | Typed event stream plus OpenTelemetry |
 | Memory and knowledge | Built in, including knowledge sources | Bring your own, wired through dependencies and history processors |
 | Testing offline | Needs a live model for a real run | `TestModel` and `FunctionModel` drive the whole loop with no network |
-| Evals | Their platform | `pydantic-evals` in your test suite, using the agent's own types |
+| Evals | `crewai.experimental.evaluation`: goal alignment, reasoning efficiency, an experiment runner | `pydantic-evals` in your test suite, using the agent's own types |
 
 ## Choose CrewAI when
 
@@ -164,4 +163,6 @@ more complete out of the box than ours.
 *Checked against crewai 1.15.21 and Pydantic AI 2.42 on 2026-09-10. The CrewAI facts come from reading
 the installed package — `Crew` and `Agent` fields, `kickoff` parameters, checkpoint configuration, and
 the absence of any cancel method. Its runtime behaviour needs a live model and was not run. The
-Pydantic AI example is executed by this repository's test suite on every commit.*
+Pydantic AI example is executed by this repository's test suite on every commit. We recheck this page's
+version pins and behaviour claims each time Pydantic AI ships a minor release; if something here has
+gone stale, [tell us](https://github.com/pydantic/pydantic-ai/issues/new) and we'll correct it.*

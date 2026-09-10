@@ -104,4 +104,6 @@ page, measured where we could measure them. Read them and decide whether they're
 ---
 
 *Measured on 2026-09-10 against Pydantic AI 2.42 and Agno 3.0.x in clean environments. The example on
-this page is executed by this repository's test suite on every commit.*
+this page is executed by this repository's test suite on every commit. We recheck this page's
+version pins and behaviour claims each time Pydantic AI ships a minor release; if something here has
+gone stale, [tell us](https://github.com/pydantic/pydantic-ai/issues/new) and we'll correct it.*

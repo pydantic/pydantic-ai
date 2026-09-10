@@ -135,4 +135,6 @@ We don't ship that and don't intend to.
 *Checked against `ai` 7.0.97 and Pydantic AI 2.42 on 2026-09-10. The AI SDK facts come from installing
 the package and reading its exports and type definitions — `ToolLoopAgent`, `uploadSkill`, the approval
 error types, `abortSignal`, `stopWhen`, and the absence of any durable-agent export. The Pydantic AI
-example is executed by this repository's test suite.*
+example is executed by this repository's test suite. We recheck this page's
+version pins and behaviour claims each time Pydantic AI ships a minor release; if something here has
+gone stale, [tell us](https://github.com/pydantic/pydantic-ai/issues/new) and we'll correct it.*

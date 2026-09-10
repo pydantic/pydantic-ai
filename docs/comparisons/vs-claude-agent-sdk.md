@@ -92,7 +92,7 @@ work rather than the transcript, and the wrapping doesn't change the agent.
 | Trusted state | Nothing typed; configuration and environment | `deps_type`, read by tools, invisible to the model |
 | Coding-agent features | Everything Claude Code has, immediately | Composable pieces in the harness: filesystem, shell, `CodeMode`, subagents, skills, memory |
 | Spend limits | `max_budget_usd` for the run | `UsageLimits` on requests, tool calls and tokens, checked before the next call |
-| Stopping a run | Kill the subprocess | `CancellationToken`, `ctx.cancel()`, `RunCancelled` with resumable history |
+| Stopping a run | `ClaudeSDKClient.interrupt()`, streaming mode only, from outside the run | `CancellationToken`, `ctx.cancel()` from inside a tool, `RunCancelled` carrying resumable history |
 | Continuity | Sessions: resume, fork, rewind | Message history you own and store |
 | Crash recovery | Not the same thing as a session | Six engines wrap the agent object |
 | Testing offline | Launch the CLI; it's an integration test | `TestModel` and `FunctionModel`, no network |
@@ -129,6 +129,10 @@ interface. Pydantic AI keeps trusted state out of the model's reach entirely, pa
 
 ---
 
-*Checked against claude-agent-sdk 0.2.152 and Pydantic AI 2.42 on 2026-09-10. The subprocess behaviour
+*Checked against claude-agent-sdk 0.2.152 and Pydantic AI 2.42 on 2026-09-10. `interrupt()` was read
+in `client.py` and `_internal/query.py`, where it sends an `interrupt` control request over the
+transport rather than signalling the process. The subprocess behaviour
 and the `ClaudeAgentOptions` fields, including `max_budget_usd`, come from reading the installed
-package. The Pydantic AI example is executed by this repository's test suite.*
+package. The Pydantic AI example is executed by this repository's test suite. We recheck this page's
+version pins and behaviour claims each time Pydantic AI ships a minor release; if something here has
+gone stale, [tell us](https://github.com/pydantic/pydantic-ai/issues/new) and we'll correct it.*

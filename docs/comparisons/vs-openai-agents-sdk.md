@@ -148,4 +148,6 @@ hosted tracing works the moment you install it.
 *Checked against openai-agents 0.22.2 and Pydantic AI 2.42 on 2026-09-10. The OpenAI SDK facts come
 from reading the installed package — method signatures, exported guardrail types, and `handoff()`
 parameters. The Pydantic AI example is run by this repository's test suite on every commit, so its
-output is what it printed.*
+output is what it printed. We recheck this page's
+version pins and behaviour claims each time Pydantic AI ships a minor release; if something here has
+gone stale, [tell us](https://github.com/pydantic/pydantic-ai/issues/new) and we'll correct it.*

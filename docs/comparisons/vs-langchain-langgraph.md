@@ -54,11 +54,31 @@ before you knew where you would want to stop.
 
 ??? example "How we measured this"
 
-    Three scripts, run offline against langchain 1.4.0 / langgraph 1.2.11 with a stub chat model that
-    appends to a list every time it is called. The full sources are in
-    [pydantic-ai-notes](https://github.com/pydantic/pydantic-ai-notes/tree/main/aditya/framework-comparison-articles/raw).
+    Three scripts, run offline against langchain 1.4.0 / langgraph 1.2.11. All three share one stub
+    model, which appends to a list every time it is called and returns a canned tool call, so nothing
+    here needs a network or an API key:
 
-    An `interrupt()` inside the node that holds the work:
+    ```python {test="skip" lint="skip"}
+    class CountingModel(BaseChatModel):
+        calls: int = 0
+
+        def _generate(self, messages, stop=None, run_manager=None, **kw) -> ChatResult:
+            trail.append('MODEL_CALL')
+            self.calls += 1
+            if self.calls == 1:
+                msg = AIMessage(content='', tool_calls=[{'name': 'issue_refund', 'args': {...}, 'id': 'c1'}])
+            else:
+                msg = AIMessage(content='Refunded A-4471.')
+            return ChatResult(generations=[ChatGeneration(message=msg)])
+
+        def bind_tools(self, tools, **kw):
+            return self
+    ```
+
+    That subclass is also the answer to "can you test a LangChain agent offline?" — it drives
+    `create_agent` fine. There just isn't a test model in the box.
+
+    First, an `interrupt()` inside the node that holds the work:
 
     ```python {test="skip" lint="skip"}
     def refund_node(state: S):
@@ -139,10 +159,15 @@ tomorrow.
 
 `requires_approval=True` on the tool is the whole change. And when the pause you want isn't a tool
 call, the answer is the same shape rather than a different mechanism: a `CancellationToken` or a tool
-calling `ctx.cancel()` ends the run in `RunCancelled`, carrying the same resumable history. LangGraph
-has no cancellation API at all — `CompiledStateGraph` exposes no stop or cancel method, so ending a
-run early means cancelling whatever task is executing it and keeping whatever the checkpointer
-happened to write.
+calling `ctx.cancel()` ends the run in `RunCancelled`, carrying the same resumable history, and that
+works whichever way you started the run.
+
+LangGraph can stop a run too, but only down one path: `stream_events(version='v3')` returns a
+`GraphRunStream` with an `abort()`, and that method warns it's experimental when you touch it. Ordinary
+`invoke()` and `stream()` have nothing, so stopping those means cancelling whatever task is executing
+them. What `abort()` gives you is also a different thing — it closes the graph iterator so in-flight
+nodes see `GeneratorExit`, and you keep whatever the checkpointer happened to write. Ours is a value
+you catch.
 
 ## Why the two behave differently
 
@@ -168,8 +193,9 @@ rather than a graph. Everything downstream follows from that:
   state dict per step, which is why checkpoint size tracks your payload size.
 - **Cancelling is a typed outcome, not a killed task.** A `CancellationToken` stops one or several
   runs from another thread, a tool can call `ctx.cancel()`, and the run ends in `RunCancelled`
-  carrying the history — which resumes like any other. LangGraph has no cancellation API; stopping a
-  run means killing whatever is executing it.
+  carrying the history — which resumes like any other, from any entry point. LangGraph's `abort()` is
+  experimental, exists only on the v3 stream, and closes the iterator rather than returning you a
+  result.
 
 ## One layer up: Deep Agents and the harness
 
@@ -214,7 +240,7 @@ and in use.
 | Pausing for a human | `interrupt()`, replaying the enclosing node; or `interrupt_after` on a node you split out in advance | `requires_approval=True` on the tool; the run ends and resumes from the tool boundary |
 | Crash recovery | Checkpointers, part of LangGraph | Six engines wrap the agent object: Temporal, DBOS, Prefect in-tree; Restate, Kitaru, Airflow outside |
 | Trusted state | `context_schema`, part of the state the loop reads | `deps_type`, a separate typed argument tools read and the model cannot see |
-| Cancellation | No API; kill the task | `CancellationToken`, `ctx.cancel()`, `RunCancelled` with resumable history |
+| Cancellation | `abort()` on the experimental `stream_events(version='v3')` stream; nothing on `invoke()` or `stream()` | `CancellationToken`, `ctx.cancel()`, `RunCancelled` with resumable history, from any entry point |
 | Extending the agent | Middleware, wrapping in LIFO order around each pass | Capabilities, bundling tools, instructions, settings, and hooks as one unit that can also load on demand |
 | Testing offline | Subclass their `ChatModel` and a dozen lines drives the whole loop; there's no test model included, and `GenericFakeChatModel` raises `NotImplementedError` on `bind_tools` | `TestModel` and `FunctionModel` ship with the library; `ALLOW_MODEL_REQUESTS = False` blocks real providers globally |
 | Evals | Datasets and experiments in LangSmith | `pydantic-evals` in your test suite, sharing the agent's own types, no platform |
@@ -228,11 +254,9 @@ dict splits into three things that were previously one, which is usually the poi
 say the migration was worth it. Your deps become `deps_type`, your conversation becomes
 `message_history`, and your workflow state becomes whatever your application already uses for state.
 
-[skills-langchain-to-pydantic-ai](https://github.com/pydantic/skills-langchain-to-pydantic-ai) does
-the mechanical part. If what you're moving is a Deep Agents application rather than a LangChain
-agent, that's a harness migration and
-[skills-deepagents-migration](https://github.com/pydantic/skills-deepagents-migration) is the one you
-want.
+If what you're moving is a Deep Agents application rather than a plain LangChain agent, the target is
+[pydantic-ai-harness](https://github.com/pydantic/pydantic-ai-harness) rather than Pydantic AI on its
+own, and the file, shell, and sub-agent tools you're relying on have direct counterparts there.
 
 ## When LangChain is the right answer
 
@@ -277,8 +301,11 @@ tracing dashboard that works the day you install it, LangSmith is a product and 
 0.7.13, and Pydantic AI 2.42. Both LangGraph traces come from scripts that log every model call and
 side effect across a pause and a resume — one through `HumanInTheLoopMiddleware`, one through a
 hand-written `interrupt()` — run against a stub chat model with no network. The dependency and
-`create_agent` return-type claims are read from the installed distributions. Probe sources and their
-raw output live in
-[pydantic-ai-notes](https://github.com/pydantic/pydantic-ai-notes/tree/main/aditya/framework-comparison-articles/raw).
-The Pydantic AI snippet on this page is executed by this repository's test suite on every commit, so
-its output is what it printed.*
+`create_agent` return-type claims are read from the installed distributions. `GraphRunStream.abort()` was
+reached by calling `stream_events(version='v3')` on a compiled graph and confirmed to raise a
+`LangChainBetaWarning`; `invoke()` and `stream()` were checked for a stop method and have none. The probes are the ones
+shown above, and they need nothing beyond those two packages and no network. The Pydantic AI snippet
+on this page is executed by this repository's test suite on every commit, so its output is what it
+printed. We recheck this page's
+version pins and behaviour claims each time Pydantic AI ships a minor release; if something here has
+gone stale, [tell us](https://github.com/pydantic/pydantic-ai/issues/new) and we'll correct it.*

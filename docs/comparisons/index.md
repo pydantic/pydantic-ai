@@ -60,7 +60,7 @@ installed.
 
 | Framework | Strongest at | Where it stops |
 |---|---|---|
-| LangChain and LangGraph | The largest ecosystem in agent tooling; checkpointed workflows and time travel; Deep Agents as a shipped harness | Pausing anywhere their middleware doesn't already pause means `interrupt()`, which replays the enclosing node's work; no cancellation API; trusted state isn't separate from the conversation |
+| LangChain and LangGraph | The largest ecosystem in agent tooling; checkpointed workflows and time travel; Deep Agents as a shipped harness | Pausing anywhere their middleware doesn't already pause means `interrupt()`, which replays the enclosing node's work; stopping a run needs their experimental v3 stream; trusted state isn't separate from the conversation |
 | OpenAI Agents SDK | OpenAI features first; hosted sessions and tracing; `after_turn` is a genuinely nice stop | Continuity is a session rather than history you own; no first-party crash recovery |
 | Claude Agent SDK | Claude Code's behaviour, immediately, including permissions and rewind | The loop is a `claude` subprocess; Anthropic only; tests are integration tests |
 | CrewAI | Fastest route to a working multi-agent demo; memory and knowledge included; the biggest tutorial library | Orchestration is a DSL; no stop method on a crew; limits are per agent rather than per run |
@@ -74,18 +74,23 @@ installed.
 
 ## What other people say
 
-- **Developer experience.** A [90-day, five-framework
-  benchmark](https://nextbuild.co/blog/ai-agent-frameworks-benchmarked-pydanticai) by Nextbuild scored
-  Pydantic AI 8/10 for developer experience against 5/10 for LangChain, and credited its type safety
-  with catching "23 bugs during development that would have reached production in other frameworks".
-  Mastra scored higher than us on that measure, at 9/10.
-- **Cost.** The same benchmark, [summarised by
-  Speakeasy](https://www.speakeasy.com/blog/ai-agent-framework-comparison) (2026-03), put a 90-day
-  build at $390 with Pydantic AI against $1,088 with CrewAI.
-- **The complaint we hear most.** Heavy use of generics makes for noisy tracebacks. It's a fair
-  criticism, we're working on it, and we'd rather you heard it here.
+There is one write-up people quote at us often: a [five-framework
+comparison](https://nextbuild.co/blog/ai-agent-frameworks-benchmarked-pydanticai) from the agency
+NextBuild, which scored Pydantic AI 8/10 for developer experience against 5/10 for LangChain. We're
+not going to lean on it. It's one team's account of one project rather than a benchmark anyone can
+re-run; Mastra scored above us on that same measure at 9/10; and its headline cost figure is mostly a
+subscription line item — the $1,088 it attributes to CrewAI is $898 of Pro-tier licensing plus $190 of
+infrastructure, which says something about pricing pages and nothing about the frameworks.
+
+If you find that quoted somewhere as proof that Pydantic AI is cheaper, it isn't proof, and it isn't
+ours.
+
+The complaint we hear most about us is real and unresolved: heavy use of generics makes for noisy
+tracebacks. We're working on it, and we'd rather you heard it here.
 
 ---
 
 *All pages checked on 2026-09-10 against Pydantic AI 2.42. Framework versions are named at the bottom
-of each page, along with how the claims were checked.*
+of each page, along with how the claims were checked. We recheck every page against current releases
+each time Pydantic AI ships a minor version; if something here has gone stale, please
+[open an issue](https://github.com/pydantic/pydantic-ai/issues/new) and we'll fix it.*
