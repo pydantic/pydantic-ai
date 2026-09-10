@@ -1,13 +1,13 @@
 # Pydantic AI vs LangChain & LangGraph
 
-**LangChain, at its best:** the largest ecosystem in agent tooling — every integration, every
+**LangChain** is the largest ecosystem in agent tooling — every integration, every
 provider, a huge community, and durable workflows through LangGraph.
 
-**Pydantic AI, at its best:** a typed, async-first Python framework where the agent loop is a plain
+**Pydantic AI** is a typed, async-first Python framework where the agent loop is a plain
 value — no graph DSL, no runtime to adopt, capabilities you wire yourself.
 
 *Verified against langchain 1.3.1 / langgraph 1.2.1 (2026-09-10). Pydantic AI claims below are
-self-contained scripts — offline, no API keys — re-executed by this repository's test suite.**
+self-contained scripts — offline, no API keys — re-executed by this repository's test suite.*
 
 ## Quick comparison
 
@@ -76,10 +76,10 @@ drive it — the same value a capability can wrap, a durable engine can wrap, an
 
 ## Key differences
 
-**Their best:** the ecosystem is the offer — integrations, community, fast tinkering. LangGraph's
+**LangChain/LangGraph.** the ecosystem is the offer — integrations, community, fast tinkering. LangGraph's
 checkpointed workflows are genuinely durable. Middleware is a real intercept seam.
 
-**Ours:** the seams are typed and the run is yours. Interrupt-vs-cancel is the sharpest example:
+**Pydantic AI.** the seams are typed and the run is yours. Interrupt-vs-cancel is the sharpest example:
 `interrupt()` in LangGraph pauses by graph state and **resuming restarts the enclosing node** (the
 LLM call re-runs — probed); our pause sits at the tool-call boundary, the run stops or continues
 without re-running finished work, and cancellation ends in a catchable `RunCancelled` carrying the

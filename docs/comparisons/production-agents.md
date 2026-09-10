@@ -126,7 +126,8 @@ def main() -> None:
     print('deferred tool visible before load_capability:', bool(late))
 
 
-main()```
+main()
+```
 
 ```text
 requests: 4
@@ -228,7 +229,8 @@ def main() -> None:
         print('blocked run_sync interrupted from another thread -> RunCancelled')
 
 
-main()```
+main()
+```
 
 ```text
 blocked run_sync interrupted from another thread -> RunCancelled
@@ -409,7 +411,8 @@ def main() -> None:
     print(f'valid template -> {type(agent).__name__}({agent.name!r}) runs offline')
 
 
-main()```
+main()
+```
 
 ```text
 TemplateSchemaError: 1 error(s) found:
@@ -465,7 +468,8 @@ async def main():
     print(f'final output: {final!r} (streamed while it happened)')
 
 
-asyncio.run(main())```
+asyncio.run(main())
+```
 
 ```text
 events observed: ['PartStartEvent', 'PartEndEvent', 'FunctionToolCallEvent', 'FunctionToolResultEvent', 'PartStartEvent', 'FinalResultEvent', 'PartEndEvent', 'AgentRunResultEvent']
@@ -528,44 +532,47 @@ main()
 assertions passed: 100%
 ```
 
-## 9. Durability is a wrapper, not a rewrite
+## 9. Durability is attached at run time, not written into the agent
 
-One agent source; the engine is the import. Temporal, DBOS, and Prefect agents wrap the same
-definition. This one needs the engine installed (Temporal/DBOS/Prefect) — it's a reference, not an
-offline proof:
-
+One agent definition; the engine is chosen where it runs. The attach API differs per engine and has
+changed (wrapper classes are deprecated in favor of durability capabilities) — the
+[durable execution docs](../durable_execution/overview.md) are the source of truth per engine:
 
 ```python {title="durability_wrap.py"}
-"""Durability is a wrapper, not a rewrite (requires an engine to run).
+"""Durability is attached at run time, not written into the agent.
 
-The agent definition below is identical for all three engines; only the
-wrapper import changes. This file is a reference, not an offline proof:
-run the engine versions in an environment with Temporal/DBOS/Prefect.
+One agent definition; the engine is chosen where it runs. The attach API
+differs per engine and has changed (wrappers -> capabilities) — the durable
+execution docs are the source of truth per engine.
 """
 from pydantic_ai import Agent
 
-# one agent, unchanged:
+
 def build_agent() -> Agent:
     return Agent('openai:gpt-5.6-luna', deps_type=dict, system_prompt='be terse')
 
 
-print('same agent source under:')
-print('  - TemporalAgent(agent, task_queue="tq")   # Temporal')
-print('  - DBOSAgent(agent, workflow_name="wf")    # DBOS')
-print('  - PrefectAgent(agent, task_name="t")      # Prefect')
-print('agent definition changes: 0 lines')
+def main() -> None:
+    print('one agent definition; durability attached at run time (see docs/durable_execution/*):')
+    print('  - Temporal  (TemporalDurability capability; temporal + pydantic-ai[durable-temporal])')
+    print('  - DBOS      (DBOSDurability capability; dbos + pydantic-ai[durable-dbos])')
+    print('  - Prefect   (PrefectDurability capability; prefect + pydantic-ai[durable-prefect])')
+    print('  - Restate, Kitaru, Apache Airflow: external adapters, same shape')
+    print('agent definition changes: 0 lines')
+
+
+if __name__ == '__main__':
+    main()
 ```
 
 ```text
-same agent source under:
-  - TemporalAgent(agent, task_queue="tq")   # Temporal
-  - DBOSAgent(agent, workflow_name="wf")    # DBOS
-  - PrefectAgent(agent, task_name="t")      # Prefect
+one agent definition; durability attached at run time (see docs/durable_execution/*):
+  - Temporal  (TemporalDurability capability; temporal + pydantic-ai[durable-temporal])
+  - DBOS      (DBOSDurability capability; dbos + pydantic-ai[durable-dbos])
+  - Prefect   (PrefectDurability capability; prefect + pydantic-ai[durable-prefect])
+  - Restate, Kitaru, Apache Airflow: external adapters, same shape
 agent definition changes: 0 lines
 ```
-
-Restate, Kitaru, and Airflow ship the same shape. Everything else here stays yours.
-
 
 ## What we don't ship (same tone)
 

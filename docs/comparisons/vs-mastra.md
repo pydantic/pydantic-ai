@@ -1,9 +1,9 @@
 # Pydantic AI vs Mastra
 
-**Mastra, at its best:** a batteries-included TS/Node framework — agents, tools, workflows,
+**Mastra** is a batteries-included TS/Node framework — agents, tools, workflows,
 observability, and evals under one roof, with a processor-style extension model.
 
-**Pydantic AI, at its best:** one extension unit — a capability can carry tools, defer, and observe
+**Pydantic AI** is one extension unit — a capability can carry tools, defer, and observe
 or transform the run's event stream — on a typed, async-first Python loop.
 
 *Verified against Mastra docs 2026-09 (TS framework; docs-grounded). Pydantic AI claims below are
@@ -13,7 +13,7 @@ self-contained scripts — offline, no API keys — re-executed by this reposito
 
 | What you get | Mastra | Pydantic AI |
 |---|---|---|
-| Stack | TS/Node; agents + workflows + tools in one package | Python 3.11+, packages split: core, evals, graph |
+| Stack | TS/Node; agents + workflows + tools in one package | Python 3.10+; packages split: core, evals, graph |
 | Extension | Processors/guardrails/workflow concepts | Capabilities: one unit (tools + instructions + hooks), deferrable, serializable |
 | Observability | Built-in (a real strength) | OTel + Logfire instrumentation; your capability can also see the stream (proven below) |
 | Typed seams | Zod at boundaries | `deps_type` through construction, tools, specs, tests, evals |
@@ -40,7 +40,6 @@ from pydantic_ai import Agent, AgentStreamEvent, RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.models.function import DeltaToolCall, FunctionModel
 
-
 @dataclass
 class Auditor(AbstractCapability[Any]):
     seen: list[str]
@@ -52,22 +51,18 @@ class Auditor(AbstractCapability[Any]):
             self.seen.append(type(event).__name__)
             yield event
 
-
 async def stream(messages, info):
     if len(messages) == 1:
         yield {0: DeltaToolCall(name='twice', json_args='{"n": 21}', tool_call_id='c1')}
     else:
         yield '42'
 
-
 aud = Auditor(seen=[])
 agent = Agent(FunctionModel(stream_function=stream), capabilities=[aud])
-
 
 @agent.tool
 def twice(ctx, n: int) -> int:
     return n * 2
-
 
 async def main():
     async with agent.run_stream_events('what is 21*2?') as run:
@@ -77,26 +72,23 @@ async def main():
     assert 'FunctionToolCallEvent' in aud.seen
     assert 'FinalResultEvent' in aud.seen
 
-
-asyncio.run(main())```
-
-```text
-auditor (a capability) observed: ['PartStartEvent', 'PartEndEvent', 'FunctionToolCallEvent', 'FunctionToolResultEvent', 'PartStartEvent', 'FinalResultEvent', 'PartEndEvent']
+asyncio.run(main())
 ```
 
 ```text
 auditor (a capability) observed: ['PartStartEvent', 'PartEndEvent', 'FunctionToolCallEvent', 'FunctionToolResultEvent', 'PartStartEvent', 'FinalResultEvent', 'PartEndEvent']
 ```
+
 
 One extension model, and it reaches the event stream: your auditor, your UI adapter, your approval
 gate are all just capabilities.
 
 ## Key differences
 
-**Their best:** the all-in-one TS package with built-in observability and workflows is a genuinely
+**Mastra.** the all-in-one TS package with built-in observability and workflows is a genuinely
 batteries-included offer for the JS ecosystem.
 
-**Ours:** extension is one noun with prod reach — the capability that adds a tool can also wrap the
+**Pydantic AI.** extension is one noun with prod reach — the capability that adds a tool can also wrap the
 run's events, defer loading, and serialize into a spec. Observability is a capability, not a module
 you bolt on the side.
 

@@ -1,10 +1,10 @@
 # Pydantic AI vs Google ADK
 
-**Google ADK, at its best:** a full-surface agent framework from a cloud vendor — `LlmAgent` config,
+**Google ADK** is a full-surface agent framework from a cloud vendor — `LlmAgent` config,
 workflows with a builder, in-memory services, code executors (including subprocess interpreters via
 anyio), and A2A for interop.
 
-**Pydantic AI, at its best:** a typed loop with cancellation as a first-class, resumable outcome —
+**Pydantic AI** is a typed loop with cancellation as a first-class, resumable outcome —
 plus capabilities, deps, budgets, evals, and durability wraps.
 
 *Verified against Google ADK 2026-09 (adk-venv install; docs-grounded where noted). Pydantic AI
@@ -41,10 +41,8 @@ from pydantic_ai.models.function import FunctionModel
 
 CONCURRENT = 3
 
-
 async def hang(messages, info):
     await asyncio.sleep(3600)  # in-flight until cancelled
-
 
 async def main():
     token = CancellationToken()
@@ -56,7 +54,6 @@ async def main():
     print(f'runs cancelled by one token: {sum(isinstance(r, RunCancelled) for r in results)}/{CONCURRENT}')
     assert all(isinstance(r, RunCancelled) for r in results)
 
-
 asyncio.run(main())
 ```
 
@@ -64,19 +61,16 @@ asyncio.run(main())
 runs cancelled by one token: 3/3
 ```
 
-```text
-runs cancelled by one token: 3/3
-```
 
 The cancellation machinery is ours because the loop is ours — attribution between your cancel and an
 external `CancelledError` (external wins), plus the resumable history, are part of the same seam.
 
 ## Key differences
 
-**Their best:** the vendor surface is real — workflows, code executors, service layers, A2A — and
+**Google ADK.** the vendor surface is real — workflows, code executors, service layers, A2A — and
 their anyio depth is genuinely close to ours.
 
-**Ours:** on top of the same primitives we ship cancellation as a product: typed, thread-safe,
+**Pydantic AI.** on top of the same primitives we ship cancellation as a product: typed, thread-safe,
 multi-run, resumable. ADK's own anyio task groups could do it — but the API isn't shipped.
 
 ## When to choose Google ADK

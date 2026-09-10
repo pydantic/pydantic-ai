@@ -1,10 +1,10 @@
 # Pydantic AI vs AG2
 
-**AG2, at its best:** the protocol-rich framework — the v1 rewrite ships a checkpointed `Task` state
+**AG2** is the protocol-rich framework — the v1 rewrite ships a checkpointed `Task` state
 machine (`checkpoint_store`, `resume_from`), its own `AgentSpec`, `Inject`/`Depends` typed inputs,
 `ResponseSchema`, and envelopes for cancel/expire/fail.
 
-**Pydantic AI, at its best:** an agent that is data — a spec that fails at load, serializes with a
+**Pydantic AI** is an agent that is data — a spec that fails at load, serializes with a
 companion schema, and runs offline — plus durable wraps and typed, repairable history.
 
 *Verified against `ag2 1.0.4` (2026-09-10). Pydantic AI claims below are self-contained scripts —
@@ -23,7 +23,8 @@ offline, no API keys — re-executed by this repository's test suite.*
 ## Prove it yourself
 
 Their spec protocol is the closest to ours — so prove the difference where it matters: validation at
-load, a file + companion schema, and an agent that runs offline from that file:
+load, a file + companion schema, and an agent that runs offline from that file. YAML round-trips need
+the optional `spec` extra for PyYAML (`pip install 'pydantic-ai[spec]'`):
 
 ```python {title="spec_data_roundtrip.py"}
 """The agent is data: spec -> YAML + JSON schema -> a running agent.
@@ -39,10 +40,8 @@ from pydantic import BaseModel
 
 from pydantic_ai import Agent, AgentSpec
 
-
 class Ctx(BaseModel):
     version: str
-
 
 spec = AgentSpec.from_dict(
     {
@@ -74,18 +73,14 @@ spec -> YAML + schema file (exists=True) -> running agent, offline
 loaded-from-file output: 'success (no tool calls)'
 ```
 
-```text
-spec -> YAML + schema file (exists=True) -> running agent, offline
-loaded-from-file output: 'success (no tool calls)'
-```
 
 ## Key differences
 
-**Their best:** the v1 rewrite is genuinely different — a durable task state machine with envelopes
+**AG2.** the v1 rewrite is genuinely different — a durable task state machine with envelopes
 is the right shape when the *whole system* is checkpointed, and their protocol surface (ACP, A2A,
 hitl, live) is broad.
 
-**Ours:** the spec is validated against typed deps at load (dict/YAML path), serializes with a schema
+**Pydantic AI.** the spec is validated against typed deps at load (dict/YAML path), serializes with a schema
 file, and the loaded agent runs offline. Durable units wrap the same ordinary run; `ctx.cancel()`
 inside a unit raises an explanatory error instead of replay-diverging.
 

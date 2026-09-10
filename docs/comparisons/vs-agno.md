@@ -1,9 +1,9 @@
 # Pydantic AI vs Agno
 
-**Agno, at its best:** a batteries-included Python framework with a bundled runtime and the AgentOS
+**Agno** is a batteries-included Python framework with a bundled runtime and the AgentOS
 hosted platform — plus toolsets, teams, and evals in the modern 3.x rewrite.
 
-**Pydantic AI, at its best:** a library, not a runtime — the same agent runs sync, async, or
+**Pydantic AI** is a library, not a runtime — the same agent runs sync, async, or
 node-by-node wherever your application already runs, with typed seams and engines you choose.
 
 *Verified against `agno 3.0.x` (2026-09-10). Pydantic AI claims below are self-contained scripts —
@@ -61,10 +61,10 @@ sync='same result' async='same result' iter='same result'
 
 ## Key differences
 
-**Their best:** batteries and a hosted platform are real — AgentOS, teams, and bundled tools lower
+**Agno.** batteries and a hosted platform are real — AgentOS, teams, and bundled tools lower
 the start cost.
 
-**Ours:** the loop stays in your process, so every production seam applies — typed deps, budgets,
+**Pydantic AI.** the loop stays in your process, so every production seam applies — typed deps, budgets,
 cancellation with resumable history, offline tests — and durability is chosen by wrapping, not by
 adopting a runtime.
 

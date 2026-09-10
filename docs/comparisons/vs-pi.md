@@ -1,9 +1,9 @@
 # Pydantic AI vs Pi
 
-**Pi, at its best:** a shipped coding agent — a polished CLI (TUI, skills, memory, provider
+**Pi** is a shipped coding agent — a polished CLI (TUI, skills, memory, provider
 catalog) built on the same harness primitives, with a deliberate no-sandbox security stance.
 
-**Pydantic AI / pydantic-ai-harness, at its best:** the harness as a library — `CodeMode` (Monty),
+**Pydantic AI / pydantic-ai-harness** is the harness as a library — `CodeMode` (Monty),
 `FileSystem`, `Shell`, subagents, compaction, skills, memory, and ACP, each a replaceable
 capability, on the typed, durable loop.
 
@@ -77,10 +77,10 @@ Pi is a product built on these primitives; the harness is the primitives themsel
 
 ## Key differences
 
-**Their best:** pi is a genuinely good product — TUI, skills, memory, provider compatibility table,
+**Pi.** pi is a genuinely good product — TUI, skills, memory, provider compatibility table,
 a no-sandbox stance stated plainly.
 
-**Ours:** the same affordances as a rewirable, typed library on a durable loop. Any capability a CLI
+**Pydantic AI.** the same affordances as a rewirable, typed library on a durable loop. Any capability a CLI
 hides is one you can replace; any step it takes is one you can observe, cancel, or make durable.
 
 ## When to choose Pi

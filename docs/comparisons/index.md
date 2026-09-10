@@ -1,8 +1,8 @@
 # Pydantic AI vs other agent frameworks
 
 Pydantic AI is the de facto, Pythonic way to write agents in Python. These pages compare it against
-the agent frameworks people actually reach for — **their best vs our best, today**, with every claim
-runnable on your laptop and every version pinned.
+the agent frameworks people actually reach for. Each page compares what the frameworks
+actually ship, with every claim runnable on your laptop and framework versions documented on the page.
 
 We ship **primitives, not decisions**: typed, composable seams (capabilities, events, dependencies,
 durability engines) that you wire yourself. We don't pick your architecture. Most comparisons below
@@ -36,6 +36,7 @@ fail at load, evals in CI.
 - Every claim on a page is either a **self-contained code block on that page** (offline, no API
   keys, deterministic — the repository's test suite executes each one) or carries a pinned version
   of the framework it describes.
-- Competitor pages state their best fairly; our gaps are in the same tone as theirs.
+- Competitor pages state each framework's capabilities factually; our gaps are stated in the same
+tone as theirs.
 - Page sources and probe records live in the [`pydantic-ai-notes`](https://github.com/pydantic/pydantic-ai-notes)
   repository's framework-comparison series; versions last verified 2026-09-10.

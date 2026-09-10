@@ -1,10 +1,10 @@
 # Pydantic AI vs OpenAI Agents SDK
 
-**OpenAI Agents SDK, at its best:** the first-party SDK for the platform most of the industry runs
+**OpenAI Agents SDK** is the first-party SDK for the platform most of the industry runs
 on — guardrails, handoffs, sessions, structured outputs, and a streamed run you can cancel with
 `mode='after_turn'`.
 
-**Pydantic AI, at its best:** one extension noun instead of categories — a capability carries tools,
+**Pydantic AI** is one extension noun instead of categories — a capability carries tools,
 instructions, settings, and hooks together — plus a typed deps boundary, durable wraps, and
 cancellation that ends in a catchable, resumable exception.
 
@@ -104,16 +104,18 @@ resumed run output: run resumed and completed
 ```
 
 The note that matters: the stop interrupt hit the *in-flight model request*, so history ends marked
-`interrupted` and the next run repairs it automatically. Cancelling *from inside a tool* leaves the
-pending tool call unexecuted and resume needs that trailing call dropped — a real difference between
-the two interrupt points, documented in the research notes.
+`interrupted`, and the next run repairs it automatically — that's why the proof passes `all_messages()`
+straight to resume. Cancelling *from inside a tool* is different: `ctx.cancel()` discards that tool's
+result and leaves its pending call in history without one (verified on 2.42.0), and `message_history`
+repair applies where the interruption is marked — check the
+[message-history docs](../message-history.md) and test your resume path.
 
 ## Key differences
 
-**Their best:** the platform is the product — Responses API continuity, sessions, memory, tracing,
+**OpenAI Agents SDK.** the platform is the product — Responses API continuity, sessions, memory, tracing,
 and `after_turn` is a genuine turn-granularity grace on streamed runs.
 
-**Ours:** the seams are typed and local. One capability noun pays for itself across all four of
+**Pydantic AI.** the seams are typed and local. One capability noun pays for itself across all four of
 their categories (their handoffs are tools with a reserved name; our non-tool capabilities hide
 tools until loaded). The deps boundary, a cancellation that is a catchable exception, and durability
 wraps on the public interface all exist because the run is a normal coroutine — nothing platform-

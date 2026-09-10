@@ -1,10 +1,10 @@
 # Pydantic AI vs Claude Agent SDK
 
-**Claude Agent SDK, at its best:** the harness that powers Claude Code as a library — you configure
+**Claude Agent SDK** is the harness that powers Claude Code as a library — you configure
 the `claude` process (skills, hooks, permissions, substitutions) and drive it over a subprocess
 protocol.
 
-**Pydantic AI, at its best:** the loop is an object in *your* process — typed, testable,
+**Pydantic AI** is the loop is an object in *your* process — typed, testable,
 cancellable, wrap-able — and the same seams (deps, capabilities, cancellation, evals) that work for
 any provider.
 
@@ -83,10 +83,10 @@ the loop — nothing is spawned to run the agent.
 
 ## Key differences
 
-**Their best:** the product is real — Claude Code's skills, hooks, and subprocess isolation are
+**Claude Agent SDK.** the product is real — Claude Code's skills, hooks, and subprocess isolation are
 battle-tested behaviors, and prompt caching with their models is a first-party advantage.
 
-**Ours:** everything meaningful about the run is inspectable and changeable from your code: typed
+**Pydantic AI.** everything meaningful about the run is inspectable and changeable from your code: typed
 deps, budgets that halt before side effects, cancellation that is a catchable, resumable exception,
 evals in CI, and durability by wrapping — none of which exist for a loop you can't reach into.
 

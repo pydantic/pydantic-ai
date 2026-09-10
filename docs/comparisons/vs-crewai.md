@@ -1,9 +1,9 @@
 # Pydantic AI vs CrewAI
 
-**CrewAI, at its best:** the orchestration DSL — agents with roles, goals, and backstories, crews
+**CrewAI** is the orchestration DSL — agents with roles, goals, and backstories, crews
 run by `process='sequential'` or `'hierarchical'`, plus knowledge sources and memory.
 
-**Pydantic AI, at its best:** orchestration-as-code — chained and fanned-out agents with a type at
+**Pydantic AI** is orchestration-as-code — chained and fanned-out agents with a type at
 every seam, plus the production checklist (deps, budgets, cancellation, evals).
 
 *Verified against `crewai 1.15.21` (2026-09-10). Pydantic AI claims below are self-contained scripts
@@ -102,10 +102,10 @@ the framework interprets.
 
 ## Key differences
 
-**Their best:** the role DSL compresses common multi-agent shapes into a few lines, and memory +
+**CrewAI.** the role DSL compresses common multi-agent shapes into a few lines, and memory +
 knowledge are included — real batteries for the crew-of-specialists pattern.
 
-**Ours:** orchestration-as-code keeps every step typed and inspectable (the fan-out returns ints, the
+**Pydantic AI.** orchestration-as-code keeps every step typed and inspectable (the fan-out returns ints, the
 sum flows into deps), and the production checklist applies: the same runs are cancellable,
 budgeted, and testable offline.
 

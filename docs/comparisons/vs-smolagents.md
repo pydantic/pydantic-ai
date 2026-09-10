@@ -1,10 +1,10 @@
 # Pydantic AI vs smolagents
 
-**smolagents, at its best:** the smallest loop that runs agents — the model writes Python, a
+**smolagents** is the smallest loop that runs agents — the model writes Python, a
 sandboxed executor runs it (with an allowlist of 11 stdlib modules, Docker/E2B/Modal/Blaxel options
 for real isolation), and the loop ends when the model calls `final_answer`.
 
-**Pydantic AI, at its best:** a structured, async-first loop with a typed deps boundary, exact
+**Pydantic AI** is a structured, async-first loop with a typed deps boundary, exact
 budgets, typed cancellation, and evals — the same seams for any provider.
 
 *Verified against `smolagents 1.26.0` (2026-09-10). Pydantic AI claims below are self-contained
@@ -89,10 +89,10 @@ all: the loop is structured, so it can be limited, interrupted, and observed.
 
 ## Key differences
 
-**Their best:** agentic code execution with real sandboxing options is a genuinely different model —
+**smolagents.** agentic code execution with real sandboxing options is a genuinely different model —
 and their allowlist is a sane default for it.
 
-**Ours:** the boundary is about *what the model is allowed to know and do*, not only where code runs.
+**Pydantic AI.** the boundary is about *what the model is allowed to know and do*, not only where code runs.
 A typed deps boundary, budgets that halt before side effects, resumable cancellation, and evals in
 CI all exist because the loop is structured async — and they hold for every provider, not just
 Python-executing models.
