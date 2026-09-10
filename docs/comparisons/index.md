@@ -33,8 +33,9 @@ fail at load, evals in CI.
 
 ## Method
 
-- Every claim is either **runnable here** (offline, deterministic, ~5 seconds) or carries a pinned
-  version of the framework it describes.
+- Every claim on a page is either a **self-contained code block on that page** (offline, no API
+  keys, deterministic — the repository's test suite executes each one) or carries a pinned version
+  of the framework it describes.
 - Competitor pages state their best fairly; our gaps are in the same tone as theirs.
 - Page sources and probe records live in the [`pydantic-ai-notes`](https://github.com/pydantic/pydantic-ai-notes)
   repository's framework-comparison series; versions last verified 2026-09-10.

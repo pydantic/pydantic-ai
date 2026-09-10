@@ -1,26 +1,63 @@
 # The production agent
 
 Every framework demo can run an agent. Production needs more. This page walks the checklist that
-matters when the agent ships — each row is a runnable snippet, offline, no API keys. Run any of them
-with:
+matters when the agent ships. Each row is a **complete, self-contained script** — offline, no API
+keys, deterministic — and this repository's test suite executes every one of them, so what you see
+printed below is what the code prints today.
 
-```bash
-uv run -m pydantic_ai_examples.comparisons.production_agent.<name>
-```
+Competitor frameworks that lack a row are named per row; their best features are stated on their
+own pages.
 
-(Individual steps don't need side-by-side comparison: the point is which framework ships the seam at
-all. Competitor frameworks that lack a row are named per row; their best features are stated on their
-own pages.)
 
 ## 1. Trusted state: a boundary the model cannot cross
 
 The DB password lives in `deps`. Only the tool may read it. The model receives tool definitions —
 nothing else — and its request payload never contains the secret.
 
-```snippet {path="/examples/pydantic_ai_examples/comparisons/production_agent/deps_boundary.py"}
+
+```python {title="deps_boundary.py"}
+"""The deps boundary: the model never sees trusted state.
+
+The password lives in deps. Only the tool may read it. The model only ever
+receives tool definitions; its request payload contains no secret.
+"""
+import asyncio
+from pydantic_ai import Agent, capture_run_messages
+from pydantic_ai.models.function import FunctionModel
+from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
+
+DB = {'db_password': 'hunter2-keep-secret'}
+
+
+async def model(messages, info):
+    if len(messages) == 1:
+        return ModelResponse(parts=[ToolCallPart('check_db', {'key': 'readiness probe'})])
+    return ModelResponse(parts=[TextPart('done')])
+
+
+agent = Agent(FunctionModel(model), deps_type=dict)
+
+
+@agent.tool
+async def check_db(ctx, key: str) -> str:
+    ok = ctx.deps['db_password'] == 'hunter2-keep-secret'
+    return f'db:{key}:{"ok" if ok else "auth-failed"}'  # never echoes the secret
+
+
+async def main():
+    with capture_run_messages() as msgs:
+        result = await agent.run('Is the db ready?', deps=DB)
+    payload = str(msgs)
+    leaked = 'hunter2' in payload
+    assert not leaked, 'the secret crossed into model-visible messages!'
+    print(f'request payload contained the db password: {leaked}')
+    print(f'tool executed with deps ({result.output!r}); model saw only tool definitions')
+
+
+asyncio.run(main())
 ```
 
-```
+```text
 request payload contained the db password: False
 tool executed with deps ('done'); model saw only tool definitions
 ```
@@ -29,15 +66,71 @@ No competitor has this seam: other frameworks pass "context"/"inputs" through th
 model's request history can echo it (LangChain `context_schema`, OpenAI `TContext`, CrewAI inputs,
 ADK invocation context).
 
+
 ## 2. Capabilities that load on demand
 
-Request 1: the refund tool is absent from the request payload. Request 2: the model asks to load the
-capability. Request 3: the tool exists. The model cannot touch what it hasn't loaded.
+Request 1: the refund tool is absent from the request payload. Request 2: the model asks to load
+the capability. Request 3: the tool exists. The model cannot touch what it hasn't loaded.
 
-```snippet {path="/examples/pydantic_ai_examples/comparisons/production_agent/deferred_capability.py"}
+
+```python {title="deferred_capability.py"}
+"""Deferred capability: the model cannot touch what it hasn't loaded.
+
+Request 1: the deferred tool is absent from the request payload.
+Request 2: the model asks to load the capability; request 3 sees the tool.
+"""
+import asyncio
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import Capability
+from pydantic_ai.models.function import FunctionModel
+from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
+
+CAP_INSTRUCTION = 'Always confirm the order ID before issuing a refund.'
+
+refunds = Capability(
+    id='refunds', description='Use for refunds.', instructions=CAP_INSTRUCTION, defer_loading=True
+)
+
+
+@refunds.tool_plain
+def refund_status(order_id: str) -> str:
+    """Look up refund status."""
+    return f'Order {order_id}: refunded.'
+
+
+seen = []  # (tool names, cap_instruction_in_messages)
+
+
+async def model(messages, info):
+    tools = sorted(t.name for t in info.function_tools)
+    seen.append((tools, CAP_INSTRUCTION in str(messages)))
+    n = len(seen)
+    if n == 1:
+        return ModelResponse(parts=[ToolCallPart('refund_status', {'order_id': 'X'})])  # blocked: not loaded
+    if n == 2:
+        return ModelResponse(parts=[ToolCallPart('load_capability', {'id': 'refunds'})])
+    if n == 3:
+        return ModelResponse(parts=[ToolCallPart('refund_status', {'order_id': 'Y'})])
+    return ModelResponse(parts=[TextPart('done')])
+
+
+agent = Agent(FunctionModel(model), capabilities=[refunds])
+
+
+def main() -> None:
+    res = agent.run_sync('go')
+    print('requests:', len(seen))
+    for i, (tools, instr) in enumerate(seen, 1):
+        print(f'  req{i}: tools={tools} cap_instruction_in_messages={instr}')
+    late = [t for t in seen[0][0] if 'refund' in t]
+    assert not late, 'deferred tool was offered before loading'
+    print('deferred tool visible before load_capability:', bool(late))
+
+
+main()
 ```
 
-```
+```text
 requests: 4
   req1: tools=['load_capability'] cap_instruction_in_messages=False
   req2: tools=['load_capability'] cap_instruction_in_messages=False
@@ -51,25 +144,97 @@ server-hidden (`defer_loading=True`) until loaded. Extend the pattern: capabilit
 instructions + settings + hooks, order themselves, serialize into `AgentSpec`, and can observe or
 transform the run's event stream.
 
+
 ## 3. Cancellation is a typed, resumable outcome
 
 A tool may stop the run. `ctx.cancel()` requests it; the run ends in a catchable `RunCancelled`
 carrying everything completed before the stop — resume by passing that history to the next run.
 
-```snippet {path="/examples/pydantic_ai_examples/comparisons/production_agent/cancel_from_tool.py"}
+
+```python {title="cancel_from_tool.py"}
+"""A tool may stop the run. ctx.cancel() requests cancellation; the run ends
+in a catchable RunCancelled carrying everything completed before it stopped.
+"""
+import asyncio
+from pydantic_ai import Agent, RunCancelled
+from pydantic_ai.models.function import FunctionModel
+from pydantic_ai.messages import ModelResponse, ToolCallPart
+
+
+async def model(messages, info):
+    return ModelResponse(parts=[ToolCallPart('slow_job', {})])
+
+
+agent = Agent(FunctionModel(model))
+
+
+@agent.tool
+async def slow_job(ctx) -> str:
+    ctx.cancel()  # cooperative: returns normally, lands at the next await
+    await asyncio.sleep(0)
+    return 'never used'
+
+
+def main():
+    try:
+        agent.run_sync('start the job')
+        print('BUG: run completed')
+    except RunCancelled as exc:
+        history = exc.all_messages()
+        print(f'run ended with RunCancelled; completed work preserved ({len(history)} message(s))')
+        print('cancellation is a typed, catchable, resumable outcome')
+        assert len(history) >= 1
+main()
 ```
 
-```
+```text
 run ended with RunCancelled; completed work preserved (2 message(s))
 cancellation is a typed, catchable, resumable outcome
 ```
 
 And from outside: a stop button in another thread interrupts a blocked synchronous run.
 
-```snippet {path="/examples/pydantic_ai_examples/comparisons/production_agent/cancel_token_thread.py"}
+
+```python {title="cancel_token_thread.py"}
+"""A stop button, from another thread. CancellationToken interrupts a blocked
+run_sync(); the run ends in RunCancelled instead of hanging forever.
+"""
+import asyncio
+import threading
+import time
+from pydantic_ai import Agent, CancellationToken, RunCancelled
+from pydantic_ai.models.function import FunctionModel
+from pydantic_ai.messages import ModelResponse
+
+
+async def model(messages, info):
+    await asyncio.sleep(3600)  # model appears to hang
+
+
+token = CancellationToken()
+agent = Agent(FunctionModel(model))
+
+
+def stop_handler():
+    time.sleep(0.5)
+    token.cancel()  # thread-safe: delivered onto the run's loop
+
+
+def main() -> None:
+    stop = threading.Thread(target=stop_handler)
+    stop.start()
+    try:
+        agent.run_sync('go', cancellation_token=token)
+        print('BUG: run completed')
+    except RunCancelled as exc:
+        stop.join()
+        print('blocked run_sync interrupted from another thread -> RunCancelled')
+
+
+main()
 ```
 
-```
+```text
 blocked run_sync interrupted from another thread -> RunCancelled
 ```
 
@@ -77,15 +242,59 @@ Compare: OpenAI SDK cancels the streamed run only; Claude SDK = kill the subproc
 interrupt is graph state and resuming re-runs the node's LLM call; smolagents/CrewAI = kill the
 thread; Google ADK exposes no user cancellation API; AG2 cancels via a durable envelope.
 
+
 ## 4. Budgets halt before side effects, not after
 
 The model asks for two tool calls in one response; the limit allows one. The whole batch is
 rejected — `UsageLimitExceeded` — and *neither* tool ran.
 
-```snippet {path="/examples/pydantic_ai_examples/comparisons/production_agent/usage_limits_atomic.py"}
+
+```python {title="usage_limits_atomic.py"}
+"""A usage limit stops a run BEFORE a side-effect batch executes.
+
+The model asks for two tool calls in one response; the limit allows one.
+The whole batch is rejected, so neither tool runs: budget checks precede
+execution, not polite suggestions after it.
+"""
+from pydantic_ai import Agent, UsageLimits, UsageLimitExceeded
+from pydantic_ai.models.function import FunctionModel
+from pydantic_ai.messages import ModelResponse, ToolCallPart
+
+side_effects = []
+
+
+async def model(messages, info):
+    return ModelResponse(
+        parts=[
+            ToolCallPart('credit_customer', {'amount': 100}),
+            ToolCallPart('credit_customer', {'amount': 100}),
+        ]
+    )
+
+
+agent = Agent(FunctionModel(model))
+
+
+@agent.tool
+def credit_customer(ctx, amount: int) -> str:
+    side_effects.append(('credited', amount))
+    return 'ok'
+
+
+def main() -> None:
+    try:
+        agent.run_sync('credit the customer twice', usage_limits=UsageLimits(tool_calls_limit=1))
+        print('BUG: exceeded the limit')
+    except UsageLimitExceeded as exc:
+        print(f'{type(exc).__name__}: {str(exc)[:60]}...')
+        print(f'tool executions that happened: {len(side_effects)}')
+        assert not side_effects, 'a side effect ran despite the budget'
+
+
+main()
 ```
 
-```
+```text
 UsageLimitExceeded: The next tool call(s) would exceed the tool_calls_limit of 1...
 tool executions that happened: 0
 ```
@@ -93,15 +302,66 @@ tool executions that happened: 0
 Budget checks precede execution. A framework that stops mid-batch lets the first side effect happen
 and calls it a limit.
 
+
 ## 5. History repairs itself
 
-A run that dies mid-tool leaves a dangling tool call — invalid for any provider. The next run closes
-it out before the request goes out.
+A run that dies mid-tool leaves a dangling tool call — invalid for any provider. The next run
+closes it out before the request goes out.
 
-```snippet {path="/examples/pydantic_ai_examples/comparisons/production_agent/history_repair.py"}
+
+```python {title="history_repair.py"}
+"""Interrupted history repairs itself before it reaches the model.
+
+A run that dies mid-tool leaves a dangling tool call. The next run closes
+that call out (outcome=<interrupted>) before the request goes out, so the
+provider never rejects the history as malformed.
+"""
+import asyncio
+from pydantic_ai import Agent, capture_run_messages
+from pydantic_ai.models.function import FunctionModel
+from pydantic_ai.messages import (
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
+
+
+async def model(messages, info):
+    return ModelResponse(parts=[TextPart('ok')])
+
+
+agent = Agent(FunctionModel(model), tools=[])
+
+
+@agent.tool
+def add(ctx, n: int) -> int:
+    return n
+
+
+interrupted = [
+    ModelRequest(parts=[UserPromptPart(content='add 1')]),
+    ModelResponse(parts=[ToolCallPart('add', {'n': 1}, tool_call_id='t1')], state='interrupted'),
+]
+
+
+async def main():
+    with capture_run_messages() as msgs:
+        await agent.run('add 1', message_history=interrupted)
+    repaired = [
+        p for m in msgs for p in m.parts if isinstance(p, ToolReturnPart) and p.tool_call_id == 't1'
+    ]
+    assert repaired, 'dangling tool call was not repaired'
+    print(f'outgoing request carried a synthesized result for t1: {[r.content for r in repaired]}')
+    print('history was provider-valid: no malformed pairing sent to the model')
+
+
+asyncio.run(main())
 ```
 
-```
+```text
 outgoing request carried a synthesized result for t1: ['The tool call was interrupted before a result was produced.']
 history was provider-valid: no malformed pairing sent to the model
 ```
@@ -110,27 +370,111 @@ history was provider-valid: no malformed pairing sent to the model
 
 A template typo errors against the typed deps schema at construction, naming the field:
 
-```snippet {path="/examples/pydantic_ai_examples/comparisons/production_agent/spec_validation.py"}
+
+```python {title="spec_validation.py"}
+"""An agent spec fails at load time, not at runtime.
+
+Templates are validated against typed deps when the spec is built: a single
+typo error names the field and the file. The same spec typechecks into a
+running agent offline.
+"""
+from pydantic import BaseModel
+from pydantic_ai import Agent, AgentSpec
+
+
+class UserContext(BaseModel):
+    user_name: str
+    user_role: str
+
+
+bad = {
+    'name': 'support',
+    'model': 'test',  # offline stub backend
+    'instructions': 'You are {{non_existent_field}}. Be nice.',
+    'tools': [],
+    'capabilities': [],
+}
+def main() -> None:
+    try:
+        Agent.from_spec(bad, deps_type=UserContext)
+        print('BUG: invalid template accepted')
+    except Exception as exc:
+        print(f'{type(exc).__name__}: {str(exc)[:100]}')
+
+
+    good = {
+        'name': 'support',
+        'model': 'test',
+        'instructions': 'You are {{user_role}} {{user_name}}. Be nice.',
+        'tools': [],
+        'capabilities': [],
+    }
+    agent = Agent.from_spec(good, deps_type=UserContext)
+    print(f'valid template -> {type(agent).__name__}({agent.name!r}) runs offline')
+
+
+main()
 ```
 
-```
+```text
 TemplateSchemaError: 1 error(s) found:
   - non_existent_field: Field 'non_existent_field' not found in schema
 valid template -> Agent('support') runs offline
 ```
 
-The same spec is data: YAML, schema file, publish, load — construction-time validation holds on the
-dict/YAML path (a pre-built Python `AgentSpec` object skips it: validate via `from_spec(dict, ...)`).
+The same spec is data: YAML, schema file, publish, load. Construction-time validation holds on the
+dict/YAML path; a pre-built Python `AgentSpec` object skips it, so validate via
+`Agent.from_spec(spec_dict, deps_type=...)`.
+
 
 ## 7. The run is an event stream you can observe or transform
 
 Parts, tool calls, results, the final result — typed events, streamed. No opinion about what you do
 with them: your auditor, your UI, your SSE adapter, or a capability transforming the stream.
 
-```snippet {path="/examples/pydantic_ai_examples/comparisons/production_agent/event_stream.py"}
+
+```python {title="event_stream.py"}
+"""The run is an event stream you can observe or transform.
+
+Part deltas, tool calls, results, and the final result — all typed, all
+streamed. No framework opinion on what you do with them.
+"""
+import asyncio
+from pydantic_ai import Agent, AgentStreamEvent
+from pydantic_ai.models.function import DeltaToolCall, FunctionModel
+from pydantic_ai.messages import FinalResultEvent, FunctionToolCallEvent
+
+
+async def stream(messages, info):
+    if len(messages) == 1:
+        yield {0: DeltaToolCall(name='twice', json_args='{"n": 21}', tool_call_id='c1')}
+    else:
+        yield '42'
+
+
+agent = Agent(FunctionModel(stream_function=stream))
+
+
+@agent.tool
+def twice(ctx, n: int) -> int:
+    return n * 2
+
+
+async def main():
+    kinds = []
+    async with agent.run_stream_events('what is 21*2?') as run:
+        async for event in run:
+            kinds.append(type(event).__name__)
+        final = run.result.output
+    assert 'FunctionToolCallEvent' in kinds and 'FinalResultEvent' in kinds
+    print(f'events observed: {kinds}')
+    print(f'final output: {final!r} (streamed while it happened)')
+
+
+asyncio.run(main())
 ```
 
-```
+```text
 events observed: ['PartStartEvent', 'PartEndEvent', 'FunctionToolCallEvent', 'FunctionToolResultEvent', 'PartStartEvent', 'FinalResultEvent', 'PartEndEvent', 'AgentRunResultEvent']
 final output: '42' (streamed while it happened)
 ```
@@ -139,23 +483,97 @@ final output: '42' (streamed while it happened)
 
 Same types as the agent, same harness as CI: dataset → evaluators → report.
 
-```snippet {path="/examples/pydantic_ai_examples/comparisons/production_agent/evals_ci.py"}
+
+```python {title="evals_ci.py"}
+"""Regressions are typed and run in CI, offline.
+
+Same types as the agent, same harness as CI: dataset -> evaluators -> report.
+"""
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.models.function import FunctionModel
+from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
+from pydantic_evals import Case, Dataset
+from pydantic_evals.evaluators import Contains, EqualsExpected
+
+
+async def model(messages, info):
+    if len(messages) == 1:
+        return ModelResponse(parts=[ToolCallPart('shout', {'text': 'hello'})])
+    return ModelResponse(parts=[TextPart('HELLO WORLD')])
+
+
+agent = Agent(FunctionModel(model))
+
+
+@agent.tool
+def shout(ctx: RunContext[None], text: str) -> str:
+    return text.upper()
+
+
+dataset = Dataset(
+    name='shout',
+    cases=[Case(name='hello', inputs='hello', expected_output='HELLO WORLD')],
+    evaluators=[EqualsExpected(), Contains(value='HELLO', case_sensitive=True)],
+)
+
+
+def run_case(text: str) -> str:
+    return str(agent.run_sync(text).output)
+
+
+def main() -> None:
+    report = dataset.evaluate_sync(run_case)
+    averages = report.averages()
+    print(f'assertions passed: {averages.assertions * 100:.0f}%')
+    report.print()
+    assert averages.assertions == 1.0
+
+
+main()
 ```
 
-```
+```text
+Evaluating run_case ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 100% 0:00:00
 assertions passed: 100%
-[Evaluation summary table]
+    Evaluation Summary: run_case    
+┏━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┓
+┃ Case ID  ┃ Assertions ┃ Duration ┃
+┡━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━┩
+│ hello    │ ✔✔         │    5.3ms │
+├──────────┼────────────┼──────────┤
+│ Averages │ 100.0% ✔   │    5.3ms │
+└──────────┴────────────┴──────────┘
 ```
 
 ## 9. Durability is a wrapper, not a rewrite
 
 One agent source; the engine is the import. Temporal, DBOS, and Prefect agents wrap the same
-definition. This one needs the engine installed — it's a reference, not an offline proof:
+definition. This one needs the engine installed (Temporal/DBOS/Prefect) — it's a reference, not an
+offline proof:
 
-```snippet {path="/examples/pydantic_ai_examples/comparisons/production_agent/durability_wrap.py"}
+
+```python {title="durability_wrap.py"}
+"""Durability is a wrapper, not a rewrite (requires an engine to run).
+
+The agent definition below is identical for all three engines; only the
+wrapper import changes. This file is a reference, not an offline proof:
+run the engine versions in an environment with Temporal/DBOS/Prefect.
+"""
+from pydantic_ai import Agent
+
+# one agent, unchanged:
+def build_agent() -> Agent:
+    return Agent('openai:gpt-5.6-luna', deps_type=dict, system_prompt='be terse')
+
+
+print('same agent source under:')
+print('  - TemporalAgent(agent, task_queue="tq")   # Temporal')
+print('  - DBOSAgent(agent, workflow_name="wf")    # DBOS')
+print('  - PrefectAgent(agent, task_name="t")      # Prefect')
+print('agent definition changes: 0 lines')
 ```
 
-```
+```text
 same agent source under:
   - TemporalAgent(agent, task_queue="tq")   # Temporal
   - DBOSAgent(agent, workflow_name="wf")    # DBOS
@@ -165,6 +583,7 @@ agent definition changes: 0 lines
 
 Restate, Kitaru, and Airflow ship the same shape. Everything else here stays yours.
 
+
 ## What we don't ship (same tone)
 
 - No first-party managed agent server.
@@ -172,5 +591,6 @@ Restate, Kitaru, and Airflow ship the same shape. Everything else here stays you
 - Curated integrations count, not exhaustive.
 - `run_sync` can't be nested inside async code; a worker-thread tool can't be force-stopped.
 
-*Versions verified 2026-09-10: pydantic-ai 2.42.0, pydantic-evals 2.42.0. Snippets are CI tests in
-this repo; probe records in the [framework-comparison series](https://github.com/pydantic/pydantic-ai-notes).*
+*Snippets are self-contained, offline, deterministic, and re-executed by this repository's test
+suite on every change. Behavior verified against pydantic-ai 2.42.0 on 2026-09-10; probe records in
+the [framework-comparison series](https://github.com/pydantic/pydantic-ai-notes).*

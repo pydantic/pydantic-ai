@@ -6,8 +6,8 @@ provider, a huge community, and durable workflows through LangGraph.
 **Pydantic AI, at its best:** a typed, async-first Python framework where the agent loop is a plain
 value — no graph DSL, no runtime to adopt, capabilities you wire yourself.
 
-*Verified against langchain 1.3.1 / langgraph 1.2.1 (2026-09-10). Pydantic AI claims below run
-offline: `uv run -m pydantic_ai_examples.comparisons.vs_langchain_langgraph.graph_is_a_value`.*
+*Verified against langchain 1.3.1 / langgraph 1.2.1 (2026-09-10). Pydantic AI claims below are
+self-contained scripts — offline, no API keys — re-executed by this repository's test suite.**
 
 ## Quick comparison
 
@@ -26,10 +26,46 @@ offline: `uv run -m pydantic_ai_examples.comparisons.vs_langchain_langgraph.grap
 
 The loop is a value, not an abstraction to adopt. One run, iterated node by node, offline:
 
-```snippet {path="/examples/pydantic_ai_examples/comparisons/vs_langchain_langgraph/graph_is_a_value.py"}
+```python {title="graph_is_a_value.py"}
+"""The agent loop is a value you can drive — no graph DSL required.
+
+Pydantic AI doesn't need you to adopt a graph abstraction for structure.
+The run is plain async code over a typed value; when you do want the
+graph, it's the same value, iterated node by node.
+"""
+import asyncio
+from pydantic_ai import Agent
+from pydantic_ai.models.function import FunctionModel
+from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
+
+
+async def model(messages, info):
+    if len(messages) == 1:
+        return ModelResponse(parts=[ToolCallPart('double', {'n': 21})])
+    return ModelResponse(parts=[TextPart('42')])
+
+
+agent = Agent(FunctionModel(model))
+
+
+@agent.tool
+def double(ctx, n: int) -> int:
+    return n * 2
+
+
+async def main():
+    nodes = []
+    async with agent.iter('what is 21*2?') as run:
+        async for node in run:
+            nodes.append(type(node).__name__)
+    print('nodes in one run:', ' -> '.join(nodes))
+    print('the loop is a plain value: iterate it, drive it manually, or let a capability transform it')
+
+
+asyncio.run(main())
 ```
 
-```
+```text
 nodes in one run: UserPromptNode -> ModelRequestNode -> CallToolsNode -> ModelRequestNode -> CallToolsNode -> End
 the loop is a plain value: iterate it, drive it manually, or let a capability transform it
 ```
