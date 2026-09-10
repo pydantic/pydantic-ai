@@ -1,16 +1,18 @@
 # Pydantic AI vs other agent frameworks
 
-You're picking an agent framework. These pages are the version we'd want to read if we were the ones
-picking, one framework at a time.
+You're picking an agent framework. These pages are what we'd want to read if we were the ones picking.
 
-Every page starts by giving the other framework its best shot, in its own terms, before we say a word
-about ourselves. Anything we claim about someone else's software, we checked against a version we
-installed and read, and the bottom of the page tells you which one. Anything we claim about ours comes
-with a script you can run in seconds without an API key — and our CI runs every one of those on every
-commit, so the output on the page is what the code printed today, not what it printed when someone
-wrote the page.
+Every page gives the other framework its best shot first, in its own terms, before we say a word about
+ourselves.
 
-Where we're the wrong answer, we say so. If you'd rather have the bad news first, it's
+Anything we say about someone else's software, we installed it and read it. The bottom of each page
+tells you which version, and how we checked.
+
+Anything we say about ours comes with a script you can run in a few seconds. No API key. CI runs every
+one of them on every commit, so what's printed on the page is what the code printed today, not what it
+printed when somebody wrote the page.
+
+Where we're the wrong answer, we say so. Want the bad news first? It's
 [all in one place](production-agents.md#where-were-not-the-answer).
 
 ## Start here
@@ -85,7 +87,7 @@ installed.
 | smolagents | The smallest way to let a model write and run code, with honest sandboxing | Synchronous, so tool calls don't overlap; stopping leaves an error, not a resumable run |
 | Google ADK | Gemini, Vertex, A2A, and Google's tooling with no glue | No cancellation API anywhere in the runner; trusted state isn't separate |
 | AG2 | Durable checkpointed tasks with no infrastructure to run; broad first-party protocols | The AutoGen-era API is gone at 1.0; specs aren't validated against your types at load |
-| Agno | A deployable agent service with auth, roles, and a UI, out of the box | A runtime to adopt; shell and Python tools run on the host by default |
+| Agno | A deployable agent service with auth, roles, and a UI, out of the box | Shell and Python tools run on the host by default; spans carry no `gen_ai.*` attributes |
 | Mastra | TypeScript all-in-one: workflows, memory, evals, a real dev experience | JavaScript only; tracing and deployment lean on their platform |
 | Vercel AI SDK | Streaming state shared with a React front end, which is what it was built for | JavaScript only; no first-party crash recovery |
 | Pi | A finished coding agent that you can also embed | TypeScript; deliberately no sandbox of its own; changing its behaviour means forking |

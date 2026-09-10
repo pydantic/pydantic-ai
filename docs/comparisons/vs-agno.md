@@ -11,11 +11,15 @@ put the agent inside whatever you already run.
 
 Two things come out of that, and both are worth spelling out.
 
-## Nothing to adopt
+## Do you have to take AgentOS?
 
-An Agno agent is built for AgentOS, and its shape follows from that: a large keyword constructor, an
-implied session and storage story, and a deployment target. It's coherent, and if you're deploying
-AgentOS it's exactly right.
+No, and we want to be straight about that, because plenty of comparisons get it wrong. `Agent(name='x')`
+constructs fine with no database and no AgentOS, `agno/agent/agent.py` never imports `agno.os`, and
+`agent.run()` works. AgentOS sits next to the library. It isn't a tax on using it.
+
+What does follow from AgentOS is the shape of the agent: a large keyword constructor, an implied
+session and storage story, and a deployment target it was designed against. That's coherent, and if
+you are deploying AgentOS it's exactly right.
 
 A Pydantic AI agent has no assumed home. The same object runs blocking, runs async, or gets driven a
 step at a time inside a loop you control:
@@ -85,12 +89,12 @@ framework: mark it `requires_approval=True` and the run pauses and hands you the
 
 | | Agno 3.0.9 | Pydantic AI 2.42 |
 |---|---|---|
-| What you deploy | AgentOS: a runtime with endpoints, UI, auth, roles, storage | Nothing; the agent goes inside your app |
-| Agent shape | One large constructor built around the runtime | A typed value that runs sync, async, or step by step |
+| What you can deploy | AgentOS if you want it: endpoints, UI, auth, roles, storage. Optional, not required | Nothing to deploy; the agent goes inside the app you already have |
+| Agent shape | One large constructor, designed against AgentOS | A typed value that runs sync, async, or step by step |
 | Trusted state | Session state and values captured in tools | `deps_type`, read by tools, invisible to the model |
 | Stopping a run | `cancel_run(run_id)` | `CancellationToken` across runs, `ctx.cancel()` in a tool, `RunCancelled` with resumable history |
 | Shell and code tools | Host `subprocess` and in-process `exec` by default, with warnings and opt-in confirmation | `CodeMode` in Monty, `ModalSandbox` for containers, `requires_approval=True` on any tool |
-| Crash recovery | AgentOS durable API | Six engines wrap the agent object; you pick |
+| Crash recovery | AgentOS durable API | Temporal, DBOS and Prefect in-tree; Restate and Airflow through integrations those projects maintain |
 | Structured output | `output_schema` — note that `output_model` means the parser model | `output_type`, with explicit control over how it goes over the wire |
 | Memory and knowledge | Built in and well developed | Bring your own; ours is thinner |
 | Evals | `AccuracyEval`, `ReliabilityEval`, `PerformanceEval`, agent-as-judge — importable without AgentOS | `pydantic-evals` in your test suite, using the agent's own types |
