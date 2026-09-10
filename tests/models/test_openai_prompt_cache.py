@@ -1053,6 +1053,86 @@ async def test_openai_responses_cache_instructions_reused_across_chained_request
     )
 
 
+async def test_openai_responses_cache_instructions_stamps_response_without_provider_details(
+    allow_model_requests: None,
+):
+    """The relocation stamp is created even when the response has no other provider details."""
+    response = responses_completion()
+    # `_process_response` only fills `provider_details` from a truthy `created_at` (and a few
+    # optional fields), so a zero timestamp leaves it `None` and the stamp has to create the dict.
+    response.created_at = 0
+    mock_client = MockOpenAIResponses.create_mock(response)
+    model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
+    settings = OpenAIResponsesModelSettings(openai_cache_instructions=True)
+
+    result = await Agent(model, instructions='Support policies.', model_settings=settings).run('Where is order 1234?')
+
+    final_response = result.all_messages()[-1]
+    assert isinstance(final_response, ModelResponse)
+    assert final_response.provider_details == {'instructions_relocated': True}
+
+
+async def test_openai_responses_cache_instructions_stamps_streamed_response(allow_model_requests: None):
+    """A relocated streamed response is stamped, so a later chained request skips resending them."""
+    base_response = resp.Response(
+        id='123',
+        model='gpt-5.6-sol',
+        object='response',
+        created_at=1704067200,
+        output=[],
+        parallel_tool_calls=True,
+        tool_choice='auto',
+        tools=[],
+    )
+
+    def stream_for(text: str) -> list[resp.ResponseStreamEvent]:
+        return [
+            resp.ResponseCreatedEvent(response=base_response, type='response.created', sequence_number=0),
+            resp.ResponseOutputItemAddedEvent(
+                item=ResponseOutputMessage(
+                    id='msg_001', content=[], role='assistant', status='in_progress', type='message'
+                ),
+                output_index=0,
+                type='response.output_item.added',
+                sequence_number=1,
+            ),
+            resp.ResponseTextDeltaEvent(
+                item_id='msg_001',
+                output_index=0,
+                content_index=0,
+                delta=text,
+                logprobs=[],
+                type='response.output_text.delta',
+                sequence_number=2,
+            ),
+            resp.ResponseCompletedEvent(
+                response=base_response.model_copy(update={'status': 'completed'}),
+                type='response.completed',
+                sequence_number=3,
+            ),
+        ]
+
+    mock_client = MockOpenAIResponses.create_mock_stream([stream_for('first'), stream_for('second')])
+    model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
+    settings = OpenAIResponsesModelSettings(openai_cache_instructions=True, openai_previous_response_id='auto')
+    agent = Agent(model, instructions='Support policies.', model_settings=settings)
+
+    async with agent.run_stream('Where is order 1234?') as result:
+        assert await result.get_output() == 'first'
+    first_messages = result.all_messages()
+    final_response = first_messages[-1]
+    assert isinstance(final_response, ModelResponse)
+    assert final_response.provider_details is not None
+    assert final_response.provider_details.get('instructions_relocated') is True
+
+    async with agent.run_stream('And order 5678?', message_history=first_messages) as result:
+        assert await result.get_output() == 'second'
+
+    requests = get_mock_responses_kwargs(mock_client)
+    assert all('instructions' not in request for request in requests)
+    assert requests[1]['previous_response_id'] == '123'
+
+
 async def test_openai_responses_cache_instructions_dynamic_sends_full_history_with_auto(allow_model_requests: None):
     """Dynamic instructions can change per request, so a chained response would replay stale ones.
     With `'auto'` the full history is sent each request instead of chaining."""

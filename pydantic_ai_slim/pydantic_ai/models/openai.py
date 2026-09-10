@@ -2280,8 +2280,6 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             # `_get_continuation_info` already rejected the continuation with `UserError`.
             response_id, _, _ = info
             response = await self._responses_retrieve(response_id, settings)
-            if isinstance(response, ModelResponse):
-                return response
             return self._process_response(response, settings, model_request_parameters)
         elif self.profile.get('openai_responses_requires_streaming', False):
             # Stream-only backend (e.g. Codex subscription auth): drain a forced stream via the
@@ -4449,7 +4447,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             mcp_list_tools_return_ids: set[str] = set()
 
             if self._provider_timestamp is not None:  # pragma: no branch
-                self.provider_details = {'timestamp': self._provider_timestamp}
+                self.provider_details = {'timestamp': self._provider_timestamp, **(self.provider_details or {})}
 
             async for chunk in self._response:
                 self._last_sequence_number = chunk.sequence_number
