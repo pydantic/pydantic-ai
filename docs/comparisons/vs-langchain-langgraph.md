@@ -177,7 +177,7 @@ interrupted halfway is unfinished from the top. That is a coherent design — it
 travel and forking work — and the replay is the price of it.
 
 Pydantic AI's unit of execution is the tool call, because the run is a plain loop over messages
-rather than a graph. Everything downstream follows from that:
+and not a graph. Everything downstream follows from that:
 
 - **Durability is added to the agent, not built into it.** `TemporalDurability()` is a capability you
   add to the same agent
@@ -194,7 +194,7 @@ rather than a graph. Everything downstream follows from that:
 - **Cancelling is a typed outcome, not a killed task.** A `CancellationToken` stops one or several
   runs from another thread, a tool can call `ctx.cancel()`, and the run ends in `RunCancelled`
   carrying the history — which resumes like any other, from any entry point. LangGraph's `abort()` is
-  experimental, exists only on the v3 stream, and closes the iterator rather than returning you a
+  experimental, exists only on the v3 stream, and closes the iterator instead of returning you a
   result.
 
 ## One layer up: Deep Agents and the harness

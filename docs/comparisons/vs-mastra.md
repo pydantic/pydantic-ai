@@ -10,7 +10,7 @@ of this page's conclusion. Pydantic AI is Python, so for a TypeScript team the h
 Mastra or the Vercel AI SDK, and the rest of this page is for people whose agent is going to be in
 Python either way.
 
-Two things are worth comparing even across that line, because they're design choices rather than
+Two things are still worth comparing across that line, because they're design choices and not
 language ones.
 
 ## One thing to learn instead of several
@@ -93,7 +93,7 @@ makes it pleasant.
 
 Pydantic AI emits OpenTelemetry. It goes to Logfire if you want the first-party experience, or to
 Datadog, Honeycomb, Grafana, or whatever your company already runs, and the agent's traces sit next to
-your database and HTTP spans rather than in a separate tool. That's less polished on day one and less
+your database and HTTP spans instead of in a separate tool. That's less polished on day one and less
 of a commitment on day two hundred.
 
 The same pattern shows up in durability. Mastra's story is its workflow engine, with a variant built on

@@ -63,7 +63,7 @@ assert sync_result == async_result == iter_result
 Same agent, same answer, three shapes — which matters when the agent has to live inside a Django view,
 a Celery task, a Lambda handler, or a websocket server you already have.
 
-For crash recovery, the same idea applies: rather than a durable API belonging to the runtime, a
+For crash recovery, same idea: instead of a durable API that belongs to the runtime, a
 durable engine is a capability you add. `capabilities=[TemporalDurability()]` is the whole change, and DBOS, Prefect,
 Restate, Kitaru, and Airflow have equivalents. You use whichever your company already runs.
 
@@ -111,8 +111,8 @@ framework: mark it `requires_approval=True` and the run pauses and hands you the
 
 - The agent has to live inside an application you already have.
 - Credentials and identity must sit where the model can't reach them.
-- You want model-written code in a sandbox rather than on the host, and approval gates in the
-  framework rather than in a tool's configuration.
+- You want model-written code in a sandbox instead of on the host, and approval gates in the
+  framework instead of in a tool's configuration.
 - You want crash recovery from an engine you already operate.
 
 ## FAQ

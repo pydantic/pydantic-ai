@@ -10,7 +10,7 @@ stream, a provider registry, middleware, tool approval errors as first-class typ
 `uploadSkill` for provider-hosted skills. Cancellation is the standard JavaScript idiom: pass an
 `abortSignal`.
 
-So the first question isn't which is better. It's which language your agent lives in.
+So the real question here is a simple one: which language does your agent live in?
 
 ## If your product is TypeScript
 

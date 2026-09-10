@@ -6,12 +6,13 @@ a web dev UI, first-party Google Search and MCP tools, planners, evaluation, age
 code executors, and deployment to Vertex AI. If your organisation is on Google Cloud, that adjacency
 is worth a lot.
 
-Version 2.8.0 is a big kit. Alongside `LlmAgent` there are `LoopAgent` and `ParallelAgent` for
-composing runs, and the `Runner` now carries a resumability configuration and a `rewind_async` method
-for stepping a session back.
+Version 2.8.0 is a big kit. Alongside `LlmAgent` you get `LoopAgent` and `ParallelAgent` for
+composing runs, and the `Runner` has picked up a resumability config and a `rewind_async` for stepping
+a session back. ADK is also one of only two frameworks here that emits the OpenTelemetry GenAI
+semantic conventions properly, which we'll come back to, because credit where it's due.
 
-Pydantic AI is smaller and not tied to a cloud. The difference that shows up first in production is
-what happens when someone hits stop.
+Pydantic AI is smaller and isn't tied to a cloud. The difference you hit first in production is what
+happens when somebody hits stop.
 
 ## Stopping a run
 
@@ -23,7 +24,7 @@ ending a run early means cancelling the asyncio task running it. That works, but
 tools get an ordinary task cancellation partway through whatever they were doing, and what you keep
 afterwards is whatever the session service already wrote.
 
-Pydantic AI treats stopping as a result rather than an accident. One `CancellationToken` can govern
+Pydantic AI treats stopping as a result, not an accident. One `CancellationToken` can govern
 several runs at once, it's safe to call from another thread, and each run ends by raising
 `RunCancelled` carrying its own history:
 

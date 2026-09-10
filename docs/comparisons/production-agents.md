@@ -287,7 +287,7 @@ main()
 ```
 
 
-Spend works the same way, in money rather than tokens. This is the one on this page that nothing else
+Spend works the same way, in money instead of tokens. This is the one on this page that nothing else
 can do. A dollar budget needs prices for every model you might call, so it only works if the pricing
 data is part of the library: `cost_limit` is backed by [genai-prices](https://github.com/pydantic/genai-prices),
 which we maintain, covering 41 providers and 1,646 models. The check runs *before* the next request
@@ -402,7 +402,7 @@ the framework owns rather than a dictionary of whatever the last thing put there
 
 ## 6. Agents you can ship as configuration
 
-An agent can be a YAML file, and the file is checked when it loads rather than when it runs. A typo in
+An agent can be a YAML file, and the file is checked when it loads, not when it runs. A typo in
 a prompt template fails immediately and names the field:
 
 ```python {title="spec_validation.py"}
@@ -511,7 +511,7 @@ asyncio.run(main())
 
 
 A capability can also wrap that stream to filter or rewrite it, which is how you build an auditor that
-travels with the agent rather than a separate observability integration.
+travels with the agent instead of a separate observability integration.
 
 Everything also goes out as OpenTelemetry — and specifically, as the OpenTelemetry
 [GenAI semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/). That distinction is
@@ -627,7 +627,7 @@ main()
 
 ## 9. Crash recovery without rewriting the agent
 
-A run is an ordinary coroutine, so durability is a capability you add rather than a shape you adopt.
+A run is an ordinary coroutine, so durability is a capability you add, not a shape you have to adopt.
 The same agent definition runs under Temporal, DBOS, or Prefect, and there are adapters for Restate,
 Kitaru, and Airflow maintained in those projects:
 

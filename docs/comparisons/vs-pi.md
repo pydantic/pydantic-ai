@@ -23,7 +23,7 @@ immediately. Configuration is how you influence it.
 
 The harness has made almost none. Every piece is a capability you add, replace, or leave out, and they
 sit on the same agent object as everything else, which means the coding pieces compose with ordinary
-agent features rather than living in a separate world:
+agent features instead of living in a separate world:
 
 ```python {title="in_process_loop.py"}
 """The loop runs in your process, so a tool is just your function."""
@@ -79,7 +79,7 @@ comparison starts.
 On isolation, Pi's position is that it isn't the sandbox — you run it in a container, mount things
 read-only, and give it minimal credentials. That's a defensible design and they say it plainly.
 
-Ours puts more of the boundary in the library: `CodeMode` runs model-written code in Monty rather than
+Ours puts more of the boundary in the library: `CodeMode` runs model-written code in Monty instead of
 your interpreter, `ModalSandbox` gives the agent an isolated cloud container, any tool can be marked
 `requires_approval=True` so the run pauses and hands you the pending call, and `deps_type` keeps
 credentials somewhere the model can't see them at all. You should still run the thing in a container.
@@ -109,7 +109,7 @@ The difference is how much survives when you don't.
 
 ## Choose Pydantic AI and the harness when
 
-- The coding agent is part of a larger Python application rather than a tool you run.
+- The coding agent is part of a larger Python application, not a tool you run.
 - You need to replace or add behaviour that a configuration flag doesn't cover.
 - You want spend ceilings, approval gates, resumable cancellation, and evals from the same framework.
 - Credentials must sit where the model can't reach them.

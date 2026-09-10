@@ -6,7 +6,7 @@ model writes code, sandbox runs it, output goes back — until the code calls `f
 small library with few dependencies, it's honest about its limits, and it's a genuinely good fit when
 the task is computational.
 
-Its default sandbox is a restricted interpreter rather than a container, and it says so. Running
+Its default sandbox is a restricted interpreter, not a container, and it says so. Running
 `import os` gets you *"Import of os is not allowed. Authorized imports are: collections, datetime,
 itertools, math, queue, random, re, stat, statistics, time, unicodedata"*, and `open(...)` is refused
 outright. For real isolation you escalate to one of the remote executors — Docker, E2B, Modal, Blaxel,
@@ -89,7 +89,7 @@ they actually overlapped.
 
 The second is stopping. smolagents does have a stop: `agent.interrupt()` sets a flag the loop checks
 between steps. It works, but because the run is blocking you need another thread to call it, and what
-you get afterwards is an error rather than a resumable conversation. In Pydantic AI a
+you get afterwards is an error, not a resumable conversation. In Pydantic AI a
 `CancellationToken` or a tool calling `ctx.cancel()` ends the run in `RunCancelled` carrying the
 history, and you resume by passing that history to the next run.
 
@@ -102,7 +102,7 @@ conversation entirely.
 
 **Testing.** Both are testable offline, and smolagents deserves credit here: its `Model` base class is
 a real place to plug a scripted stub, and we used one to drive a full `CodeAgent` run with no network.
-Pydantic AI ships `TestModel` and `FunctionModel` rather than asking you to write one, and
+Pydantic AI ships `TestModel` and `FunctionModel` instead of asking you to write one, and
 `ALLOW_MODEL_REQUESTS = False` turns any stray real call into an error.
 
 **Crash recovery.** smolagents has none in core. Pydantic AI's runs can be wrapped by Temporal, DBOS,

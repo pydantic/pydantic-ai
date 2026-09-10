@@ -6,13 +6,13 @@ own protocol. Everything the CLI can do — editing files, running commands, ski
 checkpoints, session forking, MCP servers, the permission prompts — you get, because it is the same
 program.
 
-For building something Claude-Code-shaped, that is the shortest path there is, and version 0.2.152 has
-grown useful things since: `max_budget_usd` caps what a run may spend, and permission handling,
-session resumption, and hook events are all configurable.
+If you want something Claude-Code-shaped, that is the shortest path there is. Version 0.2.152 has
+picked up useful things since we last looked: `max_budget_usd` caps what a run may spend, and
+permission handling, session resumption and hook events are all configurable.
 
-Pydantic AI runs the loop in your process, on any model, with your own Python functions as tools. The
-two are genuinely different tools, and the honest way to choose is to notice which side of a line your
-project is on.
+Pydantic AI runs the loop in your own process, on any model, with your own Python functions as tools.
+These are genuinely different tools and we're not going to pretend otherwise. The way to choose is to
+work out which side of one line your project sits on.
 
 ## The line: whose process is it
 
@@ -120,7 +120,7 @@ Yes, directly, including the Anthropic-hosted tools. This isn't about which mode
 **Can Pydantic AI build a coding agent?**
 Yes, through [pydantic-ai-harness](https://github.com/pydantic/pydantic-ai-harness), which supplies a
 filesystem, a shell, subagents, skills, memory, compaction, and `CodeMode` as pieces you assemble.
-It's a library of parts rather than a finished product, so it's more work than pointing the Claude SDK
+It's a library of parts, not a finished product, so it's more work than pointing the Claude SDK
 at a directory — and more yours afterwards.
 
 **Is one more secure?**

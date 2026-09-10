@@ -12,8 +12,9 @@ automatically and restart from a checkpoint, agents carry limits for iterations,
 tokens, and requests per minute, and there are first-party modules for memory, knowledge, MCP, skills,
 and agent-to-agent messaging.
 
-Pydantic AI has no crew and no roles. Multi-agent work is ordinary Python: call an agent, branch on
-the answer, run two in parallel with `asyncio.gather`, pass one's result into the next.
+Pydantic AI has no crew and no roles. Multi-agent work is just Python: call an agent, branch on the
+answer, run two at once with `asyncio.gather`, feed one result into the next. That's a worse fit than
+CrewAI when the work genuinely is a list of tasks, and a better one when it isn't.
 
 ## When the shape of the work isn't a list of tasks
 
@@ -99,7 +100,7 @@ asyncio.run(main())
 
 
 Two branches ran at the same time, each returned an `int`, the sum went into the next agent as
-dependencies rather than as text in a prompt. Nothing here is a framework concept — it's `asyncio`,
+dependencies instead of as text in a prompt. Nothing here is a framework concept — it's `asyncio`,
 a couple of functions, and type hints.
 
 ## What you can see while it runs
@@ -108,10 +109,10 @@ Pydantic AI emits a typed stream of events as the run happens — the model star
 call and its result, the final answer — and you consume it with a normal `async for`. It also emits
 OpenTelemetry, so the run shows up wherever your other traces go. CrewAI's equivalent is its event bus
 plus the third-party observability integrations it documents, which is a different shape: you subscribe
-to a bus rather than iterating the run.
+to a bus instead of iterating the run.
 
 Budgets are the other half of that. `UsageLimits` caps model requests, tool calls, and tokens, and the
-check happens *before* the next request goes out, so a runaway loop stops rather than being noticed on
+check happens *before* the next request goes out, so a runaway loop stops instead of being noticed on
 the bill. CrewAI's limits are per agent — `max_iter`, `max_execution_time`, `max_tokens`, `max_rpm` —
 which cover a lot but aren't a ceiling on the whole crew.
 
@@ -152,7 +153,7 @@ flow. People usually find the crew was three or four ordinary steps.
 
 **Does Pydantic AI have anything like a Crew?**
 No, deliberately. Multi-agent patterns — an agent as a tool, a router, a parallel fan-out — are
-documented as code you write rather than a class you configure.
+documented as code you write instead of a class you configure.
 
 **What does CrewAI do better?**
 Getting to a working multi-agent demo, by some distance, and its memory and knowledge batteries are

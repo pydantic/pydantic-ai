@@ -5,14 +5,14 @@ and the pieces around it are shaped like the OpenAI platform: conversations pers
 safety checks are **guardrails**, and passing work to another agent is a **handoff**. It is small,
 well documented, and it gets new OpenAI features first.
 
-It has also grown a lot. Version 0.22.2 has guardrails on input, on output, and now on tool calls
-going in and coming back; handoffs can filter and nest history; streamed runs stop with
+It has grown a lot too. Version 0.22.2 puts guardrails on input, on output, and now on tool calls
+going both ways. Handoffs can filter and nest history. Streamed runs stop with
 `cancel(mode='immediate')` or `cancel(mode='after_turn')`, and `after_turn` is a nicer stop than
-anything we offer. Structured output is clean too — hand it an `output_type` and it validates the
-model's JSON into your type without forcing a tool call.
+anything we offer. Structured output is clean: hand it an `output_type` and it validates the model's
+JSON into your type, no forced tool call.
 
-Pydantic AI is a general library rather than one vendor's. That shows up in two places: where your
-agent can run, and what happens when you stop it.
+So what's actually left to argue about? Two things. Where your agent is allowed to run, and what
+you're holding after you stop it.
 
 ## Stopping a run without losing it
 
@@ -97,7 +97,7 @@ projects. If your company already runs one of those, that's the one you use.
 
 The OpenAI SDK has no first-party equivalent, though a Temporal contrib package exists — which is
 worth saying, because it proves the idea isn't impossible there. Their durability story is sessions,
-and sessions remember conversations rather than executions. If the process dies halfway through a run,
+and sessions remember conversations, not executions. If the process dies halfway through a run,
 a session tells you what was said, not what was half-done.
 
 ## Side by side
