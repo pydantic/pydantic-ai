@@ -103,7 +103,7 @@ downstream agent received the typed sum as deps: True
 
 ## If this answer doesn't fit you
 
-If the crew-of-specialists pattern with shipped memory and knowledge is exactly your shape, CrewAI's DSL compresses it well. The code-visible alternative this page shows is for orchestration you need to read, review, and control.
+If crew-of-roles with memory and knowledge out of the box is exactly your shape, CrewAI's DSL compresses it nicely, and we're not going to pretend this page replaces that. Ours is for when the orchestration needs to be code you can actually read and review — branches, joins, retries — or when you want a type at every seam.
 
 ---
 

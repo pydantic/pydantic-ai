@@ -78,7 +78,7 @@ the loop ran in your own process: True
 
 ## If this answer doesn't fit you
 
-If you want a working coding agent today and will take a product's decisions for you, Pi is the product — and it is built on the same primitives. If you're building the product, the harness as a library is the starting point.
+If you want a coding agent today and would rather take a product's decisions than make them, Pi is the product — it's literally built on these same primitives, and we're glad it exists. If you're building the product, the harness-as-library is the starting point. Both are fine; they're just different.
 
 ---
 

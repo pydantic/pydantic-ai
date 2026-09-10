@@ -108,7 +108,7 @@ resumed run output: run resumed and completed
 
 ## If this answer doesn't fit you
 
-If your application is all-in on the OpenAI platform — Responses API continuity, sessions, platform tracing — their SDK is the natural layer, and `after_turn` is a genuine stop-grace. None of that changes what this page demonstrates: the seams listed on the left are what the platform shape doesn't give you, and OpenAI models work here too.
+If you're all-in on the OpenAI platform — sessions, Responses continuity, their tracing — their SDK is the natural layer, and honestly, `after_turn` is a nice stop. We won't pretend otherwise. Our claim is narrower: if the loop has to be yours, these are the seams the platform shape won't give you — and OpenAI models work with us either way.
 
 ---
 

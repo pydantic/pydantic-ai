@@ -77,7 +77,7 @@ loaded-from-file output: 'success (no tool calls)'
 
 ## If this answer doesn't fit you
 
-If your system is built around checkpointed task state machines and envelopes across protocols (ACP/A2A/live), AG2's v1 design is the deliberate architecture for that. Their spec protocol is the closest competitor to what this page demonstrates — the difference is what validated agent at load time.
+If your system is built around checkpointed task state machines and protocol envelopes across ACP/A2A/live, then AG2's v1 design is the architecture you actually want — and we'll even say its spec protocol is the closest thing to ours. The difference this page proves: our spec validates against types at load, runs offline, and leaves the loop ordinary.
 
 ---
 

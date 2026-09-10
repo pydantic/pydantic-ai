@@ -65,7 +65,7 @@ runs cancelled by one token: 3/3
 
 ## If this answer doesn't fit you
 
-If you want a vendor-maintained full-surface framework on the Google stack — workflows builder, code executors, A2A — ADK is a deliberate choice, and its anyio depth is real. Its runner's lack of a user cancellation surface is the specific gap this page's proof addresses.
+If you want a vendor-maintained, full-surface framework on the Google stack — workflows builder, code executors, A2A — ADK is a deliberate choice, and we respect it. Our only claim is the one gap we verified: its runner exposes no user cancellation surface. If a stop gesture matters to you, that's this page's whole point.
 
 ---
 

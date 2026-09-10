@@ -85,7 +85,7 @@ auditor (a capability) observed: ['PartStartEvent', 'PartEndEvent', 'FunctionToo
 
 ## If this answer doesn't fit you
 
-If your stack is TypeScript and agents + workflows + observability from one package is the offer you want, Mastra is built for that. For a Python loop where the extension unit reaches the event stream, this page shows what that looks like.
+If yours is a TypeScript stack and you want one package that does agents, workflows, and observability, Mastra is built for exactly that, and we're not going to talk you out of it. Ours is the Python expression of the same instinct — one extension unit that reaches the event stream.
 
 ---
 

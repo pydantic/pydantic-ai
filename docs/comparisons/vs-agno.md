@@ -66,7 +66,7 @@ sync='same result' async='same result' iter='same result'
 
 ## If this answer doesn't fit you
 
-If the all-in-one plus a hosted runtime (AgentOS) and team orchestration is the product you want, Agno ships that. The absence of a runtime is the feature this page demonstrates, not a claim about theirs.
+If all-in-one plus a hosted runtime (AgentOS) and team orchestration is the product you want, Agno genuinely ships that. We chose the opposite trade: nothing to adopt, run where your app runs. This page is that trade, demonstrated.
 
 ---
 

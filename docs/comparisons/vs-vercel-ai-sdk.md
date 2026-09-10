@@ -69,7 +69,7 @@ StructuredDict: {'n': 7} is a dict
 
 ## If this answer doesn't fit you
 
-If your application is TypeScript, Vercel AI SDK is the ecosystem default with real UI ergonomics — streaming, tool loops, provider adapters, skills protocol. This page is about the Python loop, and the semantics your framework should own for you.
+If your app is TypeScript, Vercel AI SDK is the ecosystem default with real UI ergonomics — streaming, tool loops, skills protocol — and that's not nothing. We can't compete with JS comfort from here. This page is for the Python side: where the result's shape should be the framework's job, and where the loop has seams.
 
 ---
 

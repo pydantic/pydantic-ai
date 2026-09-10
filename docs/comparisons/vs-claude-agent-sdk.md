@@ -83,7 +83,7 @@ the loop ran in your own process: True
 
 ## If this answer doesn't fit you
 
-If what you want is the Claude Code harness — its skills, hooks, and subprocess isolation — their SDK gives you that product directly, and no loop-level feature here replaces the harness's defaults. What the harness can't give you is a loop you can reach into; this page is the difference.
+Easy one: if what you actually need is Claude Code inside your product — the real harness, its skills, its hooks, its defaults — that's theirs, and we can't argue with it. No library gives you Claude Code better than Claude's own SDK does. We can only argue the other direction: if the loop needs to live in your code, typed and testable, no harness gives you that either. Claude models work fine here too.
 
 ---
 

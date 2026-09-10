@@ -78,7 +78,7 @@ the loop is a plain value: iterate it, drive it manually, or let a capability tr
 
 ## If this answer doesn't fit you
 
-If your application lives in the LangChain ecosystem — its integration breadth and community patterns — that ecosystem is a real asset, and LangGraph's checkpointed workflows are a deliberate durability design. What this page doesn't claim is more notable than what it does: those benefits are additive, not a substitute for the seams above, and the migration skill ([skills-langchain-to-pydantic-ai](https://github.com/pydantic/skills-langchain-to-pydantic-ai)) exists if you ever want both.
+If your product genuinely lives in the LangChain ecosystem — its integration breadth, its community patterns, its checkpointed workflows — that's a real thing to build on, and we're not going to argue you out of it. What this page does is name what the ecosystem doesn't hand you: the seams on the left. If you ever want both, the migration skill exists.
 
 ---
 

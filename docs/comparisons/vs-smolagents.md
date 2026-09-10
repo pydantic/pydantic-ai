@@ -89,7 +89,7 @@ wall time: 0.26s (the three calls would take ~0.75s one after another)
 
 ## If this answer doesn't fit you
 
-If your agent's job is writing and running Python, smolagents is the minimal, focused solution, and its sandboxing story (allowlist; Docker/E2B/Modal/Blaxel) is real. That's a different axis from production loop control — this page demonstrates the axis it doesn't cover.
+If your agent's whole job is writing and running Python, smolagents is the smallest thing that does it, and its sandboxing story is real. We won't pretend we're the minimal code-executor. We're built for what wraps around it — budgets, cancellation, checks that run in CI. Different axes; this page shows ours.
 
 ---
 
