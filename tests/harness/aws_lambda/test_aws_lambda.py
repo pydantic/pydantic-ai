@@ -7,7 +7,7 @@ import gc
 import re
 import threading
 import time
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -48,6 +48,8 @@ from pydantic_ai_harness.aws_lambda import (
 
 from .conftest import FakeDurableContext
 from .test_aws_lambda_mcp import FakeMCPToolset
+
+_READINESS_WAIT_TIMEOUT = 5.0
 
 
 def tool_then_text(tool_name: str = 'act', args: dict[str, Any] | None = None) -> FunctionModel:
@@ -699,34 +701,88 @@ class TestCoverageOfRemainingPaths:
 
 
 def shutdown(loop: asyncio.AbstractEventLoop, owner: threading.Thread | None = None) -> None:
-    """Stop and close a loop a test built, so it does not outlive the test as a leak.
+    """Stop a bridge loop and wait for its owning thread to finish closing it.
 
     Bridge loops close themselves on their owning thread after `run_forever()` exits, so pass
-    `owner` for those: the helper joins it before closing, because closing from the test thread
-    would race the thread's own close and double-close the loop. Foreign loops have no owning
-    thread, so the helper closes those directly.
+    `owner` for those: the helper stops the loop and joins it, because closing from the test
+    thread would race the thread's own close and double-close the loop. Foreign loops have no
+    owning thread, so the helper closes those directly.
     """
-    if loop.is_closed():
-        return
-    if loop.is_running():
-        loop.call_soon_threadsafe(loop.stop)
-        deadline = time.monotonic() + 5
-        while loop.is_running() and time.monotonic() < deadline:  # pragma: no branch - stops promptly
-            time.sleep(0.01)
+    if not loop.is_closed() and loop.is_running():
+        try:
+            loop.call_soon_threadsafe(loop.stop)
+        except RuntimeError:
+            assert loop.is_closed()
     if owner is not None:
-        owner.join(timeout=5)
-    # Unwind anything the loop was still holding, so closing it does not log a pending task.
-    outstanding = asyncio.all_tasks(loop)
-    if outstanding:  # pragma: no cover - test cleanup normally leaves no pending tasks
-        for task in outstanding:
-            task.cancel()
-        loop.run_until_complete(asyncio.gather(*outstanding, return_exceptions=True))
+        owner.join(timeout=_READINESS_WAIT_TIMEOUT)
+        assert not owner.is_alive()
     if not loop.is_closed():
         loop.close()
 
 
 class TestBridgeFailureModes:
     """Regressions for ways the bridge could strand the handler thread or swallow SDK control flow."""
+
+    @pytest.mark.parametrize('close_first', [False, True], ids=['closing', 'closed'])
+    def test_shutdown_waits_for_the_thread_that_closes_the_loop(
+        self, monkeypatch: pytest.MonkeyPatch, close_first: bool
+    ) -> None:
+        loops = _bridge._AgentLoop()  # pyright: ignore[reportPrivateUsage]
+        loop = loops.get()
+        thread = loops._thread  # pyright: ignore[reportPrivateUsage]
+        assert thread is not None
+        closing = threading.Event()
+        release_close = threading.Event()
+        close = loop.close
+        join = thread.join
+
+        def close_on_owner() -> None:
+            assert threading.current_thread() is thread, 'Only the owning thread may close the loop'
+            if close_first:
+                close()
+            closing.set()
+            assert release_close.wait(timeout=_READINESS_WAIT_TIMEOUT)
+            if not close_first:
+                close()
+
+        def join_after_close_starts(timeout: float | None = None) -> None:
+            assert closing.wait(timeout=_READINESS_WAIT_TIMEOUT)
+            release_close.set()
+            join(timeout=timeout)
+
+        monkeypatch.setattr(loop, 'close', close_on_owner)
+        monkeypatch.setattr(thread, 'join', join_after_close_starts)
+        try:
+            loop.call_soon_threadsafe(loop.stop)
+            assert closing.wait(timeout=_READINESS_WAIT_TIMEOUT)
+            shutdown(loop, owner=thread)
+            assert not thread.is_alive()
+            assert loop.is_closed()
+        finally:
+            release_close.set()
+            join(timeout=_READINESS_WAIT_TIMEOUT)
+
+    def test_shutdown_handles_the_owner_closing_before_the_stop_request(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        loops = _bridge._AgentLoop()  # pyright: ignore[reportPrivateUsage]
+        loop = loops.get()
+        thread = loops._thread  # pyright: ignore[reportPrivateUsage]
+        assert thread is not None
+        request_stop = loop.call_soon_threadsafe
+
+        def request_stop_after_close(callback: Callable[[], None]) -> asyncio.Handle:
+            request_stop(loop.stop)
+            thread.join(timeout=_READINESS_WAIT_TIMEOUT)
+            assert not thread.is_alive()
+            assert loop.is_closed()
+            return request_stop(callback)
+
+        monkeypatch.setattr(loop, 'call_soon_threadsafe', request_stop_after_close)
+        try:
+            shutdown(loop, owner=thread)
+            assert not thread.is_alive()
+            assert loop.is_closed()
+        finally:
+            shutdown(loop, owner=thread)
 
     def test_a_cancelled_step_operation_does_not_hang_the_handler(self) -> None:
         # `Task.exception()` raises for a cancelled task, so a naive done-callback would strand the
