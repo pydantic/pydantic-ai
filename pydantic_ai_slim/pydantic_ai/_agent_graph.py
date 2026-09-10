@@ -14,7 +14,7 @@ from dataclasses import field, replace
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeGuard, cast
 
 from opentelemetry.trace import Tracer
-from typing_extensions import TypeVar, assert_never
+from typing_extensions import TypeForm, TypeVar, assert_never
 
 from pydantic_ai._history_processor import HistoryProcessor
 from pydantic_ai._instrumentation import (
@@ -2682,7 +2682,7 @@ def get_captured_run_messages() -> _RunMessages:
 
 def build_agent_graph(
     name: str | None,
-    deps_type: type[DepsT],
+    deps_type: TypeForm[DepsT],
     output_type: OutputSpec[OutputT],
 ) -> Graph[
     GraphAgentState,

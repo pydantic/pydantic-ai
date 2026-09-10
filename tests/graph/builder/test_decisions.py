@@ -7,7 +7,7 @@ from typing import Literal
 
 import pytest
 
-from pydantic_graph import BaseNode, End, GraphBuilder, GraphRunContext, StepContext, TypeExpression
+from pydantic_graph import BaseNode, End, GraphBuilder, GraphRunContext, StepContext
 from pydantic_graph.join import reduce_list_append, reduce_sum
 
 pytestmark = pytest.mark.anyio
@@ -40,9 +40,7 @@ async def test_simple_decision_literal():
     g.add(
         g.edge_from(g.start_node).to(choose_path),
         g.edge_from(choose_path).to(
-            g.decision()
-            .branch(g.match(TypeExpression[Literal['left']]).to(left_path))
-            .branch(g.match(TypeExpression[Literal['right']]).to(right_path))
+            g.decision().branch(g.match(Literal['left']).to(left_path)).branch(g.match(Literal['right']).to(right_path))
         ),
         g.edge_from(left_path, right_path).to(g.end_node),
     )
@@ -73,9 +71,7 @@ async def test_decision_with_type_matching():
     g.add(
         g.edge_from(g.start_node).to(return_int),
         g.edge_from(return_int).to(
-            g.decision()
-            .branch(g.match(TypeExpression[int]).to(handle_int))
-            .branch(g.match(TypeExpression[str]).to(handle_str))
+            g.decision().branch(g.match(int).to(handle_int)).branch(g.match(str).to(handle_str))
         ),
         g.edge_from(handle_int, handle_str).to(g.end_node),
     )
@@ -105,8 +101,8 @@ async def test_decision_with_custom_matcher():
         g.edge_from(g.start_node).to(return_number),
         g.edge_from(return_number).to(
             g.decision()
-            .branch(g.match(TypeExpression[int], matches=lambda x: x % 2 == 0).to(even_path))
-            .branch(g.match(TypeExpression[int], matches=lambda x: x % 2 == 1).to(odd_path))
+            .branch(g.match(int, matches=lambda x: x % 2 == 0).to(even_path))
+            .branch(g.match(int, matches=lambda x: x % 2 == 1).to(odd_path))
         ),
         g.edge_from(even_path, odd_path).to(g.end_node),
     )
@@ -138,8 +134,8 @@ async def test_decision_with_state_modification():
         g.edge_from(g.start_node).to(get_value),
         g.edge_from(get_value).to(
             g.decision()
-            .branch(g.match(TypeExpression[int], matches=lambda x: x < 10).to(small_value))
-            .branch(g.match(TypeExpression[int], matches=lambda x: x >= 10).to(large_value))
+            .branch(g.match(int, matches=lambda x: x < 10).to(small_value))
+            .branch(g.match(int, matches=lambda x: x >= 10).to(large_value))
         ),
         g.edge_from(small_value, large_value).to(g.end_node),
     )
@@ -165,7 +161,7 @@ async def test_decision_all_types_match():
 
     g.add(
         g.edge_from(g.start_node).to(return_value),
-        g.edge_from(return_value).to(g.decision().branch(g.match(TypeExpression[object]).to(catch_all))),
+        g.edge_from(return_value).to(g.decision().branch(g.match(object).to(catch_all))),
         g.edge_from(catch_all).to(g.end_node),
     )
 
@@ -195,8 +191,8 @@ async def test_decision_first_match_wins():
         g.edge_from(return_value).to(
             g.decision()
             # Both branches match, but A is first
-            .branch(g.match(TypeExpression[int], matches=lambda x: x >= 5).to(branch_a))
-            .branch(g.match(TypeExpression[int], matches=lambda x: x >= 0).to(branch_b))
+            .branch(g.match(int, matches=lambda x: x >= 5).to(branch_a))
+            .branch(g.match(int, matches=lambda x: x >= 0).to(branch_b))
         ),
         g.edge_from(branch_a, branch_b).to(g.end_node),
     )
@@ -234,13 +230,13 @@ async def test_nested_decisions():
         g.edge_from(g.start_node).to(get_number),
         g.edge_from(get_number).to(
             g.decision()
-            .branch(g.match(TypeExpression[int], matches=lambda x: x > 0).to(is_positive))
-            .branch(g.match(TypeExpression[int], matches=lambda x: x <= 0).to(is_negative))
+            .branch(g.match(int, matches=lambda x: x > 0).to(is_positive))
+            .branch(g.match(int, matches=lambda x: x <= 0).to(is_negative))
         ),
         g.edge_from(is_positive).to(
             g.decision()
-            .branch(g.match(TypeExpression[int], matches=lambda x: x < 10).to(small_positive))
-            .branch(g.match(TypeExpression[int], matches=lambda x: x >= 10).to(large_positive))
+            .branch(g.match(int, matches=lambda x: x < 10).to(small_positive))
+            .branch(g.match(int, matches=lambda x: x >= 10).to(large_positive))
         ),
         g.edge_from(is_negative, small_positive, large_positive).to(g.end_node),
     )
@@ -270,8 +266,8 @@ async def test_decision_with_label():
         g.edge_from(g.start_node).to(choose),
         g.edge_from(choose).to(
             g.decision()
-            .branch(g.match(TypeExpression[Literal['a']]).label('Take path A').to(path_a))
-            .branch(g.match(TypeExpression[Literal['b']]).label('Take path B').to(path_b))
+            .branch(g.match(Literal['a']).label('Take path A').to(path_a))
+            .branch(g.match(Literal['b']).label('Take path B').to(path_b))
         ),
         g.edge_from(path_a, path_b).to(g.end_node),
     )
@@ -310,8 +306,8 @@ async def test_decision_with_map():
         g.edge_from(g.start_node).to(get_type),
         g.edge_from(get_type).to(
             g.decision()
-            .branch(g.match(TypeExpression[Literal['list']]).to(make_list))
-            .branch(g.match(TypeExpression[Literal['single']]).to(make_single))
+            .branch(g.match(Literal['list']).to(make_list))
+            .branch(g.match(Literal['single']).to(make_single))
         ),
         g.edge_from(make_list).map().to(process_item),
         g.edge_from(make_single).to(process_item),
@@ -407,8 +403,8 @@ async def test_decision_branch_label():
         g.edge_from(g.start_node).to(get_value),
         g.edge_from(get_value).to(
             g.decision()
-            .branch(g.match(TypeExpression[Literal['a']]).label('path A').to(handle_a))
-            .branch(g.match(TypeExpression[Literal['b']]).label('path B').to(handle_b))
+            .branch(g.match(Literal['a']).label('path A').to(handle_a))
+            .branch(g.match(Literal['b']).label('path B').to(handle_b))
         ),
         g.edge_from(handle_a, handle_b).to(g.end_node),
     )
@@ -440,7 +436,7 @@ async def test_decision_branch_fork():
         g.edge_from(g.start_node).to(choose_option),
         g.edge_from(choose_option).to(
             g.decision().branch(
-                g.match(TypeExpression[Literal['fork']]).broadcast(
+                g.match(Literal['fork']).broadcast(
                     lambda b: [
                         b.to(path_1),
                         b.to(path_2),
@@ -461,7 +457,7 @@ async def test_empty_decision_broadcast():
     """Test DecisionBranchBuilder.fork method."""
     g = GraphBuilder(state_type=DecisionState, output_type=list[str])
     with pytest.raises(ValueError, match=r'returned no branches, but must return at least one'):
-        g.match(TypeExpression[Literal['fork']]).broadcast(lambda b: [])
+        g.match(Literal['fork']).broadcast(lambda b: [])
 
 
 async def test_match_node():

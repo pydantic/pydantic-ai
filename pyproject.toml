@@ -192,6 +192,9 @@ anthropic = "2026-09-01T17:37:11Z"
 # OpenAI 3.8.0 is the first release listing `gpt-6-astra` in `ChatModel`/`ReasoningEffort('max')`.
 # TODO(dsfaccini): Remove after 2026-09-10 19:51 UTC.
 openai = "2026-09-03T19:51:09Z"
+# Pyright 1.1.413 is the first release supporting PEP 747 `TypeForm` without `enableExperimentalFeatures`.
+# TODO: Remove after 2026-09-16 18:36 UTC.
+pyright = "2026-09-09T18:36:20Z"
 
 [dependency-groups]
 dev = [
@@ -247,7 +250,7 @@ coverage = [
 lint = [
     "griffecli>=2.1.0,<3",
     "mypy>=1.11.2",
-    "pyright>=1.1.408",
+    "pyright>=1.1.413",
     "ruff>=0.14.14",
 ]
 [tool.hatch.build.targets.wheel]

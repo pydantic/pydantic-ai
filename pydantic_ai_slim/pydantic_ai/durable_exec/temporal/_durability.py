@@ -9,6 +9,7 @@ from typing import Any, Literal, cast
 from pydantic_core import PydanticSerializationError
 from temporalio import workflow
 from temporalio.workflow import ActivityConfig
+from typing_extensions import TypeForm
 
 from pydantic_ai._agent_graph import set_agent_graph_sleep
 from pydantic_ai.agent import EventStreamHandler
@@ -152,6 +153,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         models: Mapping[str, Model] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         name: str | None = None,
+        # Not `TypeForm[AgentDepsT] | None`: `None` is itself a type form, so the default would solve `AgentDepsT` to `None`.
         deps_type: type[AgentDepsT] | None = None,
         activity_config: ActivityConfig | None = None,
         model_activity_config: ActivityConfig | None = None,
@@ -284,7 +286,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
     def _bind_to_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> None:
         # Discover the deps type from the agent unless explicitly configured.
         if self._deps_type is None:
-            self._deps_type = cast('type[AgentDepsT]', agent.deps_type)
+            self._deps_type = agent.deps_type
 
         assert self._deps_type is not None
         self._operation_backend = TemporalOperationBackend(
@@ -479,7 +481,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             raise serialization_user_error(error) from error
         raise error
 
-    def _model_request_parameter_transport(self, result_type: object) -> _ModelRequestTransport:
+    def _model_request_parameter_transport(self, result_type: TypeForm[Any]) -> _ModelRequestTransport:
         if result_type is StreamedActivityResult:
             result_type = _StreamedActivityPayload
         return _ModelRequestTransport(self, result_type=result_type)

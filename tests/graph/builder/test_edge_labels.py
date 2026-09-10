@@ -124,8 +124,6 @@ async def test_label_on_decision_branch():
     """Test labels on decision branches."""
     from typing import Literal
 
-    from pydantic_graph import TypeExpression
-
     g = GraphBuilder(state_type=LabelState, output_type=str)
 
     @g.step
@@ -144,8 +142,8 @@ async def test_label_on_decision_branch():
         g.edge_from(g.start_node).to(choose),
         g.edge_from(choose).to(
             g.decision()
-            .branch(g.match(TypeExpression[Literal['a']]).label('choose A').to(path_a))
-            .branch(g.match(TypeExpression[Literal['b']]).label('choose B').to(path_b))
+            .branch(g.match(Literal['a']).label('choose A').to(path_a))
+            .branch(g.match(Literal['b']).label('choose B').to(path_b))
         ),
         g.edge_from(path_a, path_b).to(g.end_node),
     )

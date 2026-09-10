@@ -33,7 +33,7 @@ import anyio
 from opentelemetry.trace import NoOpTracer
 from pydantic.alias_generators import to_snake
 from pydantic.json_schema import GenerateJsonSchema
-from typing_extensions import Self, TypeIs, TypeVar
+from typing_extensions import Self, TypeForm, TypeIs, TypeVar
 
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 from pydantic_ai._spec import load_from_registry
@@ -486,7 +486,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     _instrument_default: ClassVar[InstrumentationSettings | bool] = False
     _metadata: AgentMetadata[AgentDepsT] | None = dataclasses.field(repr=False)
 
-    _deps_type: type[AgentDepsT] = dataclasses.field(repr=False)
+    _deps_type: TypeForm[AgentDepsT] = dataclasses.field(repr=False)
     _output_schema: _output.OutputSchema[OutputDataT] = dataclasses.field(repr=False)
     _output_validators: list[_output.OutputValidator[AgentDepsT, OutputDataT]] = dataclasses.field(repr=False)
     _instructions: list[_instructions.SourcedInstruction[AgentDepsT]] = dataclasses.field(repr=False)
@@ -529,7 +529,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         output_type: OutputSpec[OutputDataT] = str,
         instructions: AgentInstructions[AgentDepsT] = None,
         system_prompt: str | Sequence[str] = (),
-        deps_type: type[AgentDepsT] = object,
+        deps_type: TypeForm[AgentDepsT] = object,
         name: str | None = None,
         description: TemplateStr[AgentDepsT] | str | None = None,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
@@ -553,7 +553,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         output_type: OutputSpec[OutputDataT] = str,
         instructions: AgentInstructions[AgentDepsT] = None,
         system_prompt: str | Sequence[str] = (),
-        deps_type: type[AgentDepsT] = object,
+        deps_type: TypeForm[AgentDepsT] = object,
         name: str | None = None,
         description: TemplateStr[AgentDepsT] | str | None = None,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
@@ -576,7 +576,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         output_type: OutputSpec[OutputDataT] = str,
         instructions: AgentInstructions[AgentDepsT] = None,
         system_prompt: str | Sequence[str] = (),
-        deps_type: type[AgentDepsT] = object,
+        deps_type: TypeForm[AgentDepsT] = object,
         name: str | None = None,
         description: TemplateStr[AgentDepsT] | str | None = None,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
@@ -864,7 +864,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         cls,
         spec: dict[str, Any] | AgentSpec,
         *,
-        deps_type: type[T],
+        deps_type: TypeForm[T],
         custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
         model: models.Model | models.KnownModelName | str | None = None,
         output_type: OutputSpec[Any] = str,
@@ -890,7 +890,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         cls,
         spec: dict[str, Any] | AgentSpec,
         *,
-        deps_type: type[Any] = type(None),
+        deps_type: TypeForm[Any] = type(None),
         custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
         model: models.Model | models.KnownModelName | str | None = None,
         output_type: OutputSpec[Any] = str,
@@ -1033,7 +1033,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         path: Path | str,
         *,
         fmt: Literal['yaml', 'json'] | None = None,
-        deps_type: type[T],
+        deps_type: TypeForm[T],
         custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
         model: models.Model | models.KnownModelName | str | None = None,
         output_type: OutputSpec[Any] = str,
@@ -1060,7 +1060,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         path: Path | str,
         *,
         fmt: Literal['yaml', 'json'] | None = None,
-        deps_type: type[Any] = type(None),
+        deps_type: TypeForm[Any] = type(None),
         custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
         model: models.Model | models.KnownModelName | str | None = None,
         output_type: OutputSpec[Any] = str,
@@ -1181,7 +1181,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         return self._description
 
     @property
-    def deps_type(self) -> type:
+    def deps_type(self) -> TypeForm[AgentDepsT]:
         """The type of dependencies used by the agent."""
         return self._deps_type
 
@@ -4496,7 +4496,7 @@ def _synthetic_capability_id(cls: type[AbstractCapability[Any]], *, taken: Colle
 
 def _validate_spec(
     spec: dict[str, Any] | AgentSpec,
-    deps_type: type[Any],
+    deps_type: TypeForm[Any],
 ) -> tuple[AgentSpec, dict[str, Any]]:
     """Validate a spec dict/object and build the template context.
 
