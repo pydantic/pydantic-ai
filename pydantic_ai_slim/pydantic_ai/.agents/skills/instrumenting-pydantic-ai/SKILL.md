@@ -190,8 +190,9 @@ Two things that look like failure and aren't:
 - **Nothing appears until the process exits.** Spans are batched; a short script flushes on exit.
 - **Prompts, tool arguments and tool results are visible in the traces.** That is the point of the
   feature. Say so out loud, and if the agent touches anything sensitive, take the user back to the
-  content flags in step 4 — `instrument_pydantic_ai(include_binary_content=False)` drops images and
-  audio on its own — so they can decide before this reaches production.
+  content flags in step 4 — `instrument_pydantic_ai(include_binary_content=False)` drops binary file
+  data, images, audio and documents alike, on its own — so they can decide before this reaches
+  production.
 
 ## Offering more coverage
 
