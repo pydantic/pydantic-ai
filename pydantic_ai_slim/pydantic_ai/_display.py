@@ -398,15 +398,18 @@ def _observability_lines() -> list[str]:
             subsequent_indent='  ',
             break_on_hyphens=False,
         ),
+        # One link each, so that whichever of the two the reader wants is a single thing to follow.
+        # Both are written to fit `_TEXT_WIDTH` unbroken: a URL `textwrap` splits across lines stops
+        # being clickable in most terminals, which is the whole point of putting it here.
         *wrap(
-            'ask your agent to set it up: https://pydantic.dev/ai-setup.md',
+            'set it up free with Logfire and a GitHub login: https://pydantic.dev/ai-setup.md',
             width=_TEXT_WIDTH,
             initial_indent='  ',
             subsequent_indent='  ',
             break_on_hyphens=False,
         ),
         *wrap(
-            'free with Logfire and a GitHub login, or use any OpenTelemetry backend',
+            'or use any OpenTelemetry backend: https://pydantic.dev/docs/ai/logfire/#otel',
             width=_TEXT_WIDTH,
             initial_indent='  ',
             subsequent_indent='  ',

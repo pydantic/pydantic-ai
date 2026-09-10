@@ -192,7 +192,7 @@ Running the [weather agent](examples/weather-agent.md) example connected to `ote
 For more information on using the Logfire SDK to send data to alternative backends, see
 [the Logfire documentation](https://logfire.pydantic.dev/docs/how-to-guides/alternative-backends/).
 
-### OTel without Logfire
+### OTel without Logfire {#otel}
 
 You can also emit OpenTelemetry data from Pydantic AI without using Logfire at all.
 

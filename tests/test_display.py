@@ -138,8 +138,8 @@ def test_render_banner(render: Callable[..., str]):
      /   \\       agent: support_agent • model: openai:gpt-5.6-sol • tools: 2 • capabilities: 0
    /___.___\\
   /    |    \\    observability: off — see every model and tool call live, with cost
-/      |      \\    ask your agent to set it up: https://pydantic.dev/ai-setup.md
-`---.._|_..---'    free with Logfire and a GitHub login, or use any OpenTelemetry backend
+/      |      \\    set it up free with Logfire and a GitHub login: https://pydantic.dev/ai-setup.md
+`---.._|_..---'    or use any OpenTelemetry backend: https://pydantic.dev/docs/ai/logfire/#otel
 
                  goes away once observability is on — or PYDANTIC_AI_NO_BANNER=1\
 """)
@@ -153,8 +153,8 @@ def test_render_banner_for_an_unnamed_agent(render: Callable[..., str]):
      /   \\       model: openai:gpt-5.6-sol • output: list[str] • tools: 2 • capabilities: 3
    /___.___\\
   /    |    \\    observability: off — see every model and tool call live, with cost
-/      |      \\    ask your agent to set it up: https://pydantic.dev/ai-setup.md
-`---.._|_..---'    free with Logfire and a GitHub login, or use any OpenTelemetry backend
+/      |      \\    set it up free with Logfire and a GitHub login: https://pydantic.dev/ai-setup.md
+`---.._|_..---'    or use any OpenTelemetry backend: https://pydantic.dev/docs/ai/logfire/#otel
 
                  goes away once observability is on — or PYDANTIC_AI_NO_BANNER=1\
 """)
@@ -230,6 +230,22 @@ def test_render_banner_wraps_a_version_line_too_wide_for_the_column(
 `---.._|_..---'\
 """)
     assert max(map(len, banner.splitlines())) <= 100
+
+
+def test_the_observability_links_each_survive_on_one_line():
+    """A URL `textwrap` splits stops being clickable, which is the only reason it's in the banner."""
+    lines = _display._observability_lines()  # pyright: ignore[reportPrivateUsage]
+    urls = [word for line in lines for word in line.split() if word.startswith('http')]
+
+    assert urls == snapshot(['https://pydantic.dev/ai-setup.md', 'https://pydantic.dev/docs/ai/logfire/#otel'])
+    # One line per link: a wrapped URL would leave its tail on a line of its own.
+    assert [line for line in lines if 'http' in line] == snapshot(
+        [
+            '  set it up free with Logfire and a GitHub login: https://pydantic.dev/ai-setup.md',
+            '  or use any OpenTelemetry backend: https://pydantic.dev/docs/ai/logfire/#otel',
+        ]
+    )
+    assert max(map(len, lines)) <= _display._TEXT_WIDTH  # pyright: ignore[reportPrivateUsage]
 
 
 def test_render_banner_colors_the_logo_and_identity(monkeypatch: pytest.MonkeyPatch, render: Callable[..., str]):
