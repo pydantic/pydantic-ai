@@ -78,7 +78,7 @@ the loop is a plain value: iterate it, drive it manually, or let a capability tr
 
 ## If this answer doesn't fit you
 
-If your product genuinely lives in the LangChain ecosystem — its integration breadth, its community patterns, its checkpointed workflows — that's a real thing to build on, and we're not going to argue you out of it. What this page does is name what the ecosystem doesn't hand you: the seams on the left. If you ever want both, the migration skill exists.
+If your product genuinely lives in the LangChain ecosystem — its integration breadth, its community patterns, its checkpointed workflows — that's a real thing to build on, and we're not going to argue you out of it. What this page does is name what the ecosystem doesn't hand you: the seams on the left. And if you're on board with those and want to transform your project, we have the skills to walk you over — [skills-langchain-to-pydantic-ai](https://github.com/pydantic/skills-langchain-to-pydantic-ai), plus a [Deep Agents migration playbook](https://github.com/pydantic/skills-deepagents-migration) if that's your flavor.
 
 ---
 
