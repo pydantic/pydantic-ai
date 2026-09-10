@@ -36,7 +36,7 @@ on the checklist. Every knob is still yours; we just ship the one that lets the 
 | [vs Vercel AI SDK](vs-vercel-ai-sdk.md) | The TS ecosystem norm (AbortSignal) vs typed Python cancellation |
 | [vs Mastra](vs-mastra.md) | TS/Node processors architecture vs typed capabilities |
 | [vs Agno](vs-agno.md) | A bundled runtime vs a library with runtime choice |
-| [vs Pi](vs-pi.md) | A shipped CLI vs the harness as a library |
+| [vs Pi](vs-pi.md) | A TS coding agent with an embeddable core vs the harness as composeable, replaceable capabilities (Python, typed) |
 
 ## The flagship
 

@@ -1,24 +1,35 @@
 # Pydantic AI vs Pi
 
-Choosing an agent framework and you're down to
-[Pydantic AI](../agent.md) and Pi. This page is the tiebreaker — the answer first, then code
-you can run in seconds.
+Choosing an agent framework and you're down to [Pydantic AI](../agent.md) and Pi? Pi is the coding
+agent from the pi (earendil) project — and yes, it's a library too: the same package that ships the
+CLI exports an embeddable core (`createAgentSession`, `createAgentSessionRuntime`,
+`createCodingTools`, extensions — verified in 0.85.1). So this page is not "CLI vs library"; both
+sides embed. The real differences are the language, and what sits underneath the loop.
 
 ## Pydantic AI fits if you need
 
-- you are **building the product**: the loop in your process, harness capabilities as libraries, durable execution under it
-- pydantic-ai-harness: `CodeMode`, `FileSystem`, `Shell`, subagents, compaction, skills, ACP — replaceable
-- the same primitives across agents and coding
+- the loop **in your own process**, typed and cancellable, on a general framework — not a session
+  runtime built for a coding CLI
+- a **Python** stack (Pi's core is TypeScript/Node)
+- coding capabilities as **composeable units** — `CodeMode` (Monty), `FileSystem`, `Shell`,
+  subagents, compaction, skills, memory, ACP — each replaceable, on the same capability model as
+  every other agent
+- what a shipped product needs underneath: typed deps, budgets, resumable cancellation, **evals in
+  CI**, specs, and **durable execution** wraps (Temporal, DBOS, Prefect, Restate, Kitaru, Airflow)
 
 ## Why the answers differ
 
-Pi is the harness shipped as a CLI; Pydantic AI is the harness as a library. Same family — the difference is ownership: you run Pi; you build with us.
+Pi's core exists to power a coding agent: sessions, compaction, code tools, extensions — opinionated
+and well-built, in TypeScript. Ours is the general framework, with the coding edition (the harness)
+composed from replaceable capabilities on the same typed loop. Same idea, different center of
+gravity: theirs is the coding session; ours is the loop and everything you can hang off it.
 
 ## See it work
 
-Say you're building a coding product, not running someone else's CLI.
+Say you're building a product on an agent core, and the loop should run inside your own process.
 
-Pi ships a polished CLI you run — TUI, skills, memory, its decisions made for you.
+In Pi, the core is TypeScript — `createAgentSession({...})` plus `createCodingTools()` from the
+same published package (0.85.1); what you embed is the session engine the CLI uses.
 
 Your side, runs offline:
 
@@ -65,6 +76,7 @@ async def main():
 asyncio.run(main())
 
 
+
 ```
 
 ```text
@@ -72,25 +84,32 @@ nodes: UserPromptNode -> ModelRequestNode -> CallToolsNode -> ModelRequestNode -
 the loop ran in your own process: True
 ```
 
-**Notice:** The loop is an object in your process: drive it, wrap it, cancel it. The product is yours to shape.
+**Notice:** both embed. Here the loop is Python, node by node, in your PID — and underneath it sit
+the seams a shipped product keeps needing: cancellation that resumes, budgets, evals, durable
+engine wraps. That's the difference the CLI-shaped core doesn't give you by itself.
 
 ## The details
 
 | What you get | Pi | Pydantic AI |
 |---|---|---|
-|---|---|---|
-| Shape | A CLI you run | A library you build into your product |
-| The loop | Shipped, in the app | Yours: drive it, wrap it, cancel it (proven below) |
-| Extensions | Skills (frontmatter), your config | Capabilities: replaceable and composable, same units as any agent |
-| Security | No-sandbox stance, documented | Sandbox/harness isolation is a composable choice (Harness) |
-| Durable | — | Six engine wraps on the public interface |
+| Language | TypeScript/Node | Python 3.10+ |
+| Embeddable core | `createAgentSession` + coding tools + extensions (0.85.1) | pydantic-ai-harness: capability library |
+| Loop underneath | Their session runtime | pydantic-ai: typed deps, budgets, typed cancellation |
+| Coding capabilities | Opinionated session + tools + compaction | `CodeMode`, `FileSystem`, `Shell`, skills, memory, ACP — replaceable |
+| Durability | Sessions/compaction (their model) | Engine wraps: Temporal, DBOS, Prefect, Restate, Kitaru, Airflow |
+| Evals / specs | Not first-party there | Typed datasets + evaluators in CI; `AgentSpec` |
+| Product | CLI (TUI/print/RPC) + core, same package | Harness-as-library docs; sandbox isolation a composable choice |
 
 ## If this answer doesn't fit you
 
-If you want a coding agent today and would rather take a product's decisions than make them, Pi is the product — it's literally built on these same primitives, and we're glad it exists. If you're building the product, the harness-as-library is the starting point. Both are fine; they're just different.
+If your product is TypeScript — or you want Pi's opinionated session-and-compaction stack as its
+foundation, exactly as it powers the CLI — Pi's core is a real path, and the package's docs
+(`docs/`, `examples/`) show embedding it. If you're building on Python, or you want the general
+framework underneath the coding layer (typed, cancellable, budgeted, durable, evals included) with
+coding capabilities composed in, that's the harness. Both directions are fine; they're just
+different centers of gravity.
 
 ---
 
----
-
-*Versions: pi installed CLI / pydantic-harness @ 1ad638f8; Pydantic AI 2.42.0 — 2026-09-10. Snippets re-executed by this repository's tests.*
+*Versions: pi 0.85.1 (exports verified), pydantic-harness @ 1ad638f8; Pydantic AI 2.42.0 — 2026-09-10.
+Snippets re-executed by this repository's tests.*
