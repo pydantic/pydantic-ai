@@ -33,43 +33,35 @@ answer.
 
 Get the agent's runs visible, show the user, and only then talk about widening. Someone asking to
 instrument their agent wants to see the agent working in the next few minutes, not to begin an
-instrumentation project.
+instrumentation project. Put the setup where the user already starts the process — the script, the
+module, the entry point they run.
 
 But don't stop dead there either. A tool call is far more useful when you can also see the HTTP
 request it made and the query it ran, so once the agent is reporting, **offer** the pieces you can
 see the project already uses — see [Offering more coverage](#offering-more-coverage). Offer it;
 don't assume it.
 
-Two things to stay away from unless the user asks for them by name:
-
-- **Don't scatter `logfire.instrument()` decorators through the codebase.** Library integrations
-  cover the interesting boundaries already; hand-decorating individual functions is a large diff
-  that mostly adds noise.
-- **Don't restructure how the application starts.** Put the setup where the user already starts the
-  process — the script, the module, the entry point they run. Moving it into a central bootstrap is
-  reasonable when the user asks, or when several entry points genuinely all need it, but it isn't
-  where to start.
-
 ## Step 1: Decide where the traces go
 
-For "instrument my agent" during development, **Pydantic Logfire is the default**, and it stays the
-default even when the repo already exports OpenTelemetry somewhere.
+Look before you ask. A few seconds of it turns this into a recommendation rather than a guess:
 
-That existing exporter is very often production-only. Asking a developer to get themselves a
-Datadog seat, or to stand up a local collector, before they can see their agent run is a much worse
-first five minutes than a free account. So look, then ask — don't quietly reuse production's
-backend:
+- A `.logfire/` directory, or `LOGFIRE_TOKEN` in the environment — Logfire is set up here already,
+  and only `instrument_pydantic_ai()` may be missing. Skip straight to step 4 of Path A.
+- `OTEL_` variables in the environment, `.env` or deploy config; `opentelemetry-*` in the
+  dependencies; an existing `logfire.configure()` call.
 
-| Situation | Path |
+| What you found | Path |
 | --- | --- |
-| No backend yet, or unsure | **Path A** — Pydantic Logfire |
-| A backend exists, but this is local development | **Path A**, unless the user wants otherwise |
-| The user wants their agent's spans in the backend the project already uses | **Path B** |
+| Logfire already configured | **Path A**, from step 4 |
+| Nothing | **Path A** |
+| An OTel backend, and the user wants the agent's spans in it | **Path B** |
+| An OTel backend that looks production-only or isn't reachable from here | Say so, and offer both |
 | The user names a backend | Whichever of the two it implies |
 
-Worth a quick look before asking: `OTEL_` variables in the environment, `.env` or deploy config;
-`opentelemetry-*` in the dependencies; an existing `logfire.configure()` call; a `.logfire/`
-directory, which means Logfire is set up already and only `instrument_pydantic_ai()` may be missing.
+Say what you found rather than quietly reusing it: an exporter configured for production is often
+not something a developer can send local runs to. Pydantic Logfire is worth offering for development
+either way — signing up is free, and it gives you somewhere you can query the traces yourself in the
+same session (see [Step 2](#step-2-give-yourself-the-traces-with-the-logfire-mcp)).
 
 ## Path A: Pydantic Logfire
 
@@ -117,20 +109,26 @@ directory, which means Logfire is set up already and only `instrument_pydantic_a
    puts the actual HTTP request to the model beside the run that caused it. On its own it records
    the request, the status and the timing — no headers, no bodies.
 
-5. **Offer `capture_all=True`, don't set it.** `logfire.instrument_httpx(capture_all=True)` adds
-   headers and both bodies, which is the difference between "the model answered badly" and seeing
-   the prompt it was really sent. Two things the user needs before they say yes:
+   How much content the traces carry is the user's call, and two flags decide it:
 
-   - It instruments **every** `httpx` client in the process, not just the model calls. Unrelated
-     application traffic goes into the traces too — OAuth token exchanges, third-party APIs,
-     anything carrying credentials. Passing one client, `instrument_httpx(client, capture_all=True)`,
-     narrows it to that client.
-   - Those spans get large.
+   | Flag | Covers | Default |
+   | --- | --- | --- |
+   | `instrument_pydantic_ai(include_content=...)` | prompts, tool arguments, tool results | on |
+   | `instrument_httpx(capture_all=...)` | request and response headers and bodies | off |
 
-   Set up [scrubbing](https://logfire.pydantic.dev/docs/how-to-guides/scrubbing/) before this reaches
-   anywhere shared, and say that it can be turned back off once the question it was for is answered.
+   So by default the traces carry what the agent said but not the raw HTTP payloads. They usually
+   want to move together: `capture_all=True` is the difference between "the model answered badly"
+   and seeing the prompt it was really sent, while `include_content=False` is what someone reaches
+   for when the agent handles data that shouldn't leave the process. Pass either one only to move it
+   off its default.
 
-6. **Name the agents.** `Agent(..., name='support_agent')` labels the run span. Without it the name
+   `capture_all=True` instruments **every** `httpx` client in the process, so unrelated application
+   traffic — OAuth exchanges, third-party APIs — lands in the traces too, and the spans get large;
+   `instrument_httpx(client, capture_all=True)` narrows it to one client. Point at
+   [scrubbing](https://logfire.pydantic.dev/docs/how-to-guides/scrubbing/) before either flag's
+   output reaches anywhere shared.
+
+5. **Name the agents.** `Agent(..., name='support_agent')` labels the run span. Without it the name
    is inferred from the variable and falls back to `'agent'`, which makes traces hard to tell apart
    once more than one agent runs. Add it to the agents you're instrumenting; leave the rest alone.
 
@@ -148,8 +146,8 @@ logfire.instrument_pydantic_ai()
 logfire.instrument_httpx()
 ```
 
-The `capture_all=True` offer above applies here too, and matters more: these traces are going
-somewhere the whole team already reads.
+The content choice in step 4 applies here too, and is worth raising rather than assuming: these
+traces are going somewhere the whole team already reads.
 
 `send_to_logfire=False` is what keeps the data out of Pydantic Logfire; without it, spans go to
 both. The destination comes from the standard `OTEL_EXPORTER_OTLP_ENDPOINT` environment variable,
@@ -190,11 +188,10 @@ you couldn't check, say so and tell the user what to look for.
 Two things that look like failure and aren't:
 
 - **Nothing appears until the process exits.** Spans are batched; a short script flushes on exit.
-- **Prompts, tool arguments and HTTP bodies are visible in the traces.** That is the point of the
-  feature. Say so out loud, and if the agent touches anything sensitive, point the user at
-  [scrubbing](https://logfire.pydantic.dev/docs/how-to-guides/scrubbing/) and at
-  `InstrumentationSettings(include_content=False)` / `include_binary_content=False`, so they can
-  decide before this reaches production.
+- **Prompts, tool arguments and tool results are visible in the traces.** That is the point of the
+  feature. Say so out loud, and if the agent touches anything sensitive, take the user back to the
+  content flags in step 4 — `instrument_pydantic_ai(include_binary_content=False)` drops images and
+  audio on its own — so they can decide before this reaches production.
 
 ## Offering more coverage
 
