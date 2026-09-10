@@ -13,8 +13,10 @@ from typing import Any
 import pytest
 from pydantic import BaseModel
 
+import pydantic_ai
 import pydantic_ai._display as _display
 from pydantic_ai import Agent, ModelMessage, ModelRequest, UserPromptPart, __version__
+from pydantic_ai.agent import _registered_capability_count  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets import FunctionToolset
@@ -69,7 +71,7 @@ def reset_banner(monkeypatch: pytest.MonkeyPatch):
 
     # Process-wide state has to be reset so each test starts at its first run.
     _display._banner_displayed = False  # pyright: ignore[reportPrivateUsage]
-    _display.BANNER_ENABLED = True
+    pydantic_ai.BANNER_ENABLED = True
     monkeypatch.delenv('PYDANTIC_AI_NO_BANNER', raising=False)
     monkeypatch.delenv('CI', raising=False)
     # This suite is the one place a test run may show a banner, and the only place that decides
@@ -82,7 +84,7 @@ def reset_banner(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(importlib.util, 'find_spec', find_spec_without_harness)
     yield
     _display._banner_displayed = False  # pyright: ignore[reportPrivateUsage]
-    _display.BANNER_ENABLED = True
+    pydantic_ai.BANNER_ENABLED = True
 
 
 @pytest.fixture
@@ -112,7 +114,6 @@ def display_banner(**overrides: Any) -> None:
         'output_type': str,
         'tools': 2,
         'capabilities': 0,
-        'instrumented': False,
     }
     kwargs.update(overrides)
     _display.display_agent_banner(**kwargs)
@@ -307,7 +308,6 @@ def test_display_banner_with_harness_module_but_no_distribution(monkeypatch: pyt
         ('PYDANTIC_AI_NO_BANNER', ''),
         ('CI', ''),
         ('PYTEST_VERSION', ''),
-        ('instrumented', True),
         ('tty', False),
         ('enabled', False),
     ],
@@ -315,17 +315,14 @@ def test_display_banner_with_harness_module_but_no_distribution(monkeypatch: pyt
 def test_display_banner_suppressed(
     condition: str, value: str | bool, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ):
-    kwargs: dict[str, Any] = {}
     if condition in _SUPPRESSING_ENV_VARS:
         monkeypatch.setenv(condition, str(value))
-    elif condition == 'instrumented':
-        kwargs['instrumented'] = value
     elif condition == 'tty':
         monkeypatch.setattr(sys.stderr, 'isatty', lambda: value)
     else:
-        monkeypatch.setattr(_display, 'BANNER_ENABLED', value)
+        monkeypatch.setattr(pydantic_ai, 'BANNER_ENABLED', value)
 
-    display_banner(**kwargs)
+    display_banner()
 
     assert capsys.readouterr().err == ''
 
@@ -349,7 +346,7 @@ def test_a_banner_that_can_never_be_shown_stops_being_offered(
     elif condition == 'tty':
         monkeypatch.setattr(sys.stderr, 'isatty', lambda: value)
     else:
-        monkeypatch.setattr(_display, 'BANNER_ENABLED', value)
+        monkeypatch.setattr(pydantic_ai, 'BANNER_ENABLED', value)
 
     display_banner()
 
@@ -461,17 +458,6 @@ def test_an_agent_does_not_override_a_suppressed_banner(monkeypatch: pytest.Monk
     display_banner()
 
     assert stderr.getvalue() == ''
-
-
-def test_an_instrumented_run_leaves_the_banner_for_another_agent(monkeypatch: pytest.MonkeyPatch, stderr: TTYStream):
-    """Instrumentation is the agent's, not the process's, so it doesn't speak for the ones after it."""
-    monkeypatch.setattr(sys, 'stderr', stderr)
-
-    display_banner(instrumented=True)
-    assert _display.banner_pending() is True
-
-    display_banner(name='uninstrumented_agent')
-    assert 'agent: uninstrumented_agent' in stderr.getvalue()
 
 
 def test_the_fork_handler_hands_back_a_lock_nobody_holds():
@@ -738,3 +724,41 @@ def test_instrumented_agent_run_is_silent(monkeypatch: pytest.MonkeyPatch, stder
     agent.run_sync('hello')
 
     assert stderr.getvalue() == ''
+
+
+def test_an_instrumented_run_leaves_the_banner_for_another_agent(monkeypatch: pytest.MonkeyPatch, stderr: TTYStream):
+    """Instrumentation is the agent's, not the process's, so it doesn't speak for the ones after it."""
+    monkeypatch.setattr(sys, 'stderr', stderr)
+    instrumented = Agent(TestModel())
+    instrumented.instrument = True
+
+    instrumented.run_sync('hello')
+    assert _display.banner_pending() is True
+
+    Agent(TestModel(), name='uninstrumented_agent').run_sync('hello')
+    assert 'agent: uninstrumented_agent' in stderr.getvalue()
+
+
+def test_a_run_that_has_no_banner_to_show_gathers_nothing(monkeypatch: pytest.MonkeyPatch, stderr: TTYStream):
+    """A courtesy nobody will see shouldn't cost every run of every instrumented agent to skip."""
+    monkeypatch.setattr(sys, 'stderr', stderr)
+    counted = 0
+
+    def counting_count(capability: AbstractCapability[Any]) -> int:
+        nonlocal counted
+        counted += 1
+        return _registered_capability_count(capability)
+
+    monkeypatch.setattr(pydantic_ai.agent, '_registered_capability_count', counting_count)
+
+    instrumented = Agent(TestModel())
+    instrumented.instrument = True
+    for _ in range(3):
+        instrumented.run_sync('hello')
+    assert counted == 0
+
+    plain = Agent(TestModel())
+    for _ in range(3):
+        plain.run_sync('hello')
+    # Only the run that actually shows the banner; the claim it spends covers the two after it.
+    assert counted == 1

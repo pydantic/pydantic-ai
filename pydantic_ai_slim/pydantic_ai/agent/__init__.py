@@ -1829,7 +1829,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         def display_banner(*, model: str, tools: int) -> None:
             # Called by the graph once the run's first step has resolved the model it will actually
-            # use and the tools it will actually offer; everything else is settled here and now.
+            # use and the tools it will actually offer, and only when there is a banner to show;
+            # everything else is settled here and now.
             _display.display_agent_banner(
                 name=self.name,
                 model=model,
@@ -1837,7 +1838,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 output_type=output_type_,
                 tools=tools,
                 capabilities=_registered_capability_count(bootstrap_capability),
-                instrumented=instrumentation_settings is not None,
             )
 
         model_resources = _RunModelResources(self._entered_model_ids.copy())

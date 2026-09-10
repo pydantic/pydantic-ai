@@ -16,7 +16,6 @@ from typing import Protocol, cast, get_args
 
 _banner_displayed = False
 _banner_lock = Lock()
-BANNER_ENABLED = True
 
 
 def _replace_lock_inherited_from_fork() -> None:
@@ -172,6 +171,10 @@ def _agent_signal_matches(signal: str) -> bool:
 
 def _banner_suppressed() -> bool:
     """Whether the user or the environment has asked not to be shown the banner."""
+    # Read from the package rather than kept here, so that setting `pydantic_ai.BANNER_ENABLED` is
+    # what turns the banner off. Imported at call time for the same reason as in `_version_line`.
+    from . import BANNER_ENABLED
+
     return (
         not BANNER_ENABLED
         or 'PYDANTIC_AI_NO_BANNER' in os.environ
@@ -254,15 +257,8 @@ def display_agent_banner(
     output_type: object,
     tools: int,
     capabilities: int,
-    instrumented: bool,
 ) -> None:
-    """Display information about the first uninstrumented agent run in an interactive process."""
-    # An instrumented run has what the banner would point it to, so it stays out of the way — and
-    # leaves the claim alone, since another agent in this process may not be instrumented. `clai`
-    # differs: its banner is also its session header, so it shows one either way.
-    if instrumented:
-        return
-
+    """Display information about the first agent run in an interactive process."""
     stderr = sys.stderr
     is_terminal = _stderr_is_terminal()
     # Someone being there to read is not the same question as there being somewhere to write:

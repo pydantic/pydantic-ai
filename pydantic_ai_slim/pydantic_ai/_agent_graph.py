@@ -1157,11 +1157,15 @@ def _display_first_run_banner(ctx: GraphRunContext[GraphAgentState, GraphAgentDe
     are left out, as the banner reports the output type separately and counting them would make the
     number move with the output mode rather than with what the agent was given.
 
-    `banner_pending()` is asked before any of that is gathered, so a process that will never show a
-    banner counts nothing: past the first run it comes down to reading a flag, on a path every run
-    takes.
+    Every reason there won't be a banner is checked before any of that is gathered, so a run that
+    isn't getting one counts nothing: this is on a path every run takes, and past the first one it
+    comes down to reading a flag.
+
+    An instrumented run has what the banner would point it to, so it stays out of the way — without
+    spending the claim, since another agent in this process may not be instrumented. `clai` differs:
+    its banner is also its session header, so it shows one either way.
     """
-    if ctx.state.run_step != 1 or not _display.banner_pending():
+    if ctx.state.run_step != 1 or ctx.deps.instrumentation_settings is not None or not _display.banner_pending():
         return
 
     ctx.deps.display_banner(
