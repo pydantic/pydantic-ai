@@ -63,7 +63,7 @@ TextOutput(fn): HELLO WORLD
 StructuredDict: {'n': 7} is a dict
 ```
 
-**Notice:** Here a response *becomes* what you declared it to be — a transform or a schema-validated dict — and that type flows into tests and evals.
+**Notice:** Here a response *becomes* what you declared it to be — a transform or a parsed dict — but `StructuredDict` parses rather than schema-validates at runtime, so required fields and types are not enforced.
 
 ## The details
 
@@ -73,7 +73,7 @@ StructuredDict: {'n': 7} is a dict
 | Language/runtime | TS/JS + your framework (Next/Express) | Python 3.10+, asyncio-native |
 | Result shape | `generateText` returns data; your handler decides | Output **transports** are explicit: a transform, a schema, a tool, native parts (proven below) |
 | Cancellation | `AbortSignal` — the JS norm, forwarded into providers | Typed: `ctx.cancel()`, thread-safe token, catchable `RunCancelled` with resumable history |
-| Extensions | Providers, tool sets, experimental agents | Capabilities: one unit, deferrable, serializable |
+| Extensions | Providers, tool sets, experimental agents | Capabilities: one unit, deferrable, spec-declarable |
 | Durable | Your infrastructure | Six engine wraps on the public interface |
 | Run length | Hard function-timeout ceiling: 300 s (Pro) / 800 s (Enterprise) — long-horizon agents hit a wall (per Speakeasy 2026-03) | No loop timeouts; the run is yours |
 | SDK evolution | AI SDK 6 added an `Agent` interface and `DurableAgent` for resumable steps (per Speakeasy 2026-03; we verified 5) | Capabilities as one unit in 2.42.0 |

@@ -6,7 +6,7 @@ you can run in seconds.
 
 ## Pydantic AI fits if you need
 
-- one extension noun — a capability (tools + instructions + settings + hooks, deferrable, serializable)
+- one extension noun — a capability (tools + instructions + settings + hooks, deferrable, spec-declarable)
 - a **deps boundary** the model cannot cross
 - **cancellation that resumes**: stop the run, keep the history, continue as an ordinary run
 - durability by wrapping, offline tests, or a choice of providers
@@ -106,11 +106,11 @@ resumed run output: run resumed and completed
 | What you get | OpenAI Agents SDK | Pydantic AI |
 |---|---|---|
 |---|---|---|
-| Extension model | Separate categories: **guardrails** (functions), **handoffs** (tools named `transfer_to_<name>`), hooks | **One noun**: a capability bundles tools + instructions + settings + hooks, orderable, deferrable, serializable into `AgentSpec` |
+| Extension model | Separate categories: **guardrails** (functions), **handoffs** (tools named `transfer_to_<name>`), hooks | **One noun**: a capability bundles tools + instructions + settings + hooks, orderable, deferrable, spec-declarable where data-only |
 | Trusted state | `TContext` flows through the loop | `deps_type` — the model cannot choose or see it |
 | Cancellation | Streamed-run `cancel(mode='immediate'\|'after_turn')` | Typed: `CancellationToken` (thread-safe, multi-run), `ctx.cancel()`, `RunCancelled` carrying resumable history |
 | Resume | Sessions / `previous_response_id` — platform continuity | The exception carries history; resume is a normal run (proven below) |
-| Durability | Engine-side adapters (the Temporal contrib exists) | First-party wraps on the public interface — Temporal, DBOS, Prefect, Restate, Kitaru, Airflow |
+| Durability | Engine-side adapters (the Temporal contrib exists) | First-party wraps on the public interface (Temporal, DBOS, Prefect) + external SDK integrations (Restate, Kitaru, Airflow) |
 | Crash recovery | Not built in — their docs point at Temporal for durable paths (per Speakeasy 2026-03) | Engine wraps on the public interface, durable from the start |
 | Output | Plain JSON validated into typed models via `tools=[]` | Output transports: text, tool, native, structured — wire semantics are yours |
 | Events | Run items — platform-shaped | Typed event stream (part/tool/result/final); capabilities can transform it |

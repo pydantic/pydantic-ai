@@ -67,9 +67,9 @@ runs cancelled by one token: 3/3
 |---|---|---|
 | Foundation | Deeply anyio-internal (task groups, `fail_after`, interceptors) — arguably the closest to us in the anyio world | asyncio-native with the same anyio primitives at the seams |
 | Cancellation | **No user cancellation API**: `def cancel` exists only in the A2A executor; the runner surfaces nothing | Typed: `CancellationToken` (thread-safe, one token = many runs — proven below), `ctx.cancel()`, catchable `RunCancelled` |
-| Extension | Agent/Workflow classes + code executors | Capabilities: one unit, deferrable, serializable, event-stream-aware |
+| Extension | Agent/Workflow classes + code executors | Capabilities: one unit, deferrable, spec-declarable, event-stream-aware |
 | Trusted state | Handlers receive app context | `deps_type` boundary — the model cannot choose or see it |
-| Durable | Workflows; checkpointing is your responsibility | Six engine wraps on the public interface (Temporal/DBOS/Prefect/Restate/Kitaru/Airflow) |
+| Durable | Workflows; checkpointing is your responsibility | Six engine wraps (Temporal/DBOS/Prefect first-party; Restate/Kitaru/Airflow external) |
 | Evals | `evaluation` module exists | Typed datasets + evaluators, CI-runnable offline |
 
 ## If this answer doesn't fit you

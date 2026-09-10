@@ -103,7 +103,6 @@ downstream agent received the typed sum as deps: True
 
 | What you get | CrewAI | Pydantic AI |
 |---|---|---|
-|---|---|---|
 | Orchestration | A DSL: `Agent(role=..., goal=..., backstory=...)`, `Crew(process=...)` | Plain async code: chain agents, fan out with `asyncio.gather`, branch with normal control flow |
 | Typed seams | `inputs` dicts; output models via Pydantic | `deps_type` boundary; typed tool signatures and returns at every seam (proven below) |
 | Loop access | A `kickoff()` you run; stopping = kill your thread | Typed cancellation + resumable history; `iter()` drives the loop node-by-node |

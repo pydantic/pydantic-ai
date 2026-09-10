@@ -82,7 +82,7 @@ the loop ran in your own process: True
 |---|---|---|
 |---|---|---|
 | Runtime | A `claude` **subprocess** driven over a JSON protocol | The run is a value in your process (proven below) |
-| Extension | Config surface — hooks, plugins, skills for *their* harness | Typed capabilities in your code, deferrable + serializable |
+| Extension | Config surface — hooks, plugins, skills for *their* harness | Typed capabilities in your code, deferrable + spec-declarable |
 | Trusted state | Environment / context handed to the harness | `deps_type` — a boundary the model cannot cross |
 | Cancellation | Stop = kill the subprocess | Typed: `CancellationToken` (thread-safe), `ctx.cancel()`, catchable `RunCancelled` with resumable history |
 | History | Resume by session id (the CLI's state) | Typed, repairable history you can pass between runs |

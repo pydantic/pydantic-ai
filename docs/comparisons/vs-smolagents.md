@@ -93,7 +93,7 @@ wall time: 0.26s (the three calls would take ~0.75s one after another)
 | Model interaction | Writes and executes Python in a sandbox | Calls typed tools with validated arguments |
 | Isolation | Code sandbox: `import os` and `open()` are forbidden; 11-module allowlist | Typed deps — the model cannot choose or see trusted state; tools hold the boundary |
 | Stopping | Only `final_answer` (model-driven) | Typed cancellation: `ctx.cancel()`, thread-safe token, catchable `RunCancelled` with resumable history |
-| Extension | Tools + the Model ABC (a real seam) | Capabilities: tools + instructions + hooks, deferrable, serializable |
+| Extension | Tools + the Model ABC (a real seam) | Capabilities: tools + instructions + hooks, deferrable, spec-declarable |
 | Evals | Not first-party | Typed datasets + evaluators, CI-runnable offline |
 
 ## If this answer doesn't fit you

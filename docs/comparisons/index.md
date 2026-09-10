@@ -102,7 +102,7 @@ same agent without changing it.
 We cite people we don't control; that's the point.
 
 - **Developer experience**: an independent 90-day, five-framework benchmark, reported in
-  [Speakeasy's framework comparison](https://www.speakeasy.com) (2026-03), scored Pydantic AI 8/10 —
+  [Speakeasy's framework comparison](https://www.speakeasy.com/blog/ai-agent-framework-comparison) (2026-03), scored Pydantic AI 8/10 —
   the highest of the five — against 5/10 for LangChain, and credited type validation with catching
   23 bugs during development that would have reached production.
 - **Cost**: the same report measured a 90-day build at $390 total with Pydantic AI (zero license

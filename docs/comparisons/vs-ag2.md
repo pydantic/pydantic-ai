@@ -6,13 +6,13 @@ you can run in seconds.
 
 ## Pydantic AI fits if you need
 
-- the **agent as data**: a spec validated against types at load, shipped as YAML + schema, run offline
+- the **agent as data**: a spec validated against its types, shipped as YAML + schema, run offline
 - **typed, repairable history** on an ordinary loop
 - durability by wrapping six engines — not adopting one state machine
 
 ## Why the answers differ
 
-Both treat the agent as data — AG2 as a checkpointed task protocol, ours as a validated spec on an ordinary loop. Where it shows: validation at load, a file + schema, and offline execution.
+Both treat the agent as data — AG2 as a checkpointed task protocol, ours as a validated spec on an ordinary loop. Where it shows: validation when the spec meets your types, a file + schema, and offline execution.
 
 ## See it work
 
@@ -25,9 +25,9 @@ Your side, runs offline:
 ```python {title="spec_data_roundtrip.py"}
 """The agent is data: spec -> YAML + JSON schema -> a running agent.
 
-The same declarative spec validates its templates against typed deps at
-load (on the dict/YAML path), writes itself to a file with a companion
-schema, loads back, and runs offline.
+The same declarative spec validates its templates against typed deps on
+the dict path (Agent.from_spec), writes itself to a file with a
+companion schema, loads back (Agent.from_file), and runs offline.
 """
 import os
 import tempfile
@@ -39,16 +39,14 @@ from pydantic_ai import Agent, AgentSpec
 class Ctx(BaseModel):
     version: str
 
-spec = AgentSpec.from_dict(
-    {
-        'name': 'checker',
-        'model': 'test',  # offline stub backend
-        'instructions': 'Reply with {{version}}.',
-        'tools': [],
-        'capabilities': [],
-    }
-)
-agent = Agent.from_spec(spec, deps_type=Ctx)
+spec_data = {
+    'name': 'checker',
+    'model': 'test',  # offline stub backend
+    'instructions': 'Reply with {{version}}.',
+    'capabilities': [],
+}
+agent = Agent.from_spec(spec_data, deps_type=Ctx)  # templates meet typed deps here (dict path)
+spec = AgentSpec.from_dict(spec_data)  # the same data, as a file-exportable spec
 
 with tempfile.TemporaryDirectory() as d:
     yaml_path = os.path.join(d, 'agent.yaml')

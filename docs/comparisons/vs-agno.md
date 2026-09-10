@@ -66,7 +66,6 @@ sync='same result' async='same result' iter='same result'
 
 | What you get | Agno | Pydantic AI |
 |---|---|---|
-|---|---|---|
 | Runtime | Bundled runtime + AgentOS hosted platform | Runtime-agnostic: sync, async, or driven node-by-node (proven below) |
 | Tools | Curated toolsets; shell tool wraps host `subprocess` (requires confirmation) | Typed tools + toolsets per run + capabilities; deps boundary |
 | Multi-agent | Agent teams | Plain async orchestration; graph builder |

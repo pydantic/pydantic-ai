@@ -76,12 +76,11 @@ the loop is a plain value: iterate it, drive it manually, or let a capability tr
 
 | What you get | LangChain & LangGraph | Pydantic AI |
 |---|---|---|
-|---|---|---|
 | Structure without a DSL | Adopt a `StateGraph` to get checkpoints, retries, streaming | Plain async; the loop is a value you drive |
 | Pause for a human | `interrupt()` — graph state; resuming **re-runs the node's LLM call** | `ctx.cancel()` / deferred tools — pause at the tool boundary, resume clean |
 | Trusted state | `context_schema` / state dict flows through the loop | `deps_type` — model cannot choose or see it |
-| Extend the agent | Middleware (LIFO order) intercepts steps | Capabilities: bundle tools + instructions + settings + hooks, orderable, serializable |
-| Durability | Checkpointers are a graph feature — you must use LangGraph | Engines wrap the same agent (Temporal/DBOS/Prefect/Restate/Kitaru/Airflow) |
+| Extend the agent | Middleware (LIFO order) intercepts steps | Capabilities: bundle tools + instructions + settings + hooks, orderable, spec-declarable |
+| Durability | Checkpointers are a graph feature — you must use LangGraph | First-party wraps on the public interface (Temporal/DBOS/Prefect) + external SDK integrations (Restate/Kitaru/Airflow) |
 | Cancellation | None: interrupt is state; killing a run = kill the task | Typed: `RunCancelled` with resumable history; external `CancelledError` preserved |
 | Events | Super-step graph events | Part/tool/result/final typed events; capabilities can transform the stream |
 | Offline tests | `GenericFakeChatModel` can't `bind_tools` | `TestModel`/`FunctionModel` drive the whole pipeline deterministically |

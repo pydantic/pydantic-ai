@@ -88,9 +88,8 @@ tool from the capability executed; auditor (same unit) observed: ['PartStartEven
 
 | What you get | Mastra | Pydantic AI |
 |---|---|---|
-|---|---|---|
 | Stack | TS/Node; agents + workflows + tools in one package | Python 3.10+; packages split: core, evals, graph |
-| Extension | Processors/guardrails/workflow concepts | Capabilities: one unit (tools + instructions + hooks), deferrable, serializable |
+| Extension | Processors/guardrails/workflow concepts | Capabilities: one unit (tools + instructions + hooks), deferrable, spec-declarable |
 | Observability | Built-in (a real strength) | OTel + Logfire instrumentation; your capability can also see the stream (proven below) |
 | Dev loop | `mastra dev` ships a local playground + Swagger + OpenAPI out of the box (per Speakeasy 2026-03) | Offline test models drive the whole loop |
 | Memory | Most sophisticated of the group: 4 types incl. Observational Memory (~5-40x auto-compress; runs background LLM calls whose tokens don't appear in agent usage — per Speakeasy 2026-03) | Your memory: deps and history processors, wired by you, billed visibly |

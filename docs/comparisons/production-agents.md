@@ -142,7 +142,9 @@ deferred tool visible before load_capability: False
 
 This ran offline against a stub model; the same protocol ran live against Anthropic with the tool
 server-hidden (`defer_loading=True`) until loaded. Extend the pattern: capabilities bundle tools +
-instructions + settings + hooks, order themselves, serialize into `AgentSpec`, and can observe or
+instructions + settings + hooks and order themselves; the spec-declarable ones (built-ins like
+`Thinking`/`WebSearch`, whose arguments are data) serialize into `AgentSpec` — a bundle carrying
+callables or toolsets stays Python code, per [our agent-spec docs](../agent-spec.md). Capabilities can also observe or
 transform the run's event stream.
 
 
@@ -629,9 +631,9 @@ def build_agent() -> Agent:
 
 def main() -> None:
     print('one agent definition; durability attached at run time (see docs/durable_execution/*):')
-    print('  - Temporal  (TemporalDurability capability; temporal + pydantic-ai[durable-temporal])')
-    print('  - DBOS      (DBOSDurability capability; dbos + pydantic-ai[durable-dbos])')
-    print('  - Prefect   (PrefectDurability capability; prefect + pydantic-ai[durable-prefect])')
+    print('  - Temporal  (TemporalDurability capability; temporal + pydantic-ai[temporal])')
+    print('  - DBOS      (DBOSDurability capability; dbos + pydantic-ai[dbos])')
+    print('  - Prefect   (PrefectDurability capability; prefect + pydantic-ai[prefect])')
     print('  - Restate, Kitaru, Apache Airflow: external adapters, same shape')
     print('agent definition changes: 0 lines')
 
@@ -642,9 +644,9 @@ if __name__ == '__main__':
 
 ```text
 one agent definition; durability attached at run time (see docs/durable_execution/*):
-  - Temporal  (TemporalDurability capability; temporal + pydantic-ai[durable-temporal])
-  - DBOS      (DBOSDurability capability; dbos + pydantic-ai[durable-dbos])
-  - Prefect   (PrefectDurability capability; prefect + pydantic-ai[durable-prefect])
+  - Temporal  (TemporalDurability capability; temporal + pydantic-ai[temporal])
+  - DBOS      (DBOSDurability capability; dbos + pydantic-ai[dbos])
+  - Prefect   (PrefectDurability capability; prefect + pydantic-ai[prefect])
   - Restate, Kitaru, Apache Airflow: external adapters, same shape
 agent definition changes: 0 lines
 ```
