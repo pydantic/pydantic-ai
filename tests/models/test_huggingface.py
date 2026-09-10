@@ -58,8 +58,10 @@ with try_import() as imports_successful:
         ChatCompletionStreamOutput,
         ChatCompletionStreamOutputChoice,
         ChatCompletionStreamOutputDelta,
+        ChatCompletionStreamOutputDeltaToolCall,
         ChatCompletionStreamOutputUsage,
     )
+    from huggingface_hub.inference._generated.types.chat_completion import ChatCompletionStreamOutputFunction
     from huggingface_hub.errors import HfHubHTTPError
 
     from pydantic_ai.models.huggingface import HuggingFaceModel
@@ -1126,3 +1128,38 @@ async def test_map_user_prompt_with_text_content():
 
     assert msg.content[0].text == snapshot('hello')  # pyright: ignore[reportAttributeAccessIssue, reportOptionalSubscript, reportUnknownMemberType]
     assert msg.content[1].text == snapshot('there')  # pyright: ignore[reportAttributeAccessIssue, reportOptionalSubscript, reportUnknownMemberType]
+
+
+async def test_stream_text_after_tool_call_gets_own_part(allow_model_requests: None):
+    """Text streamed after a tool call must start a new TextPart instead of merging into the pre-tool-call one."""
+    tool_chunk = chunk(
+        [
+            ChatCompletionStreamOutputDelta(
+                role='assistant',
+                tool_calls=[
+                    ChatCompletionStreamOutputDeltaToolCall(
+                        index=0,
+                        id='call-0',
+                        type='function',
+                        function=ChatCompletionStreamOutputFunction(name='lookup', arguments='{}'),
+                    )
+                ]
+            )
+        ],
+        finish_reason='tool_calls',
+    )
+    stream = text_chunk('Hello, '), tool_chunk, text_chunk('world'), chunk([])
+    mock_client = MockHuggingFace.create_stream_mock(stream)
+    model = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
+    agent = Agent(model)
+
+    async with agent.run_stream('') as result:
+        async for _ in result.stream_output(debounce_by=None):
+            pass
+
+    response_parts = [p for msg in result.new_messages() if isinstance(msg, ModelResponse) for p in msg.parts]
+    assert response_parts == [
+        TextPart(content='Hello, '),
+        ToolCallPart(tool_name='lookup', args='{}', tool_call_id='call-0'),
+        TextPart(content='world'),
+    ]

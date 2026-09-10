@@ -38,6 +38,7 @@ from ..messages import (
     NativeToolReturnPart,
     RetryPromptPart,
     SpeechPart,
+    PartStartEvent,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -776,6 +777,7 @@ class MistralStreamedResponse(StreamedResponse):
     _timestamp: datetime = field(default_factory=_now_utc)
 
     _delta_content: str = field(default='', init=False)
+    _vendor_part_id: str = field(default='content', init=False)
 
     async def close_stream(self) -> None:
         await self._response.source.response.aclose()
@@ -821,18 +823,23 @@ class MistralStreamedResponse(StreamedResponse):
                                 tool_call_id=maybe_tool_call_part.tool_call_id,
                             )
                     else:
-                        for event in self._parts_manager.handle_text_delta(vendor_part_id='content', content=text):
+                        for event in self._parts_manager.handle_text_delta(vendor_part_id=self._vendor_part_id, content=text):
                             yield event
 
                 # Handle the explicit tool calls
                 for index, dtc in enumerate(choice.delta.tool_calls or []):
                     # It seems that mistral just sends full tool calls, so we just use them directly, rather than building
-                    yield self._parts_manager.handle_tool_call_part(
+                    event = self._parts_manager.handle_tool_call_part(
                         vendor_part_id=index,
                         tool_name=dtc.function.name,
                         args=dtc.function.arguments,
                         tool_call_id=dtc.id,
                     )
+                    if isinstance(
+                        self._parts_manager.get_part_by_vendor_id(self._vendor_part_id), TextPart
+                    ):
+                        self._vendor_part_id = f'{self._vendor_part_id}-{event.index}'
+                    yield event
 
     @property
     def model_name(self) -> MistralModelName:

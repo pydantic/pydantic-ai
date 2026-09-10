@@ -35,6 +35,7 @@ from ..messages import (
     NativeToolReturnPart,
     RetryPromptPart,
     SpeechPart,
+    PartStartEvent,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -706,6 +707,7 @@ class GroqStreamedResponse(StreamedResponse):
     _provider_url: str
     _provider_timestamp: datetime | None = None
     _timestamp: datetime = field(default_factory=_utils.now_utc)
+    _vendor_part_id: str = field(default='content', init=False)
 
     async def close_stream(self) -> None:
         await self._response.source.close()
@@ -766,7 +768,7 @@ class GroqStreamedResponse(StreamedResponse):
                     content = choice.delta.content
                     if content:
                         for event in self._parts_manager.handle_text_delta(
-                            vendor_part_id='content',
+                            vendor_part_id=self._vendor_part_id,
                             content=content,
                             thinking_tags=self._model_profile.get('thinking_tags', DEFAULT_THINKING_TAGS),
                             ignore_leading_whitespace=self._model_profile.get(
@@ -784,6 +786,10 @@ class GroqStreamedResponse(StreamedResponse):
                             tool_call_id=dtc.id,
                         )
                         if maybe_event is not None:
+                            if isinstance(maybe_event, PartStartEvent) and isinstance(
+                                self._parts_manager.get_part_by_vendor_id(self._vendor_part_id), TextPart
+                            ):
+                                self._vendor_part_id = f'{self._vendor_part_id}-{maybe_event.index}'
                             yield maybe_event
             except APIError as e:
                 # The Groq SDK tries to be helpful by raising an exception when generated tool arguments don't match the schema,
