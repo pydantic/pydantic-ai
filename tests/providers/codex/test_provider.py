@@ -141,7 +141,7 @@ def test_from_codex_cli_honors_code_home(env: TestEnv, tmp_path: Path):
             'tokens': {'access_token': 'a', 'refresh_token': 'r', 'account_id': 'acc'},
         }
     )
-    auth_json.write_text(original)
+    auth_json.write_text(original, encoding='utf-8')
     env.set('CODEX_HOME', str(tmp_path))
 
     provider = OpenAICodexProvider()
@@ -150,7 +150,7 @@ def test_from_codex_cli_honors_code_home(env: TestEnv, tmp_path: Path):
     assert provider.name == 'openai-codex'
     assert provider.base_url == 'https://chatgpt.com/backend-api/codex'
     # Read-only contract: byte-for-byte unchanged after construction.
-    assert auth_json.read_text() == original
+    assert auth_json.read_text(encoding='utf-8') == original
 
 
 def test_from_codex_cli_missing_file(env: TestEnv, tmp_path: Path):
@@ -167,7 +167,7 @@ def test_from_codex_cli_unreadable_file(env: TestEnv, tmp_path: Path):
 
 
 def test_from_codex_cli_malformed_json(env: TestEnv, tmp_path: Path):
-    (tmp_path / 'auth.json').write_text('not json')
+    (tmp_path / 'auth.json').write_text('not json', encoding='utf-8')
     env.set('CODEX_HOME', str(tmp_path))
     with pytest.raises(UserError, match='Malformed'):
         OpenAICodexProvider()
