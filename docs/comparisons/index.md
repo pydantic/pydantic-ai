@@ -1,16 +1,17 @@
 # Pydantic AI vs other agent frameworks
 
-You're choosing an agent framework and want to know how we compare. These pages answer that, one
-framework at a time, and they try to be the version we'd want to read if we were choosing.
+You're picking an agent framework. These pages are the version we'd want to read if we were the ones
+picking, one framework at a time.
 
-Three things about how they're written. Each page says what the other framework is genuinely good at,
-in its own terms, before it says anything else. Claims about other people's software are checked
-against a pinned version we installed and read, and the page says so at the bottom. Claims about ours
-come with a script you can run in a few seconds with no API key, and our test suite runs every one of
-them on every commit — so the output printed on the page is what the code prints today.
+Every page starts by giving the other framework its best shot, in its own terms, before we say a word
+about ourselves. Anything we claim about someone else's software, we checked against a version we
+installed and read, and the bottom of the page tells you which one. Anything we claim about ours comes
+with a script you can run in seconds without an API key — and our CI runs every one of those on every
+commit, so the output on the page is what the code printed today, not what it printed when someone
+wrote the page.
 
-Where we're a worse choice, the page says that too. There's a
-[list of those](production-agents.md#where-were-not-the-answer) if you'd rather get the bad news first.
+Where we're the wrong answer, we say so. If you'd rather have the bad news first, it's
+[all in one place](production-agents.md#where-were-not-the-answer).
 
 ## Start here
 
@@ -42,13 +43,16 @@ People first came to Pydantic AI for strong primitives: a typed agent, a real va
 nothing between you and the model you didn't ask for. That hasn't changed. What changed is the size of
 the pieces.
 
-A capability is one object that can carry tools, instructions, model settings, lifecycle hooks and
-event-stream handling together, and arrive only when the model asks for it — 63 hooks in all, with a
-matching `before_`, `after_`, `wrap_` and error handler at every stage of the run. That's the trade
-we're offering: bigger blocks, not a bigger world to live in. Your agent stays a value in your
-application rather than an application that hosts your values.
+The blocks got bigger, badder and meaner. A capability is one object that carries tools,
+instructions, model settings, lifecycle hooks and event-stream handling all together, and it can wait
+to show up until the model actually asks for it. Sixty-three hooks, with a matching `before_`,
+`after_`, `wrap_` and error handler at every stage of a run.
 
-Five things that follow from that, each with a proof you can run:
+What didn't get bigger is how much of your life you have to hand over. That's the whole trade. You
+don't build a world around Pydantic AI. Your agent is a value inside your application; it never
+becomes an application that your values live inside.
+
+Six things follow from that, and every one has a proof you can run in a few seconds:
 
 - **Traces your existing tools already understand.** We emit the OpenTelemetry
   [GenAI semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/) — 36 distinct
