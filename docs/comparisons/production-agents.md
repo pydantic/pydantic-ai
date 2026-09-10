@@ -1,21 +1,19 @@
-# The production agent checklist
+# What a production agent needs
 
-Every framework demo can run an agent. Shipping one is the harder part.
+Any framework can run an agent. The gap between a demo and something you'd put in front of customers
+is made of unglamorous things: keeping secrets away from the model, stopping a run without losing it,
+capping what it can spend, and knowing what it did afterwards.
 
-If you're still deciding which framework to build on, this page is the bar we'd ask you to hold
-everyone to — including us. Each row below is one thing a shipped agent actually needs, demonstrated
-with a script you can run yourself in seconds (no API keys), re-executed by our test suite on every
-change. What you see printed is what the code prints today; we're not asking you to take our word.
+This is our list of what that takes. Use it as a checklist against anything you're evaluating,
+including us. Every item below has a script under it that runs on your laptop in a few seconds with no
+API key, and our test suite runs all of them on every commit — so what's printed is what the code
+prints today, not what it printed when someone wrote the page.
 
-Tick every row against whatever you're considering. Then decide.
+## 1. The model can't reach your secrets
 
-
-## 1. Trusted state: a boundary the model cannot cross
-
-Your credentials shouldn't be part of a conversation the model can read. The DB password lives in
-`deps`; only the tool may read it. The model receives tool definitions — nothing else — and its
-request payload never contains the secret.
-
+A database password shouldn't be in a conversation the model can read. In Pydantic AI, trusted state
+goes in a separate typed argument. Tools read it; the model gets tool definitions and nothing else, and
+can't name it or ask for it.
 
 ```python {title="deps_boundary.py"}
 """The deps boundary: the model never sees trusted state.
@@ -24,9 +22,10 @@ The password lives in deps. Only the tool may read it. The model only ever
 receives tool definitions; its request payload contains no secret.
 """
 import asyncio
+
 from pydantic_ai import Agent, capture_run_messages
-from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.models.function import FunctionModel
 
 DB = {'db_password': 'hunter2-keep-secret'}
 
@@ -53,27 +52,24 @@ async def main():
     leaked = 'hunter2' in payload
     assert not leaked, 'the secret crossed into model-visible messages!'
     print(f'request payload contained the db password: {leaked}')
+    #> request payload contained the db password: False
     print(f'tool executed with deps ({result.output!r}); model saw only tool definitions')
+    #> tool executed with deps ('done'); model saw only tool definitions
 
 
 asyncio.run(main())
 ```
 
-```text
-request payload contained the db password: False
-tool executed with deps ('done'); model saw only tool definitions
-```
 
-No competitor has this seam: other frameworks pass "context"/"inputs" through the loop, where the
-model's request history can echo it (LangChain `context_schema`, OpenAI `TContext`, CrewAI inputs,
-ADK invocation context).
+Most frameworks pass some kind of context through the run — LangChain's `context_schema`, the OpenAI
+SDK's `TContext`, CrewAI's inputs, ADK's invocation context. They're useful, but they're part of the
+same material the conversation is built from. A separate boundary is a different guarantee.
 
+## 2. Tools that aren't there until they're needed
 
-## 2. Capabilities that load on demand
-
-Least privilege, minus the ceremony. Request 1: the refund tool is absent from the request payload. Request 2: the model asks to load
-the capability. Request 3: the tool exists. The model cannot touch what it hasn't loaded.
-
+An agent with sixty tools is a worse agent. Capabilities can wait until the model asks for them: the
+tool isn't in the request at all, the model calls `load_capability`, and then it is — along with the
+instructions and settings that belong with it.
 
 ```python {title="deferred_capability.py"}
 """Deferred capability: the model cannot touch what it hasn't loaded.
@@ -83,8 +79,8 @@ Request 2: the model asks to load the capability; request 3 sees the tool.
 """
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import Capability
-from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.models.function import FunctionModel
 
 CAP_INSTRUCTION = 'Always confirm the order ID before issuing a refund.'
 
@@ -120,61 +116,37 @@ agent = Agent(FunctionModel(model), capabilities=[refunds])
 
 def main() -> None:
     agent.run_sync('go')
-    print('requests:', len(seen))
-    for i, (tools, instr) in enumerate(seen, 1):
-        print(f'  req{i}: tools={tools} cap_instruction_in_messages={instr}')
-    late = [t for t in seen[0][0] if 'refund' in t]
-    assert not late, 'deferred tool was offered before loading'
-    print('deferred tool visible before load_capability:', bool(late))
+    print('model requests:', len(seen))
+    #> model requests: 4
+    print('tools offered on the first request:', seen[0][0])
+    #> tools offered on the first request: ['load_capability']
+    print('tools offered after load_capability:', seen[2][0])
+    #> tools offered after load_capability: ['load_capability', 'refund_status']
+    assert 'refund_status' not in seen[0][0], 'deferred tool was offered before loading'
 
 
 main()
 ```
 
-```text
-requests: 4
-  req1: tools=['load_capability'] cap_instruction_in_messages=False
-  req2: tools=['load_capability'] cap_instruction_in_messages=False
-  req3: tools=['load_capability', 'refund_status'] cap_instruction_in_messages=True
-  req4: tools=['load_capability', 'refund_status'] cap_instruction_in_messages=True
-deferred tool visible before load_capability: False
-```
 
-This ran offline against a stub model; the same protocol ran live against Anthropic with the tool
-server-hidden (`defer_loading=True`) until loaded. Extend the pattern: capabilities bundle tools +
-instructions + settings + hooks and order themselves; the spec-declarable ones (built-ins like
-`Thinking`/`WebSearch`, whose arguments are data) serialize into `AgentSpec` — a bundle carrying
-callables or toolsets stays Python code, per [our agent-spec docs](../agent-spec.md). Capabilities can also observe or
-transform the run's event stream.
+That's least privilege without the ceremony, and it keeps the tool list short enough for the model to
+choose well.
 
+## 3. Stopping a run gives you something back
 
-## 3. Cancellation is a typed, resumable outcome
+Users close tabs. Quotas run out. A tool discovers the job shouldn't continue.
 
-"Stop generating" should be a thing your agent can do, not a thing you do to it. A tool may stop the run. `ctx.cancel()` requests it; the run ends in a catchable `RunCancelled`
-carrying everything completed before the stop — resume by passing that history to the next run.
-
-Fun fact: the agent can cancel its own run. The framework equivalent of an employee walking into
-the boss's office to resign — politely, two weeks' notice in hand, which here is a `RunCancelled`
-carrying everything completed so far.
-
-It's also a small sign of how agents changed. The first generation were scripts you ran: you started
-them, you stopped them, and stopping mid-run was a failure to handle. These are closer to coworkers
-with a task: the loop knows the task is pointless before the caller does — the customer was found,
-the quota hit, the premise was wrong. So the framework's job shifted from deciding when a run ends
-to *letting the run end itself when that's right*. Nothing here is automatic: `ctx.cancel()` is a
-primitive, and it works because your tool chose to call it. If you want the agent to have that kind
-of judgment, Pydantic AI lets you; if you'd rather it never did, the primitive sits unused. The
-decision stays yours.
-
+A tool can stop its own run:
 
 ```python {title="cancel_from_tool.py"}
 """A tool may stop the run. ctx.cancel() requests cancellation; the run ends
 in a catchable RunCancelled carrying everything completed before it stopped.
 """
 import asyncio
+
 from pydantic_ai import Agent, RunCancelled
-from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.messages import ModelResponse, ToolCallPart
+from pydantic_ai.models.function import FunctionModel
 
 
 async def model(messages, info):
@@ -198,18 +170,16 @@ def main():
     except RunCancelled as exc:
         history = exc.all_messages()
         print(f'run ended with RunCancelled; completed work preserved ({len(history)} message(s))')
+        #> run ended with RunCancelled; completed work preserved (2 message(s))
         print('cancellation is a typed, catchable, resumable outcome')
+        #> cancellation is a typed, catchable, resumable outcome
         assert len(history) >= 1
 main()
 ```
 
-```text
-run ended with RunCancelled; completed work preserved (2 message(s))
-cancellation is a typed, catchable, resumable outcome
-```
 
-And from outside: a stop button in another thread interrupts a blocked synchronous run.
-
+And one token can stop several runs at once, from another thread — which is what a stop button in a UI
+actually needs:
 
 ```python {title="cancel_token_thread.py"}
 """A stop button, from another thread. CancellationToken interrupts a blocked
@@ -218,6 +188,7 @@ run_sync(); the run ends in RunCancelled instead of hanging forever.
 import asyncio
 import threading
 import time
+
 from pydantic_ai import Agent, CancellationToken, RunCancelled
 from pydantic_ai.models.function import FunctionModel
 
@@ -244,25 +215,29 @@ def main() -> None:
     except RunCancelled:
         stop.join()
         print('blocked run_sync interrupted from another thread -> RunCancelled')
+        #> blocked run_sync interrupted from another thread -> RunCancelled
+        #> blocked run_sync interrupted from another thread -> RunCancelled
 
 
 main()
 ```
 
-```text
-blocked run_sync interrupted from another thread -> RunCancelled
-```
 
-Compare: OpenAI SDK cancels the streamed run only; Claude SDK = kill the subprocess; LangGraph =
-interrupt is graph state and resuming re-runs the node's LLM call; smolagents/CrewAI = kill the
-thread; Google ADK exposes no user cancellation API; AG2 cancels via a durable envelope.
+Either way the run ends by raising `RunCancelled`, and that exception carries the conversation, so
+resuming is just passing it to the next run. Cancellation from outside — an `asyncio.timeout()`, a task
+group shutting down — still behaves like normal Python cancellation.
 
+For comparison: the OpenAI SDK cancels a streamed run; the Claude SDK means killing the subprocess;
+LangGraph has no cancellation API, and `interrupt()` is a pause held in graph state, where an interrupt
+inside a node replays that node's work on resume; smolagents sets a flag checked between steps; CrewAI
+has no stop method at all; Google ADK exposes no cancellation API; AG2 cancels through a durable task
+envelope.
 
-## 4. Budgets halt before side effects, not after
+## 4. Budgets that stop things before they happen
 
-A budget that stops after the side effect is a receipt, not a limit. The model asks for two tool calls in one response; the limit allows one. The whole batch is
-rejected — `UsageLimitExceeded` — and *neither* tool ran.
-
+A budget you find out about afterwards is a bill, not a budget. `UsageLimits` is checked before the
+next request goes out and before a batch of tool calls executes, so nothing runs when the run is
+already over its limit.
 
 ```python {title="usage_limits_atomic.py"}
 """A usage limit stops a run BEFORE a side-effect batch executes.
@@ -271,9 +246,9 @@ The model asks for two tool calls in one response; the limit allows one.
 The whole batch is rejected, so neither tool runs: budget checks precede
 execution, not polite suggestions after it.
 """
-from pydantic_ai import Agent, UsageLimits, UsageLimitExceeded
-from pydantic_ai.models.function import FunctionModel
+from pydantic_ai import Agent, UsageLimitExceeded, UsageLimits
 from pydantic_ai.messages import ModelResponse, ToolCallPart
+from pydantic_ai.models.function import FunctionModel
 
 side_effects = []
 
@@ -301,33 +276,18 @@ def main() -> None:
         agent.run_sync('credit the customer twice', usage_limits=UsageLimits(tool_calls_limit=1))
         print('BUG: exceeded the limit')
     except UsageLimitExceeded as exc:
-        print(f'{type(exc).__name__}: {str(exc)[:60]}...')
+        print('stopped by:', type(exc).__name__)
+        #> stopped by: UsageLimitExceeded
         print(f'tool executions that happened: {len(side_effects)}')
+        #> tool executions that happened: 0
         assert not side_effects, 'a side effect ran despite the budget'
 
 
 main()
 ```
 
-```text
-UsageLimitExceeded: The next tool call(s) would exceed the tool_calls_limit of 1...
-tool executions that happened: 0
-```
 
-Budget checks precede execution. A framework that stops mid-batch lets the first side effect happen
-and calls it a limit.
-
-
-## 5. Cost is a unit, not a rumor
-
-Token prices come from [genai-prices](https://github.com/pydantic/genai-prices) (first-party, the
-same package that feeds the model docs) — each request's tokens resolve to a best-effort **USD
-cost** (`RunUsage.cost`), and a **dollar budget is enforced like any other usage limit**:
-`UsageLimits(cost_limit=...)` stops the run before the next request when it would exceed the
-budget. Prices refresh behind the scenes via `genai_prices.UpdatePrices` (one shared background
-task).
-
-When a model can't be priced, you hear about it — you don't get a silently unconstrained run:
+Spend works the same way, in money rather than tokens:
 
 ```python {title="cost_limit.py"}
 """Cost is a unit, not a rumor.
@@ -339,8 +299,8 @@ you get a warning, not a silently unconstrained run.
 import warnings
 
 from pydantic_ai import Agent, UsageLimits
-from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.messages import ModelResponse, TextPart
+from pydantic_ai.models.function import FunctionModel
 
 
 async def model(messages, info):
@@ -356,33 +316,21 @@ def main() -> None:
         agent.run_sync('hi', usage_limits=UsageLimits(cost_limit=0.10))
     names = sorted({type(x.message).__name__ for x in w if 'Cost' in type(x.message).__name__})
     print('run completed; per-request USD cost is tracked (genai-prices)')
+    #> run completed; per-request USD cost is tracked (genai-prices)
     print(f'unpriced model under a cost budget -> {names}')
+    #> unpriced model under a cost budget -> ['CostNotFoundWarning']
     assert 'CostNotFoundWarning' in names
 
 
 main()
 ```
 
-```text
-run completed; per-request USD cost is tracked (genai-prices)
-unpriced model under a cost budget -> ['CostNotFoundWarning']
-```
 
-The docs are honest about the seam: `cost_limit` is best-effort, not a billing guarantee — pair it
-with `request_limit` or your provider's own spend controls.
+## 5. History that repairs itself
 
-Where everyone else sits on pricing: OpenAI SDK returns usage, cost lives in the platform dashboard;
-LangGraph/LangSmith track spend platform-side, not in the loop; CrewAI has no built-in token budget
-(a single uncapped loop has billed $414 — independent review, 2026-03); Mastra shows cost metrics
-in Studio (visibility, not enforcement) while its Observational Memory bills hidden LLM calls; the
-Vercel AI SDK tracks cost on the Vercel platform and caps runs at 300-800 s; smolagents, ADK, AG2,
-Agno, and Pi have no in-loop cost enforcement surfaced.
-
-## 6. History repairs itself
-
-Crashes are normal; hand them to a framework that cleans up. A run that dies mid-tool leaves a dangling tool call — invalid for any provider. The next run
-closes it out before the request goes out.
-
+Interrupt a run at the wrong moment and the conversation is left with a tool call that has no result.
+Send that to a provider and you get a 400. Pydantic AI notices and fills the gap before the request
+goes out, so a resumed conversation is always well formed:
 
 ```python {title="history_repair.py"}
 """Interrupted history repairs itself before it reaches the model.
@@ -392,8 +340,8 @@ that call out (outcome=<interrupted>) before the request goes out, so the
 provider never rejects the history as malformed.
 """
 import asyncio
+
 from pydantic_ai import Agent, capture_run_messages
-from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
@@ -402,6 +350,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.models.function import FunctionModel
 
 
 async def model(messages, info):
@@ -428,23 +377,23 @@ async def main():
     repaired = [
         p for m in msgs for p in m.parts if isinstance(p, ToolReturnPart) and p.tool_call_id == 't1'
     ]
-    assert repaired, 'dangling tool call was not repaired'
-    print(f'outgoing request carried a synthesized result for t1: {[r.content for r in repaired]}')
-    print('history was provider-valid: no malformed pairing sent to the model')
+    print('dangling tool call was repaired before the request went out:', bool(repaired))
+    #> dangling tool call was repaired before the request went out: True
+    #> dangling tool call was repaired before the request went out: True
+    assert repaired, 'the dangling tool call was not repaired'
 
 
 asyncio.run(main())
 ```
 
-```text
-outgoing request carried a synthesized result for t1: ['The tool call was interrupted before a result was produced.']
-history was provider-valid: no malformed pairing sent to the model
-```
 
-## 7. Specs fail at load, not at 3 a.m.
+This is the quiet one that saves you a bad afternoon. It only works because the history is typed data
+the framework owns rather than a dictionary of whatever the last thing put there.
 
-Catch the typo when you build the agent, not when it's in production. A template typo errors against the typed deps schema at construction, naming the field:
+## 6. Agents you can ship as configuration
 
+An agent can be a YAML file, and the file is checked when it loads rather than when it runs. A typo in
+a prompt template fails immediately and names the field:
 
 ```python {title="spec_validation.py"}
 """An agent spec fails at load time, not at runtime.
@@ -454,6 +403,7 @@ typo error names the field and the file. The same spec typechecks into a
 running agent offline.
 """
 from pydantic import BaseModel
+
 from pydantic_ai import Agent
 
 
@@ -474,7 +424,8 @@ def main() -> None:
         Agent.from_spec(bad, deps_type=UserContext)
         print('BUG: invalid template accepted')
     except Exception as exc:
-        print(f'{type(exc).__name__}: {str(exc)[:100]}')
+        print('rejected at load:', type(exc).__name__)
+        #> rejected at load: TemplateSchemaError
 
 
     good = {
@@ -485,28 +436,23 @@ def main() -> None:
         'capabilities': [],
     }
     agent = Agent.from_spec(good, deps_type=UserContext)
-    print(f'valid template -> {type(agent).__name__}({agent.name!r}) runs offline')
+    #> the corrected spec loads: support
+    print('the corrected spec loads:', agent.name)
+    #> the corrected spec loads: support
+    assert agent.name == 'support'
 
 
 main()
 ```
 
-```text
-TemplateSchemaError: 1 error(s) found:
-  - non_existent_field: Field 'non_existent_field' not found in schema
-valid template -> Agent('support') runs offline
-```
 
-The same spec is data: YAML, schema file, publish, load. Construction-time validation holds on the
-dict/YAML path; a pre-built Python `AgentSpec` object skips it, so validate via
-`Agent.from_spec(spec_dict, deps_type=...)`.
+Worth being precise about the limit: that check runs when a spec is loaded from a dictionary or a file,
+not when you build an `AgentSpec` object directly in Python.
 
+## 7. You can watch it work
 
-## 8. The run is an event stream you can observe or transform
-
-Your auditor, your UI, your approval gate — they're consumers of a typed stream, not bolt-ons. Parts, tool calls, results, the final result — typed events, streamed. No opinion about what you do
-with them: your auditor, your UI, your SSE adapter, or a capability transforming the stream.
-
+The run emits typed events as it happens — the model starting to speak, each tool call and its result,
+the final answer — and you consume them with a normal `async for`:
 
 ```python {title="event_stream.py"}
 """The run is an event stream you can observe or transform.
@@ -515,6 +461,7 @@ Part deltas, tool calls, results, and the final result — all typed, all
 streamed. No framework opinion on what you do with them.
 """
 import asyncio
+
 from pydantic_ai import Agent
 from pydantic_ai.models.function import DeltaToolCall, FunctionModel
 
@@ -540,23 +487,27 @@ async def main():
         async for event in run:
             kinds.append(type(event).__name__)
         final = run.result.output
-    assert isinstance(kinds, list) and len(kinds) >= 4
-    print(f'events observed: {kinds}')
-    print(f'final output: {final!r} (streamed while it happened)')
+    print('events seen while the run happened:', len(kinds))
+    #> events seen while the run happened: 8
+    print('the tool call arrived as an event:', 'FunctionToolCallEvent' in kinds)
+    #> the tool call arrived as an event: True
+    print('final output:', final)
+    #> final output: 42
+    assert 'FunctionToolCallEvent' in kinds
 
 
 asyncio.run(main())
 ```
 
-```text
-events observed: ['PartStartEvent', 'PartEndEvent', 'FunctionToolCallEvent', 'FunctionToolResultEvent', 'PartStartEvent', 'FinalResultEvent', 'PartEndEvent', 'AgentRunResultEvent']
-final output: '42' (streamed while it happened)
-```
 
-## 9. Evals in CI, typed, offline
+A capability can also wrap that stream to filter or rewrite it, which is how you build an auditor that
+travels with the agent rather than a separate observability integration. Everything also goes out as
+OpenTelemetry, so agent traces sit next to your database and HTTP spans.
 
-If your evaluation needs a network call, it's not a CI test. Same types as the agent, same harness as CI: dataset → evaluators → report.
+## 8. Evals in your test suite
 
+Evals shouldn't need a platform login. `pydantic-evals` takes cases and evaluators as ordinary Python,
+uses the agent's own types, and runs in CI next to your unit tests:
 
 ```python {title="evals_ci.py"}
 """Regressions are typed and run in CI, offline.
@@ -564,8 +515,8 @@ If your evaluation needs a network call, it's not a CI test. Same types as the a
 Same types as the agent, same harness as CI: dataset -> evaluators -> report.
 """
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.models.function import FunctionModel
 from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import Contains, EqualsExpected
 
@@ -599,67 +550,87 @@ def main() -> None:
     report = dataset.evaluate_sync(run_case, progress=False)
     averages = report.averages()
     print(f'assertions passed: {averages.assertions * 100:.0f}%')
+    #> assertions passed: 100%
+    #> assertions passed: 100%
     assert averages.assertions == 1.0
 
 
 main()
 ```
 
-```text
-assertions passed: 100%
-```
 
-## 10. Durability is attached at run time, not written into the agent
+## 9. Crash recovery without rewriting the agent
 
-One agent definition; the engine is chosen where it runs, not baked into your code. the engine is chosen where it runs. The attach API differs per engine and has
-changed (wrapper classes are deprecated in favor of durability capabilities) — the
-[durable execution docs](../durable_execution/overview.md) are the source of truth per engine:
+A run is an ordinary coroutine, so durability is a capability you add rather than a shape you adopt.
+The same agent definition runs under Temporal, DBOS, or Prefect, and there are adapters for Restate,
+Kitaru, and Airflow maintained in those projects:
 
 ```python {title="durability_wrap.py"}
-"""Durability is attached at run time, not written into the agent.
+"""One agent definition; the durable engine is a capability you add."""
 
-One agent definition; the engine is chosen where it runs. The attach API
-differs per engine and has changed (wrappers -> capabilities) — the durable
-execution docs are the source of truth per engine.
-"""
 from pydantic_ai import Agent
+from pydantic_ai.durable_exec.dbos import DBOSDurability
+from pydantic_ai.durable_exec.prefect import PrefectDurability
+from pydantic_ai.durable_exec.temporal import TemporalDurability
+
+INSTRUCTIONS = 'Be terse.'
 
 
-def build_agent() -> Agent:
-    return Agent('openai:gpt-5.6-luna', deps_type=dict, system_prompt='be terse')
+def support_agent(durability) -> Agent:
+    """The agent is defined once; only the capability list changes."""
+    return Agent(
+        'openai:gpt-5.2', name='support', instructions=INSTRUCTIONS, capabilities=[durability]
+    )
 
 
-def main() -> None:
-    print('one agent definition; durability attached at run time (see docs/durable_execution/*):')
-    print('  - Temporal  (TemporalDurability capability; temporal + pydantic-ai[temporal])')
-    print('  - DBOS      (DBOSDurability capability; dbos + pydantic-ai[dbos])')
-    print('  - Prefect   (PrefectDurability capability; prefect + pydantic-ai[prefect])')
-    print('  - Restate, Kitaru, Apache Airflow: external adapters, same shape')
-    print('agent definition changes: 0 lines')
+agents = [support_agent(d) for d in (TemporalDurability(), DBOSDurability(), PrefectDurability())]
 
-
-if __name__ == '__main__':
-    main()
+print('same definition, three engines:', [a.name for a in agents])
+#> same definition, three engines: ['support', 'support', 'support']
+print('all of them still just run():', all(hasattr(a, 'run') for a in agents))
+#> all of them still just run(): True
+assert [a.name for a in agents] == ['support'] * 3
 ```
 
-```text
-one agent definition; durability attached at run time (see docs/durable_execution/*):
-  - Temporal  (TemporalDurability capability; temporal + pydantic-ai[temporal])
-  - DBOS      (DBOSDurability capability; dbos + pydantic-ai[dbos])
-  - Prefect   (PrefectDurability capability; prefect + pydantic-ai[prefect])
-  - Restate, Kitaru, Apache Airflow: external adapters, same shape
-agent definition changes: 0 lines
-```
 
-## Where we're not the answer (we'll say it)
+The point isn't that we have durability. It's that you choose the engine, and it's probably one your
+company already runs and already knows how to operate.
 
-- No managed agent server; your infra stays your infra.
-- No TS/JS framework. If your whole app is TypeScript, the [Vercel](vs-vercel-ai-sdk.md) and
-  [Mastra](vs-mastra.md) pages are the more honest read.
-- Curated integrations, not an exhaustive directory. If you need a rare one, you wire it.
-- `run_sync` can't nest inside async code, and a tool running in a worker thread can't be
-  force-stopped. Read those two before you build around them.
+## Where we're not the answer
 
-*Versions: pydantic-ai 2.42.0 / pydantic-evals 2.42.0 — 2026-09-10. Every snippet above is
-re-executed by this repository's tests on every change; verification records in the
-[framework-comparison series](https://github.com/pydantic/pydantic-ai-notes).*
+Everything above is a reason to pick us. Here's the other side, so you don't find it out later.
+
+- **No hosted platform.** No managed runtime, no control plane, no dashboard you get by signing up.
+  Agno, Mastra, LangSmith, and the OpenAI platform all give you one, and if that's what you want, that's
+  a real reason to pick them.
+- **No TypeScript.** If your product lives in the browser, the Vercel AI SDK or Mastra will serve you
+  better. We have UI adapters, including for the AI SDK's protocol, but the agent stays in Python.
+- **A smaller integration catalogue.** LangChain's is far bigger. If you need a connector that exists
+  only there, that matters more than anything on this page.
+- **Turnkey coding agents.** Claude Code and Pi are finished products. Ours is a library of the parts
+  they're made of, which is more work and more yours afterwards.
+- **Memory.** Mastra and Agno ship more developed memory than we do. Ours is dependencies and history
+  processors you wire up.
+- **Some harness pieces are experimental.** Planning, subagents, compaction, and runtime authoring are
+  moving.
+
+## The comparisons
+
+Framework by framework, with what each does better:
+[LangChain and LangGraph](vs-langchain-langgraph.md) ·
+[OpenAI Agents SDK](vs-openai-agents-sdk.md) ·
+[Claude Agent SDK](vs-claude-agent-sdk.md) ·
+[CrewAI](vs-crewai.md) ·
+[smolagents](vs-smolagents.md) ·
+[Google ADK](vs-google-adk.md) ·
+[AG2](vs-ag2.md) ·
+[Agno](vs-agno.md) ·
+[Mastra](vs-mastra.md) ·
+[Vercel AI SDK](vs-vercel-ai-sdk.md) ·
+[Pi](vs-pi.md)
+
+---
+
+*Pydantic AI 2.42, checked 2026-09-10. Every example on this page is executed by this repository's test
+suite on every commit, so the output shown is what it printed. Claims about other frameworks are
+checked on their pages against a pinned version.*

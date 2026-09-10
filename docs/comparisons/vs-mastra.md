@@ -1,33 +1,33 @@
 # Pydantic AI vs Mastra
 
-Choosing an agent framework and you're down to
-[Pydantic AI](../agent.md) and Mastra? Mastra is TypeScript, Pydantic AI is Python — if your service doesn't bind you to either, this page is the tiebreaker — the answer first, then code
-you can run in seconds.
+Mastra is the batteries-included TypeScript framework for agents. One package gives you agents,
+workflows with snapshots and time travel, a memory system with several kinds of recall, evaluation
+scorers, a sandboxed way to run model-written TypeScript, a local dev server with a playground, and a
+hosted Studio and Cloud if you want them.
 
-## Pydantic AI fits if you need
+It's a genuinely strong product, and if your stack is TypeScript it should be on your shortlist ahead
+of this page's conclusion. Pydantic AI is Python, so for a TypeScript team the honest answer is usually
+Mastra or the Vercel AI SDK, and the rest of this page is for people whose agent is going to be in
+Python either way.
 
-- a **Python** agent
-- **one extension unit** that reaches the seams — including the event stream
-- deps, budgets, cancellation, and evals on the same loop
+Two things are worth comparing even across that line, because they're design choices rather than
+language ones.
 
-## Why the answers differ
+## One thing to learn instead of several
 
-Their observability is a module; our auditor is a capability — the same unit that bundles tools can wrap the run's events. Same concern, one product ship versus one extension noun.
+Mastra separates concerns by giving each its own concept: tools, processors, guardrails, subagents,
+workflow steps, scorers. Each is well shaped, and there are a lot of them.
 
-## See it work
-
-Say you want to observe what your agent did in production — without a separate observability product.
-
-Mastra (TS) spreads this across surfaces: agent config, tools, processors, and an observability module (their docs).
-
-Your side, runs offline:
+Pydantic AI has one extension: a capability. A capability can add tools, add instructions, change model
+settings, hook into the run's lifecycle, and watch or rewrite the stream of events — all as one unit,
+and it can wait to load until the model asks for it. Here's a single capability doing two of those jobs
+at once, adding a tool and auditing what the run emits:
 
 ```python {title="one_capability_two_jobs.py"}
-"""One capability, two jobs: add a tool and watch the stream.
+"""One capability, two jobs: it supplies the tool and audits the run.
 
-Your auditor is not a separate observability product; it is the same
-extension unit that carries tools. This capability both provides the
-tool the model calls and records every event it sees.
+The auditor is not a separate observability product bolted on; it is the same
+extension unit that carries the tool, watching the events the run emits.
 """
 import asyncio
 from collections.abc import AsyncIterable
@@ -38,13 +38,13 @@ from pydantic_ai.models.function import DeltaToolCall, FunctionModel
 
 
 def refund_status(order_id: str) -> str:
-    """Look up a refund status (provided by the capability)."""
+    """Look up a refund status."""
     return f'Order {order_id}: refunded.'
 
 
-class Auditor(Capability):
+class Refunds(Capability):
     def __init__(self):
-        super().__init__(id='auditor', description='watch and act', tools=[refund_status])
+        super().__init__(id='refunds', description='refund tools, audited', tools=[refund_status])
         self.seen: list[str] = []
 
     async def wrap_run_event_stream(
@@ -62,64 +62,98 @@ async def stream(messages, info):
         yield 'done'
 
 
-aud = Auditor()
-agent = Agent(FunctionModel(stream_function=stream), capabilities=[aud])
-
-
 async def main():
+    refunds = Refunds()
+    agent = Agent(FunctionModel(stream_function=stream), capabilities=[refunds])
     async with agent.run_stream_events('check my refund') as run:
         async for _ in run:
             pass
-    print(f'tool from the capability executed; auditor (same unit) observed: {aud.seen}')
-    assert 'FunctionToolCallEvent' in aud.seen
+    print('the capability ran its own tool:', 'FunctionToolCallEvent' in refunds.seen)
+    #> the capability ran its own tool: True
+    print('and saw the whole run:', len(refunds.seen), 'events')
+    #> and saw the whole run: 7 events
 
 
 asyncio.run(main())
-
-
 ```
 
-```text
-tool from the capability executed; auditor (same unit) observed: ['PartStartEvent', 'PartEndEvent', 'FunctionToolCallEvent', 'FunctionToolResultEvent', 'PartStartEvent', 'FinalResultEvent', 'PartEndEvent']```
 
-**Notice:** The same unit added the tool *and* watched the stream. One noun, both jobs — your auditor is just a capability.
 
-## The details
+The practical effect is that "add refunds to this agent" is one object to write, one object to test,
+and one object to hand to another team — rather than a tool registered here, an instruction appended
+there, and a listener wired up somewhere else.
 
-| What you get | Mastra | Pydantic AI |
+## Observability you own
+
+Mastra's tracing goes to their dev server, Studio, and Cloud, and that integration is part of what
+makes it pleasant.
+
+Pydantic AI emits OpenTelemetry. It goes to Logfire if you want the first-party experience, or to
+Datadog, Honeycomb, Grafana, or whatever your company already runs, and the agent's traces sit next to
+your database and HTTP spans rather than in a separate tool. That's less polished on day one and less
+of a commitment on day two hundred.
+
+The same pattern shows up in durability. Mastra's story is its workflow engine, with a variant built on
+Inngest. Ours is a wrapper around whichever engine you already operate — Temporal, DBOS, Prefect,
+Restate, Kitaru, or Airflow. Neither is better in the abstract; one has fewer moving parts, the other
+has fewer opinions.
+
+## Where Mastra is ahead
+
+Its memory is more developed than ours. Working memory, observational memory, and semantic recall are
+real features with real depth, and the equivalent in Pydantic AI is dependencies and history processors
+you wire up yourself. If memory is the centre of your product, that gap is on our side.
+
+Mastra also has a reconnectable streaming story under durability — a client can drop and rejoin a
+running agent. Ours doesn't do that; under a durable engine you stream through an external sink you
+provide.
+
+## Side by side
+
+| | Mastra 1.28 (`@mastra/core` 1.65) | Pydantic AI 2.42 |
 |---|---|---|
-| Stack | TS/Node; agents + workflows + tools in one package | Python 3.10+; packages split: core, evals, graph |
-| Extension | Processors/guardrails/workflow concepts | Capabilities: one unit (tools + instructions + hooks), deferrable, spec-declarable |
-| Observability | Built-in (a real strength) | OTel + Logfire instrumentation; your capability can also see the stream (proven below) |
-| Dev loop | `mastra dev` ships a local playground + Swagger + OpenAPI out of the box (per Speakeasy 2026-03) | Offline test models drive the whole loop |
-| Memory | Most sophisticated of the group: 4 types incl. Observational Memory (~5-40x auto-compress; runs background LLM calls whose tokens don't appear in agent usage — per Speakeasy 2026-03) | Your memory: deps and history processors, wired by you, billed visibly |
-| Typed seams | Zod at boundaries | `deps_type` through construction, tools, specs, tests, evals |
-| Cancellation | TS `AbortSignal` norm | Typed: `ctx.cancel()`, thread-safe token, catchable `RunCancelled` with resumable history |
-| Tests/evals | Vitest + their evals | Offline `TestModel`/`FunctionModel` + typed datasets, CI-runnable |
+| Language | TypeScript | Python |
+| Extending an agent | Tools, processors, guardrails, subagents, scorers | One capability that can do all of those, and load on demand |
+| Trusted state | Zod validates tool inputs | `deps_type`, read by tools, invisible to the model |
+| Workflows | A workflow engine with snapshots and time travel | Ordinary async code, and `pydantic_graph` when you want a state machine |
+| Durability | Their workflow engine, or the Inngest variant | Six engines wrap the agent; you pick |
+| Memory | Working, observational, and semantic recall | Dependencies and history processors you wire up |
+| Evals | Scorers, with their tooling and Vitest | `pydantic-evals` in your test suite, using the agent's own types |
+| Tracing | Dev server, Studio, Cloud | OpenTelemetry to wherever you send everything else |
+| Deployment | Their Cloud is the paved road | Anywhere; it's a library |
 
-## If this answer doesn't fit you
+## Choose Mastra when
 
-If yours is a TypeScript stack and you want one package that does agents, workflows, and observability, Mastra is built for exactly that, and we're not going to talk you out of it. Ours is the Python expression of the same instinct — one extension unit that reaches the event stream.
+- Your product is TypeScript. This is most of the decision.
+- You want workflows, memory, evals, and a playground without assembling them.
+- Their Cloud is somewhere you're happy to run things.
+- Memory is central to what you're building.
 
----
+## Choose Pydantic AI when
+
+- Your agent belongs in Python, near your data or your existing services.
+- You want traces in the observability stack you already pay for.
+- You want durability from an engine your company already operates.
+- Credentials and identity must sit where the model can't reach them.
 
 ## FAQ
 
-**Is Pydantic AI a drop-in replacement for Mastra?**
-Drop-in, no — the loop and the seams are different, even though the ideas carry over (tools,
-prompts, outputs). If you're weighing a move, that honesty is the point of this page: read the fits
-list and run the proof before you decide.
+**Can I use both?**
+Yes — Mastra in front, a Python agent behind an HTTP endpoint. Pydantic AI's UI adapters mean the
+front end doesn't need to know.
 
-**When should I use Mastra on its own?**
-When your stack is TypeScript and you want agents, workflows, and observability from one package.
+**Is Pydantic AI a drop-in replacement?**
+No, it's a different language. What ports is the design: tools, prompts, schemas, and how you think
+about evals.
 
-**Why do people pick Pydantic AI over Mastra?**
-Because the loop is yours end to end — typed deps, cancellation that resumes, budgets that stop side
-effects before they start, evals in CI — and every one of those claims is a snippet on this page you
-can run in seconds. Community threads on r/AI_Agents add "documentation" and "low abstraction" to
-that list; see Independent takes on the [overview](index.md).
-
+**What does Mastra do better?**
+Memory, the local development experience, and reconnectable streaming. All three are real, and the
+first two are why people like it.
 
 ---
 
-*Versions: Mastra (docs); Pydantic AI 2.42.0 — 2026-09. Snippets re-executed by this repository's tests.*
+*Mastra versions checked on the npm registry on 2026-09-10 (`mastra` 1.28.0, `@mastra/core` 1.65.0).
+Unlike the other pages in this series, the Mastra behaviour described here comes from their published
+documentation rather than from code we ran — it's TypeScript and we didn't install it. Treat those
+claims as their documentation's, and tell us if any have gone stale. The Pydantic AI example is
+executed by this repository's test suite on every commit.*

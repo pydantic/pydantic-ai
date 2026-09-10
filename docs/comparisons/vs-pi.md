@@ -1,132 +1,135 @@
 # Pydantic AI vs Pi
 
-Choosing an agent framework and you're down to [Pydantic AI](../agent.md) and Pi? Pi is the coding
-agent from the pi (earendil) project — and yes, it's a library too: the same package that ships the
-CLI exports an embeddable core (`createAgentSession`, `createAgentSessionRuntime`,
-`createCodingTools`, extensions — verified in 0.85.1). So this page is not "CLI vs library"; both
-sides embed. The real differences are the language, and what sits underneath the loop.
+Pi is a coding agent you run in a terminal, and it's also a library: the same package that ships the
+CLI exports an embeddable core, so you can drive the agent from your own TypeScript. It has skills
+discovered from `SKILL.md` files, automatic conversation compaction, a strict line-delimited JSON
+protocol for driving it programmatically, and a clear-eyed security position — its own documentation
+says Pi ships no sandbox and that real isolation has to come from a container or a VM.
 
-## Pydantic AI fits if you need
+The closest thing on our side isn't Pydantic AI by itself. It's Pydantic AI plus
+[pydantic-ai-harness](https://github.com/pydantic/pydantic-ai-harness), which is where the
+coding-agent pieces live: a filesystem, a shell, subagents, skills, memory, compaction, planning, and
+`CodeMode` for running model-written Python inside the [Monty](https://github.com/pydantic/monty)
+sandbox.
 
-- the loop **in your own process**, typed and cancellable, on a general framework — not a session
-  runtime built for a coding CLI
-- a **Python** stack (Pi's core is TypeScript/Node)
-- coding capabilities as **composeable units** — `CodeMode` (Monty), `FileSystem`, `Shell`,
-  subagents, compaction, skills, memory, ACP — each replaceable, on the same capability model as
-  every other agent
-- what a shipped product needs underneath: typed deps, budgets, resumable cancellation, **evals in
-  CI**, specs, and **durable execution** wraps (Temporal, DBOS, Prefect, Restate, Kitaru, Airflow)
+So this is a comparison between a finished product you can also embed, and a set of parts you
+assemble. Both are legitimate. Which one you want depends on how much of the agent you need to change.
 
-## Why the answers differ
+## A product you configure, or parts you assemble
 
-Pi's core exists to power a coding agent: sessions, compaction, code tools, extensions — opinionated
-and well-built, in TypeScript. Ours is the general framework, with the coding edition (the harness)
-composed from replaceable capabilities on the same typed loop. Same idea, different center of
-gravity: theirs is the coding session; ours is the loop and everything you can hang off it.
+Pi has made the decisions. What the loop does, how compaction works, when skills load, how the
+conversation is stored — all settled, all good defaults, and you get a working coding agent
+immediately. Configuration is how you influence it.
 
-## See it work
-
-Say you're building a product on an agent core, and the loop should run inside your own process.
-
-In Pi, the core is TypeScript — `createAgentSession({...})` plus `createCodingTools()` from the
-same published package (0.85.1); what you embed is the session engine the CLI uses.
-
-Your side, runs offline:
+The harness has made almost none. Every piece is a capability you add, replace, or leave out, and they
+sit on the same agent object as everything else, which means the coding pieces compose with ordinary
+agent features rather than living in a separate world:
 
 ```python {title="in_process_loop.py"}
-"""The loop is an object in your process — not a harness you configure.
+"""The loop runs in your process, so a tool is just your function."""
 
-No subprocess, no CLI contract: the run is a value you drive node by node,
-and everything runs in your pid. You keep your code, your exits, your
-libraries around the loop; nothing is spawned to run it.
-"""
-import asyncio
 import os
-from pydantic_ai import Agent
-from pydantic_ai.models.function import FunctionModel
-from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
 
-pid = os.getpid()
+from pydantic_ai import Agent
+from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.models.function import FunctionModel
+
+ran_in: list[int] = []
 
 
 async def model(messages, info):
     if len(messages) == 1:
-        return ModelResponse(parts=[ToolCallPart('twice', {'n': 21})])
-    return ModelResponse(parts=[TextPart('42')])
+        return ModelResponse(parts=[ToolCallPart('where_am_i', {})])
+    return ModelResponse(parts=[TextPart('In the same process that called me.')])
 
 
 agent = Agent(FunctionModel(model))
 
 
-@agent.tool
-def twice(ctx, n: int) -> int:
-    return n * 2
+@agent.tool_plain
+def where_am_i() -> str:
+    """Report which process this tool is executing in."""
+    ran_in.append(os.getpid())
+    return 'checked'
 
 
-async def main():
-    nodes = []
-    async with agent.iter('what is 21*2?') as run:
-        async for node in run:
-            nodes.append(type(node).__name__)
-            await asyncio.sleep(0)  # ordinary Python between nodes
-    print('nodes:', ' -> '.join(nodes))
-    print('the loop ran in your own process:', pid == os.getpid())
-
-
-asyncio.run(main())
-
-
-
+result = agent.run_sync('which process runs the tools?')
+print('the tool ran in this process:', ran_in == [os.getpid()])
+#> the tool ran in this process: True
+print(result.output)
+#> In the same process that called me.
+assert ran_in == [os.getpid()]
 ```
 
-```text
-nodes: UserPromptNode -> ModelRequestNode -> CallToolsNode -> ModelRequestNode -> CallToolsNode -> End
-the loop ran in your own process: True
-```
 
-**Notice:** both embed. Here the loop is Python, node by node, in your PID — and underneath it sit
-the seams a shipped product keeps needing: cancellation that resumes, budgets, evals, durable
-engine wraps. That's the difference the CLI-shaped core doesn't give you by itself.
 
-## The details
+The loop runs in your process, so a tool is a Python function with your types and your imports, and you
+can put a breakpoint in it.
 
-| What you get | Pi | Pydantic AI |
+The trade is honest in both directions. If you want a coding agent, Pi is running today and the harness
+is an afternoon of assembly. If you want a coding agent that does something Pi didn't anticipate —
+different compaction, a different filesystem, an approval gate on one specific action, a spend ceiling
+per customer — that's a capability on our side and a fork on theirs.
+
+## Language, and where isolation lives
+
+Pi's core is TypeScript and Node. Ours is Python. For most teams that settles it before any feature
+comparison starts.
+
+On isolation, Pi's position is that it isn't the sandbox — you run it in a container, mount things
+read-only, and give it minimal credentials. That's a defensible design and they say it plainly.
+
+Ours puts more of the boundary in the library: `CodeMode` runs model-written code in Monty rather than
+your interpreter, `ModalSandbox` gives the agent an isolated cloud container, any tool can be marked
+`requires_approval=True` so the run pauses and hands you the pending call, and `deps_type` keeps
+credentials somewhere the model can't see them at all. You should still run the thing in a container.
+The difference is how much survives when you don't.
+
+## Side by side
+
+| | Pi | Pydantic AI + harness 2.42 |
 |---|---|---|
-| Language | TypeScript/Node | Python 3.10+ |
-| Embeddable core | `createAgentSession` + coding tools + extensions (0.85.1) | pydantic-ai-harness: capability library |
-| Loop underneath | Their session runtime | pydantic-ai: typed deps, budgets, typed cancellation |
-| Coding capabilities | Opinionated session + tools + compaction | `CodeMode`, `FileSystem`, `Shell`, skills, memory, ACP — replaceable |
-| Durability | Sessions/compaction (their model) | Engine wraps: Temporal, DBOS, Prefect, Restate, Kitaru, Airflow |
-| Evals / specs | Not first-party there | Typed datasets + evaluators in CI; `AgentSpec` |
-| Product | CLI (TUI/print/RPC) + core, same package | Harness-as-library docs; sandbox isolation a composable choice |
+| Language | TypeScript and Node | Python |
+| What you get | A working coding agent, plus an embeddable core | Parts you assemble onto any agent |
+| Changing behaviour | Configuration, extensions, skills | Any piece is a capability you swap |
+| Isolation | Deliberately none; run it in a container | `CodeMode` in Monty, `ModalSandbox`, per-tool approval, plus your container |
+| Trusted state | Environment and configuration | `deps_type`, read by tools, invisible to the model |
+| Skills | `SKILL.md` files with progressive disclosure | Skills as a capability, alongside the rest |
+| Driving it programmatically | Line-delimited JSON over stdin and stdout | Ordinary Python function calls |
+| Models | Configurable provider and model | Any provider, with `FallbackModel` for failover |
+| Crash recovery | Session resume | Six engines wrap the agent object |
+| Testing offline | Run the agent | `TestModel` and `FunctionModel`, no network |
 
-## If this answer doesn't fit you
+## Choose Pi when
 
-If your product is TypeScript — or you want Pi's opinionated session-and-compaction stack as its
-foundation, exactly as it powers the CLI — Pi's core is a real path, and the package's docs
-(`docs/`, `examples/`) show embedding it. If you're building on Python, or you want the general
-framework underneath the coding layer (typed, cancellable, budgeted, durable, evals included) with
-coding capabilities composed in, that's the harness. Both directions are fine; they're just
-different centers of gravity.
+- You want a good coding agent now and don't intend to change how it works.
+- TypeScript is your language.
+- Its skills and compaction behaviour already match how you want to work.
+- You're happy to provide isolation at the container level, which you should be doing anyway.
+
+## Choose Pydantic AI and the harness when
+
+- The coding agent is part of a larger Python application rather than a tool you run.
+- You need to replace or add behaviour that a configuration flag doesn't cover.
+- You want spend ceilings, approval gates, resumable cancellation, and evals from the same framework.
+- Credentials must sit where the model can't reach them.
 
 ## FAQ
 
-**Is Pydantic AI a drop-in replacement for Pi?**
-Drop-in, no — the loop and the seams are different, even though the ideas carry over (tools,
-prompts, outputs). If you're weighing a move, that honesty is the point of this page: read the fits
-list and run the proof before you decide.
+**Is the harness a Claude Code or Pi competitor?**
+Not as a product. It's a library of the pieces those products are made of. If you want a finished
+coding agent, use a finished coding agent.
 
-**When should I use Pi on its own?**
-When your product is TypeScript, or you want Pi's opinionated session-and-compaction stack as its foundation — that's what its core is for.
+**How much assembly is it really?**
+A useful agent with a filesystem, a shell, and subagents is a short file. Matching a mature CLI's
+behaviour — its compaction, its permission prompts, its polish — is considerably more.
 
-**Why do people pick Pydantic AI over Pi?**
-Because the loop is yours end to end — typed deps, cancellation that resumes, budgets that stop side
-effects before they start, evals in CI — and every one of those claims is a snippet on this page you
-can run in seconds. Community threads on r/AI_Agents add "documentation" and "low abstraction" to
-that list; see Independent takes on the [overview](index.md).
-
+**What does Pi do better?**
+Being finished. And its security documentation is more direct about its own limits than most projects
+manage.
 
 ---
 
-*Versions: pi 0.85.1 (exports verified), pydantic-harness @ 1ad638f8; Pydantic AI 2.42.0 — 2026-09-10.
-Snippets re-executed by this repository's tests.*
+*Pi behaviour described here comes from its CLI and its own documentation, checked at version 0.85.1;
+we did not run its embeddable core. The Pydantic AI example is executed by this repository's test suite
+on every commit. Pydantic AI 2.42, checked 2026-09-10.*

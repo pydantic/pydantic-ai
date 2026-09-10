@@ -1,26 +1,24 @@
 # Pydantic AI vs Agno
 
-Choosing an agent framework and you're down to
-[Pydantic AI](../agent.md) and Agno. This page is the tiebreaker — the answer first, then code
-you can run in seconds.
+Agno is two products that ship together. There's the library — `Agent`, `Team`, toolkits, memory,
+knowledge, guardrails — and there's **AgentOS**, a runtime you deploy: a FastAPI application with
+prebuilt endpoints for sessions, memory, knowledge and evals, a control-plane UI, JWT auth with
+role-based access, storage, and background runs. If what you want is an agent service running by
+Friday, that combination is hard to beat, and nothing in Pydantic AI competes with it directly.
 
-## Pydantic AI fits if you need
+Pydantic AI is only the library half. There's no runtime to deploy, no control plane, and no UI. You
+put the agent inside whatever you already run.
 
-- an agent that **runs where your app runs** — sync, async, or iterated, same result
-- the production seams: deps, budgets, resumable cancellation, offline tests
-- durability by **choosing an engine** rather than adopting a runtime
+That's the whole comparison, really — but it has two consequences worth spelling out.
 
-## Why the answers differ
+## Nothing to adopt
 
-Their value is the runtime they add; ours is that there is nothing to add. The same agent, three driving styles, one result.
+An Agno agent is built for AgentOS, and its shape follows from that: a large keyword constructor, an
+implied session and storage story, and a deployment target. It's coherent, and if you're deploying
+AgentOS it's exactly right.
 
-## See it work
-
-Say your agent has to run where your app already runs.
-
-Agno bundles a runtime and offers the AgentOS hosted platform (3.0.x).
-
-Your side, runs offline:
+A Pydantic AI agent has no assumed home. The same object runs blocking, runs async, or gets driven a
+step at a time inside a loop you control:
 
 ```python {title="runtime_agnostic.py"}
 """No bundled runtime to adopt: the same agent runs sync, async, and driven
@@ -28,8 +26,8 @@ node-by-node with iter() - whichever shape your application already uses."""
 import asyncio
 
 from pydantic_ai import Agent
-from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.messages import ModelResponse, TextPart
+from pydantic_ai.models.function import FunctionModel
 
 
 async def model(messages, info):
@@ -51,50 +49,86 @@ async_result = asyncio.run(agent.run('q')).output
 iter_result = asyncio.run(via_iter())
 
 print(f'sync={sync_result!r} async={async_result!r} iter={iter_result!r}')
+#> sync='same result' async='same result' iter='same result'
 assert sync_result == async_result == iter_result
 
 
 ```
 
-```text
-sync='same result' async='same result' iter='same result'
-```
 
-**Notice:** Same agent, sync/async/iterated, same output. Nothing to adopt — and because the loop is plain code, every seam on the checklist applies.
+Same agent, same answer, three shapes — which matters when the agent has to live inside a Django view,
+a Celery task, a Lambda handler, or a websocket server you already have.
 
-## The details
+For crash recovery, the same idea applies: rather than a durable API belonging to the runtime, a
+durable engine is a capability you add. `capabilities=[TemporalDurability()]` is the whole change, and DBOS, Prefect,
+Restate, Kitaru, and Airflow have equivalents. You use whichever your company already runs.
 
-| What you get | Agno | Pydantic AI |
+## What the tools are allowed to do
+
+Agno positions itself for coding agents and ships shell, file, and Python tools to match. Their
+defaults are worth understanding before you turn them on, and Agno documents them honestly — the shell
+tool's own docstring says the command "is executed directly on the host OS" and tells you to gate it
+with `requires_confirmation_tools=["run_shell_command"]`.
+
+At 3.0.9: `run_shell_command` runs `subprocess` on the host by default. `PythonTools` runs
+model-written code with `exec` in your process and includes tools that install packages with pip. File
+and Python tools do contain paths by default — `restrict_to_base_dir=True`, with `..`, absolute paths,
+and symlink escapes rejected — which is a real protection and recently added.
+
+Pydantic AI's plain tools are just your functions, so there's nothing to sandbox. When you do want the
+model executing code, the harness gives you `CodeMode`, which runs it inside the
+[Monty](https://github.com/pydantic/monty) sandbox, and `ModalSandbox`, which gives the agent an
+isolated cloud container instead of your host. Approval before a risky tool runs is built into the
+framework: mark it `requires_approval=True` and the run pauses and hands you the pending call.
+
+## Side by side
+
+| | Agno 3.0.9 | Pydantic AI 2.42 |
 |---|---|---|
-| Runtime | Bundled runtime + AgentOS hosted platform | Runtime-agnostic: sync, async, or driven node-by-node (proven below) |
-| Tools | Curated toolsets; shell tool wraps host `subprocess` (requires confirmation) | Typed tools + toolsets per run + capabilities; deps boundary |
-| Multi-agent | Agent teams | Plain async orchestration; graph builder |
-| Evals | Included | Typed datasets + evaluators, CI-runnable offline |
-| Durable | Your infrastructure / platform | Six engine wraps on the public interface |
+| What you deploy | AgentOS: a runtime with endpoints, UI, auth, roles, storage | Nothing; the agent goes inside your app |
+| Agent shape | One large constructor built around the runtime | A typed value that runs sync, async, or step by step |
+| Trusted state | Session state and values captured in tools | `deps_type`, read by tools, invisible to the model |
+| Stopping a run | `cancel_run(run_id)` | `CancellationToken` across runs, `ctx.cancel()` in a tool, `RunCancelled` with resumable history |
+| Shell and code tools | Host `subprocess` and in-process `exec` by default, with warnings and opt-in confirmation | `CodeMode` in Monty, `ModalSandbox` for containers, `requires_approval=True` on any tool |
+| Crash recovery | AgentOS durable API | Six engines wrap the agent object; you pick |
+| Structured output | `output_schema` — note that `output_model` means the parser model | `output_type`, with explicit control over how it goes over the wire |
+| Memory and knowledge | Built in and well developed | Bring your own; ours is thinner |
+| Evals | Eval classes stored in AgentOS | `pydantic-evals` in your test suite, using the agent's own types |
+| Tracing | Their control plane | OpenTelemetry to wherever you send everything else |
 
-## If this answer doesn't fit you
+## Choose Agno when
 
-If all-in-one plus a hosted runtime (AgentOS) and team orchestration is the product you want, Agno genuinely ships that. We chose the opposite trade: nothing to adopt, run where your app runs. This page is that trade, demonstrated. The recurring community advice on r/AI_Agents is to try Agno and Pydantic AI back to back and keep the one that feels better — we agree with that advice. And if you came here from a comparison quoting creation-speed or memory numbers, we answer that claim head-on in [Tradeoffs, translated](under-the-hood.md) — measured, not argued.
+- You want a deployable agent service with auth, roles, and a UI, and you don't want to build it.
+- Their memory and knowledge features match what you need — they're more complete than ours.
+- A team-of-agents abstraction fits your problem and you'd rather configure than code it.
+- Running one more service is fine, and having it be theirs is a plus.
 
----
+## Choose Pydantic AI when
+
+- The agent has to live inside an application you already have.
+- Credentials and identity must sit where the model can't reach them.
+- You want model-written code in a sandbox rather than on the host, and approval gates in the
+  framework rather than in a tool's configuration.
+- You want crash recovery from an engine you already operate.
 
 ## FAQ
 
-**Is Pydantic AI a drop-in replacement for Agno?**
-Drop-in, no — the loop and the seams are different, even though the ideas carry over (tools,
-prompts, outputs). If you're weighing a move, that honesty is the point of this page: read the fits
-list and run the proof before you decide.
+**Is Agno faster?**
+It constructs agents faster, and you'll see benchmarks about that. Construction happens once and takes
+microseconds either way; a single model call takes hundreds of milliseconds. It's not the number to
+choose on.
 
-**When should I use Agno on its own?**
-When you want the all-in-one with a hosted runtime (AgentOS) and team orchestration out of the box.
+**Can I get something like AgentOS with Pydantic AI?**
+Not out of the box. You'd put the agent behind your own FastAPI app, use one of the UI adapters, and
+send telemetry to Logfire or your own collector. That's more work, and it's your stack afterwards.
 
-**Why do people pick Pydantic AI over Agno?**
-Because the loop is yours end to end — typed deps, cancellation that resumes, budgets that stop side
-effects before they start, evals in CI — and every one of those claims is a snippet on this page you
-can run in seconds. Community threads on r/AI_Agents add "documentation" and "low abstraction" to
-that list; see Independent takes on the [overview](index.md).
-
+**What does Agno do better?**
+Time to a running, authenticated, observable agent service. If that's the job, they've built the thing
+and we haven't.
 
 ---
 
-*Versions: agno 3.0.x; Pydantic AI 2.42.0 — 2026-09-10. Snippets re-executed by this repository's tests.*
+*Checked against agno 3.0.9 and Pydantic AI 2.42 on 2026-09-10. The tool behaviour comes from reading
+the installed package: `ShellTools.run_shell_command` and its docstring, `PythonTools`, and the
+`restrict_to_base_dir` default. AgentOS claims are from Agno's documentation, not run. The Pydantic AI
+example is executed by this repository's test suite.*

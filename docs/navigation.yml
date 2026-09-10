@@ -571,10 +571,10 @@ navigation:
         slug: "comparisons/overview"
         aliases:
           - "comparisons"
-      - page: "The production agent"
+      - page: "What a production agent needs"
         path: "comparisons/production-agents.md"
         slug: "comparisons/production-agents"
-      - page: "Tradeoffs, translated"
+      - page: "The numbers people quote about us"
         path: "comparisons/under-the-hood.md"
         slug: "comparisons/under-the-hood"
       - page: "vs LangChain & LangGraph"

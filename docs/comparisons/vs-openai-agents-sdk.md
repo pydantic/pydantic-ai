@@ -1,43 +1,40 @@
 # Pydantic AI vs OpenAI Agents SDK
 
-Choosing an agent framework and you're down to
-[Pydantic AI](../agent.md) and the OpenAI Agents SDK. This page is the tiebreaker — the answer first, then code
-you can run in seconds.
+The OpenAI Agents SDK is OpenAI's own agent library. You build an `Agent` and hand it to a `Runner`,
+and the pieces around it are shaped like the OpenAI platform: conversations persist as **sessions**,
+safety checks are **guardrails**, and passing work to another agent is a **handoff**. It is small,
+well documented, and it gets new OpenAI features first.
 
-## Pydantic AI fits if you need
+It has also grown a lot. Version 0.22.2 has guardrails on input, on output, and now on tool calls
+going in and coming back; handoffs can filter and nest history; streamed runs stop with
+`cancel(mode='immediate')` or `cancel(mode='after_turn')`, and `after_turn` is a nicer stop than
+anything we offer. Structured output is clean too — hand it an `output_type` and it validates the
+model's JSON into your type without forcing a tool call.
 
-- one extension noun — a capability (tools + instructions + settings + hooks, deferrable, spec-declarable)
-- a **deps boundary** the model cannot cross
-- **cancellation that resumes**: stop the run, keep the history, continue as an ordinary run
-- durability by wrapping, offline tests, or a choice of providers
+Pydantic AI is a general library rather than one vendor's. That shows up in two places: where your
+agent can run, and what happens when you stop it.
 
-## Why the answers differ
+## Stopping a run without losing it
 
-Their framework organizes the agent into platform-shaped categories (guardrails, handoffs, sessions); ours has one typed unit that carries the same concerns. Their resume is a session on their platform; ours is an exception that carries the history to the next run.
+Say a customer support agent has already filed a refund request, and then the customer closes the
+chat. You want to stop, keep what happened, and pick it up when they come back.
 
-## See it work
+In the OpenAI SDK you stop a streamed run and the iteration ends. What you keep afterwards depends on
+where the conversation lives: if you use a session, that's your record; if not, it's whatever you
+collected as it streamed. Sessions are a small protocol — `get_items`, `add_items`, `pop_item`,
+`clear_session` — and the storage behind them ships as separate packages.
 
-Say you need a stop button that doesn't destroy the conversation.
-
-In the OpenAI Agents SDK, streamed runs can stop (`cancel(mode='immediate'|'after_turn')`), and resume lives in platform sessions (0.17.3).
-
-Your side, runs offline:
+In Pydantic AI, stopping produces a value. The run raises `RunCancelled`, that exception carries the
+whole conversation, and passing it to the next run continues from there. Nothing is stored anywhere
+unless you store it.
 
 ```python {title="cancel_then_resume.py"}
-"""Cancellation, then resume: the exception carries the work; the next run continues.
+"""Stopping keeps the work: the exception carries the conversation, and the
+next run continues from it."""
 
-A stop gesture interrupts the in-flight model request. The run ends in
-RunCancelled; everything completed before it — the record_a result — is
-preserved in the exception's history. Pass that history to the next run:
-the remaining work executes and the run completes.
-"""
-import asyncio
-import threading
-import time
-
-from pydantic_ai import Agent, CancellationToken, RunCancelled
-from pydantic_ai.models.function import FunctionModel
+from pydantic_ai import Agent, CancellationToken, RunCancelled, RunContext
 from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.models.function import FunctionModel
 
 calls = 0
 
@@ -46,99 +43,109 @@ async def model(messages, info):
     global calls
     calls += 1
     if calls == 1:
-        return ModelResponse(parts=[ToolCallPart('record_a', {'item': 'invoice'})])
+        return ModelResponse(parts=[ToolCallPart('file_refund', {'item': 'invoice'})])
     if calls == 2:
-        await asyncio.sleep(3600)  # in-flight request, awaiting the model
-    if calls == 3:
-        return ModelResponse(parts=[ToolCallPart('record_b', {'item': 'receipt'})])
-    return ModelResponse(parts=[TextPart('run resumed and completed')])
+        return ModelResponse(parts=[ToolCallPart('notify_customer', {'item': 'invoice'})])
+    return ModelResponse(parts=[TextPart('Refund filed and the customer was told.')])
 
 
-agent = Agent(FunctionModel(model), deps_type=None)
+token = CancellationToken()
+agent = Agent(FunctionModel(model))
+
+
+@agent.tool_plain
+def file_refund(item: str) -> str:
+    return f'{item}: refund filed'
 
 
 @agent.tool
-def record_a(ctx, item: str) -> str:
-    return f'a:{item}:done'
+def notify_customer(ctx: RunContext, item: str) -> str:
+    token.cancel()  # e.g. the customer closed the chat just as we got here
+    return f'{item}: customer emailed'
 
 
-@agent.tool
-def record_b(ctx, item: str) -> str:
-    return f'b:{item}:done'
+try:
+    agent.run_sync('Refund the duplicate invoice charge.', cancellation_token=token)
+except RunCancelled as cancelled:
+    history = cancelled.all_messages()
+    print('work kept while stopped:', 'refund filed' in str(history))
+    #> work kept while stopped: True
 
-
-def main():
-    token = CancellationToken()
-
-    def stop_gesture():
-        time.sleep(0.3)
-        token.cancel()
-
-    threading.Thread(target=stop_gesture, daemon=True).start()
-    try:
-        agent.run_sync('start', cancellation_token=token)
-        raise SystemExit('BUG: first run completed')
-    except RunCancelled as exc:
-        history = exc.all_messages()
-        preserved = 'invoice' in str(history)
-        print(f'first run cancelled; completed work preserved: {preserved}')
-
-    resumed = agent.run_sync('continue', message_history=history)
-    print('resumed run output:', resumed.output)
-    assert preserved
-    assert resumed.output == 'run resumed and completed'
-
-
-main()
-
-
+resumed = agent.run_sync(message_history=history)  # no new prompt: the run is mid-flight
+print('after resuming:', resumed.output)
+#> after resuming: Refund filed and the customer was told.
 ```
 
-```text
-first run cancelled; completed work preserved: True
-resumed run output: run resumed and completed
-```
 
-**Notice:** Here the stop is an exception that carries the history. The next run is ordinary code — and the completed work is already in it.
 
-## The details
+The completed work is in the history, and the second run finishes the job. There is no session
+service in the middle, so the history is yours to put wherever you already put things.
 
-| What you get | OpenAI Agents SDK | Pydantic AI |
+One thing worth knowing before you rely on it: cancelling from inside a tool leaves the model's last
+tool call unexecuted, so a resume drops it. Cancelling with a token instead marks the history
+interrupted, which is cleaner.
+
+## Where the agent can run
+
+The other difference is durability, and it's less about features than about who owns the loop.
+
+A Pydantic AI run is an ordinary coroutine, so a durable engine can wrap the agent object without
+changing it. Adding `TemporalDurability()` to its capabilities gives you Temporal's retries and
+crash recovery; DBOS and Prefect
+wrappers ship in the same repository, and Restate, Kitaru, and Airflow adapters live in those
+projects. If your company already runs one of those, that's the one you use.
+
+The OpenAI SDK has no first-party equivalent, though a Temporal contrib package exists — which is
+worth saying, because it proves the idea isn't impossible there. Their durability story is sessions,
+and sessions remember conversations rather than executions. If the process dies halfway through a run,
+a session tells you what was said, not what was half-done.
+
+## Side by side
+
+| | OpenAI Agents SDK 0.22.2 | Pydantic AI 2.42 |
 |---|---|---|
-|---|---|---|
-| Extension model | Separate categories: **guardrails** (functions), **handoffs** (tools named `transfer_to_<name>`), hooks | **One noun**: a capability bundles tools + instructions + settings + hooks, orderable, deferrable, spec-declarable where data-only |
-| Trusted state | `TContext` flows through the loop | `deps_type` — the model cannot choose or see it |
-| Cancellation | Streamed-run `cancel(mode='immediate'\|'after_turn')` | Typed: `CancellationToken` (thread-safe, multi-run), `ctx.cancel()`, `RunCancelled` carrying resumable history |
-| Resume | Sessions / `previous_response_id` — platform continuity | The exception carries history; resume is a normal run (proven below) |
-| Durability | Engine-side adapters (the Temporal contrib exists) | First-party wraps on the public interface (Temporal, DBOS, Prefect) + external SDK integrations (Restate, Kitaru, Airflow) |
-| Crash recovery | Not built in — their docs point at Temporal for durable paths (per Speakeasy 2026-03) | Engine wraps on the public interface, durable from the start |
-| Output | Plain JSON validated into typed models via `tools=[]` | Output transports: text, tool, native, structured — wire semantics are yours |
-| Events | Run items — platform-shaped | Typed event stream (part/tool/result/final); capabilities can transform it |
-| Offline tests | Pluggable `Model`, no first-party test model | `TestModel` / `FunctionModel` drive the whole pipeline deterministically |
+| Models | OpenAI first; others through LiteLLM or a custom `Model` | Any provider directly, with `FallbackModel` for failover |
+| Trusted state | `TContext` travels with the run | `deps_type`, a separate argument tools read and the model never sees |
+| Stopping a run | `cancel('immediate')` or `cancel('after_turn')` on a streamed run | `CancellationToken` from any thread, or `ctx.cancel()` inside a tool; ends in `RunCancelled` holding the history |
+| Picking it back up | A session, or `previous_response_id` | Pass the history to the next run; storage is yours |
+| Safety checks | Guardrails on input, output, and tool calls, with tripwires | Capabilities, which bundle tools, instructions, settings and hooks together and can load on demand |
+| Handing work over | `handoff()` registers a tool named `transfer_to_<agent>` | An agent used as a tool, or a capability |
+| Crash recovery | Not first-party; a Temporal contrib exists | Six engines wrap the agent: Temporal, DBOS, Prefect, Restate, Kitaru, Airflow |
+| Testing offline | Write your own `Model`; there's no test model included | `TestModel` and `FunctionModel` ship with it; `ALLOW_MODEL_REQUESTS = False` blocks real calls |
+| Evals | A separate product | `pydantic-evals` runs in your test suite using the agent's own types |
+| Tracing | Their dashboard | OpenTelemetry to wherever you send everything else |
 
-## If this answer doesn't fit you
+## Choose the OpenAI SDK when
 
-If you're all-in on the OpenAI platform — sessions, Responses continuity, their tracing — their SDK is the natural layer, and honestly, `after_turn` is a nice stop. We won't pretend otherwise. Our claim is narrower: if the loop has to be yours, these are the seams the platform shape won't give you — and OpenAI models work with us either way.
+- You are building on OpenAI and want their newest features the week they land.
+- Their hosted sessions and tracing dashboard are things you'd rather not build or run.
+- `after_turn` is the stop you want: let the current turn finish, then halt.
+- You want the smallest possible amount of code between you and the Responses API.
 
----
+## Choose Pydantic AI when
+
+- You want the same agent to run on Claude, Gemini, and GPT without a rewrite.
+- Credentials and customer identity must sit where the model can't reach them.
+- You need crash recovery from an engine your company already operates.
+- You want the agent's tests to run offline in CI like the rest of your test suite.
 
 ## FAQ
 
-**Is Pydantic AI a drop-in replacement for OpenAI Agents SDK?**
-Drop-in, no — the loop and the seams are different, even though the ideas carry over (tools,
-prompts, outputs). If you're weighing a move, that honesty is the point of this page: read the fits
-list and run the proof before you decide.
+**Can I use OpenAI models with Pydantic AI?**
+Yes, including the Responses API, and that's how most people run it. Choosing us isn't choosing
+against OpenAI.
 
-**When should I use OpenAI Agents SDK on its own?**
-When you're all-in on the OpenAI platform — sessions, Responses continuity, their tracing — and `after_turn` is the stop-grace you need.
+**Is it a drop-in replacement?**
+No. Tools and prompts carry over almost unchanged. Guardrails become capabilities or plain validation,
+handoffs become an agent called as a tool, and sessions become message history you store yourself.
 
-**Why do people pick Pydantic AI over OpenAI Agents SDK?**
-Because the loop is yours end to end — typed deps, cancellation that resumes, budgets that stop side
-effects before they start, evals in CI — and every one of those claims is a snippet on this page you
-can run in seconds. Community threads on r/AI_Agents add "documentation" and "low abstraction" to
-that list; see Independent takes on the [overview](index.md).
-
+**What does the OpenAI SDK do better?**
+New OpenAI features arrive there first, `after_turn` is a real stop mode we don't have, and their
+hosted tracing works the moment you install it.
 
 ---
 
-*Versions: openai-agents 0.17.3; Pydantic AI 2.42.0 — 2026-09-10. Snippets re-executed by this repository's tests.*
+*Checked against openai-agents 0.22.2 and Pydantic AI 2.42 on 2026-09-10. The OpenAI SDK facts come
+from reading the installed package — method signatures, exported guardrail types, and `handoff()`
+parameters. The Pydantic AI example is run by this repository's test suite on every commit, so its
+output is what it printed.*

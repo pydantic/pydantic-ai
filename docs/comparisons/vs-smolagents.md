@@ -1,26 +1,30 @@
 # Pydantic AI vs smolagents
 
-Choosing an agent framework and you're down to
-[Pydantic AI](../agent.md) and smolagents. This page is the tiebreaker — the answer first, then code
-you can run in seconds.
+smolagents takes an unusual position and takes it seriously: instead of asking the model for
+structured tool calls, it asks the model to write Python, then runs that Python. A `CodeAgent` loops —
+model writes code, sandbox runs it, output goes back — until the code calls `final_answer`. It's a
+small library with few dependencies, it's honest about its limits, and it's a genuinely good fit when
+the task is computational.
 
-## Pydantic AI fits if you need
+Its default sandbox is a restricted interpreter rather than a container, and it says so. Running
+`import os` gets you *"Import of os is not allowed. Authorized imports are: collections, datetime,
+itertools, math, queue, random, re, stat, statistics, time, unicodedata"*, and `open(...)` is refused
+outright. For real isolation you escalate to one of the remote executors — Docker, E2B, Modal, Blaxel,
+or your own.
 
-- **structured async**: parallel tool calls, budgets, cancellation, event streams
-- a **deps boundary** — bounding what the model knows, not just where code runs
-- **evals in CI**, and seams that hold for every provider, not just Python-executing models
+Pydantic AI does structured tool calls by default, and can do the write-code approach too through
+`CodeMode` in [pydantic-ai-harness](https://github.com/pydantic/pydantic-ai-harness), which runs the
+model's Python inside the [Monty](https://github.com/pydantic/monty) sandbox. The difference that
+matters more day to day is that one library is synchronous and the other isn't.
 
-## Why the answers differ
+## Synchronous, and what that costs
 
-Their loop executes the code the model writes inside a sandbox; ours bounds the model itself with typed deps, and the loop is structured enough to limit, cancel, and observe. Different problems — the proof shows the concurrency their sync loop cannot have.
+smolagents' loop is blocking. `CodeAgent.run()` has no async counterpart, so a run owns the thread it's
+on. Two consequences follow.
 
-## See it work
-
-Say you want parallel work, not a loop that serializes.
-
-smolagents runs sync-only — zero `asyncio`/`anyio` reference in 1.26.0.
-
-Your side, runs offline:
+The first is concurrency. If the model wants three independent things done — three lookups, three API
+calls — they happen one after another, because the generated code runs in a single interpreter on one
+thread. In Pydantic AI the tools are `async def` and the model can ask for several at once:
 
 ```python {title="parallel_tool_calls.py"}
 """Parallel tool calls in one turn.
@@ -32,8 +36,8 @@ import asyncio
 import time
 
 from pydantic_ai import Agent, capture_run_messages
-from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.models.function import FunctionModel
 
 started: list[str] = []
 
@@ -67,7 +71,9 @@ async def main():
     wall = time.perf_counter() - t0
     seen = {p.content for m in msgs for p in m.parts if hasattr(p, 'content') and 'done' in str(getattr(p, 'content', ''))}
     print(f'completed in parallel: {sorted(seen)}')
+    #> completed in parallel: ['a:done', 'b:done', 'c:done', 'done']
     print(f'wall time: {wall:.2f}s (the three calls would take ~0.75s one after another)')
+    #> wall time: 0.26s (the three calls would take ~0.75s one after another)
     assert {'a:done', 'b:done', 'c:done'} <= seen
     assert wall < 0.7
 
@@ -77,48 +83,79 @@ asyncio.run(main())
 
 ```
 
-```text
-completed in parallel: ['a:done', 'b:done', 'c:done', 'done']
-wall time: 0.26s (the three calls would take ~0.75s one after another)
-```
 
-**Notice:** Three 250 ms calls in one response finished together in ~0.26 s. Structured async is the prerequisite for budgets and cancellation that actually work.
+Three calls that would take about three quarters of a second in sequence finish in a quarter, because
+they actually overlapped.
 
-## The details
+The second is stopping. smolagents does have a stop: `agent.interrupt()` sets a flag the loop checks
+between steps. It works, but because the run is blocking you need another thread to call it, and what
+you get afterwards is an error rather than a resumable conversation. In Pydantic AI a
+`CancellationToken` or a tool calling `ctx.cancel()` ends the run in `RunCancelled` carrying the
+history, and you resume by passing that history to the next run.
 
-| What you get | smolagents | Pydantic AI |
+## The other differences
+
+**Trusted state.** smolagents builds tool schemas from docstrings and type hints, and there's nowhere
+to put something the model shouldn't see. Pydantic AI's `deps_type` is a separate typed argument that
+tools read and the model never does — so a database handle or a customer ID stays out of the
+conversation entirely.
+
+**Testing.** Both are testable offline, and smolagents deserves credit here: its `Model` base class is
+a real place to plug a scripted stub, and we used one to drive a full `CodeAgent` run with no network.
+Pydantic AI ships `TestModel` and `FunctionModel` rather than asking you to write one, and
+`ALLOW_MODEL_REQUESTS = False` turns any stray real call into an error.
+
+**Crash recovery.** smolagents has none in core. Pydantic AI's runs can be wrapped by Temporal, DBOS,
+Prefect, Restate, Kitaru, or Airflow without changing the agent.
+
+## Side by side
+
+| | smolagents 1.26.0 | Pydantic AI 2.42 |
 |---|---|---|
-|---|---|---|
-| Runtime | Sync-only — the loop owns your thread; zero `asyncio`/`anyio` reference (grep-verified) | Async-first; concurrent tool calls run in parallel (proven below) |
-| Model interaction | Writes and executes Python in a sandbox | Calls typed tools with validated arguments |
-| Isolation | Code sandbox: `import os` and `open()` are forbidden; 11-module allowlist | Typed deps — the model cannot choose or see trusted state; tools hold the boundary |
-| Stopping | Only `final_answer` (model-driven) | Typed cancellation: `ctx.cancel()`, thread-safe token, catchable `RunCancelled` with resumable history |
-| Extension | Tools + the Model ABC (a real seam) | Capabilities: tools + instructions + hooks, deferrable, spec-declarable |
-| Evals | Not first-party | Typed datasets + evaluators, CI-runnable offline |
+| How the model acts | Writes Python that a sandbox runs | Structured tool calls; `CodeMode` in the harness if you want code |
+| Async | Synchronous; a run owns the thread | Async throughout, with `run_sync` when you want blocking |
+| Parallel tool calls | Sequential in one interpreter | Genuinely concurrent |
+| Sandbox by default | Restricted interpreter, 11 stdlib modules, no `open` | Tools are your functions; `CodeMode` runs model code in Monty |
+| Stronger isolation | Docker, E2B, Modal, Blaxel, or remote executors | Sandbox providers in the harness |
+| Stopping a run | `interrupt()` sets a flag checked between steps; needs another thread | `CancellationToken`, `ctx.cancel()`, `RunCancelled` with resumable history |
+| Trusted state | Nothing separate from the prompt | `deps_type`, read by tools, invisible to the model |
+| Crash recovery | None in core | Six engines wrap the agent object |
+| Testing offline | Subclass `Model` yourself; it's a genuine place to plug in | `TestModel` and `FunctionModel` included |
+| Evals | None in core | `pydantic-evals` in your test suite |
 
-## If this answer doesn't fit you
+## Choose smolagents when
 
-If your agent's whole job is writing and running Python, smolagents is the smallest thing that does it, and its sandboxing story is real. Community shorthand on r/AI_Agents agrees: it's the pick "for those who want just one step above plain LLM calls." We won't pretend we're the minimal code-executor. We're built for what wraps around it — budgets, cancellation, checks that run in CI. Different axes; this page shows ours.
+- The task is computational and writing Python is genuinely the best way for the model to express it.
+- You want very few dependencies and a codebase you can read in an afternoon.
+- You're in the Hugging Face ecosystem already.
+- A restricted interpreter is the right level of isolation for what you're doing.
 
----
+## Choose Pydantic AI when
+
+- Your tools do I/O and you want them to overlap.
+- You need a stop button that leaves you a conversation you can resume.
+- Credentials and identity must sit where the model can't reach them.
+- You want crash recovery, spend limits, and evals without assembling them.
 
 ## FAQ
 
-**Is Pydantic AI a drop-in replacement for smolagents?**
-Drop-in, no — the loop and the seams are different, even though the ideas carry over (tools,
-prompts, outputs). If you're weighing a move, that honesty is the point of this page: read the fits
-list and run the proof before you decide.
+**Can Pydantic AI do the write-code-instead-of-tool-calls thing?**
+Yes, through `CodeMode` in the harness. The model writes one Python program that calls your tools as
+functions — with loops and `asyncio.gather` — inside the Monty sandbox, instead of one round trip per
+call.
 
-**When should I use smolagents on its own?**
-When your agent's whole job is writing and running Python, and you want the smallest loop that does it with their sandboxing.
+**Is smolagents' sandbox safe?**
+For accidents, largely yes, and the defaults are sensible. For a model that might be adversarially
+prompted, their own documentation points you at Docker or a remote executor, which is the right
+answer.
 
-**Why do people pick Pydantic AI over smolagents?**
-Because the loop is yours end to end — typed deps, cancellation that resumes, budgets that stop side
-effects before they start, evals in CI — and every one of those claims is a snippet on this page you
-can run in seconds. Community threads on r/AI_Agents add "documentation" and "low abstraction" to
-that list; see Independent takes on the [overview](index.md).
-
+**What does smolagents do better?**
+Being small. If the write-code approach suits your problem, it's less machinery than anything else,
+and that's a real virtue.
 
 ---
 
-*Versions: smolagents 1.26.0; Pydantic AI 2.42.0 — 2026-09-10. Snippets re-executed by this repository's tests.*
+*Checked against smolagents 1.26.0 and Pydantic AI 2.42 on 2026-09-10. The sandbox messages are the
+actual errors from running `import os` and `open(...)` through its local executor; the absence of an
+async run and the behaviour of `interrupt()` come from reading the installed package. The Pydantic AI
+example is executed by this repository's test suite, and the timing shown is from that run.*

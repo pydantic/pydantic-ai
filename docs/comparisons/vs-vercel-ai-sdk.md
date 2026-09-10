@@ -1,34 +1,48 @@
 # Pydantic AI vs Vercel AI SDK
 
-Choosing an agent framework and you're down to
-[Pydantic AI](../agent.md) and the Vercel AI SDK? They sit on different sides of the language line (TypeScript vs Python) — if your service doesn't bind you to either, this page is the tiebreaker — the answer first, then code
-you can run in seconds.
+The Vercel AI SDK is the default way to talk to models from TypeScript, and its real strength isn't
+the agent loop — it's the wire between your server and your React app. Streaming text into a UI,
+rendering tool calls as they happen, asking the user to approve one, resuming after they answer: it
+does all of that well, and nothing in the Python ecosystem, ours included, matches it.
 
-## Pydantic AI fits if you need
+Version 7 has grown agent machinery too. There's a `ToolLoopAgent`, helpers for building an agent UI
+stream, a provider registry, middleware, tool approval errors as first-class types, and
+`uploadSkill` for provider-hosted skills. Cancellation is the standard JavaScript idiom: pass an
+`abortSignal`.
 
-- a **Python 3.10+** agent
-- **result semantics declared by the framework** — a transform, a schema, native parts — not interpreted by your handler
-- the Python-side checklist: deps boundary, budgets, resumable cancellation
+So the first question isn't which is better. It's which language your agent lives in.
 
-## Why the answers differ
+## If your product is TypeScript
 
-Their loop is the norm for TypeScript; ours is a typed contract for Python. Where it shows: what a response *becomes* is part of the agent's type, not a post-processing decision.
+Use the AI SDK. Running Python for the agent means a service boundary, a deployment, and a second
+language in your repository, and unless you need something specific from the Python side, that trade
+usually isn't worth it.
 
-## See it work
+The reasonable middle is a split: the AI SDK owns the browser and the streaming, and a Python agent
+sits behind it as an HTTP endpoint. Pydantic AI has UI adapters, including one for the AI SDK's own
+protocol, so the front end doesn't need to know what language answered.
 
-Say the shape of your result should be your framework's job, not your handler's puzzle.
+## If your agent lives in Python
 
-In the AI SDK, `generateText` hands you a result object that your code interprets (SDK 5).
+Then the comparison is worth having, and it's mostly about how much is decided for you.
 
-Your side, runs offline:
+**Cancellation.** `abortSignal` aborts the request. What you keep afterwards is whatever you collected
+while streaming. In Pydantic AI, stopping raises `RunCancelled`, that exception carries the whole
+conversation, and passing it to the next run continues from there. There's no separate bookkeeping to
+write.
+
+**How a response becomes a value.** The AI SDK picks a sensible strategy for you. Pydantic AI makes it
+explicit, so the same schema can arrive as a tool call, as native structured output, or as text you
+transform:
 
 ```python {title="output_transports.py"}
 """Wire semantics are explicit: the output transport decides how a response
 becomes your result — a transform, or a dict validated against a schema."""
 from pydantic_ai import Agent
-from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.messages import ModelResponse, TextPart
+from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.output import StructuredDict, TextOutput
+
 
 async def model(messages, info):
     return ModelResponse(parts=[TextPart('hello world')])
@@ -42,6 +56,7 @@ def upper(t: str) -> str:
 
 agent = Agent(FunctionModel(model), output_type=TextOutput(upper))
 print('TextOutput(fn):', agent.run_sync('q').output)
+#> TextOutput(fn): HELLO WORLD
 
 # A JSON schema the response must satisfy:
 schema = {
@@ -52,55 +67,72 @@ schema = {
 agent2 = Agent(FunctionModel(model_json), output_type=StructuredDict(schema))
 out = agent2.run_sync('q').output
 print(f'StructuredDict: {out!r} is a {type(out).__name__}')
+#> StructuredDict: {'n': 7} is a dict
 assert agent.run_sync('q').output == 'HELLO WORLD'
 assert out == {'n': 7}
 
 
 ```
 
-```text
-TextOutput(fn): HELLO WORLD
-StructuredDict: {'n': 7} is a dict
-```
 
-**Notice:** Here a response *becomes* what you declared it to be — a transform or a parsed dict — but `StructuredDict` parses rather than schema-validates at runtime, so required fields and types are not enforced.
+That matters when a provider's structured output mode is unreliable for your schema and you want to
+switch how the answer comes back without touching the schema or the tools.
 
-## The details
+**Trusted state.** The AI SDK's runtime context is a loosely typed bag that travels with the call.
+Pydantic AI's `deps_type` is a separate typed argument that tools read and the model never sees, so a
+database handle or a customer ID isn't something a prompt can reach.
 
-| What you get | Vercel AI SDK | Pydantic AI |
+**Crash recovery.** There isn't a first-party story in the AI SDK; there's no durable agent export in
+version 7. Pydantic AI runs can be wrapped by Temporal, DBOS, Prefect, Restate, Kitaru, or Airflow
+without changing the agent.
+
+## Side by side
+
+| | Vercel AI SDK 7.0.97 | Pydantic AI 2.42 |
 |---|---|---|
-|---|---|---|
-| Language/runtime | TS/JS + your framework (Next/Express) | Python 3.10+, asyncio-native |
-| Result shape | `generateText` returns data; your handler decides | Output **transports** are explicit: a transform, a schema, a tool, native parts (proven below) |
-| Cancellation | `AbortSignal` — the JS norm, forwarded into providers | Typed: `ctx.cancel()`, thread-safe token, catchable `RunCancelled` with resumable history |
-| Extensions | Providers, tool sets, experimental agents | Capabilities: one unit, deferrable, spec-declarable |
-| Durable | Your infrastructure | Six engine wraps on the public interface |
-| Run length | Hard function-timeout ceiling: 300 s (Pro) / 800 s (Enterprise) — long-horizon agents hit a wall (per Speakeasy 2026-03) | No loop timeouts; the run is yours |
-| SDK evolution | AI SDK 6 added an `Agent` interface and `DurableAgent` for resumable steps (per Speakeasy 2026-03; we verified 5) | Capabilities as one unit in 2.42.0 |
+| Language | TypeScript | Python |
+| Streaming to a UI | Its whole reason for existing, and excellent | Adapters, including for the AI SDK's protocol |
+| The agent loop | `ToolLoopAgent`, with `stopWhen` for control | The loop is a value; `agent.iter()` drives it step by step |
+| Stopping a run | `abortSignal` aborts the request | `RunCancelled` carries the conversation; resume is a normal run |
+| Trusted state | A loosely typed runtime context | `deps_type`, read by tools, invisible to the model |
+| Structured output | Chosen for you | You choose: tool call, native, or transformed text |
+| Skills | `uploadSkill` to a provider | Capabilities that load on demand and round-trip to YAML |
+| Budgets | `stopWhen` on steps | Requests, tool calls, and tokens, checked before the next call |
+| Crash recovery | Not first-party | Six engines wrap the agent object |
+| Testing offline | Subclass their provider spec yourself; it works well | `TestModel` and `FunctionModel` included |
+| Evals | Not first-party | `pydantic-evals` in your test suite using the agent's own types |
 
-## If this answer doesn't fit you
+## Choose the Vercel AI SDK when
 
-If your app is TypeScript, Vercel AI SDK is the ecosystem default with real UI ergonomics — streaming, tool loops, skills protocol — and that's not nothing. We can't compete with JS comfort from here. This page is for the Python side: where the result's shape should be the framework's job, and where the loop has seams.
+- Your product is TypeScript and the agent belongs next to the UI.
+- Streaming state shared with the front end is the hard part of your problem.
+- You're on Next.js and want the integration to be free.
+- Provider-hosted skills and their approval UX fit what you're building.
 
----
+## Choose Pydantic AI when
+
+- Your agent is in Python, near your data, your models, or your existing services.
+- You need crash recovery, spend ceilings, and evals as part of the framework.
+- Credentials and identity must sit where the model can't reach them.
+- You want to keep the AI SDK in the browser and put Python behind it — that's a supported shape, not a
+  workaround.
 
 ## FAQ
 
-**Is Pydantic AI a drop-in replacement for Vercel AI SDK?**
-Drop-in, no — the loop and the seams are different, even though the ideas carry over (tools,
-prompts, outputs). If you're weighing a move, that honesty is the point of this page: read the fits
-list and run the proof before you decide.
+**Can I use both?**
+Yes, and it's a common setup. The AI SDK handles the UI stream; Pydantic AI answers behind it through
+a UI adapter.
 
-**When should I use Vercel AI SDK on its own?**
-When your app is TypeScript and you want the ecosystem default: streaming UI, tool loops, provider adapters.
+**Is Pydantic AI a drop-in replacement?**
+No, it's a different language. What ports is the thinking: tools, prompts, schemas.
 
-**Why do people pick Pydantic AI over Vercel AI SDK?**
-Because the loop is yours end to end — typed deps, cancellation that resumes, budgets that stop side
-effects before they start, evals in CI — and every one of those claims is a snippet on this page you
-can run in seconds. Community threads on r/AI_Agents add "documentation" and "low abstraction" to
-that list; see Independent takes on the [overview](index.md).
-
+**What does the AI SDK do better?**
+Everything about the browser. Shared streaming state, tool-call rendering, approval flows in the UI.
+We don't ship that and don't intend to.
 
 ---
 
-*Versions: Vercel AI SDK 5 (verified by probe); AI SDK 6 claims per an independent review (Speakeasy, 2026-03) — re-verify before publishing against them. Pydantic AI 2.42.0 — 2026-09-10. Snippets re-executed by this repository's tests.*
+*Checked against `ai` 7.0.97 and Pydantic AI 2.42 on 2026-09-10. The AI SDK facts come from installing
+the package and reading its exports and type definitions — `ToolLoopAgent`, `uploadSkill`, the approval
+error types, `abortSignal`, `stopWhen`, and the absence of any durable-agent export. The Pydantic AI
+example is executed by this repository's test suite.*

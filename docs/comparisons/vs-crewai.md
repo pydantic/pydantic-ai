@@ -1,41 +1,42 @@
 # Pydantic AI vs CrewAI
 
-Choosing an agent framework and you're down to
-[Pydantic AI](../agent.md) and CrewAI. This page is the tiebreaker — the answer first, then code
-you can run in seconds.
+CrewAI asks you to describe a team. Each agent gets a role, a goal, and a backstory; each unit of work
+is a `Task`; a `Crew` runs them in order or puts one agent in charge of the others. It reads well, it
+demos well, and it has the largest tutorial library of any Python agent framework — plus the widest
+enterprise adoption of this group, with PwC, DocuSign, IBM, and PepsiCo among its users.
 
-## Pydantic AI fits if you need
+Version 1.15.21 is more than the role DSL people remember. Crews, flows, and agents can checkpoint
+automatically and restart from a checkpoint, agents carry limits for iterations, wall-clock time,
+tokens, and requests per minute, and there are first-party modules for memory, knowledge, MCP, skills,
+and agent-to-agent messaging.
 
-- orchestration with **branches, joins, or retries you can see and control**
-- **typed seams at every stage** — fan-out returns ints, sums flow into deps
-- the production checklist on top: cancellation, budgets, offline tests
+Pydantic AI has no crew and no roles. Multi-agent work is ordinary Python: call an agent, branch on
+the answer, run two in parallel with `asyncio.gather`, pass one's result into the next.
 
-## Why the answers differ
+## When the shape of the work isn't a list of tasks
 
-Their crew is a DSL the framework interprets; ours is ordinary async code with a type at every seam. Same multi-agent shape, far more visibility. An independent review (Speakeasy, 2026-03) saw the production limits too: unit-testing individual agents is a documented gap (even `print`/`log` don't work inside Task callbacks), and uncapped loops have billed $414 in a single run — and it also names their strength, the broadest enterprise adoption of the group (PwC, DocuSign, IBM, PepsiCo).
+A crew is a good fit when the work really is a sequence of steps, or a manager delegating. It gets
+harder when the work has a branch in it — different follow-up depending on what came back, two things
+in parallel joined at the end, a retry on one branch only. In CrewAI those live inside the process
+mode you picked and the framework decides how they run.
 
-## See it work
-
-Say your multi-agent flow has branches and a join — and you need to read it like code.
-
-CrewAI expresses crews as roles plus a process mode (`sequential`/`hierarchical`); what the crew does is what the DSL decides (1.15.21).
-
-Your side, runs offline:
+In Pydantic AI they're just code, so they look like the rest of your application and your reviewer
+reads them the same way:
 
 ```python {title="chain_as_code.py"}
 """A crew is code: chained and fanned-out agents with types between them.
 
 Two branches each extract an int (the tool's signature and return are
 typed); the branches are gathered; the typed sum flows into a downstream
-agent's deps. No role DSL - just ordinary async code with a type at every
-seam.
+agent's dependencies. No roles, no process mode - ordinary async code with a
+type at every step.
 """
 import asyncio
 import re
 
 from pydantic_ai import Agent, capture_run_messages
-from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.models.function import FunctionModel
 
 
 async def model_num(messages, info):
@@ -72,7 +73,7 @@ async def branch(value: int) -> int:
         await num_agent.run(f'get {value}')
     returns = [p.content for m in msgs for p in m.parts if isinstance(p, ToolReturnPart)]
     assert returns, 'no tool return captured'
-    return int(returns[0])  # the typed tool return is the seam
+    return int(returns[0])  # the tool's typed return is what the next step gets
 
 
 async def main():
@@ -82,7 +83,9 @@ async def main():
         await txt_agent.run('finish', deps=total)
     used = 'total:43' in str(msgs)
     print(f'typed chain: branch(a)={a!r}, branch(b)={b!r}, sum={total!r}')
+    #> typed chain: branch(a)=21, branch(b)=22, sum=43
     print(f'downstream agent received the typed sum as deps: {used}')
+    #> downstream agent received the typed sum as deps: True
     assert isinstance(a, int) and isinstance(b, int)
     assert used
 
@@ -92,46 +95,73 @@ asyncio.run(main())
 
 ```
 
-```text
-typed chain: branch(a)=21, branch(b)=22, sum=43
-downstream agent received the typed sum as deps: True
-```
 
-**Notice:** Here the same shape is ordinary, reviewable code: the fan-out returns ints, and the join flows into the next agent's deps.
+Two branches ran at the same time, each returned an `int`, the sum went into the next agent as
+dependencies rather than as text in a prompt. Nothing here is a framework concept — it's `asyncio`,
+a couple of functions, and type hints.
 
-## The details
+## What you can see while it runs
 
-| What you get | CrewAI | Pydantic AI |
+The practical complaint people report about crews is visibility. `print` and log calls inside `Task`
+callbacks don't surface, so when a crew does something surprising you're reading the final output and
+guessing. One [practitioner write-up](https://ondrej-popelka.medium.com/crewai-practical-lessons-learned-b696baa67242)
+records a two-agent run reaching $414 before it was noticed.
+
+Pydantic AI emits a typed stream of events as the run happens — the model starting to speak, each tool
+call and its result, the final answer — and you consume it with a normal `async for`. It also emits
+OpenTelemetry, so the run shows up wherever your other traces go.
+
+Budgets are the other half of that. `UsageLimits` caps model requests, tool calls, and tokens, and the
+check happens *before* the next request goes out, so a runaway loop stops rather than being noticed on
+the bill. CrewAI's limits are per agent — `max_iter`, `max_execution_time`, `max_tokens`, `max_rpm` —
+which cover a lot but aren't a ceiling on the whole crew.
+
+## Side by side
+
+| | CrewAI 1.15.21 | Pydantic AI 2.42 |
 |---|---|---|
-| Orchestration | A DSL: `Agent(role=..., goal=..., backstory=...)`, `Crew(process=...)` | Plain async code: chain agents, fan out with `asyncio.gather`, branch with normal control flow |
-| Typed seams | `inputs` dicts; output models via Pydantic | `deps_type` boundary; typed tool signatures and returns at every seam (proven below) |
-| Loop access | A `kickoff()` you run; stopping = kill your thread | Typed cancellation + resumable history; `iter()` drives the loop node-by-node |
-| Memory/knowledge | Built-in memory + `StringKnowledgeSource` | Your memory: deps + history processors are yours to wire |
-| Evals | Not first-party in the core loop | Typed datasets + evaluators, CI-runnable offline |
+| How you describe work | Roles, goals, backstories, tasks, and a process mode | Ordinary async Python: call, branch, gather |
+| Trusted state | Crew inputs and values captured in tools | `deps_type`, a separate argument tools read and the model never sees |
+| Budgets | Per agent: iterations, time, tokens, requests per minute | Per run: model requests, tool calls, and tokens, checked before the next request |
+| Crash recovery | Built-in checkpoints on crews, flows, and agents | Six engines wrap the agent: Temporal, DBOS, Prefect, Restate, Kitaru, Airflow |
+| Stopping a run | No stop or cancel method on `Crew` | `CancellationToken` from another thread, or `ctx.cancel()` in a tool; the history survives and resumes |
+| Watching it work | Events and their platform | Typed event stream plus OpenTelemetry |
+| Memory and knowledge | Built in, including knowledge sources | Bring your own, wired through dependencies and history processors |
+| Testing offline | Needs a live model for a real run | `TestModel` and `FunctionModel` drive the whole loop with no network |
+| Evals | Their platform | `pydantic-evals` in your test suite, using the agent's own types |
 
-## If this answer doesn't fit you
+## Choose CrewAI when
 
-If crew-of-roles with memory and knowledge out of the box is exactly your shape, CrewAI's DSL compresses it nicely, and we're not going to pretend this page replaces that. Ours is for when the orchestration needs to be code you can actually read and review — branches, joins, retries — or when you want a type at every seam.
+- The work genuinely is a team of specialists doing steps in order, and the role framing helps you
+  think about it.
+- You want memory, knowledge sources, and RAG without assembling them.
+- You're moving fast and the tutorial library is worth real time to you.
+- You want their managed platform to run and watch it.
 
----
+## Choose Pydantic AI when
+
+- The orchestration has branches, joins, and retries you want to read in a diff.
+- Credentials and customer identity must sit where the model can't reach them.
+- You need a hard ceiling on spend for the whole run, not per agent.
+- You want the agent's tests to run offline in CI alongside everything else.
 
 ## FAQ
 
-**Is Pydantic AI a drop-in replacement for CrewAI?**
-Drop-in, no — the loop and the seams are different, even though the ideas carry over (tools,
-prompts, outputs). If you're weighing a move, that honesty is the point of this page: read the fits
-list and run the proof before you decide.
+**Is Pydantic AI a drop-in replacement?**
+No, and the port isn't mechanical. Tools carry over; roles and tasks become functions and control
+flow. People usually find the crew was three or four ordinary steps.
 
-**When should I use CrewAI on its own?**
-When crew-of-roles with memory and knowledge out of the box is exactly your shape, and the DSL's opinion matches your design.
+**Does Pydantic AI have anything like a Crew?**
+No, deliberately. Multi-agent patterns — an agent as a tool, a router, a parallel fan-out — are
+documented as code you write rather than a class you configure.
 
-**Why do people pick Pydantic AI over CrewAI?**
-Because the loop is yours end to end — typed deps, cancellation that resumes, budgets that stop side
-effects before they start, evals in CI — and every one of those claims is a snippet on this page you
-can run in seconds. Community threads on r/AI_Agents add "documentation" and "low abstraction" to
-that list; see Independent takes on the [overview](index.md).
-
+**What does CrewAI do better?**
+Getting to a working multi-agent demo, by some distance, and its memory and knowledge batteries are
+more complete out of the box than ours.
 
 ---
 
-*Versions: crewai 1.15.21; Pydantic AI 2.42.0 — 2026-09-10. Snippets re-executed by this repository's tests.*
+*Checked against crewai 1.15.21 and Pydantic AI 2.42 on 2026-09-10. The CrewAI facts come from reading
+the installed package — `Crew` and `Agent` fields, `kickoff` parameters, checkpoint configuration, and
+the absence of any cancel method. Its runtime behaviour needs a live model and was not run. The
+Pydantic AI example is executed by this repository's test suite on every commit.*

@@ -1,107 +1,107 @@
-# Tradeoffs, translated
+# The numbers people quote about us
 
-When a comparison page lands on us with a number — "10,000× faster agent creation", "four lines
-to a working agent", "memory that just works" — there's usually a mechanism behind the difference,
-and it's almost always a tradeoff. This page takes the claims that circulate about Pydantic AI,
-explains what actually happens, and translates what it means for you. We're not here to argue we're
-faster at everything: we're here to show you the switch behind the difference, so you can flip it
-for yourself.
+Comparison articles like a number. "10,000 times faster to create an agent." "Four lines to a working
+agent." "Memory that just works." Usually there's a real mechanism behind the number and a trade behind
+the mechanism, and the number on its own tells you neither.
 
-## "Pydantic AI is heavier when you create an agent"
+This page takes the claims that circulate about Pydantic AI, checks them where we can, and explains
+what's actually being traded. We're not arguing we win every measurement. We're showing you what the
+measurement is made of.
 
-**The claim:** an article comparing us and Agno said Agno creates agents "~10,000× faster" with
-"~50× lower memory".
+## "Creating an agent is much slower"
 
-**What actually happens (we measured it, 2026-09-10, clean environments):**
+**The claim.** An article comparing us with Agno said Agno creates agents about 10,000 times faster,
+using about 50 times less memory.
 
-| | Agno 3.0.x | Pydantic AI 2.42.0 |
+**What we measured**, on 2026-09-10, in clean environments:
+
+| | Agno 3.0.x | Pydantic AI 2.42 |
 |---|---|---|
-| time to construct one agent | 14.5 µs | 764 µs (~50×) |
-| traced memory during construction | 7 KiB | 417 KiB (~50-60×) |
+| Time to construct one agent | 14.5 µs | 764 µs |
+| Memory traced during construction | 7 KiB | 417 KiB |
 
-So the "10,000×" doesn't reproduce — it's about **50×**, and only for construction. But don't stop
-at the correction; the interesting part is *why*.
+So it's about 50 times, not 10,000, and only for construction. But the ratio isn't the interesting
+part.
 
-**The mechanism:** creating an agent here does real work. It resolves the model provider, checks
-your configuration and credentials, builds the tool schemas, validates spec templates. That work is
-done **once, up front, where a mistake costs you a second**.
-
-**The tradeoff:** theirs is faster to construct because that work is deferred. Ours is slower
-because it's done where mistakes are cheap. "Why would you want to do those things later?" — you
-wouldn't. The deferred version doesn't save you the work; it moves it to the worst possible moment:
-runtime, in front of a customer, where the same mistake costs money and trust.
+**Why ours is slower.** Creating an agent here does real work: it resolves the model provider, checks
+your configuration and credentials, builds the tool schemas, and validates any prompt templates. That
+happens once, at startup, where a mistake costs you a second.
 
 ```python {title="config_fails_here.py"}
-"""Config errors fail at construction, not at 3 a.m. in production."""
+"""A bad model name fails when you build the agent, not on the first request."""
 from pydantic_ai import Agent
 
 try:
     Agent('does-not-exist:gpt-4')  # a typo'd provider
 except Exception as exc:
     print(f'{type(exc).__name__}: {str(exc)[:120]}')
+    """
+    UserError: Unknown model: does-not-exist:gpt-4. Did you mean 'openai-chat:gpt-4'?
+    """
 ```
 
-```text
-UserError: Unknown model: does-not-exist:gpt-4. Did you mean 'openai-chat:gpt-4'?
-```
 
-**What it means for you:** 0.75 ms, paid once, at startup — versus the same mistake showing up
-later, when it's expensive. That's the whole tradeoff, and it's why we think our side is the right
-one for software you ship.
+**The trade.** Deferring that work makes construction faster and moves the failure to the first real
+request — in front of a customer, where the same typo costs money instead of a second. And the number
+is the wrong one to choose on either way: construction happens once per process and takes under a
+millisecond, while a single model call takes hundreds of milliseconds. If agent construction is your
+bottleneck, something else has gone very right.
 
-## "It's only four lines to a working agent"
+## "It's four lines to a working agent"
 
-**The claim:** minimal frameworks (smolagents is "one step above plain LLM calls"; the OpenAI SDK
-quotes a four-line agent).
+**The claim.** Minimal frameworks quote a four-line agent, and it's true — ours is about that long too.
 
-**What the four lines don't include:** a deps boundary, budgets, cancellation, evals, durability.
-Those are either absent or something you add yourself, later.
+**What the four lines don't include.** Somewhere to put credentials the model can't see. A ceiling on
+what the run may spend. A stop button that leaves you something to resume. Evals. Crash recovery. In
+every framework, those are things you add later or don't have.
 
-**The tradeoff:** we print the seams; a demo doesn't need them and a shipped agent does. Every
-framework makes this tradeoff; ours just puts the missing half on the page as running code —
-[the production checklist](production-agents.md) is the four lines' other half.
+**The trade.** Every framework makes this one. The difference is what's on the page: our
+[production list](production-agents.md) is the other half of the four lines, written as code you can
+run.
 
-## "Stateful graph, checkpointed at every step"
+## "Checkpointed at every step"
 
-**The claim:** LangGraph persists state at every step, and their platform is the durable story.
+**The claim.** LangGraph persists state at every step, so durability is handled.
 
-**What happens:** checkpoints are a deliberate architecture — and an independent review (Speakeasy,
-2026-03) notes the costs: no token-budget management (context bloat silently degrades long runs),
-and a full copy of the state per step, so checkpoints grow with your payloads.
+**What happens.** It does, and that's what makes time travel and forking work — those are real
+features we don't have. The cost is that a checkpoint holds a copy of the graph state, so checkpoint
+size tracks the size of what you're carrying, and the durability comes with a shape: to get crash
+recovery you express your control flow as a graph.
 
-**The tradeoff:** their durability comes with a shape you must adopt. Ours wraps the same loop you
-already drive — [the run stays plain, the engines attach](production-agents.md#10-durability-is-attached-at-run-time-not-written-into-the-agent).
-The difference is whose architecture the agent lives in.
+**The trade.** Ours goes the other way. The run is an ordinary coroutine, so
+[durability is a capability you add](production-agents.md#9-crash-recovery-without-rewriting-the-agent)
+and the engine is one your company already operates. That's less convenient if you run nothing, and
+better if you run Temporal.
 
 ## "Memory that just works"
 
-**The claim:** Mastra's Observational Memory auto-compresses conversations ~5-40× with no
-configuration.
+**The claim.** Some frameworks compress conversation history automatically, with no configuration.
 
-**What happens:** the compression runs **background LLM calls** whose tokens don't appear in your
-agent's usage — automatic, and billed off the books (same independent review).
+**What happens.** Automatic compression generally means extra model calls to summarise, and those
+tokens are spent whether or not they show up in the usage you're looking at. We haven't measured
+anyone else's implementation, so treat that as a thing to check rather than a claim of ours.
 
-**The tradeoff:** automatic is not free; it's hidden. Ours is deps and history processors, wired by
-you, billed visibly. You choose what automatic means for your budget.
+**The trade.** Ours isn't automatic. History processors and dependencies are yours to wire, which is
+more work and more visible. If memory is the centre of your product, Mastra and Agno have built more
+of it than we have, and we say so on [their](vs-mastra.md) [pages](vs-agno.md).
 
-## The tradeoffs *we* make, stated the same way
+## The trades we make, in the same format
 
-- **Construction does real work up front** — see above. We believe fail-fast beats fail-later.
-- **No managed agent server.** Your infra stays your infra; that's a decision, not an omission.
-- **No TS/JS framework.** If your whole product is TypeScript, the honest reads are the
-  [Vercel](vs-vercel-ai-sdk.md) and [Mastra](vs-mastra.md) pages.
-- **Curated integrations, not a 1,000-item directory.** You wire the rare one; the seams make that
-  a weekend, not a project.
-- **`run_sync` can't nest inside async code**, and a worker-thread tool can't be force-stopped.
-  We say it so you read it before you build around it.
+- **Construction does real work.** Slower to build an agent, mistakes found at startup.
+- **No hosted platform.** Your infrastructure stays yours, and there's no dashboard on day one.
+- **No TypeScript.** If your whole product is TypeScript, read the [Vercel](vs-vercel-ai-sdk.md) and
+  [Mastra](vs-mastra.md) pages instead — they're the honest answer.
+- **A curated integration list, not a directory of a thousand.** You'll occasionally wire one
+  yourself.
+- **`run_sync` can't be nested inside async code**, and a tool running in a worker thread can't be
+  force-stopped. Both are documented, and we'd rather you read that here than discover it.
 
 ## The bottom line
 
-Are we giving you an inefficient piece of software? No. We're making tradeoffs — like all software,
-including the frameworks that look light by comparison. The difference is that ours are on this
-page, measured where we could measure them, and argued in the open. We believe they're the right
-tradeoffs for a framework you ship with; read the arguments and decide if you agree.
+Every framework is a set of trades, including the ones that look light next to us. Ours are on this
+page, measured where we could measure them. Read them and decide whether they're the ones you'd make.
 
-*Versions: Agno 3.0.x, Pydantic AI 2.42.0 — measured 2026-09-10 in clean virtualenvs (20,000
-iterations each, `time.perf_counter` + `tracemalloc`). Snippets re-executed by this repository's
-tests.*
+---
+
+*Measured on 2026-09-10 against Pydantic AI 2.42 and Agno 3.0.x in clean environments. The example on
+this page is executed by this repository's test suite on every commit.*
