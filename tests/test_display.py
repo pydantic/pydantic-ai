@@ -136,7 +136,7 @@ def test_render_banner(render: Callable[..., str]):
    /___.___\\
   /    |    \\    observability: off — see every model and tool call live, with cost
 /      |      \\    ask your agent to set it up: https://pydantic.dev/ai-setup.md
-`--.___|___.--'    free with Logfire and a GitHub login, or use any OpenTelemetry backend
+`---.._|_..---'    free with Logfire and a GitHub login, or use any OpenTelemetry backend
 
                  hide: PYDANTIC_AI_NO_BANNER=1\
 """)
@@ -151,7 +151,7 @@ def test_render_banner_for_an_unnamed_agent(render: Callable[..., str]):
    /___.___\\
   /    |    \\    observability: off — see every model and tool call live, with cost
 /      |      \\    ask your agent to set it up: https://pydantic.dev/ai-setup.md
-`--.___|___.--'    free with Logfire and a GitHub login, or use any OpenTelemetry backend
+`---.._|_..---'    free with Logfire and a GitHub login, or use any OpenTelemetry backend
 
                  hide: PYDANTIC_AI_NO_BANNER=1\
 """)
@@ -165,7 +165,7 @@ def test_render_banner_without_observability(render: Callable[..., str]):
    /___.___\\
   /    |    \\    agent: support_agent • model: openai:gpt-5.6-sol • tools: 2 • capabilities: 0
 /      |      \\
-`--.___|___.--'\
+`---.._|_..---'\
 """)
 
 
@@ -181,7 +181,7 @@ def test_render_banner_wraps_long_details(render: Callable[..., str]):
    /___.___\\     agent: the-agent-that-has-a-rather-long-name
   /    |    \\      model: bedrock:us.anthropic.claude-fable-5-20260101-v1:0 • tools: 2
 /      |      \\    capabilities: 0
-`--.___|___.--'\
+`---.._|_..---'\
 """)
 
 
@@ -198,7 +198,7 @@ def test_render_banner_elides_a_detail_too_wide_for_the_column(render: Callable[
    /___.___\\     agent: support_agent
   /    |    \\      model: bedrock:arn:aws:bedrock:us-east-1:12…file/us.anthropic.claude-fable-5-v1:0
 /      |      \\    tools: 2 • capabilities: 0
-`--.___|___.--'\
+`---.._|_..---'\
 """)
     # Both ends survive, so the banner still names a provider and a model rather than an account.
     assert 'bedrock:arn' in banner
@@ -224,7 +224,7 @@ def test_render_banner_wraps_a_version_line_too_wide_for_the_column(
    /___.___\\
   /    |    \\    agent: support_agent • model: openai:gpt-5.6-sol • tools: 2 • capabilities: 0
 /      |      \\
-`--.___|___.--'\
+`---.._|_..---'\
 """)
     assert max(map(len, banner.splitlines())) <= 100
 
