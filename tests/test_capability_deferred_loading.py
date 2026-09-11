@@ -1006,6 +1006,55 @@ def test_load_capability_parts_round_trip_through_message_history() -> None:
     assert isinstance(rebuilt[1].parts[0], LoadCapabilityReturnPart)
 
 
+def test_load_capability_parts_round_trip_preserves_content_extras() -> None:
+    """Unknown keys on `load_capability` args/return content survive a history round trip.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/8002: the
+    `LoadCapabilityReturn` narrower silently dropped unknown content keys on
+    dump and validate, so extras written by capabilities (e.g. version markers)
+    were lost when persisting message history.
+    """
+    import json
+
+    from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelRequest, ModelResponse
+
+    messages: Any = [
+        ModelResponse(
+            parts=[
+                LoadCapabilityCallPart(
+                    tool_call_id='c1',
+                    args={'id': 'refunds', 'requested_by': 'policy-v2'},
+                ),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                LoadCapabilityReturnPart(
+                    tool_name='load_capability',
+                    tool_call_id='c1',
+                    content={'instructions': 'Confirm the order id.', 'version': 2, 'deprecated': True},
+                ),
+            ]
+        ),
+    ]
+
+    dumped = json.loads(ModelMessagesTypeAdapter.dump_json(messages))
+    assert dumped[0]['parts'][0]['args'] == {'id': 'refunds', 'requested_by': 'policy-v2'}
+    assert dumped[1]['parts'][0]['content'] == {
+        'instructions': 'Confirm the order id.',
+        'version': 2,
+        'deprecated': True,
+    }
+
+    rebuilt = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(messages))
+    assert rebuilt[0].parts[0].args == {'id': 'refunds', 'requested_by': 'policy-v2'}
+    assert rebuilt[1].parts[0].content == {
+        'instructions': 'Confirm the order id.',
+        'version': 2,
+        'deprecated': True,
+    }
+
+
 async def test_deferred_capability_loads_instructions_and_tools_e2e() -> None:
     """A deferred capability starts as a catalog entry and becomes usable after `load_capability`."""
     toolset = FunctionToolset()

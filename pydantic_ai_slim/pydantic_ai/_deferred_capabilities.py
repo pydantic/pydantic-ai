@@ -28,6 +28,8 @@ if TYPE_CHECKING:
 class LoadCapabilityArgs(TypedDict):
     """Typed arguments for a `load_capability` tool call."""
 
+    __pydantic_config__ = pydantic.ConfigDict(extra='allow')
+
     id: Annotated[
         str,
         pydantic.Field(
@@ -39,6 +41,8 @@ class LoadCapabilityArgs(TypedDict):
 
 class LoadCapabilityReturn(TypedDict):
     """Typed return value for the `load_capability` tool."""
+
+    __pydantic_config__ = pydantic.ConfigDict(extra='allow')
 
     instructions: NotRequired[str]
     """Instructions for the loaded capability."""
