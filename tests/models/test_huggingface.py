@@ -61,8 +61,8 @@ with try_import() as imports_successful:
         ChatCompletionStreamOutputDeltaToolCall,
         ChatCompletionStreamOutputUsage,
     )
-    from huggingface_hub.inference._generated.types.chat_completion import ChatCompletionStreamOutputFunction
     from huggingface_hub.errors import HfHubHTTPError
+    from huggingface_hub.inference._generated.types.chat_completion import ChatCompletionStreamOutputFunction
 
     from pydantic_ai.models.huggingface import HuggingFaceModel
     from pydantic_ai.providers.huggingface import HuggingFaceProvider
@@ -1143,7 +1143,7 @@ async def test_stream_text_after_tool_call_gets_own_part(allow_model_requests: N
                         type='function',
                         function=ChatCompletionStreamOutputFunction(name='lookup', arguments='{}'),
                     )
-                ]
+                ],
             )
         ],
         finish_reason='tool_calls',

@@ -38,7 +38,6 @@ from ..messages import (
     NativeToolReturnPart,
     RetryPromptPart,
     SpeechPart,
-    PartStartEvent,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -823,7 +822,9 @@ class MistralStreamedResponse(StreamedResponse):
                                 tool_call_id=maybe_tool_call_part.tool_call_id,
                             )
                     else:
-                        for event in self._parts_manager.handle_text_delta(vendor_part_id=self._vendor_part_id, content=text):
+                        for event in self._parts_manager.handle_text_delta(
+                            vendor_part_id=self._vendor_part_id, content=text
+                        ):
                             yield event
 
                 # Handle the explicit tool calls
@@ -835,9 +836,7 @@ class MistralStreamedResponse(StreamedResponse):
                         args=dtc.function.arguments,
                         tool_call_id=dtc.id,
                     )
-                    if isinstance(
-                        self._parts_manager.get_part_by_vendor_id(self._vendor_part_id), TextPart
-                    ):
+                    if isinstance(self._parts_manager.get_part_by_vendor_id(self._vendor_part_id), TextPart):
                         self._vendor_part_id = f'{self._vendor_part_id}-{event.index}'
                     yield event
 
