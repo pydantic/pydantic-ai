@@ -12,11 +12,11 @@ speak.
 | | LiveKit Agents | Pydantic AI |
 |---|---|---|
 | Language | Python (also Node) | Python |
-| Model providers | Many (plugins) | [Any](../models/overview.md), plus [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] |
+| Model providers | Many (plugins) | [Multiple](../models/overview.md) |
 | Durable execution | Agent server orchestration | Yes — [5+ integrations](../durable_execution/overview.md) |
-| Observability | OTel, their endpoint | [OpenTelemetry](../capabilities/instrumentation.md), any backend including [Pydantic Logfire](../logfire.md) |
-| Extensibility | Pipeline nodes (`stt_node`, `llm_node`, …) | [Capabilities](../extensibility.md) and [toolsets](../toolsets.md) |
-| Interfaces | WebRTC rooms, telephony | [CLI](../cli.md), [web chat](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) (experimental), [A2A](https://github.com/datalayer/fasta2a) (community) |
+| Observability | OpenTelemetry | [OpenTelemetry](../capabilities/instrumentation.md) |
+| Extensibility | Pipeline nodes (`stt_node`, `llm_node`, …) | [Capabilities and toolsets](../extensibility.md) |
+| Interfaces | WebRTC rooms, telephony | [CLI](../cli.md), [web chat](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) (experimental), A2A |
 | Build your own harness | Yes | [Yes](https://pydantic.dev/docs/ai/harness/#build-your-own) |
 | Coding harness | No | [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) |
 | Graph library | No (media pipelines) | [`pydantic-graph`](../graph.md) |

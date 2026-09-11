@@ -8,11 +8,11 @@ only the library: an agent you put in the application you already run.
 | | Agno | Pydantic AI |
 |---|---|---|
 | Language | Python | Python |
-| Model providers | Many | [Any](../models/overview.md), plus [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] |
+| Model providers | Many | [Multiple](../models/overview.md) |
 | Durable execution | Agent `db` / `checkpoint` | Yes — [5+ integrations](../durable_execution/overview.md) |
-| Observability | OTel, their endpoint | [OpenTelemetry](../capabilities/instrumentation.md), any backend including [Pydantic Logfire](../logfire.md) |
-| Extensibility | Tools, toolkits | [Capabilities](../extensibility.md) and [toolsets](../toolsets.md) |
-| Interfaces | AG-UI, A2A | [CLI](../cli.md), [web chat](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) (experimental), [A2A](https://github.com/datalayer/fasta2a) (community) |
+| Observability | OpenTelemetry | [OpenTelemetry](../capabilities/instrumentation.md) |
+| Extensibility | Tools, toolkits | [Capabilities and toolsets](../extensibility.md) |
+| Interfaces | AG-UI, A2A | [CLI](../cli.md), [web chat](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) (experimental), A2A |
 | Build your own harness | Yes | [Yes](https://pydantic.dev/docs/ai/harness/#build-your-own) |
 | Coding harness | No (shell and Python toolkits) | [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) |
 | Graph library | Workflows | [`pydantic-graph`](../graph.md) |

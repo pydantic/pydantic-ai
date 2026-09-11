@@ -8,11 +8,11 @@ features first. Pydantic AI runs on any model, including OpenAI.
 | | OpenAI Agents SDK | Pydantic AI |
 |---|---|---|
 | Language | Python | Python |
-| Model providers | OpenAI first; others via LiteLLM | [Any](../models/overview.md), plus [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] |
+| Model providers | OpenAI first; others via LiteLLM | [Multiple](../models/overview.md) |
 | Durable execution | Temporal integration | Yes — [5+ integrations](../durable_execution/overview.md) |
-| Observability | Their dashboard | [OpenTelemetry](../capabilities/instrumentation.md), any backend including [Pydantic Logfire](../logfire.md) |
-| Extensibility | Tools, guardrails, handoffs | [Capabilities](../extensibility.md) and [toolsets](../toolsets.md) |
-| Interfaces | None built in | [CLI](../cli.md), [web chat](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) (experimental), [A2A](https://github.com/datalayer/fasta2a) (community) |
+| Observability | Their dashboard | [OpenTelemetry](../capabilities/instrumentation.md) |
+| Extensibility | Tools, guardrails, handoffs | [Capabilities and toolsets](../extensibility.md) |
+| Interfaces | None built in | [CLI](../cli.md), [web chat](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) (experimental), A2A |
 | Build your own harness | Yes | [Yes](https://pydantic.dev/docs/ai/harness/#build-your-own) |
 | Coding harness | `SandboxAgent` | [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) |
 | Graph library | No (handoffs only) | [`pydantic-graph`](../graph.md) |
