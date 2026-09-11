@@ -21,7 +21,6 @@ from pydantic_ai import (
     ModelRequest,
     ModelResponse,
     ModelRetry,
-    RetryPromptPart,
     RunContext,
     TextPart,
     ToolCallPart,
@@ -360,11 +359,12 @@ def test_tool_retry():
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='First call failed',
                         tool_name='my_ret',
                         timestamp=IsNow(tz=timezone.utc),
                         tool_call_id=IsStr(),
+                        outcome='retried',
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -373,7 +373,7 @@ def test_tool_retry():
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='my_ret', args={'x': 0}, tool_call_id=IsStr())],
-                usage=RequestUsage(input_tokens=61, output_tokens=8),
+                usage=RequestUsage(input_tokens=57, output_tokens=8),
                 model_name='test',
                 provider_name='test',
                 timestamp=IsNow(tz=timezone.utc),
@@ -392,7 +392,7 @@ def test_tool_retry():
             ),
             ModelResponse(
                 parts=[TextPart(content='{"my_ret":"1"}')],
-                usage=RequestUsage(input_tokens=62, output_tokens=12),
+                usage=RequestUsage(input_tokens=58, output_tokens=12),
                 model_name='test',
                 provider_name='test',
                 timestamp=IsNow(tz=timezone.utc),

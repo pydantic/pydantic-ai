@@ -6,16 +6,23 @@ bodies. Pinning the mapped payload proves the failure signal reaches each provid
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import asdict, dataclass
 from typing import Literal
 
 import pytest
 
-from pydantic_ai.messages import BinaryContent, ImageUrl, ModelRequest, ToolReturnPart
+from pydantic_ai.messages import (
+    BinaryContent,
+    ImageUrl,
+    ModelRequest,
+    ModelRequestPart,
+    ToolReturnPart,
+)
 from pydantic_ai.models import ModelRequestParameters
 
-from .conftest import try_import
+from ._inline_snapshot import snapshot
+from .conftest import legacy_retry_prompt_part, try_import
 
 with try_import() as anthropic_imports_successful:
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
@@ -28,6 +35,10 @@ with try_import() as bedrock_imports_successful:
 with try_import() as cohere_imports_successful:
     from pydantic_ai.models.cohere import CohereModel
     from pydantic_ai.providers.cohere import CohereProvider
+
+with try_import() as google_imports_successful:
+    from pydantic_ai.models.google import GoogleModel
+    from pydantic_ai.providers.google import GoogleProvider
 
 with try_import() as groq_imports_successful:
     from pydantic_ai.models.groq import GroqModel
@@ -60,59 +71,61 @@ pytestmark = pytest.mark.anyio
 _TOOL_CONTENT = 'Disk full'
 _FAILED_WIRE_CONTENT = '{"error":"Disk full"}'
 
-WireMapper = Callable[[ToolReturnPart], Awaitable[object]]
+WireMapper = Callable[[ModelRequestPart], Awaitable[Sequence[object]]]
 
 
-async def _map_openai_chat(part: ToolReturnPart) -> object:
+async def _map_openai_chat(part: ModelRequestPart) -> Sequence[object]:
     model = OpenAIChatModel('gpt-5', provider=OpenAIProvider(api_key='test-key'))
     return await model._map_messages(  # pyright: ignore[reportPrivateUsage]
-        [ModelRequest(parts=[part])], ModelRequestParameters()
+        model.prepare_messages([ModelRequest(parts=[part])], ModelRequestParameters()), ModelRequestParameters()
     )
 
 
-async def _map_openai_responses(part: ToolReturnPart) -> object:
+async def _map_openai_responses(part: ModelRequestPart) -> Sequence[object]:
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key='test-key'))
     _, messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
-        [ModelRequest(parts=[part])], OpenAIResponsesModelSettings(), ModelRequestParameters()
+        model.prepare_messages([ModelRequest(parts=[part])], ModelRequestParameters()),
+        OpenAIResponsesModelSettings(),
+        ModelRequestParameters(),
     )
     return messages
 
 
-async def _map_groq(part: ToolReturnPart) -> object:
+async def _map_groq(part: ModelRequestPart) -> Sequence[object]:
     model = GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(api_key='test-key'))
     return await model._map_messages(  # pyright: ignore[reportPrivateUsage]
-        [ModelRequest(parts=[part])], ModelRequestParameters()
+        model.prepare_messages([ModelRequest(parts=[part])], ModelRequestParameters()), ModelRequestParameters()
     )
 
 
-async def _map_mistral(part: ToolReturnPart) -> object:
+async def _map_mistral(part: ModelRequestPart) -> Sequence[object]:
     model = MistralModel('mistral-large-latest', provider=MistralProvider(api_key='test-key'))
     messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
-        [ModelRequest(parts=[part])], ModelRequestParameters()
+        model.prepare_messages([ModelRequest(parts=[part])], ModelRequestParameters()), ModelRequestParameters()
     )
     return [message.model_dump() for message in messages]
 
 
-async def _map_xai(part: ToolReturnPart) -> object:
+async def _map_xai(part: ModelRequestPart) -> Sequence[object]:
     model = XaiModel('grok-4-fast-non-reasoning', provider=XaiProvider(api_key='test-key'))
     messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
-        [ModelRequest(parts=[part])], ModelRequestParameters()
+        model.prepare_messages([ModelRequest(parts=[part])], ModelRequestParameters()), ModelRequestParameters()
     )
     return [MessageToDict(message, preserving_proto_field_name=True) for message in messages]
 
 
-async def _map_huggingface(part: ToolReturnPart) -> object:
+async def _map_huggingface(part: ModelRequestPart) -> Sequence[object]:
     model = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(api_key='test-key'))
     messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
-        [ModelRequest(parts=[part])], ModelRequestParameters()
+        model.prepare_messages([ModelRequest(parts=[part])], ModelRequestParameters()), ModelRequestParameters()
     )
     return [{key: value for key, value in asdict(message).items() if value is not None} for message in messages]
 
 
-async def _map_cohere(part: ToolReturnPart) -> object:
+async def _map_cohere(part: ModelRequestPart) -> Sequence[object]:
     model = CohereModel('command-r7b-12-2024', provider=CohereProvider(api_key='test-key'))
     messages = model._map_messages(  # pyright: ignore[reportPrivateUsage]
-        [ModelRequest(parts=[part])], ModelRequestParameters()
+        model.prepare_messages([ModelRequest(parts=[part])], ModelRequestParameters()), ModelRequestParameters()
     )
     return [getattr(message, 'content', None) for message in messages]
 
@@ -123,6 +136,8 @@ class ChannelLessCase:
     mapper: WireMapper
     success_wire: object
     failed_wire: object
+    legacy_retry_wire: object = None
+    """What a user-supplied [tool-bound, tool-less] pair of legacy `RetryPromptPart`s reaches the wire as."""
     marks: tuple[pytest.MarkDecorator, ...] = ()
 
 
@@ -135,6 +150,19 @@ _CHANNEL_LESS_CASES = [
         mapper=_map_openai_chat,
         success_wire=_CHAT_SUCCESS_WIRE,
         failed_wire=_CHAT_FAILED_WIRE,
+        legacy_retry_wire=snapshot(
+            [
+                {
+                    'role': 'tool',
+                    'tool_call_id': 'call_1',
+                    'content': '{"error":"Disk full"}',
+                },
+                {
+                    'role': 'system',
+                    'content': 'Disk full',
+                },
+            ]
+        ),
         marks=(pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed'),),
     ),
     ChannelLessCase(
@@ -142,6 +170,19 @@ _CHANNEL_LESS_CASES = [
         mapper=_map_openai_responses,
         success_wire=[{'type': 'function_call_output', 'call_id': 'call_1', 'output': _TOOL_CONTENT}],
         failed_wire=[{'type': 'function_call_output', 'call_id': 'call_1', 'output': _FAILED_WIRE_CONTENT}],
+        legacy_retry_wire=snapshot(
+            [
+                {
+                    'type': 'function_call_output',
+                    'call_id': 'call_1',
+                    'output': '{"error":"Disk full"}',
+                },
+                {
+                    'role': 'system',
+                    'content': 'Disk full',
+                },
+            ]
+        ),
         marks=(pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed'),),
     ),
     ChannelLessCase(
@@ -149,6 +190,19 @@ _CHANNEL_LESS_CASES = [
         mapper=_map_groq,
         success_wire=_CHAT_SUCCESS_WIRE,
         failed_wire=_CHAT_FAILED_WIRE,
+        legacy_retry_wire=snapshot(
+            [
+                {
+                    'role': 'tool',
+                    'tool_call_id': 'call_1',
+                    'content': '{"error":"Disk full"}',
+                },
+                {
+                    'role': 'system',
+                    'content': 'Disk full',
+                },
+            ]
+        ),
         marks=(pytest.mark.skipif(not groq_imports_successful(), reason='groq not installed'),),
     ),
     ChannelLessCase(
@@ -156,6 +210,19 @@ _CHANNEL_LESS_CASES = [
         mapper=_map_mistral,
         success_wire=_CHAT_SUCCESS_WIRE,
         failed_wire=_CHAT_FAILED_WIRE,
+        legacy_retry_wire=snapshot(
+            [
+                {
+                    'content': '{"error":"Disk full"}',
+                    'role': 'tool',
+                    'tool_call_id': 'call_1',
+                },
+                {
+                    'content': 'Disk full',
+                    'role': 'system',
+                },
+            ]
+        ),
         marks=(pytest.mark.skipif(not mistral_imports_successful(), reason='mistral not installed'),),
     ),
     ChannelLessCase(
@@ -167,6 +234,19 @@ _CHANNEL_LESS_CASES = [
         failed_wire=[
             {'content': [{'text': _FAILED_WIRE_CONTENT}], 'role': 'ROLE_TOOL', 'tool_call_id': 'call_1'},
         ],
+        legacy_retry_wire=snapshot(
+            [
+                {
+                    'content': [{'text': '{"error":"Disk full"}'}],
+                    'role': 'ROLE_TOOL',
+                    'tool_call_id': 'call_1',
+                },
+                {
+                    'content': [{'text': 'Disk full'}],
+                    'role': 'ROLE_SYSTEM',
+                },
+            ]
+        ),
         marks=(pytest.mark.skipif(not xai_imports_successful(), reason='xai-sdk not installed'),),
     ),
     ChannelLessCase(
@@ -174,6 +254,15 @@ _CHANNEL_LESS_CASES = [
         mapper=_map_huggingface,
         success_wire=_CHAT_SUCCESS_WIRE,
         failed_wire=_CHAT_FAILED_WIRE,
+        legacy_retry_wire=snapshot(
+            [
+                {'role': 'tool', 'content': '{"error":"Disk full"}', 'tool_call_id': 'call_1'},
+                {
+                    'role': 'system',
+                    'content': 'Disk full',
+                },
+            ]
+        ),
         marks=(pytest.mark.skipif(not huggingface_imports_successful(), reason='huggingface-hub not installed'),),
     ),
     ChannelLessCase(
@@ -181,17 +270,27 @@ _CHANNEL_LESS_CASES = [
         mapper=_map_cohere,
         success_wire=[_TOOL_CONTENT],
         failed_wire=[_FAILED_WIRE_CONTENT],
+        legacy_retry_wire=snapshot(
+            [
+                '{"error":"Disk full"}',
+                'Disk full',
+            ]
+        ),
         marks=(pytest.mark.skipif(not cohere_imports_successful(), reason='cohere not installed'),),
     ),
 ]
 
 
 @pytest.mark.parametrize('case', [pytest.param(case, id=case.id, marks=case.marks) for case in _CHANNEL_LESS_CASES])
-@pytest.mark.parametrize('outcome', ['success', 'failed', 'denied'])
+@pytest.mark.parametrize('outcome', ['success', 'failed', 'denied', 'retried'])
 async def test_channel_less_tool_return_framing(
-    case: ChannelLessCase, outcome: Literal['success', 'failed', 'denied']
+    case: ChannelLessCase, outcome: Literal['success', 'failed', 'denied', 'retried']
 ) -> None:
-    """Direct mapping pins request content that a VCR cassette could fail to distinguish."""
+    """Direct mapping pins request content that a VCR cassette could fail to distinguish.
+
+    `'retried'` frames exactly like `'failed'`: both are errors from the model's point of view, so a
+    provider with no error channel of its own has to see the same `{"error": ...}` wrapper either way.
+    """
     part = ToolReturnPart(
         tool_name='tool',
         content=_TOOL_CONTENT,
@@ -201,8 +300,28 @@ async def test_channel_less_tool_return_framing(
 
     wire = await case.mapper(part)
 
-    assert wire == (case.failed_wire if outcome == 'failed' else case.success_wire)
+    assert wire == (case.failed_wire if outcome in ('failed', 'retried') else case.success_wire)
     assert part.content == _TOOL_CONTENT
+
+
+@pytest.mark.parametrize('case', [pytest.param(case, id=case.id, marks=case.marks) for case in _CHANNEL_LESS_CASES])
+async def test_legacy_retry_prompt_part_framing(case: ChannelLessCase) -> None:
+    """A `RetryPromptPart` out of a stored history reaches the wire as the parts that replaced it.
+
+    Nothing the framework emits is one any more, so only a history a user hands back — or one saved
+    before this release — carries one, and `prepare_messages` translates it before any adapter sees
+    it. Both shapes are pinned: the tool-bound one, which arrives as its call's own retried result,
+    and the tool-less one, which no longer arrives as the bare user text
+    [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart] exists to end.
+    """
+    parts: list[ModelRequestPart] = [
+        legacy_retry_prompt_part(content=_TOOL_CONTENT, tool_name='tool', tool_call_id='call_1'),
+        legacy_retry_prompt_part(content=_TOOL_CONTENT),
+    ]
+
+    wire = [item for part in parts for item in await case.mapper(part)]
+
+    assert wire == case.legacy_retry_wire
 
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
@@ -292,11 +411,13 @@ async def test_failed_tool_return_does_not_sniff_error_key() -> None:
 
 
 @pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
-@pytest.mark.parametrize('outcome,is_error', [('failed', True), ('denied', False), ('success', False)])
+@pytest.mark.parametrize(
+    'outcome,is_error', [('failed', True), ('retried', True), ('denied', False), ('success', False)]
+)
 async def test_anthropic_tool_return_native_error_channel(
-    outcome: Literal['success', 'failed', 'denied'], is_error: bool
+    outcome: Literal['success', 'failed', 'denied', 'retried'], is_error: bool
 ) -> None:
-    """Only `failed` sets Anthropic's `is_error`; `denied`/`success` stay on the success channel."""
+    """`failed` and `retried` set Anthropic's `is_error`; `denied`/`success` stay on the success channel."""
     model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(api_key='test-key'))
     part = ToolReturnPart(
         tool_name='tool',
@@ -340,6 +461,22 @@ async def test_anthropic_tool_return_native_error_channel(
         ),
         pytest.param(
             'us.amazon.nova-micro-v1:0',
+            'retried',
+            {
+                'toolUseId': 'call_1',
+                'content': [{'text': _TOOL_CONTENT}],
+                'status': 'error',
+            },
+            id='native-status-retried',
+        ),
+        pytest.param(
+            'us.writer.palmyra-x4-v1:0',
+            'retried',
+            {'toolUseId': 'call_1', 'content': [{'text': _FAILED_WIRE_CONTENT}]},
+            id='framed-fallback-retried',
+        ),
+        pytest.param(
+            'us.amazon.nova-micro-v1:0',
             'denied',
             {'toolUseId': 'call_1', 'content': [{'text': _TOOL_CONTENT}], 'status': 'success'},
             id='native-denied',
@@ -367,7 +504,7 @@ async def test_anthropic_tool_return_native_error_channel(
 async def test_bedrock_failed_tool_return_signal(
     bedrock_provider: BedrockProvider,
     model_name: str,
-    outcome: Literal['success', 'failed', 'denied'],
+    outcome: Literal['success', 'failed', 'denied', 'retried'],
     expected_tool_result: object,
 ) -> None:
     """Direct mapping distinguishes native status from the no-status fallback despite VCR matching."""
@@ -389,6 +526,108 @@ async def test_bedrock_failed_tool_return_signal(
             'content': [{'toolResult': expected_tool_result}],
         }
     ]
+
+
+_LEGACY_RETRY_PARTS: list[ModelRequestPart] = [
+    legacy_retry_prompt_part(content=_TOOL_CONTENT, tool_name='tool', tool_call_id='call_1'),
+    legacy_retry_prompt_part(content=_TOOL_CONTENT),
+]
+"""The two shapes a stored `RetryPromptPart` can take: bound to a tool call, and not."""
+
+
+@pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
+async def test_anthropic_legacy_retry_prompt_part_framing() -> None:
+    """A stored `RetryPromptPart` still takes Anthropic's error channel, now as the retried tool
+    return it is translated into, and its tool-less shape arrives in the harness's voice."""
+    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(api_key='test-key'))
+
+    _, wire = await model._map_message(  # pyright: ignore[reportPrivateUsage]
+        model.prepare_messages([ModelRequest(parts=_LEGACY_RETRY_PARTS)], ModelRequestParameters()),
+        ModelRequestParameters(),
+        AnthropicModelSettings(),
+    )
+
+    assert wire == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'tool_use_id': 'call_1',
+                        'type': 'tool_result',
+                        'content': [{'text': 'Disk full', 'type': 'text'}],
+                        'is_error': True,
+                    },
+                    {
+                        'type': 'text',
+                        'text': '<system>Disk full</system>',
+                    },
+                ],
+            }
+        ]
+    )
+
+
+@pytest.mark.skipif(not bedrock_imports_successful(), reason='boto3 not installed')
+async def test_bedrock_legacy_retry_prompt_part_framing(bedrock_provider: BedrockProvider) -> None:
+    """The same for Bedrock's `status` channel."""
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+
+    _, wire = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        model.prepare_messages([ModelRequest(parts=_LEGACY_RETRY_PARTS)], ModelRequestParameters()),
+        ModelRequestParameters(),
+        BedrockModelSettings(),
+    )
+
+    assert wire == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'toolResult': {
+                            'toolUseId': 'call_1',
+                            'content': [{'text': 'Disk full'}],
+                            'status': 'error',
+                        }
+                    },
+                    {'text': '<system>Disk full</system>'},
+                ],
+            }
+        ]
+    )
+
+
+@pytest.mark.skipif(not google_imports_successful(), reason='google-genai not installed')
+async def test_google_legacy_retry_prompt_part_framing() -> None:
+    """The same for Gemini's `error` key on a function response."""
+    model = GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key='test-key'))
+
+    _, wire = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        model.prepare_messages([ModelRequest(parts=_LEGACY_RETRY_PARTS)], ModelRequestParameters()),
+        ModelRequestParameters(),
+    )
+
+    assert wire == snapshot(
+        [
+            {
+                'role': 'user',
+                'parts': [
+                    {
+                        'function_response': {
+                            'name': 'tool',
+                            'response': {'error': 'Disk full'},
+                            'id': 'call_1',
+                        }
+                    }
+                ],
+            },
+            {
+                'role': 'user',
+                'parts': [{'text': '<system>Disk full</system>'}],
+            },
+        ]
+    )
 
 
 @pytest.mark.skipif(not bedrock_imports_successful(), reason='boto3 not installed')

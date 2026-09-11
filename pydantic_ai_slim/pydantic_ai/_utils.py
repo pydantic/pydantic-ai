@@ -581,7 +581,6 @@ def validate_uploaded_file_provider(item: _messages.UploadedFile, *, system: str
 def guard_tool_call_id(
     t: _messages.ToolCallPart
     | _messages.ToolReturnPart
-    | _messages.RetryPromptPart
     | _messages.NativeToolCallPart
     | _messages.NativeToolReturnPart,
 ) -> str:

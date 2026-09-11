@@ -27,6 +27,22 @@ import pydantic_ai
 from pydantic_ai.models import StreamedResponse
 
 
+def _constructor_parameters(cls: type) -> list[inspect.Parameter]:
+    """The parameters a caller may pass to `cls(...)`.
+
+    Normally read off the class itself, which resolves construction through whichever of `__new__`
+    and `__init__` defines it. A `__new__` that adds nothing to construction breaks that reading:
+    `@deprecated` installs one that `functools.wraps` the `__new__` it replaces, so for a class that
+    had none of its own, `inspect.signature` follows the wrapper down to `object.__new__` and reports
+    `(*args, **kwargs)` -- every deprecated class reads as taking arbitrarily many positional
+    arguments whatever its fields are. When the class's own `__new__` unwraps to `object.__new__`,
+    read `__init__` instead, minus its `self`: that is where the signature came from before.
+    """
+    if '__new__' in cls.__dict__ and inspect.unwrap(cls.__new__) is object.__new__:
+        return list(inspect.signature(cls.__init__).parameters.values())[1:]
+    return list(inspect.signature(cls).parameters.values())
+
+
 def _takes_two_positional_arguments(cls: type) -> bool | None:
     """Whether a caller may pass two or more arguments positionally to `cls(...)`, or `None` if unreadable.
 
@@ -35,7 +51,7 @@ def _takes_two_positional_arguments(cls: type) -> bool | None:
     private attribute is needed to tell them apart.
     """
     try:
-        parameters = inspect.signature(cls).parameters.values()
+        parameters = _constructor_parameters(cls)
     except (TypeError, ValueError):
         return None
     positional = 0

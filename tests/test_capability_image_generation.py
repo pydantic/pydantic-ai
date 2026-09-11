@@ -43,7 +43,6 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -1457,8 +1456,12 @@ class TestImageGenerationCapability:
         result = await agent.run('Generate a test image')
 
         assert result.output == 'gave up'
-        retry_prompts = list(iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart))
-        assert [part.content for part in retry_prompts] == snapshot(
+        retry_parts = [
+            part
+            for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
+            if part.outcome == 'retried'
+        ]
+        assert [part.content for part in retry_parts] == snapshot(
             ['image generation was blocked for content moderation']
         )
 
@@ -1508,11 +1511,12 @@ class TestImageGenerationCapability:
                 ),
                 ModelRequest(
                     parts=[
-                        RetryPromptPart(
+                        ToolReturnPart(
                             content='Exceeded maximum output retries (1)',
                             tool_name='generate_image',
                             tool_call_id=IsStr(),
                             timestamp=IsDatetime(),
+                            outcome='retried',
                         )
                     ],
                     timestamp=IsDatetime(),
@@ -1521,7 +1525,7 @@ class TestImageGenerationCapability:
                 ),
                 ModelResponse(
                     parts=[TextPart(content='gave up')],
-                    usage=RequestUsage(input_tokens=66, output_tokens=7),
+                    usage=RequestUsage(input_tokens=62, output_tokens=7),
                     model_name='function:outer_model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),

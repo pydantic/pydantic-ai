@@ -61,6 +61,8 @@ def get_user_by_name(ctx: RunContext[dict[str, int]], name: str) -> int:
 
 Use retries for recoverable model mistakes, not application crashes.
 
+The retry is recorded as that call's own `ToolReturnPart` with `outcome='retried'`, carrying the `ModelRetry` message or the validation errors, and reaches the model on the provider's error channel. Match that when you read history: `RetryPromptPart` is deprecated and no longer emitted, and a retry that answers no tool call is a `RetryFeedbackPart` instead.
+
 Set the agent-wide tool-retry default with `Agent(retries={'tools': N})`, and override it for a single run (or `iter`) with `agent.run(retries={'tools': N})` — explicit per-tool `retries=` and per-toolset `FunctionToolset(max_retries=N)` still win. A bare `int` at run time overrides both budgets (matching construction), so pass a dict like `{'tools': N}` or `{'output': N}` to change just one.
 
 ## Report a Failed Tool Result
@@ -87,7 +89,7 @@ def read_file(path: str) -> str:
     return file_path.read_text()
 ```
 
-The failure is recorded in message history as a `ToolReturnPart` with `outcome='failed'` and traced as an error in telemetry. Pydantic AI uses the provider's native error field where one exists; otherwise model-visible content is JSON-framed as `{"error": ...}` so the failure remains explicit.
+The failure is recorded in message history as a `ToolReturnPart` with `outcome='failed'` — the other error outcome beside `'retried'` — and traced as an error in telemetry. Pydantic AI uses the provider's native error field where one exists; otherwise model-visible content is JSON-framed as `{"error": ...}` so the failure remains explicit.
 
 `ToolFailed` can also be raised from an `args_validator` (see below) and from tool validation/execution hooks with the same model-visible and retry-budget behavior. This is useful for converting a third-party exception into a failed result in one place instead of per tool. MCP servers expose the same retry-vs-failed choice via `tool_error_behavior`. For deferred tools, a `ToolFailed` instance can be supplied as a `DeferredToolResults.calls` value to report an external execution failure, just like `ModelRetry` requests a retry from there.
 

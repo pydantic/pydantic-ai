@@ -22,7 +22,6 @@ from pydantic_ai import (
     ModelRequest,
     ModelResponse,
     PrefixedToolset,
-    RetryPromptPart,
     RunContext,
     TextPart,
     Tool,
@@ -34,7 +33,14 @@ from pydantic_ai import (
     UserPromptPart,
 )
 from pydantic_ai.capabilities import HandleDeferredToolCalls, PrepareTools
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, ToolFailed, UnexpectedModelBehavior
+from pydantic_ai.exceptions import (
+    ApprovalRequired,
+    CallDeferred,
+    ModelRetry,
+    PydanticAIDeprecationWarning,
+    ToolFailed,
+    UnexpectedModelBehavior,
+)
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import ToolOutput
@@ -49,7 +55,7 @@ from pydantic_ai.tools import (
 from pydantic_ai.usage import RequestUsage, RunUsage
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsStr, iter_message_parts, message, message_part
+from .conftest import IsDatetime, IsStr, iter_message_parts, legacy_retry_prompt_part, message, message_part
 
 
 def test_tool_no_ctx():
@@ -1591,7 +1597,7 @@ def test_tool_retries():
 
 
 def test_tool_failed():
-    """A tool raising `ToolFailed` produces a `ToolReturnPart(outcome='failed')` in history (not a `RetryPromptPart`), and the run continues."""
+    """A tool raising `ToolFailed` produces a `ToolReturnPart(outcome='failed')` in history (not a retried one), and the run continues."""
 
     def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
@@ -1612,7 +1618,7 @@ def test_tool_failed():
     assert len(tool_returns) == 1
     assert tool_returns[0].outcome == 'failed'
     assert tool_returns[0].content == 'Disk full'
-    assert not any(isinstance(p, RetryPromptPart) for p in parts)
+    assert not any(isinstance(p, ToolReturnPart) and p.outcome == 'retried' for p in parts)
 
 
 def test_tool_failed_parallel():
@@ -1855,9 +1861,13 @@ def test_resume_deferred_tool_with_invalid_output_call(end_strategy: EndStrategy
 
     assert result.output == MyOutput(value=42)
     messages = result.all_messages()
-    retry_parts = list(iter_message_parts(messages, ModelRequest, RetryPromptPart))
+    retry_parts = [
+        part for part in iter_message_parts(messages, ModelRequest, ToolReturnPart) if part.outcome == 'retried'
+    ]
     my_tool_returns = [
-        part for part in iter_message_parts(messages, ModelRequest, ToolReturnPart) if part.tool_name == 'my_tool'
+        part
+        for part in iter_message_parts(messages, ModelRequest, ToolReturnPart)
+        if part.tool_name == 'my_tool' and part.outcome == 'success'
     ]
     assert len(retry_parts) == 1
     assert retry_parts[0].tool_call_id == 'output_call'
@@ -1888,11 +1898,11 @@ def test_resume_deferred_tool_with_invalid_output_call(end_strategy: EndStrategy
                 ),
                 ModelRequest(
                     parts=[
-                        RetryPromptPart(
+                        ToolReturnPart(
                             content=[
                                 {
                                     'type': 'int_parsing',
-                                    'loc': ('value',),
+                                    'loc': ['value'],
                                     'msg': 'Input should be a valid integer, unable to parse string as an integer',
                                     'input': 'not-an-int',
                                 }
@@ -1900,6 +1910,7 @@ def test_resume_deferred_tool_with_invalid_output_call(end_strategy: EndStrategy
                             tool_name='final_result',
                             tool_call_id='output_call',
                             timestamp=IsDatetime(),
+                            outcome='retried',
                         )
                     ],
                     timestamp=IsDatetime(),
@@ -1920,7 +1931,7 @@ def test_resume_deferred_tool_with_invalid_output_call(end_strategy: EndStrategy
                     parts=[
                         ToolCallPart(tool_name='final_result', args={'value': 42}, tool_call_id='valid_output_call')
                     ],
-                    usage=RequestUsage(input_tokens=90, output_tokens=13),
+                    usage=RequestUsage(input_tokens=85, output_tokens=13),
                     model_name='function:llm:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
@@ -2332,11 +2343,12 @@ def test_parallel_tool_return_with_deferred():
                         metadata={'fruit': 'apple', 'price': 10.0},
                         timestamp=IsDatetime(),
                     ),
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='Unknown fruit: banana',
                         tool_name='get_price',
                         tool_call_id='get_price_banana',
                         timestamp=IsDatetime(),
+                        outcome='retried',
                     ),
                     ToolReturnPart(
                         tool_name='get_price',
@@ -2345,11 +2357,12 @@ def test_parallel_tool_return_with_deferred():
                         metadata={'fruit': 'pear', 'price': 10.0},
                         timestamp=IsDatetime(),
                     ),
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='Unknown fruit: grape',
                         tool_name='get_price',
                         tool_call_id='get_price_grape',
                         timestamp=IsDatetime(),
+                        outcome='retried',
                     ),
                     UserPromptPart(
                         content='The price of apple is 10.0.',
@@ -2386,7 +2399,7 @@ def test_parallel_tool_return_with_deferred():
                     content='I bought a banana',
                     metadata={'fruit': 'banana', 'price': 100.0},
                 ),
-                'buy_pear': RetryPromptPart(
+                'buy_pear': legacy_retry_prompt_part(
                     content='The purchase of pears was denied.',
                 ),
             },
@@ -2430,11 +2443,12 @@ def test_parallel_tool_return_with_deferred():
                         metadata={'fruit': 'apple', 'price': 10.0},
                         timestamp=IsDatetime(),
                     ),
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='Unknown fruit: banana',
                         tool_name='get_price',
                         tool_call_id='get_price_banana',
                         timestamp=IsDatetime(),
+                        outcome='retried',
                     ),
                     ToolReturnPart(
                         tool_name='get_price',
@@ -2443,11 +2457,12 @@ def test_parallel_tool_return_with_deferred():
                         metadata={'fruit': 'pear', 'price': 10.0},
                         timestamp=IsDatetime(),
                     ),
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='Unknown fruit: grape',
                         tool_name='get_price',
                         tool_call_id='get_price_grape',
                         timestamp=IsDatetime(),
+                        outcome='retried',
                     ),
                     UserPromptPart(
                         content='The price of apple is 10.0.',
@@ -2464,11 +2479,12 @@ def test_parallel_tool_return_with_deferred():
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='Apples are not available',
                         tool_name='buy',
                         tool_call_id='buy_apple',
                         timestamp=IsDatetime(),
+                        outcome='retried',
                     ),
                     ToolReturnPart(
                         tool_name='buy',
@@ -2477,11 +2493,12 @@ def test_parallel_tool_return_with_deferred():
                         metadata={'fruit': 'banana', 'price': 100.0},
                         timestamp=IsDatetime(),
                     ),
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='The purchase of pears was denied.',
                         tool_name='buy',
                         tool_call_id='buy_pear',
                         timestamp=IsDatetime(),
+                        outcome='retried',
                     ),
                     UserPromptPart(
                         content='I bought a banana',
@@ -2494,7 +2511,7 @@ def test_parallel_tool_return_with_deferred():
             ),
             ModelResponse(
                 parts=[TextPart(content='Done!')],
-                usage=RequestUsage(input_tokens=137, output_tokens=36),
+                usage=RequestUsage(input_tokens=121, output_tokens=36),
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -2507,11 +2524,12 @@ def test_parallel_tool_return_with_deferred():
         [
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='Apples are not available',
                         tool_name='buy',
                         tool_call_id='buy_apple',
                         timestamp=IsDatetime(),
+                        outcome='retried',
                     ),
                     ToolReturnPart(
                         tool_name='buy',
@@ -2520,11 +2538,12 @@ def test_parallel_tool_return_with_deferred():
                         metadata={'fruit': 'banana', 'price': 100.0},
                         timestamp=IsDatetime(),
                     ),
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='The purchase of pears was denied.',
                         tool_name='buy',
                         tool_call_id='buy_pear',
                         timestamp=IsDatetime(),
+                        outcome='retried',
                     ),
                     UserPromptPart(
                         content='I bought a banana',
@@ -2537,7 +2556,7 @@ def test_parallel_tool_return_with_deferred():
             ),
             ModelResponse(
                 parts=[TextPart(content='Done!')],
-                usage=RequestUsage(input_tokens=137, output_tokens=36),
+                usage=RequestUsage(input_tokens=121, output_tokens=36),
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -2584,11 +2603,12 @@ def test_parallel_tool_return_with_deferred():
                         metadata={'fruit': 'apple', 'price': 10.0},
                         timestamp=IsDatetime(),
                     ),
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='Unknown fruit: banana',
                         tool_name='get_price',
                         tool_call_id='get_price_banana',
                         timestamp=IsDatetime(),
+                        outcome='retried',
                     ),
                     ToolReturnPart(
                         tool_name='get_price',
@@ -2597,17 +2617,19 @@ def test_parallel_tool_return_with_deferred():
                         metadata={'fruit': 'pear', 'price': 10.0},
                         timestamp=IsDatetime(),
                     ),
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='Unknown fruit: grape',
                         tool_name='get_price',
                         tool_call_id='get_price_grape',
                         timestamp=IsDatetime(),
+                        outcome='retried',
                     ),
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='Apples are not available',
                         tool_name='buy',
                         tool_call_id='buy_apple',
                         timestamp=IsDatetime(),
+                        outcome='retried',
                     ),
                     ToolReturnPart(
                         tool_name='buy',
@@ -2616,11 +2638,12 @@ def test_parallel_tool_return_with_deferred():
                         metadata={'fruit': 'banana', 'price': 100.0},
                         timestamp=IsDatetime(),
                     ),
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='The purchase of pears was denied.',
                         tool_name='buy',
                         tool_call_id='buy_pear',
                         timestamp=IsDatetime(),
+                        outcome='retried',
                     ),
                     UserPromptPart(
                         content='The price of apple is 10.0.',
@@ -2694,7 +2717,11 @@ def test_unapproved_tool_invalid_args_retry():
 
     result = agent.run_sync('test')
     assert result.output == 'done'
-    retry_parts = list(iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart))
+    retry_parts = [
+        part
+        for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
+        if part.outcome == 'retried'
+    ]
     assert len(retry_parts) == 1
     assert retry_parts[0].tool_name == 'my_tool'
 
@@ -2887,7 +2914,7 @@ def test_deferred_tool_results_serializable():
             ),
             'tool-failed': ToolFailed('The tool failed.'),
             'model-retry': ModelRetry('The tool call was denied.'),
-            'retry-prompt-part': RetryPromptPart(
+            'retry-prompt-part': legacy_retry_prompt_part(
                 content='The tool call was denied.',
                 tool_name='foo',
                 tool_call_id='foo',
@@ -2933,7 +2960,10 @@ def test_deferred_tool_results_serializable():
             'metadata': {},
         }
     )
-    deserialized = results_ta.validate_python(serialized)
+    # `DeferredToolCallResult` still accepts the deprecated part, and unlike a message history it
+    # doesn't translate one — so reloading results that hold one rebuilds the class, and warns.
+    with pytest.warns(PydanticAIDeprecationWarning):
+        deserialized = results_ta.validate_python(serialized)
     assert deserialized == results
     assert TypeAdapter(DeferredToolCallResult).validate_python(results.calls['tool-failed']) == ToolFailed(
         'The tool failed.'
@@ -3080,11 +3110,12 @@ def test_retry_tool_until_last_attempt():
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='Please try again.',
                         tool_name='always_fail',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        outcome='retried',
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -3093,7 +3124,7 @@ def test_retry_tool_until_last_attempt():
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='always_fail', args={}, tool_call_id=IsStr())],
-                usage=RequestUsage(input_tokens=62, output_tokens=4),
+                usage=RequestUsage(input_tokens=58, output_tokens=4),
                 model_name='test',
                 timestamp=IsDatetime(),
                 provider_name='test',
@@ -3102,11 +3133,12 @@ def test_retry_tool_until_last_attempt():
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='Please try again.',
                         tool_name='always_fail',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        outcome='retried',
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -3115,7 +3147,7 @@ def test_retry_tool_until_last_attempt():
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='always_fail', args={}, tool_call_id=IsStr())],
-                usage=RequestUsage(input_tokens=72, output_tokens=6),
+                usage=RequestUsage(input_tokens=64, output_tokens=6),
                 model_name='test',
                 timestamp=IsDatetime(),
                 provider_name='test',
@@ -3137,7 +3169,7 @@ def test_retry_tool_until_last_attempt():
             ),
             ModelResponse(
                 parts=[TextPart(content='{"always_fail":"I guess you never learn"}')],
-                usage=RequestUsage(input_tokens=77, output_tokens=14),
+                usage=RequestUsage(input_tokens=69, output_tokens=14),
                 model_name='test',
                 timestamp=IsDatetime(),
                 provider_name='test',
@@ -3150,7 +3182,7 @@ def test_retry_tool_until_last_attempt():
 
 @pytest.mark.anyio
 async def test_tool_timeout_triggers_retry():
-    """Test that a slow tool triggers RetryPromptPart when timeout is exceeded."""
+    """Test that a slow tool is answered with a retried tool return when its timeout is exceeded."""
     import asyncio
 
     call_count = 0
@@ -3176,11 +3208,11 @@ async def test_tool_timeout_triggers_retry():
     # Check that retry prompt was sent to the model
     retry_parts = [
         part
-        for part in iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart)
-        if 'Timed out' in str(part.content)
+        for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
+        if part.outcome == 'retried' and 'Timed out' in str(part.content)
     ]
     assert len(retry_parts) == 1
-    assert 'Timed out after 0.1 seconds' in retry_parts[0].content
+    assert 'Timed out after 0.1 seconds' in str(retry_parts[0].content)
     assert retry_parts[0].tool_name == 'slow_tool'
 
 
@@ -3208,11 +3240,11 @@ async def test_sync_tool_timeout_triggers_retry():
 
     retry_parts = [
         part
-        for part in iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart)
-        if 'Timed out' in str(part.content)
+        for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
+        if part.outcome == 'retried' and 'Timed out' in str(part.content)
     ]
     assert len(retry_parts) == 1
-    assert 'Timed out after 0.01 seconds' in retry_parts[0].content
+    assert 'Timed out after 0.01 seconds' in str(retry_parts[0].content)
     assert retry_parts[0].tool_name == 'slow_sync_tool'
 
 
@@ -3249,8 +3281,8 @@ async def test_tool_with_timeout_completes_successfully():
     # Should NOT have any retry prompts since tool completed within timeout
     retry_parts = [
         part
-        for part in iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart)
-        if 'Timed out' in str(part.content)
+        for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
+        if part.outcome == 'retried' and 'Timed out' in str(part.content)
     ]
     assert len(retry_parts) == 0
     assert 'completed successfully' in result.output
@@ -3322,12 +3354,12 @@ async def test_tool_timeout_message_format():
 
     retry_parts = [
         part
-        for part in iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart)
-        if 'Timed out' in str(part.content)
+        for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
+        if part.outcome == 'retried' and 'Timed out' in str(part.content)
     ]
     assert len(retry_parts) == 1
     # Check message contains timeout value (tool_name is in the part, not in content)
-    assert '0.1' in retry_parts[0].content
+    assert '0.1' in str(retry_parts[0].content)
     assert retry_parts[0].tool_name == 'my_slow_tool'
 
 
@@ -3409,11 +3441,11 @@ async def test_agent_level_tool_timeout():
     # Check that retry prompt was sent
     retry_parts = [
         part
-        for part in iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart)
-        if 'Timed out' in str(part.content)
+        for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
+        if part.outcome == 'retried' and 'Timed out' in str(part.content)
     ]
     assert len(retry_parts) == 1
-    assert 'Timed out after 0.1 seconds' in retry_parts[0].content
+    assert 'Timed out after 0.1 seconds' in str(retry_parts[0].content)
 
 
 @pytest.mark.anyio
@@ -3443,11 +3475,11 @@ async def test_per_tool_timeout_overrides_agent_timeout():
     # Should timeout because per-tool timeout (0.1s) is applied, not agent timeout (10s)
     retry_parts = [
         part
-        for part in iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart)
-        if 'Timed out' in str(part.content)
+        for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
+        if part.outcome == 'retried' and 'Timed out' in str(part.content)
     ]
     assert len(retry_parts) == 1
-    assert 'Timed out after 0.1 seconds' in retry_parts[0].content
+    assert 'Timed out after 0.1 seconds' in str(retry_parts[0].content)
 
 
 def test_agent_tool_timeout_passed_to_toolset():

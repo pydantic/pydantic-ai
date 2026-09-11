@@ -35,7 +35,6 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
     TextPart,
     ToolAvailabilityDeltaEvent,
     ToolAvailabilityDeltaPart,
@@ -840,13 +839,14 @@ The following capabilities are deferred and can be loaded using the `load_capabi
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content=[
-                            {'type': 'missing', 'loc': ('id',), 'msg': 'Field required', 'input': {'name': 'refunds'}}
+                            {'type': 'missing', 'loc': ['id'], 'msg': 'Field required', 'input': {'name': 'refunds'}}
                         ],
                         tool_name='load_capability',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        outcome='retried',
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -859,7 +859,7 @@ The following capabilities are deferred and can be loaded using the `load_capabi
             ),
             ModelResponse(
                 parts=[LoadCapabilityCallPart(args={'id': 'refunds'}, tool_call_id=IsStr())],
-                usage=RequestUsage(input_tokens=81, output_tokens=10),
+                usage=RequestUsage(input_tokens=75, output_tokens=10),
                 model_name='function:model_fn:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -883,7 +883,7 @@ The following capabilities are deferred and can be loaded using the `load_capabi
             ),
             ModelResponse(
                 parts=[TextPart(content='done')],
-                usage=RequestUsage(input_tokens=86, output_tokens=11),
+                usage=RequestUsage(input_tokens=80, output_tokens=11),
                 model_name='function:model_fn:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -1310,7 +1310,7 @@ async def test_model_calling_a_withheld_tool_is_refused_and_reveals_nothing() ->
 
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         wire_tools.append(sorted(tool.name for tool in info.function_tools))
-        if list(iter_message_parts(messages, ModelRequest, RetryPromptPart)):
+        if [part for part in iter_message_parts(messages, ModelRequest, ToolReturnPart) if part.outcome == 'retried']:
             return ModelResponse(parts=[TextPart('done')])
         return ModelResponse(parts=[ToolCallPart(tool_name='hidden_tool', args={}, tool_call_id='guess')])
 
@@ -1323,10 +1323,18 @@ async def test_model_calling_a_withheld_tool_is_refused_and_reveals_nothing() ->
     result = await agent.run('guess the hidden tool')
 
     assert result.output == 'done'
-    returns = list(iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart))
-    assert returns == []
-    retries = list(iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart))
-    assert [str(part.content) for part in retries] == snapshot(
+    executions = [
+        part
+        for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
+        if part.outcome != 'retried'
+    ]
+    assert executions == []
+    refusals = [
+        part
+        for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
+        if part.outcome == 'retried'
+    ]
+    assert [str(part.content) for part in refusals] == snapshot(
         [
             "Tool 'hidden_tool' is not available yet: search for it first, then call it again once you've seen its schema."
         ]
@@ -2120,12 +2128,12 @@ async def test_unknown_deferred_capability_id_does_not_reveal_hidden_tools() -> 
 
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         seen_tool_state.append([(t.name, bool(t.defer_loading)) for t in info.function_tools])
-        # Give up on the first signal of tool feedback — either a `ToolReturnPart`
-        # (success, which can't happen here) or a `RetryPromptPart` (the framework
+        # Give up on the first signal of tool feedback — a `ToolReturnPart`, whether it
+        # succeeded (which can't happen here) or carries `outcome='retried'` (the framework
         # signaling the bad cap id). Without the retry branch, we'd loop past
         # `max_retries` and raise `UnexpectedModelBehavior` instead of giving up.
         if not any(
-            isinstance(part, (ToolReturnPart, RetryPromptPart))
+            isinstance(part, ToolReturnPart)
             for message in messages
             if isinstance(message, ModelRequest)
             for part in message.parts
@@ -2153,7 +2161,7 @@ async def test_unknown_deferred_capability_id_does_not_reveal_hidden_tools() -> 
     )
     history_parts = [part for message in result.all_messages() for part in message.parts]
     assert not any(isinstance(part, LoadCapabilityReturnPart) for part in history_parts)
-    [retry] = [part for part in history_parts if isinstance(part, RetryPromptPart)]
+    [retry] = [part for part in history_parts if isinstance(part, ToolReturnPart) and part.outcome == 'retried']
     assert retry.content == snapshot("No capability found with id 'missing'.")
 
 
@@ -2208,7 +2216,7 @@ async def test_load_capability_retries_for_already_available_capability() -> Non
             for message in messages
             if isinstance(message, ModelRequest)
             for part in message.parts
-            if isinstance(part, RetryPromptPart) and isinstance(part.content, str)
+            if isinstance(part, ToolReturnPart) and part.outcome == 'retried' and isinstance(part.content, str)
         ]
         if retries:
             retry_messages.extend(retries)
@@ -2250,7 +2258,7 @@ async def test_load_capability_retries_when_capability_is_already_loaded() -> No
             for message in messages
             if isinstance(message, ModelRequest)
             for part in message.parts
-            if isinstance(part, RetryPromptPart) and isinstance(part.content, str)
+            if isinstance(part, ToolReturnPart) and part.outcome == 'retried' and isinstance(part.content, str)
         ]
         if retries:
             retry_messages.extend(retries)
