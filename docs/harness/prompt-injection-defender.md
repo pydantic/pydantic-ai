@@ -21,7 +21,7 @@ to observe flagged verdicts.
 ## Installation
 
 ```bash
-uv add "pydantic-ai-harness[prompt-injection-defender]"
+pip/uv-add "pydantic-ai-harness[prompt-injection-defender]"
 ```
 
 The capability requires Python 3.11 or newer. The base extra provides pattern
@@ -30,7 +30,7 @@ content. To classify text under other fields, install the ML extra and enable
 `semantic_detection`:
 
 ```bash
-uv add "pydantic-ai-harness[prompt-injection-defender-ml]"
+pip/uv-add "pydantic-ai-harness[prompt-injection-defender-ml]"
 ```
 
 ```python

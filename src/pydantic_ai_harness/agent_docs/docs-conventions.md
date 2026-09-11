@@ -33,6 +33,17 @@ PR that updates pydantic-ai's `docs/navigation.yml`. Keep slugs
 
 ## Page Conventions
 
+- **Installation commands**: on docs pages, put `pip/uv-add <packages>` on its own
+  line in a `bash` fence. The [unified-docs preprocessor](https://github.com/pydantic/unified-docs/blob/main/src/integrations/docs-sync.ts)
+  expands this shorthand into pip / uv tabs. Use a separate `bash` fence with
+  `py-cli <command>` for follow-up executables; it generates the bare command and
+  its `uv run` equivalent. Do not hand-write installation tabs.
+  In READMEs, use executable commands under plain `uv:` / `pip:` labels, uv first,
+  because GitHub does not run the preprocessor. Keep package arguments identical,
+  including extras. Put inline dependency-install examples in fenced blocks too.
+  Use `uv run` for README follow-up executables in the uv project environment.
+  Workflow YAML and repository-development commands retain
+  their required execution environment rather than becoming `uv add` examples.
 - **Purpose-first lead**: the opening paragraph says what the capability is for and when to use
   it. Lifecycle hook names (`before_model_request`, …) never appear in the lead — mechanism goes
   below the purpose.

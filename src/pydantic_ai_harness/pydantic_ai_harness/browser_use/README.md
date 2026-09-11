@@ -19,8 +19,16 @@ the tool returns a text result.
 
 ## Installation
 
+uv:
+
 ```bash
 uv add "pydantic-ai-harness[browser-use]"
+```
+
+pip:
+
+```bash
+pip install "pydantic-ai-harness[browser-use]"
 ```
 
 The extra needs Python 3.11+ (browser-use's floor; the rest of the harness

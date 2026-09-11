@@ -16,8 +16,16 @@ to observe flagged verdicts.
 
 ## Installation
 
+uv:
+
 ```bash
 uv add "pydantic-ai-harness[prompt-injection-defender]"
+```
+
+pip:
+
+```bash
+pip install "pydantic-ai-harness[prompt-injection-defender]"
 ```
 
 The capability requires Python 3.11 or newer. The base extra provides pattern
@@ -25,8 +33,16 @@ detection over recognized text fields, bare string results, and `ToolReturn`
 content. To classify text under other fields, install the ML extra and enable
 `semantic_detection`:
 
+uv:
+
 ```bash
 uv add "pydantic-ai-harness[prompt-injection-defender-ml]"
+```
+
+pip:
+
+```bash
+pip install "pydantic-ai-harness[prompt-injection-defender-ml]"
 ```
 
 ```python

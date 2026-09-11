@@ -15,10 +15,23 @@ one across several runs.
 Install the `modal` extra and authenticate with the Modal CLI. In CI, set
 `MODAL_TOKEN_ID` and `MODAL_TOKEN_SECRET` instead.
 
+uv:
+
 ```bash
 uv add "pydantic-ai-harness[modal]"
+uv run modal token new                # writes ~/.modal.toml
+```
+
+pip:
+
+```bash
+pip install "pydantic-ai-harness[modal]"
 modal token new                # writes ~/.modal.toml
-# or, e.g. in CI:
+```
+
+In CI, use environment variables instead of interactive authentication:
+
+```bash
 export MODAL_TOKEN_ID=...
 export MODAL_TOKEN_SECRET=...
 ```

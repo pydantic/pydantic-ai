@@ -89,7 +89,19 @@ sqlite_memory = Memory(SqliteMemoryStore(database='.agent-memory.db'))
 
 `FileStore` keeps the journal at `.memory-store.sqlite3` inside its root. Keep it with the Markdown files when copying or backing up the store. Editing a Markdown file outside the capability changes its content version and can produce a conflict with a prepared operation; the journal recovers operations interrupted between transaction preparation and filesystem replacement.
 
-`PostgresMemoryStore` accepts the driver-neutral `PostgresPool` protocol, so the harness does not require a particular PostgreSQL driver. Install and manage the driver in your application (for example, `uv add asyncpg`):
+`PostgresMemoryStore` accepts the driver-neutral `PostgresPool` protocol, so the harness does not require a particular PostgreSQL driver. Install and manage the driver in your application, for example:
+
+uv:
+
+```bash
+uv add asyncpg
+```
+
+pip:
+
+```bash
+pip install asyncpg
+```
 
 ```python
 import asyncpg

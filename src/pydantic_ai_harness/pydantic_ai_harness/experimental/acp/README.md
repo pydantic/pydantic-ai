@@ -41,8 +41,16 @@ Editors like [Zed](https://zed.dev/docs/ai/external-agents) speak ACP: a stdio J
 
 ## Installation
 
+uv:
+
 ```bash
 uv add "pydantic-ai-harness[acp]"
+```
+
+pip:
+
+```bash
+pip install "pydantic-ai-harness[acp]"
 ```
 
 This pulls in the [`agent-client-protocol`](https://pypi.org/project/agent-client-protocol/) SDK. The rest of the harness does not depend on it -- only `pydantic_ai_harness.experimental.acp` does.

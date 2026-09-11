@@ -18,7 +18,7 @@ Everything here is one primitive: a [capability](/ai/capabilities/overview/), a 
 Install with [`uv`](https://docs.astral.sh/uv/):
 
 ```bash
-uv add "pydantic-ai-harness[anthropic]"
+pip/uv-add "pydantic-ai-harness[anthropic]"
 ```
 
 ```python
@@ -41,7 +41,7 @@ uvx --with pydantic-ai-harness clai -a pydantic_ai_harness.coder:coder_agent -m 
 Every model works: swap the string for [any provider's](/ai/models/overview/). Need more? Add capabilities to the list; here's the same coder on `gpt-5.6-sol`, with web search and cross-session memory:
 
 ```bash
-uv add "pydantic-ai-slim[openai]"
+pip/uv-add "pydantic-ai-slim[openai]"
 ```
 
 ```python
@@ -259,7 +259,7 @@ Community packages extend the same capability system further; see [third-party c
 ## Installation
 
 ```bash
-uv add pydantic-ai-harness
+pip/uv-add pydantic-ai-harness
 ```
 
 This installs [`pydantic-ai-slim`](/ai/install/) with it, so it works on its own; you don't need to install Pydantic AI separately. Model providers and the CLI come via extras that pass through to Pydantic AI: `pydantic-ai-harness[anthropic]`, `[cli]`. Some capabilities need their own extra for optional dependencies; each capability's page gives its exact install line. Requires Python 3.10+.

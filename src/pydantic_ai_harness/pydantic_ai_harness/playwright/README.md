@@ -26,8 +26,17 @@ JavaScript-rendered SPAs, and interactive multi-step flows.
 The `playwright` extra pulls in Playwright, and Chromium is a separate binary
 download:
 
+uv:
+
 ```bash
 uv add "pydantic-ai-harness[playwright]"
+uv run playwright install chromium
+```
+
+pip:
+
+```bash
+pip install "pydantic-ai-harness[playwright]"
 playwright install chromium
 ```
 

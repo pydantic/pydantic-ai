@@ -49,7 +49,7 @@ supports 3.10). browser-use talks to Chromium directly over CDP and downloads
 a browser on first run when none is found locally:
 
 ```bash
-uv add "pydantic-ai-harness[browser-use]"
+pip/uv-add "pydantic-ai-harness[browser-use]"
 ```
 
 Then pass `BrowserUse` to an `Agent` via the `capabilities` parameter, with a

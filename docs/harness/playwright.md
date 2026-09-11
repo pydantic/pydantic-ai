@@ -32,8 +32,11 @@ The `playwright` extra pulls in Playwright, and Chromium is a separate binary
 download:
 
 ```bash
-uv add "pydantic-ai-harness[playwright]"
-playwright install chromium
+pip/uv-add "pydantic-ai-harness[playwright]"
+```
+
+```bash
+py-cli playwright install chromium
 ```
 
 If the Chromium binary is missing at runtime, the browser tool returns the

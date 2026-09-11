@@ -359,8 +359,7 @@ configured retention can delete older snapshots.
   and `counters` (atomic `$inc` for monotonic `seq`). Run registration uses an
   atomic insert by `runs._id = run_id`; duplicate ids raise `ValueError`.
   Needs the `mongodb` extra
-  (`pip install pydantic-ai-harness[mongodb]`, which installs
-  `pymongo>=4.17.0`); pass a shared `AsyncMongoClient` as `client=`, or a
+  (which installs `pymongo>=4.17.0`); pass a shared `AsyncMongoClient` as `client=`, or a
   connection string as `db_url=` (the store then owns the client -- call
   `await store.aclose()` to release it).
   Externalizes individual parts at or above `media_threshold_bytes` by
@@ -402,6 +401,20 @@ so their keys become BSON field names: keys containing `.` or starting with
 `$` need [MongoDB 5.0 or later](https://www.mongodb.com/docs/manual/core/dot-dollar-considerations/),
 and a key containing a NULL byte is rejected by the BSON encoder before it
 reaches the server. CI exercises both Mongo backends against `mongo:8`.
+
+Install MongoDB support:
+
+uv:
+
+```bash
+uv add "pydantic-ai-harness[mongodb]"
+```
+
+pip:
+
+```bash
+pip install "pydantic-ai-harness[mongodb]"
+```
 
 ## Bounding snapshot growth
 
