@@ -36,6 +36,7 @@ from ..messages import (
     ModelResponseStreamEvent,
     NativeToolCallPart,
     NativeToolReturnPart,
+    PartStartEvent,
     RetryPromptPart,
     SpeechPart,
     SystemPromptPart,
@@ -836,7 +837,9 @@ class MistralStreamedResponse(StreamedResponse):
                         args=dtc.function.arguments,
                         tool_call_id=dtc.id,
                     )
-                    if isinstance(self._parts_manager.get_part_by_vendor_id(self._vendor_part_id), TextPart):
+                    if isinstance(event, PartStartEvent) and isinstance(
+                        self._parts_manager.get_part_by_vendor_id(self._vendor_part_id), TextPart
+                    ):
                         self._vendor_part_id = f'{self._vendor_part_id}-{event.index}'
                     yield event
 
