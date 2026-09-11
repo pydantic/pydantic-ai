@@ -25,6 +25,7 @@ from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
     ModelRetry,
+    UnexpectedModelBehavior,
     UserError,
 )
 from pydantic_ai.messages import (
@@ -2779,6 +2780,38 @@ class TestDefaultOutputErrorHooks:
 
 class TestStreamingOutputHooks:
     """Output hooks fire during streaming (partial and final validation)."""
+
+    async def test_streaming_output_validate_error_hook_reraises_without_wrapping(self):
+        """A streaming validation error hook preserves its raw validation error."""
+
+        async def stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+            assert info.output_tools is not None
+            yield {0: DeltaToolCall(name=info.output_tools[0].name, json_args='not valid json')}
+
+        seen_errors: list[ValidationError | ModelRetry] = []
+
+        @dataclass
+        class ReraiseCap(AbstractCapability[Any]):
+            async def on_output_validate_error(
+                self,
+                ctx: RunContext[Any],
+                *,
+                output_context: OutputContext,
+                output: str | dict[str, Any],
+                error: ValidationError | ModelRetry,
+            ) -> Any:
+                seen_errors.append(error)
+                raise error
+
+        agent = Agent(
+            FunctionModel(stream_function=stream_fn),
+            output_type=MyOutput,
+            capabilities=[ReraiseCap()],
+        )
+        with pytest.raises(UnexpectedModelBehavior) as exc_info:
+            async with agent.run_stream('hello') as result:
+                await result.get_output()
+        assert exc_info.value.__cause__ is seen_errors[0]
 
     async def test_output_hooks_fire_during_streaming(self):
         """Validate hooks fire on partial attempts; execute hooks fire only when partial validation succeeds."""

@@ -264,7 +264,10 @@ async def _run_lifecycle_hooks(  # noqa: C901
         return build_result()
 
     outer_context = contextvars.copy_context()
-    _wrap_task = asyncio.create_task(run_capability.wrap_run(run_ctx, handler=_do_run))
+    if run_capability._has_wrap_run:  # pyright: ignore[reportPrivateUsage]
+        _wrap_task = asyncio.create_task(run_capability.wrap_run(run_ctx, handler=_do_run))
+    else:
+        _wrap_task = asyncio.create_task(_do_run())
     # Wait for handler to start or wrap_run to complete (short-circuit).
     _ready_waiter = asyncio.create_task(_run_ready.wait())
     try:
@@ -353,7 +356,7 @@ async def _run_lifecycle_hooks(  # noqa: C901
                         pass
 
         # If wrap_run didn't recover, give on_run_error a chance.
-        if _run_error is not None:
+        if _run_error is not None and run_capability._has_on_run_error:  # pyright: ignore[reportPrivateUsage]
             try:
                 result = await run_capability.on_run_error(run_ctx, error=_run_error)
             except BaseException as on_error_exc:
@@ -3688,15 +3691,25 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     AsyncIterable[_messages.AgentStreamEvent],
                 ]
                 | None
-            ) = (
-                (
-                    lambda stream: run_capability.wrap_run_event_stream(
+            ) = None
+            if run_capability.has_wrap_run_event_stream:
+
+                def wrap_with_capability(
+                    stream: AsyncIterable[_messages.AgentStreamEvent],
+                ) -> AsyncIterable[_messages.AgentStreamEvent]:
+                    return run_capability.wrap_run_event_stream(
                         run_context, stream=dispatch_event_stream(run_context, stream)
                     )
-                )
-                if run_capability.has_wrap_run_event_stream or run_capability.has_on_event
-                else None
-            )
+
+                wrap_event_stream = wrap_with_capability
+            elif run_capability.has_on_event:
+
+                def dispatch_events(
+                    stream: AsyncIterable[_messages.AgentStreamEvent],
+                ) -> AsyncIterable[_messages.AgentStreamEvent]:
+                    return dispatch_event_stream(run_context, stream)
+
+                wrap_event_stream = dispatch_events
 
             resolution = _RealtimeSessionResolution(
                 model=model,

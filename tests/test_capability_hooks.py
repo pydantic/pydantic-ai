@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import re
 import threading
+import traceback
 import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -24,7 +25,9 @@ from pydantic_ai.capabilities import (
     UseThreadExecutor,
 )
 from pydantic_ai.capabilities.abstract import AbstractCapability
+from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.capabilities.hooks import Hooks
+from pydantic_ai.capabilities.wrapper import WrapperCapability
 from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
@@ -120,6 +123,79 @@ class SingleBaseModelArg(BaseModel):
 
 
 class TestRunHooks:
+    async def test_empty_capabilities_do_not_add_hook_frames_to_tool_errors(self):
+        """Empty capabilities do not wrap or re-raise a tool error just because they are present."""
+        agent = Agent(
+            TestModel(),
+            deps_type=type(None),
+            capabilities=[Hooks(id=f'empty-{i}') for i in range(3)],
+        )
+
+        @agent.tool
+        async def explode(ctx: RunContext[None]) -> str:
+            raise ValueError('small error')
+
+        with pytest.raises(ValueError) as exc_info:
+            await agent.run('go')
+
+        frame_names = [frame.f_code.co_name for frame, _ in traceback.walk_tb(exc_info.value.__traceback__)]
+        assert 'explode' in frame_names
+        assert not {
+            'wrap_run',
+            'on_run_error',
+            'wrap_tool_validate',
+            'on_tool_validate_error',
+            'wrap_tool_execute',
+            'on_tool_execute_error',
+        } & set(frame_names)
+
+    async def test_dynamic_hooks_survive_capability_composition(self):
+        hooks = Hooks()
+        calls: list[str] = []
+
+        @hooks.on.tool_execute
+        async def wrap_tool_execute(
+            ctx: RunContext[Any],
+            *,
+            call: ToolCallPart,
+            tool_def: ToolDefinition,
+            args: dict[str, Any],
+            handler: Any,
+        ) -> Any:
+            calls.append('before')
+            result = await handler(args)
+            calls.append('after')
+            return result
+
+        capability = WrapperCapability(wrapped=CombinedCapability([hooks]))
+        agent = Agent(FunctionModel(tool_calling_model), capabilities=[capability])
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            return 'tool result'
+
+        await agent.run('call tool')
+        assert calls == ['before', 'after']
+
+    async def test_dynamic_event_hooks_survive_classic_stream_composition(self):
+        hooks = Hooks()
+        observed: list[AgentStreamEvent] = []
+
+        @hooks.on.event
+        async def observe(ctx: RunContext[Any], event: AgentStreamEvent) -> None:
+            observed.append(event)
+
+        capability = WrapperCapability(wrapped=CombinedCapability([hooks]))
+        agent = Agent(
+            FunctionModel(simple_model_function, stream_function=simple_stream_function),
+            capabilities=[capability],
+        )
+
+        async with agent.run_stream('hello') as stream:
+            await stream.get_output()
+
+        assert any(isinstance(event, PartStartEvent) for event in observed)
+
     async def test_before_run(self):
         cap = LoggingCapability()
         agent = Agent(FunctionModel(simple_model_function), capabilities=[cap])

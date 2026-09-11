@@ -1,6 +1,6 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterable, Iterator
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Awaitable, Callable, Iterable, Iterator
 from contextlib import AbstractAsyncContextManager, aclosing
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
@@ -394,11 +394,10 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
             )
             # Wrap once, so a capability's `wrap_run_event_stream` sees each event exactly once no
             # matter how many times this stream is iterated (e.g. `stream_text()` then a drain).
-            self._events_iterator = aiter(
-                self._root_capability.wrap_run_event_stream(
-                    self._run_ctx, stream=dispatch_event_stream(self._run_ctx, self._events_iter(base_iter))
-                )
-            )
+            events: AsyncIterable[AgentStreamEvent] = dispatch_event_stream(self._run_ctx, self._events_iter(base_iter))
+            if self._root_capability.has_wrap_run_event_stream:
+                events = self._root_capability.wrap_run_event_stream(self._run_ctx, stream=events)
+            self._events_iterator = aiter(events)
 
         return self._pull_shared(self._events_iterator)
 

@@ -18,7 +18,8 @@ import anyio
 import pytest
 
 import pydantic_ai._utils as utils_module
-from pydantic_ai import Agent, UserError
+from pydantic_ai import Agent, RunContext, UserError
+from pydantic_ai._agent_graph import GraphAgentState
 from pydantic_ai._utils import (
     UNSET,
     PeekableAsyncStream,
@@ -35,7 +36,9 @@ from pydantic_ai._utils import (
     strip_markdown_fences,
     using_thread_executor,
 )
+from pydantic_ai.messages import ModelMessage, ModelRequest, UserPromptPart
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.usage import RunUsage
 
 from ._inline_snapshot import snapshot
 from .conftest import undrivable_event_loop
@@ -1157,6 +1160,48 @@ def test_dataclasses_no_defaults_repr_omits_defaults():
     _items_factory.calls = 0
     assert repr(instance) == '_HasMixedFields(required=1, flag=True, items=[])'
     assert _items_factory.calls == 0
+
+
+def test_run_and_graph_state_repr_do_not_expand_user_data():
+    """Run and graph contexts keep user data accessible without formatting it in `repr`."""
+
+    class LargeRepr:
+        def __repr__(self) -> str:
+            return 'D' * 4096  # pragma: no cover
+
+    deps = LargeRepr()
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='H' * 4096)])]
+    context = RunContext(deps=deps, model=TestModel(), usage=RunUsage(), prompt='P' * 4096, messages=messages)
+    state = GraphAgentState(message_history=messages)
+
+    context_repr = repr(context)
+    state_repr = repr(state)
+    assert len(context_repr) < 1024
+    assert len(state_repr) < 1024
+    assert 'D' * 64 not in context_repr
+    assert 'H' * 64 not in context_repr
+    assert 'P' * 64 not in context_repr
+    assert 'H' * 64 not in state_repr
+    assert context.deps is deps
+    assert context.messages is messages
+    assert state.message_history is messages
+
+
+async def test_graph_run_context_repr_does_not_expand_dependencies():
+    """The graph context used by `AgentRun.ctx` also omits user dependencies from its repr."""
+
+    class LargeRepr:
+        def __repr__(self) -> str:
+            return 'D' * 4096  # pragma: no cover
+
+    deps = LargeRepr()
+    agent = Agent(TestModel(), deps_type=LargeRepr)
+    async with agent.iter('P' * 4096, deps=deps) as agent_run:
+        context_repr = repr(agent_run.ctx)
+
+    assert len(context_repr) < 4096
+    assert 'D' * 64 not in context_repr
+    assert 'P' * 64 not in context_repr
 
 
 def test_format_inlined_text_file() -> None:

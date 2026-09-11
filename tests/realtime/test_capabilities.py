@@ -20,7 +20,14 @@ import pytest
 
 from pydantic_ai import Agent
 from pydantic_ai._instrumentation import get_instructions
-from pydantic_ai.capabilities import Hooks, NativeTool, ProcessEventStream, WebSearch
+from pydantic_ai.capabilities import (
+    CombinedCapability,
+    Hooks,
+    NativeTool,
+    ProcessEventStream,
+    WebSearch,
+    WrapperCapability,
+)
 from pydantic_ai.capabilities.abstract import AbstractCapability, WrapRunHandler
 from pydantic_ai.exceptions import RunCancelled, UserError
 from pydantic_ai.messages import (
@@ -758,6 +765,24 @@ async def test_on_event_hook_receives_session_events() -> None:
 
     assert any(isinstance(event, PartStartEvent) for event in observed)
     assert any(isinstance(event, RealtimeTurnCompleteEvent) for event in observed)
+
+
+async def test_nested_on_event_hook_receives_session_events() -> None:
+    """Nested dynamic event hooks still dispatch when no stream wrapper is registered."""
+    observed: list[AgentStreamEvent] = []
+    hooks = Hooks()
+
+    @hooks.on.event
+    async def observe(ctx: RunContext[None], event: AgentStreamEvent) -> None:
+        observed.append(event)
+
+    capability = WrapperCapability(wrapped=CombinedCapability([hooks]))
+    await _drain(
+        Agent(capabilities=[capability], deps_type=type(None)),
+        _RecordingModel(connection_events=[OutputTranscript(text='hello'), ResponseDone()]),
+    )
+
+    assert any(isinstance(event, PartStartEvent) for event in observed)
 
 
 async def test_session_stream_wrapper_closes_after_early_break() -> None:

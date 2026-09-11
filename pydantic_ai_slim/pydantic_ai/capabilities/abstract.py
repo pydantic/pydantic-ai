@@ -395,6 +395,46 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         return type(self).on_model_request_error is not AbstractCapability.on_model_request_error
 
     @property
+    def _has_wrap_run(self) -> bool:
+        return type(self).wrap_run is not AbstractCapability.wrap_run
+
+    @property
+    def _has_on_run_error(self) -> bool:
+        return type(self).on_run_error is not AbstractCapability.on_run_error
+
+    @property
+    def _has_wrap_tool_validate(self) -> bool:
+        return type(self).wrap_tool_validate is not AbstractCapability.wrap_tool_validate
+
+    @property
+    def _has_on_tool_validate_error(self) -> bool:
+        return type(self).on_tool_validate_error is not AbstractCapability.on_tool_validate_error
+
+    @property
+    def _has_wrap_tool_execute(self) -> bool:
+        return type(self).wrap_tool_execute is not AbstractCapability.wrap_tool_execute
+
+    @property
+    def _has_on_tool_execute_error(self) -> bool:
+        return type(self).on_tool_execute_error is not AbstractCapability.on_tool_execute_error
+
+    @property
+    def _has_wrap_output_validate(self) -> bool:
+        return type(self).wrap_output_validate is not AbstractCapability.wrap_output_validate
+
+    @property
+    def _has_on_output_validate_error(self) -> bool:
+        return type(self).on_output_validate_error is not AbstractCapability.on_output_validate_error
+
+    @property
+    def _has_wrap_output_process(self) -> bool:
+        return type(self).wrap_output_process is not AbstractCapability.wrap_output_process
+
+    @property
+    def _has_on_output_process_error(self) -> bool:
+        return type(self).on_output_process_error is not AbstractCapability.on_output_process_error
+
+    @property
     def has_wrap_run_event_stream(self) -> bool:
         """Whether this capability (or any sub-capability) overrides wrap_run_event_stream."""
         return type(self).wrap_run_event_stream is not AbstractCapability.wrap_run_event_stream

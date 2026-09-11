@@ -161,6 +161,70 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         )
 
     @property
+    def _has_wrap_run(self) -> bool:
+        return type(self).wrap_run is not WrapperCapability.wrap_run or self.wrapped._has_wrap_run
+
+    @property
+    def _has_on_run_error(self) -> bool:
+        return type(self).on_run_error is not WrapperCapability.on_run_error or self.wrapped._has_on_run_error
+
+    @property
+    def _has_wrap_tool_validate(self) -> bool:
+        return (
+            type(self).wrap_tool_validate is not WrapperCapability.wrap_tool_validate
+            or self.wrapped._has_wrap_tool_validate
+        )
+
+    @property
+    def _has_on_tool_validate_error(self) -> bool:
+        return (
+            type(self).on_tool_validate_error is not WrapperCapability.on_tool_validate_error
+            or self.wrapped._has_on_tool_validate_error
+        )
+
+    @property
+    def _has_wrap_tool_execute(self) -> bool:
+        return (
+            type(self).wrap_tool_execute is not WrapperCapability.wrap_tool_execute
+            or self.wrapped._has_wrap_tool_execute
+        )
+
+    @property
+    def _has_on_tool_execute_error(self) -> bool:
+        return (
+            type(self).on_tool_execute_error is not WrapperCapability.on_tool_execute_error
+            or self.wrapped._has_on_tool_execute_error
+        )
+
+    @property
+    def _has_wrap_output_validate(self) -> bool:
+        return (
+            type(self).wrap_output_validate is not WrapperCapability.wrap_output_validate
+            or self.wrapped._has_wrap_output_validate
+        )
+
+    @property
+    def _has_on_output_validate_error(self) -> bool:
+        return (
+            type(self).on_output_validate_error is not WrapperCapability.on_output_validate_error
+            or self.wrapped._has_on_output_validate_error
+        )
+
+    @property
+    def _has_wrap_output_process(self) -> bool:
+        return (
+            type(self).wrap_output_process is not WrapperCapability.wrap_output_process
+            or self.wrapped._has_wrap_output_process
+        )
+
+    @property
+    def _has_on_output_process_error(self) -> bool:
+        return (
+            type(self).on_output_process_error is not WrapperCapability.on_output_process_error
+            or self.wrapped._has_on_output_process_error
+        )
+
+    @property
     def has_wrap_run_event_stream(self) -> bool:
         return (
             type(self).wrap_run_event_stream is not WrapperCapability.wrap_run_event_stream
