@@ -12,7 +12,7 @@ typed [`Agent`][pydantic_ai.Agent], with [`pydantic-graph`](../graph.md) when yo
 | Durable execution | Checkpointers | Yes — [5+ integrations](../durable_execution/overview.md) |
 | Observability | LangSmith | [OpenTelemetry](../capabilities/instrumentation.md) |
 | Extensibility | Middleware, callbacks | [Capabilities and toolsets](../extensibility.md) |
-| Interfaces | LangServe, Studio | [CLI](../cli.md), [web chat](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) (experimental), A2A |
+| Interfaces | LangSmith Agent Server, Fleet | [CLI](../cli.md), [web chat](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) (experimental), A2A |
 | Build your own harness | Yes | [Yes](https://pydantic.dev/docs/ai/harness/#build-your-own) |
 | Coding harness | Deep Agents | Yes ([`Coder()`](https://pydantic.dev/docs/ai/harness/coder/)) |
 | Graph library | LangGraph | Yes ([`pydantic-graph`](../graph.md)) |

@@ -27,9 +27,9 @@ AI isn't tied to a cloud.
 | Guardrails | Callbacks | [Yes](https://pydantic.dev/docs/ai/harness/guardrails/) |
 | Code sandboxes | Gemini code execution | [Yes](https://pydantic.dev/docs/ai/harness/#execution-environments) |
 | Browser | Yes (Computer Use) | [Yes](https://pydantic.dev/docs/ai/harness/#web-research) |
-| Memory | App / user / invocation state | [Yes](https://pydantic.dev/docs/ai/harness/memory/) |
+| Memory | State plus `MemoryService` | [Yes](https://pydantic.dev/docs/ai/harness/memory/) |
 | Compaction | `EventsCompactionConfig` | [Yes](../capabilities/compaction.md) |
-| Evals | Yes (Vertex) | [Yes](../evals.md) |
+| Evals | Yes (`adk eval`, Vertex) | [Yes](../evals.md) |
 | Test without API keys | Yes (subclass `BaseLlm`) | [Yes](../testing.md) |
 
 Cells linked to pydantic.dev/docs/ai/harness ship in [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/),

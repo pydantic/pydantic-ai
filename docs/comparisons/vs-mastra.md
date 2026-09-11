@@ -18,7 +18,7 @@ and scorers as separate concepts.
 | Coding harness | `createCodingAgent()` | Yes ([`Coder()`](https://pydantic.dev/docs/ai/harness/coder/)) |
 | Graph library | Workflows in core | Yes ([`pydantic-graph`](../graph.md)) |
 | Multi-agent | Workflows, sub-agents | [Sub-agents](../multi-agent-applications.md), [hand-offs](../multi-agent-applications.md#programmatic-agent-hand-off), or [graph](../graph.md) |
-| Realtime voice | Voice extras | [Yes](../realtime/overview.md) |
+| Realtime voice | Yes (voice packages) | [Yes](../realtime/overview.md) |
 | Image generation | No | [Yes](../image-generation.md) |
 | License | Apache-2.0 (core); EE for some features | MIT |
 
@@ -29,7 +29,7 @@ and scorers as separate concepts.
 | Code sandboxes | Yes | [Yes](https://pydantic.dev/docs/ai/harness/#execution-environments) |
 | Browser | Yes | [Yes](https://pydantic.dev/docs/ai/harness/#web-research) |
 | Memory | Yes (working, observational, semantic) | [Yes](https://pydantic.dev/docs/ai/harness/memory/) |
-| Compaction | No | [Yes](../capabilities/compaction.md) |
+| Compaction | Yes (`TokenLimiterProcessor`, `summarizeThread`) | [Yes](../capabilities/compaction.md) |
 | Evals | Yes | [Yes](../evals.md) |
 | Test without API keys | Yes | [Yes](../testing.md) |
 

@@ -11,7 +11,7 @@ packages. Pydantic AI is a typed Python [`Agent`][pydantic_ai.Agent].
 | Language | TypeScript | Python |
 | Model providers | Many | [Multiple](../models/overview.md) |
 | Durable execution | Session tree on disk | Yes — [5+ integrations](../durable_execution/overview.md) |
-| Observability | Logs | [OpenTelemetry](../capabilities/instrumentation.md) |
+| Observability | Telemetry contract, no exporter | [OpenTelemetry](../capabilities/instrumentation.md) |
 | Extensibility | Extensions, skills, `pi install` | [Capabilities and toolsets](../extensibility.md) |
 | Interfaces | CLI | [CLI](../cli.md), [web chat](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) (experimental), A2A |
 | Build your own harness | No — you extend Pi | [Yes](https://pydantic.dev/docs/ai/harness/#build-your-own) |
@@ -31,7 +31,7 @@ packages. Pydantic AI is a typed Python [`Agent`][pydantic_ai.Agent].
 | Memory | Sessions | [Yes](https://pydantic.dev/docs/ai/harness/memory/) |
 | Compaction | Yes | [Yes](../capabilities/compaction.md) |
 | Evals | No | [Yes](../evals.md) |
-| Test without API keys | Yes (`registerProvider()`) | [Yes](../testing.md) |
+| Test without API keys | Yes (`faux` provider) | [Yes](../testing.md) |
 
 Cells linked to pydantic.dev/docs/ai/harness ship in [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/),
 a separate package.
