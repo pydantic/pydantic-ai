@@ -119,6 +119,15 @@ those limits. Exact limits and provider behavior can change, so provider pages a
 Gemini sends `GoAway` shortly before its cap but Pydantic AI currently reconnects only after the
 connection drops, so a long call can briefly drop mid-turn.
 
+## Ending a call
+
+Leaving the `async with` block closes the session. To hang up from elsewhere — a watchdog, a stop
+button, or [a tool](tools.md#ending-the-session-from-a-tool) — await
+[`close()`][pydantic_ai.realtime.RealtimeSession.close] from any task. The teardown runs to
+completion even if that task is cancelled while it waits, and both a concurrent `close()` and the
+`async with` exit wait for the same teardown, so the session is fully closed by the time the block
+is left.
+
 ## Errors
 
 Realtime sessions use the standard Pydantic AI exception hierarchy:

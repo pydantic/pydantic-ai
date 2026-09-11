@@ -315,7 +315,8 @@ Key facts for building realtime agents:
   can return a replacement result or raise `ModelRetry` to keep the session running. To end the call
   from a tool, await `ctx.realtime_session.close()` for a clean hang-up (the tool does not resume and
   its call is recorded as interrupted), or call `ctx.cancel()` to make the session context raise
-  `RunCancelled`.
+  `RunCancelled`. A watchdog can also await `session.close()` safely: cancelling the watchdog does
+  not interrupt teardown, and the session context waits for teardown before exiting.
 - **Browser WebRTC (OpenAI and Azure OpenAI)**: for browser voice agents, relay the browser's SDP
   offer server-side with `agent.realtime(model).answer_webrtc_offer(sdp_offer)` — the agent's
   resolved instructions and tools are baked in and the API key stays on the server — then attach a
