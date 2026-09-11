@@ -45,7 +45,7 @@ Input-transcription usage is reported separately in `RunUsage.details` under
 `ModelResponse`, because transcription can use a separate model and billing meter.
 
 Token and tool-call limits are checked as usage accrues. Request limits are checked before sending
-text, explicitly creating a response, or returning a tool result. With server-side VAD, the provider
+text, sending an image with `respond=True`, explicitly creating a response, or returning a tool result. With server-side VAD, the provider
 can begin a response without a client request; that limit is checked at the first response event.
 Breaches raise [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded] from iteration.
 
@@ -67,8 +67,9 @@ logfire.instrument_pydantic_ai()
 ```
 
 The session creates an `invoke_agent` span with cumulative usage and conversation content, subject
-to the normal content-redaction setting. Nested `chat {model}` spans represent provider responses,
-and `execute_tool` spans represent tools and delegated agent runs. `model turn complete` and `interrupt`
+to the normal content-redaction setting. Nested provider-response spans have the OpenTelemetry name
+`chat {model}` but display as `response {model}` in Logfire. `execute_tool` spans represent tools;
+a delegated run adds its own `invoke_agent` span inside `execute_tool`. `model turn complete` and `interrupt`
 spans mark those boundaries. A tool round can produce several response spans within one turn.
 
 You may see runs of `model turn complete (interrupted)` spans with no `chat` span between them.
@@ -79,7 +80,7 @@ interrupted response still draws a boundary, displayed as `model turn complete (
 | Attribute | Set on | Meaning |
 | --- | --- | --- |
 | `pydantic_ai.realtime` | Spans the session emits itself (session, response, boundary, and `user speech` spans) | Always `True`; marks spans that belong to a realtime session. `execute_tool` spans come from the [`Instrumentation`][pydantic_ai.capabilities.Instrumentation] capability and don't carry it. |
-| `gen_ai.output.type` | Response spans | `speech` or `text`. |
+| `gen_ai.output.type` | Session and response spans | `speech` or `text`. |
 | `pydantic_ai.response.state` | Interrupted response spans | `'interrupted'`. |
 | Response-level usage | OpenAI, Azure OpenAI, and xAI response spans | Tokens attributed to that response. |
 

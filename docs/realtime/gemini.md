@@ -29,6 +29,20 @@ asynchronous tools, and output behavior. Use the
 [official Gemini Live documentation](https://ai.google.dev/gemini-api/docs/live) as the canonical
 model and availability source.
 
+Vertex AI and the [Pydantic AI Gateway](../gateway.md) use different model IDs and locations from
+the Gemini Developer API:
+
+| API | Model ID | Location |
+| --- | --- | --- |
+| Gemini Developer API | `gemini-2.5-flash-native-audio-latest` | n/a (no location) |
+| Gemini Developer API | `gemini-3.1-flash-live-preview` | n/a (no location) |
+| Vertex AI / gateway | `gemini-live-2.5-flash` | `global` |
+| Vertex AI / gateway | `gemini-live-2.5-flash-native-audio` | `us-central1` |
+
+The Developer API IDs are not available on Vertex AI. Configure the matching Vertex location on
+[`GoogleCloudProvider`][pydantic_ai.providers.google_cloud.GoogleCloudProvider] or in the gateway;
+the gateway example below uses `gemini-live-2.5-flash` and therefore requires `global`.
+
 ## Settings
 
 [`GoogleRealtimeModelSettings`][pydantic_ai.realtime.google.GoogleRealtimeModelSettings] — the
@@ -101,6 +115,10 @@ facts with [`profile=`](overview.md#provider-support), which resolves like a
 [standard model profile](../models/overview.md#inspecting-a-models-profile), e.g.
 `GoogleRealtimeModel('gemini-robotics-er-2-streaming-preview', profile={'supports_text_output': True})`.
 
+The Vertex half-cascade model `gemini-live-2.5-flash` is another exception: it accepts `TEXT`, but
+the built-in speech-to-speech profile rejects `output_modality='text'` before connecting for every
+Gemini ID. Opt in explicitly with `profile={'supports_text_output': True}`.
+
 ## Feature support and limitations
 
 | Feature | Support | Notes |
@@ -130,7 +148,7 @@ realtime = agent.realtime('gateway/google:gemini-live-2.5-flash')
 ```
 
 The gateway proxies Gemini Live through the Vertex upstream, so configure a region that supports
-the Live API. `gateway/google-cloud` is an alias. See
+the selected model as listed in [Model names](#model-names). `gateway/google-cloud` is an alias. See
 [Gateway trace propagation](observability.md#gateway-trace-propagation).
 
 ## Session resumption
@@ -149,6 +167,9 @@ Reconnection uses the latest in-memory server handle and emits `state_restored=T
 
 ## Provider-specific quirks
 
+- A text turn sent while a reply is in flight is answered in order on Gemini 2.5. On Gemini 3.1 it
+  interrupts the active reply, emits `RealtimeResponseInterruptedEvent`, and records any partial
+  reply as interrupted before answering the text turn.
 - Gemini reports response interruption but not user speech-start/end events, so local playback is
   flushed on `RealtimeResponseInterruptedEvent`, and Gemini sessions record no `user speech` span (see
   [Logfire instrumentation](observability.md#logfire-instrumentation)).

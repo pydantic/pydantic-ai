@@ -69,7 +69,9 @@ Each view is independently bounded; a slow consumer drops its oldest item rather
 tools, turn tracking, or other consumers.
 A subscription begins when `stream_audio()` or `stream_transcripts()` is called, so a view handed to
 a task with `asyncio.create_task` misses nothing while it waits for its first turn on the event loop,
-up to its buffer bound.
+up to its buffer bound. Call the method where the task is created and pass the iterator in, as
+above: an `async for chunk in session.stream_audio()` inside the task body subscribes only once the
+task first runs, so audio emitted before then is never seen.
 An unconsumed view buffers up to its bound, dropping the oldest item when full, until it is collected.
 [`close()`][pydantic_ai.realtime.RealtimeSession.close] discards pending items and ends every live
 iterator; [`closed`][pydantic_ai.realtime.RealtimeSession.closed] reports the state.
