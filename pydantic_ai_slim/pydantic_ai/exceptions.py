@@ -14,6 +14,7 @@ from ._warnings import (
     CostCalculationFailedWarning as CostCalculationFailedWarning,
     CostNotFoundWarning as CostNotFoundWarning,
     PydanticAIDeprecationWarning as PydanticAIDeprecationWarning,
+    UsageLimitUnavailableWarning as UsageLimitUnavailableWarning,
 )
 
 if sys.version_info < (3, 11):
@@ -48,6 +49,7 @@ __all__ = (
     'MessageHistoryMutatedWarning',
     'CostCalculationFailedWarning',
     'CostNotFoundWarning',
+    'UsageLimitUnavailableWarning',
     'PydanticAIDeprecationWarning',
     'FallbackExceptionGroup',
     'ToolFailed',

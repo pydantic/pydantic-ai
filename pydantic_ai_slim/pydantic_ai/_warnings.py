@@ -16,3 +16,7 @@ class CostCalculationFailedWarning(Warning):
 
 class CostNotFoundWarning(Warning):
     """Warning raised when cost is not found."""
+
+
+class UsageLimitUnavailableWarning(Warning):
+    """Warning raised when a usage limit cannot be enforced because usage extraction failed."""

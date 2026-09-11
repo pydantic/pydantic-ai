@@ -3887,7 +3887,9 @@ def test_xai_usage_fallback_when_extract_fails(monkeypatch: pytest.MonkeyPatch):
     # Mock RequestUsage.extract to return zeros, simulating genai-prices extraction failure
     def mock_extract(cls: type[RequestUsage], *args: Any, **kwargs: Any) -> RequestUsage:
         details: dict[str, int] = kwargs.get('details') or {}
-        return RequestUsage(details=details)
+        usage = RequestUsage(details=details)
+        usage._usage_extraction_failed = True  # pyright: ignore[reportPrivateUsage]
+        return usage
 
     monkeypatch.setattr(xai_module.RequestUsage, 'extract', classmethod(mock_extract))
 
@@ -3899,6 +3901,7 @@ def test_xai_usage_fallback_when_extract_fails(monkeypatch: pytest.MonkeyPatch):
         response, model='unknown-model', provider='unknown', provider_url='https://unknown.example.com'
     )
     assert result == snapshot(RequestUsage(input_tokens=15, output_tokens=8))
+    assert result._usage_extraction_failed  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_xai_usage_with_server_side_tools(allow_model_requests: None):
