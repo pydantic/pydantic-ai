@@ -12,7 +12,7 @@ features first. Pydantic AI runs on any model, including OpenAI.
 | Model providers | OpenAI first; others via LiteLLM | Any, plus [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] |
 | Extensibility | Tools, guardrails, handoffs | [Capabilities](../extensibility.md) |
 | Skills | Yes (sandbox) | Yes ([Skills](https://pydantic.dev/docs/ai/harness/skills/)) |
-| Interfaces | None of these | [`to_cli_sync()`](../cli.md), [`to_web()`](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/), [A2A extra](https://github.com/datalayer/fasta2a) |
+| Interfaces | None of these | [`to_cli_sync()`](../cli.md), [`to_web()`](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) (experimental), [A2A](https://github.com/datalayer/fasta2a) (community) |
 | Realtime voice | Yes (OpenAI Realtime) | Yes ([realtime](../realtime/overview.md)) |
 | Agent graph | No (handoffs only) | [`pydantic-graph`](../graph.md) |
 | Coding agent | `SandboxAgent` | [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) |
@@ -27,10 +27,14 @@ features first. Pydantic AI runs on any model, including OpenAI.
 | Spend limits | No | Yes ([cost_limit](../agent.md#usage-limits), [spend](https://pydantic.dev/docs/ai/harness/spend/)) |
 | MCP | Client | Client and [server](../mcp/server.md) |
 | Memory | Sessions | [Harness Memory](https://pydantic.dev/docs/ai/harness/memory/) |
-| Compaction | Yes | Yes ([compaction](https://pydantic.dev/docs/ai/harness/compaction/)) |
+| Compaction | Yes | Yes ([compaction](../capabilities/compaction.md), [harness](https://pydantic.dev/docs/ai/harness/compaction/)) |
 | Multi-agent | Handoffs | [Delegation, graph, or `async`](../multi-agent-applications.md) |
-| Durable execution | Temporal integration | [Temporal, DBOS, Prefect, Restate, Lambda, Kitaru, Airflow](../durable_execution/overview.md) |
-| Tracing | Their dashboard | OpenTelemetry |
+| Durable execution | Temporal integration | [Temporal, DBOS, Prefect, Restate](../durable_execution/overview.md), [Lambda](https://pydantic.dev/docs/ai/harness/aws-lambda/); Kitaru and Airflow (external) |
+| Tracing | Their dashboard | OpenTelemetry, any backend |
 | Evals | Yes (platform) | Yes ([Pydantic Evals](../evals.md)) |
-| Test without API keys | Yes (`ScriptedModel`) | Yes |
-| Embeddings | Yes (OpenAI) | Yes |
+| Test without API keys | Yes (`ScriptedModel`) | Yes ([TestModel](../testing.md), [FunctionModel](../testing.md)) |
+| Embeddings | No | Yes |
+
+Harness-linked cells ship in [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/), a separate package.
+
+[Install Pydantic AI](../install.md).

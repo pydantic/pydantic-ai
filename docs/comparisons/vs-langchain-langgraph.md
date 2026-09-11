@@ -12,7 +12,7 @@ typed [`Agent`][pydantic_ai.Agent], with [`pydantic-graph`](../graph.md) when yo
 | Model providers | Many | Any, plus [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] |
 | Extensibility | Middleware, callbacks | [Capabilities](../extensibility.md) |
 | Skills | Yes | Yes ([Skills](https://pydantic.dev/docs/ai/harness/skills/)) |
-| Interfaces | LangServe, Studio | [`to_cli_sync()`](../cli.md), [`to_web()`](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/), [A2A extra](https://github.com/datalayer/fasta2a) |
+| Interfaces | LangServe, Studio | [`to_cli_sync()`](../cli.md), [`to_web()`](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) (experimental), [A2A](https://github.com/datalayer/fasta2a) (community) |
 | Realtime voice | No | Yes ([realtime](../realtime/overview.md)) |
 | Agent graph | LangGraph | [`pydantic-graph`](../graph.md) |
 | Coding agent | Deep Agents | [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) |
@@ -24,18 +24,22 @@ typed [`Agent`][pydantic_ai.Agent], with [`pydantic-graph`](../graph.md) when yo
 | Structured output | Yes (`with_structured_output`) | Yes (type on the agent) |
 | Human in the loop | Yes (`interrupt`) | Yes (tool approval) |
 | Guardrails | Middleware | Yes ([harness](https://pydantic.dev/docs/ai/harness/guardrails/)) |
-| Spend limits | No | Yes ([cost_limit](../agent.md#usage-limits), [spend](https://pydantic.dev/docs/ai/harness/spend/)) |
+| Spend limits | `ModelCallLimitMiddleware` | Yes ([cost_limit](../agent.md#usage-limits), [spend](https://pydantic.dev/docs/ai/harness/spend/)) |
 | MCP | Client (adapters) | Client and [server](../mcp/server.md) |
 | Memory | Checkpointers, store | [Harness Memory](https://pydantic.dev/docs/ai/harness/memory/) |
-| Compaction | Yes (Deep Agents) | Yes ([compaction](https://pydantic.dev/docs/ai/harness/compaction/)) |
+| Compaction | Yes (`SummarizationMiddleware`) | Yes ([compaction](../capabilities/compaction.md), [harness](https://pydantic.dev/docs/ai/harness/compaction/)) |
 | Multi-agent | LangGraph | [Delegation, graph, or `async`](../multi-agent-applications.md) |
-| Durable execution | Checkpointers | [Temporal, DBOS, Prefect, Restate, Lambda, Kitaru, Airflow](../durable_execution/overview.md) |
-| Tracing | LangSmith | OpenTelemetry |
+| Durable execution | Checkpointers | [Temporal, DBOS, Prefect, Restate](../durable_execution/overview.md), [Lambda](https://pydantic.dev/docs/ai/harness/aws-lambda/); Kitaru and Airflow (external) |
+| Tracing | LangSmith | OpenTelemetry, any backend |
 | Evals | Yes (LangSmith) | Yes ([Pydantic Evals](../evals.md)) |
-| Test without API keys | Yes (fake chat models) | Yes |
+| Test without API keys | Yes (fake chat models) | Yes ([TestModel](../testing.md), [FunctionModel](../testing.md)) |
 | Embeddings | Yes (large catalogue) | Yes |
+
+Harness-linked cells ship in [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/), a separate package.
 
 ## FAQ
 
 **Do you have a graph library?** Yes. [`pydantic-graph`](../graph.md). Most multi-agent work is still
 ordinary [async Python](../multi-agent-applications.md).
+
+[Install Pydantic AI](../install.md).

@@ -16,7 +16,7 @@ speak.
 | Model providers | Many (plugins) | Any, plus [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] |
 | Extensibility | Pipeline nodes (`stt_node`, `llm_node`, …) | [Capabilities](../extensibility.md) |
 | Skills | No | Yes ([Skills](https://pydantic.dev/docs/ai/harness/skills/)) |
-| Interfaces | WebRTC rooms, telephony | [`to_cli_sync()`](../cli.md), [`to_web()`](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/), [A2A extra](https://github.com/datalayer/fasta2a) |
+| Interfaces | WebRTC rooms, telephony | [`to_cli_sync()`](../cli.md), [`to_web()`](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) (experimental), [A2A](https://github.com/datalayer/fasta2a) (community) |
 | Realtime voice | The product (WebRTC, telephony) | Yes ([realtime](../realtime/overview.md)) |
 | Agent graph | Media pipeline, not a workflow graph | [`pydantic-graph`](../graph.md) |
 | Coding agent | No | [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) |
@@ -31,10 +31,14 @@ speak.
 | Spend limits | No | Yes ([cost_limit](../agent.md#usage-limits), [spend](https://pydantic.dev/docs/ai/harness/spend/)) |
 | MCP | Client | Client and [server](../mcp/server.md) |
 | Memory | No | [Harness Memory](https://pydantic.dev/docs/ai/harness/memory/) |
-| Compaction | No | Yes ([compaction](https://pydantic.dev/docs/ai/harness/compaction/)) |
+| Compaction | Yes (`truncate`) | Yes ([compaction](../capabilities/compaction.md), [harness](https://pydantic.dev/docs/ai/harness/compaction/)) |
 | Multi-agent | Handoffs in a room | [Delegation, graph, or `async`](../multi-agent-applications.md) |
-| Durable execution | Agent server orchestration | [Temporal, DBOS, Prefect, Restate, Lambda, Kitaru, Airflow](../durable_execution/overview.md) |
-| Tracing | Their telemetry | OpenTelemetry |
+| Durable execution | Agent server orchestration | [Temporal, DBOS, Prefect, Restate](../durable_execution/overview.md), [Lambda](https://pydantic.dev/docs/ai/harness/aws-lambda/); Kitaru and Airflow (external) |
+| Tracing | OTel, their endpoint | OpenTelemetry, any backend |
 | Evals | Yes (`livekit.agents.evals`) | Yes ([Pydantic Evals](../evals.md)) |
-| Test without API keys | Yes | Yes |
+| Test without API keys | Yes | Yes ([TestModel](../testing.md), [FunctionModel](../testing.md)) |
 | Embeddings | No | Yes |
+
+Harness-linked cells ship in [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/), a separate package.
+
+[Install Pydantic AI](../install.md).

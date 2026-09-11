@@ -12,7 +12,7 @@ call, branch, `asyncio.gather`, or [`pydantic-graph`](../graph.md).
 | Model providers | Many | Any, plus [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] |
 | Extensibility | Tools on agents and crews | [Capabilities](../extensibility.md) |
 | Skills | Yes | Yes ([Skills](https://pydantic.dev/docs/ai/harness/skills/)) |
-| Interfaces | Enterprise UI | [`to_cli_sync()`](../cli.md), [`to_web()`](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/), [A2A extra](https://github.com/datalayer/fasta2a) |
+| Interfaces | Enterprise UI, A2A | [`to_cli_sync()`](../cli.md), [`to_web()`](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) (experimental), [A2A](https://github.com/datalayer/fasta2a) (community) |
 | Realtime voice | No | Yes ([realtime](../realtime/overview.md)) |
 | Agent graph | `Process` (sequential / hierarchical) | [`pydantic-graph`](../graph.md) |
 | Coding agent | E2B tools | [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) |
@@ -27,10 +27,14 @@ call, branch, `asyncio.gather`, or [`pydantic-graph`](../graph.md).
 | Spend limits | `max_iter` / `max_rpm` | Yes ([cost_limit](../agent.md#usage-limits), [spend](https://pydantic.dev/docs/ai/harness/spend/)) |
 | MCP | Client | Client and [server](../mcp/server.md) |
 | Memory | On `Agent` and `Crew` | [Harness Memory](https://pydantic.dev/docs/ai/harness/memory/) |
-| Compaction | `respect_context_window` | Yes ([compaction](https://pydantic.dev/docs/ai/harness/compaction/)) |
+| Compaction | `respect_context_window` | Yes ([compaction](../capabilities/compaction.md), [harness](https://pydantic.dev/docs/ai/harness/compaction/)) |
 | Multi-agent | Roles, tasks, `Process` | [Delegation, graph, or `async`](../multi-agent-applications.md) |
-| Durable execution | `Crew.from_checkpoint` | [Temporal, DBOS, Prefect, Restate, Lambda, Kitaru, Airflow](../durable_execution/overview.md) |
-| Tracing | Their platform | OpenTelemetry |
+| Durable execution | `Crew.from_checkpoint` | [Temporal, DBOS, Prefect, Restate](../durable_execution/overview.md), [Lambda](https://pydantic.dev/docs/ai/harness/aws-lambda/); Kitaru and Airflow (external) |
+| Tracing | OTel, their endpoint | OpenTelemetry, any backend |
 | Evals | Yes (experimental) | Yes ([Pydantic Evals](../evals.md)) |
-| Test without API keys | No (`crewai test` hits a live model) | Yes |
+| Test without API keys | No (`crewai test` hits a live model) | Yes ([TestModel](../testing.md), [FunctionModel](../testing.md)) |
 | Embeddings | Knowledge | Yes |
+
+Harness-linked cells ship in [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/), a separate package.
+
+[Install Pydantic AI](../install.md).
