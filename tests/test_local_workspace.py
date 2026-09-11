@@ -617,6 +617,18 @@ async def test_windowed_read_runs_sed_inside_the_workspace(
 
     assert (window.lines, window.has_more, window.total_lines) == expected
     assert window.start_line == offset
+    assert window.truncated is expected[1]
+
+
+async def test_read_file_does_not_return_a_partial_overlong_line(tmp_path: Path):
+    workspace = Workspace(LocalWorkspace(tmp_path))
+    await workspace.write_text('min.js', 'x' * 100)
+
+    window = await workspace.read_file('min.js', max_bytes=20)
+
+    assert window.lines == ()
+    assert (window.truncated, window.first_line_exceeds_limit) == (True, True)
+    assert '[truncated: line 1 exceeds the byte limit' in window.text
 
 
 async def test_list_dir_symlink_sizes_match_stat(tmp_path: Path):

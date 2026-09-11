@@ -54,16 +54,22 @@ from pydantic_ai import RunContext
 
 async def read_source(ctx: RunContext[None], path: str, offset: int = 1) -> str:
     window = await ctx.workspace.read_file(path, offset=offset, limit=200)
-    suffix = '\n[more lines available]' if window.has_more else ''
-    return window.text + suffix
+    return window.text
 ```
 
-By default `read_file` returns at most 2000 lines; pass `limit=None` to read through the end of the
-file. A line longer than 2000 characters is truncated with a marker, and a file whose head contains a
-NUL byte is reported as binary (`window.binary` is `True`, and `window.text` names its size instead of
-decoding the bytes). For remote workspaces the window is sliced inside the environment, so only the
-window crosses the wire, never the whole file. When you do want the exact, uncapped contents, use
-`read_bytes` or `read_text`.
+By default `read_file` returns at most 2000 lines or 50 KiB, whichever comes first (the same
+defaults as Pi and OpenCode; Claude Code and Gemini CLI also default to 2000 lines). Pass
+`limit=None` and `max_bytes=None` together to read through the end of the file.
+
+The result is a [`FileWindow`][pydantic_ai.workspaces.FileWindow], not a bare string, so a cap
+cannot be missed: `truncated` is true when the window is incomplete, `truncated_by` names the cap
+that fired (`'lines'` or `'bytes'`), `remaining_lines` is set when the total is known, and
+`text` includes a continuation notice. A single line longer than `max_bytes` yields an empty
+window with `first_line_exceeds_limit=True` rather than a partial line presented as complete.
+A file whose head contains a NUL byte is reported as binary (`window.binary` is `True`, and
+`window.text` names its size instead of decoding the bytes). For remote workspaces the window is
+sliced inside the environment, so only the window crosses the wire, never the whole file. When
+you do want the exact, uncapped contents, use `read_bytes` or `read_text`.
 
 ## Policy wrappers
 

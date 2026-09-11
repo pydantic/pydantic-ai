@@ -36,6 +36,7 @@ class FakeEntry:
 
 
 _SED_WINDOW = re.compile(r'^(\d+),(\d+)p;\2q$')
+_SED_REST = re.compile(r'^(\d+),\$p$')
 
 
 class FakeWorkspace(WorkspaceBackend, SupportsFilesystem):
@@ -88,13 +89,16 @@ class FakeWorkspace(WorkspaceBackend, SupportsFilesystem):
                 return FakeWorkspaceResult(exit_code=1, stderr=f'head: {path}: No such file or directory')
             return FakeWorkspaceResult(stdout=self.files[path][:count].decode('utf-8', errors='replace'))
         if isinstance(command, str) and command.startswith('sed -n '):
-            # The facade sends the bounded window as `sed -n '<expr>' <path> | head -c <bytes>`.
+            # The facade sends the bounded window as `sed -n '<expr>' <path>` and, when a byte cap
+            # is set, pipes that through `head -c <bytes>`.
             if not self._sed:
                 return FakeWorkspaceResult(exit_code=127, stderr='sed: not found')
             sed_part, _, head_bytes = command.partition(' | head -c ')
-            max_bytes = int(head_bytes)
+            max_bytes = int(head_bytes) if head_bytes else None
             _, _, expression, path = shlex.split(sed_part)
-            match = _SED_WINDOW.match(expression)
+            window = _SED_WINDOW.match(expression)
+            rest = _SED_REST.match(expression)
+            match = window or rest
             assert match is not None
             # The window read only runs after the `head` sniff has already found the file, so a path
             # reaching the `sed` pipeline always exists.
@@ -102,12 +106,16 @@ class FakeWorkspace(WorkspaceBackend, SupportsFilesystem):
             lines = text.split('\n')
             if lines[-1] == '':
                 lines.pop()
-            start, end = int(match[1]) - 1, int(match[2])
+            start = int(match[1]) - 1
+            end = int(window[2]) if window is not None else len(lines)
             selected = lines[start:end]
             stdout = '\n'.join(selected)
             if selected and (start + len(selected) < len(lines) or text.endswith('\n')):
                 stdout += '\n'
-            return FakeWorkspaceResult(stdout=stdout.encode('utf-8')[:max_bytes].decode('utf-8', errors='replace'))
+            encoded = stdout.encode('utf-8')
+            if max_bytes is not None:
+                encoded = encoded[:max_bytes]
+            return FakeWorkspaceResult(stdout=encoded.decode('utf-8', errors='replace'))
         self.commands.append(command)
         return FakeWorkspaceResult(stdout='connected')
 

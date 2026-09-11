@@ -15,6 +15,7 @@ import shlex
 import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from typing import Literal
 
 import anyio
 
@@ -53,39 +54,47 @@ _SHELL_CLEANUP_TIMEOUT = 10
 _DEFAULT_READ_LINES = 2000
 """Line cap applied by `read_file` when the caller passes no `limit`.
 
-This matches the de-facto default across coding agents (Claude Code, Cline, Gemini CLI). Pass
-`limit=None` to read through end of file."""
+Claude Code, Pi, OpenCode, and Gemini CLI all default to 2000 lines. Pass `limit=None` to drop
+the line cap (the byte cap still applies unless `max_bytes=None` too)."""
 
-_MAX_LINE_CHARS = 2000
-"""Per-line character cap in `read_file`'s model-facing window.
+_DEFAULT_READ_BYTES = 50 * 1024
+"""Byte cap applied by `read_file` when the caller passes no `max_bytes`.
 
-A single line longer than this is truncated with a marker, so one generated or minified line
-cannot flood the model context. `read_text` and `read_bytes` return exact content and are unaffected."""
+Pi and OpenCode both default to 50 KiB and take whichever of the line and byte caps hits first.
+Pass `max_bytes=None` to drop the byte cap. `read_text` and `read_bytes` are uncapped."""
 
 _BINARY_SNIFF_BYTES = 8192
 """Bytes sampled from a file's head to classify it as binary before a window crosses the wire."""
 
-_MAX_READ_BYTES = 1024 * 1024
-"""Byte ceiling on a bounded `read_file` transfer, so a window of very long lines cannot drag the
-whole file across the wire. A normal 2000-line window is far below this. `limit=None` (and
-`read_bytes`/`read_text`) bypass it to read the whole file deliberately."""
-
 
 @dataclass(frozen=True, kw_only=True)
 class FileWindow:
-    """A line window of a workspace file, as returned by [`Workspace.read_file`][pydantic_ai.workspaces.Workspace.read_file]."""
+    """A line window of a workspace file, as returned by [`Workspace.read_file`][pydantic_ai.workspaces.Workspace.read_file].
+
+    Always inspect [`truncated`][pydantic_ai.workspaces.FileWindow.truncated] before treating
+    `lines` as the whole file. [`text`][pydantic_ai.workspaces.FileWindow.text] includes a
+    truncation notice when the window was cut, so stringifying the result cannot hide a cap.
+    """
 
     lines: tuple[str, ...]
-    """The requested lines, without trailing newlines; a trailing `\r` (Windows line ending)
-    is also stripped. A line longer than 2000 characters is truncated with a ` [line truncated]`
-    marker. For byte-exact access, use `read_bytes`.
+    """Complete lines in this window, without trailing newlines; a trailing `\r` (Windows
+    line ending) is also stripped. Lines are never mid-line truncated and never carry a
+    truncation marker in the content itself. For byte-exact access, use `read_bytes`.
     """
     start_line: int
     """1-based line number of `lines[0]` (the requested `offset`, even when `lines` is empty)."""
     has_more: bool
     """Whether the file has content after this window."""
     total_lines: int | None
-    """Total number of lines in the file, when known (the read reached EOF); `None` otherwise."""
+    """Total number of lines in the file, when known (the read reached EOF, or the whole
+    file was already in memory); `None` otherwise."""
+    truncated_by: Literal['lines', 'bytes'] | None = None
+    """Which cap cut this window: `'lines'`, `'bytes'`, or `None` when the window is complete."""
+    first_line_exceeds_limit: bool = False
+    """Whether the first requested line is longer than `max_bytes` by itself.
+
+    When `True`, `lines` is empty: a partial line is not returned as if it were complete.
+    """
     binary: bool = False
     """Whether the file is binary. When `True`, `lines` is empty and `text` is a size marker,
     not content: binary bytes are not decoded into the model context. Use `read_bytes` for the
@@ -94,11 +103,41 @@ class FileWindow:
     """The file's size in bytes when known; reported for a binary file so the marker can name it."""
 
     @property
+    def truncated(self) -> bool:
+        """Whether this window is not the complete requested view.
+
+        True when `has_more` or `first_line_exceeds_limit`. Check this before treating `lines`
+        or `text` as the whole file.
+        """
+        return self.has_more or self.first_line_exceeds_limit
+
+    @property
+    def remaining_lines(self) -> int | None:
+        """Lines after this window, when `total_lines` is known; `None` otherwise."""
+        if self.total_lines is None:
+            return None
+        consumed = self.start_line - 1 + len(self.lines)
+        return max(self.total_lines - consumed, 0)
+
+    @property
+    def end_line(self) -> int | None:
+        """1-based line number of `lines[-1]`, or `None` when `lines` is empty."""
+        if not self.lines:
+            return None
+        return self.start_line + len(self.lines) - 1
+
+    @property
     def text(self) -> str:
         if self.binary:
             size = 'unknown size' if self.byte_size is None else f'{self.byte_size} bytes'
             return f'[Binary file ({size}). Use a binary-aware tool to inspect it.]'
-        return '\n'.join(self.lines)
+        if self.first_line_exceeds_limit:
+            return _truncation_notice(self)
+        body = '\n'.join(self.lines)
+        if not self.truncated:
+            return body
+        notice = _truncation_notice(self)
+        return f'{body}\n\n{notice}' if body else notice
 
 
 class _ShellFilesystem(SupportsFilesystem):
@@ -357,12 +396,25 @@ class Workspace(WorkspaceBackend):
         """Write text to `path`, resolving relative paths through the backend first."""
         await self.write_bytes(path, content.encode(encoding))
 
-    async def read_file(self, path: str, *, offset: int = 1, limit: int | None = _DEFAULT_READ_LINES) -> FileWindow:
+    async def read_file(
+        self,
+        path: str,
+        *,
+        offset: int = 1,
+        limit: int | None = _DEFAULT_READ_LINES,
+        max_bytes: int | None = _DEFAULT_READ_BYTES,
+    ) -> FileWindow:
         """Read a line window from `path`, capped for a model to read safely.
 
-        `offset` is the 1-based first line. `limit` is the maximum number of lines and defaults to
-        2000; pass `limit=None` to read through end of file. A line longer than 2000 characters is
-        truncated in the returned window (see [`FileWindow.lines`][pydantic_ai.workspaces.FileWindow]).
+        `offset` is the 1-based first line. `limit` defaults to 2000 lines; `max_bytes` defaults
+        to 50 KiB. Both caps apply at once and the window stops at whichever hits first. Pass
+        `limit=None` and `max_bytes=None` together to read through end of file.
+
+        The returned [`FileWindow`][pydantic_ai.workspaces.FileWindow] is structured so a cap
+        cannot be missed: `truncated` is true when the window is incomplete, `truncated_by`
+        names the cap that fired, and `text` includes a continuation notice. A single line
+        longer than `max_bytes` yields an empty window with `first_line_exceeds_limit=True`
+        rather than a partial line presented as complete.
 
         A file whose head contains a NUL byte is treated as binary: the returned window has
         `binary=True`, empty `lines`, and a `text` that names the size instead of decoding the
@@ -378,11 +430,13 @@ class Workspace(WorkspaceBackend):
             raise ValueError('`offset` must be at least 1')
         if limit is not None and limit < 1:
             raise ValueError('`limit` must be at least 1')
-        if limit is not None:
+        if max_bytes is not None and max_bytes < 1:
+            raise ValueError('`max_bytes` must be at least 1')
+        if limit is not None or max_bytes is not None:
             # Bounded path: classify the file and slice the window inside the workspace, so a
             # binary or oversized file never crosses the wire in full. Returns `None` when the
             # shell utilities are unavailable, so the authoritative read below serves the window.
-            window = await self._read_file_via_shell(path, offset, limit)
+            window = await self._read_file_via_shell(path, offset, limit, max_bytes)
             if window is not None:
                 return window
 
@@ -391,9 +445,11 @@ class Workspace(WorkspaceBackend):
             return FileWindow(
                 lines=(), start_line=offset, has_more=False, total_lines=None, binary=True, byte_size=len(data)
             )
-        return _window_from_data(data, offset, limit)
+        return _window_from_data(data, offset, limit, max_bytes)
 
-    async def _read_file_via_shell(self, path: str, offset: int, limit: int) -> FileWindow | None:
+    async def _read_file_via_shell(
+        self, path: str, offset: int, limit: int | None, max_bytes: int | None
+    ) -> FileWindow | None:
         """Classify and slice a file inside the workspace, so only a bounded amount crosses the wire.
 
         Returns `None` on failure (no usable `head`/`sed`, `run()` unsupported, or a slice that
@@ -414,14 +470,18 @@ class Workspace(WorkspaceBackend):
                 binary=True,
                 byte_size=await self._safe_size(resolved_path),
             )
-        end = offset + limit  # one extra line, to learn whether more exist
-        # `{end}q` stops `sed` at the line window; `head -c` caps the bytes that cross the wire, so
-        # a window whose lines are individually huge cannot drag the whole file across. The sed
-        # expression holds only integers and the path is quoted, so `shell=True` is safe here. The
-        # timeout bounds the optimization on paths that never finish.
-        command = (
-            f'sed -n {shlex.quote(f"{offset},{end}p;{end}q")} {shlex.quote(resolved_path)} | head -c {_MAX_READ_BYTES}'
-        )
+        if limit is not None:
+            end = offset + limit  # one extra line, to learn whether more exist
+            sed_expr = f'{offset},{end}p;{end}q'
+        else:
+            sed_expr = f'{offset},$p'
+        # `head -c` caps the bytes that cross the wire, so a window whose lines are individually
+        # huge cannot drag the whole file across. The sed expression holds only integers and the
+        # path is quoted, so `shell=True` is safe here. The timeout bounds the optimization on
+        # paths that never finish.
+        command = f'sed -n {shlex.quote(sed_expr)} {shlex.quote(resolved_path)}'
+        if max_bytes is not None:
+            command = f'{command} | head -c {max_bytes}'
         try:
             result = await self.run(command, shell=True, timeout=_SHELL_SLICE_TIMEOUT)
         except (NotImplementedError, OSError, WorkspaceTimeoutError, UserError):
@@ -429,30 +489,42 @@ class Workspace(WorkspaceBackend):
         if result.exit_code != 0 or result.stderr:
             return None
 
-        # `head -c` filling its budget marks a window the byte ceiling bounded, not the line window.
-        byte_capped = len(result.stdout.encode('utf-8')) >= _MAX_READ_BYTES
+        byte_capped = max_bytes is not None and len(result.stdout.encode('utf-8')) >= max_bytes
         lines = list(_split_lines(result.stdout))
         if lines and lines[-1] == '':
             lines.pop()
-        if byte_capped and len(lines) > 1:
+        if byte_capped and lines:
             # The ceiling cut the final line mid-way; drop it so no partial line is shown as
-            # complete, keeping the complete lines before it. A single over-ceiling line is kept
-            # and trimmed by `_cap_line` instead, so the window is never empty when content exists.
+            # complete. If that was the only line, the window is empty and
+            # `first_line_exceeds_limit` tells the caller to use a byte-range read.
             lines.pop()
         if not lines:
+            await self._validate_bounded_read_path(resolved_path)
+            if byte_capped:
+                return FileWindow(
+                    lines=(),
+                    start_line=offset,
+                    has_more=True,
+                    total_lines=None,
+                    truncated_by='bytes',
+                    first_line_exceeds_limit=True,
+                )
             # Empty output covers an empty file or an offset past EOF. The exact total is
             # unknown without scanning to EOF, which would defeat the bounded-read contract.
-            await self._validate_bounded_read_path(resolved_path)
             return FileWindow(lines=(), start_line=offset, has_more=False, total_lines=None)
-        if byte_capped or len(lines) > limit:
+        line_capped = limit is not None and len(lines) > limit
+        if line_capped:
+            lines = lines[:limit]
+        if byte_capped or line_capped:
             return FileWindow(
-                lines=tuple(_cap_line(line) for line in lines[:limit]),
+                lines=tuple(lines),
                 start_line=offset,
                 has_more=True,
                 total_lines=None,
+                truncated_by='bytes' if byte_capped and not line_capped else 'lines',
             )
         return FileWindow(
-            lines=tuple(_cap_line(line) for line in lines),
+            lines=tuple(lines),
             start_line=offset,
             has_more=False,
             total_lines=offset - 1 + len(lines),
@@ -506,24 +578,53 @@ class WrapperWorkspace(Workspace):
     def wrapped(self) -> Workspace:
         return self._backend
 
-    async def _read_file_via_shell(self, path: str, offset: int, limit: int) -> FileWindow | None:
+    async def _read_file_via_shell(
+        self, path: str, offset: int, limit: int | None, max_bytes: int | None
+    ) -> FileWindow | None:
         return None
 
 
-def _window_from_data(data: bytes, offset: int, limit: int | None) -> FileWindow:
+def _window_from_data(
+    data: bytes, offset: int, limit: int | None, max_bytes: int | None
+) -> FileWindow:
     text = data.decode('utf-8', errors='replace')
     lines = _split_lines(text)
     if lines[-1] == '':
         lines = lines[:-1]
 
     start = offset - 1
-    end = None if limit is None else start + limit
-    window = tuple(_cap_line(line) for line in lines[start:end])
+    remaining = lines[start:]
+    line_capped = limit is not None and len(remaining) > limit
+    candidates = remaining if limit is None else remaining[:limit]
+
+    selected: list[str] = []
+    size = 0
+    byte_capped = False
+    first_line_exceeds = False
+    for line in candidates:
+        encoded_size = len(line.encode('utf-8'))
+        extra = encoded_size if not selected else encoded_size + 1
+        if max_bytes is not None and size + extra > max_bytes:
+            byte_capped = True
+            if not selected:
+                first_line_exceeds = True
+            break
+        selected.append(line)
+        size += extra
+
+    has_more = line_capped or byte_capped or first_line_exceeds
+    truncated_by: Literal['lines', 'bytes'] | None = None
+    if first_line_exceeds or (byte_capped and not line_capped):
+        truncated_by = 'bytes'
+    elif line_capped:
+        truncated_by = 'lines'
     return FileWindow(
-        lines=window,
+        lines=tuple(selected),
         start_line=offset,
-        has_more=False if limit is None else start + limit < len(lines),
+        has_more=has_more,
         total_lines=len(lines),
+        truncated_by=truncated_by,
+        first_line_exceeds_limit=first_line_exceeds,
     )
 
 
@@ -540,8 +641,26 @@ def _is_binary(data: bytes) -> bool:
     return b'\x00' in data[:_BINARY_SNIFF_BYTES]
 
 
-def _cap_line(line: str) -> str:
-    """Truncate a single line that would flood the model context, keeping the head."""
-    if len(line) <= _MAX_LINE_CHARS:
-        return line
-    return f'{line[:_MAX_LINE_CHARS]} [line truncated]'
+def _truncation_notice(window: FileWindow) -> str:
+    """A continuation notice that makes a capped window obvious in `FileWindow.text`."""
+    if window.first_line_exceeds_limit:
+        return (
+            f'[truncated: line {window.start_line} exceeds the byte limit; no content returned. '
+            f'Pass a higher max_bytes, max_bytes=None, or read a byte slice via the shell.]'
+        )
+    end = window.end_line
+    shown = f'lines {window.start_line}-{end}' if end is not None else f'line {window.start_line}'
+    if window.total_lines is not None:
+        shown = f'{shown} of {window.total_lines}'
+        remaining = window.remaining_lines
+        remaining_note = f'; {remaining} line{"" if remaining == 1 else "s"} remaining' if remaining else ''
+    else:
+        remaining_note = ''
+    if window.truncated_by == 'bytes':
+        cap = 'byte limit'
+        next_step = 'Use offset={} to continue, or pass max_bytes=None to raise the byte cap.'
+    else:
+        cap = 'line limit'
+        next_step = 'Use offset={} to continue, or pass limit=None to raise the line cap.'
+    next_offset = (end + 1) if end is not None else window.start_line
+    return f'[truncated: showing {shown}{remaining_note} ({cap}). {next_step.format(next_offset)}]'

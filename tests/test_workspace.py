@@ -232,11 +232,11 @@ async def test_run_only_backend_supports_bounded_reads_through_shell() -> None:
     assert window.lines == ('one', 'two')
     assert commands == [
         ['head', '-c', '8192', '/workspace/data.txt'],
-        "sed -n '1,3p;3q' /workspace/data.txt | head -c 1048576",
+        "sed -n '1,3p;3q' /workspace/data.txt | head -c 51200",
     ]
     assert inner.reads == []
     with pytest.raises(WorkspaceError, match='invalid base64'):
-        await workspace.read_file('data.txt', limit=None)
+        await workspace.read_file('data.txt', limit=None, max_bytes=None)
 
 
 @pytest.mark.parametrize(
@@ -500,7 +500,7 @@ async def test_a_file_without_a_trailing_newline_reads_to_its_last_line() -> Non
     assert window.total_lines == 2
 
 
-@pytest.mark.parametrize('kwargs', [{'offset': 0}, {'limit': 0}])
+@pytest.mark.parametrize('kwargs', [{'offset': 0}, {'limit': 0}, {'max_bytes': 0}])
 async def test_read_file_rejects_invalid_window_values(kwargs: dict[str, int]) -> None:
     with pytest.raises(ValueError):
         await Workspace(FakeWorkspace('invalid-window')).read_file('data.txt', **kwargs)
@@ -523,14 +523,18 @@ async def test_bounded_read_reports_more_lines_only_when_the_window_is_short() -
     ending = await workspace.read_file('data.txt', offset=2, limit=2)
 
     assert (partial.lines, partial.has_more, partial.total_lines) == (('one', 'two'), True, None)
+    assert (partial.truncated, partial.truncated_by) == (True, 'lines')
+    assert '[truncated:' in partial.text
     assert (ending.lines, ending.has_more, ending.total_lines) == (('two', 'three'), False, 3)
+    assert ending.truncated is False
+    assert '[truncated:' not in ending.text
 
 
 async def test_full_read_uses_filesystem_and_preserves_decoding_contracts() -> None:
     backend = FakeWorkspace('full-read', {'/workspace/data.txt': b'one\ntwo\nthree'})
     workspace = Workspace(backend)
 
-    window = await workspace.read_file('data.txt', offset=2, limit=None)
+    window = await workspace.read_file('data.txt', offset=2, limit=None, max_bytes=None)
 
     assert (window.lines, window.has_more, window.total_lines) == (('two', 'three'), False, 3)
     assert window.text == 'two\nthree'
@@ -572,7 +576,7 @@ async def test_binary_file_is_detected_on_the_full_read_path() -> None:
     data = b'text\x00more'
     backend = FakeWorkspace('binary-full', {'/workspace/blob.bin': data})
 
-    window = await Workspace(backend).read_file('blob.bin', limit=None)
+    window = await Workspace(backend).read_file('blob.bin', limit=None, max_bytes=None)
 
     assert (window.binary, window.lines, window.byte_size) == (True, (), len(data))
     assert backend.reads == ['/workspace/blob.bin']
@@ -599,39 +603,68 @@ async def test_read_file_caps_at_the_default_line_limit() -> None:
 
     assert len(window.lines) == 2000
     assert (window.lines[0], window.lines[-1]) == ('line0', 'line1999')
-    assert (window.has_more, window.total_lines) == (True, None)
+    assert (window.has_more, window.total_lines, window.truncated, window.truncated_by) == (
+        True,
+        None,
+        True,
+        'lines',
+    )
+    assert window.remaining_lines is None
+    assert '[truncated: showing lines 1-2000' in window.text
+    assert 'Use offset=2001 to continue' in window.text
 
 
-@pytest.mark.parametrize('limit', [None, 2000], ids=['full-read', 'bounded-read'])
-async def test_read_file_truncates_an_overlong_line(limit: int | None) -> None:
+async def test_read_file_keeps_an_overlong_line_within_the_byte_cap() -> None:
     long_line = 'a' * 2500
     backend = FakeWorkspace('long-line', {'/workspace/min.js': (long_line + '\n').encode()})
 
-    window = await Workspace(backend).read_file('min.js', limit=limit)
+    window = await Workspace(backend).read_file('min.js')
 
-    assert window.lines == ('a' * 2000 + ' [line truncated]',)
+    # Per-line character clipping is a rendering concern for the FileSystem capability.
+    # The facade returns the complete line when it fits in the 50 KiB byte cap.
+    assert window.lines == (long_line,)
+    assert window.truncated is False
+    assert window.text == long_line
 
 
-async def test_read_file_byte_ceiling_bounds_a_window_of_long_lines(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr('pydantic_ai.workspaces.workspace._MAX_READ_BYTES', 20)
+async def test_read_file_byte_ceiling_bounds_a_window_of_long_lines() -> None:
     backend = FakeWorkspace('ceiling', {'/workspace/data.txt': b'aaaaa\nbbbbb\nccccc\nddddd\n'})
 
-    window = await Workspace(backend).read_file('data.txt')
+    window = await Workspace(backend).read_file('data.txt', max_bytes=20)
 
     # The 20-byte ceiling cuts inside the window: the partial final line is dropped and the
     # complete lines before it are returned with more signalled. Nothing else crosses the wire.
     assert (window.lines, window.has_more, window.total_lines) == (('aaaaa', 'bbbbb', 'ccccc'), True, None)
+    assert (window.truncated, window.truncated_by) == (True, 'bytes')
+    assert '[truncated: showing lines 1-3' in window.text
+    assert 'byte limit' in window.text
     assert backend.reads == []
 
 
-async def test_read_file_byte_ceiling_keeps_a_single_overlong_line(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr('pydantic_ai.workspaces.workspace._MAX_READ_BYTES', 20)
+async def test_read_file_byte_ceiling_returns_no_content_for_a_single_overlong_line() -> None:
     backend = FakeWorkspace('one-line', {'/workspace/data.txt': b'x' * 100})
 
-    window = await Workspace(backend).read_file('data.txt')
+    window = await Workspace(backend).read_file('data.txt', max_bytes=20)
 
-    # A single line larger than the ceiling is kept (never dropped to an empty window) and trimmed.
-    assert (window.lines, window.has_more) == (('x' * 20,), True)
+    # A single line larger than the ceiling is not returned as a partial line.
+    assert window.lines == ()
+    assert (window.truncated, window.truncated_by, window.first_line_exceeds_limit) == (True, 'bytes', True)
+    assert window.text.startswith('[truncated: line 1 exceeds the byte limit')
+
+
+async def test_read_file_applies_whichever_cap_hits_first() -> None:
+    # 10-byte lines; a 25-byte cap stops before the 5-line cap.
+    backend = FakeWorkspace(
+        'both-caps',
+        {'/workspace/data.txt': b'aaaaaaaaaa\nbbbbbbbbbb\ncccccccccc\ndddddddddd\neeeeeeeeee\n'},
+    )
+
+    window = await Workspace(backend).read_file('data.txt', limit=5, max_bytes=25)
+
+    assert window.lines == ('aaaaaaaaaa', 'bbbbbbbbbb')
+    assert (window.truncated, window.truncated_by) == (True, 'bytes')
+    assert '[truncated:' in window.text
+    assert '\n'.join(window.lines) != window.text
 
 
 async def test_binary_sniff_failure_falls_back_to_the_filesystem_read() -> None:
@@ -655,6 +688,12 @@ async def test_binary_sniff_failure_falls_back_to_the_filesystem_read() -> None:
 
     # The sniff cannot classify the file, so the read falls back to the authoritative filesystem read.
     assert (window.lines, window.has_more) == (('one', 'two'), True)
+    assert (window.truncated, window.truncated_by, window.total_lines, window.remaining_lines) == (
+        True,
+        'lines',
+        3,
+        1,
+    )
     assert backend.reads == ['/workspace/data.txt']
 
 

@@ -25,6 +25,11 @@ Without an attached workspace, operations raise `UserError`. `Workspace` offers 
 file, and bounded-read methods for every backend; wrappers can override primitives and
 `ReadOnlyWorkspace` blocks commands and changes.
 
+`read_file` is the model-facing read: it returns a `FileWindow` capped at 2000 lines or 50 KiB
+(whichever first). Check `window.truncated` before treating the result as complete; `window.text`
+includes a continuation notice when a cap fired. Pass `limit=None` and `max_bytes=None` together
+for an uncapped read, or use `read_text` / `read_bytes` for exact whole-file access.
+
 An explicit backend or facade passed through `workspace=` is used directly. Otherwise configured
 capabilities receive an explicit `WorkspaceRef`, the latest `ModelResponse.workspace_ref` from
 message history, or `None` when there is no reference. A latest `None` suppresses older references.
