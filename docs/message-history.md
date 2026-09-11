@@ -424,6 +424,19 @@ assert loaded.result.all_messages() == result.all_messages()
 The round-trip preserves the output, messages and new-message boundary, output tool name, usage, run and
 conversation IDs, metadata, and trace context. Run-local state used only while the agent is executing is not stored.
 
+A [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult] reads its values off the stream that is
+producing them, so it lasts only as long as that stream. Once the stream has finished, take
+[`StreamedRunResult.result`][pydantic_ai.result.StreamedRunResult.result] to get the same run in settled
+form and store that:
+
+```python {title="store a streamed run" test="skip" lint="skip"}
+async with agent.run_stream('Tell me a joke.') as streamed:
+    async for text in streamed.stream_text():
+        print(text)
+
+    stored_json = StoredRun(result=streamed.result).model_dump_json()
+```
+
 ### Loading untrusted history
 
 The `message_history` parameter is trusted server-side state. If you load history that came from a browser request or another untrusted boundary, sanitize it before passing it to the agent.

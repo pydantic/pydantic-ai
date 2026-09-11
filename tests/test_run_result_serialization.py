@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID
 
+import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel, TypeAdapter
 
@@ -12,12 +13,14 @@ from pydantic_ai import (
     Agent,
     AgentRunResult,
     AgentRunResultEvent,
+    DeferredToolRequests,
     ModelMessage,
     ModelResponse,
     RequestUsage,
     RunUsage,
     ToolCallPart,
     ToolReturnPart,
+    UserError,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -197,3 +200,76 @@ def test_run_result_event_round_trip() -> None:
     reloaded = adapter.validate_json(adapter.dump_json(AgentRunResultEvent(result))).result
 
     assert_same_result(reloaded, result)
+
+
+async def test_streamed_run_result_settles_into_a_serializable_result() -> None:
+    agent = Agent(TestModel(custom_output_text='streamed'), instructions='Be helpful.')
+
+    async with agent.run_stream('Stream this') as streamed:
+        with pytest.raises(UserError, match='still streaming'):
+            streamed.result
+
+        await streamed.get_output()
+        result = streamed.result
+
+        assert isinstance(result, AgentRunResult)
+        assert result.output == 'streamed'
+        assert result.all_messages() == streamed.all_messages()
+        assert result.new_messages() == streamed.new_messages()
+        assert result.usage == streamed.usage
+        assert result.run_id == streamed.run_id
+        assert result.conversation_id == streamed.conversation_id
+        assert result.metadata == streamed.metadata
+
+    adapter = TypeAdapter(AgentRunResult[str])
+    reloaded = adapter.validate_json(adapter.dump_json(result))
+    assert_same_result(reloaded, result)
+
+
+async def test_streamed_structured_output_keeps_the_output_tool_name() -> None:
+    agent = Agent(TestModel(), instructions='Be helpful.', output_type=Profile)
+
+    async with agent.run_stream('Create a profile') as streamed:
+        await streamed.get_output()
+        result = streamed.result
+
+    assert result.output == Profile(name='a', score=0)
+    messages = result.all_messages(output_tool_return_content='Profile stored')
+    assert isinstance(messages[-1].parts[0], ToolReturnPart)
+    assert messages[-1].parts[0].content == 'Profile stored'
+
+    adapter = TypeAdapter(AgentRunResult[Profile])
+    assert adapter.validate_json(adapter.dump_json(result)).output == Profile(name='a', score=0)
+
+
+async def test_streamed_deferred_pause_returns_the_run_result_it_already_holds() -> None:
+    """A `run_stream` that pauses on a deferred call already carries an `AgentRunResult`; hand that one back."""
+    agent = Agent(
+        TestModel(call_tools=['delete_file']),
+        instructions='Be helpful.',
+        output_type=[str, DeferredToolRequests],
+    )
+
+    @agent.tool_plain(requires_approval=True)
+    def delete_file(path: str) -> str:
+        raise AssertionError('should not execute')  # pragma: no cover
+
+    async with agent.run_stream('Delete a file') as streamed:
+        await streamed.get_output()
+        result = streamed.result
+
+    assert isinstance(result.output, DeferredToolRequests)
+    assert [call.tool_name for call in result.output.approvals] == ['delete_file']
+    assert result.all_messages() == streamed.all_messages()
+
+
+async def test_streamed_result_can_be_stored_and_replayed_as_history() -> None:
+    agent = Agent(TestModel(custom_output_text='first'), instructions='Be helpful.')
+
+    async with agent.run_stream('Start') as streamed:
+        await streamed.get_output()
+        stored = StringResultEnvelope(result=streamed.result).model_dump_json()
+
+    loaded = StringResultEnvelope.model_validate_json(stored).result
+    continued = await agent.run('Continue', message_history=loaded.all_messages())
+    assert continued.all_messages()[: len(loaded.all_messages())] == loaded.all_messages()
