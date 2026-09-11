@@ -18,20 +18,20 @@ packages. Pydantic AI is a typed Python [`Agent`][pydantic_ai.Agent].
 | Coding harness | Yes | [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) |
 | Graph library | No | [`pydantic-graph`](../graph.md) |
 | Multi-agent | Packages, not core | [Sub-agents](../multi-agent-applications.md), [hand-offs](../multi-agent-applications.md#programmatic-agent-hand-off), or [graph](../graph.md) |
-| Realtime voice | No | [Yes](../realtime/overview.md) |
-| Image generation | No | [Yes](../image-generation.md) |
+| Realtime voice | No | [Realtime](../realtime/overview.md) |
+| Image generation | No | [Image Generation](../image-generation.md) |
 | License | MIT | MIT |
 
 | | Pi | Pydantic AI |
 |---|---|---|
-| Structured output | No | [Yes](../output.md) |
-| Guardrails | No | [Yes](https://pydantic.dev/docs/ai/harness/guardrails/) |
-| Code sandboxes | No | [Yes](https://pydantic.dev/docs/ai/harness/#execution-environments) |
-| Browser | No | [Yes](https://pydantic.dev/docs/ai/harness/#web-research) |
-| Memory | Yes | [Yes](https://pydantic.dev/docs/ai/harness/memory/) |
-| Compaction | Yes | [Yes](../capabilities/compaction.md) |
-| Evals | No | [Yes](../evals.md) |
-| Test without API keys | Yes | [Yes](../testing.md) |
+| Structured output | No | [Structured output](../output.md#structured-output) |
+| Guardrails | No | [Guardrails](https://pydantic.dev/docs/ai/harness/guardrails/) |
+| Code sandboxes | No | [Execution environments](https://pydantic.dev/docs/ai/harness/#execution-environments) |
+| Browser | No | [Web & research](https://pydantic.dev/docs/ai/harness/#web--research) |
+| Memory | Yes | [Memory](https://pydantic.dev/docs/ai/harness/memory/) |
+| Compaction | Yes | [Compaction](../capabilities/compaction.md) |
+| Evals | No | [Pydantic Evals](../evals.md) |
+| Test without API keys | Yes | [`TestModel`, `FunctionModel`](../testing.md) |
 
 ## FAQ
 

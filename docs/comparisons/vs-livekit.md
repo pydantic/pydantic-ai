@@ -21,17 +21,17 @@ speak.
 | Coding harness | No | [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) |
 | Graph library | No | [`pydantic-graph`](../graph.md) |
 | Multi-agent | Handoffs in a room | [Sub-agents](../multi-agent-applications.md), [hand-offs](../multi-agent-applications.md#programmatic-agent-hand-off), or [graph](../graph.md) |
-| Realtime voice | Yes | [Yes](../realtime/overview.md) |
-| Image generation | No | [Yes](../image-generation.md) |
+| Realtime voice | Yes | [Realtime](../realtime/overview.md) |
+| Image generation | No | [Image Generation](../image-generation.md) |
 | License | Apache-2.0 | MIT |
 
 | | LiveKit Agents | Pydantic AI |
 |---|---|---|
-| Structured output | No | [Yes](../output.md) |
-| Guardrails | No | [Yes](https://pydantic.dev/docs/ai/harness/guardrails/) |
-| Code sandboxes | Yes | [Yes](https://pydantic.dev/docs/ai/harness/#execution-environments) |
-| Browser | Yes | [Yes](https://pydantic.dev/docs/ai/harness/#web-research) |
-| Memory | No | [Yes](https://pydantic.dev/docs/ai/harness/memory/) |
-| Compaction | Yes | [Yes](../capabilities/compaction.md) |
-| Evals | Yes | [Yes](../evals.md) |
-| Test without API keys | Yes | [Yes](../testing.md) |
+| Structured output | No | [Structured output](../output.md#structured-output) |
+| Guardrails | No | [Guardrails](https://pydantic.dev/docs/ai/harness/guardrails/) |
+| Code sandboxes | Yes | [Execution environments](https://pydantic.dev/docs/ai/harness/#execution-environments) |
+| Browser | Yes | [Web & research](https://pydantic.dev/docs/ai/harness/#web--research) |
+| Memory | No | [Memory](https://pydantic.dev/docs/ai/harness/memory/) |
+| Compaction | Yes | [Compaction](../capabilities/compaction.md) |
+| Evals | Yes | [Pydantic Evals](../evals.md) |
+| Test without API keys | Yes | [`TestModel`, `FunctionModel`](../testing.md) |

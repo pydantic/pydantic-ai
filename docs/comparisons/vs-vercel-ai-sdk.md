@@ -18,17 +18,17 @@ protocol, so the browser can stay theirs.
 | Coding harness | Yes | [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) |
 | Graph library | Yes | [`pydantic-graph`](../graph.md) |
 | Multi-agent | You compose it | [Sub-agents](../multi-agent-applications.md), [hand-offs](../multi-agent-applications.md#programmatic-agent-hand-off), or [graph](../graph.md) |
-| Realtime voice | Yes | [Yes](../realtime/overview.md) |
-| Image generation | Yes | [Yes](../image-generation.md) |
+| Realtime voice | Yes | [Realtime](../realtime/overview.md) |
+| Image generation | Yes | [Image Generation](../image-generation.md) |
 | License | Apache-2.0 | MIT |
 
 | | Vercel AI SDK | Pydantic AI |
 |---|---|---|
-| Structured output | Yes | [Yes](../output.md) |
-| Guardrails | Yes | [Yes](https://pydantic.dev/docs/ai/harness/guardrails/) |
-| Code sandboxes | Yes | [Yes](https://pydantic.dev/docs/ai/harness/#execution-environments) |
-| Browser | No | [Yes](https://pydantic.dev/docs/ai/harness/#web-research) |
-| Memory | No | [Yes](https://pydantic.dev/docs/ai/harness/memory/) |
-| Compaction | Yes | [Yes](../capabilities/compaction.md) |
-| Evals | No | [Yes](../evals.md) |
-| Test without API keys | Yes | [Yes](../testing.md) |
+| Structured output | Yes | [Structured output](../output.md#structured-output) |
+| Guardrails | Yes | [Guardrails](https://pydantic.dev/docs/ai/harness/guardrails/) |
+| Code sandboxes | Yes | [Execution environments](https://pydantic.dev/docs/ai/harness/#execution-environments) |
+| Browser | No | [Web & research](https://pydantic.dev/docs/ai/harness/#web--research) |
+| Memory | No | [Memory](https://pydantic.dev/docs/ai/harness/memory/) |
+| Compaction | Yes | [Compaction](../capabilities/compaction.md) |
+| Evals | No | [Pydantic Evals](../evals.md) |
+| Test without API keys | Yes | [`TestModel`, `FunctionModel`](../testing.md) |
