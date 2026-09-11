@@ -16,12 +16,12 @@ model.
 | Observability | CLI telemetry | [OpenTelemetry](../capabilities/instrumentation.md), including [Pydantic Logfire](../logfire.md) |
 | Interfaces | CLI | [CLI](../cli.md), [web chat](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) |
 | Extensibility | Hooks, `allowed_tools` | [Capabilities and toolsets](../extensibility.md) |
+| Realtime voice | No | [Realtime](../realtime/overview.md) |
+| Image generation | No | [Image Generation](../image-generation.md) |
 | Multi-agent | Sub-agents | [Sub-agents, hand-offs, or graph](../multi-agent-applications.md) |
 | Graph library | No | [`pydantic-graph`](../graph.md) |
 | Build your own harness | No | [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) |
 | Coding harness | Yes | [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) |
-| Realtime voice | No | [Realtime](../realtime/overview.md) |
-| Image generation | No | [Image Generation](../image-generation.md) |
 | License | MIT | MIT |
 
 | | Claude Agent SDK | Pydantic AI |

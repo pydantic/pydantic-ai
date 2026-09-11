@@ -14,12 +14,12 @@ and scorers as separate concepts.
 | Observability | OpenTelemetry | [OpenTelemetry](../capabilities/instrumentation.md), including [Pydantic Logfire](../logfire.md) |
 | Interfaces | Playground, Studio | [CLI](../cli.md), [web chat](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) |
 | Extensibility | Tools, processors, scorers, workflows | [Capabilities and toolsets](../extensibility.md) |
+| Realtime voice | Yes | [Realtime](../realtime/overview.md) |
+| Image generation | No | [Image Generation](../image-generation.md) |
 | Multi-agent | Workflows, sub-agents | [Sub-agents, hand-offs, or graph](../multi-agent-applications.md) |
 | Graph library | Yes | [`pydantic-graph`](../graph.md) |
 | Build your own harness | Yes | [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) |
 | Coding harness | Yes | [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) |
-| Realtime voice | Yes | [Realtime](../realtime/overview.md) |
-| Image generation | No | [Image Generation](../image-generation.md) |
 | License | Apache-2.0 (core); EE for some features | MIT |
 
 | | Mastra | Pydantic AI |

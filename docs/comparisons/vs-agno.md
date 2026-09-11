@@ -13,12 +13,12 @@ only the library: an agent you put in the application you already run.
 | Observability | OpenTelemetry | [OpenTelemetry](../capabilities/instrumentation.md), including [Pydantic Logfire](../logfire.md) |
 | Interfaces | AG-UI, A2A, chat platforms | [CLI](../cli.md), [web chat](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) |
 | Extensibility | Tools, toolkits | [Capabilities and toolsets](../extensibility.md) |
+| Realtime voice | No | [Realtime](../realtime/overview.md) |
+| Image generation | Yes | [Image Generation](../image-generation.md) |
 | Multi-agent | Teams (delegation), workflows | [Sub-agents, hand-offs, or graph](../multi-agent-applications.md) |
 | Graph library | Yes | [`pydantic-graph`](../graph.md) |
 | Build your own harness | Yes | [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) |
 | Coding harness | No | [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) |
-| Realtime voice | No | [Realtime](../realtime/overview.md) |
-| Image generation | Yes | [Image Generation](../image-generation.md) |
 | License | Apache-2.0 | MIT |
 
 | | Agno | Pydantic AI |

@@ -14,12 +14,12 @@ protocol, so the browser can stay theirs.
 | Observability | OpenTelemetry | [OpenTelemetry](../capabilities/instrumentation.md), including [Pydantic Logfire](../logfire.md) |
 | Interfaces | React chat UI, stream protocol | [CLI](../cli.md), [web chat](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) |
 | Extensibility | Middleware, tools | [Capabilities and toolsets](../extensibility.md) |
+| Realtime voice | Yes | [Realtime](../realtime/overview.md) |
+| Image generation | Yes | [Image Generation](../image-generation.md) |
 | Multi-agent | You compose it | [Sub-agents, hand-offs, or graph](../multi-agent-applications.md) |
 | Graph library | Yes | [`pydantic-graph`](../graph.md) |
 | Build your own harness | Yes | [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) |
 | Coding harness | Yes | [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) |
-| Realtime voice | Yes | [Realtime](../realtime/overview.md) |
-| Image generation | Yes | [Image Generation](../image-generation.md) |
 | License | Apache-2.0 | MIT |
 
 | | Vercel AI SDK | Pydantic AI |
