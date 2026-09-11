@@ -513,6 +513,7 @@ async def test_bounded_read_returns_empty_window_at_or_past_empty_file(offset: i
     window = await Workspace(backend).read_file('data.txt', offset=offset, limit=2)
 
     assert (window.lines, window.start_line, window.has_more, window.total_lines) == ((), offset, False, None)
+    assert window.end_line is None
 
 
 async def test_bounded_read_reports_more_lines_only_when_the_window_is_short() -> None:
@@ -667,22 +668,23 @@ async def test_read_file_applies_whichever_cap_hits_first() -> None:
     assert '\n'.join(window.lines) != window.text
 
 
-async def test_binary_sniff_failure_falls_back_to_the_filesystem_read() -> None:
-    class SniffFails(FakeWorkspace):
-        async def run(
-            self,
-            command: str | Sequence[str],
-            *,
-            shell: bool = False,
-            cwd: str | None = None,
-            env: Mapping[str, str] | None = None,
-            timeout: float | None = None,
-        ) -> FakeWorkspaceResult:
-            # The shell probe fails, so `read_file` cannot classify via the shell and falls back to
-            # the authoritative filesystem read. The sniff is the only command it issues first.
-            return FakeWorkspaceResult(exit_code=1, stderr='head: unavailable')
+class _HeadUnavailable(FakeWorkspace):
+    """A backend whose `head` sniff fails, so `read_file` falls back to the filesystem read."""
 
-    backend = SniffFails('sniff-fail', {'/workspace/data.txt': b'one\ntwo\nthree\n'})
+    async def run(
+        self,
+        command: str | Sequence[str],
+        *,
+        shell: bool = False,
+        cwd: str | None = None,
+        env: Mapping[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> FakeWorkspaceResult:
+        return FakeWorkspaceResult(exit_code=1, stderr='head: unavailable')
+
+
+async def test_binary_sniff_failure_falls_back_to_the_filesystem_read() -> None:
+    backend = _HeadUnavailable('sniff-fail', {'/workspace/data.txt': b'one\ntwo\nthree\n'})
 
     window = await Workspace(backend).read_file('data.txt', offset=1, limit=2)
 
@@ -694,7 +696,62 @@ async def test_binary_sniff_failure_falls_back_to_the_filesystem_read() -> None:
         3,
         1,
     )
+    assert '1 line remaining' in window.text
     assert backend.reads == ['/workspace/data.txt']
+
+
+async def test_filesystem_fallback_byte_cap_drops_a_partial_line() -> None:
+    backend = _HeadUnavailable('sniff-bytes', {'/workspace/data.txt': b'aaaaa\nbbbbb\nccccc\nddddd\n'})
+
+    window = await Workspace(backend).read_file('data.txt', max_bytes=20)
+
+    assert (window.lines, window.truncated_by, window.first_line_exceeds_limit) == (
+        ('aaaaa', 'bbbbb', 'ccccc'),
+        'bytes',
+        False,
+    )
+    assert '1 line remaining' in window.text
+
+
+async def test_filesystem_fallback_returns_no_content_for_a_single_overlong_line() -> None:
+    backend = _HeadUnavailable('sniff-overlong', {'/workspace/data.txt': b'x' * 100})
+
+    window = await Workspace(backend).read_file('data.txt', max_bytes=20)
+
+    assert window.lines == ()
+    assert (window.end_line, window.first_line_exceeds_limit, window.truncated_by) == (None, True, 'bytes')
+
+
+async def test_truncation_notice_names_plural_remaining_lines() -> None:
+    backend = _HeadUnavailable('sniff-plural', {'/workspace/data.txt': b'one\ntwo\nthree\nfour\n'})
+
+    window = await Workspace(backend).read_file('data.txt', limit=2)
+
+    assert window.remaining_lines == 2
+    assert '2 lines remaining' in window.text
+
+
+async def test_truncation_notice_omits_zero_remaining_lines() -> None:
+    window = FileWindow(lines=('only',), start_line=1, has_more=True, total_lines=1, truncated_by='lines')
+
+    assert window.remaining_lines == 0
+    assert 'remaining' not in window.text
+
+
+async def test_read_file_limit_none_still_applies_the_byte_cap() -> None:
+    backend = FakeWorkspace('uncapped-lines', {'/workspace/data.txt': b'one\ntwo\nthree\n'})
+
+    window = await Workspace(backend).read_file('data.txt', limit=None)
+
+    assert (window.lines, window.has_more, window.truncated) == (('one', 'two', 'three'), False, False)
+
+
+async def test_read_file_max_bytes_none_still_applies_the_line_cap() -> None:
+    backend = FakeWorkspace('uncapped-bytes', {'/workspace/data.txt': b'one\ntwo\nthree\n'})
+
+    window = await Workspace(backend).read_file('data.txt', limit=2, max_bytes=None)
+
+    assert (window.lines, window.has_more, window.truncated_by) == (('one', 'two'), True, 'lines')
 
 
 async def test_binary_sniff_error_falls_back_to_the_filesystem_read() -> None:

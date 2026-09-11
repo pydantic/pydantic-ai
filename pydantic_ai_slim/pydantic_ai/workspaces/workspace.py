@@ -584,9 +584,7 @@ class WrapperWorkspace(Workspace):
         return None
 
 
-def _window_from_data(
-    data: bytes, offset: int, limit: int | None, max_bytes: int | None
-) -> FileWindow:
+def _window_from_data(data: bytes, offset: int, limit: int | None, max_bytes: int | None) -> FileWindow:
     text = data.decode('utf-8', errors='replace')
     lines = _split_lines(text)
     if lines[-1] == '':
