@@ -11,13 +11,13 @@ typed [`Agent`][pydantic_ai.Agent], with [`pydantic-graph`](../graph.md) when yo
 | License | MIT | MIT |
 | Model providers | Many | [Any](../models/overview.md), plus [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] |
 | Durable execution | Checkpointers | Yes — [5+ integrations](../durable_execution/overview.md) |
-| Observability | LangSmith | OpenTelemetry, any backend including [Pydantic Logfire](../logfire.md) |
+| Observability | LangSmith | [OpenTelemetry](../capabilities/instrumentation.md), any backend including [Pydantic Logfire](../logfire.md) |
 | Extensibility | Middleware, callbacks | [Capabilities](../extensibility.md) and [toolsets](../toolsets.md) |
 | Interfaces | LangServe, Studio | [CLI](../cli.md), [web chat](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) (experimental), [A2A](https://github.com/datalayer/fasta2a) (community) |
-| Build your own harness | Yes | Yes |
+| Build your own harness | Yes | [Yes](https://pydantic.dev/docs/ai/harness/#build-your-own) |
 | Coding harness | Deep Agents | [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) |
 | Graph library | LangGraph | [`pydantic-graph`](../graph.md) |
-| Multi-agent | LangGraph (handoffs, supervisors, teams) | [Sub-agents](../multi-agent-applications.md), graph, or `async` |
+| Multi-agent | LangGraph (handoffs, supervisors, teams) | [Sub-agents](../multi-agent-applications.md), [graph](../graph.md), or `async` |
 | Realtime voice | No | [Realtime](../realtime/overview.md) |
 | Image generation | Third party | [Image generation](../image-generation.md) |
 
