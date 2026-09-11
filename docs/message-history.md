@@ -397,6 +397,33 @@ _(This example is complete, it can be run "as is")_
     protocol (Vercel AI, AG-UI) whose message shape has no place for application-only fields, so
     those fields are dropped entirely. That loss is by design, not a state-loss bug.
 
+### Storing complete run results
+
+An [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] can be stored directly as a field on a Pydantic model:
+
+```python {title="serialize a run result to json"}
+from pydantic import BaseModel
+
+from pydantic_ai import Agent, AgentRunResult
+
+
+class StoredRun(BaseModel):
+    result: AgentRunResult[str]
+
+
+agent = Agent('openai:gpt-5.2', instructions='Be a helpful assistant.')
+result = agent.run_sync('Tell me a joke.')
+
+stored_json = StoredRun(result=result).model_dump_json()
+loaded = StoredRun.model_validate_json(stored_json)
+
+assert loaded.result.output == result.output
+assert loaded.result.all_messages() == result.all_messages()
+```
+
+The round-trip preserves the output, messages and new-message boundary, output tool name, usage, run and
+conversation IDs, metadata, and trace context. Run-local state used only while the agent is executing is not stored.
+
 ### Loading untrusted history
 
 The `message_history` parameter is trusted server-side state. If you load history that came from a browser request or another untrusted boundary, sanitize it before passing it to the agent.
