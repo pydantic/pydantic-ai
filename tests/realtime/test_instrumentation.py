@@ -1073,6 +1073,24 @@ async def test_session_span_counts_dropped_transcript_deltas() -> None:
     assert sess.attributes['pydantic_ai.transcript_items_dropped'] == 8
 
 
+async def test_session_span_counts_dropped_session_queue_deltas() -> None:
+    settings, exporter = _settings()
+    chunks = [index.to_bytes(2, 'big') for index in range(520)]
+    session = RealtimeSession(
+        _Connection([AudioDelta(chunk) for chunk in chunks]),
+        _ok_runner,
+        instrumentation=settings,
+        model_name='gpt-realtime',
+    )
+
+    async with session:
+        _ = [chunk async for chunk in session.stream_audio()]
+
+    sess = next(s for s in exporter.get_finished_spans() if s.name == 'invoke_agent agent')
+    assert sess.attributes is not None
+    assert sess.attributes['pydantic_ai.queue_dropped_deltas'] == 8
+
+
 async def test_session_span_includes_resolved_run_attributes() -> None:
     settings, exporter = _settings()
     agent: Agent[None, str] = Agent(
