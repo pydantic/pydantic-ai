@@ -10,7 +10,7 @@ Pydantic AI isn't tied to a cloud. The first production gap is stop: there is no
 
 | | Google ADK 2.8.0 | Pydantic AI 2.42 |
 |---|---|---|
-| Models | Gemini first | Any provider |
+| Models | Gemini first (`LiteLlm`, `AnthropicLlm` exist) | Any provider |
 | Stop | Cancel the asyncio task | `CancellationToken` → `RunCancelled` |
 | Trusted state | App / user / invocation state | `deps_type` plus `RunContext` |
 | Compose | `LoopAgent`, `ParallelAgent` | `async` / `gather` |
@@ -58,5 +58,6 @@ ADK emits OpenTelemetry GenAI conventions too. We both do. Most of this field do
 
 ---
 
-*google-adk 2.8.0, Pydantic AI 2.42. No cancel/stop/abort on `Runner` or `LlmAgent`.
+*google-adk 2.8.0, installed. No `cancel`/`stop`/`abort` on `Runner` or `LlmAgent`. `LoopAgent` and
+`ParallelAgent` exist. The package contains 64 `gen_ai.` strings. Pydantic AI 2.42.
 [Tell us](https://github.com/pydantic/pydantic-ai/issues/new) if a pin goes stale.*

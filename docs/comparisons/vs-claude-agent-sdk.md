@@ -13,11 +13,11 @@ model, as a capability you can take apart.
 | | Claude Agent SDK 0.2.152 | Pydantic AI 2.42 + harness |
 |---|---|---|
 | Where the loop runs | `claude` subprocess | Your process |
-| Models | Anthropic | Any provider |
+| Models | Claude (Anthropic, Bedrock, Vertex, Foundry) | Any provider |
 | Coding agent | The CLI, immediately | [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/), or the blocks it bundles |
-| Tools | Strings the CLI owns | Your functions, plus harness tools |
+| Tools | `allowed_tools: list[str]` the CLI owns | Your functions, plus harness tools |
 | Stop | `interrupt()`, streaming only | `CancellationToken`, `RunCancelled` |
-| Continuity | Sessions, rewind | History you own |
+| Continuity | Sessions, `rewind_files` | History you own |
 | Crash recovery | Not a session | Six engines wrap the agent |
 | Test offline | Launch the CLI | `TestModel` / `FunctionModel` |
 
@@ -69,6 +69,8 @@ Temporal, DBOS, or Prefect if you need the work to restart.
 
 ---
 
-*claude-agent-sdk 0.2.152, Pydantic AI 2.42. `Coder()` matches the [Harness Coder docs](https://pydantic.dev/docs/ai/harness/coder/);
-this repo does not install the harness, so that snippet is not executed in CI.
+*claude-agent-sdk 0.2.152, installed. Transport is `SubprocessCLITransport`.
+`ClaudeSDKClient.interrupt()` docstring: streaming mode only. `allowed_tools` is `list[str]`.
+`rewind_files` exists on the client. `Coder()` matches the [Harness Coder docs](https://pydantic.dev/docs/ai/harness/coder/);
+this repo does not install the harness, so that snippet is not executed in CI. Pydantic AI 2.42.
 [Tell us](https://github.com/pydantic/pydantic-ai/issues/new) if a pin goes stale.*

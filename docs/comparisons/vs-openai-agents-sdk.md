@@ -16,7 +16,7 @@ engine recovers a crashed run.
 | Crash recovery | Not first-party | Six engines wrap the agent |
 | Trusted state | `TContext`, not sent to the LLM | `deps_type` plus `RunContext` |
 | Guardrails | Input, output, tool tripwires | Capabilities |
-| Test offline | `ScriptedModel`; no `ALLOW_MODEL_REQUESTS` | `TestModel` / `FunctionModel`; `ALLOW_MODEL_REQUESTS = False` |
+| Test offline | `ScriptedModel` in `agents.testing`; no `ALLOW_MODEL_REQUESTS` | `TestModel` / `FunctionModel`; `ALLOW_MODEL_REQUESTS = False` |
 | Tracing | Their dashboard; zero `gen_ai.*` | OpenTelemetry GenAI conventions, when enabled |
 
 ## Stop, keep the conversation, continue
@@ -62,8 +62,9 @@ A `CancellationToken` cannot be passed through Temporal, DBOS, or Prefect; cance
 instead. Cancelling from inside a tool leaves the last model tool call unexecuted.
 
 Durability is the same split. They remember conversations as sessions. We wrap the agent in an engine
-you already run (`TemporalDurability()` still needs the worker and workflow). A Temporal contrib exists
-for their SDK; it isn't first-party.
+you already run (`TemporalDurability()` still needs the worker and workflow). Their SDK has a
+`temporal` extra so it can detect a Temporal workflow; that is not a durability wrapper that replays
+the agent.
 
 ## FAQ
 
@@ -74,5 +75,7 @@ become history you store.
 
 ---
 
-*openai-agents 0.22.2, Pydantic AI 2.42. Cancel is on the streamed result, not `Runner`.
+*openai-agents 0.22.2, installed. `RunResultStreaming.cancel(mode='immediate'|'after_turn')` is on
+the streamed result, not `Runner`. `RunContextWrapper` documents that `TContext` is not passed to the
+LLM. `ScriptedModel` lives in `agents.testing`. Zero `gen_ai.` strings in the package. Pydantic AI 2.42.
 [Tell us](https://github.com/pydantic/pydantic-ai/issues/new) if a pin goes stale.*

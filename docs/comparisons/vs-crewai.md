@@ -10,12 +10,13 @@ ordinary `async` on ours, and there is no cancel method on `Crew`.
 
 | | CrewAI 1.15.21 | Pydantic AI 2.42 |
 |---|---|---|
-| Shape of work | Roles, tasks, process mode | Async Python |
-| Stop | None on `Crew` | `CancellationToken` / `ctx.cancel()` |
-| Budgets | Per agent | Per run, `cost_limit` after each response |
-| Crash recovery | Built-in checkpoints | Six engines wrap the agent |
-| Memory / knowledge | Built in | You wire it |
-| Test offline | Live model | `TestModel` / `FunctionModel` |
+| Shape of work | Roles, tasks, `Process` | Async Python |
+| Stop | None on `Crew` (`cancel` lives on A2A tasks) | `CancellationToken` / `ctx.cancel()` |
+| Budgets | `max_rpm` / `max_iter` per agent | Per run, `cost_limit` after each response |
+| Crash recovery | `Crew.from_checkpoint` | Six engines wrap the agent |
+| Memory / knowledge | On `Agent` and `Crew` | You wire it |
+| Trusted state | Closures / config | `deps_type` plus `RunContext` |
+| Test offline | `Crew.test` runs a live `eval_llm` | `TestModel` / `FunctionModel` |
 
 ## FAQ
 
@@ -25,5 +26,6 @@ ordinary `async` on ours, and there is no cancel method on `Crew`.
 
 ---
 
-*crewai 1.15.21, Pydantic AI 2.42. No `cancel` on `Crew`. Runtime with a live model was not run.
+*crewai 1.15.21, installed. No `cancel`/`stop`/`abort` on `Crew`. The only `def cancel` in the
+package is `a2a/utils/task.py`. `Crew.test` constructs an LLM and calls `kickoff`. Pydantic AI 2.42.
 [Tell us](https://github.com/pydantic/pydantic-ai/issues/new) if a pin goes stale.*

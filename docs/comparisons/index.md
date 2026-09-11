@@ -19,7 +19,7 @@ names the version. Anything we say about ours comes with a script CI runs on eve
 | [Agno](vs-agno.md) | An agent is a service you deploy | A library you embed |
 | [Mastra](vs-mastra.md) | TypeScript all-in-one | Python, next to the rest of your stack |
 | [Vercel AI SDK](vs-vercel-ai-sdk.md) | The wire to a React UI | Python behind that wire, or stay in TypeScript |
-| [Pi](vs-pi.md) | A finished coding agent | The parts it's made of, on the same agent object |
+| [Pi](vs-pi.md) | A coding agent you extend | A typed Agent that can wear a coding harness |
 
 Where we're the wrong answer, once:
 [all in one place](production-agents.md#where-were-not-the-answer).
@@ -48,7 +48,7 @@ tracebacks. We're working on it, and we'd rather you heard it here.
 
 ---
 
-*All pages checked on 2026-09-10 against Pydantic AI 2.42. Framework versions are named at the bottom of each
+*All pages checked on 2026-09-11 against Pydantic AI 2.42. Framework versions are named at the bottom of each
 page, along with how the claims were checked. We recheck every page against current releases each time
 Pydantic AI ships a minor version; if something here has gone stale, please [open an
 issue](https://github.com/pydantic/pydantic-ai/issues/new) and we'll fix it.*

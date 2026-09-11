@@ -13,7 +13,7 @@ Pydantic AI is async tool calls. `CodeMode` in the harness is the write-Python p
 |---|---|---|
 | How the model acts | Writes Python | Tool calls; `CodeMode` if you want code |
 | Async | No | Yes |
-| Stop | Flag between steps | `RunCancelled` with history |
+| Stop | `interrupt()` raises `AgentError` between steps | `RunCancelled` with history |
 | Sandbox | Restricted interpreter; escalate to Docker/E2B/Modal | Monty / Modal in the harness |
 | Crash recovery | None in core | Six engines wrap the agent |
 | Test offline | Subclass `Model` | `TestModel` / `FunctionModel` |
@@ -45,7 +45,7 @@ async def main():
     #> first three events: ['start:a', 'start:b', 'start:c']
 ```
 
-smolagents' `interrupt()` is a flag between steps, from another thread, and you get an error, not a
+smolagents' `interrupt()` sets a flag checked between steps. The run then raises `AgentError`, not a
 resumable history.
 
 ## FAQ
@@ -57,6 +57,7 @@ tell you to use Docker.
 
 ---
 
-*smolagents 1.26.0, Pydantic AI 2.42. `import os` / `open(...)` errors and `CodeAgent.run` being sync
-come from the installed package.
+*smolagents 1.26.0, installed. `CodeAgent.run` is not a coroutine. `LocalPythonExecutor([])` rejects
+`import os` and `open(...)`. `interrupt()` sets `interrupt_switch`; the loop raises `AgentError("Agent interrupted.")`.
+Pydantic AI 2.42.
 [Tell us](https://github.com/pydantic/pydantic-ai/issues/new) if a pin goes stale.*

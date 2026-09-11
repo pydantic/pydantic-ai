@@ -6,15 +6,16 @@ an agent service on Friday, that's the product. We don't ship one.
 The library does not require AgentOS: `Agent(name='x')` constructs, `agno.agent.agent` never imports
 `agno.os`. Pydantic AI is only the library half. You put the agent in the app you already run.
 
-Shell and Python tools default to host `subprocess` and in-process `exec`. Gate them with
-`requires_confirmation_tools`. Ours: `CodeMode` in Monty, `requires_approval=True` on any tool.
+Shell and Python tools default to host `subprocess` and in-process `exec`. Gate shell with
+`ShellTools(requires_confirmation_tools=["run_shell_command"])`. Ours: `CodeMode` in Monty,
+`requires_approval=True` on any tool.
 
 ## Side by side
 
 | | Agno 3.0.9 | Pydantic AI 2.42 |
 |---|---|---|
 | Deploy | Optional AgentOS (UI, auth, roles) | Nothing to deploy |
-| Stop | `cancel_run(run_id)` | `CancellationToken` / `RunCancelled` |
+| Stop | `Agent.cancel_run(run_id)` | `CancellationToken` / `RunCancelled` |
 | Shell / code | Host `subprocess` / `exec` by default | Monty / Modal, plus approval |
 | Memory | Built in | You wire it |
 | Crash recovery | AgentOS durable API | Six engines wrap the agent |
@@ -29,5 +30,8 @@ See [under the hood](under-the-hood.md).
 
 ---
 
-*agno 3.0.9, Pydantic AI 2.42. Tool defaults from the installed package; AgentOS from their docs.
+*agno 3.0.9, installed. `Agent(name='x')` constructs. `agno.agent.agent` does not import `agno.os`.
+`Agent.cancel_run` is a staticmethod taking `run_id`. `ShellTools.run_shell_command` uses
+`subprocess.run`; `PythonTools.run_python_code` uses `exec`. Zero `gen_ai.` strings; tracing
+imports OpenInference. Pydantic AI 2.42.
 [Tell us](https://github.com/pydantic/pydantic-ai/issues/new) if a pin goes stale.*
