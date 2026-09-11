@@ -87,9 +87,10 @@ async def replace_subject(source: BinaryImage) -> BinaryImage:
 
 The order of multiple reference images is preserved. Provider-hosted files are supported by Google and xAI, and the
 [`UploadedFile.provider_name`][pydantic_ai.messages.UploadedFile] must name the provider the file was uploaded to. On
-xAI that is exactly the name of the provider you selected; Google additionally accepts `google-gla`, its pre-v2 name,
-and reads whether the Gemini Files API is available off the client's transport rather than off the provider name, as
-covered under [Google image generation](models/google.md#image-generation). OpenAI's image-edit endpoint requires file
+xAI that is exactly the name of the provider you selected; Google additionally accepts `google-gla` and `google-vertex`,
+its pre-v2 names, and reads off the client's transport rather than the provider name which file store it resolves — the
+Gemini Files API on the Gemini Developer API, Cloud Storage (`gs://`) on Vertex AI — as covered under
+[Google image generation](models/google.md#image-generation). OpenAI's image-edit endpoint requires file
 content, so use `BinaryImage` or `ImageUrl` with OpenAI. Image URLs downloaded by Pydantic AI are limited to 50 MiB.
 
 Editing applies to the whole image: masked editing, where a mask restricts the edit to a region, is not supported.
@@ -99,7 +100,7 @@ Of the providers below only OpenAI exposes that primitive, so there is nothing p
 | --- | --- | --- | --- | --- | --- |
 | OpenAI | ✅ | ✅ | ❌ | ✅ | Reference images must be PNG, JPEG, or WebP; any other media type raises [`UserError`][pydantic_ai.exceptions.UserError]. |
 | Google Gemini API | ✅ | ✅ | ✅ | ❌ | [`UploadedFile.file_id`][pydantic_ai.messages.UploadedFile] must be the Files API URI (`file.uri`, which starts with `https://`), not the `files/...` resource name; any other value raises [`UserError`][pydantic_ai.exceptions.UserError]. A Files API URL passed as an `ImageUrl` instead needs an explicit `media_type`, since those URLs carry no file extension. See [Uploaded Files](input.md#uploaded-files). |
-| Google Cloud (Vertex AI) | ✅ | ✅ | ❌ | ❌ | The Gemini Files API is not available on Vertex AI, and the adapter does not accept the `gs://` URIs Vertex uses instead, so pass reference images as `BinaryImage` or `ImageUrl`. Whether a client targets Vertex is read off the client, not the provider name. |
+| Google Cloud (Vertex AI) | ✅ | ✅ | ✅ | ❌ | The Gemini Files API is not available on Vertex AI; its file store is Cloud Storage, so [`UploadedFile.file_id`][pydantic_ai.messages.UploadedFile] must be a `gs://bucket/path` URI, and an `ImageUrl` whose URL starts with `gs://` is forwarded the same way (pass `media_type` explicitly when the object name carries no extension). Vertex reads the object server-side, so neither is downloaded. Any other URL is downloaded and inlined. Whether a client targets Vertex is read off the client, not the provider name. |
 | xAI | ✅ | ✅ | ✅ | ✅ | xAI documents up to five reference images and enforces the limit itself: six references to `grok-imagine-image` come back as `INVALID_ARGUMENT` with `This model supports at most 5 input image(s), but 6 were provided.`, which surfaces as a 400 [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError]. Every `UploadedFile` must come before any `ImageUrl` or `BinaryImage`, because xAI sends file IDs ahead of URL and binary inputs; another order raises [`UserError`][pydantic_ai.exceptions.UserError] rather than silently resequencing them. `extra_headers` and `extra_body` are ignored with a warning: the transport is gRPC, which has no per-request header or body escape hatch. |
 
 `google:` is the Gemini Developer API (Google AI Studio) and `google-cloud:` is Vertex AI, exactly as for
