@@ -19,7 +19,7 @@ model.
 | Build your own harness | No | [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) |
 | Coding harness | Yes | [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) |
 | Graph library | No | [`pydantic-graph`](../graph.md) |
-| Multi-agent | Sub-agents | [Sub-agents](../multi-agent-applications.md), [hand-offs](../multi-agent-applications.md#programmatic-agent-hand-off), or [graph](../graph.md) |
+| Multi-agent | Sub-agents | [Sub-agents, hand-offs, or graph](../multi-agent-applications.md) |
 | Realtime voice | No | [Realtime](../realtime/overview.md) |
 | Image generation | No | [Image Generation](../image-generation.md) |
 | License | MIT | MIT |

@@ -20,7 +20,7 @@ speak.
 | Build your own harness | Yes | [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) |
 | Coding harness | No | [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) |
 | Graph library | No | [`pydantic-graph`](../graph.md) |
-| Multi-agent | Handoffs in a room | [Sub-agents](../multi-agent-applications.md), [hand-offs](../multi-agent-applications.md#programmatic-agent-hand-off), or [graph](../graph.md) |
+| Multi-agent | Handoffs in a room | [Sub-agents, hand-offs, or graph](../multi-agent-applications.md) |
 | Realtime voice | Yes | [Realtime](../realtime/overview.md) |
 | Image generation | No | [Image Generation](../image-generation.md) |
 | License | Apache-2.0 | MIT |

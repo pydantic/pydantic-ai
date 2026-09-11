@@ -16,7 +16,7 @@ call, branch, `asyncio.gather`, or [`pydantic-graph`](../graph.md).
 | Build your own harness | Yes | [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) |
 | Coding harness | No | [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) |
 | Graph library | No | [`pydantic-graph`](../graph.md) |
-| Multi-agent | Roles, tasks, `Process` | [Sub-agents](../multi-agent-applications.md), [hand-offs](../multi-agent-applications.md#programmatic-agent-hand-off), or [graph](../graph.md) |
+| Multi-agent | Roles, tasks, `Process` | [Sub-agents, hand-offs, or graph](../multi-agent-applications.md) |
 | Realtime voice | No | [Realtime](../realtime/overview.md) |
 | Image generation | Yes | [Image Generation](../image-generation.md) |
 | License | MIT | MIT |
