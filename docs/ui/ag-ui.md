@@ -12,7 +12,7 @@ team that standardises how frontend applications communicate with AI agents, wit
 The only dependencies are:
 
 - [ag-ui-protocol](https://docs.ag-ui.com/introduction): to provide the AG-UI types and encoder.
-- [starlette](https://www.starlette.io): to handle [ASGI](https://asgi.readthedocs.io/en/latest/) requests from a framework like FastAPI.
+- [starlette](https://starlette.dev): to handle [ASGI](https://asgi.readthedocs.io/en/latest/) requests from a framework like FastAPI.
 
 You can install Pydantic AI with the `ag-ui` extra to ensure you have all the
 required AG-UI dependencies:
@@ -35,7 +35,7 @@ There are three ways to run a Pydantic AI agent based on AG-UI run input with st
 
 1. The [`AGUIAdapter.run_stream()`][pydantic_ai.ui.ag_ui.AGUIAdapter.run_stream] method, when called on an [`AGUIAdapter`][pydantic_ai.ui.ag_ui.AGUIAdapter] instantiated with an agent and an AG-UI [`RunAgentInput`](https://docs.ag-ui.com/sdk/python/core/types#runagentinput) object, will run the agent and return a stream of AG-UI events. It also takes optional [`Agent.iter()`][pydantic_ai.agent.Agent.iter] arguments including `deps`. Use this if you're using a web framework not based on Starlette (e.g. Django or Flask) or want to modify the input or output some way.
 2. The [`AGUIAdapter.dispatch_request()`][pydantic_ai.ui.ag_ui.AGUIAdapter.dispatch_request] class method takes an agent and a Starlette request (e.g. from FastAPI) coming from an AG-UI frontend, and returns a streaming Starlette response of AG-UI events that you can return directly from your endpoint. It also takes optional [`Agent.iter()`][pydantic_ai.agent.Agent.iter] arguments including `deps`, that you can vary for each request (e.g. based on the authenticated user). This is a convenience method that combines [`AGUIAdapter.from_request()`][pydantic_ai.ui.ag_ui.AGUIAdapter.from_request], [`AGUIAdapter.run_stream()`][pydantic_ai.ui.ag_ui.AGUIAdapter.run_stream], and [`AGUIAdapter.streaming_response()`][pydantic_ai.ui.ag_ui.AGUIAdapter.streaming_response].
-3. Build a stand-alone [`Starlette`](https://www.starlette.io/applications/) app with a single `/` route that calls [`AGUIAdapter.dispatch_request()`][pydantic_ai.ui.ag_ui.AGUIAdapter.dispatch_request]. The same Starlette app can be [mounted](https://fastapi.tiangolo.com/advanced/sub-applications/) at a path in an existing FastAPI app.
+3. Build a stand-alone [`Starlette`](https://starlette.dev/applications/) app with a single `/` route that calls [`AGUIAdapter.dispatch_request()`][pydantic_ai.ui.ag_ui.AGUIAdapter.dispatch_request]. The same Starlette app can be [mounted](https://fastapi.tiangolo.com/advanced/sub-applications/) at a path in an existing FastAPI app.
 
 When a run ends in [first-party cancellation](../agent.md#cancelling-a-run) — `ctx.cancel()`, `AgentRun.cancel()`, or a [`CancellationToken`][pydantic_ai.CancellationToken] your server wires to a cancel endpoint — the adapter closes any open text or tool events and emits a bare `RUN_FINISHED`. AG-UI currently has no cancelled outcome, so cancellation is not reported as `RUN_ERROR`. Pass an `on_cancel` callback (see the `run_stream()` example below) to persist the resumable message history from [`RunCancelled.all_messages()`][pydantic_ai.exceptions.RunCancelled.all_messages].
 
@@ -135,7 +135,7 @@ This will expose the agent as an AG-UI server, and your frontend can start sendi
 
 ### Stand-alone ASGI app
 
-When you don't already have a Starlette/FastAPI app to mount the route on, build a minimal [`Starlette`](https://www.starlette.io/applications/) app whose single `/` route calls [`AGUIAdapter.dispatch_request()`][pydantic_ai.ui.ag_ui.AGUIAdapter.dispatch_request]:
+When you don't already have a Starlette/FastAPI app to mount the route on, build a minimal [`Starlette`](https://starlette.dev/applications/) app whose single `/` route calls [`AGUIAdapter.dispatch_request()`][pydantic_ai.ui.ag_ui.AGUIAdapter.dispatch_request]:
 
 ```py {title="ag_ui_app.py"}
 from starlette.applications import Starlette
