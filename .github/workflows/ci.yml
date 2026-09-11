@@ -967,7 +967,7 @@ jobs:
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         id: app-token
         with:
-          app-id: ${{ vars.DOCS_APP_ID }}
+          client-id: ${{ vars.DOCS_CLIENT_ID }}
           private-key: ${{ secrets.DOCS_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
           repositories: unified-docs
