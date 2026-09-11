@@ -3,7 +3,7 @@
 A LangChain **agent** is a graph: `create_agent()` returns a `CompiledStateGraph`. Pydantic AI is a
 typed value. Pause, durability, and tests attach to it; they don't redraw it as nodes.
 
-LangSmith is hosted tracing. We emit OpenTelemetry you already run.
+LangSmith is hosted tracing. We emit OpenTelemetry, off by default, into the collector you already run.
 
 ## Side by side
 
