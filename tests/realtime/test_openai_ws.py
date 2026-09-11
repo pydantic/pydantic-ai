@@ -51,7 +51,7 @@ from pydantic_ai.usage import RequestUsage, RunUsage
 
 from ..conftest import IsDatetime, IsSameStr, IsStr, try_import
 from .conftest import REAL_SDP_OFFER
-from .ws_cassettes import RealtimeCassette, ReplayWebSocket
+from .ws_cassettes import RealtimeCassette
 from .ws_helpers import collapse_event_types, sent_frames_containing
 
 with try_import() as imports_successful:
@@ -282,6 +282,7 @@ async def test_image_can_solicit_one_response(
     assert len(responses) == 1
 
 
+@pytest.mark.realtime_ws_hold_open
 async def test_media_views_subscribe_before_iteration(
     openai_ws_cassette: tuple[Provider[Any], RealtimeCassette],
 ) -> None:
@@ -499,6 +500,7 @@ async def test_audio_in_server_vad_turn(
     assert reply.usage.details.get('input_transcription_seconds') is None
 
 
+@pytest.mark.realtime_ws_hold_open
 async def test_input_audio_retention_segments_three_server_vad_turns(
     openai_ws_cassette: tuple[Provider[Any], RealtimeCassette], assets_path: Path
 ) -> None:
@@ -723,20 +725,11 @@ async def test_tool_can_close_session(openai_ws_cassette: tuple[Provider[Any], R
     )
 
 
+@pytest.mark.realtime_ws_hold_open
 async def test_tool_error_ends_transcript_only_session(
     openai_ws_cassette: tuple[Provider[Any], RealtimeCassette],
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A raising tool ends a transcript-only consumer instead of leaving the live session mute."""
-    replay_recv = ReplayWebSocket.recv
-
-    async def yielding_replay_recv(self: ReplayWebSocket, *, decode: bool | None = None) -> str | bytes:
-        # A real socket yields between frames; give the spawned tool task the same scheduling chance
-        # during cassette playback before end-of-recording is interpreted as a provider close.
-        await asyncio.sleep(0)
-        return await replay_recv(self, decode=decode)
-
-    monkeypatch.setattr(ReplayWebSocket, 'recv', yielding_replay_recv)
     provider, _ = openai_ws_cassette
     model = OpenAIRealtimeModel(
         'gpt-realtime', provider=provider, settings=OpenAIRealtimeModelSettings(output_modality='text')

@@ -268,12 +268,14 @@ class ReplayWebSocket:
     consuming a future inbound frame.
     """
 
-    def __init__(self, cassette: RealtimeCassette) -> None:
+    def __init__(self, cassette: RealtimeCassette, *, hold_open: bool = False) -> None:
         self._interactions = cassette.interactions
+        self._hold_open = hold_open
         self._position = 0
         self._normalizer = _SentFrameNormalizer()
         self._condition = asyncio.Condition()
         self._readers = 0
+        self._closed = False
         # Mirrors the `websockets` attributes a connection exposes once closed, so code that inspects
         # the close after iteration ends (a normal close doesn't raise) sees what was recorded.
         self.close_code: int | None = None
@@ -314,6 +316,9 @@ class ReplayWebSocket:
         while True:
             interaction = self._peek()
             if interaction is None:
+                if self._hold_open and not self._closed:
+                    await self._condition.wait()
+                    continue
                 # The recording ran out: the session outlived what was captured, which replays as
                 # the ordinary end-of-conversation close.
                 self.close_code, self.close_reason = 1000, ''
@@ -349,6 +354,9 @@ class ReplayWebSocket:
 
     async def close(self, *args: Any, **kwargs: Any) -> None:
         del args, kwargs
+        async with self._condition:
+            self._closed = True
+            self._condition.notify_all()
 
     def _peek(self) -> RealtimeCassetteInteraction | None:
         if self._position >= len(self._interactions):
@@ -428,11 +436,13 @@ def _connect_target(provider: ProviderName) -> tuple[Any, str]:
 
 
 @contextmanager
-def patched_ws_connect(provider: ProviderName, cassette: RealtimeCassette, plan: CassettePlan) -> Generator[None]:
+def patched_ws_connect(
+    provider: ProviderName, cassette: RealtimeCassette, plan: CassettePlan, *, hold_open: bool = False
+) -> Generator[None]:
     """Patch the provider's WebSocket `connect` to replay from (or record into) `cassette`."""
     target, attr = _connect_target(provider)
     real_connect = getattr(target, attr)
-    replay = ReplayWebSocket(cassette) if plan == 'replay' else None
+    replay = ReplayWebSocket(cassette, hold_open=hold_open) if plan == 'replay' else None
 
     @asynccontextmanager
     async def connect(*args: Any, **kwargs: Any) -> AsyncGenerator[ReplayWebSocket | RecordingWebSocket]:
