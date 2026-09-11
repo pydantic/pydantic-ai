@@ -145,6 +145,7 @@ from .wrapper import WrapperAgent
 
 if TYPE_CHECKING:
     from starlette.applications import Starlette
+    from starlette.types import Lifespan
 
     from pydantic_graph import Graph, GraphRunContext
 
@@ -4010,13 +4011,15 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
     def to_web(
         self,
-        *,
         models: ModelsParam = None,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        native_tools: Sequence[AbstractNativeTool] | None = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         instructions: str | None = None,
         html_source: str | Path | None = None,
         allowed_hosts: Sequence[str] | None = None,
+        lifespan: Lifespan[Starlette] | None = None,
     ) -> Starlette:
         """Create a Starlette app that serves a web chat UI for this agent.
 
@@ -4041,6 +4044,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                   (e.g., `{'GPT 5': 'openai:gpt-5', 'Claude': 'anthropic:claude-sonnet-4-6'}`)
                 The agent's model is always included. Native tool support is automatically
                 determined from each model's profile.
+            toolsets: Optional sequence of toolsets to make available to the agent. When
+                mounting in a parent ASGI app, manage toolsets with `web_toolset_lifespan` in the
+                parent lifespan to keep connections persistent across requests.
+            native_tools: Optional list of additional native tools to make available in the UI.
+                Tools already configured on the agent are always included but won't appear as options.
             deps: Optional dependencies to use for all requests.
             model_settings: Optional settings to use for all model requests.
             instructions: Optional extra instructions to pass to each agent run.
@@ -4055,6 +4063,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 with a `421`, so that a website cannot reach the UI on your machine by pointing a
                 hostname it controls at you (DNS rebinding). Pass `['*']` to answer to any host,
                 only if something in front of the app already authenticates requests.
+            lifespan: Optional custom Starlette lifespan context manager to run alongside the
+                internal toolset lifespan.
 
         Returns:
             A configured Starlette application ready to be served (e.g., with uvicorn)
@@ -4081,11 +4091,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         return create_web_app(
             self,
             models=models,
+            toolsets=toolsets,
+            native_tools=native_tools,
             deps=deps,
             model_settings=model_settings,
             instructions=instructions,
             html_source=html_source,
             allowed_hosts=allowed_hosts,
+            lifespan=lifespan,
         )
 
 
