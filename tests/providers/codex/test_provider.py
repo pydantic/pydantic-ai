@@ -153,6 +153,33 @@ def test_from_codex_cli_honors_code_home(env: TestEnv, tmp_path: Path):
     assert auth_json.read_text() == original
 
 
+def test_read_codex_cli_credentials_decodes_as_utf8(env: TestEnv, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """`_read_codex_cli_credentials()` must decode `auth.json` as UTF-8, not the locale default.
+
+    Unit test, not VCR: the defect is a `Path.read_text()` encoding argument. It only
+    surfaces when the platform default is not UTF-8 (Windows/localized CPython ≤ 3.14),
+    which no cassette can force. The monkeypatch simulates that locale so this fails
+    before the fix (`UnicodeDecodeError`) and passes after it.
+    """
+    (tmp_path / 'auth.json').write_bytes(
+        json.dumps(
+            {'tokens': {'access_token': 'a', 'refresh_token': 'r', 'account_id': 'acc-é-123'}},
+            ensure_ascii=False,
+        ).encode('utf-8')
+    )
+    env.set('CODEX_HOME', str(tmp_path))
+
+    original = Path.read_text
+
+    def read_text_as_locale_ascii(self: Path, encoding: str | None = None, **kwargs: Any) -> str:
+        return original(self, encoding=encoding or 'ascii', **kwargs)
+
+    monkeypatch.setattr(Path, 'read_text', read_text_as_locale_ascii)
+
+    provider = OpenAICodexProvider()
+    assert provider.credentials.account_id == 'acc-é-123'
+
+
 def test_from_codex_cli_missing_file(env: TestEnv, tmp_path: Path):
     env.set('CODEX_HOME', str(tmp_path))
     with pytest.raises(UserError, match=r'codex login'):
