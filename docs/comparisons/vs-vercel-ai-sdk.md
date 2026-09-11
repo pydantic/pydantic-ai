@@ -35,10 +35,3 @@ protocol, so the browser can stay theirs.
 | Evals | No | Yes ([Pydantic Evals](../evals.md)) |
 | Test without API keys | Yes (`MockLanguageModelV4`) | Yes |
 | Embeddings | Yes (`embed`) | Yes |
-
-## FAQ
-
-**Can the React UI stay?** Yes. [`VercelAIAdapter`][pydantic_ai.ui.vercel_ai.VercelAIAdapter] speaks
-their protocol. The agent is Python.
-
-**Do tool cards and approvals still work?** Yes. The adapter streams their protocol.

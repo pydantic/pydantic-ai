@@ -34,10 +34,3 @@ features first. Pydantic AI runs on any model, including OpenAI.
 | Evals | Yes (platform) | Yes ([Pydantic Evals](../evals.md)) |
 | Test without API keys | Yes (`ScriptedModel`) | Yes |
 | Embeddings | Yes (OpenAI) | Yes |
-
-## FAQ
-
-**Can I keep using OpenAI models?** Yes, including the Responses API, and any other provider with
-[`FallbackModel`][pydantic_ai.models.fallback.FallbackModel].
-
-**If the process dies?** The same [`Agent`][pydantic_ai.Agent], inside [Temporal, DBOS, Prefect, Restate, Lambda, Kitaru, or Airflow](../durable_execution/overview.md).

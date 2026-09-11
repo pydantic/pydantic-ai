@@ -34,9 +34,3 @@ AI isn't tied to a cloud.
 | Evals | Yes (Vertex) | Yes ([Pydantic Evals](../evals.md)) |
 | Test without API keys | Yes (subclass `BaseLlm`) | Yes |
 | Embeddings | Yes (Vertex) | Yes |
-
-## FAQ
-
-**Can I use Gemini?** Yes, including Vertex, and any other provider.
-
-**Do I have to deploy to Vertex?** No. The agent runs in your process. Vertex is optional.

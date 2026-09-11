@@ -34,10 +34,3 @@ call, branch, `asyncio.gather`, or [`pydantic-graph`](../graph.md).
 | Evals | Yes (experimental) | Yes ([Pydantic Evals](../evals.md)) |
 | Test without API keys | No (`crewai test` hits a live model) | Yes |
 | Embeddings | Knowledge | Yes |
-
-## FAQ
-
-**How do I do multi-agent without a crew?** An agent as a tool, a router, `asyncio.gather`, or
-[`pydantic-graph`](../graph.md).
-
-**Can I test without a live model?** Yes. `crewai test` hits one. We don't.

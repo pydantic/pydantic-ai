@@ -34,10 +34,3 @@ only the library: an agent you put in the application you already run.
 | Evals | Yes | Yes ([Pydantic Evals](../evals.md)) |
 | Test without API keys | Yes | Yes |
 | Embeddings | Knowledge | Yes |
-
-## FAQ
-
-**Does the agent need its own service?** No. It goes in the app you already run.
-
-**Can I get a chat UI without AgentOS?** Yes. [`to_web()`][pydantic_ai.agent.Agent.to_web] and
-[`to_cli_sync()`](../cli.md).

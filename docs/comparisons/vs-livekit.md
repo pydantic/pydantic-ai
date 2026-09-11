@@ -38,11 +38,3 @@ speak.
 | Evals | Yes (`livekit.agents.evals`) | Yes ([Pydantic Evals](../evals.md)) |
 | Test without API keys | Yes | Yes |
 | Embeddings | No | Yes |
-
-## FAQ
-
-**Can the same agent speak and then keep going as text?** Yes. A
-[realtime session](../realtime/overview.md) hands its history to `Agent.run()`.
-
-**Can I still use LiveKit for rooms?** Yes. LiveKit owns the room; the reasoning can stay a Pydantic
-AI [`Agent`][pydantic_ai.Agent].

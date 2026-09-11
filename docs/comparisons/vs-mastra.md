@@ -35,10 +35,3 @@ and scorers as separate concepts.
 | Evals | Yes | Yes ([Pydantic Evals](../evals.md)) |
 | Test without API keys | Yes | Yes |
 | Embeddings | Yes (with memory) | Yes |
-
-## FAQ
-
-**Can the UI stay in TypeScript?** Yes. A Python agent behind HTTP. UI adapters exist.
-
-**Do I need Studio or Cloud?** No. [`to_web()`][pydantic_ai.agent.Agent.to_web] is a chat UI in your
-process. Tracing is OpenTelemetry.

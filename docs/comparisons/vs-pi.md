@@ -38,7 +38,6 @@ packages. Pydantic AI is a typed Python [`Agent`][pydantic_ai.Agent].
 
 ## FAQ
 
-**Is this a CLI I wrap?** No. A typed [`Agent`][pydantic_ai.Agent] you import into the Python app you
-already have.
-
-**Can I test it without API keys?** Yes. Same [TestModel](../testing.md) as the rest of the library.
+**Can I build a coding agent like this in Python?** Yes. [Code Puppy](https://github.com/mpfaffenberger/code_puppy)
+and [Pydantic Deep Agents](https://github.com/vstorm-co/pydantic-deepagents) (Vstorm) did.
+[`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) if you want ours.
