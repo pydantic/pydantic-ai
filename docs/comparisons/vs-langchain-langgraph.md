@@ -1,6 +1,6 @@
 # Pydantic AI vs LangChain & LangGraph
 
-LangChain is a large Python ecosystem: LangGraph underneath it for graph-based control flow, `deepagents` for its coding harness, and integrations for most things you would want to plug in. Pydantic AI vs LangChain comes down to surface area: one typed [`Agent`][pydantic_ai.Agent], plain Python control flow, and validation from the library you already use.
+LangChain is a large Python ecosystem: LangGraph underneath it for graph-based control flow, `deepagents` for its coding harness, and a large catalogue of integrations. Pydantic AI vs LangChain comes down to surface area: one typed [`Agent`][pydantic_ai.Agent], plain Python control flow, and validation from the library you already use.
 
 ## Framework
 

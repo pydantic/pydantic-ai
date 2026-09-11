@@ -1,6 +1,6 @@
 # Pydantic AI vs Pi
 
-Pi is a lean, hackable TypeScript coding agent from Earendil Works: a terminal agent you extend with hooks, skills and packages, or embed through `createAgentSession`. Pydantic AI vs Pi is the Python answer, where a coding agent is one configuration of a general agent.
+Pi is a TypeScript coding agent from Earendil Works: a terminal agent you extend with hooks, skills and packages, or embed through `createAgentSession`. Pydantic AI vs Pi is the Python answer, where a coding agent is one configuration of a general agent.
 
 ## Framework
 
