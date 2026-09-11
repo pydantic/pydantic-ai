@@ -7,7 +7,7 @@ providers did not reproduce this ordering, so these tests use synthetic chunks.
 from __future__ import annotations as _annotations
 
 import json
-from typing import Any, Literal
+from typing import Any
 
 import pytest
 
@@ -15,17 +15,9 @@ from pydantic_ai import Agent
 from pydantic_ai.messages import ModelRequest, TextPart, ThinkingPart, ToolCallPart, UserPromptPart
 from pydantic_ai.models import ModelRequestParameters
 
-from ..conftest import try_import
+from ..conftest import IsStr, try_import
 
 with try_import() as imports_successful:
-    from openai.types.chat import ChatCompletionChunk
-    from openai.types.chat.chat_completion_chunk import (
-        Choice,
-        ChoiceDelta,
-        ChoiceDeltaToolCall,
-        ChoiceDeltaToolCallFunction,
-    )
-
     from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.profiles.openai import OpenAIModelProfile
     from pydantic_ai.providers.openai import OpenAIProvider
@@ -33,6 +25,7 @@ with try_import() as imports_successful:
     from pydantic_ai.ui.vercel_ai.request_types import SubmitMessage, TextUIPart, UIMessage
 
     from .mock_openai import MockOpenAI
+    from .test_openai import struc_chunk, text_chunk
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
@@ -61,33 +54,6 @@ def _assert_text_part_lifecycle(events: list[Any]) -> None:
     assert not open_ids
 
 
-def _chunk(delta: ChoiceDelta, finish_reason: Literal['stop', 'tool_calls'] | None = None) -> ChatCompletionChunk:
-    return ChatCompletionChunk(
-        id='response',
-        object='chat.completion.chunk',
-        created=1,
-        model='test',
-        choices=[Choice(index=0, delta=delta, finish_reason=finish_reason)],
-    )
-
-
-def _tool_delta(index: int, arguments: str) -> ChoiceDelta:
-    return ChoiceDelta(
-        tool_calls=[
-            ChoiceDeltaToolCall(
-                index=index,
-                id=f'call-{index}',
-                type='function',
-                function=ChoiceDeltaToolCallFunction(name='lookup', arguments=arguments),
-            )
-        ]
-    )
-
-
-def _chunks(*deltas: ChoiceDelta, finish_reason: Literal['stop', 'tool_calls']) -> list[ChatCompletionChunk]:
-    return [*(_chunk(delta) for delta in deltas), _chunk(ChoiceDelta(), finish_reason=finish_reason)]
-
-
 async def test_text_after_tool_is_not_a_vercel_delta_on_the_ended_part(allow_model_requests: None):
     """Reporter shape: text, tool, then more content. That content must not be a delta on the ended text id."""
     agent = Agent(
@@ -96,13 +62,12 @@ async def test_text_after_tool_is_not_a_vercel_delta_on_the_ended_part(allow_mod
             provider=OpenAIProvider(
                 openai_client=MockOpenAI.create_mock_stream(
                     [
-                        _chunks(
-                            ChoiceDelta(content='Checking now.'),
-                            _tool_delta(0, '{"value":1}'),
-                            ChoiceDelta(content='\n'),
-                            finish_reason='tool_calls',
-                        ),
-                        _chunks(ChoiceDelta(content='Done.'), finish_reason='stop'),
+                        [
+                            text_chunk('Checking now.'),
+                            struc_chunk('lookup', '{"value":1}'),
+                            text_chunk('\n', finish_reason='tool_calls'),
+                        ],
+                        [text_chunk('Done.', finish_reason='stop')],
                     ]
                 )
             ),
@@ -131,14 +96,13 @@ async def test_closing_think_tag_after_tool_is_not_leaked_as_text(allow_model_re
         'test',
         provider=OpenAIProvider(
             openai_client=MockOpenAI.create_mock_stream(
-                _chunks(
-                    ChoiceDelta(content='<think>'),
-                    ChoiceDelta(content='Checking'),
-                    _tool_delta(0, '{"value":1}'),
-                    ChoiceDelta(content='</think>'),
-                    ChoiceDelta(content=' Continued.'),
-                    finish_reason='tool_calls',
-                )
+                [
+                    text_chunk('<think>'),
+                    text_chunk('Checking'),
+                    struc_chunk('lookup', '{"value":1}'),
+                    text_chunk('</think>'),
+                    text_chunk(' Continued.', finish_reason='tool_calls'),
+                ]
             )
         ),
         profile=OpenAIModelProfile(thinking_tags=('<think>', '</think>')),
@@ -153,6 +117,6 @@ async def test_closing_think_tag_after_tool_is_not_leaked_as_text(allow_model_re
 
     assert response.get().parts == [
         ThinkingPart(content='Checking', id='content', provider_name='openai'),
-        ToolCallPart(tool_name='lookup', args='{"value":1}', tool_call_id='call-0'),
+        ToolCallPart(tool_name='lookup', args='{"value":1}', tool_call_id=IsStr()),
         TextPart(' Continued.'),
     ]
