@@ -127,6 +127,7 @@ from ..toolsets.abstract import AGENT_TOOLSET_ID
 from ..toolsets.combined import CombinedToolset
 from ..toolsets.function import FunctionToolset
 from ..toolsets.prepared import PreparedToolset
+from ..workspaces import UnavailableWorkspace, Workspace, WorkspaceBackend, WorkspaceRef
 from .abstract import (
     AbstractAgent,
     AgentMetadata,
@@ -412,6 +413,13 @@ S = TypeVar('S')
 _PreparedDepsT = TypeVar('_PreparedDepsT')
 _PreparedOutputT = TypeVar('_PreparedOutputT')
 NoneType = type(None)
+
+_NO_WORKSPACE_REASON = (
+    'No workspace is attached to this run. Pass `workspace=LocalWorkspace()` to the run method to use the '
+    'local machine (unsafe: commands and file operations run with the full permissions of this process), '
+    'attach a capability that supplies a workspace through its `get_workspace` hook, or pass a `WorkspaceRef` '
+    'to connect to an existing environment. See https://ai.pydantic.dev/workspace/ for details.'
+)
 
 
 @dataclasses.dataclass
@@ -1232,6 +1240,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, OutputDataT]]: ...
 
@@ -1257,6 +1266,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, RunOutputDataT]]: ...
 
@@ -1282,6 +1292,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AsyncGenerator[AgentRun[AgentDepsT, Any]]:
         """A contextmanager which can be used to iterate over the agent graph's nodes as they are executed.
@@ -1376,6 +1387,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
+            workspace: Optional workspace backend or [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] for this run; overrides capability contributions. See the [workspace docs](../workspace.md).
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
@@ -1402,6 +1414,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             retries=retries,
             toolsets=toolsets,
             capabilities=capabilities,
+            workspace=workspace,
             spec=spec,
         )
         async with prepared.open() as agent_run:
@@ -1427,6 +1440,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         retries: int | AgentRetries | None = None,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> _PreparedAgentRun[AgentDepsT, Any]:
         # Consume the pending `AgentRunEvents` binding before ANY user-supplied code (capability /
@@ -1611,6 +1625,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             run_id=_agent_graph.resolve_run_id(run_id, message_history),
             conversation_id=_agent_graph.resolve_conversation_id(conversation_id, message_history),
         )
+        historical_response = next(
+            (message for message in reversed(state.message_history) if isinstance(message, _messages.ModelResponse)),
+            None,
+        )
+        historical_workspace_ref = historical_response.workspace_ref if historical_response is not None else None
 
         # Build a resolver that computes model settings per-step, in order of precedence: run > agent > model
         model_settings_override = self._override_model_settings.get()
@@ -1682,7 +1701,18 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             run_id=state.run_id,
             conversation_id=state.conversation_id,
             _cancellation=cancellation,
+            workspace=Workspace(UnavailableWorkspace(_NO_WORKSPACE_REASON)),
         )
+
+        # A caller-provided live workspace is already known and is visible to `for_run`. A workspace
+        # supplied by a capability is selected from the final per-run capability tree below, so a
+        # capability that replaces itself in `for_run` cannot leave behind the bootstrap backend.
+        run_workspace = initial_ctx.workspace
+        if workspace is not None and not isinstance(workspace, WorkspaceRef):
+            # An explicit backend, or an existing `Workspace` passed straight through from a
+            # parent run or a previous result.
+            run_workspace = workspace if isinstance(workspace, Workspace) else Workspace(workspace)
+            initial_ctx.workspace = run_workspace
 
         # Resolve run metadata up front so capability and toolset `for_run` hooks
         # can see it on `RunContext.metadata`. Metadata factories receive the
@@ -1714,6 +1744,22 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         cap_native_tools = resolved_caps.native_tools
         cap_model_settings = resolved_caps.model_settings
         cap_toolsets = resolved_caps.toolsets
+
+        # Nothing here does I/O: the backend creates or attaches on its first operation. Resolve
+        # capability-provided workspaces only now, after `for_run()` has chosen the instances whose
+        # hooks and durable operations this run will actually use.
+        if workspace is None or isinstance(workspace, WorkspaceRef):
+            selection_ref = workspace if isinstance(workspace, WorkspaceRef) else historical_workspace_ref
+            selection = run_capability.get_workspace(initial_ctx, ref=selection_ref)
+            if selection is None:
+                if isinstance(workspace, WorkspaceRef):
+                    raise exceptions.UserError(
+                        f'No capability can supply workspace {workspace.id!r}: every `get_workspace` returned '
+                        '`None`. Attach a capability whose `get_workspace` recognizes it.'
+                    )
+            else:
+                run_workspace = selection if isinstance(selection, Workspace) else Workspace(selection)
+        initial_ctx.workspace = run_workspace
 
         # Whether any capability's `for_run` swapped a model-layer contribution during resolution; the
         # per-step model-selection block below keys off this. The model layers are the tail of the
@@ -1851,6 +1897,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             capabilities=capabilities_dict,
             loaded_capability_ids=loaded_capability_ids,
             discovered_tool_names=discovered_tool_names,
+            workspace=run_workspace,
             native_tools=cap_native_tools,
             tool_manager=tool_manager,
             tracer=tracer,
@@ -4013,6 +4060,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         *,
         models: ModelsParam = None,
         deps: AgentDepsT = None,
+        workspace: WorkspaceBackend | WorkspaceRef | None = None,
         model_settings: ModelSettings | None = None,
         instructions: str | None = None,
         html_source: str | Path | None = None,
@@ -4027,7 +4075,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         The returned Starlette application can be mounted into a FastAPI app or run directly
         with any ASGI server (uvicorn, hypercorn, etc.).
 
-        Note that the `deps` and `model_settings` will be the same for each request.
+        Note that the `deps`, `workspace`, and `model_settings` will be the same for each request.
         To provide different `deps` for each request use the lower-level adapters directly.
 
         The agent's configured native tools (registered via `capabilities=[NativeTool(...)]`
@@ -4042,6 +4090,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 The agent's model is always included. Native tool support is automatically
                 determined from each model's profile.
             deps: Optional dependencies to use for all requests.
+            workspace: Optional workspace backend or [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] for all requests; overrides capability contributions. See the [workspace docs](../workspace.md).
             model_settings: Optional settings to use for all model requests.
             instructions: Optional extra instructions to pass to each agent run.
             html_source: Path or URL for the chat UI HTML. Can be:
@@ -4082,6 +4131,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             self,
             models=models,
             deps=deps,
+            workspace=workspace,
             model_settings=model_settings,
             instructions=instructions,
             html_source=html_source,
@@ -4138,9 +4188,29 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
     ]
 
     @asynccontextmanager
-    async def open(self) -> AsyncGenerator[AgentRun[_PreparedDepsT, _PreparedOutputT]]:
+    async def open(self) -> AsyncGenerator[AgentRun[_PreparedDepsT, _PreparedOutputT]]:  # noqa: C901
         graph_deps = self.graph_deps
         state = self.state
+        # Snapshot the responses that existed before this run, by identity, so `refresh_workspace_ref`
+        # can tell a response this run produced from one that arrived via `message_history`. Identity
+        # rather than position: a history processor may reorder or rewrite messages mid-run, and the
+        # ref must land only on a newly produced response, never overwrite a prior run's on an existing
+        # one.
+        initial_responses = tuple(
+            message for message in state.message_history if isinstance(message, _messages.ModelResponse)
+        )
+
+        def refresh_workspace_ref() -> None:
+            message = next(
+                (
+                    message
+                    for message in reversed(state.message_history)
+                    if isinstance(message, _messages.ModelResponse)
+                ),
+                None,
+            )
+            if message is not None and all(message is not original for original in initial_responses):
+                message.workspace_ref = graph_deps.workspace.ref
 
         @asynccontextmanager
         async def _translate_cancellation() -> AsyncGenerator[None]:
@@ -4180,6 +4250,7 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
         async with AsyncExitStack() as stack:
             # Enter first so cancellation is classified only after every other context has torn down.
             await stack.enter_async_context(_translate_cancellation())
+            stack.callback(refresh_workspace_ref)
 
             # Bind the run's cancellation controller to this task and register the token BEFORE any
             # potentially-blocking setup (the concurrency limiter, model entry): a run queued behind
@@ -4223,6 +4294,7 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
                 # task's cancellation counter (past the helper's `raise_if_cancelling` backstop).
                 if graph_deps.cancellation.cancel_requested:
                     raise asyncio.CancelledError('pydantic-ai: re-asserting a requested run cancellation')
+                result.__dict__['_workspace'] = graph_deps.workspace
                 agent_run._result_override = result  # pyright: ignore[reportPrivateUsage]
 
             def _extract_error(error: BaseException) -> BaseException:

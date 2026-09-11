@@ -62,6 +62,11 @@ navigation:
         slug: "core-concepts/hooks"
         aliases:
           - "hooks"
+      - page: "Workspaces"
+        path: "workspace.md"
+        slug: "core-concepts/workspace"
+        aliases:
+          - "workspace"
       - page: "Capabilities"
         path: "capabilities/overview.md"
         slug: "capabilities/overview"
@@ -1091,6 +1096,11 @@ navigation:
             slug: "api/pydantic-ai/run"
             aliases:
               - "api/run"
+          - page: "workspaces"
+            path: "api/workspaces.md"
+            slug: "api/pydantic-ai/workspaces"
+            aliases:
+              - "api/workspaces"
           - page: "settings"
             path: "api/settings.md"
             slug: "api/pydantic-ai/settings"

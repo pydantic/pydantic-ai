@@ -28,6 +28,7 @@ from pydantic_ai.profiles.google import GoogleModelProfile
 from pydantic_ai.profiles.groq import GroqModelProfile
 from pydantic_ai.profiles.openai import OpenAIModelProfile
 from pydantic_ai.tools import DeferredToolRequests
+from pydantic_ai.workspaces import WorkspaceRef
 
 from ._inline_snapshot import snapshot
 from .conftest import try_import
@@ -1005,10 +1006,11 @@ def test_agent_to_web_with_instructions():
 
 
 @pytest.mark.anyio
-async def test_instructions_passed_to_dispatch(monkeypatch: pytest.MonkeyPatch):
-    """Test that instructions from create_web_app are passed to dispatch_request."""
+async def test_agent_to_web_passes_instructions_and_workspace_to_dispatch(monkeypatch: pytest.MonkeyPatch):
+    """Test that `Agent.to_web()` passes instructions and workspace to `dispatch_request`."""
     agent = Agent(TestModel(custom_output_text='Hello'))
-    app = create_web_app(agent, instructions='Always respond in Spanish')
+    workspace = WorkspaceRef(provider='fake', id='test')
+    app = agent.to_web(instructions='Always respond in Spanish', workspace=workspace)
 
     # Mock dispatch_request to capture the instructions parameter
     mock_dispatch = AsyncMock(return_value=Response(content=b'', status_code=200))
@@ -1032,10 +1034,10 @@ async def test_instructions_passed_to_dispatch(monkeypatch: pytest.MonkeyPatch):
             },
         )
 
-    # Verify dispatch_request was called with instructions
     mock_dispatch.assert_called_once()
     call_kwargs = mock_dispatch.call_args.kwargs
     assert call_kwargs['instructions'] == 'Always respond in Spanish'
+    assert call_kwargs['workspace'] is workspace
 
 
 @pytest.mark.anyio

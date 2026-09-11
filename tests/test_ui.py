@@ -65,9 +65,11 @@ from pydantic_ai.output import OutputDataT
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, ExternalToolset
+from pydantic_ai.workspaces import WorkspaceRef
 
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, message, message_part
+from .workspace_fakes import ConnectOnlyWorkspaceCapability
 
 pytest.importorskip('starlette')
 
@@ -1335,9 +1337,21 @@ async def test_run_stream_native_metadata_forwarded():
     assert run_result_event.result.metadata == {'ui': 'native'}
 
 
-async def test_adapter_dispatch_request():
-    agent = Agent(model=TestModel())
+async def test_adapter_dispatch_request(monkeypatch: pytest.MonkeyPatch):
+    # The agent carries a capability that recognizes the ref: a `WorkspaceRef` no capability can
+    # supply is a `UserError`, and this test is about the forwarding, not that failure.
+    agent = Agent(model=TestModel(), capabilities=[ConnectOnlyWorkspaceCapability()])
     request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+    workspace = WorkspaceRef(provider='fake', id='test')
+    captured_workspace: list[object] = []
+
+    run_stream_events = agent.run_stream_events
+
+    def capture_run_stream_events(**kwargs: Any) -> Any:
+        captured_workspace.append(kwargs['workspace'])
+        return run_stream_events(**kwargs)
+
+    monkeypatch.setattr(agent, 'run_stream_events', capture_run_stream_events)
 
     async def receive() -> dict[str, Any]:
         return {'type': 'http.request', 'body': request.model_dump_json().encode('utf-8')}
@@ -1359,7 +1373,11 @@ async def test_adapter_dispatch_request():
         captured_metadata.append(run_result.metadata)
 
     response = await DummyUIAdapter.dispatch_request(
-        starlette_request, agent=agent, metadata={'ui': 'dispatch'}, on_complete=on_complete
+        starlette_request,
+        agent=agent,
+        metadata={'ui': 'dispatch'},
+        on_complete=on_complete,
+        workspace=workspace,
     )
 
     assert isinstance(response, StreamingResponse)
@@ -1398,6 +1416,7 @@ async def test_adapter_dispatch_request():
         ]
     )
     assert captured_metadata == [{'ui': 'dispatch'}]
+    assert captured_workspace == [workspace]
 
 
 def test_manage_system_prompt_visible_in_base_adapter_signatures():

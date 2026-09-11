@@ -4,6 +4,11 @@ from typing_extensions import TypedDict
 from pydantic_ai.durable_exec._toolset import guard_run_context
 from pydantic_ai.tools import AgentDepsT, RunContext
 
+DBOS_WORKSPACE_UNAVAILABLE_REASON = (
+    'RunContext.workspace is not available inside a DBOS durable workflow. Configure workspace access '
+    'through application-owned durable tools or capability hooks.'
+)
+
 
 class StepConfig(TypedDict, total=False):
     """Configuration for a step in the DBOS workflow."""
