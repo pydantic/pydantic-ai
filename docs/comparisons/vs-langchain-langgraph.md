@@ -30,5 +30,4 @@
 
 ## FAQ
 
-**Do you have a graph library?** Yes. [`pydantic-graph`](../graph.md). Most multi-agent work is still
-ordinary [async Python](../multi-agent-applications.md).
+**Do you have a graph library?** Yes. [`pydantic-graph`](../graph.md).
