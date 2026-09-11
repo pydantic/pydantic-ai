@@ -93,12 +93,12 @@ def _text_start_ids(events: Sequence[UIEvent | str]) -> list[str]:
 
 
 def _first_step_events(events: Sequence[UIEvent | str]) -> list[UIEvent | str]:
-    first_step: list[UIEvent | str] = []
-    for event in events:
-        first_step.append(event)
-        if isinstance(event, dict) and _event_str(event, 'type') == 'finish-step':
-            break
-    return first_step
+    end = next(
+        index
+        for index, event in enumerate(events)
+        if isinstance(event, dict) and _event_str(event, 'type') == 'finish-step'
+    )
+    return list(events[: end + 1])
 
 
 def _first_model_response(messages: Sequence[ModelMessage]) -> ModelResponse:
