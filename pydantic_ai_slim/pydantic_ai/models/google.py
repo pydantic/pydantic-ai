@@ -773,7 +773,10 @@ class GoogleModel(Model[Client]):
 
             for tool in model_request_parameters.native_tools:
                 if isinstance(tool, WebSearchTool):
-                    tools.append(ToolDict(google_search=GoogleSearchDict()))
+                    google_search = GoogleSearchDict()
+                    if tool.blocked_domains:
+                        google_search['exclude_domains'] = list(tool.blocked_domains)
+                    tools.append(ToolDict(google_search=google_search))
                 elif isinstance(tool, WebFetchTool):
                     tools.append(ToolDict(url_context=UrlContextDict()))
                 elif isinstance(tool, CodeExecutionTool):

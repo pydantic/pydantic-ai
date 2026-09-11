@@ -4059,6 +4059,35 @@ def test_google_gemini_api_sets_include_server_side_tool_invocations(
     assert tool_config.get('include_server_side_tool_invocations') is True
 
 
+def test_google_web_search_tool_blocked_domains(
+    google_provider: GoogleProvider,
+) -> None:
+    """blocked_domains on WebSearchTool is forwarded as exclude_domains in the GoogleSearch config."""
+    model = GoogleModel('gemini-2.0-flash', provider=google_provider)
+    blocked = ['example.com', 'ads.example.org']
+    params = ModelRequestParameters(native_tools=[WebSearchTool(blocked_domains=blocked)])
+    tools, _tool_config, _image_config = model._get_tool_config(params, GoogleModelSettings())  # pyright: ignore[reportPrivateUsage]
+    assert tools is not None
+    assert len(tools) == 1
+    google_search = tools[0].get('google_search')
+    assert google_search is not None
+    assert google_search.get('exclude_domains') == blocked
+
+
+def test_google_web_search_tool_no_blocked_domains(
+    google_provider: GoogleProvider,
+) -> None:
+    """WebSearchTool without blocked_domains produces a GoogleSearch config without exclude_domains."""
+    model = GoogleModel('gemini-2.0-flash', provider=google_provider)
+    params = ModelRequestParameters(native_tools=[WebSearchTool()])
+    tools, _tool_config, _image_config = model._get_tool_config(params, GoogleModelSettings())  # pyright: ignore[reportPrivateUsage]
+    assert tools is not None
+    assert len(tools) == 1
+    google_search = tools[0].get('google_search')
+    assert google_search is not None
+    assert 'exclude_domains' not in google_search
+
+
 @pytest.mark.vcr()
 async def test_google_vertex_tool_combination_omits_include_server_side_tool_invocations(
     allow_model_requests: None, vertex_provider: GoogleProvider, vcr: Cassette
