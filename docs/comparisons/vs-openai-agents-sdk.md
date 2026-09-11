@@ -1,6 +1,6 @@
 # Pydantic AI vs OpenAI Agents SDK
 
-The OpenAI Agents SDK is a small Python library built close to OpenAI's own API: agents, `handoff` primitives, guardrails, and access to the hosted tools. Pydantic AI runs the same shape of agent on [any provider](../models/overview.md), with [structured output](../output.md#structured-output) validated by Pydantic and a [Harness SDK](https://pydantic.dev/docs/ai/harness/) of capabilities from sandboxes to sub-agents.
+The OpenAI Agents SDK is a small Python library built close to OpenAI's own API: agents, `handoff` primitives, guardrails, and access to the hosted tools. Pydantic AI runs one typed [`Agent`][pydantic_ai.Agent] on [any provider](../models/overview.md), with [structured output](../output.md#structured-output) validated by Pydantic and a [Harness SDK](https://pydantic.dev/docs/ai/harness/) of capabilities from sandboxes to sub-agents.
 
 ## Framework
 
@@ -9,7 +9,7 @@ The OpenAI Agents SDK is a small Python library built close to OpenAI's own API:
 | Language | Python | Python |
 | License | MIT | MIT |
 | Model providers | OpenAI first; others via LiteLLM | [Many](../models/overview.md) |
-| Extensibility | Tools, guardrails, handoffs | [Capabilities and toolsets](../extensibility.md); [30+ in the Harness SDK](https://pydantic.dev/docs/ai/harness/) |
+| Extensibility | Tools, guardrails, handoffs | [Capabilities and toolsets](../extensibility.md); [50+ with the Harness SDK](https://pydantic.dev/docs/ai/harness/) |
 | Harnesses | `SandboxAgent`, or build your own | Built-in [`Coder`](https://pydantic.dev/docs/ai/harness/coder/) and [`Researcher`](https://pydantic.dev/docs/ai/harness/researcher/), or compose your own |
 | Observability | OpenAI tracing, OTel via adapters | [OpenTelemetry](../logfire.md#using-opentelemetry), including [Pydantic Logfire](https://pydantic.dev/logfire) |
 | Interfaces | None built in | [CLI](../cli.md), [web chat](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) (experimental) |

@@ -1,6 +1,6 @@
 # Pydantic AI vs Agno
 
-Agno is a Python agent framework that optimizes for breadth: a very large tool catalogue, teams, step workflows, and AgentOS to run and watch them. Pydantic AI matches that breadth with a typed core and strict Pydantic validation: [capabilities](../capabilities/overview.md) and the [Harness SDK](https://pydantic.dev/docs/ai/harness/) for the batteries, [sub-agents](https://pydantic.dev/docs/ai/harness/subagents/) for teams, [`pydantic-graph`](../graph.md) for workflows, and [Pydantic Logfire](https://pydantic.dev/logfire) to run and watch them.
+Agno is a Python agent framework that optimizes for breadth: a very large tool catalogue, teams, step workflows, and AgentOS to run and watch them. Pydantic AI gives you that breadth on a typed core with strict Pydantic validation: [capabilities](../capabilities/overview.md) and the [Harness SDK](https://pydantic.dev/docs/ai/harness/) for the batteries, [sub-agents](https://pydantic.dev/docs/ai/harness/subagents/) for teams, [`pydantic-graph`](../graph.md) for workflows, and [Pydantic Logfire](https://pydantic.dev/logfire) to run and watch them.
 
 ## Framework
 
@@ -9,7 +9,7 @@ Agno is a Python agent framework that optimizes for breadth: a very large tool c
 | Language | Python | Python |
 | License | Apache-2.0 | MIT |
 | Model providers | Many | [Many](../models/overview.md) |
-| Extensibility | Tools, toolkits | [Capabilities and toolsets](../extensibility.md); [30+ in the Harness SDK](https://pydantic.dev/docs/ai/harness/) |
+| Extensibility | Tools, toolkits | [Capabilities and toolsets](../extensibility.md); [50+ with the Harness SDK](https://pydantic.dev/docs/ai/harness/) |
 | Harnesses | Build your own | Built-in [`Coder`](https://pydantic.dev/docs/ai/harness/coder/) and [`Researcher`](https://pydantic.dev/docs/ai/harness/researcher/), or compose your own |
 | Observability | OpenTelemetry | [OpenTelemetry](../logfire.md#using-opentelemetry), including [Pydantic Logfire](https://pydantic.dev/logfire) |
 | Interfaces | AG-UI, A2A, chat platforms | [CLI](../cli.md), [web chat](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) (experimental) |

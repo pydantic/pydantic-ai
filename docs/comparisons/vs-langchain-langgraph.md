@@ -1,6 +1,6 @@
 # Pydantic AI vs LangChain & LangGraph
 
-LangChain is a large Python ecosystem: LangGraph underneath it for graph-based control flow, `deepagents` for its coding harness, and a large catalogue of integrations. Pydantic AI covers the same ground from one typed [`Agent`][pydantic_ai.Agent] with plain Python control flow, [`pydantic-graph`](../graph.md) when you want an explicit graph, a [Harness SDK](https://pydantic.dev/docs/ai/harness/) of ready-made capabilities and complete agents, and validation from the library you already use.
+LangChain is a large Python ecosystem: LangGraph underneath it for graph-based control flow, `deepagents` for its coding harness, and a large catalogue of integrations. Pydantic AI does it from one typed [`Agent`][pydantic_ai.Agent] with plain Python control flow: [`pydantic-graph`](../graph.md) when you want an explicit graph, a [Harness SDK](https://pydantic.dev/docs/ai/harness/) of ready-made capabilities and complete agents, and validation from the library you already use.
 
 ## Framework
 
@@ -9,7 +9,7 @@ LangChain is a large Python ecosystem: LangGraph underneath it for graph-based c
 | Language | Python | Python |
 | License | MIT | MIT |
 | Model providers | Many | [Many](../models/overview.md) |
-| Extensibility | Middleware, callbacks | [Capabilities and toolsets](../extensibility.md); [30+ in the Harness SDK](https://pydantic.dev/docs/ai/harness/) |
+| Extensibility | Middleware, callbacks | [Capabilities and toolsets](../extensibility.md); [50+ with the Harness SDK](https://pydantic.dev/docs/ai/harness/) |
 | Harnesses | `deepagents`, or your own on LangGraph | Built-in [`Coder`](https://pydantic.dev/docs/ai/harness/coder/) and [`Researcher`](https://pydantic.dev/docs/ai/harness/researcher/), or compose your own |
 | Observability | OpenTelemetry via LangSmith | [OpenTelemetry](../logfire.md#using-opentelemetry), including [Pydantic Logfire](https://pydantic.dev/logfire) |
 | Interfaces | LangSmith Agent Server, Fleet | [CLI](../cli.md), [web chat](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) (experimental) |
@@ -33,4 +33,6 @@ LangChain is a large Python ecosystem: LangGraph underneath it for graph-based c
 
 ## FAQ
 
-**Do you have a graph library?** Yes. [`pydantic-graph`](../graph.md).
+**Do you have a graph library?** Yes. [`pydantic-graph`](../graph.md): typed nodes, edges from return
+types, and persistence for pausing and resuming. Reach for it when the control flow is a real state
+machine; plain Python and [sub-agents](https://pydantic.dev/docs/ai/harness/subagents/) cover the rest.

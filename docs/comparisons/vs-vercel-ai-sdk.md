@@ -1,6 +1,6 @@
 # Pydantic AI vs Vercel AI SDK
 
-The Vercel AI SDK adds model calls, tool loops and streaming chat to a TypeScript app, with `useChat` hooks and a broad provider registry. Pydantic AI is the Python counterpart with a deeper back end: a typed [`Agent`][pydantic_ai.Agent], the [Harness SDK](https://pydantic.dev/docs/ai/harness/), and a [Vercel AI stream adapter](../ui/vercel-ai.md) so their UI renders our agents.
+The Vercel AI SDK adds model calls, tool loops and streaming chat to a TypeScript app, with `useChat` hooks and a broad provider registry. Pydantic AI is the Python back end for that UI: a typed [`Agent`][pydantic_ai.Agent], the [Harness SDK](https://pydantic.dev/docs/ai/harness/), and a [Vercel AI stream adapter](../ui/vercel-ai.md) so `useChat` renders our agents.
 
 ## Framework
 
@@ -9,7 +9,7 @@ The Vercel AI SDK adds model calls, tool loops and streaming chat to a TypeScrip
 | Language | TypeScript | Python |
 | License | Apache-2.0 | MIT |
 | Model providers | Many | [Many](../models/overview.md) |
-| Extensibility | Middleware, tools | [Capabilities and toolsets](../extensibility.md); [30+ in the Harness SDK](https://pydantic.dev/docs/ai/harness/) |
+| Extensibility | Middleware, tools | [Capabilities and toolsets](../extensibility.md); [50+ with the Harness SDK](https://pydantic.dev/docs/ai/harness/) |
 | Harnesses | Build your own; adapters drive external harnesses | Built-in [`Coder`](https://pydantic.dev/docs/ai/harness/coder/) and [`Researcher`](https://pydantic.dev/docs/ai/harness/researcher/), or compose your own |
 | Observability | OpenTelemetry | [OpenTelemetry](../logfire.md#using-opentelemetry), including [Pydantic Logfire](https://pydantic.dev/logfire) |
 | Interfaces | React chat UI, stream protocol | [CLI](../cli.md), [web chat](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) (experimental) |

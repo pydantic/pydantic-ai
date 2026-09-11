@@ -1,6 +1,6 @@
 # Pydantic AI vs Mastra
 
-Mastra is a TypeScript agent framework with step workflows, memory, processors, evals, a local playground and a hosted Studio. Pydantic AI brings the same range to Python: a typed [`Agent`][pydantic_ai.Agent], [memory](https://pydantic.dev/docs/ai/harness/memory/), [guardrails](https://pydantic.dev/docs/ai/harness/guardrails/), [Pydantic Evals](../evals.md) and a [web chat UI](../web.md), composed from [capabilities](../capabilities/overview.md) rather than fixed constructs.
+Mastra is a TypeScript agent framework with step workflows, memory, processors, evals, a local playground and a hosted Studio. Pydantic AI is that stack in Python, composed from [capabilities](../capabilities/overview.md) rather than fixed constructs: a typed [`Agent`][pydantic_ai.Agent], [memory](https://pydantic.dev/docs/ai/harness/memory/), [guardrails](https://pydantic.dev/docs/ai/harness/guardrails/), [Pydantic Evals](../evals.md) and a [web chat UI](../web.md).
 
 ## Framework
 
@@ -9,7 +9,7 @@ Mastra is a TypeScript agent framework with step workflows, memory, processors, 
 | Language | TypeScript | Python |
 | License | Apache-2.0 (core); EE for some features | MIT |
 | Model providers | Many | [Many](../models/overview.md) |
-| Extensibility | Tools, processors, scorers, workflows | [Capabilities and toolsets](../extensibility.md); [30+ in the Harness SDK](https://pydantic.dev/docs/ai/harness/) |
+| Extensibility | Tools, processors, scorers, workflows | [Capabilities and toolsets](../extensibility.md); [50+ with the Harness SDK](https://pydantic.dev/docs/ai/harness/) |
 | Harnesses | Mastra Code, or your own | Built-in [`Coder`](https://pydantic.dev/docs/ai/harness/coder/) and [`Researcher`](https://pydantic.dev/docs/ai/harness/researcher/), or compose your own |
 | Observability | OpenTelemetry | [OpenTelemetry](../logfire.md#using-opentelemetry), including [Pydantic Logfire](https://pydantic.dev/logfire) |
 | Interfaces | Playground, Studio | [CLI](../cli.md), [web chat](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) (experimental) |

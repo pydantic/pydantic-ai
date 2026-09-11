@@ -9,7 +9,7 @@ The Claude Agent SDK gives you the agent loop behind Claude Code: a Python packa
 | Language | Python SDK wrapping the TypeScript `claude` CLI | Python |
 | License | MIT | MIT |
 | Model providers | Claude (Anthropic, Bedrock, Vertex, Foundry) | [Many](../models/overview.md) |
-| Extensibility | Hooks, `allowed_tools` | [Capabilities and toolsets](../extensibility.md); [30+ in the Harness SDK](https://pydantic.dev/docs/ai/harness/) |
+| Extensibility | Hooks, `allowed_tools` | [Capabilities and toolsets](../extensibility.md); [50+ with the Harness SDK](https://pydantic.dev/docs/ai/harness/) |
 | Harnesses | Claude Code's; hooks extend it, you cannot recompose it | Built-in [`Coder`](https://pydantic.dev/docs/ai/harness/coder/) and [`Researcher`](https://pydantic.dev/docs/ai/harness/researcher/), or compose your own |
 | Observability | OpenTelemetry from the CLI | [OpenTelemetry](../logfire.md#using-opentelemetry), including [Pydantic Logfire](https://pydantic.dev/logfire) |
 | Interfaces | CLI | [CLI](../cli.md), [web chat](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) (experimental) |
