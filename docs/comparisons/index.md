@@ -3,7 +3,7 @@
 Each page uses the same rows, the ones you'd put on a slide:
 
 native Python SDK, license, model providers, [extensibility](../extensibility.md), skills,
-[interfaces](../interfaces.md) (CLI, web chat, AG-UI, Vercel AI, ACP),
+[interfaces](../interfaces.md) (CLI, web chat, AG-UI, Vercel AI, ACP, A2A extra),
 [realtime voice](../realtime/overview.md), agent graph, coding agent, research agent, web search,
 code sandboxes, image generation, browser (Browser Use and Playwright), structured output,
 human in the loop, guardrails, spend limits, MCP, memory, compaction, multi-agent,

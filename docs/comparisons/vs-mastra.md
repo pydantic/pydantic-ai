@@ -13,7 +13,7 @@ and scorers as separate concepts.
 | Model providers | Many | Any, plus [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] |
 | Extensibility | Tools, processors, scorers, workflows | [Capabilities](../extensibility.md) |
 | Skills | Yes | Yes ([Skills](https://pydantic.dev/docs/ai/harness/skills/)) |
-| Interfaces | Playground, Studio | [`to_cli_sync()`](../cli.md), [`to_web()`](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) |
+| Interfaces | Playground, Studio | [`to_cli_sync()`](../cli.md), [`to_web()`](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/), [A2A extra](https://github.com/datalayer/fasta2a) |
 | Realtime voice | Voice extras | Yes ([realtime](../realtime/overview.md)) |
 | Agent graph | Workflows in core | [`pydantic-graph`](../graph.md) |
 | Coding agent | No | [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) |

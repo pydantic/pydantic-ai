@@ -13,7 +13,7 @@ packages. Pydantic AI is a typed Python [`Agent`][pydantic_ai.Agent].
 | Model providers | Many | Any, plus [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] |
 | Extensibility | Extensions, skills, `pi install` | [Capabilities](../extensibility.md) |
 | Skills | Yes (`pi install`) | Yes ([Skills](https://pydantic.dev/docs/ai/harness/skills/)) |
-| Interfaces | CLI | [`to_cli_sync()`](../cli.md), [`to_web()`](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) |
+| Interfaces | CLI | [`to_cli_sync()`](../cli.md), [`to_web()`](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/), [A2A extra](https://github.com/datalayer/fasta2a) |
 | Realtime voice | No | Yes ([realtime](../realtime/overview.md)) |
 | Agent graph | No | [`pydantic-graph`](../graph.md) |
 | Coding agent | The product | [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) |

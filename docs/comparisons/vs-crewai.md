@@ -12,7 +12,7 @@ call, branch, `asyncio.gather`, or [`pydantic-graph`](../graph.md).
 | Model providers | Many | Any, plus [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] |
 | Extensibility | Tools on agents and crews | [Capabilities](../extensibility.md) |
 | Skills | Yes | Yes ([Skills](https://pydantic.dev/docs/ai/harness/skills/)) |
-| Interfaces | Enterprise UI | [`to_cli_sync()`](../cli.md), [`to_web()`](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) |
+| Interfaces | Enterprise UI | [`to_cli_sync()`](../cli.md), [`to_web()`](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/), [A2A extra](https://github.com/datalayer/fasta2a) |
 | Realtime voice | No | Yes ([realtime](../realtime/overview.md)) |
 | Agent graph | `Process` (sequential / hierarchical) | [`pydantic-graph`](../graph.md) |
 | Coding agent | E2B tools | [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) |

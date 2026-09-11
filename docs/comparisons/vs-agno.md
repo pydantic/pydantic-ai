@@ -12,7 +12,7 @@ only the library: an agent you put in the application you already run.
 | Model providers | Many | Any, plus [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] |
 | Extensibility | Toolkits | [Capabilities](../extensibility.md) |
 | Skills | Yes | Yes ([Skills](https://pydantic.dev/docs/ai/harness/skills/)) |
-| Interfaces | AgentOS UI, AG-UI, A2A, Slack, Telegram, WhatsApp, Discord | [`to_cli_sync()`](../cli.md), [`to_web()`](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) |
+| Interfaces | AG-UI, A2A | [`to_cli_sync()`](../cli.md), [`to_web()`](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/), [A2A extra](https://github.com/datalayer/fasta2a) |
 | Realtime voice | No | Yes ([realtime](../realtime/overview.md)) |
 | Agent graph | Workflows | [`pydantic-graph`](../graph.md) |
 | Coding agent | Shell / Python toolkits | [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) |

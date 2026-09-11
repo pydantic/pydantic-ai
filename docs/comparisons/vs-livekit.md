@@ -16,7 +16,7 @@ speak.
 | Model providers | Many (plugins) | Any, plus [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] |
 | Extensibility | Pipeline nodes (`stt_node`, `llm_node`, …) | [Capabilities](../extensibility.md) |
 | Skills | No | Yes ([Skills](https://pydantic.dev/docs/ai/harness/skills/)) |
-| Interfaces | WebRTC rooms, telephony | [`to_cli_sync()`](../cli.md), [`to_web()`](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) |
+| Interfaces | WebRTC rooms, telephony | [`to_cli_sync()`](../cli.md), [`to_web()`](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/), [A2A extra](https://github.com/datalayer/fasta2a) |
 | Realtime voice | The product (WebRTC, telephony) | Yes ([realtime](../realtime/overview.md)) |
 | Agent graph | Media pipeline, not a workflow graph | [`pydantic-graph`](../graph.md) |
 | Coding agent | No | [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) |
