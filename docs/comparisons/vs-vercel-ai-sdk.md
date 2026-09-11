@@ -1,7 +1,5 @@
 # Pydantic AI vs Vercel AI SDK
 
-## Side by side
-
 | | Vercel AI SDK | Pydantic AI |
 |---|---|---|
 | Language | TypeScript | Python |

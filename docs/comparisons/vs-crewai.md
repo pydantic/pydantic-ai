@@ -1,7 +1,5 @@
 # Pydantic AI vs CrewAI
 
-## Side by side
-
 | | CrewAI | Pydantic AI |
 |---|---|---|
 | Language | Python | Python |

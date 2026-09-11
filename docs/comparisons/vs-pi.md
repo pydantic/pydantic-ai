@@ -1,7 +1,5 @@
 # Pydantic AI vs Pi
 
-## Side by side
-
 | | Pi | Pydantic AI |
 |---|---|---|
 | Language | TypeScript | Python |
@@ -31,7 +29,7 @@
 ## FAQ
 
 **Can I build a coding agent like this in Python?** Yes. Give your agent the
-[`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) capability and it can read, edit and run
-code. If you want to see a complete coding agent built on Pydantic AI,
+[`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) capability. If you want to see a complete
+coding agent built on Pydantic AI,
 [Code Puppy](https://github.com/mpfaffenberger/code_puppy) and
 [Pydantic Deep Agents](https://github.com/vstorm-co/pydantic-deepagents) (Vstorm) are both open source.

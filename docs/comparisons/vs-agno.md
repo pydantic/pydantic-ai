@@ -1,7 +1,5 @@
 # Pydantic AI vs Agno
 
-## Side by side
-
 | | Agno | Pydantic AI |
 |---|---|---|
 | Language | Python | Python |

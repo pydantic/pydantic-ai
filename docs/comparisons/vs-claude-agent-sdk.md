@@ -1,7 +1,5 @@
 # Pydantic AI vs Claude Agent SDK
 
-## Side by side
-
 | | Claude Agent SDK | Pydantic AI |
 |---|---|---|
 | Language | Python SDK wrapping the TypeScript `claude` CLI | Python |
@@ -30,8 +28,6 @@
 | Test without API keys | No | [Testing](../testing.md) |
 
 ## FAQ
-
-**Is Pydantic AI a native Python SDK?** Yes. The Claude Agent SDK wraps a TypeScript CLI.
 
 **Can I build my own coding agent harness?** Yes. Give your agent the
 [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) capability, or assemble your own from the

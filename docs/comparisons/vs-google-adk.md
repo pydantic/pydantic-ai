@@ -1,7 +1,5 @@
 # Pydantic AI vs Google ADK
 
-## Side by side
-
 | | Google ADK | Pydantic AI |
 |---|---|---|
 | Language | Python | Python |

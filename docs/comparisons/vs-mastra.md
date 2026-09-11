@@ -1,7 +1,5 @@
 # Pydantic AI vs Mastra
 
-## Side by side
-
 | | Mastra | Pydantic AI |
 |---|---|---|
 | Language | TypeScript | Python |

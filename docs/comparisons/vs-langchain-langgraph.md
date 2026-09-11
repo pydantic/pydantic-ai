@@ -1,7 +1,5 @@
 # Pydantic AI vs LangChain & LangGraph
 
-## Side by side
-
 | | LangChain & LangGraph | Pydantic AI |
 |---|---|---|
 | Language | Python | Python |

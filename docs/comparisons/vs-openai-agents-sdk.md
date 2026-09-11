@@ -1,7 +1,5 @@
 # Pydantic AI vs OpenAI Agents SDK
 
-## Side by side
-
 | | OpenAI Agents SDK | Pydantic AI |
 |---|---|---|
 | Language | Python | Python |

@@ -1,7 +1,5 @@
 # Pydantic AI vs LiveKit Agents
 
-## Side by side
-
 | | LiveKit Agents | Pydantic AI |
 |---|---|---|
 | Language | Python (also Node) | Python |
