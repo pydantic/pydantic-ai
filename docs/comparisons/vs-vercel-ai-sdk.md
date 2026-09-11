@@ -31,4 +31,3 @@ protocol, so the browser can stay theirs.
 | Memory | No | [Memory](https://pydantic.dev/docs/ai/harness/memory/) |
 | Compaction | Yes | [Compaction](../capabilities/compaction.md) |
 | Evals | No | [Pydantic Evals](../evals.md) |
-| Test without API keys | Yes | [Testing](../testing.md) |

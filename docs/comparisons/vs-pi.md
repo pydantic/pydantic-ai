@@ -31,7 +31,6 @@ packages. Pydantic AI is a typed Python [`Agent`][pydantic_ai.Agent].
 | Memory | Yes | [Memory](https://pydantic.dev/docs/ai/harness/memory/) |
 | Compaction | Yes | [Compaction](../capabilities/compaction.md) |
 | Evals | No | [Pydantic Evals](../evals.md) |
-| Test without API keys | Yes | [Testing](../testing.md) |
 
 ## FAQ
 

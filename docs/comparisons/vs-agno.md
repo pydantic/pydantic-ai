@@ -30,4 +30,3 @@ only the library: an agent you put in the application you already run.
 | Memory | Yes | [Memory](https://pydantic.dev/docs/ai/harness/memory/) |
 | Compaction | Yes | [Compaction](../capabilities/compaction.md) |
 | Evals | Yes | [Pydantic Evals](../evals.md) |
-| Test without API keys | Yes | [Testing](../testing.md) |
