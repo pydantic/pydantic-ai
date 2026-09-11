@@ -2953,6 +2953,7 @@ Unknown tool name: 'unknown_tool'. No tools available.
 
 Fix the errors and try again.\
 """,
+                'providerMetadata': {'pydantic_ai': {'outcome': 'retried'}},
             },
             {'type': 'finish-step'},
             {'type': 'start-step'},
@@ -6213,7 +6214,7 @@ Tool failed with error
 
 Fix the errors and try again.\
 """,
-                        'call_provider_metadata': None,
+                        'call_provider_metadata': {'pydantic_ai': {'outcome': 'retried'}},
                         'approval': None,
                     }
                 ],
@@ -6221,17 +6222,16 @@ Fix the errors and try again.\
         ]
     )
 
-    # Verify roundtrip — load_messages now produces ToolReturnPart(outcome='failed')
-    # instead of RetryPromptPart for tool errors from the Vercel AI format
+    # The outcome claim on the metadata channel restores a RetryPromptPart instead of
+    # degrading the retry to ToolReturnPart(outcome='failed').
     reloaded_messages = VercelAIAdapter.load_messages(ui_messages)
-    tool_error_part = message_part(reloaded_messages, ToolReturnPart, message_index=2)
+    tool_error_part = message_part(reloaded_messages, RetryPromptPart, message_index=2)
     assert tool_error_part == snapshot(
-        ToolReturnPart(
-            tool_name='my_tool',
+        RetryPromptPart(
             content='Tool failed with error\n\nFix the errors and try again.',
+            tool_name='my_tool',
             tool_call_id='tool_789',
             timestamp=IsDatetime(),
-            outcome='failed',
         )
     )
 
@@ -8672,6 +8672,7 @@ Fix the errors and try again.\
                                 'id': 'call_fail_id',
                                 'provider_name': 'google',
                                 'provider_details': {'attempt': 1},
+                                'outcome': 'retried',
                             }
                         },
                         'approval': None,
@@ -8681,10 +8682,8 @@ Fix the errors and try again.\
         ]
     )
 
-    # Verify roundtrip — load_messages now produces ToolReturnPart(outcome='failed')
     reloaded_messages = VercelAIAdapter.load_messages(ui_messages)
-    tool_error_part = message_part(reloaded_messages, ToolReturnPart, message_index=2)
-    assert tool_error_part.outcome == 'failed'
+    tool_error_part = message_part(reloaded_messages, RetryPromptPart, message_index=2)
     assert tool_error_part.content == 'Tool execution failed\n\nFix the errors and try again.'
 
 
@@ -9694,6 +9693,33 @@ async def test_adapter_dump_messages_builtin_tool_error_backward_compat():
     )
 
 
+async def test_adapter_load_output_error_without_retried_claim_stays_failed():
+    """A persisted `output-error` part with no outcome claim still reloads as `failed`.
+
+    Not VCR-backed: this pins the pre-#8185 dump shape so adding the stream carrier
+    does not change how existing histories without the claim load.
+    """
+    reloaded = VercelAIAdapter.load_messages(
+        [
+            UIMessage(
+                id='hist',
+                role='assistant',
+                parts=[
+                    ToolOutputErrorPart(
+                        type='tool-my_tool',
+                        tool_call_id='tc_old',
+                        input={'x': 1},
+                        error_text='Something went wrong',
+                    ),
+                ],
+            ),
+        ]
+    )
+    error_part = message_part(reloaded, ToolReturnPart, message_index=1)
+    assert error_part.outcome == 'failed'
+    assert error_part.content == 'Something went wrong'
+
+
 async def test_event_stream_function_tool_return_error():
     """Test that ToolOutputErrorChunk is emitted for ToolReturnPart(outcome='failed')."""
 
@@ -9841,6 +9867,118 @@ async def test_event_stream_function_tool_return_interrupted_is_neutral():
             '[DONE]',
         ]
     )
+
+
+async def test_event_stream_retry_prompt_carries_retried_outcome():
+    """A `RetryPromptPart` streams as `tool-output-error` with an `'retried'` outcome claim.
+
+    Not VCR-backed: this pins a local event-stream transformation and makes no model request.
+    """
+
+    async def event_generator():
+        yield FunctionToolResultEvent(
+            part=RetryPromptPart(
+                content='Service unavailable',
+                tool_name='my_tool',
+                tool_call_id='tc_retry',
+            )
+        )
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[
+            UIMessage(
+                id='bar',
+                role='user',
+                parts=[TextUIPart(text='Do something')],
+            ),
+        ],
+    )
+    event_stream = VercelAIEventStream(run_input=request, sdk_version=6)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {
+                'type': 'tool-output-error',
+                'toolCallId': 'tc_retry',
+                'errorText': """\
+Service unavailable
+
+Fix the errors and try again.\
+""",
+                'providerMetadata': {'pydantic_ai': {'outcome': 'retried'}},
+            },
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+            '[DONE]',
+        ]
+    )
+
+
+async def test_stream_retry_echo_reloads_as_retry_prompt():
+    """A live retry streamed to a v6 frontend reloads as a `RetryPromptPart`, not `failed`.
+
+    The AI SDK copies `tool-output-error.providerMetadata` onto `resultProviderMetadata`
+    (not `callProviderMetadata`) when it builds `ToolUIPart(state='output-error')`. Echoing
+    that part back through `load_messages` must keep the retry.
+
+    Not VCR-backed: FunctionModel drives the retry; there is no provider HTTP.
+    """
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        if any(isinstance(part, RetryPromptPart) for message in messages for part in message.parts):
+            yield 'gave up'
+        else:
+            yield {0: DeltaToolCall(name='flaky', json_args='{}', tool_call_id='tc_live')}
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function))
+
+    @agent.tool_plain
+    async def flaky() -> str:
+        raise ModelRetry('Service unavailable')
+
+    request = SubmitMessage(id='foo', messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Call it')])])
+    adapter = VercelAIAdapter(agent, request, sdk_version=6)
+    events: list[str | dict[str, Any]] = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream())
+    ]
+    retry_chunk = next(
+        e
+        for e in events
+        if isinstance(e, dict) and e.get('type') == 'tool-output-error' and e.get('toolCallId') == 'tc_live'
+    )
+    assert retry_chunk['providerMetadata'] == {'pydantic_ai': {'outcome': 'retried'}}
+
+    # Replay the way processUIMessageStream does: chunk.providerMetadata → resultProviderMetadata.
+    reloaded = VercelAIAdapter.load_messages(
+        [
+            UIMessage(
+                id='echo',
+                role='assistant',
+                parts=[
+                    ToolOutputErrorPart(
+                        type='tool-flaky',
+                        tool_call_id='tc_live',
+                        input={},
+                        error_text=retry_chunk['errorText'],
+                        result_provider_metadata=retry_chunk['providerMetadata'],
+                    ),
+                ],
+            ),
+        ]
+    )
+    retry_part = message_part(reloaded, RetryPromptPart, message_index=1)
+    assert retry_part.tool_name == 'flaky'
+    assert retry_part.tool_call_id == 'tc_live'
+    assert retry_part.content == retry_chunk['errorText']
 
 
 def _sync_timestamps(original: list[ModelMessage], new: list[ModelMessage]) -> None:

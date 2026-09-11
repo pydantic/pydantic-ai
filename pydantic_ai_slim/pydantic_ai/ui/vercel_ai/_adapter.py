@@ -573,14 +573,33 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                             # subclasses only ever wrap successful, shape-valid content, and readers
                             # like `parse_loaded_capabilities` treat their presence as proof of success.
                             elif part.state == 'output-error':
-                                builder.add(
-                                    ToolReturnPart(
-                                        tool_name=tool_name,
-                                        tool_call_id=tool_call_id,
-                                        content=part.error_text,
-                                        outcome='failed',
-                                    )
+                                # A tool-bound `RetryPromptPart` shares `output-error` with
+                                # `'failed'`. The dump path stores the claim on
+                                # `call_provider_metadata`; a live-stream echo stores the same
+                                # claim on `result_provider_metadata` (AI SDK copies
+                                # `ToolOutputErrorChunk.provider_metadata` there). Without
+                                # either, the return reloads as a definitive failure.
+                                result_meta = load_provider_metadata(part.result_provider_metadata)
+                                retried = (
+                                    provider_meta.get('outcome') == 'retried' or result_meta.get('outcome') == 'retried'
                                 )
+                                if retried:
+                                    builder.add(
+                                        RetryPromptPart(
+                                            content=part.error_text,
+                                            tool_name=tool_name,
+                                            tool_call_id=tool_call_id,
+                                        )
+                                    )
+                                else:
+                                    builder.add(
+                                        ToolReturnPart(
+                                            tool_name=tool_name,
+                                            tool_call_id=tool_call_id,
+                                            content=part.error_text,
+                                            outcome='failed',
+                                        )
+                                    )
                             elif part.state == 'output-denied':
                                 builder.add(
                                     ToolReturnPart(
@@ -860,15 +879,18 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         """Convert a ToolCallPart (with optional result) into UIMessageParts."""
         tool_result = tool_results.get(part.tool_call_id)
         interrupted = isinstance(tool_result, ToolReturnPart) and tool_result.outcome == 'interrupted'
+        retried = isinstance(tool_result, RetryPromptPart)
+        # The two claims the UI part state can't represent on its own: `'interrupted'` dumps as
+        # neutral `output-available` below, and a `RetryPromptPart` shares `output-error` with
+        # `'failed'`. Both ride the metadata channel so a dump/load (or stream echo) round-trip
+        # doesn't degrade them to `'success'` / `'failed'`.
+        carried_outcome = 'interrupted' if interrupted else 'retried' if retried else None
         call_provider_metadata = dump_provider_metadata(
             id=part.id,
             provider_name=part.provider_name,
             provider_details=part.provider_details,
             tool_kind=part.tool_kind,
-            # `'interrupted'` is the one outcome the UI part state can't represent (it dumps as
-            # neutral `output-available` below), so it rides the metadata channel instead of
-            # degrading to `'success'` on a dump/load round-trip.
-            outcome='interrupted' if interrupted else None,
+            outcome=carried_outcome,
         )
         tool_type = f'tool-{part.tool_name}'
         ui_parts: list[UIMessagePart] = []
@@ -970,13 +992,13 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
 
         Note: The round-trip `dump_messages` -> `load_messages` is not fully lossless for tool
         results. Successful, failed, and denied results each round-trip via their own part type
-        (`ToolOutputAvailablePart` / `ToolOutputErrorPart` / `ToolOutputDeniedPart`), but a
-        `RetryPromptPart` becomes a `ToolReturnPart` with `outcome='failed'` on reload (or a user
-        text part when it has no `tool_name`), since the protocol has no separate retry concept —
-        both a retry prompt and a `ToolFailed` result map to `ToolOutputErrorPart`. A reloaded retry
-        is therefore presented to the model as a definitive failure rather than a request to correct
-        and retry; keep the conversation in-process rather than persisting through the Vercel AI wire
-        format if you need retry semantics to survive a round-trip.
+        (`ToolOutputAvailablePart` / `ToolOutputErrorPart` / `ToolOutputDeniedPart`). A tool-bound
+        `RetryPromptPart` shares `ToolOutputErrorPart` with a failed result — the protocol has no
+        separate retry concept — so its outcome rides the `providerMetadata` channel that already
+        carries `'interrupted'`, and is restored from there on reload. The live stream emits the
+        same claim on `ToolOutputErrorChunk.provider_metadata`; a v6 frontend that echoes the
+        conversation stores that on `resultProviderMetadata`, which `load_messages` also reads.
+        A `RetryPromptPart` with no `tool_name` still becomes a user text part.
 
         Tool calls lose one thing too: `ToolCallPart.args` that don't parse as a JSON object are
         rewritten to `{'INVALID_JSON': '<raw args>'}` (see

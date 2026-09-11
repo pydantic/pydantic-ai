@@ -467,7 +467,14 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
                 else part.model_response_str(wrap_if_error=False),
             )
         elif isinstance(part, RetryPromptPart):
-            yield ToolOutputErrorChunk(tool_call_id=tool_call_id, error_text=part.model_response())
+            # `'retried'` shares `tool-output-error` with `'failed'`. The claim rides
+            # `provider_metadata` so a frontend echo can restore a `RetryPromptPart`
+            # instead of a definitive `ToolReturnPart(outcome='failed')`.
+            yield ToolOutputErrorChunk(
+                tool_call_id=tool_call_id,
+                error_text=part.model_response(),
+                provider_metadata=dump_provider_metadata(outcome='retried'),
+            )
         elif isinstance(part, ToolReturnPart) and part.outcome == 'failed':
             yield ToolOutputErrorChunk(
                 tool_call_id=tool_call_id, error_text=part.model_response_str(wrap_if_error=False)

@@ -149,12 +149,21 @@ class ToolInputErrorChunk(BaseChunk):
 
 
 class ToolOutputErrorChunk(BaseChunk):
-    """Tool output error chunk."""
+    """Tool output error chunk.
+
+    `provider_metadata` is the live-stream carrier for an outcome the UI part state
+    cannot represent on its own: a tool-bound `RetryPromptPart` shares `tool-output-error`
+    with `ToolReturnPart(outcome='failed')`. A v6 frontend that builds
+    `ToolUIPart(state='output-error')` from this chunk stores the field on
+    `resultProviderMetadata`, which `VercelAIAdapter.load_messages` reads so a later
+    echo reloads as a retry rather than a definitive failure.
+    """
 
     type: Literal['tool-output-error'] = 'tool-output-error'
     tool_call_id: str
     error_text: str
     provider_executed: bool | None = None
+    provider_metadata: ProviderMetadata | None = None
     dynamic: bool | None = None
 
 

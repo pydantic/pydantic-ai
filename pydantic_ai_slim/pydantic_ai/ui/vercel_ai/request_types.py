@@ -204,6 +204,12 @@ class ToolOutputErrorPart(BaseUIPart):
     error_text: str
     provider_executed: bool | None = None
     call_provider_metadata: ProviderMetadata | None = None
+    result_provider_metadata: ProviderMetadata | None = Field(default=None, exclude_if=lambda value: value is None)
+    """Metadata the AI SDK copies from a streamed `tool-output-error` chunk.
+
+    A v6 frontend that echoes a live turn stores `ToolOutputErrorChunk.provider_metadata`
+    here, not on `call_provider_metadata`. `VercelAIAdapter.load_messages` reads both.
+    """
     approval: ToolApproval | None = None
 
 
@@ -315,6 +321,12 @@ class DynamicToolOutputErrorPart(BaseUIPart):
     error_text: str
     provider_executed: bool | None = None
     call_provider_metadata: ProviderMetadata | None = None
+    result_provider_metadata: ProviderMetadata | None = Field(default=None, exclude_if=lambda value: value is None)
+    """Metadata the AI SDK copies from a streamed `tool-output-error` chunk.
+
+    A v6 frontend that echoes a live turn stores `ToolOutputErrorChunk.provider_metadata`
+    here, not on `call_provider_metadata`. `VercelAIAdapter.load_messages` reads both.
+    """
     approval: ToolApproval | None = None
 
 
