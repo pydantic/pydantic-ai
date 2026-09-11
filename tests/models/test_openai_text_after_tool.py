@@ -88,31 +88,24 @@ def _chunks(*deltas: ChoiceDelta, finish_reason: Literal['stop', 'tool_calls']) 
     return [*(_chunk(delta) for delta in deltas), _chunk(ChoiceDelta(), finish_reason=finish_reason)]
 
 
-def _model(
-    stream: list[ChatCompletionChunk] | list[list[ChatCompletionChunk]],
-    *,
-    profile: OpenAIModelProfile | None = None,
-) -> OpenAIChatModel:
-    return OpenAIChatModel(
-        'test',
-        provider=OpenAIProvider(openai_client=MockOpenAI.create_mock_stream(stream)),
-        profile=profile,
-    )
-
-
 async def test_text_after_tool_is_not_a_vercel_delta_on_the_ended_part(allow_model_requests: None):
     """Reporter shape: text, tool, then more content. That content must not be a delta on the ended text id."""
     agent = Agent(
-        _model(
-            [
-                _chunks(
-                    ChoiceDelta(content='Checking now.'),
-                    _tool_delta(0, '{"value":1}'),
-                    ChoiceDelta(content='\n'),
-                    finish_reason='tool_calls',
-                ),
-                _chunks(ChoiceDelta(content='Done.'), finish_reason='stop'),
-            ]
+        OpenAIChatModel(
+            'test',
+            provider=OpenAIProvider(
+                openai_client=MockOpenAI.create_mock_stream(
+                    [
+                        _chunks(
+                            ChoiceDelta(content='Checking now.'),
+                            _tool_delta(0, '{"value":1}'),
+                            ChoiceDelta(content='\n'),
+                            finish_reason='tool_calls',
+                        ),
+                        _chunks(ChoiceDelta(content='Done.'), finish_reason='stop'),
+                    ]
+                )
+            ),
         )
     )
 
@@ -134,14 +127,19 @@ async def test_text_after_tool_is_not_a_vercel_delta_on_the_ended_part(allow_mod
 
 async def test_closing_think_tag_after_tool_is_not_leaked_as_text(allow_model_requests: None):
     """Do not rotate `'content'` while it is still a `ThinkingPart`, or `</think>` becomes visible text."""
-    model = _model(
-        _chunks(
-            ChoiceDelta(content='<think>'),
-            ChoiceDelta(content='Checking'),
-            _tool_delta(0, '{"value":1}'),
-            ChoiceDelta(content='</think>'),
-            ChoiceDelta(content=' Continued.'),
-            finish_reason='tool_calls',
+    model = OpenAIChatModel(
+        'test',
+        provider=OpenAIProvider(
+            openai_client=MockOpenAI.create_mock_stream(
+                _chunks(
+                    ChoiceDelta(content='<think>'),
+                    ChoiceDelta(content='Checking'),
+                    _tool_delta(0, '{"value":1}'),
+                    ChoiceDelta(content='</think>'),
+                    ChoiceDelta(content=' Continued.'),
+                    finish_reason='tool_calls',
+                )
+            )
         ),
         profile=OpenAIModelProfile(thinking_tags=('<think>', '</think>')),
     )
