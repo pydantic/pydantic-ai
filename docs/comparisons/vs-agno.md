@@ -34,7 +34,6 @@ only the library: an agent you put in the application you already run.
 | Evals | Yes | Yes ([Pydantic Evals](../evals.md)) |
 | Test without API keys | Yes | Yes |
 | Embeddings | Knowledge | Yes |
-| What you run | Optional AgentOS (UI, auth, roles) | The agent, in your existing app |
 
 ## FAQ
 

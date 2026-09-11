@@ -34,7 +34,6 @@ typed [`Agent`][pydantic_ai.Agent], with [`pydantic-graph`](../graph.md) when yo
 | Evals | Yes (LangSmith) | Yes ([Pydantic Evals](../evals.md)) |
 | Test without API keys | Yes (fake chat models) | Yes |
 | Embeddings | Yes (large catalogue) | Yes |
-| Integrations | Large catalogue | Wrap theirs in a tool |
 
 ## FAQ
 
