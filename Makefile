@@ -4,19 +4,19 @@
 .uv: ## Check that uv is installed
 	@uv --version || echo 'Please install uv: https://docs.astral.sh/uv/getting-started/installation/'
 
-.PHONY: .pre-commit
-.pre-commit: ## Check that pre-commit is installed
-	@pre-commit -V || echo 'Please install pre-commit: https://pre-commit.com/'
-
 .PHONY: install
-install: .uv .pre-commit ## Install the package, dependencies, and pre-commit for local development
+install: .uv ## Install the package, dependencies, and pre-commit for local development
 	uv sync --frozen --all-extras --no-extra mcp-tasks --all-packages --group lint
 	# pyright typechecks the gh-aw shim, which imports pydantic-ai-harness. The
 	# harness is kept out of the lock (its pydantic-ai-slim dep collides with the
 	# workspace member under lowest-direct), so install it out-of-band; --no-deps
 	# because pydantic-ai-slim is already present. See .github/workflows/ci.yml.
 	uv pip install --no-deps "pydantic-ai-harness==0.7.0"
-	pre-commit install --install-hooks
+	@if command -v pre-commit >/dev/null 2>&1; then \
+		pre-commit install --install-hooks; \
+	else \
+		uv tool install pre-commit && "$$(uv tool dir --bin)/pre-commit" install --install-hooks; \
+	fi
 
 .PHONY: install-all-python
 install-all-python: ## Install and synchronize an interpreter for every python version
@@ -54,8 +54,10 @@ typecheck-pyright:
 
 .PHONY: typecheck-changed
 typecheck-changed: ## Run static type checking on the files reached by changes since it last passed
-	@# The pre-commit hook's entry point. Falls back to `typecheck-pyright` whenever the
-	@# narrowed set is not provably the same answer; see scripts/typecheck_changed.py
+	@# The pre-commit hook's entry point. Whenever the narrowed set is not provably the same answer, it
+	@# runs pyright over every tracked file it reports on, minus the unchanged `tests/` files. Only `CI`, an
+	@# interpreter older than 3.11 and a pyright configuration it cannot reproduce hand the whole project to
+	@# `typecheck-pyright`; see scripts/typecheck_changed.py
 	uv run python scripts/typecheck_changed.py
 
 .PHONY: typecheck-mypy

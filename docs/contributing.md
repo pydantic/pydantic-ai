@@ -103,18 +103,9 @@ git clone git@github.com:<your username>/pydantic-ai.git
 cd pydantic-ai
 ```
 
-Install `uv` (version 0.4.30 or later) and `pre-commit`:
+[Install `uv`](https://docs.astral.sh/uv/getting-started/installation/). The minimum supported `uv` version is set by `tool.uv.required-version` in the repository's [`pyproject.toml`](https://github.com/pydantic/pydantic-ai/blob/main/pyproject.toml).
 
-- [`uv` install docs](https://docs.astral.sh/uv/getting-started/installation/)
-- [`pre-commit` install docs](https://pre-commit.com/#install)
-
-To install `pre-commit` you can run the following command:
-
-```bash
-uv tool install pre-commit
-```
-
-Install `pydantic-ai`, all dependencies and pre-commit hooks
+Install `pydantic-ai`, all dependencies, and pre-commit hooks. If `pre-commit` is not available, this also installs it with `uv`:
 
 ```bash
 make install
@@ -149,30 +140,39 @@ and on seeing it `make typecheck-changed` narrows nothing and hands the whole pr
 `make typecheck-pyright`. A fresh runner has no record to narrow against in the first place. CI still
 skips the hook outright on a pull request that touches nothing Pyright reads, as it did before.
 
-Locally it follows the imports Pyright resolves statically, and falls back to the full run whenever
-something could leave that set incomplete: a first run; an interpreter older than Python 3.11, which
-is what it needs to read `pyproject.toml`; a new Pyright or Python version, including one asked for
-through `PYRIGHT_PYTHON`; a change to
+Locally it follows the imports Pyright resolves statically, and never checks a file under `tests/`
+that did not itself change since the run it recorded. Tests are two thirds of the project's lines
+and most of them import `pydantic_ai`, so checking them here would put the whole project back on the
+command line for any change to the library; CI is the gate for a source change that breaks a test
+file's typing.
+
+It gives up on narrowing whenever something could leave that set incomplete: a first run; a new
+Pyright or Python version, including one asked for through `PYRIGHT_PYTHON`; a change to
 `pyproject.toml`, `uv.lock` or the `Makefile`; an import that would now resolve to a different file
 or a new top-level module that could shadow an installed one; or a change reaching more than half the
-project. A narrowed run only ever considers tracked files, so run `make typecheck` yourself before
-relying on a green hook for a file you have not added; a fallback run hands Pyright the whole project
-and picks untracked files up with it.
+project. It then runs Pyright over every tracked file Pyright reports on, minus the `tests/` files
+that did not change; a first run has no record to compare them against, so it checks all of them.
+Only three things hand the whole project to `make typecheck-pyright`: `CI`, an interpreter older
+than Python 3.11, which is what it needs to read `pyproject.toml`, and a Pyright configuration it
+cannot reproduce. Every other run considers tracked files only, so run `make typecheck` yourself
+before relying on a green hook for a file you have not added.
 
 A full run is single-process unless `PYRIGHT_THREADS` says otherwise, and CI sets it to `auto`.
 The variable turns on Pyright's parallel check phase, which reaches the same diagnostics in less
-wall time: `auto` is up to one worker per logical core, and a positive integer caps them. A narrowed
-run stays single-process either way.
+wall time: `auto` is up to one worker per logical core, and a positive integer caps them. Only
+`make typecheck-pyright` reads it, so the hook picks it up only on a run that hands the whole
+project over: `CI`, an interpreter older than Python 3.11, or a Pyright configuration it cannot
+reproduce. A run it narrows, or runs itself over the reduced set, stays single-process.
 
 ```bash
 export PYRIGHT_THREADS=auto
 ```
 
-Export it rather than setting it per command, so a hook run that falls back to the full check picks
-it up too. Every worker is a full Node process, so they pay for themselves only on a machine with
-the memory to hold them; one already near its limit swaps and comes out slower than the default.
-Unset the variable or set it to `1` to go back to a single process: anything Pyright cannot read as
-a positive integer, `0` and `off` included, means `auto`.
+Export it rather than setting it per command, so every `make typecheck` picks it up. Every worker is
+a full Node process, so they pay for themselves only on a machine with the memory to hold them; one
+already near its limit swaps and comes out slower than the default. Unset the variable or set it to
+`1` to go back to a single process: anything Pyright cannot read as a positive integer, `0` and
+`off` included, means `auto`.
 
 ## Documentation Changes
 
@@ -185,8 +185,9 @@ All routes in `docs/navigation.yml` are relative to the Pydantic AI documentatio
 page its complete canonical route in `slug`; use `aliases` only for redirect sources. Do not prefix
 either value with `/ai` or a leading slash.
 
-For the rendered site, use the documentation preview attached to a pull request after a maintainer
-adds the `trigger:docs` label.
+To validate navigation changes, ask a maintainer to add the `trigger:docs` label to the pull request.
+This checks the navigation manifest, referenced Markdown files, routes, aliases, and redirects in
+`pydantic/unified-docs` and posts the result on the PR. It does not build a rendered preview.
 
 CI checks that every link between doc pages resolves, anchor included, and fails on `Cannot find
 fragment`. A heading's anchor is generated from its text, so renaming one silently breaks every link
