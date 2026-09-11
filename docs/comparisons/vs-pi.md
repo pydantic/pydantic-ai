@@ -38,8 +38,7 @@ packages. Pydantic AI is a typed Python [`Agent`][pydantic_ai.Agent].
 
 ## FAQ
 
-**Can I code like Pi?** Yes. [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) on a typed
-[`Agent`][pydantic_ai.Agent]. Files, shell, planning, and sub-agents.
+**Is this a CLI I wrap?** No. A typed [`Agent`][pydantic_ai.Agent] you import into the Python app you
+already have.
 
-**Can that coding agent live in the Python app I already have?** Yes. Types, tests, and Temporal stay
-attached.
+**Can I test it without API keys?** Yes. Same [TestModel](../testing.md) as the rest of the library.

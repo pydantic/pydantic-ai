@@ -39,5 +39,4 @@ AI isn't tied to a cloud.
 
 **Can I use Gemini?** Yes, including Vertex, and any other provider.
 
-**Can I attach a coding harness to Gemini?** Yes.
-[`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) on the same [`Agent`][pydantic_ai.Agent].
+**Do I have to deploy to Vertex?** No. The agent runs in your process. Vertex is optional.

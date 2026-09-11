@@ -39,5 +39,5 @@ only the library: an agent you put in the application you already run.
 
 **Does the agent need its own service?** No. It goes in the app you already run.
 
-**Can I still get a UI and a coding harness?** Yes. [`to_web()`][pydantic_ai.agent.Agent.to_web],
-[`to_cli_sync()`](../cli.md), and [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/).
+**Can I get a chat UI without AgentOS?** Yes. [`to_web()`][pydantic_ai.agent.Agent.to_web] and
+[`to_cli_sync()`](../cli.md).

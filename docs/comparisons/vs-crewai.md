@@ -40,5 +40,4 @@ call, branch, `asyncio.gather`, or [`pydantic-graph`](../graph.md).
 **How do I do multi-agent without a crew?** An agent as a tool, a router, `asyncio.gather`, or
 [`pydantic-graph`](../graph.md).
 
-**Can one of those agents be a coding agent?** Yes.
-[`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) on that [`Agent`][pydantic_ai.Agent].
+**Can I test without a live model?** Yes. `crewai test` hits one. We don't.

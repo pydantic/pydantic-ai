@@ -40,4 +40,5 @@ and scorers as separate concepts.
 
 **Can the UI stay in TypeScript?** Yes. A Python agent behind HTTP. UI adapters exist.
 
-**Can I get a chat UI without Studio?** Yes. [`to_web()`][pydantic_ai.agent.Agent.to_web].
+**Do I need Studio or Cloud?** No. [`to_web()`][pydantic_ai.agent.Agent.to_web] is a chat UI in your
+process. Tracing is OpenTelemetry.

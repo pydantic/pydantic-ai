@@ -42,6 +42,4 @@ model.
 **Is Pydantic AI a native Python SDK?** Yes. The Claude Agent SDK is a wrapper around a TypeScript
 CLI.
 
-**Can I get a coding agent without spawning `claude`?** Yes.
-[`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) in your process, on any model, including
-Claude.
+**Can I still use Claude?** Yes. The Anthropic API, plus any other provider. Nothing spawns `claude`.

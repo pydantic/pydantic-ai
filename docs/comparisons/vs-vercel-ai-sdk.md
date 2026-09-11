@@ -41,5 +41,4 @@ protocol, so the browser can stay theirs.
 **Can the React UI stay?** Yes. [`VercelAIAdapter`][pydantic_ai.ui.vercel_ai.VercelAIAdapter] speaks
 their protocol. The agent is Python.
 
-**Can a coding agent sit behind that UI?** Yes. [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/)
-on the Python agent. The adapter still speaks their protocol.
+**Do tool cards and approvals still work?** Yes. The adapter streams their protocol.

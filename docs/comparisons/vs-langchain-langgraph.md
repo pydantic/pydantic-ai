@@ -40,5 +40,4 @@ typed [`Agent`][pydantic_ai.Agent], with [`pydantic-graph`](../graph.md) when yo
 **Do you have a graph library?** Yes. [`pydantic-graph`](../graph.md). Most multi-agent work is still
 ordinary [async Python](../multi-agent-applications.md).
 
-**Can I get a coding agent without Deep Agents?** Yes.
-[`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) on the same typed [`Agent`][pydantic_ai.Agent].
+**Can I keep calling LangChain tools?** Yes. Wrap one and call it from a Pydantic AI tool.

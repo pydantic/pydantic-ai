@@ -40,5 +40,4 @@ features first. Pydantic AI runs on any model, including OpenAI.
 **Can I keep using OpenAI models?** Yes, including the Responses API, and any other provider with
 [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel].
 
-**Can I attach a coding harness?** Yes. [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) on
-the same [`Agent`][pydantic_ai.Agent].
+**If the process dies?** The same [`Agent`][pydantic_ai.Agent], inside [Temporal, DBOS, Prefect, Restate, Lambda, Kitaru, or Airflow](../durable_execution/overview.md).
