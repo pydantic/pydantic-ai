@@ -11,15 +11,17 @@ ordinary `async` on ours, and there is no cancel method on `Crew`.
 | | CrewAI | Pydantic AI |
 |---|---|---|
 | Shape of work | Roles, tasks, `Process` | Async Python |
-| Stop | None on `Crew` (`cancel` lives on A2A tasks) | A stop signal; you get the messages back |
+| Stop | No method on `Crew`; streaming `aclose()` | A stop signal; you get the messages back |
 | Budgets | `max_rpm` / `max_iter` per agent | Per run, `cost_limit` after each response |
 | Crash recovery | `Crew.from_checkpoint` | The same agent, inside Temporal, DBOS, or Prefect |
 | Memory / knowledge | On `Agent` and `Crew` | You wire it |
 | Trusted state | Closures / config | A typed object your tools read; the model never sees it |
-| Test offline | `Crew.test` runs a live `eval_llm` | A fake model you script; no API key |
+| Test offline | `crewai test` runs a live model | A fake model you script; no API key |
 
 ## FAQ
 
-**Drop-in?** No. Tools carry. Roles become functions.
+**How do I do multi-agent without a crew?** An agent as a tool, a router, or `asyncio.gather`. A
+retry on one arm is ordinary `async`.
 
-**A Crew class?** No. An agent as a tool, a router, or `gather`.
+**Can one of those agents be a coding agent?** Yes. [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/)
+on that [`Agent`][pydantic_ai.Agent]. The others stay ordinary Python.

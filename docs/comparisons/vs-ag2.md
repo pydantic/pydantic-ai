@@ -19,6 +19,7 @@ is the same agent, inside Temporal, DBOS, or Prefect.
 
 ## FAQ
 
-**AutoGen-era code?** It won't run on AG2 1.x either. Compare at the rewrite, don't assume.
+**Can I ship an agent as YAML?** Yes. Templates are checked when you construct, so a typo fails before
+a customer hits it.
 
-**Compatible specs?** No. Same name, different shape. Don't call `Agent.from_spec` on theirs.
+**If the process dies?** The same [`Agent`][pydantic_ai.Agent], inside Temporal, DBOS, or Prefect.

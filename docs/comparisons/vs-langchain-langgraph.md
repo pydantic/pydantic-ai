@@ -33,6 +33,9 @@ Deep Agents is the same graph: `create_deep_agent()` returns a `CompiledStateGra
 
 ## FAQ
 
-**Can I use both?** Yes. Us for the agent, LangChain for a connector that exists only there.
+**Do I have to redraw the agent as a graph to pause?** No. `requires_approval=True` on the tool. The
+run ends holding the pending call. Resume is a second `run`.
 
-**Drop-in?** No. Tools and prompts carry. The graph does not.
+**Can I get a coding agent without Deep Agents?** Yes.
+[`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) on the same typed [`Agent`][pydantic_ai.Agent].
+A LangChain connector you already have can be a tool on that agent.

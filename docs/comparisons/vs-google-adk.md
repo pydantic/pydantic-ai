@@ -17,6 +17,7 @@ AI isn't tied to a cloud. The production gap is stop: there is no `cancel`, `sto
 
 ## FAQ
 
-**Gemini?** Yes, including Vertex. This isn't about the model.
+**Can I use Gemini?** Yes, including Vertex, and any other provider.
 
-**Drop-in?** No. Sessions become history. `ParallelAgent` becomes `gather`.
+**Can I attach a coding harness to Gemini?** Yes. [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/)
+on the same [`Agent`][pydantic_ai.Agent].

@@ -38,7 +38,9 @@ wrapper that replays the agent.
 
 ## FAQ
 
-**Can I use OpenAI models?** Yes, including the Responses API. Choosing us isn't choosing against OpenAI.
+**Can I keep using OpenAI models?** Yes, including the Responses API, and any other provider with
+`FallbackModel`.
 
-**Drop-in?** No. Guardrails become capabilities. Handoffs become an agent used as a tool. Sessions
-become history you store.
+**The user closed the tab.** You get the conversation back as
+[`RunCancelled`][pydantic_ai.exceptions.RunCancelled]. The next `run` continues from that list.
+Storage is yours.

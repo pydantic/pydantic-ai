@@ -15,12 +15,12 @@ protocol, so the browser can stay theirs.
 | Stop | `abortSignal` | A stop signal; you get the messages back |
 | Structured output | `generateObject` / `Output` | You pick the transport |
 | Crash recovery | Not in `ai`; `@ai-sdk/workflow` is a sibling | The same agent, inside Temporal, DBOS, or Prefect |
-| Test offline | `MockLanguageModel` from `ai/test` | A fake model you script; no API key |
+| Test offline | `MockLanguageModelV4` from `ai/test` | A fake model you script; no API key |
 
 ## FAQ
 
-**The agent lives in TypeScript?** Use the AI SDK. This page is for a Python agent behind that UI.
+**Can the React UI stay?** Yes. [`VercelAIAdapter`][pydantic_ai.ui.vercel_ai.VercelAIAdapter] speaks
+their protocol. The agent is Python.
 
-**Both?** Yes. That's a common split.
-
-**Drop-in?** No. Different language.
+**Can a coding agent sit behind that UI?** Yes. [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/)
+on the Python agent. The adapter still speaks their protocol.

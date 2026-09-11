@@ -20,7 +20,7 @@ interpreter (no `os`, no `open`); Docker and friends are the real isolation.
 
 ## FAQ
 
-**Write-code instead of tools?** `CodeMode` in the harness, inside Monty.
+**Can the model write Python?** Yes. [`CodeMode`](https://pydantic.dev/docs/ai/harness/code-mode/) in
+the harness, inside [Monty](https://github.com/pydantic/monty). The default is still async tool calls.
 
-**Is their sandbox safe?** For accidents, the defaults are honest. For an adversarial prompt, they
-tell you to use Docker.
+**Can I stop a run and continue?** Yes. You get the messages back. Resume is the next `run`.

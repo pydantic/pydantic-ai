@@ -62,12 +62,13 @@ messages back as [`RunCancelled`][pydantic_ai.exceptions.RunCancelled], not an e
 A Claude session is the chat. If the process dies while a tool is still running, you can reopen the
 conversation; that tool does not run again as a durable step. In Pydantic AI you keep a normal
 [`Agent`][pydantic_ai.Agent]. Attach Temporal, DBOS, or Prefect and that same object is what the
-worker runs: after a crash the engine replays completed model and tool calls and continues from the
-first incomplete one. You don't rewrite the agent as a workflow. (Restate, Kitaru, and Airflow
-adapters exist beside those three.)
+worker runs.
 
 ## FAQ
 
-**Can I use Claude models?** Yes, directly. This page is about whose process the loop lives in.
+**Can I get a coding agent without spawning `claude`?** Yes.
+[`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) in your process, on any model, including
+Claude.
 
-**Is `Coder()` Claude Code?** No. It's the parts, on your agent. More assembly, more yours.
+**Can I add my own tools next to the coding harness?** Yes. Same [`Agent`][pydantic_ai.Agent], same
+[`Coder()`](https://pydantic.dev/docs/ai/harness/coder/). A debugger stops in your function.
