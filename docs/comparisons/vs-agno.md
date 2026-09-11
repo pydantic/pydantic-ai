@@ -55,8 +55,10 @@ Same agent, same answer, three shapes, which matters when the agent has to live 
 a Celery task, a Lambda handler, or a websocket server you already have.
 
 For crash recovery, same idea: instead of a durable API that belongs to the runtime, a durable engine
-is a capability you add. `capabilities=[TemporalDurability()]` is the whole change, and DBOS, Prefect,
-Restate, Kitaru and Airflow have equivalents. You use whichever your company already runs.
+is a capability you add. `capabilities=[TemporalDurability()]` is how you attach it; you still need
+that engine's worker and workflow (or the DBOS/Prefect equivalent). `agent.run()` is not durable just
+because the capability is present. DBOS, Prefect, Restate, Kitaru and Airflow have equivalents. You
+use whichever your company already runs.
 
 ## What the tools are allowed to do
 
@@ -74,7 +76,8 @@ Pydantic AI's plain tools are just your functions, so there's nothing to sandbox
 model executing code, the harness gives you `CodeMode`, which runs it inside the
 [Monty](https://github.com/pydantic/monty) sandbox, and `ModalSandbox`, which gives the agent an
 isolated cloud container instead of your host. Approval before a risky tool runs is built into the
-framework: mark it `requires_approval=True` and the run pauses and hands you the pending call.
+framework: mark it `requires_approval=True`, include [`DeferredToolRequests`][pydantic_ai.DeferredToolRequests]
+in `output_type`, and the run pauses and hands you the pending call.
 
 ## Side by side
 

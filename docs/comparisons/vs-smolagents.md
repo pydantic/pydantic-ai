@@ -1,7 +1,7 @@
 # Pydantic AI vs smolagents
 
 smolagents takes an unusual position and takes it seriously: instead of asking the model for
-structured tool calls, it asks the model to write Python, then runs that Python. A `CodeAgent` loops , 
+structured tool calls, it asks the model to write Python, then runs that Python. A `CodeAgent` loops:
 model writes code, sandbox runs it, output goes back, until the code calls `final_answer`. It's a
 small library with few dependencies, it's clear about its limits, and it fits when the task is
 computational.
@@ -95,8 +95,8 @@ Prefect, Restate, Kitaru, or Airflow without changing the agent.
 | Trusted state | Nothing separate from the prompt | `deps_type`, read by tools, invisible to the model |
 | Crash recovery | None in core | Six engines wrap the agent object |
 | Testing offline | Subclass `Model` yourself | `TestModel` calls your tools with no scripting; `FunctionModel` scripts them |
-| Tracing | OpenInference spans under its own attribute names; zero `gen_ai.*` | The GenAI semantic conventions, 36 `gen_ai.*` attributes |
-| Budgets | Step caps; no money limit | `cost_limit` in USD across 41 providers, checked after each response; pair with `request_limit` |
+| Tracing | OpenInference spans under its own attribute names; zero `gen_ai.*` | The GenAI semantic conventions, 36 `gen_ai.*` attributes, when instrumentation is enabled |
+| Budgets | Step caps; no money limit | `cost_limit` in USD across 41 providers when pricing data is available, checked after each response; pair with `request_limit` |
 | Evals | None in core | `pydantic-evals` in your test suite |
 
 ## Choose smolagents when

@@ -16,8 +16,8 @@ work out which side of one line your project sits on.
 
 ## The line: whose process is it
 
-Configuring the Claude SDK means describing an agent in data. Tools are strings , 
-`allowed_tools=['Read', 'Glob']`. Subagents are dictionaries. Hooks are JSON events. That's a
+Configuring the Claude SDK means describing an agent in data. Tools are strings
+(`allowed_tools=['Read', 'Glob']`). Subagents are dictionaries. Hooks are JSON events. That's a
 reasonable interface to a program running elsewhere, and it's the only interface available, because
 your Python isn't where the loop lives.
 
@@ -85,7 +85,7 @@ work rather than the transcript, and the wrapping doesn't change the agent.
 | Continuity | Sessions: resume, fork, rewind | Message history you own and store |
 | Crash recovery | Not the same thing as a session | Six engines wrap the agent object |
 | Testing offline | Launch the CLI; it's an integration test | `TestModel` and `FunctionModel`, no network |
-| Budgets | `max_budget_usd`, enforced by the CLI, for Claude models through it | `cost_limit` in USD across 41 providers and 1,646 models, whichever model you call |
+| Budgets | `max_budget_usd`, enforced by the CLI, for Claude models through it | `cost_limit` in USD across 41 providers when pricing data is available; unpriced models emit `CostNotFoundWarning` |
 
 ## Choose the Claude Agent SDK when
 

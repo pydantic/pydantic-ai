@@ -58,9 +58,9 @@ The loop runs in your process, so a tool is a Python function with your types an
 can put a breakpoint in it.
 
 The trade is honest in both directions. If you want a coding agent, Pi is running today and the harness
-is an afternoon of assembly. If you want a coding agent that does something Pi didn't anticipate , 
-different compaction, a different filesystem, an approval gate on one specific action, a spend ceiling
-per customer, that's a capability on our side and a fork on theirs.
+is an afternoon of assembly. If you want a coding agent that does something Pi didn't anticipate
+(different compaction, a different filesystem, an approval gate on one specific action, a spend ceiling
+per customer), that's a capability on our side and a fork on theirs.
 
 ## Language, and where isolation lives
 
@@ -72,7 +72,9 @@ read-only, and give it minimal credentials. That's a defensible design and they 
 
 Ours puts more of the boundary in the library: `CodeMode` runs model-written code in Monty instead of
 your interpreter, `ModalSandbox` gives the agent an isolated cloud container, any tool can be marked
-`requires_approval=True` so the run pauses and hands you the pending call, and `deps_type` keeps
+`requires_approval=True` (and [`DeferredToolRequests`][pydantic_ai.DeferredToolRequests] included in
+`output_type`, or [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] used)
+so the run pauses and hands you the pending call, and `deps_type` keeps
 credentials somewhere the model can't see them at all. You should still run the thing in a container.
 The difference is how much survives when you don't.
 

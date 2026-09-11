@@ -153,14 +153,16 @@ print(second.output)
 #> Refunded A-4471.
 ```
 
-The lookup ran once. The payout ran once, after approval. Between the two runs there is nothing live , 
+The lookup ran once. The payout ran once, after approval. Between the two runs there is nothing live:
 no held connection, no parked task, just a list of messages you can put in a database and read back
 tomorrow.
 
-`requires_approval=True` on the tool is the whole change. And when the pause you want isn't a tool
-call, the answer is the same shape rather than a different mechanism: a `CancellationToken` or a tool
-calling `ctx.cancel()` ends the run in `RunCancelled`, carrying the same resumable history, and that
-works whichever way you started the run.
+Mark the tool `requires_approval=True` and include [`DeferredToolRequests`][pydantic_ai.DeferredToolRequests]
+in `output_type`. And when the pause you want isn't a tool call, the answer is the same shape rather
+than a different mechanism: a `CancellationToken` or a tool calling `ctx.cancel()` ends the run in
+`RunCancelled`, carrying the same resumable history. That works for ordinary in-process runs; a
+`CancellationToken` cannot be passed through Temporal, DBOS, or Prefect durable entry points, where
+it raises `UserError`.
 
 LangGraph can stop a run too, but only down one path: `stream_events(version='v3')` returns a
 `GraphRunStream` with an `abort()`, and that method warns it's experimental when you touch it. Ordinary
@@ -180,9 +182,10 @@ Pydantic AI's unit of execution is the tool call, because the run is a plain loo
 and not a graph. Everything downstream follows from that:
 
 - **Durability is added to the agent, not built into it.** `TemporalDurability()` is a capability you
-  add to the same agent
-  object and gives you Temporal's retries and crash recovery. So do the DBOS and Prefect wrappers in
-  the repo, and the Restate, Kitaru, and Airflow adapters outside it. In LangGraph, durability is the
+  add to the same agent object. You still need that engine's worker and workflow (or the DBOS/Prefect
+  equivalent); attaching the capability does not by itself make `agent.run()` durable. The DBOS and
+  Prefect wrappers in the repo work the same way, and Restate, Kitaru, and Airflow adapters live
+  outside it. In LangGraph, durability is the
   checkpointer, and the checkpointer is a graph feature, you get crash recovery by expressing your
   control flow as a graph.
 - **Trusted state is a separate typed argument.** `deps_type` holds your database handle, the
@@ -246,7 +249,7 @@ and in use.
 | Extending the agent | Middleware, wrapping in LIFO order around each pass | Capabilities, bundling tools, instructions, settings, and hooks as one unit that can also load on demand |
 | Testing offline | Every fake chat model in `langchain-core` raises `NotImplementedError` on `bind_tools`, so none can drive an agent; a dozen-line `BaseChatModel` subclass does work | `TestModel` calls your tools with no scripting; `FunctionModel` scripts them; `ALLOW_MODEL_REQUESTS = False` blocks real providers globally |
 | Tracing | LangSmith is the paved road; OpenInference spans are available but carry zero `gen_ai.*` attributes | The OpenTelemetry GenAI semantic conventions, 36 `gen_ai.*` attributes, when instrumentation is enabled |
-| Budgets | `recursion_limit` caps graph depth; no token or money ceiling on the run | Requests, tool calls and tokens per run, plus `cost_limit` in USD (checked after each response; pair with `request_limit`) |
+| Budgets | `recursion_limit` caps graph depth; no token or money ceiling on the run | Requests, tool calls and tokens per run, plus `cost_limit` in USD when pricing data is available (checked after each response; pair with `request_limit`) |
 | Evals | Datasets and experiments in LangSmith | `pydantic-evals` in your test suite, sharing the agent's own types, no platform |
 | Deploying an agent as config | Graphs are code | `AgentSpec` round-trips to YAML and validates prompt templates against `deps_type` at load |
 

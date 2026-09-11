@@ -74,9 +74,9 @@ interrupted, which is cleaner.
 The other difference is durability, and it's less about features than about who owns the loop.
 
 A Pydantic AI run is an ordinary coroutine, so a durable engine can wrap the agent object without
-changing it. Adding `TemporalDurability()` to its capabilities gives you Temporal's retries and
-crash recovery; DBOS and Prefect
-wrappers ship in the same repository, and Restate, Kitaru, and Airflow adapters live in those
+changing it. Adding `TemporalDurability()` to its capabilities is how you attach Temporal; you still
+need the worker and workflow. DBOS and Prefect wrappers ship in the same repository, and Restate,
+Kitaru, and Airflow adapters live in those
 projects. If your company already runs one of those, that's the one you use.
 
 The OpenAI SDK has no first-party equivalent, though a Temporal contrib package exists, which is

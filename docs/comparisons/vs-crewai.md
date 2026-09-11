@@ -90,7 +90,7 @@ to a bus instead of iterating the run.
 
 Budgets are the other half of that. `UsageLimits` caps model requests, tool calls, and tokens, and the
 check happens *before* the next request goes out, so a runaway loop stops instead of being noticed on
-the bill. CrewAI's limits are per agent, `max_iter`, `max_execution_time`, `max_tokens`, `max_rpm` , 
+the bill. CrewAI's limits are per agent (`max_iter`, `max_execution_time`, `max_tokens`, `max_rpm`),
 which cover a lot but aren't a ceiling on the whole crew.
 
 ## Side by side

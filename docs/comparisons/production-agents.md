@@ -62,7 +62,7 @@ assert not leaked
 An agent with sixty tools is a worse agent. Capabilities can wait until the model asks for them.
 Inspect what the model is offered with a [`Hooks`][pydantic_ai.capabilities.Hooks]
 `before_model_request` hook: on the first request only `load_capability` is visible, then after the
-model loads `refunds`, `refund_status` is too.
+model loads `refunds`, `check_refund` is too.
 
 How that withholding is represented on the wire depends on the provider. OpenAI-style requests omit
 the deferred definition; Anthropic still sends it, marked `defer_loading=True`. Either way the model
@@ -83,7 +83,7 @@ refunds = Capability(
 
 
 @refunds.tool_plain
-def refund_status(order_id: str) -> str:
+def check_refund(order_id: str) -> str:
     """Look up whether an order was refunded."""
     return f'Order {order_id}: refunded.'
 
@@ -103,14 +103,14 @@ async def record_tools(
 
 agent = Agent('openai:gpt-5.6-luna', capabilities=[refunds, hooks])
 with capture_run_messages() as msgs:
-    agent.run_sync('Was I refunded for the duplicate charge on my last statement?')
+    agent.run_sync('Was order A-4471 refunded?')
 refund_ran = any(
-    isinstance(p, ToolReturnPart) and p.tool_name == 'refund_status' for m in msgs for p in m.parts
+    isinstance(p, ToolReturnPart) and p.tool_name == 'check_refund' for m in msgs for p in m.parts
 )
 print('tools declared on the first request:', declared[0])
 #> tools declared on the first request: ['load_capability']
-print('refund_status executed after it was loaded:', refund_ran)
-#> refund_status executed after it was loaded: True
+print('check_refund executed after it was loaded:', refund_ran)
+#> check_refund executed after it was loaded: True
 assert declared[0] == ['load_capability']
 assert refund_ran
 ```

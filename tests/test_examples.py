@@ -559,18 +559,13 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     'Was I refunded for the duplicate charge on my last statement?': ToolCallPart(
         tool_name='load_capability', args={'id': 'refunds'}
     ),
-    '<system>The following tool(s) are now available: `refund_status`</system>': ToolCallPart(
-        tool_name='refund_status', args={'order_id': 'A-4471'}
+    'Was order A-4471 refunded?': ToolCallPart(tool_name='load_capability', args={'id': 'refunds'}),
+    '<system>The following tool(s) are now available: `check_refund`</system>': ToolCallPart(
+        tool_name='check_refund', args={'order_id': 'A-4471'}
     ),
-    'Is the warehouse database ready?': ToolCallPart(
-        tool_name='check_warehouse', args={'probe': 'readiness'}
-    ),
-    'Look up shipment for order C-110.': ToolCallPart(
-        tool_name='look_up_shipment', args={'order_id': 'C-110'}
-    ),
-    'Wait on the warehouse for order H-900.': ToolCallPart(
-        tool_name='wait_on_warehouse', args={'order_id': 'H-900'}
-    ),
+    'Is the warehouse database ready?': ToolCallPart(tool_name='check_warehouse', args={'probe': 'readiness'}),
+    'Look up shipment for order C-110.': ToolCallPart(tool_name='look_up_shipment', args={'order_id': 'C-110'}),
+    'Wait on the warehouse for order H-900.': ToolCallPart(tool_name='wait_on_warehouse', args={'order_id': 'H-900'}),
     'Credit the wallet twice for order C-110.': [
         ToolCallPart(tool_name='credit_wallet', args={'amount': 100}, tool_call_id='credit_1'),
         ToolCallPart(tool_name='credit_wallet', args={'amount': 100}, tool_call_id='credit_2'),
@@ -578,16 +573,10 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     'Say hello to the customer.': 'Hello.',
     'Tag ticket 9 as urgent.': 'Ticket 9 is open.',
     'What is 21 times 2?': ToolCallPart(tool_name='twice', args={'n': 21}),
-    'Issue store credit for order W-882.': ToolCallPart(
-        tool_name='issue_store_credit', args={'order_id': 'W-882'}
-    ),
+    'Issue store credit for order W-882.': ToolCallPart(tool_name='issue_store_credit', args={'order_id': 'W-882'}),
     'Shout hello for the ticket.': ToolCallPart(tool_name='shout', args={'text': 'hello'}),
-    'Refund the duplicate invoice charge.': ToolCallPart(
-        tool_name='file_refund', args={'item': 'invoice'}
-    ),
-    'Look up warehouse stock for SKU-WAIT.': ToolCallPart(
-        tool_name='wait_on_stock', args={'sku': 'SKU-WAIT'}
-    ),
+    'Refund the duplicate invoice charge.': ToolCallPart(tool_name='file_refund', args={'item': 'invoice'}),
+    'Look up warehouse stock for SKU-WAIT.': ToolCallPart(tool_name='wait_on_stock', args={'sku': 'SKU-WAIT'}),
     'How many items are on order 21?': ToolCallPart(tool_name='extract_count', args={'v': 21}),
     'How many items are on order 22?': ToolCallPart(tool_name='extract_count', args={'v': 22}),
     'Write the combined item count.': ToolCallPart(tool_name='describe_total', args={'prefix': 'total'}),
@@ -596,9 +585,7 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
         ToolCallPart(tool_name='slow_lookup', args={'name': 'b'}, tool_call_id='slow_b'),
         ToolCallPart(tool_name='slow_lookup', args={'name': 'c'}, tool_call_id='slow_c'),
     ],
-    'Check my refund on order X-19.': ToolCallPart(
-        tool_name='refund_status', args={'order_id': 'X-19'}
-    ),
+    'Check my refund on order X-19.': ToolCallPart(tool_name='refund_status', args={'order_id': 'X-19'}),
     'Which process runs the support tools?': ToolCallPart(tool_name='where_does_support_run', args={}),
     'What is the status of ticket 9?': ToolCallPart(tool_name='read_ticket', args={'ticket_id': '9'}),
     'Confirm the warehouse is open.': 'same result',
@@ -821,9 +808,7 @@ tool_responses: dict[tuple[str, str], str | ToolCallPart | Sequence[ToolCallPart
     ('twice', '42'): '42',
     ('issue_store_credit', 'credited W-882'): 'Store credit issued for W-882.',
     ('shout', 'HELLO'): 'HELLO',
-    ('file_refund', 'invoice: refund filed'): ToolCallPart(
-        tool_name='notify_customer', args={'item': 'invoice'}
-    ),
+    ('file_refund', 'invoice: refund filed'): ToolCallPart(tool_name='notify_customer', args={'item': 'invoice'}),
     ('notify_customer', 'invoice: customer emailed'): 'Refund filed and the customer was told.',
     ('extract_count', '21'): 'counted',
     ('extract_count', '22'): 'counted',
@@ -832,6 +817,7 @@ tool_responses: dict[tuple[str, str], str | ToolCallPart | Sequence[ToolCallPart
     ('slow_lookup', 'b:done'): 'All three warehouses replied.',
     ('slow_lookup', 'c:done'): 'All three warehouses replied.',
     ('refund_status', 'Order X-19: refunded.'): 'done',
+    ('check_refund', 'Order A-4471: refunded.'): 'Order A-4471 was refunded.',
     ('where_does_support_run', 'checked'): 'In the same process that called me.',
     ('read_ticket', 'open: printer jam on floor 2'): 'Ticket 9 is open: printer jam on floor 2.',
 }
@@ -1145,15 +1131,19 @@ async def model_logic(  # noqa: C901
         return ModelResponse(
             parts=[ToolCallPart(tool_name='final_result', args=args, tool_call_id='pyd_ai_tool_call_id')]
         )
-    elif isinstance(m, ToolAvailabilityDeltaPart) and 'refund_status' in m.tools_added:
+    elif isinstance(m, ToolAvailabilityDeltaPart) and 'check_refund' in m.tools_added:
         return ModelResponse(
             parts=[
                 ToolCallPart(
-                    tool_name='refund_status',
+                    tool_name='check_refund',
                     args={'order_id': 'A-4471'},
                     tool_call_id='pyd_ai_tool_call_id',
                 )
             ]
+        )
+    elif isinstance(m, ToolAvailabilityDeltaPart) and 'refund_status' in m.tools_added:
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='refund_status', args={}, tool_call_id='pyd_ai_tool_call_id')]
         )
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'recent_reviews':
         return ModelResponse(
@@ -1166,7 +1156,14 @@ async def model_logic(  # noqa: C901
             ]
         )
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'refund_status':
-        return ModelResponse(parts=[TextPart(str(m.content))])
+        args = {
+            'support_advice': 'Good news, John: the duplicate charge on your last statement was refunded on 2026-05-01.',
+            'block_card': False,
+            'risk': 1,
+        }
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='final_result', args=args, tool_call_id='pyd_ai_tool_call_id')]
+        )
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'joke_factory':
         return ModelResponse(parts=[TextPart('Did you hear about the toothpaste scandal? They called it Colgate.')])
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_jokes':

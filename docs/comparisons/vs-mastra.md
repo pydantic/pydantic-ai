@@ -78,10 +78,13 @@ there, and a listener wired up somewhere else.
 Mastra's tracing goes to their dev server, Studio, and Cloud, and that integration is part of what
 makes it pleasant.
 
-Pydantic AI emits OpenTelemetry. It goes to Logfire if you want the first-party experience, or to
-Datadog, Honeycomb, Grafana, or whatever your company already runs, and the agent's traces sit next to
-your database and HTTP spans instead of in a separate tool. That's less polished on day one and less
-of a commitment on day two hundred.
+Pydantic AI emits OpenTelemetry when instrumentation is enabled
+([`Agent.instrument_all()`][pydantic_ai.Agent.instrument_all], the
+[`Instrumentation`][pydantic_ai.capabilities.Instrumentation] capability, or Logfire). It is off by
+default. It goes to Logfire if you want the first-party experience, or to Datadog, Honeycomb, Grafana,
+or whatever your company already runs, and the agent's traces sit next to your database and HTTP spans
+instead of in a separate tool. That's less polished on day one and less of a commitment on day two
+hundred.
 
 The same pattern shows up in durability. Mastra's story is its workflow engine, with a variant built on
 Inngest. Ours is a wrapper around whichever engine you already operate, Temporal, DBOS, Prefect,
