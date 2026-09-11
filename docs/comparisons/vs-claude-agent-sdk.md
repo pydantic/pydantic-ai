@@ -7,7 +7,7 @@
 | Language | Python SDK wrapping the TypeScript `claude` CLI | Python |
 | Model providers | Claude (Anthropic, Bedrock, Vertex, Foundry) | [Multiple](../models/overview.md) |
 | Durable execution | No | [5+ integrations](../durable_execution/overview.md) |
-| Observability | CLI telemetry | [OpenTelemetry](../capabilities/instrumentation.md), including [Pydantic Logfire](../logfire.md) |
+| Observability | OpenTelemetry from the CLI | [OpenTelemetry](../capabilities/instrumentation.md), including [Pydantic Logfire](../logfire.md) |
 | Interfaces | CLI | [CLI](../cli.md), [web chat](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) |
 | Extensibility | Hooks, `allowed_tools` | [Capabilities and toolsets](../extensibility.md) |
 | Realtime voice | No | [Realtime](../realtime/overview.md) |
