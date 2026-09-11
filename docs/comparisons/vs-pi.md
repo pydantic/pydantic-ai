@@ -1,81 +1,31 @@
 # Pydantic AI vs Pi
 
-Pi is a coding agent you run in a terminal, and it's also a library: the same package that ships the
-CLI exports an embeddable core, so you can drive the agent from your own TypeScript. It lives at
-[`@earendil-works/pi-coding-agent`](https://www.npmjs.com/package/@earendil-works/pi-coding-agent)
-([source](https://github.com/earendil-works/pi)). It has skills discovered from `SKILL.md` files,
-automatic conversation compaction, a strict line-delimited JSON protocol for driving it
-programmatically, and a clear-eyed security position: its own documentation says Pi ships no sandbox
-and that real isolation has to come from a container or a VM.
+Pi is a finished coding agent you can also embed
+([`@earendil-works/pi-coding-agent`](https://www.npmjs.com/package/@earendil-works/pi-coding-agent)).
+TypeScript, skills, compaction, no sandbox of its own (run it in a container; they say so).
 
-The closest thing on our side isn't Pydantic AI by itself. It's Pydantic AI plus
-[pydantic-ai-harness](https://github.com/pydantic/pydantic-ai-harness), which is where the
-coding-agent pieces live: a filesystem, a shell, subagents, skills, memory, compaction, planning, and
-`CodeMode` for running model-written Python inside the [Monty](https://github.com/pydantic/monty)
-sandbox.
+Ours is [pydantic-ai-harness](https://github.com/pydantic/pydantic-ai-harness)
+[`Coder()`](https://pydantic.dev/docs/ai/harness/coder/): the same pieces, on a Python agent you can
+take apart. Want Pi's behaviour this afternoon, take Pi. Want a gate Pi didn't ship, that's a
+capability here and a fork there.
 
-So this is a comparison between a finished product you can also embed, and a set of parts you
-assemble. Both are legitimate. Which one you want depends on how much of the agent you need to change.
-
-## A product you configure, or parts you assemble
-
-Pi has made the decisions. What the loop does, how compaction works, when skills load, how the
-conversation is stored, all settled, all good defaults, and you get a working coding agent
-immediately. Configuration is how you influence it.
-
-The harness has made almost none. Every piece is a capability you add, replace, or leave out, and they
-sit on the same agent object as everything else, which means the coding pieces compose with ordinary
-agent features instead of living in a separate world. The loop runs in your process, so a tool is a
-Python function with your types and your imports, and you can put a breakpoint in it.
-
-If you want a coding agent, Pi is running today and the harness is an afternoon of assembly. If you
-want a coding agent that does something Pi didn't anticipate (different compaction, a different
-filesystem, an approval gate on one specific action, a spend ceiling per customer), that's a
-capability on our side and a fork on theirs.
-
-## Language, and where isolation lives
-
-Pi's core is TypeScript and Node. Ours is Python. For most teams that settles it before any feature
-comparison starts.
-
-On isolation, Pi's position is that it isn't the sandbox, you run it in a container, mount things
-read-only, and give it minimal credentials. That's a defensible design and they say it plainly.
-
-Ours puts more of the boundary in the library: `CodeMode` runs model-written code in Monty instead of
-your interpreter, `ModalSandbox` gives the agent an isolated cloud container, any tool can be marked
-`requires_approval=True` (and [`DeferredToolRequests`][pydantic_ai.DeferredToolRequests] included in
-`output_type`, or [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] used)
-so the run pauses and hands you the pending call, and credentials live in `deps_type`. You should
-still run the thing in a container. The library-side gates are extra, not a substitute.
+The `Coder()` snippet is on the [Claude page](vs-claude-agent-sdk.md): same object, your process.
 
 ## Side by side
 
 | | Pi 0.85.1 | Pydantic AI + harness 2.42 |
 |---|---|---|
-| Language | TypeScript and Node | Python |
-| What you get | A working coding agent, plus an embeddable core | Parts you assemble onto any agent |
-| Changing behaviour | Configuration, extensions, skills | Any piece is a capability you swap |
-| Isolation | Deliberately none; run it in a container | `CodeMode` in Monty, `ModalSandbox`, per-tool approval, plus your container |
-| Trusted state | Environment and configuration | `deps_type` plus `RunContext`: a typed dependency API |
-| Skills | `SKILL.md` files with progressive disclosure | Skills as a capability, alongside the rest |
-| Driving it programmatically | Line-delimited JSON over stdin and stdout | Ordinary Python function calls |
-| Models | Configurable provider and model | Any provider, with `FallbackModel` for failover |
-| Crash recovery | Session resume | Six engines wrap the agent object |
-| Testing offline | Run the agent | `TestModel` and `FunctionModel`, no network |
+| Language | TypeScript | Python |
+| What you get | A working coding agent | Parts, including `Coder()` |
+| Change it | Config, or fork | Swap a capability |
+| Isolation | Container you provide | Monty / Modal, plus your container |
+| Drive it | NDJSON over stdio | A function call |
 
 ## FAQ
 
-**Is the harness a Claude Code or Pi competitor?**
-Not as a product. It's a library of the pieces those products are made of. If you want a finished
-coding agent, use a finished coding agent.
-
-**How much assembly is it really?**
-A useful agent with a filesystem, a shell, and subagents is a short file. Matching a mature CLI's
-behaviour (its compaction, its permission prompts, its polish) is considerably more.
+**Is the harness Claude Code / Pi?** No. It's the parts. Want a finished product, use one.
 
 ---
 
-*Pi behaviour described here comes from its CLI and its own documentation, checked at version 0.85.1; we did
-not run its embeddable core. Pydantic AI 2.42, checked 2026-09-10. We recheck this page's version pins and
-behaviour claims each time Pydantic AI ships a minor release; if something here has gone stale, [tell
-us](https://github.com/pydantic/pydantic-ai/issues/new) and we'll correct it.*
+*Pi 0.85.1 from its docs; embeddable core not run. Pydantic AI 2.42.
+[Tell us](https://github.com/pydantic/pydantic-ai/issues/new) if a pin goes stale.*

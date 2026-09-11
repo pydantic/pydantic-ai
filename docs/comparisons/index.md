@@ -1,24 +1,13 @@
 # Pydantic AI vs other agent frameworks
 
-You're picking an agent framework. These pages are what we'd want to read if we were the ones picking.
-
-Every other library on this list made a bet about what an agent is: a graph, a session, a subprocess,
-a crew, a Google runner, a Task envelope, a deployable OS, a TypeScript platform, a React stream, a
-finished coding agent. Ours is a typed Python value you put in the application you already have.
-Pause, durability, a coding harness, and tests attach to that value instead of changing its shape.
+Every other library on this list made a bet about what an agent is. Ours is a typed Python value you
+put in the application you already have. Pause, durability, a coding harness, and tests attach to
+that value instead of changing its shape.
 
 Anything we say about someone else's software, we installed it and read it. The bottom of each page
-tells you which version, and how we checked. Anything we say about ours comes with a script you can
-copy. CI runs every one of them on every commit.
+names the version. Anything we say about ours comes with a script CI runs on every commit.
 
-Where we're the wrong answer, we say so.
-[All in one place](production-agents.md#where-were-not-the-answer).
-
-## Start here
-
-**Down to two frameworks?** Go straight to the page.
-
-| | The bet | The fork |
+| Framework | Their bet | The fork |
 |---|---|---|
 | [LangChain and LangGraph](vs-langchain-langgraph.md) | An agent is a graph | Pause without replaying the node |
 | [OpenAI Agents SDK](vs-openai-agents-sdk.md) | An agent is a session on their platform | Stop and still own the conversation |
@@ -32,29 +21,14 @@ Where we're the wrong answer, we say so.
 | [Vercel AI SDK](vs-vercel-ai-sdk.md) | The wire to a React UI | Python behind that wire, or stay in TypeScript |
 | [Pi](vs-pi.md) | A finished coding agent | The parts it's made of, on the same agent object |
 
-**Still deciding broadly?** Read [what a production agent needs](production-agents.md). It's the list
-we'd hold any framework to, us included, and every item has a runnable proof under it.
+Where we're the wrong answer, once:
+[all in one place](production-agents.md#where-were-not-the-answer).
 
-**Reading benchmark claims about us?** [Under the hood](under-the-hood.md) takes the speed and
-lines-of-code comparisons apart and shows what's actually being measured.
+The production checklist, with a runnable proof under every item:
+[what a production agent needs](production-agents.md).
 
-## Where each one is strong
-
-Every "where it stops" below is argued on that framework's page, against a version we installed.
-
-| Framework | Strongest at | Where it stops |
-|---|---|---|
-| LangChain and LangGraph | An integration catalogue far larger than ours; checkpointed workflows and time travel; Deep Agents as a shipped harness | `interrupt()` inside a node replays that node's work; `abort()` exists only on the experimental v3 stream |
-| OpenAI Agents SDK | OpenAI features first; hosted sessions and tracing; `after_turn` stops at a turn boundary | Continuity is a session rather than history you own; no first-party crash recovery |
-| Claude Agent SDK | Claude Code's behaviour, immediately, including permissions and rewind | The loop is a `claude` subprocess; Anthropic only; tests are integration tests |
-| CrewAI | A role-and-task vocabulary that gets a multi-agent demo running quickly; memory and knowledge included | Orchestration is a DSL; no stop method on a crew; limits are per agent rather than per run |
-| smolagents | The smallest way to let a model write and run code, with honest sandboxing | Synchronous, so tool calls don't overlap; stopping leaves an error, not a resumable run |
-| Google ADK | Gemini, Vertex, A2A, and Google's tooling with no glue | No cancellation API on `Runner` or `LlmAgent` |
-| AG2 | Durable checkpointed tasks with no infrastructure to run; broad first-party protocols | The AutoGen-era API is gone at 1.0; durability is a Task envelope, not your engine |
-| Agno | A deployable agent service with auth, roles, and a UI, out of the box | Shell and Python tools run on the host by default; spans carry no `gen_ai.*` attributes |
-| Mastra | TypeScript all-in-one: workflows, memory, evals, a real dev experience | JavaScript only; tracing and deployment lean on their platform |
-| Vercel AI SDK | Streaming state shared with a React front end, which is what it was built for | JavaScript only; no first-party crash recovery |
-| Pi | A finished coding agent that you can also embed | TypeScript; deliberately no sandbox of its own; changing its behaviour means forking |
+Speed and lines-of-code claims:
+[under the hood](under-the-hood.md).
 
 ## What other people say
 

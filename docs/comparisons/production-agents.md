@@ -474,10 +474,10 @@ first-party view, or at Datadog, Honeycomb or Grafana, and the agent shows up in
 those vendors already ship, because the attribute names match. Uninstrumented agents emit nothing, so
 an existing dashboard does not start reading spans just because you imported Pydantic AI.
 
-We counted `gen_ai.*` string literals in each framework's source. Google ADK emits them too. The
-rest go through third-party instrumentation using its own namespace (`llm.model_name`,
-`openinference.span.kind`), so a standards-based GenAI dashboard stays empty. Don't treat the
-count as the pitch; the pitch is that the names match what your vendor already graphs.
+Google ADK emits those conventions too. Most of this field doesn't: they go through third-party
+instrumentation with their own names (`llm.model_name`, `openinference.span.kind`), so a
+standards-based GenAI dashboard stays empty. The pitch is that the names match what your vendor
+already graphs.
 
 ## 8. Evals in your test suite
 

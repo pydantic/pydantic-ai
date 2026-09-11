@@ -1,37 +1,28 @@
 # Pydantic AI vs smolagents
 
-smolagents takes an unusual position and takes it seriously: instead of asking the model for
-structured tool calls, it asks the model to write Python, then runs that Python. A `CodeAgent` loops:
-model writes code, sandbox runs it, output goes back, until the code calls `final_answer`. It's a
-small library with few dependencies, it's clear about its limits, and it fits when the task is
-computational.
+smolagents asks the model to write Python and runs it. The default sandbox is a restricted
+interpreter (no `os`, no `open`); Docker and friends are the real isolation. The loop is
+synchronous: `CodeAgent.run()` owns the thread.
 
-Its default sandbox is a restricted interpreter, not a container, and it says so. Running
-`import os` gets you *"Import of os is not allowed. Authorized imports are: collections, datetime,
-itertools, math, queue, random, re, stat, statistics, time, unicodedata"*, and `open(...)` is refused
-outright. For real isolation you escalate to one of the remote executors, Docker, E2B, Modal, Blaxel,
-or your own.
+Pydantic AI is async tool calls. `CodeMode` in the harness is the write-Python path, inside
+[Monty](https://github.com/pydantic/monty).
 
-Pydantic AI does structured tool calls by default, and can do the write-code approach too through
-`CodeMode` in [pydantic-ai-harness](https://github.com/pydantic/pydantic-ai-harness), which runs the
-model's Python inside the [Monty](https://github.com/pydantic/monty) sandbox. The difference that
-matters more day to day is that one library is synchronous and the other isn't.
+## Side by side
 
-## Synchronous, and what that costs
+| | smolagents 1.26.0 | Pydantic AI 2.42 |
+|---|---|---|
+| How the model acts | Writes Python | Tool calls; `CodeMode` if you want code |
+| Async | No | Yes |
+| Stop | Flag between steps | `RunCancelled` with history |
+| Sandbox | Restricted interpreter; escalate to Docker/E2B/Modal | Monty / Modal in the harness |
+| Crash recovery | None in core | Six engines wrap the agent |
+| Test offline | Subclass `Model` | `TestModel` / `FunctionModel` |
 
-smolagents' loop is blocking. `CodeAgent.run()` has no async counterpart, so a run owns the thread it's
-on. Two consequences follow.
+## Tool calls that overlap
 
-The first is concurrency. If the model wants three independent things done, three lookups, three API
-calls, they happen one after another, because the generated code runs in a single interpreter on one
-thread. In Pydantic AI the tools are `async def` and the model can ask for several at once:
+Three independent lookups start together:
 
 ```python {title="parallel_tool_calls.py"}
-"""Parallel tool calls in one turn.
-
-The model asks for three slow calls in one response. The async loop starts all
-three before any of them finishes, so they overlap instead of queueing up.
-"""
 import asyncio
 
 from pydantic_ai import Agent, RunContext
@@ -52,69 +43,20 @@ async def main():
     await agent.run('Run the warehouse lookups for A, B, and C.')
     print('first three events:', events[:3])
     #> first three events: ['start:a', 'start:b', 'start:c']
-    print('all started before any finished:', events[:3] == ['start:a', 'start:b', 'start:c'])
-    #> all started before any finished: True
 ```
 
-
-All three calls entered before any of them came back. Run them one at a time and the log reads
-`start:a`, `end:a`, `start:b` instead. That difference is the whole of it: three slow lookups cost you
-one slow lookup of wall time.
-
-The second is stopping. smolagents does have a stop: `agent.interrupt()` sets a flag the loop checks
-between steps. It works, but because the run is blocking you need another thread to call it, and what
-you get afterwards is an error, not a resumable conversation. In Pydantic AI a
-`CancellationToken` or a tool calling `ctx.cancel()` ends the run in `RunCancelled` carrying the
-history, and you resume by passing that history to the next run.
-
-## Trusted state, tests, crash recovery
-
-**Trusted state.** smolagents builds tool schemas from docstrings and type hints. Pydantic AI's
-`deps_type` is a typed argument on the agent: tools read it through `RunContext`, and it is in the
-agent's type so a tool cannot forget to take it.
-
-**Testing.** Both are testable offline, and smolagents deserves credit here: its `Model` base class is
-a real place to plug a scripted stub, and we used one to drive a full `CodeAgent` run with no network.
-Pydantic AI ships `TestModel` and `FunctionModel` instead of asking you to write one, and
-`ALLOW_MODEL_REQUESTS = False` turns any stray real call into an error.
-
-**Crash recovery.** smolagents has none in core. Pydantic AI's runs can be wrapped by Temporal, DBOS,
-Prefect, Restate, Kitaru, or Airflow without changing the agent.
-
-## Side by side
-
-| | smolagents 1.26.0 | Pydantic AI 2.42 |
-|---|---|---|
-| How the model acts | Writes Python that a sandbox runs | Structured tool calls; `CodeMode` in the harness if you want code |
-| Async | Synchronous; a run owns the thread | Async throughout, with `run_sync` when you want blocking |
-| Parallel tool calls | Sequential in one interpreter | Genuinely concurrent |
-| Sandbox by default | Restricted interpreter, 11 stdlib modules, no `open` | Tools are your functions; `CodeMode` runs model code in Monty |
-| Stronger isolation | Docker, E2B, Modal, Blaxel, or remote executors | Sandbox providers in the harness |
-| Stopping a run | `interrupt()` sets a flag checked between steps; needs another thread | `CancellationToken`, `ctx.cancel()`, `RunCancelled` with resumable history |
-| Trusted state | Nothing separate from the prompt | `deps_type` plus `RunContext`: a typed dependency API |
-| Crash recovery | None in core | Six engines wrap the agent object |
-| Testing offline | Subclass `Model` yourself | `TestModel` calls your tools with no scripting; `FunctionModel` scripts them |
-| Tracing | OpenInference spans under its own attribute names; zero `gen_ai.*` | OpenTelemetry GenAI semantic conventions when instrumentation is enabled |
-| Budgets | Step caps; no money limit | `cost_limit` in USD when pricing data is available, checked after each response; pair with `request_limit` |
-| Evals | None in core | `pydantic-evals` in your test suite |
+smolagents' `interrupt()` is a flag between steps, from another thread, and you get an error, not a
+resumable history.
 
 ## FAQ
 
-**Can Pydantic AI do the write-code-instead-of-tool-calls thing?**
-Yes, through `CodeMode` in the harness. The model writes one Python program that calls your tools as
-functions (with loops and `asyncio.gather`) inside the Monty sandbox, instead of one round trip per
-call.
+**Write-code instead of tools?** `CodeMode` in the harness, inside Monty.
 
-**Is smolagents' sandbox safe?**
-For accidents, largely yes, and the defaults are sensible. For a model that might be adversarially
-prompted, their own documentation points you at Docker or a remote executor, which is the right
-answer.
+**Is their sandbox safe?** For accidents, the defaults are honest. For an adversarial prompt, they
+tell you to use Docker.
 
 ---
 
-*Checked against smolagents 1.26.0 and Pydantic AI 2.42 on 2026-09-10. The sandbox messages are the actual
-errors from running `import os` and `open(...)` through its local executor; the absence of an async run and
-the behaviour of `interrupt()` come from reading the installed package. The Pydantic AI example is executed by
-this repository's test suite. We recheck this page's version pins and behaviour claims each time Pydantic AI
-ships a minor release; if something here has gone stale, [tell
-us](https://github.com/pydantic/pydantic-ai/issues/new) and we'll correct it.*
+*smolagents 1.26.0, Pydantic AI 2.42. `import os` / `open(...)` errors and `CodeAgent.run` being sync
+come from the installed package.
+[Tell us](https://github.com/pydantic/pydantic-ai/issues/new) if a pin goes stale.*

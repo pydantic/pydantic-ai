@@ -1,42 +1,29 @@
 # Pydantic AI vs Google ADK
 
-Google's Agent Development Kit is the Gemini-native way to build agents in Python. You define an
-`LlmAgent`, hand it to a `Runner` with a session service, and the rest of Google's stack is close by:
-a web dev UI, first-party Google Search and MCP tools, planners, evaluation, agent-to-agent messaging,
-code executors, and deployment to Vertex AI. If your organisation is already on Google Cloud, that
-adjacency saves you real work.
+Google ADK is the Gemini-native kit: `LlmAgent`, a `Runner`, Vertex, Search, A2A, a web UI. If you're
+on Google Cloud, that adjacency is the product.
 
-Version 2.8.0 is a big kit. Alongside `LlmAgent` you get `LoopAgent` and `ParallelAgent` for
-composing runs, and the `Runner` has picked up a resumability config and a `rewind_async` for stepping
-a session back. ADK also emits the OpenTelemetry GenAI semantic conventions, which most of this
-field doesn't; we come back to that below.
+Pydantic AI isn't tied to a cloud. The first production gap is stop: there is no `cancel`, `stop`, or
+`abort` on `Runner` or `LlmAgent`.
 
-Pydantic AI is smaller and isn't tied to a cloud. The difference you hit first in production is what
-happens when somebody hits stop.
+## Side by side
 
-## Stopping a run
+| | Google ADK 2.8.0 | Pydantic AI 2.42 |
+|---|---|---|
+| Models | Gemini first | Any provider |
+| Stop | Cancel the asyncio task | `CancellationToken` → `RunCancelled` |
+| Trusted state | App / user / invocation state | `deps_type` plus `RunContext` |
+| Compose | `LoopAgent`, `ParallelAgent` | `async` / `gather` |
+| Deploy | Vertex | Anywhere |
+| Test offline | Subclass `BaseLlm` | `TestModel` / `FunctionModel` |
 
-Agents get cancelled constantly in real products. A user closes the tab. A request times out. A daily
-spend cap trips and everything in flight should wind down.
-
-ADK has no API for this. There is no `cancel`, `stop`, or `abort` on `Runner` or on `LlmAgent`, so
-ending a run early means cancelling the asyncio task running it. That works, but it's abrupt: your
-tools get an ordinary task cancellation partway through whatever they were doing, and what you keep
-afterwards is whatever the session service already wrote.
-
-Pydantic AI treats stopping as a result, not an accident. One `CancellationToken` can govern
-several runs at once, it's safe to call from another thread, and each run ends by raising
-`RunCancelled` carrying its own history:
+## One token, three runs
 
 ```python {title="one_token_many_runs.py"}
-"""One stop gesture, many runs: a CancellationToken governs every run it was
-given to, and cancelling the token cancels all of them.
-"""
 import asyncio
 
 from pydantic_ai import Agent, CancellationToken, RunCancelled, RunContext
 
-CONCURRENT = 3
 agent = Agent('openai:gpt-5.6-luna')
 
 
@@ -52,69 +39,24 @@ async def main():
         asyncio.create_task(
             agent.run('Look up warehouse stock for SKU-WAIT.', cancellation_token=token)
         )
-        for _ in range(CONCURRENT)
+        for _ in range(3)
     ]
     await asyncio.sleep(0.1)
-    token.cancel()  # one gesture
+    token.cancel()
     results = await asyncio.gather(*tasks, return_exceptions=True)
-    print(f'runs cancelled by one token: {sum(isinstance(r, RunCancelled) for r in results)}/{CONCURRENT}')
+    print(f'runs cancelled by one token: {sum(isinstance(r, RunCancelled) for r in results)}/3')
     #> runs cancelled by one token: 3/3
-    assert all(isinstance(r, RunCancelled) for r in results)
 ```
 
-
-Three runs, one token, one gesture, and each ends in `RunCancelled`, which carries that run's
-history, rather than in a bare task cancellation. A tool can
-also stop its own run by calling `ctx.cancel()`, useful when the tool is the thing that discovers the
-budget is gone. Cancellation that comes from outside, like `asyncio.timeout()` or a task group
-shutting down, still propagates as a normal `CancelledError` so your own timeouts behave the way
-Python says they should.
-
-## Trusted state, tests, where it runs
-
-**Trusted state.** ADK carries app state, user state, and an invocation context through the run.
-That state is programmatic unless you interpolate it into instructions. Pydantic AI's difference is
-a typed dependency API: `deps_type` plus `RunContext`, so a database handle is in the agent's type
-and a tool cannot forget to take it.
-
-**Testing without a network.** The installed `google.adk.models` has `BaseLlm` to subclass but no test
-model, so an offline test means writing your own stub, the same situation as most frameworks, and
-perfectly workable. Pydantic AI ships `TestModel` and `FunctionModel`, plus a global
-`ALLOW_MODEL_REQUESTS = False` that turns any accidental real API call into an error.
-
-**Where it runs.** ADK's natural home is Vertex AI, and its session and telemetry story assumes
-Google's services. Pydantic AI runs wherever Python runs, and for crash recovery you wrap the same
-agent in whichever durable engine you already operate, Temporal, DBOS, Prefect, Restate, Kitaru, or
-Airflow.
-
-## Side by side
-
-| | Google ADK 2.8.0 | Pydantic AI 2.42 |
-|---|---|---|
-| Models | Gemini first; others through LiteLLM | Any provider directly, with `FallbackModel` for failover |
-| Stopping a run | No cancel API; cancel the task | `CancellationToken` across runs, `ctx.cancel()` inside a tool, `RunCancelled` with the history |
-| Trusted state | App state, user state, invocation context (programmatic unless interpolated) | `deps_type` plus `RunContext`: a typed dependency API |
-| Composing runs | `LoopAgent`, `ParallelAgent`, `ManagedAgent` | Ordinary async Python, and `pydantic_graph` when you want a state machine |
-| Crash recovery | Sessions plus resumability config and `rewind_async` | Six engines wrap the agent object, and the engine is your choice |
-| Testing offline | Subclass `BaseLlm` yourself | `TestModel` and `FunctionModel` included; real calls blockable globally |
-| Evals | An evaluation module tied to their tooling | `pydantic-evals` in your test suite using the agent's own types |
-| Tracing | The GenAI semantic conventions | The same conventions, when instrumentation is enabled |
-| Deployment | Vertex AI is the paved road | Anywhere; it's a library |
+ADK emits OpenTelemetry GenAI conventions too. We both do. Most of this field doesn't.
 
 ## FAQ
 
-**Can I use Gemini with Pydantic AI?**
-Yes, directly, including through Vertex. This isn't a comparison about which model you use.
+**Gemini?** Yes, including Vertex. This isn't about the model.
 
-**Is Pydantic AI a drop-in replacement?**
-No. Tools and instructions port easily; sessions become message history you own, and `LoopAgent` and
-`ParallelAgent` become a loop and an `asyncio.gather`.
+**Drop-in?** No. Sessions become history. `ParallelAgent` becomes `gather`.
 
 ---
 
-*Checked against google-adk 2.8.0 and Pydantic AI 2.42 on 2026-09-10. The ADK facts come from reading the
-installed package: the absence of any cancel, stop, or abort method on `Runner` and `LlmAgent`, the `Runner`
-method list, and the contents of `google.adk.models`. Its runtime behaviour needs a live model and was not
-run. The Pydantic AI example is executed by this repository's test suite. We recheck this page's version pins
-and behaviour claims each time Pydantic AI ships a minor release; if something here has gone stale, [tell
-us](https://github.com/pydantic/pydantic-ai/issues/new) and we'll correct it.*
+*google-adk 2.8.0, Pydantic AI 2.42. No cancel/stop/abort on `Runner` or `LlmAgent`.
+[Tell us](https://github.com/pydantic/pydantic-ai/issues/new) if a pin goes stale.*
