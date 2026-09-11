@@ -8,15 +8,15 @@ only the library: an agent you put in the application you already run.
 | | Agno | Pydantic AI |
 |---|---|---|
 | Language | Python | Python |
-| Model providers | Many | [Multiple](../models/overview.md) |
-| Durable execution | Agent `db` / `checkpoint` | Yes — [5+ integrations](../durable_execution/overview.md) |
+| Model providers | Multiple | [Multiple](../models/overview.md) |
+| Durable execution | Yes (`db`, `checkpoint`) | Yes — [5+ integrations](../durable_execution/overview.md) |
 | Observability | OpenTelemetry | [OpenTelemetry](../capabilities/instrumentation.md) |
 | Extensibility | Tools, toolkits | [Capabilities and toolsets](../extensibility.md) |
-| Interfaces | AG-UI, A2A | [CLI](../cli.md), [web chat](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) (experimental), A2A |
+| Interfaces | AG-UI, A2A, chat platforms | [CLI](../cli.md), [web chat](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) (experimental), A2A |
 | Build your own harness | Yes | [Yes](https://pydantic.dev/docs/ai/harness/#build-your-own) |
-| Coding harness | No (shell and Python toolkits) | Yes ([`Coder()`](https://pydantic.dev/docs/ai/harness/coder/)) |
-| Graph library | Workflows | Yes ([`pydantic-graph`](../graph.md)) |
-| Multi-agent | Teams, workflows | [Sub-agents](../multi-agent-applications.md), [hand-offs](../multi-agent-applications.md#programmatic-agent-hand-off), or [graph](../graph.md) |
+| Coding harness | No | Yes ([`Coder()`](https://pydantic.dev/docs/ai/harness/coder/)) |
+| Graph library | Yes (workflows) | Yes ([`pydantic-graph`](../graph.md)) |
+| Multi-agent | Teams (delegation), workflows | [Sub-agents](../multi-agent-applications.md), [hand-offs](../multi-agent-applications.md#programmatic-agent-hand-off), or [graph](../graph.md) |
 | Realtime voice | No | [Yes](../realtime/overview.md) |
 | Image generation | Yes | [Yes](../image-generation.md) |
 | License | Apache-2.0 | MIT |
@@ -28,9 +28,9 @@ only the library: an agent you put in the application you already run.
 | Code sandboxes | Yes (integrations) | [Yes](https://pydantic.dev/docs/ai/harness/#execution-environments) |
 | Browser | Yes | [Yes](https://pydantic.dev/docs/ai/harness/#web-research) |
 | Memory | Yes (`MemoryManager`) | [Yes](https://pydantic.dev/docs/ai/harness/memory/) |
-| Compaction | Tool-result compression | [Yes](../capabilities/compaction.md) |
+| Compaction | Yes (tool-result compression) | [Yes](../capabilities/compaction.md) |
 | Evals | Yes | [Yes](../evals.md) |
-| Test without API keys | You write a model | [Yes](../testing.md) |
+| Test without API keys | Yes (write a model subclass) | [Yes](../testing.md) |
 
 Cells linked to pydantic.dev/docs/ai/harness ship in [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/),
 a separate package.

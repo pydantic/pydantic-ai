@@ -9,14 +9,14 @@ and scorers as separate concepts.
 | | Mastra | Pydantic AI |
 |---|---|---|
 | Language | TypeScript | Python |
-| Model providers | Many | [Multiple](../models/overview.md) |
-| Durable execution | `createDurableAgent()`, Inngest | Yes — [5+ integrations](../durable_execution/overview.md) |
+| Model providers | Multiple | [Multiple](../models/overview.md) |
+| Durable execution | Yes (`createDurableAgent()`, Inngest) | Yes — [5+ integrations](../durable_execution/overview.md) |
 | Observability | OpenTelemetry | [OpenTelemetry](../capabilities/instrumentation.md) |
 | Extensibility | Tools, processors, scorers, workflows | [Capabilities and toolsets](../extensibility.md) |
 | Interfaces | Playground, Studio | [CLI](../cli.md), [web chat](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) (experimental), A2A |
 | Build your own harness | Yes | [Yes](https://pydantic.dev/docs/ai/harness/#build-your-own) |
-| Coding harness | `createCodingAgent()` | Yes ([`Coder()`](https://pydantic.dev/docs/ai/harness/coder/)) |
-| Graph library | Workflows in core | Yes ([`pydantic-graph`](../graph.md)) |
+| Coding harness | Yes (`createCodingAgent()`) | Yes ([`Coder()`](https://pydantic.dev/docs/ai/harness/coder/)) |
+| Graph library | Yes (workflows in core) | Yes ([`pydantic-graph`](../graph.md)) |
 | Multi-agent | Workflows, sub-agents | [Sub-agents](../multi-agent-applications.md), [hand-offs](../multi-agent-applications.md#programmatic-agent-hand-off), or [graph](../graph.md) |
 | Realtime voice | Yes (voice packages) | [Yes](../realtime/overview.md) |
 | Image generation | No | [Yes](../image-generation.md) |
@@ -25,7 +25,7 @@ and scorers as separate concepts.
 | | Mastra | Pydantic AI |
 |---|---|---|
 | Structured output | Yes | [Yes](../output.md) |
-| Guardrails | Processors | [Yes](https://pydantic.dev/docs/ai/harness/guardrails/) |
+| Guardrails | Yes (processors) | [Yes](https://pydantic.dev/docs/ai/harness/guardrails/) |
 | Code sandboxes | Yes | [Yes](https://pydantic.dev/docs/ai/harness/#execution-environments) |
 | Browser | Yes | [Yes](https://pydantic.dev/docs/ai/harness/#web-research) |
 | Memory | Yes (working, observational, semantic) | [Yes](https://pydantic.dev/docs/ai/harness/memory/) |

@@ -12,12 +12,12 @@ model.
 |---|---|---|
 | Language | Python SDK wrapping the TypeScript `claude` CLI | Python |
 | Model providers | Claude (Anthropic, Bedrock, Vertex, Foundry) | [Multiple](../models/overview.md) |
-| Durable execution | Sessions | Yes — [5+ integrations](../durable_execution/overview.md) |
+| Durable execution | Yes (sessions) | Yes — [5+ integrations](../durable_execution/overview.md) |
 | Observability | CLI telemetry | [OpenTelemetry](../capabilities/instrumentation.md) |
 | Extensibility | Hooks, `allowed_tools` | [Capabilities and toolsets](../extensibility.md) |
 | Interfaces | CLI | [CLI](../cli.md), [web chat](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) (experimental), A2A |
-| Build your own harness | No — one harness, you drive it | [Yes](https://pydantic.dev/docs/ai/harness/#build-your-own) |
-| Coding harness | The `claude` CLI, via `query()` or `ClaudeSDKClient` | Yes ([`Coder()`](https://pydantic.dev/docs/ai/harness/coder/)) |
+| Build your own harness | No | [Yes](https://pydantic.dev/docs/ai/harness/#build-your-own) |
+| Coding harness | Yes — the `claude` CLI, via `query()` or `ClaudeSDKClient` | Yes ([`Coder()`](https://pydantic.dev/docs/ai/harness/coder/)) |
 | Graph library | No | Yes ([`pydantic-graph`](../graph.md)) |
 | Multi-agent | Sub-agents | [Sub-agents](../multi-agent-applications.md), [hand-offs](../multi-agent-applications.md#programmatic-agent-hand-off), or [graph](../graph.md) |
 | Realtime voice | No | [Yes](../realtime/overview.md) |
@@ -27,13 +27,13 @@ model.
 | | Claude Agent SDK | Pydantic AI |
 |---|---|---|
 | Structured output | Yes (`json_schema`) | [Yes](../output.md) |
-| Guardrails | Permission modes, hooks | [Yes](https://pydantic.dev/docs/ai/harness/guardrails/) |
-| Code sandboxes | Bash sandbox (`SandboxSettings`) | [Yes](https://pydantic.dev/docs/ai/harness/#execution-environments) |
-| Browser | Via MCP | [Yes](https://pydantic.dev/docs/ai/harness/#web-research) |
-| Memory | Memory files, sessions | [Yes](https://pydantic.dev/docs/ai/harness/memory/) |
+| Guardrails | Yes (permission modes, hooks) | [Yes](https://pydantic.dev/docs/ai/harness/guardrails/) |
+| Code sandboxes | Yes (bash sandbox, `SandboxSettings`) | [Yes](https://pydantic.dev/docs/ai/harness/#execution-environments) |
+| Browser | Yes (via MCP) | [Yes](https://pydantic.dev/docs/ai/harness/#web-research) |
+| Memory | Yes (memory files, sessions) | [Yes](https://pydantic.dev/docs/ai/harness/memory/) |
 | Compaction | Yes | [Yes](../capabilities/compaction.md) |
 | Evals | No | [Yes](../evals.md) |
-| Test without API keys | No (launch the CLI) | [Yes](../testing.md) |
+| Test without API keys | No | [Yes](../testing.md) |
 
 Cells linked to pydantic.dev/docs/ai/harness ship in [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/),
 a separate package.
