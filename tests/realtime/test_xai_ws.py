@@ -11,6 +11,7 @@ cassette is missing offline the `xai_ws_cassette` fixture skips rather than erro
 
 from __future__ import annotations as _annotations
 
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -127,6 +128,7 @@ async def test_text_in_audio_out_turn(xai_ws_cassette: tuple[XaiProvider, Realti
                 'audio_tokens': 39,
                 'billable_audio_seconds': 1,
             },
+            cost=Decimal('0.0'),
             requests=1,
         )
     )

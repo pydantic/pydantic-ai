@@ -286,6 +286,8 @@ Key facts for building realtime agents:
   and xAI cannot, and assistant audio is never replayed. Streamed images all reach the provider, but
   history keeps a sampled (`retain_images_every_n`) and bounded (`retain_images_max`, default `100`,
   oldest evicted first) record.
+- **Usage and cost**: each recorded `ModelResponse` carries its response usage, while `session.usage`
+  is cumulative; priced models get a `genai-prices` cost and enforce `UsageLimits.cost_limit`.
 - **No `output_type`**: realtime models don't do structured output. Delegate hard work to a text
   agent behind a tool, or hand off history afterwards.
 - **Check the model profile before calling profile-gated methods**: `model.profile` (a

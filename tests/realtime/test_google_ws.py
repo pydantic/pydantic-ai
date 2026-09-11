@@ -11,6 +11,7 @@ Recorded once against the live API with `--record-mode=rewrite`, then replayed o
 from __future__ import annotations as _annotations
 
 import asyncio
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -270,8 +271,9 @@ async def test_tool_call_round(gemini_ws_cassette: tuple[Provider[Any], Realtime
     assert isinstance(tool_response, ModelResponse)
     assert tool_response.parts == [ToolCallPart(tool_name='record_reading', args=IsStr(), tool_call_id=IsStr())]
     # Gemini's tool-call frame carries no usage metadata; the later completed turn owns the only usage
-    # report the provider supplies, so the intermediate response remains honestly empty.
-    assert tool_response.usage == RequestUsage()
+    # report the provider supplies, so the intermediate response remains honestly empty: no tokens, and
+    # therefore a zero price rather than an unknown one.
+    assert tool_response.usage == RequestUsage(cost=Decimal('0'))
     tool_return = messages[2]
     assert isinstance(tool_return, ModelRequest)
     assert tool_return.parts == [
@@ -295,6 +297,7 @@ async def test_tool_call_round(gemini_ws_cassette: tuple[Provider[Any], Realtime
     # must not be collapsed into the output total.
     assert final.usage == (
         RequestUsage(
+            cost=Decimal('0.0016495'),
             input_tokens=1267,
             output_tokens=103,
             input_text_tokens=1267,
