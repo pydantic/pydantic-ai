@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+    echo 'Usage: issue-comment-fingerprint <issue-number> [owner/repo]' >&2
+    exit 1
+}
+
+[[ $# -ge 1 && $# -le 2 ]] || usage
+
+ISSUE_NUMBER="$1"
+REPO="${2:-$(gh repo view --json nameWithOwner --jq .nameWithOwner)}"
+OWNER="${REPO%%/*}"
+NAME="${REPO##*/}"
+
+if [[ -z "$OWNER" || -z "$NAME" || "$OWNER" == "$NAME" ]]; then
+    echo "error: expected repository as owner/name, got: $REPO" >&2
+    exit 1
+fi
+
+QUERY='query($owner: String!, $name: String!, $number: Int!, $cursor: String) {
+  repository(owner: $owner, name: $name) {
+    issue(number: $number) {
+      comments(first: 100, after: $cursor) {
+        pageInfo { hasNextPage endCursor }
+        nodes { id updatedAt }
+      }
+    }
+  }
+}'
+
+TMP_DIR="$(mktemp -d)"
+trap 'rm -rf "$TMP_DIR"' EXIT
+
+cursor=''
+page=0
+while true; do
+    page=$((page + 1))
+    output="$TMP_DIR/page-$page.json"
+    args=(graphql -f "query=$QUERY" -f "owner=$OWNER" -f "name=$NAME" -F "number=$ISSUE_NUMBER")
+    if [[ -n "$cursor" ]]; then
+        args+=(-f "cursor=$cursor")
+    fi
+    gh api "${args[@]}" > "$output"
+
+    has_next="$(jq -r '.data.repository.issue.comments.pageInfo.hasNextPage' "$output")"
+    [[ "$has_next" == 'true' ]] || break
+    cursor="$(jq -r '.data.repository.issue.comments.pageInfo.endCursor' "$output")"
+done
+
+jq -cs '[.[].data.repository.issue.comments.nodes[] | {id, updatedAt}]' "$TMP_DIR"/page-*.json \
+    | git hash-object --stdin

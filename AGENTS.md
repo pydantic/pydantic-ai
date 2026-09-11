@@ -66,7 +66,7 @@ All changes need to:
 - be fully type-safe (both internally and in public API) without unnecessary `cast`s or `Any`s, so that users don't need `isinstance` checks and can trust that code that typechecks will work at runtime
 - have comprehensive tests covering 100% of code paths, favoring integration tests and real requests (using recordings and snapshots -- see below) over unit tests and mocking
 - update/add all relevant documentation, following the existing voice and patterns
-- update the relevant agent skills when introducing a new feature or when a skill needs to reflect the correct mechanics; Pydantic AI skills belong in [pydantic_ai_slim/pydantic_ai/.agents/skills/building-pydantic-ai-agents/](pydantic_ai_slim/pydantic_ai/.agents/skills/building-pydantic-ai-agents/), while repository workflow skills live under [.claude/skills/](.claude/skills/)
+- update the relevant agent skills when introducing a new feature or when a skill needs to reflect the correct mechanics; Pydantic AI skills belong in [pydantic_ai_slim/pydantic_ai/.agents/skills/building-pydantic-ai-agents/](pydantic_ai_slim/pydantic_ai/.agents/skills/building-pydantic-ai-agents/), cross-harness repository workflow skills live under [.agents/skills/](.agents/skills/), and Claude-only workflow skills live under [.claude/skills/](.claude/skills/)
 
 When you submit a PR, make sure you include the [PR template](.github/pull_request_template.md) and fill in the issue number that should be closed when the PR is merged. The "AI generated code" checkbox should always be checked manually by the user in the UI, not by the agent.
 
@@ -76,15 +76,19 @@ Never add yourself (Claude) as a co-author on commits. Commits should be authore
 
 ## Pushing changes
 
+Before every push, and until the PR lifecycle is complete, follow the
+`pushing-commits-to-the-repo` skill. Do not idle after pushing.
+
+Branch state that has to outlive one session -- the issue brief, the decisions log, session
+handoffs -- lives in the `branch-context` skill, which `pushing-commits-to-the-repo` reads. Bootstrap
+it with `initialize-worktree` on new work or `adopt-pr` on an existing PR, and read it at the start
+of every session on that branch.
+
 **A restriction is a conclusion you earn from a real failure, not a field you read.** Never report an
 operation as blocked, unavailable, or not-permitted based on a metadata flag, a config field, or a
 docs claim — attempt it and quote the actual error. (`maintainerCanModify: false` on a PR does *not*
 mean you cannot push: it governs the upstream-maintainer auto-grant, not your own access to the
 fork.) If you genuinely cannot attempt it, say "not attempted", never "we can't".
-
-**Pushing is not the end of the task.** After you push, do not go idle. The work is done when
-**CI is green and there are no unresolved comments** — see the `pushing-commits-to-the-repo` skill
-for the full loop.
 
 **Do not leave work uncommitted.** Don't end a turn with unstaged or uncommitted local changes
 unless the user's own instructions say otherwise.
