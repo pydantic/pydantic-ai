@@ -13,12 +13,16 @@ import functools
 import warnings as _warnings
 from collections.abc import AsyncIterator
 from dataclasses import replace as dc_replace
+from datetime import datetime
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, Literal, TypeVar
 from unittest.mock import MagicMock
+from uuid import UUID
 
 import anyio
 import pytest
+from pydantic import BaseModel
 from pydantic_ai import (
     AbstractToolset,
     Agent,
@@ -166,6 +170,48 @@ class Person(TypedDict):
 def lookup_person(person: Person, count: int = 1) -> str:
     """Look up details for a person."""
     return f'{count}x {person["name"]} @ {person["home"]["street"]}'
+
+
+class Receipt(BaseModel):
+    """Fields whose Python type is not a JSON scalar."""
+
+    amount: Decimal
+    ident: UUID
+    when: datetime
+
+
+def get_receipt() -> Receipt:
+    """Fetch a receipt."""
+    return Receipt(
+        amount=Decimal('1.50'),
+        ident=UUID('00000000-0000-0000-0000-000000000001'),
+        when=datetime(2026, 1, 1),
+    )
+
+
+def get_prices() -> dict[Decimal, str]:
+    """Fetch prices by amount."""
+    return {Decimal('1.50'): 'USD'}
+
+
+def get_labels() -> dict[int, str]:
+    """Fetch labels by id."""
+    return {1: 'one'}
+
+
+def get_blobs() -> set[bytes]:
+    """Fetch binary blobs."""
+    return {b'\xff\xfe'}
+
+
+def get_sentinel() -> Any:
+    """Fetch a sentinel."""
+    return ...
+
+
+def get_colliding_labels() -> Any:
+    """Fetch labels whose keys collide once stringified."""
+    return {1: 'from-int', '1': 'from-str'}
 
 
 # Hand-built `ToolDefinition` objects + a tiny stub toolset are used by
@@ -372,6 +418,94 @@ class TestCodeMode:
             tools['run_code'],
         )
         assert result.return_value == {'output': 'Hello, Alice!\n'}
+
+    async def test_tool_result_crosses_in_the_shape_the_stub_declares(self) -> None:
+        """`Decimal`, `UUID` and `datetime` reach the sandbox as their JSON form.
+
+        `_build_type_check_stubs` derives the stub from the tool's JSON schema, so
+        those fields are declared `str`. Dumping in Python mode disagreed with that:
+        Monty rejects `Decimal` and `UUID` outright, and a `datetime` arrived where
+        the stub promised a `str`, so the type check passed and the snippet failed
+        at runtime.
+        """
+        wrapper = CodeMode[object]().get_wrapper_toolset(_build_function_toolset(get_receipt))
+        assert isinstance(wrapper, CodeModeToolset)
+        ctx = await build_ctx(None, wrapper)
+        tools = await wrapper.get_tools(ctx)
+        code = "r = await get_receipt()\n[r['amount'], r['ident'], r['when']]"
+        result = await wrapper.call_tool('run_code', {'code': code}, ctx, tools['run_code'])
+        assert result.return_value == [
+            '1.50',
+            '00000000-0000-0000-0000-000000000001',
+            '2026-01-01T00:00:00',
+        ]
+
+        # The un-dumped result is still what the message history records.
+        assert result.metadata['tool_returns']['pyd_ai_code_mode__1'].content == get_receipt()
+
+    async def test_mapping_keys_cross_as_the_strings_the_stub_declares(self) -> None:
+        """A `Decimal` key reaches the sandbox as `'1.50'`, not as a `Decimal`.
+
+        JSON object keys are always strings, so the stub declares `dict[str, str]`
+        whatever the Python key type is. Leaving the key alone hit the same two
+        failures as the values: Monty rejects a `Decimal` key outright.
+        """
+        wrapper = CodeMode[object]().get_wrapper_toolset(_build_function_toolset(get_prices))
+        assert isinstance(wrapper, CodeModeToolset)
+        ctx = await build_ctx(None, wrapper)
+        tools = await wrapper.get_tools(ctx)
+        code = "p = await get_prices()\np['1.50']"
+        result = await wrapper.call_tool('run_code', {'code': code}, ctx, tools['run_code'])
+        assert result.return_value == 'USD'
+
+    async def test_int_mapping_keys_cross_as_the_strings_the_stub_declares(self) -> None:
+        """An `int` key reaches the sandbox as `'1'`, so indexing with the declared `str` works.
+
+        This is the silent half: the stub declares `dict[str, str]`, so a snippet
+        indexing with a `str` type-checked and then raised `KeyError` against the
+        `int` key that actually arrived.
+        """
+        wrapper = CodeMode[object]().get_wrapper_toolset(_build_function_toolset(get_labels))
+        assert isinstance(wrapper, CodeModeToolset)
+        ctx = await build_ctx(None, wrapper)
+        tools = await wrapper.get_tools(ctx)
+        code = "labels = await get_labels()\n[labels['1'], list(labels.keys())]"
+        result = await wrapper.call_tool('run_code', {'code': code}, ctx, tools['run_code'])
+        assert result.return_value == ['one', ['1']]
+
+    async def test_binary_survives_inside_a_set(self) -> None:
+        """A `set` recurses like the other array containers, so its binary leaves stay `bytes`.
+
+        Sending the set to `to_jsonable_python` whole would utf-8 decode the payload,
+        which arbitrary bytes fail.
+        """
+        wrapper = CodeMode[object]().get_wrapper_toolset(_build_function_toolset(get_blobs))
+        assert isinstance(wrapper, CodeModeToolset)
+        ctx = await build_ctx(None, wrapper)
+        tools = await wrapper.get_tools(ctx)
+        code = 'blobs = await get_blobs()\nblobs'
+        result = await wrapper.call_tool('run_code', {'code': code}, ctx, tools['run_code'])
+        assert result.return_value == [b'\xff\xfe']
+
+    async def test_ellipsis_crosses_as_itself(self) -> None:
+        """Monty holds `Ellipsis`, and JSON has no form for it, so it is left alone."""
+        wrapper = CodeMode[object]().get_wrapper_toolset(_build_function_toolset(get_sentinel))
+        assert isinstance(wrapper, CodeModeToolset)
+        ctx = await build_ctx(None, wrapper)
+        tools = await wrapper.get_tools(ctx)
+        code = 'x = await get_sentinel()\nx is ...'
+        result = await wrapper.call_tool('run_code', {'code': code}, ctx, tools['run_code'])
+        assert result.return_value is True
+
+    async def test_mapping_keys_that_collide_once_stringified_are_rejected(self) -> None:
+        """`1` and `'1'` both render as `'1'`, which would drop one value silently."""
+        wrapper = CodeMode[object]().get_wrapper_toolset(_build_function_toolset(get_colliding_labels))
+        assert isinstance(wrapper, CodeModeToolset)
+        ctx = await build_ctx(None, wrapper)
+        tools = await wrapper.get_tools(ctx)
+        code = 'await get_colliding_labels()'
+        with pytest.raises(ModelRetry, match='renders as the JSON key'):
+            await wrapper.call_tool('run_code', {'code': code}, ctx, tools['run_code'])
 
     async def test_run_code_can_chain_multiple_tool_calls_in_one_snippet(self) -> None:
         """A realistic LLM snippet that calls two tools in one `run_code` invocation."""
