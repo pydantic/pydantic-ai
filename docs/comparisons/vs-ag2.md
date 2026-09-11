@@ -19,14 +19,14 @@ store, or the same agent inside [Temporal, DBOS, Prefect, Restate, Lambda, Kitar
 | Agent graph | Group chat / swarm | [`pydantic-graph`](../graph.md) |
 | Coding agent | No | [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) |
 | Research agent | No | [`Researcher()`](https://pydantic.dev/docs/ai/harness/researcher/) |
-| Web search | No | Yes ([WebSearch](../capabilities/web-search.md)) |
-| Code sandboxes | No | [Modal](https://pydantic.dev/docs/ai/harness/modal-sandbox/), [Monty](https://github.com/pydantic/monty), [Code Mode](https://pydantic.dev/docs/ai/harness/code-mode/) |
-| Image generation | No | Yes (any provider) |
+| Web search | Yes | Yes ([WebSearch](../capabilities/web-search.md)) |
+| Code sandboxes | Daytona, Docker | [Modal](https://pydantic.dev/docs/ai/harness/modal-sandbox/), [Monty](https://github.com/pydantic/monty), [Code Mode](https://pydantic.dev/docs/ai/harness/code-mode/) |
+| Image generation | Yes (OpenAI, Gemini) | Yes (OpenAI, Google, xAI) |
 | Browser | No | Yes ([Browser Use](https://pydantic.dev/docs/ai/harness/browser-use/) and [Playwright](https://pydantic.dev/docs/ai/harness/playwright/)) |
 | Structured output | Yes | Yes (type on the agent) |
 | Human in the loop | Yes (human input) | Yes (tool approval) |
 | Guardrails | No | Yes ([harness](https://pydantic.dev/docs/ai/harness/guardrails/)) |
-| Spend limits | No | Yes ([spend](https://pydantic.dev/docs/ai/harness/spend/)) |
+| Spend limits | No | Yes ([cost_limit](../agent.md#usage-limits), [spend](https://pydantic.dev/docs/ai/harness/spend/)) |
 | MCP | Client (extra) | Client and [server](../mcp/server.md) |
 | Memory | No | [Harness Memory](https://pydantic.dev/docs/ai/harness/memory/) |
 | Compaction | No | Yes ([compaction](https://pydantic.dev/docs/ai/harness/compaction/)) |

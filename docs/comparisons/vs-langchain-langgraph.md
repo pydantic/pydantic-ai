@@ -20,15 +20,15 @@ typed [`Agent`][pydantic_ai.Agent], with [`pydantic-graph`](../graph.md) when yo
 | Research agent | No | [`Researcher()`](https://pydantic.dev/docs/ai/harness/researcher/) |
 | Web search | Yes | Yes ([WebSearch](../capabilities/web-search.md)) |
 | Code sandboxes | Community / E2B | [Modal](https://pydantic.dev/docs/ai/harness/modal-sandbox/), [Monty](https://github.com/pydantic/monty), [Code Mode](https://pydantic.dev/docs/ai/harness/code-mode/) |
-| Image generation | Integrations | Yes (any provider) |
+| Image generation | Integrations | Yes (OpenAI, Google, xAI) |
 | Browser | Integrations | Yes ([Browser Use](https://pydantic.dev/docs/ai/harness/browser-use/) and [Playwright](https://pydantic.dev/docs/ai/harness/playwright/)) |
 | Structured output | Yes (`with_structured_output`) | Yes (type on the agent) |
 | Human in the loop | Yes (`interrupt`) | Yes (tool approval) |
 | Guardrails | Middleware | Yes ([harness](https://pydantic.dev/docs/ai/harness/guardrails/)) |
-| Spend limits | No | Yes ([spend](https://pydantic.dev/docs/ai/harness/spend/)) |
+| Spend limits | No | Yes ([cost_limit](../agent.md#usage-limits), [spend](https://pydantic.dev/docs/ai/harness/spend/)) |
 | MCP | Client (adapters) | Client and [server](../mcp/server.md) |
 | Memory | Checkpointers, store | [Harness Memory](https://pydantic.dev/docs/ai/harness/memory/) |
-| Compaction | No | Yes ([compaction](https://pydantic.dev/docs/ai/harness/compaction/)) |
+| Compaction | Yes (Deep Agents) | Yes ([compaction](https://pydantic.dev/docs/ai/harness/compaction/)) |
 | Multi-agent | LangGraph | [Delegation, graph, or `async`](../multi-agent-applications.md) |
 | Durable execution | Checkpointers | [Temporal, DBOS, Prefect, Restate, Lambda, Kitaru, Airflow](../durable_execution/overview.md) |
 | Tracing | LangSmith | OpenTelemetry |

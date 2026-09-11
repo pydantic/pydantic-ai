@@ -16,23 +16,23 @@ call, branch, `asyncio.gather`, or [`pydantic-graph`](../graph.md).
 | Interfaces | Enterprise UI | [`to_cli_sync()`](../cli.md), [`to_web()`](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) |
 | Realtime voice | No | Yes ([realtime](../realtime/overview.md)) |
 | Agent graph | `Process` (sequential / hierarchical) | [`pydantic-graph`](../graph.md) |
-| Coding agent | Code-interpreter tools | [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) |
+| Coding agent | E2B tools | [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) |
 | Research agent | No | [`Researcher()`](https://pydantic.dev/docs/ai/harness/researcher/) |
 | Web search | Yes | Yes ([WebSearch](../capabilities/web-search.md)) |
-| Code sandboxes | No | [Modal](https://pydantic.dev/docs/ai/harness/modal-sandbox/), [Monty](https://github.com/pydantic/monty), [Code Mode](https://pydantic.dev/docs/ai/harness/code-mode/) |
-| Image generation | No | Yes (any provider) |
-| Browser | No | Yes ([Browser Use](https://pydantic.dev/docs/ai/harness/browser-use/) and [Playwright](https://pydantic.dev/docs/ai/harness/playwright/)) |
+| Code sandboxes | E2B | [Modal](https://pydantic.dev/docs/ai/harness/modal-sandbox/), [Monty](https://github.com/pydantic/monty), [Code Mode](https://pydantic.dev/docs/ai/harness/code-mode/) |
+| Image generation | Yes (`DallETool`) | Yes (OpenAI, Google, xAI) |
+| Browser | Yes (Browserbase) | Yes ([Browser Use](https://pydantic.dev/docs/ai/harness/browser-use/) and [Playwright](https://pydantic.dev/docs/ai/harness/playwright/)) |
 | Structured output | Yes | Yes (type on the agent) |
 | Human in the loop | Yes (human tools) | Yes (tool approval) |
-| Guardrails | No | Yes ([harness](https://pydantic.dev/docs/ai/harness/guardrails/)) |
-| Spend limits | No | Yes ([spend](https://pydantic.dev/docs/ai/harness/spend/)) |
+| Guardrails | Yes (task guardrails) | Yes ([harness](https://pydantic.dev/docs/ai/harness/guardrails/)) |
+| Spend limits | No | Yes ([cost_limit](../agent.md#usage-limits), [spend](https://pydantic.dev/docs/ai/harness/spend/)) |
 | MCP | Client | Client and [server](../mcp/server.md) |
 | Memory | On `Agent` and `Crew` | [Harness Memory](https://pydantic.dev/docs/ai/harness/memory/) |
 | Compaction | No | Yes ([compaction](https://pydantic.dev/docs/ai/harness/compaction/)) |
 | Multi-agent | Roles, tasks, `Process` | [Delegation, graph, or `async`](../multi-agent-applications.md) |
 | Durable execution | `Crew.from_checkpoint` | [Temporal, DBOS, Prefect, Restate, Lambda, Kitaru, Airflow](../durable_execution/overview.md) |
 | Tracing | Their platform | OpenTelemetry |
-| Evals | No | Yes ([Pydantic Evals](../evals.md)) |
+| Evals | Yes (experimental) | Yes ([Pydantic Evals](../evals.md)) |
 | Test without API keys | No (`crewai test` hits a live model) | Yes |
 | Embeddings | Knowledge | Yes |
 | Deployment | CrewAI enterprise, or your app | Anywhere |

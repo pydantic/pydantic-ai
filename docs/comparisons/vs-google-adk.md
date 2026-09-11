@@ -20,12 +20,12 @@ AI isn't tied to a cloud.
 | Research agent | No | [`Researcher()`](https://pydantic.dev/docs/ai/harness/researcher/) |
 | Web search | Yes (Google Search) | Yes ([WebSearch](../capabilities/web-search.md)) |
 | Code sandboxes | Gemini code execution | [Modal](https://pydantic.dev/docs/ai/harness/modal-sandbox/), [Monty](https://github.com/pydantic/monty), [Code Mode](https://pydantic.dev/docs/ai/harness/code-mode/) |
-| Image generation | Yes (Gemini) | Yes (any provider) |
-| Browser | No | Yes ([Browser Use](https://pydantic.dev/docs/ai/harness/browser-use/) and [Playwright](https://pydantic.dev/docs/ai/harness/playwright/)) |
+| Image generation | Yes (Gemini) | Yes (OpenAI, Google, xAI) |
+| Browser | Yes (Computer Use) | Yes ([Browser Use](https://pydantic.dev/docs/ai/harness/browser-use/) and [Playwright](https://pydantic.dev/docs/ai/harness/playwright/)) |
 | Structured output | Yes | Yes (type on the agent) |
 | Human in the loop | Yes (confirmation / long-running tools) | Yes (tool approval) |
 | Guardrails | Callbacks | Yes ([harness](https://pydantic.dev/docs/ai/harness/guardrails/)) |
-| Spend limits | No | Yes ([spend](https://pydantic.dev/docs/ai/harness/spend/)) |
+| Spend limits | No | Yes ([cost_limit](../agent.md#usage-limits), [spend](https://pydantic.dev/docs/ai/harness/spend/)) |
 | MCP | Client | Client and [server](../mcp/server.md) |
 | Memory | App / user / invocation state | [Harness Memory](https://pydantic.dev/docs/ai/harness/memory/) |
 | Compaction | No | Yes ([compaction](https://pydantic.dev/docs/ai/harness/compaction/)) |

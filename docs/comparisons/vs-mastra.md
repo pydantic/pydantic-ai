@@ -21,12 +21,12 @@ and scorers as separate concepts.
 | Research agent | No | [`Researcher()`](https://pydantic.dev/docs/ai/harness/researcher/) |
 | Web search | Yes | Yes ([WebSearch](../capabilities/web-search.md)) |
 | Code sandboxes | No | [Modal](https://pydantic.dev/docs/ai/harness/modal-sandbox/), [Monty](https://github.com/pydantic/monty), [Code Mode](https://pydantic.dev/docs/ai/harness/code-mode/) |
-| Image generation | No | Yes |
-| Browser | No | Yes ([Browser Use](https://pydantic.dev/docs/ai/harness/browser-use/) and [Playwright](https://pydantic.dev/docs/ai/harness/playwright/)) |
+| Image generation | No | Yes (OpenAI, Google, xAI) |
+| Browser | Yes (AgentBrowser, Stagehand) | Yes ([Browser Use](https://pydantic.dev/docs/ai/harness/browser-use/) and [Playwright](https://pydantic.dev/docs/ai/harness/playwright/)) |
 | Structured output | Yes | Yes (type on the agent) |
 | Human in the loop | Yes (processors / approval) | Yes (tool approval) |
 | Guardrails | Processors | Yes ([harness](https://pydantic.dev/docs/ai/harness/guardrails/)) |
-| Spend limits | Metrics, not a ceiling | Yes ([spend](https://pydantic.dev/docs/ai/harness/spend/)) |
+| Spend limits | Metrics, not a ceiling | Yes ([cost_limit](../agent.md#usage-limits), [spend](https://pydantic.dev/docs/ai/harness/spend/)) |
 | MCP | Client | Client and [server](../mcp/server.md) |
 | Memory | Yes (working, observational, semantic) | Yes ([harness Memory](https://pydantic.dev/docs/ai/harness/memory/); thinner) |
 | Compaction | No | Yes ([compaction](https://pydantic.dev/docs/ai/harness/compaction/)) |

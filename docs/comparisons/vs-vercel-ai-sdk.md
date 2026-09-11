@@ -12,7 +12,7 @@ protocol, so the browser can stay theirs.
 | License | Apache-2.0 | MIT |
 | Model providers | Many | Any, plus [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] |
 | Extensibility | Middleware, tools | [Capabilities](../extensibility.md) |
-| Skills | No | Yes ([Skills](https://pydantic.dev/docs/ai/harness/skills/)) |
+| Skills | Yes (`uploadSkill`) | Yes ([Skills](https://pydantic.dev/docs/ai/harness/skills/)) |
 | On-demand capabilities | No | Yes ([on-demand](../capabilities/on-demand.md)) |
 | Interfaces | React `useChat` / Vercel AI stream | [`to_cli_sync()`](../cli.md), [`to_web()`](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) |
 | Realtime voice | No | Yes ([realtime](../realtime/overview.md)) |
@@ -20,18 +20,18 @@ protocol, so the browser can stay theirs.
 | Coding agent | No | [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) |
 | Research agent | No | [`Researcher()`](https://pydantic.dev/docs/ai/harness/researcher/) |
 | Web search | Yes | Yes ([WebSearch](../capabilities/web-search.md)) |
-| Code sandboxes | No | [Modal](https://pydantic.dev/docs/ai/harness/modal-sandbox/), [Monty](https://github.com/pydantic/monty), [Code Mode](https://pydantic.dev/docs/ai/harness/code-mode/) |
-| Image generation | Yes (`generateImage`) | Yes |
+| Code sandboxes | `experimental_sandbox` (you host) | [Modal](https://pydantic.dev/docs/ai/harness/modal-sandbox/), [Monty](https://github.com/pydantic/monty), [Code Mode](https://pydantic.dev/docs/ai/harness/code-mode/) |
+| Image generation | Yes (`generateImage`) | Yes (OpenAI, Google, xAI) |
 | Browser | No | Yes ([Browser Use](https://pydantic.dev/docs/ai/harness/browser-use/) and [Playwright](https://pydantic.dev/docs/ai/harness/playwright/)) |
 | Structured output | Yes (`generateObject`) | Yes (type on the agent) |
 | Human in the loop | Yes (approval in the browser) | Yes (tool approval) |
-| Guardrails | No | Yes ([harness](https://pydantic.dev/docs/ai/harness/guardrails/)) |
-| Spend limits | No | Yes ([spend](https://pydantic.dev/docs/ai/harness/spend/)) |
+| Guardrails | Middleware | Yes ([harness](https://pydantic.dev/docs/ai/harness/guardrails/)) |
+| Spend limits | No | Yes ([cost_limit](../agent.md#usage-limits), [spend](https://pydantic.dev/docs/ai/harness/spend/)) |
 | MCP | Client | Client and [server](../mcp/server.md) |
 | Memory | No | [Harness Memory](https://pydantic.dev/docs/ai/harness/memory/) |
 | Compaction | No | Yes ([compaction](https://pydantic.dev/docs/ai/harness/compaction/)) |
 | Multi-agent | You compose it | [Delegation, graph, or `async`](../multi-agent-applications.md) |
-| Durable execution | No | [Temporal, DBOS, Prefect, Restate, Lambda, Kitaru, Airflow](../durable_execution/overview.md) |
+| Durable execution | `WorkflowAgent` (`@ai-sdk/workflow`) | [Temporal, DBOS, Prefect, Restate, Lambda, Kitaru, Airflow](../durable_execution/overview.md) |
 | Tracing | Their telemetry | OpenTelemetry |
 | Evals | No | Yes ([Pydantic Evals](../evals.md)) |
 | Test without API keys | Yes (`MockLanguageModelV4`) | Yes |

@@ -24,13 +24,13 @@ speak.
 | Research agent | No | [`Researcher()`](https://pydantic.dev/docs/ai/harness/researcher/) |
 | Web search | No | Yes ([WebSearch](../capabilities/web-search.md)) |
 | Code sandboxes | No | [Modal](https://pydantic.dev/docs/ai/harness/modal-sandbox/), [Monty](https://github.com/pydantic/monty), [Code Mode](https://pydantic.dev/docs/ai/harness/code-mode/) |
-| Image generation | No | Yes |
+| Image generation | No | Yes (OpenAI, Google, xAI) |
 | Browser | No | Yes ([Browser Use](https://pydantic.dev/docs/ai/harness/browser-use/) and [Playwright](https://pydantic.dev/docs/ai/harness/playwright/)) |
-| Structured output | No | Yes (type on the agent) |
+| Structured output | You wire `response_format` | Yes (type on the agent) |
 | Human in the loop | Frontend tools | Yes (tool approval) |
 | Guardrails | No | Yes ([harness](https://pydantic.dev/docs/ai/harness/guardrails/)) |
-| Spend limits | No | Yes ([spend](https://pydantic.dev/docs/ai/harness/spend/)) |
-| MCP | No | Client and [server](../mcp/server.md) |
+| Spend limits | No | Yes ([cost_limit](../agent.md#usage-limits), [spend](https://pydantic.dev/docs/ai/harness/spend/)) |
+| MCP | Client | Client and [server](../mcp/server.md) |
 | Memory | No | [Harness Memory](https://pydantic.dev/docs/ai/harness/memory/) |
 | Compaction | No | Yes ([compaction](https://pydantic.dev/docs/ai/harness/compaction/)) |
 | Multi-agent | Handoffs in a room | [Delegation, graph, or `async`](../multi-agent-applications.md) |
