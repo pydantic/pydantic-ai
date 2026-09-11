@@ -36,4 +36,10 @@ packages. Pydantic AI is a typed Python [`Agent`][pydantic_ai.Agent].
 Cells linked to pydantic.dev/docs/ai/harness ship in [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/),
 a separate package.
 
+## FAQ
+
+**Can I build a coding agent like this in Python?** Yes. [Code Puppy](https://github.com/mpfaffenberger/code_puppy)
+and [Pydantic Deep Agents](https://github.com/vstorm-co/pydantic-deepagents) (Vstorm) did.
+[`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) if you want ours.
+
 [Install Pydantic AI](../install.md).
