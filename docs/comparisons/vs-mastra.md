@@ -15,23 +15,23 @@ and scorers as separate concepts.
 | Extensibility | Tools, processors, scorers, workflows | [Capabilities and toolsets](../extensibility.md) |
 | Interfaces | Playground, Studio | [CLI](../cli.md), [web chat](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) (experimental), A2A |
 | Build your own harness | Yes | [Yes](https://pydantic.dev/docs/ai/harness/#build-your-own) |
-| Coding harness | `createCodingAgent()` | [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) |
-| Graph library | Workflows in core | [`pydantic-graph`](../graph.md) |
-| Multi-agent | Workflows, sub-agents | [Sub-agents](../multi-agent-applications.md), [graph](../graph.md), or `async` |
-| Realtime voice | Voice extras | [Realtime](../realtime/overview.md) |
-| Image generation | No | [Image generation](../image-generation.md) |
+| Coding harness | `createCodingAgent()` | Yes ([`Coder()`](https://pydantic.dev/docs/ai/harness/coder/)) |
+| Graph library | Workflows in core | Yes ([`pydantic-graph`](../graph.md)) |
+| Multi-agent | Workflows, sub-agents | [Sub-agents](../multi-agent-applications.md), [hand-offs](../multi-agent-applications.md#programmatic-agent-hand-off), or [graph](../graph.md) |
+| Realtime voice | Voice extras | [Yes](../realtime/overview.md) |
+| Image generation | No | [Yes](../image-generation.md) |
 | License | Apache-2.0 (core); EE for some features | MIT |
 
 | | Mastra | Pydantic AI |
 |---|---|---|
-| Structured output | Yes | [Type on the agent](../output.md) |
-| Guardrails | Processors | [Guardrails](https://pydantic.dev/docs/ai/harness/guardrails/) |
+| Structured output | Yes | Yes ([type on the agent](../output.md)) |
+| Guardrails | Processors | [Yes](https://pydantic.dev/docs/ai/harness/guardrails/) |
 | Code sandboxes | Yes | [Yes](https://pydantic.dev/docs/ai/harness/#execution-environments) |
 | Browser | Yes | [Yes](https://pydantic.dev/docs/ai/harness/#web-research) |
-| Memory | Yes (working, observational, semantic) | [Memory](https://pydantic.dev/docs/ai/harness/memory/) |
-| Compaction | No | [Compaction](../capabilities/compaction.md) |
-| Evals | Yes | [Pydantic Evals](../evals.md) |
-| Test without API keys | Yes | [`TestModel`](../testing.md), [`FunctionModel`](../testing.md) |
+| Memory | Yes (working, observational, semantic) | [Yes](https://pydantic.dev/docs/ai/harness/memory/) |
+| Compaction | No | [Yes](../capabilities/compaction.md) |
+| Evals | Yes | Yes ([Pydantic Evals](../evals.md)) |
+| Test without API keys | Yes | Yes ([`TestModel`, `FunctionModel`](../testing.md)) |
 
 Cells linked to pydantic.dev/docs/ai/harness ship in [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/),
 a separate package.

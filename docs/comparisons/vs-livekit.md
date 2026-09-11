@@ -18,23 +18,23 @@ speak.
 | Extensibility | Pipeline nodes (`stt_node`, `llm_node`, …) | [Capabilities and toolsets](../extensibility.md) |
 | Interfaces | WebRTC rooms, telephony | [CLI](../cli.md), [web chat](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) (experimental), A2A |
 | Build your own harness | Yes | [Yes](https://pydantic.dev/docs/ai/harness/#build-your-own) |
-| Coding harness | No | [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) |
-| Graph library | No (media pipelines) | [`pydantic-graph`](../graph.md) |
-| Multi-agent | Handoffs in a room | [Sub-agents](../multi-agent-applications.md), [graph](../graph.md), or `async` |
-| Realtime voice | The product (WebRTC, telephony) | [Realtime](../realtime/overview.md) |
-| Image generation | No | [Image generation](../image-generation.md) |
+| Coding harness | No | Yes ([`Coder()`](https://pydantic.dev/docs/ai/harness/coder/)) |
+| Graph library | No (media pipelines) | Yes ([`pydantic-graph`](../graph.md)) |
+| Multi-agent | Handoffs in a room | [Sub-agents](../multi-agent-applications.md), [hand-offs](../multi-agent-applications.md#programmatic-agent-hand-off), or [graph](../graph.md) |
+| Realtime voice | The product (WebRTC, telephony) | [Yes](../realtime/overview.md) |
+| Image generation | No | [Yes](../image-generation.md) |
 | License | Apache-2.0 | MIT |
 
 | | LiveKit Agents | Pydantic AI |
 |---|---|---|
-| Structured output | You wire `response_format` | [Type on the agent](../output.md) |
-| Guardrails | No | [Guardrails](https://pydantic.dev/docs/ai/harness/guardrails/) |
+| Structured output | You wire `response_format` | Yes ([type on the agent](../output.md)) |
+| Guardrails | No | [Yes](https://pydantic.dev/docs/ai/harness/guardrails/) |
 | Code sandboxes | `CodeInterpreter` (provider) | [Yes](https://pydantic.dev/docs/ai/harness/#execution-environments) |
 | Browser | `ComputerUse` / `plugins.browser` | [Yes](https://pydantic.dev/docs/ai/harness/#web-research) |
-| Memory | No | [Memory](https://pydantic.dev/docs/ai/harness/memory/) |
-| Compaction | Yes (`truncate`) | [Compaction](../capabilities/compaction.md) |
-| Evals | Yes (`livekit.agents.evals`) | [Pydantic Evals](../evals.md) |
-| Test without API keys | Yes | [`TestModel`](../testing.md), [`FunctionModel`](../testing.md) |
+| Memory | No | [Yes](https://pydantic.dev/docs/ai/harness/memory/) |
+| Compaction | Yes (`truncate`) | [Yes](../capabilities/compaction.md) |
+| Evals | Yes (`livekit.agents.evals`) | Yes ([Pydantic Evals](../evals.md)) |
+| Test without API keys | Yes | Yes ([`TestModel`, `FunctionModel`](../testing.md)) |
 
 Cells linked to pydantic.dev/docs/ai/harness ship in [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/),
 a separate package.
