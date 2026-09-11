@@ -12,7 +12,6 @@ typed [`Agent`][pydantic_ai.Agent], with [`pydantic-graph`](../graph.md) when yo
 | Model providers | Many | Any, plus [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] |
 | Extensibility | Middleware, callbacks | [Capabilities](../extensibility.md) |
 | Skills | Yes | Yes ([Skills](https://pydantic.dev/docs/ai/harness/skills/)) |
-| On-demand capabilities | No | Yes ([on-demand](../capabilities/on-demand.md)) |
 | Interfaces | LangServe, Studio | [`to_cli_sync()`](../cli.md), [`to_web()`](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) |
 | Realtime voice | No | Yes ([realtime](../realtime/overview.md)) |
 | Agent graph | LangGraph | [`pydantic-graph`](../graph.md) |

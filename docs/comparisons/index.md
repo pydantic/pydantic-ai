@@ -2,8 +2,7 @@
 
 Each page uses the same rows, the ones you'd put on a slide:
 
-native Python SDK, license, model providers, [extensibility](../extensibility.md),
-skills, [on-demand capabilities](../capabilities/on-demand.md),
+native Python SDK, license, model providers, [extensibility](../extensibility.md), skills,
 [interfaces](../interfaces.md) (CLI, web chat, AG-UI, Vercel AI, ACP),
 [realtime voice](../realtime/overview.md), agent graph, coding agent, research agent, web search,
 code sandboxes, image generation, browser (Browser Use and Playwright), structured output,

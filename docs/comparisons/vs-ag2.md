@@ -13,7 +13,6 @@ store, or the same agent inside [Temporal, DBOS, Prefect, Restate, Lambda, Kitar
 | Model providers | Many | Any, plus [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] |
 | Extensibility | Tools, `Inject` / `Depends` | [Capabilities](../extensibility.md) |
 | Skills | Yes | Yes ([Skills](https://pydantic.dev/docs/ai/harness/skills/)) |
-| On-demand capabilities | No | Yes ([on-demand](../capabilities/on-demand.md)) |
 | Interfaces | A2A, ACP extra | [`to_cli_sync()`](../cli.md), [`to_web()`](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) |
 | Realtime voice | No | Yes ([realtime](../realtime/overview.md)) |
 | Agent graph | Group chat / swarm | [`pydantic-graph`](../graph.md) |
