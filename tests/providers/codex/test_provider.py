@@ -153,6 +153,30 @@ def test_from_codex_cli_honors_code_home(env: TestEnv, tmp_path: Path):
     assert auth_json.read_text(encoding='utf-8') == original
 
 
+def test_from_codex_cli_reads_auth_json_as_utf8(env: TestEnv, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """The Codex CLI auth file is JSON text, so its decoding must not depend on the locale."""
+    auth_json = tmp_path / 'auth.json'
+    auth_json.write_text(
+        json.dumps(
+            {
+                'OPENAI_API_KEY': None,
+                'tokens': {'access_token': 'a', 'refresh_token': 'r', 'account_id': 'acc'},
+            }
+        ),
+        encoding='utf-8',
+    )
+    read_text = Path.read_text
+
+    def read_text_requires_utf8(path: Path, *args: Any, **kwargs: Any) -> str:
+        assert kwargs.get('encoding') == 'utf-8'
+        return read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, 'read_text', read_text_requires_utf8)
+    env.set('CODEX_HOME', str(tmp_path))
+
+    assert OpenAICodexProvider().credentials.account_id == 'acc'
+
+
 def test_from_codex_cli_missing_file(env: TestEnv, tmp_path: Path):
     env.set('CODEX_HOME', str(tmp_path))
     with pytest.raises(UserError, match=r'codex login'):
@@ -927,7 +951,8 @@ def test_provider_class_inference():
 
 def test_openai_codex_prefix_infers_responses_model(env: TestEnv, tmp_path: Path):
     (tmp_path / 'auth.json').write_text(
-        json.dumps({'tokens': {'access_token': 'a', 'refresh_token': 'r', 'account_id': 'acc'}})
+        json.dumps({'tokens': {'access_token': 'a', 'refresh_token': 'r', 'account_id': 'acc'}}),
+        encoding='utf-8',
     )
     env.set('CODEX_HOME', str(tmp_path))
     model = infer_model('openai-codex:gpt-5.6-luna')
