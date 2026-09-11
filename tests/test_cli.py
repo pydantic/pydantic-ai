@@ -235,6 +235,34 @@ def test_mcp_config_interactive(capfd: CaptureFixture[str], mocker: MockerFixtur
     assert 'The weather in a is sunny and 26 degrees Celsius.' in ' '.join(output.split())
 
 
+def test_mcp_config_banner_omits_the_tool_count(
+    capfd: CaptureFixture[str], mocker: MockerFixture, env: TestEnv, tmp_path: Path
+):
+    """`tools: 0` beside a session full of MCP tools would be worse than saying nothing at all.
+
+    Startup can't count them: only a `FunctionToolset` holds its tools synchronously, and an MCP
+    server would have to be connected to and asked. The count is left out rather than understated.
+    """
+    env.set('OPENAI_API_KEY', 'test')
+    config_file = tmp_path / 'mcp_servers.json'
+    config_file.write_text(
+        json.dumps({'mcpServers': {'temp': {'command': 'python', 'args': ['-m', 'tests.mcp_server']}}})
+    )
+
+    with create_pipe_input() as inp:
+        inp.send_text('/exit\n')
+        session = PromptSession[Any](input=inp, output=DummyOutput())
+        mocker.patch('pydantic_ai._cli.PromptSession', return_value=session)
+        mocker.patch('pydantic_ai._display.banner_available', return_value=True)
+
+        with cli_agent.override(model=TestModel()):
+            assert cli(['--mcp-config', str(config_file)]) == 0
+
+    output = capfd.readouterr().out
+    assert 'capabilities:' in output, 'the banner should still be shown'
+    assert 'tools:' not in output
+
+
 # Sentinel for the case where `--mcp-config` is handed an existing path that isn't a readable file.
 DIRECTORY_CONFIG = 'directory-instead-of-file'
 

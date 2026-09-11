@@ -15,7 +15,7 @@ from pydantic import ImportString, TypeAdapter, ValidationError
 
 from .. import __version__, _display, models, usage as _usage
 from .._run_context import AgentDepsT
-from ..agent import AbstractAgent, Agent, _startup_banner_details  # pyright: ignore[reportPrivateUsage]
+from ..agent import AbstractAgent, Agent
 from ..exceptions import UserError
 from ..messages import FunctionToolCallEvent, FunctionToolResultEvent, ModelMessage, ModelResponse, ToolReturnPart
 from ..models import infer_model, known_model_names
@@ -145,6 +145,7 @@ def _print_intro(
     model: models.Model | models.KnownModelName | str | None = None,
     *,
     agent_path: str | None = None,
+    toolsets: Sequence[AbstractToolset[Any]] | None = None,
 ) -> None:
     """Print the intro a chat session opens with.
 
@@ -161,8 +162,10 @@ def _print_intro(
         agent: The agent the session will run.
         model: Model the session was asked to use, if not the agent's own.
         agent_path: How the user asked for the agent, for one that doesn't name itself.
+        toolsets: Toolsets the session will pass to each run, which aren't on the agent — `clai`
+            loads `--mcp-config` into these, so leaving them out would undercount the session.
     """
-    details = _startup_banner_details(agent, model)
+    details = agent._startup_banner_details(model, toolsets)  # pyright: ignore[reportPrivateUsage]
 
     banner = _display.render_banner(
         # A loaded agent doesn't always name itself, so fall back to how the user asked for it.
@@ -391,7 +394,7 @@ def _run_chat_command(
     model_name = agent.model if isinstance(agent.model, str) else agent.model.model_id
     # Nothing can print a second one later: `ask_agent` claims it before every run.
     if _display.banner_available(is_terminal=console.is_terminal):
-        _print_intro(console, agent, agent_path=args.agent)
+        _print_intro(console, agent, agent_path=args.agent, toolsets=toolsets)
     elif args.agent and model_arg_set:
         console.print(
             f'{name_version} using custom agent [magenta]{args.agent}[/magenta] with [magenta]{model_name}[/magenta]',
@@ -446,7 +449,7 @@ async def run_chat(
         and agent._has_model(model)  # pyright: ignore[reportPrivateUsage]
         and _display.banner_available(is_terminal=console.is_terminal)
     ):
-        _print_intro(console, agent, model)
+        _print_intro(console, agent, model, toolsets=toolsets)
 
     prompt_history_path = (config_dir or PYDANTIC_AI_HOME) / PROMPT_HISTORY_FILENAME
     prompt_history_path.parent.mkdir(parents=True, exist_ok=True)

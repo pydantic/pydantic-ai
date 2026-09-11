@@ -232,6 +232,21 @@ def test_render_banner_wraps_a_version_line_too_wide_for_the_column(
     assert max(map(len, banner.splitlines())) <= 100
 
 
+def test_render_banner_leaves_out_a_tool_count_the_caller_could_not_take(render: Callable[..., str]):
+    """Saying `tools: 0` beside a session full of MCP tools is worse than not saying it."""
+    banner = render(tools=None, observability=False)
+
+    assert banner == snapshot("""\
+      / \\
+     /   \\       HEADING
+   /___.___\\
+  /    |    \\    agent: support_agent • model: openai:gpt-5.6-sol • capabilities: 0
+/      |      \\
+`---.._|_..---'\
+""")
+    assert 'tools' not in banner
+
+
 def test_the_observability_links_each_survive_on_one_line():
     """A URL `textwrap` splits stops being clickable, which is the only reason it's in the banner."""
     lines = _display._observability_lines()  # pyright: ignore[reportPrivateUsage]

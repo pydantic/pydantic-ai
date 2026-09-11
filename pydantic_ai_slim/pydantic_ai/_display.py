@@ -219,7 +219,7 @@ def render_banner(
     name: str | None,
     model: str,
     output_type: object,
-    tools: int,
+    tools: int | None,
     capabilities: int,
     observability: bool = True,
     color: bool = True,
@@ -230,7 +230,8 @@ def render_banner(
         name: Agent name, omitted from the banner when the agent doesn't have one.
         model: ID of the model the agent will use.
         output_type: The agent's output type, omitted from the banner when it's the default `str`.
-        tools: Number of tools the agent can call.
+        tools: Number of tools the agent can call, or `None` when the caller can't count them
+            without connecting to something, which leaves the count out rather than understating it.
         capabilities: Number of capabilities registered on the agent.
         observability: Whether to include the pointer to setting up observability.
         color: Whether to emit the ANSI colour codes that highlight the logo and the agent's identity.
@@ -240,7 +241,10 @@ def render_banner(
     info.append(('model', model, True))
     if output_type is not str:
         info.append(('output', _output_type_name(output_type), False))
-    info.append(('tools', str(tools), False))
+    # A count the caller couldn't take is left out rather than reported as a number that's wrong:
+    # `clai --mcp-config` would otherwise say `tools: 0` beside a session full of MCP tools.
+    if tools is not None:
+        info.append(('tools', str(tools), False))
     info.append(('capabilities', str(capabilities), False))
 
     # The versions carry no colour, so `textwrap` can be trusted to break them at a separator.

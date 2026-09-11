@@ -2868,6 +2868,42 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         override = self._override_root_capability.get()
         return override.value if override is not None else self._root_capability
 
+    def _startup_banner_details(
+        self,
+        model: models.Model | models.KnownModelName | str | None,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+    ) -> _StartupBannerDetails:
+        """Describe the session `_cli` is about to open, before any run has resolved anything.
+
+        Resolved the way a run resolves it rather than read off the agent as configured: an
+        `override()` in force, or instrumentation switched on globally by `Agent.instrument_all()`,
+        would otherwise have the banner describe a different session than the one about to start.
+
+        Args:
+            model: Model the session was asked to use, if not the agent's own.
+            toolsets: Toolsets the session will pass to each run, which aren't on the agent.
+        """
+        chat_model = self._pick_raw_model(model)
+        # `self.toolsets` is override-aware, so an `override(toolsets=...)` is reflected.
+        session_toolsets = [*self.toolsets, *(toolsets or [])]
+        return _StartupBannerDetails(
+            model=chat_model.model_id if isinstance(chat_model, models.Model) else chat_model,
+            tools=(
+                sum(len(toolset.tools) for toolset in session_toolsets)
+                # Only a `FunctionToolset` holds its tools synchronously; every other toolset answers
+                # `get_tools()` given a `RunContext`, and an MCP server would have to be connected to
+                # first. Rather than report a number that's wrong — `clai --mcp-config` would have
+                # said `tools: 0` next to a session full of MCP tools — the banner leaves the count
+                # out and says nothing. A run's own banner counts what the model is really offered.
+                if all(isinstance(toolset, FunctionToolset) for toolset in session_toolsets)
+                else None
+            ),
+            capabilities=_registered_capability_count(self._effective_root_capability()),
+            instrumented=(
+                isinstance(chat_model, InstrumentedModel) or self._resolve_instrumentation_settings() is not None
+            ),
+        )
+
     def _resolve_tool_retries(self, retries: int | None = None) -> int:
         """Resolve the effective tool-retry default: override > run/spec > agent default."""
         override = self._override_tool_retries.get()
@@ -4327,37 +4363,10 @@ class _StartupBannerDetails(NamedTuple):
     """What a chat session can say about itself before any run has resolved anything."""
 
     model: str
-    tools: int
+    tools: int | None
+    """`None` when the session holds a toolset whose tools can't be counted without connecting."""
     capabilities: int
     instrumented: bool
-
-
-def _startup_banner_details(
-    agent: Agent[Any, Any], model: models.Model | models.KnownModelName | str | None
-) -> _StartupBannerDetails:
-    """Gather what `_cli` opens a session's banner with.
-
-    Gathered here rather than in `_cli` because all of it is private to `Agent`, and resolved the way
-    a run resolves it: an `override()` in force, or instrumentation switched on globally by
-    `Agent.instrument_all()`, would otherwise have the banner describe a different session than the
-    one about to start.
-
-    The tool count is the one thing startup can't know exactly, and not by choice: only
-    `FunctionToolset` holds its tools synchronously, while every other toolset answers `get_tools()`
-    given a `RunContext`, and an MCP server would have to be connected to first. So a session opened
-    with `--mcp` understates its tools here, and only here — a run's own banner counts what the model
-    is actually offered, off the tool manager.
-    """
-    chat_model = agent._pick_raw_model(model)  # pyright: ignore[reportPrivateUsage]
-    return _StartupBannerDetails(
-        model=chat_model.model_id if isinstance(chat_model, models.Model) else chat_model,
-        # `agent.toolsets` is override-aware, so an `override(toolsets=...)` is reflected.
-        tools=sum(len(toolset.tools) for toolset in agent.toolsets if isinstance(toolset, FunctionToolset)),
-        capabilities=_registered_capability_count(agent._effective_root_capability()),  # pyright: ignore[reportPrivateUsage]
-        instrumented=(
-            isinstance(chat_model, InstrumentedModel) or agent._resolve_instrumentation_settings() is not None  # pyright: ignore[reportPrivateUsage]
-        ),
-    )
 
 
 def _inject_auto_capabilities(capabilities: list[AbstractCapability[Any]]) -> None:
