@@ -374,6 +374,12 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
     # `os.stat`. Exempting the capture entry point keeps `os.stat` calls from example and library
     # code detectable.
     ('os.stat', 'pytest_examples/run_code.py', '__call__'),
+    # The first-run banner asks whether the harness is installed and what version it is, to name it
+    # in the banner. That happens once per process, before the first request.
+    ('os.stat', 'pydantic_ai/_display.py', '_version_line'),
+    ('os.listdir', 'pydantic_ai/_display.py', '_version_line'),
+    ('io.TextIOWrapper.read', 'pydantic_ai/_display.py', '_version_line'),
+    ('io.BufferedReader.read', 'pydantic_ai/_display.py', '_version_line'),
     # `load_mcp_toolsets` is a sync config-file loader; reading the file is its documented job.
     ('os.stat', 'pydantic_ai/mcp.py', 'load_mcp_toolsets'),
     ('io.BufferedReader.read', 'pydantic_ai/mcp.py', 'load_mcp_toolsets'),

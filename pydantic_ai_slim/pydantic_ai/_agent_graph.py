@@ -42,7 +42,17 @@ from pydantic_ai.toolsets._tool_search import (
 from pydantic_graph import BaseNode, End, Graph, GraphBuilder, GraphRunContext
 from pydantic_graph.basenode import NodeRunEndT
 
-from . import _enqueue, _output, _system_prompt, exceptions, messages as _messages, models, result, usage as _usage
+from . import (
+    _display,
+    _enqueue,
+    _output,
+    _system_prompt,
+    exceptions,
+    messages as _messages,
+    models,
+    result,
+    usage as _usage,
+)
 from ._cancel import RunCancellation
 from ._deferred_capabilities import (
     _parse_loaded_capabilities,  # pyright: ignore[reportPrivateUsage]
@@ -429,6 +439,9 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
 
     tracer: Tracer
     instrumentation_settings: InstrumentationSettings | None
+
+    display_banner: _display.BannerDisplay
+    """Shows the first-run banner, once this run has resolved the model and tools it will use."""
 
     agent: Agent[DepsT, Any] | None = None
 
@@ -1137,6 +1150,31 @@ async def model_request_stream(
             await sr.aclose()
 
 
+def _display_first_run_banner(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Any, Any]]) -> None:
+    """Show the first-run banner, from whichever path prepared the run's first request.
+
+    Called once the step's tool manager is built, the earliest point that knows which tools the
+    model will be offered: dynamic toolsets and MCP servers have been resolved by now. Output tools
+    are left out, as the banner reports the output type separately and counting them would make the
+    number move with the output mode rather than with what the agent was given.
+
+    Every reason there won't be a banner is checked before any of that is gathered, so a run that
+    isn't getting one counts nothing: this is on a path every run takes, and past the first one it
+    comes down to reading a flag.
+
+    An instrumented run has what the banner would point it to, so it stays out of the way — without
+    spending the claim, since another agent in this process may not be instrumented. `clai` differs:
+    its banner is also its session header, so it shows one either way.
+    """
+    if ctx.state.run_step != 1 or ctx.deps.instrumentation_settings is not None or not _display.banner_pending():
+        return
+
+    ctx.deps.display_banner(
+        model=ctx.deps.model_id or ctx.deps.model.model_id,
+        tools=sum(tool_def.kind != 'output' for tool_def in ctx.deps.tool_manager.tool_defs),
+    )
+
+
 @dataclasses.dataclass
 class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     """The node that makes a request to the model using the last message in state.message_history."""
@@ -1534,6 +1572,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # resume-without-prompt path; ToolManager.for_run_step is a no-op for the same step.
         ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
 
+        _display_first_run_banner(ctx)
+
         # Fetch instructions now that dynamic toolsets have been resolved by for_run_step.
         instruction_parts = await _get_instructions(ctx, run_context)
         if instruction_parts:
@@ -1745,6 +1785,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             max_retries=ctx.deps.tool_manager.default_max_retries,
         )
         ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
+
+        _display_first_run_banner(ctx)
 
         instructions = _get_history_instructions(ctx.state.message_history)
         instruction_parts = [_messages.InstructionPart(content=instructions)] if instructions else None

@@ -196,6 +196,7 @@ from .usage import RequestUsage, RunUsage, UsageLimits
 
 __all__ = (
     '__version__',
+    'BANNER_ENABLED',
     # agent
     'Agent',
     'CancellationToken',
@@ -405,3 +406,12 @@ __all__ = (
     'AgentRunResultEvent',
 )
 __version__ = _metadata_version('pydantic_ai_slim')
+
+BANNER_ENABLED = True
+"""Whether the first-run banner may be shown, for a program that would rather own its output.
+
+Set it to `False` before the first agent run; `PYDANTIC_AI_NO_BANNER` does the same from the
+environment. Neither is needed to keep the banner out of an application's way: it is only ever shown
+once per process, to a terminal or a coding agent, and never at all once instrumentation is
+configured, under `pytest`, or in CI.
+"""
