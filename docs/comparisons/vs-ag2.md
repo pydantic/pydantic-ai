@@ -1,10 +1,8 @@
 # Pydantic AI vs AG2
 
 AG2 1.0 is a rewrite. The AutoGen module is gone (`import autogen` fails). What replaced it is close
-to us: typed `Agent`, `AgentSpec`, `Inject`/`Depends`.
-
-The fork is durability. Theirs is a `Task` with a checkpoint store and no extra infrastructure. Ours
-is the same agent, inside [Temporal, DBOS, Prefect, Restate, Lambda, Kitaru, or Airflow](../durable_execution/overview.md).
+to us: typed `Agent`, `AgentSpec`, `Inject`/`Depends`. Durability is the fork: their `Task` checkpoint
+store, or the same agent inside [Temporal, DBOS, Prefect, Restate, Lambda, Kitaru, or Airflow](../durable_execution/overview.md).
 
 ## Side by side
 
@@ -21,14 +19,17 @@ is the same agent, inside [Temporal, DBOS, Prefect, Restate, Lambda, Kitaru, or 
 | Agent graph | Group chat / swarm | [`pydantic-graph`](../graph.md) |
 | Coding agent | No | [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) |
 | Research agent | No | [`Researcher()`](https://pydantic.dev/docs/ai/harness/researcher/) |
-| Code sandboxes | No | [Modal](https://pydantic.dev/docs/ai/harness/modal-sandbox/) and [Monty](https://github.com/pydantic/monty) |
-| Image generation | No | Yes |
-| Browser | No | Yes ([Browser Use](https://pydantic.dev/docs/ai/harness/browser-use/)) |
+| Web search | No | Yes ([WebSearch](../capabilities/web-search.md)) |
+| Code sandboxes | No | [Modal](https://pydantic.dev/docs/ai/harness/modal-sandbox/), [Monty](https://github.com/pydantic/monty), [Code Mode](https://pydantic.dev/docs/ai/harness/code-mode/) |
+| Image generation | No | Yes (any provider) |
+| Browser | No | Yes ([Browser Use](https://pydantic.dev/docs/ai/harness/browser-use/) and [Playwright](https://pydantic.dev/docs/ai/harness/playwright/)) |
 | Structured output | Yes | Yes (type on the agent) |
 | Human in the loop | Yes (human input) | Yes (tool approval) |
 | Guardrails | No | Yes ([harness](https://pydantic.dev/docs/ai/harness/guardrails/)) |
+| Spend limits | No | Yes ([spend](https://pydantic.dev/docs/ai/harness/spend/)) |
 | MCP | Client (extra) | Client and [server](../mcp/server.md) |
 | Memory | No | [Harness Memory](https://pydantic.dev/docs/ai/harness/memory/) |
+| Compaction | No | Yes ([compaction](https://pydantic.dev/docs/ai/harness/compaction/)) |
 | Multi-agent | Group chat, swarm | [Delegation, graph, or `async`](../multi-agent-applications.md) |
 | Durable execution | `Task` checkpoint store | [Temporal, DBOS, Prefect, Restate, Lambda, Kitaru, Airflow](../durable_execution/overview.md) |
 | Tracing | Logs | OpenTelemetry |

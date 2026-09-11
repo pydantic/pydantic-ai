@@ -19,14 +19,17 @@ packages. Pydantic AI is a typed Python [`Agent`][pydantic_ai.Agent].
 | Agent graph | No | [`pydantic-graph`](../graph.md) |
 | Coding agent | The product | [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) |
 | Research agent | No | [`Researcher()`](https://pydantic.dev/docs/ai/harness/researcher/) |
-| Code sandboxes | No | [Modal](https://pydantic.dev/docs/ai/harness/modal-sandbox/) and [Monty](https://github.com/pydantic/monty) |
+| Web search | No | Yes ([WebSearch](../capabilities/web-search.md)) |
+| Code sandboxes | No | [Modal](https://pydantic.dev/docs/ai/harness/modal-sandbox/), [Monty](https://github.com/pydantic/monty), [Code Mode](https://pydantic.dev/docs/ai/harness/code-mode/) |
 | Image generation | No | Yes |
-| Browser | No | Yes ([Browser Use](https://pydantic.dev/docs/ai/harness/browser-use/)) |
+| Browser | No | Yes ([Browser Use](https://pydantic.dev/docs/ai/harness/browser-use/) and [Playwright](https://pydantic.dev/docs/ai/harness/playwright/)) |
 | Structured output | Terminating tool you write | Yes (type on the agent) |
 | Human in the loop | No | Yes (tool approval) |
 | Guardrails | No | Yes ([harness](https://pydantic.dev/docs/ai/harness/guardrails/)) |
+| Spend limits | No | Yes ([spend](https://pydantic.dev/docs/ai/harness/spend/)) |
 | MCP | Packages, not core | Client and [server](../mcp/server.md) |
 | Memory | Sessions | [Harness Memory](https://pydantic.dev/docs/ai/harness/memory/) |
+| Compaction | Yes | Yes ([compaction](https://pydantic.dev/docs/ai/harness/compaction/)) |
 | Multi-agent | Packages | [Delegation, graph, or `async`](../multi-agent-applications.md) |
 | Durable execution | Session tree on disk | [Temporal, DBOS, Prefect, Restate, Lambda, Kitaru, Airflow](../durable_execution/overview.md) |
 | Tracing | Logs | OpenTelemetry |

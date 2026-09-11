@@ -1,10 +1,7 @@
 # Pydantic AI vs LangChain & LangGraph
 
 A LangChain **agent** is a graph: `create_agent()` returns a `CompiledStateGraph`. Pydantic AI is a
-typed [`Agent`][pydantic_ai.Agent]. We also ship a graph library,
-[`pydantic-graph`](../graph.md), for the cases that actually need one.
-
-LangSmith is hosted tracing. We emit OpenTelemetry, off by default, into the collector you already run.
+typed [`Agent`][pydantic_ai.Agent], with [`pydantic-graph`](../graph.md) when you actually need a graph.
 
 ## Side by side
 
@@ -21,14 +18,17 @@ LangSmith is hosted tracing. We emit OpenTelemetry, off by default, into the col
 | Agent graph | LangGraph | [`pydantic-graph`](../graph.md) |
 | Coding agent | Deep Agents | [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) |
 | Research agent | No | [`Researcher()`](https://pydantic.dev/docs/ai/harness/researcher/) |
-| Code sandboxes | Community / E2B | [Modal](https://pydantic.dev/docs/ai/harness/modal-sandbox/) and [Monty](https://github.com/pydantic/monty) |
-| Image generation | Integrations | Yes |
-| Browser | Integrations | Yes ([Browser Use](https://pydantic.dev/docs/ai/harness/browser-use/)) |
+| Web search | Yes | Yes ([WebSearch](../capabilities/web-search.md)) |
+| Code sandboxes | Community / E2B | [Modal](https://pydantic.dev/docs/ai/harness/modal-sandbox/), [Monty](https://github.com/pydantic/monty), [Code Mode](https://pydantic.dev/docs/ai/harness/code-mode/) |
+| Image generation | Integrations | Yes (any provider) |
+| Browser | Integrations | Yes ([Browser Use](https://pydantic.dev/docs/ai/harness/browser-use/) and [Playwright](https://pydantic.dev/docs/ai/harness/playwright/)) |
 | Structured output | Yes (`with_structured_output`) | Yes (type on the agent) |
 | Human in the loop | Yes (`interrupt`) | Yes (tool approval) |
 | Guardrails | Middleware | Yes ([harness](https://pydantic.dev/docs/ai/harness/guardrails/)) |
+| Spend limits | No | Yes ([spend](https://pydantic.dev/docs/ai/harness/spend/)) |
 | MCP | Client (adapters) | Client and [server](../mcp/server.md) |
 | Memory | Checkpointers, store | [Harness Memory](https://pydantic.dev/docs/ai/harness/memory/) |
+| Compaction | No | Yes ([compaction](https://pydantic.dev/docs/ai/harness/compaction/)) |
 | Multi-agent | LangGraph | [Delegation, graph, or `async`](../multi-agent-applications.md) |
 | Durable execution | Checkpointers | [Temporal, DBOS, Prefect, Restate, Lambda, Kitaru, Airflow](../durable_execution/overview.md) |
 | Tracing | LangSmith | OpenTelemetry |

@@ -18,14 +18,17 @@ only the library: an agent you put in the application you already run.
 | Agent graph | Workflows | [`pydantic-graph`](../graph.md) |
 | Coding agent | Shell / Python toolkits | [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) |
 | Research agent | No | [`Researcher()`](https://pydantic.dev/docs/ai/harness/researcher/) |
-| Code sandboxes | E2B, Daytona, Superserve | [Modal](https://pydantic.dev/docs/ai/harness/modal-sandbox/) and [Monty](https://github.com/pydantic/monty) |
-| Image generation | No | Yes |
-| Browser | Yes | Yes ([Browser Use](https://pydantic.dev/docs/ai/harness/browser-use/)) |
+| Web search | Yes | Yes ([WebSearch](../capabilities/web-search.md)) |
+| Code sandboxes | E2B, Daytona, Superserve | [Modal](https://pydantic.dev/docs/ai/harness/modal-sandbox/), [Monty](https://github.com/pydantic/monty), [Code Mode](https://pydantic.dev/docs/ai/harness/code-mode/) |
+| Image generation | No | Yes (any provider) |
+| Browser | Yes | Yes ([Browser Use](https://pydantic.dev/docs/ai/harness/browser-use/) and [Playwright](https://pydantic.dev/docs/ai/harness/playwright/)) |
 | Structured output | Yes | Yes (type on the agent) |
 | Human in the loop | Yes (confirmation on tools) | Yes (tool approval) |
 | Guardrails | No | Yes ([harness](https://pydantic.dev/docs/ai/harness/guardrails/)) |
+| Spend limits | Claude passthrough | Yes ([spend](https://pydantic.dev/docs/ai/harness/spend/)) |
 | MCP | Client | Client and [server](../mcp/server.md) |
 | Memory | Yes (`MemoryManager`) | Yes ([harness Memory](https://pydantic.dev/docs/ai/harness/memory/); thinner) |
+| Compaction | No | Yes ([compaction](https://pydantic.dev/docs/ai/harness/compaction/)) |
 | Multi-agent | Teams | [Delegation, graph, or `async`](../multi-agent-applications.md) |
 | Durable execution | Agent `db` / `checkpoint` | [Temporal, DBOS, Prefect, Restate, Lambda, Kitaru, Airflow](../durable_execution/overview.md) |
 | Tracing | OpenInference | OpenTelemetry |

@@ -18,14 +18,17 @@ features first. Pydantic AI runs on any model, including OpenAI.
 | Agent graph | No (handoffs only) | [`pydantic-graph`](../graph.md) |
 | Coding agent | No | [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) |
 | Research agent | No | [`Researcher()`](https://pydantic.dev/docs/ai/harness/researcher/) |
-| Code sandboxes | Hosted OpenAI tools | [Modal](https://pydantic.dev/docs/ai/harness/modal-sandbox/) and [Monty](https://github.com/pydantic/monty) |
+| Web search | Yes (hosted) | Yes ([WebSearch](../capabilities/web-search.md)) |
+| Code sandboxes | Hosted OpenAI tools | [Modal](https://pydantic.dev/docs/ai/harness/modal-sandbox/), [Monty](https://github.com/pydantic/monty), [Code Mode](https://pydantic.dev/docs/ai/harness/code-mode/) |
 | Image generation | Yes (OpenAI) | Yes (any provider) |
-| Browser | No | Yes ([Browser Use](https://pydantic.dev/docs/ai/harness/browser-use/)) |
+| Browser | No | Yes ([Browser Use](https://pydantic.dev/docs/ai/harness/browser-use/) and [Playwright](https://pydantic.dev/docs/ai/harness/playwright/)) |
 | Structured output | Yes | Yes (type on the agent) |
 | Human in the loop | Yes (guardrails, approvals) | Yes (tool approval) |
 | Guardrails | Input, output, tool tripwires | Yes ([harness](https://pydantic.dev/docs/ai/harness/guardrails/)) |
+| Spend limits | No | Yes ([spend](https://pydantic.dev/docs/ai/harness/spend/)) |
 | MCP | Client | Client and [server](../mcp/server.md) |
 | Memory | Sessions | [Harness Memory](https://pydantic.dev/docs/ai/harness/memory/) |
+| Compaction | Yes | Yes ([compaction](https://pydantic.dev/docs/ai/harness/compaction/)) |
 | Multi-agent | Handoffs | [Delegation, graph, or `async`](../multi-agent-applications.md) |
 | Durable execution | No | [Temporal, DBOS, Prefect, Restate, Lambda, Kitaru, Airflow](../durable_execution/overview.md) |
 | Tracing | Their dashboard | OpenTelemetry |

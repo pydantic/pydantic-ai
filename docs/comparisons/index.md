@@ -5,8 +5,9 @@ Each page uses the same rows, the ones you'd put on a slide:
 native Python SDK, license, model providers, [extensibility](../extensibility.md),
 skills, [on-demand capabilities](../capabilities/on-demand.md),
 [interfaces](../interfaces.md) (CLI, web chat, AG-UI, Vercel AI, ACP),
-[realtime voice](../realtime/overview.md), agent graph, coding agent, research agent, code sandboxes,
-image generation, browser, structured output, human in the loop, guardrails, MCP, memory, multi-agent,
+[realtime voice](../realtime/overview.md), agent graph, coding agent, research agent, web search,
+code sandboxes, image generation, browser (Browser Use and Playwright), structured output,
+human in the loop, guardrails, spend limits, MCP, memory, compaction, multi-agent,
 durable execution, tracing, evals, test without API keys, embeddings, and deployment.
 
 - [vs LangChain & LangGraph](vs-langchain-langgraph.md)
