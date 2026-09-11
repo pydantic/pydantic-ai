@@ -553,9 +553,6 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     ),
     'What is my balance?': ToolCallPart(tool_name='customer_balance', args={'include_pending': True}),
     # docs/comparisons/ — unique prompts so the shared FunctionModel mock can drive them.
-    'Refund order A-4471, the customer never received it.': ToolCallPart(
-        tool_name='look_up_order', args={'order_id': 'A-4471'}
-    ),
     'Was I refunded for the duplicate charge on my last statement?': ToolCallPart(
         tool_name='load_capability', args={'id': 'refunds'}
     ),
@@ -830,19 +827,6 @@ async def model_logic(  # noqa: C901
         return ModelResponse(parts=[TextPart(f'The answer is {m.content}')])
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'mark_task_done':
         return ModelResponse(parts=[])
-    elif isinstance(m, ToolReturnPart) and m.tool_name == 'look_up_order':
-        # docs/comparisons/vs-langchain-langgraph.md — approval_pause.py
-        return ModelResponse(
-            parts=[
-                ToolCallPart(
-                    tool_name='issue_refund',
-                    args={'order_id': 'A-4471', 'amount': 38.0},
-                    tool_call_id='pyd_ai_tool_call_id',
-                )
-            ]
-        )
-    elif isinstance(m, ToolReturnPart) and m.tool_name == 'issue_refund':
-        return ModelResponse(parts=[TextPart('Refunded A-4471.')])
     elif isinstance(m, UserPromptPart):
         if isinstance(m.content, list) and m.content[0] == 'Summarize this document':
             return ModelResponse(parts=[TextPart('This document outlines the PDF specification version 1.4.')])
