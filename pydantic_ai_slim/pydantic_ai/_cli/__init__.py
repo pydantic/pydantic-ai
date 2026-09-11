@@ -15,15 +15,14 @@ from pydantic import ImportString, TypeAdapter, ValidationError
 
 from .. import __version__, _display, models, usage as _usage
 from .._run_context import AgentDepsT
-from ..agent import AbstractAgent, Agent, _registered_capability_count  # pyright: ignore[reportPrivateUsage]
+from ..agent import AbstractAgent, Agent, _startup_banner_details  # pyright: ignore[reportPrivateUsage]
 from ..exceptions import UserError
 from ..messages import FunctionToolCallEvent, FunctionToolResultEvent, ModelMessage, ModelResponse, ToolReturnPart
 from ..models import infer_model, known_model_names
-from ..models.instrumented import InstrumentedModel
 from ..native_tools import NATIVE_TOOLS_REQUIRING_CONFIG, SUPPORTED_NATIVE_TOOLS
 from ..output import OutputDataT
 from ..settings import ModelSettings
-from ..toolsets import AbstractToolset, FunctionToolset
+from ..toolsets import AbstractToolset
 
 try:
     import argcomplete
@@ -163,21 +162,16 @@ def _print_intro(
         model: Model the session was asked to use, if not the agent's own.
         agent_path: How the user asked for the agent, for one that doesn't name itself.
     """
-    chat_model = agent._pick_raw_model(model)  # pyright: ignore[reportPrivateUsage]
-    instrumented = (
-        isinstance(chat_model, InstrumentedModel) or agent._resolve_instrumentation_settings() is not None  # pyright: ignore[reportPrivateUsage]
-    )
+    details = _startup_banner_details(agent, model)
 
     banner = _display.render_banner(
         # A loaded agent doesn't always name itself, so fall back to how the user asked for it.
         name=agent.name or agent_path,
-        model=chat_model.model_id if isinstance(chat_model, models.Model) else chat_model,
+        model=details.model,
         output_type=agent.output_type,
-        # `agent.toolsets` is override-aware, but only the tools it can count without opening a
-        # connection are known before a run: a run's own banner counts what the model is offered.
-        tools=sum(len(toolset.tools) for toolset in agent.toolsets if isinstance(toolset, FunctionToolset)),
-        capabilities=_registered_capability_count(agent._effective_root_capability()),  # pyright: ignore[reportPrivateUsage]
-        observability=not instrumented,
+        tools=details.tools,
+        capabilities=details.capabilities,
+        observability=not details.instrumented,
     )
     try:
         # Rendered by the console but written by hand: a write rich fails on stays in its buffer, so

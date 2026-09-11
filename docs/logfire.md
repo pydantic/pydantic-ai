@@ -146,7 +146,7 @@ This means you can debug and monitor Pydantic AI with any OpenTelemetry backend.
 
 Pydantic AI follows the [OpenTelemetry Semantic Conventions for Generative AI systems](https://opentelemetry.io/docs/specs/semconv/gen-ai/), so while we think you'll have the best experience using the Logfire platform :wink:, you should be able to use any OTel service with GenAI support.
 
-### Logfire with an alternative OTel backend
+### Logfire with an alternative OTel backend {#otel}
 
 You can use the Logfire SDK completely freely and send the data to any OpenTelemetry backend.
 
@@ -192,7 +192,7 @@ Running the [weather agent](examples/weather-agent.md) example connected to `ote
 For more information on using the Logfire SDK to send data to alternative backends, see
 [the Logfire documentation](https://logfire.pydantic.dev/docs/how-to-guides/alternative-backends/).
 
-### OTel without Logfire {#otel}
+### OTel without Logfire
 
 You can also emit OpenTelemetry data from Pydantic AI without using Logfire at all.
 
@@ -440,4 +440,4 @@ See the [usage and metadata example in the agents guide](agent.md#run-metadata) 
 
 Until instrumentation is configured, the first agent run in a process prints a short banner to `stderr` describing the run and pointing here. It's shown only where someone is there to read it: when `stderr` is a terminal, or when a coding agent is running the process and reads back what it writes. It's never shown when instrumentation is configured, under `pytest`, or when `CI` is set to any value. To turn it off entirely, set `PYDANTIC_AI_NO_BANNER` to any value in the environment, or set `pydantic_ai.BANNER_ENABLED = False` before the first agent run.
 
-Coding agents are recognized by the environment variables they set for the purpose — Claude Code, Codex, Cursor, Gemini CLI, Copilot, OpenCode, Aider, Amp, Augment, Antigravity, Crush, Pi, Qwen Code, Replit, Warp and Windsurf among them. That list is best-effort and will always be behind, so a harness it doesn't recognize — including one built on Pydantic AI — can set `AI_AGENT` (or `AGENT`) to be treated the same way, naming itself in the value. Agents are shown the same banner a person is, worded the same way, so that a user reading along sees what they would have seen themselves.
+Coding agents are recognized by the environment variables they set for the purpose. That list is best-effort and will always be behind, so a harness it doesn't recognize — including one built on Pydantic AI — can set `AI_AGENT` (or `AGENT`) to be treated the same way, naming itself in the value.

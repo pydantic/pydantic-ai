@@ -59,6 +59,20 @@ _MAX_OUTPUT_TYPE_LENGTH = 40
 _INFO_SEPARATOR = ' • '
 _INFO_INDENT = '  '
 
+# Everything the banner says, in the order it says it, so that the wording lives in one place rather
+# than spread through the functions that lay it out. Each is a sentence `textwrap` re-flows at render
+# time, so rewriting one doesn't mean re-flowing anything by hand.
+_OBSERVABILITY_HEADING = 'observability: off — see every model and tool call live, with cost'
+_LOGFIRE_LINE = 'set it up free with Logfire and a GitHub login: https://pydantic.dev/ai-setup.md'
+_OTEL_LINE = 'or use any OpenTelemetry backend: https://pydantic.dev/docs/ai/logfire/#otel'
+"""The two paths, one link each.
+
+Both are written to fit `_TEXT_WIDTH` unbroken: a URL `textwrap` splits across lines stops being
+clickable in most terminals, which is the only reason either is in the banner. `test_display` holds
+that, so a reworded line or a wider logo can't quietly cost a link.
+"""
+_HIDE_LINE = 'goes away once observability is on — or PYDANTIC_AI_NO_BANNER=1'
+
 # Written as ANSI rather than with `rich`, which isn't a dependency of the library the banner ships
 # in. `clai` reads the codes back into its own console, so both paths colour the banner identically.
 _LOGO_COLOR = '\x1b[35m'
@@ -236,15 +250,7 @@ def render_banner(
         # that has stays out of it entirely rather than being told to do what it has already done.
         lines += ['', *_observability_lines()]
         # Only what the block above doesn't already say: it opens by telling them to set it up.
-        lines += [
-            '',
-            *wrap(
-                'goes away once observability is on — or PYDANTIC_AI_NO_BANNER=1',
-                width=_TEXT_WIDTH,
-                subsequent_indent='  ',
-                break_on_hyphens=False,
-            ),
-        ]
+        lines += ['', *_wrapped(_HIDE_LINE)]
 
     banner = _beside_logo(lines)
     return banner if color else _COLOR_PATTERN.sub('', banner)
@@ -389,32 +395,25 @@ def _version_line() -> str:
     return version + f' • Python {platform.python_version()}'
 
 
+def _wrapped(text: str, *, indented: bool = False) -> list[str]:
+    """`text` re-flowed to the text column, continuing under its own indent rather than the label."""
+    return wrap(
+        text,
+        width=_TEXT_WIDTH,
+        initial_indent=_INFO_INDENT if indented else '',
+        subsequent_indent=_INFO_INDENT,
+        # Hyphens here are in URLs and flag names, which don't survive being broken across lines.
+        break_on_hyphens=False,
+    )
+
+
 def _observability_lines() -> list[str]:
     """How to see what the agent actually did, for someone who hasn't set that up yet."""
     return [
-        *wrap(
-            'observability: off — see every model and tool call live, with cost',
-            width=_TEXT_WIDTH,
-            subsequent_indent='  ',
-            break_on_hyphens=False,
-        ),
+        *_wrapped(_OBSERVABILITY_HEADING),
         # One link each, so that whichever of the two the reader wants is a single thing to follow.
-        # Both are written to fit `_TEXT_WIDTH` unbroken: a URL `textwrap` splits across lines stops
-        # being clickable in most terminals, which is the whole point of putting it here.
-        *wrap(
-            'set it up free with Logfire and a GitHub login: https://pydantic.dev/ai-setup.md',
-            width=_TEXT_WIDTH,
-            initial_indent='  ',
-            subsequent_indent='  ',
-            break_on_hyphens=False,
-        ),
-        *wrap(
-            'or use any OpenTelemetry backend: https://pydantic.dev/docs/ai/logfire/#otel',
-            width=_TEXT_WIDTH,
-            initial_indent='  ',
-            subsequent_indent='  ',
-            break_on_hyphens=False,
-        ),
+        *_wrapped(_LOGFIRE_LINE, indented=True),
+        *_wrapped(_OTEL_LINE, indented=True),
     ]
 
 
