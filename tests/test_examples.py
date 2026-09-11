@@ -766,14 +766,6 @@ tool_responses: dict[tuple[str, str], str] = {
 }
 
 
-def _response_to_model_response(response: str | ToolCallPart | Sequence[ToolCallPart]) -> ModelResponse:
-    if isinstance(response, str):
-        return ModelResponse(parts=[TextPart(response)])
-    if isinstance(response, Sequence):
-        return ModelResponse(parts=list(response))
-    return ModelResponse(parts=[response])
-
-
 async def model_logic(  # noqa: C901
     messages: list[ModelMessage], info: AgentInfo
 ) -> ModelResponse:  # pragma: lax no cover
@@ -920,7 +912,12 @@ async def model_logic(  # noqa: C901
 
             return ModelResponse(parts=[part])
         elif response := text_responses.get(m.content):
-            return _response_to_model_response(response)
+            if isinstance(response, str):
+                return ModelResponse(parts=[TextPart(response)])
+            elif isinstance(response, Sequence):
+                return ModelResponse(parts=list(response))
+            else:
+                return ModelResponse(parts=[response])
         elif m.content == 'The secret is 1234':
             return ModelResponse(parts=[TextPart('The secret is safe with me')])
         elif m.content == 'What is the secret code?':
@@ -1227,13 +1224,9 @@ async def model_logic(  # noqa: C901
         return ModelResponse(
             parts=[TextPart('The answer to the ultimate question of life, the universe, and everything is 42.')]
         )
-    elif isinstance(m, ToolReturnPart):
-        content = m.content if isinstance(m.content, str) else str(m.content)
-        if response := tool_responses.get((m.tool_name, content)):
-            return _response_to_model_response(response)
-
-    sys.stdout.write(str(debug.format(messages, info)))
-    raise RuntimeError(f'Unexpected message: {m}')
+    else:
+        sys.stdout.write(str(debug.format(messages, info)))
+        raise RuntimeError(f'Unexpected message: {m}')
 
 
 async def stream_model_logic(  # noqa: C901
@@ -1281,8 +1274,8 @@ async def stream_model_logic(  # noqa: C901
                 yield chunk
             return
     elif isinstance(last_part, ToolReturnPart):
-        content = last_part.content if isinstance(last_part.content, str) else str(last_part.content)
-        if response := tool_responses.get((last_part.tool_name, content)):
+        assert isinstance(last_part.content, str)
+        if response := tool_responses.get((last_part.tool_name, last_part.content)):
             async for chunk in stream_part_response(response):
                 yield chunk
             return
