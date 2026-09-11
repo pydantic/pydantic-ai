@@ -7,34 +7,32 @@ features first. Pydantic AI runs on any model, including OpenAI.
 
 | | OpenAI Agents SDK | Pydantic AI |
 |---|---|---|
-| Native Python SDK | Yes | Yes |
+| Language | Python | Python |
 | License | MIT | MIT |
-| Model providers | OpenAI first; others via LiteLLM | Any, plus [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] |
-| Extensibility | Tools, guardrails, handoffs | [Capabilities](../extensibility.md) |
-| Skills | Yes (sandbox) | Yes ([Skills](https://pydantic.dev/docs/ai/harness/skills/)) |
-| Interfaces | None of these | [`to_cli_sync()`](../cli.md), [`to_web()`](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) (experimental), [A2A](https://github.com/datalayer/fasta2a) (community) |
-| Realtime voice | Yes (OpenAI Realtime) | Yes ([realtime](../realtime/overview.md)) |
-| Agent graph | No (handoffs only) | [`pydantic-graph`](../graph.md) |
-| Coding agent | `SandboxAgent` | [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) |
-| Research agent | No | [`Researcher()`](https://pydantic.dev/docs/ai/harness/researcher/) |
-| Web search | Native | Native ([WebSearch](../capabilities/web-search.md)) and third party ([DuckDuckGo](../common-tools.md#duckduckgo-search-tool), [Tavily](../common-tools.md#tavily-search-tool), [You.com](https://pydantic.dev/docs/ai/harness/youdotcom/), [Exa](https://pydantic.dev/docs/ai/harness/exa-search/)) |
-| Code sandboxes | Hosted tools plus sandbox clients | [Modal](https://pydantic.dev/docs/ai/harness/modal-sandbox/) |
-| Image generation | Yes (OpenAI) | Yes (OpenAI, Google, xAI) |
-| Browser | `ComputerTool` (you host) | Yes ([Browser Use](https://pydantic.dev/docs/ai/harness/browser-use/) and [Playwright](https://pydantic.dev/docs/ai/harness/playwright/)) |
-| Structured output | Yes | Yes (type on the agent) |
-| Human in the loop | Yes (guardrails, approvals) | Yes (tool approval) |
-| Guardrails | Input, output, tool tripwires | Yes ([harness](https://pydantic.dev/docs/ai/harness/guardrails/)) |
-| Spend limits | No | Yes ([cost_limit](../agent.md#usage-limits), [spend](https://pydantic.dev/docs/ai/harness/spend/)) |
-| MCP | Client | Client and [server](../mcp/server.md) |
-| Memory | Sessions | [Harness Memory](https://pydantic.dev/docs/ai/harness/memory/) |
-| Compaction | Yes | Yes ([compaction](../capabilities/compaction.md), [harness](https://pydantic.dev/docs/ai/harness/compaction/)) |
-| Multi-agent | Handoffs | [Delegation, graph, or `async`](../multi-agent-applications.md) |
-| Durable execution | Temporal integration | [Temporal, DBOS, Prefect, Restate](../durable_execution/overview.md), [Lambda](https://pydantic.dev/docs/ai/harness/aws-lambda/); Kitaru and Airflow (external) |
-| Tracing | Their dashboard | OpenTelemetry, any backend |
-| Evals | Yes (platform) | Yes ([Pydantic Evals](../evals.md)) |
-| Test without API keys | Yes (`ScriptedModel`) | Yes ([TestModel](../testing.md), [FunctionModel](../testing.md)) |
-| Embeddings | No | Yes |
+| Model providers | OpenAI first; others via LiteLLM | [Any](../models/overview.md), plus [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] |
+| Durable execution | Temporal integration | Yes — [5+ integrations](../durable_execution/overview.md) |
+| Observability | Their dashboard | OpenTelemetry, any backend including [Pydantic Logfire](../logfire.md) |
+| Extensibility | Tools, guardrails, handoffs | [Capabilities](../extensibility.md) and [toolsets](../toolsets.md) |
+| Interfaces | None built in | [CLI](../cli.md), [web chat](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) (experimental), [A2A](https://github.com/datalayer/fasta2a) (community) |
+| Build your own harness | Yes | Yes |
+| Coding harness | `SandboxAgent` | [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) |
+| Graph library | No (handoffs only) | [`pydantic-graph`](../graph.md) |
+| Multi-agent | Handoffs | [Sub-agents](../multi-agent-applications.md), graph, or `async` |
+| Realtime voice | Yes (OpenAI Realtime) | [Realtime](../realtime/overview.md) |
+| Image generation | Yes (OpenAI) | [Image generation](../image-generation.md) |
 
-Harness-linked cells ship in [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/), a separate package.
+| | OpenAI Agents SDK | Pydantic AI |
+|---|---|---|
+| Structured output | Yes | [Type on the agent](../output.md) |
+| Guardrails | Input, output, tool tripwires | [Guardrails](https://pydantic.dev/docs/ai/harness/guardrails/) |
+| Code sandboxes | Hosted tools plus sandbox clients | [Yes](https://pydantic.dev/docs/ai/harness/#execution-environments) |
+| Browser | `ComputerTool` (you host) | [Yes](https://pydantic.dev/docs/ai/harness/#web-research) |
+| Memory | Sessions | [Memory](https://pydantic.dev/docs/ai/harness/memory/) |
+| Compaction | Yes | [Compaction](../capabilities/compaction.md) |
+| Evals | Yes (platform) | [Pydantic Evals](../evals.md) |
+| Test without API keys | Yes (`ScriptedModel`) | [`TestModel`](../testing.md), [`FunctionModel`](../testing.md) |
+
+Cells linked to pydantic.dev/docs/ai/harness ship in [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/),
+a separate package.
 
 [Install Pydantic AI](../install.md).

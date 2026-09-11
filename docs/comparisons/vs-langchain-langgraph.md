@@ -7,35 +7,33 @@ typed [`Agent`][pydantic_ai.Agent], with [`pydantic-graph`](../graph.md) when yo
 
 | | LangChain & LangGraph | Pydantic AI |
 |---|---|---|
-| Native Python SDK | Yes | Yes |
+| Language | Python | Python |
 | License | MIT | MIT |
-| Model providers | Many | Any, plus [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] |
-| Extensibility | Middleware, callbacks | [Capabilities](../extensibility.md) |
-| Skills | Yes | Yes ([Skills](https://pydantic.dev/docs/ai/harness/skills/)) |
-| Interfaces | LangServe, Studio | [`to_cli_sync()`](../cli.md), [`to_web()`](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) (experimental), [A2A](https://github.com/datalayer/fasta2a) (community) |
-| Realtime voice | No | Yes ([realtime](../realtime/overview.md)) |
-| Agent graph | LangGraph | [`pydantic-graph`](../graph.md) |
-| Coding agent | Deep Agents | [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) |
-| Research agent | Open Deep Research | [`Researcher()`](https://pydantic.dev/docs/ai/harness/researcher/) |
-| Web search | Native and third party | Native ([WebSearch](../capabilities/web-search.md)) and third party ([DuckDuckGo](../common-tools.md#duckduckgo-search-tool), [Tavily](../common-tools.md#tavily-search-tool), [You.com](https://pydantic.dev/docs/ai/harness/youdotcom/), [Exa](https://pydantic.dev/docs/ai/harness/exa-search/)) |
-| Code sandboxes | Third party | [Modal](https://pydantic.dev/docs/ai/harness/modal-sandbox/) |
-| Image generation | Third party | Yes (OpenAI, Google, xAI) |
-| Browser | Third party | Yes ([Browser Use](https://pydantic.dev/docs/ai/harness/browser-use/) and [Playwright](https://pydantic.dev/docs/ai/harness/playwright/)) |
-| Structured output | Yes (`with_structured_output`) | Yes (type on the agent) |
-| Human in the loop | Yes (`interrupt`) | Yes (tool approval) |
-| Guardrails | Middleware | Yes ([harness](https://pydantic.dev/docs/ai/harness/guardrails/)) |
-| Spend limits | `ModelCallLimitMiddleware` | Yes ([cost_limit](../agent.md#usage-limits), [spend](https://pydantic.dev/docs/ai/harness/spend/)) |
-| MCP | Client (adapters) | Client and [server](../mcp/server.md) |
-| Memory | Checkpointers, store | [Harness Memory](https://pydantic.dev/docs/ai/harness/memory/) |
-| Compaction | Yes (`SummarizationMiddleware`) | Yes ([compaction](../capabilities/compaction.md), [harness](https://pydantic.dev/docs/ai/harness/compaction/)) |
-| Multi-agent | LangGraph | [Delegation, graph, or `async`](../multi-agent-applications.md) |
-| Durable execution | Checkpointers | [Temporal, DBOS, Prefect, Restate](../durable_execution/overview.md), [Lambda](https://pydantic.dev/docs/ai/harness/aws-lambda/); Kitaru and Airflow (external) |
-| Tracing | LangSmith | OpenTelemetry, any backend |
-| Evals | Yes (LangSmith) | Yes ([Pydantic Evals](../evals.md)) |
-| Test without API keys | Yes (fake chat models) | Yes ([TestModel](../testing.md), [FunctionModel](../testing.md)) |
-| Embeddings | Yes (large catalogue) | Yes |
+| Model providers | Many | [Any](../models/overview.md), plus [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] |
+| Durable execution | Checkpointers | Yes — [5+ integrations](../durable_execution/overview.md) |
+| Observability | LangSmith | OpenTelemetry, any backend including [Pydantic Logfire](../logfire.md) |
+| Extensibility | Middleware, callbacks | [Capabilities](../extensibility.md) and [toolsets](../toolsets.md) |
+| Interfaces | LangServe, Studio | [CLI](../cli.md), [web chat](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) (experimental), [A2A](https://github.com/datalayer/fasta2a) (community) |
+| Build your own harness | Yes | Yes |
+| Coding harness | Deep Agents | [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) |
+| Graph library | LangGraph | [`pydantic-graph`](../graph.md) |
+| Multi-agent | LangGraph (handoffs, supervisors, teams) | [Sub-agents](../multi-agent-applications.md), graph, or `async` |
+| Realtime voice | No | [Realtime](../realtime/overview.md) |
+| Image generation | Third party | [Image generation](../image-generation.md) |
 
-Harness-linked cells ship in [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/), a separate package.
+| | LangChain & LangGraph | Pydantic AI |
+|---|---|---|
+| Structured output | Yes (`with_structured_output`) | [Type on the agent](../output.md) |
+| Guardrails | Middleware | [Guardrails](https://pydantic.dev/docs/ai/harness/guardrails/) |
+| Code sandboxes | Yes (integrations) | [Yes](https://pydantic.dev/docs/ai/harness/#execution-environments) |
+| Browser | Yes (integrations) | [Yes](https://pydantic.dev/docs/ai/harness/#web-research) |
+| Memory | Checkpointers, store | [Memory](https://pydantic.dev/docs/ai/harness/memory/) |
+| Compaction | Yes (`SummarizationMiddleware`) | [Compaction](../capabilities/compaction.md) |
+| Evals | Yes (LangSmith) | [Pydantic Evals](../evals.md) |
+| Test without API keys | Yes (fake chat models) | [`TestModel`](../testing.md), [`FunctionModel`](../testing.md) |
+
+Cells linked to pydantic.dev/docs/ai/harness ship in [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/),
+a separate package.
 
 ## FAQ
 
