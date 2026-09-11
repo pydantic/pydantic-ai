@@ -12,7 +12,7 @@ features first. Pydantic AI runs on any model, including OpenAI.
 | Durable execution | Yes | [5+ integrations](../durable_execution/overview.md) |
 | Observability | Their dashboard | [OpenTelemetry](../capabilities/instrumentation.md), including [Pydantic Logfire](../logfire.md) |
 | Extensibility | Tools, guardrails, handoffs | [Capabilities and toolsets](../extensibility.md) |
-| Interfaces | None built in | [CLI](../cli.md), [web chat](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) (experimental), A2A |
+| Interfaces | None built in | [CLI](../cli.md), [web chat](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) |
 | Build your own harness | Yes | [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) |
 | Coding harness | Yes | [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) |
 | Graph library | No | [`pydantic-graph`](../graph.md) |
