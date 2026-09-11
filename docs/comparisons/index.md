@@ -1,6 +1,6 @@
 # Comparisons
 
-Picking an agent framework is mostly a question of what you want to own and what you want handed to you. These pages put Pydantic AI side by side with the frameworks people ask us about most, one page each, with every cell checked against the other framework's released package rather than its docs.
+These pages put Pydantic AI side by side with the frameworks people ask us about most, one page each. Our column covers the whole stack: the Pydantic AI library, the [Harness SDK](https://pydantic.dev/docs/ai/harness/) of ready-made capabilities and complete agents, [Pydantic Evals](../evals.md), [Pydantic Graph](../graph.md), [Pydantic Logfire](https://pydantic.dev/logfire) for observability, and [Pydantic](https://docs.pydantic.dev/) itself for validation. Every cell in our column links to the docs for it.
 
 - [vs LangChain & LangGraph](vs-langchain-langgraph.md)
 - [vs Claude Agent SDK](vs-claude-agent-sdk.md)

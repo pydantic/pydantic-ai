@@ -1,33 +1,32 @@
 # Pydantic AI vs CrewAI
 
-CrewAI models an agent system as a crew: roles, tasks and a process that runs them, with `Flow` for deterministic control flow around the crew and a large first-party tool package. Pydantic AI vs CrewAI comes down to abstraction level: we hand you a plain typed [`Agent`][pydantic_ai.Agent] and leave the orchestration pattern to you.
+CrewAI models an agent system as a crew: roles, tasks and a process that runs them, with `Flow` for deterministic control flow around the crew and a large first-party tool package. Pydantic AI starts from a plain typed [`Agent`][pydantic_ai.Agent] and lets you pick the orchestration: [sub-agents](https://pydantic.dev/docs/ai/harness/subagents/) and [delegation](../multi-agent-applications.md) for a crew, [`pydantic-graph`](../graph.md) for a flow, and a [Harness SDK](https://pydantic.dev/docs/ai/harness/) of tools and capabilities.
 
 ## Framework
 
-| | CrewAI | Pydantic AI and [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) |
+| | CrewAI | Pydantic AI and [Harness SDK](https://pydantic.dev/docs/ai/harness/) |
 |---|---|---|
 | Language | Python | Python |
 | License | MIT | MIT |
 | Model providers | Many | [Many](../models/overview.md) |
-| Extensibility | Tools on agents and crews | [Capabilities and toolsets](../extensibility.md) |
-| Build a custom harness | Yes | [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) |
-| Coding harness | No | [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) |
+| Extensibility | Tools on agents and crews | [Capabilities and toolsets](../extensibility.md); [30+ in the Harness SDK](https://pydantic.dev/docs/ai/harness/) |
+| Harnesses | Build your own | Built-in [`Coder`](https://pydantic.dev/docs/ai/harness/coder/) and [`Researcher`](https://pydantic.dev/docs/ai/harness/researcher/), or compose your own |
+| Observability | OpenTelemetry | [OpenTelemetry](../logfire.md#using-opentelemetry), including [Pydantic Logfire](https://pydantic.dev/logfire) |
 | Interfaces | Enterprise UI, A2A | [CLI](../cli.md), [web chat](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) (experimental) |
 | Realtime voice | No | [Realtime](../realtime/overview.md) |
-| Image generation | Yes (`crewai-tools`) | [Image Generation](../image-generation.md) |
-| Durable execution | Yes | [5+ integrations](../durable_execution/overview.md) |
-| Observability | OpenTelemetry | [OpenTelemetry](../capabilities/instrumentation.md), including [Pydantic Logfire](../logfire.md) |
 | Evals | Yes | [Pydantic Evals](../evals.md) |
+| Durable execution | Yes | [5+ integrations](../durable_execution/overview.md) |
+| Image generation | Yes | [Image Generation](../image-generation.md) |
 
 ## Features
 
-| | CrewAI | Pydantic AI and [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) |
+| | CrewAI | Pydantic AI and [Harness SDK](https://pydantic.dev/docs/ai/harness/) |
 |---|---|---|
-| Structured output | Yes | [Structured output](../output.md#structured-output) |
-| Multi-agent | Roles, tasks, `Process` | [Delegation (tools or `SubAgents`), hand-off in your code, or graph](../multi-agent-applications.md) |
-| Graph library | Yes (`Flow`) | [`pydantic-graph`](../graph.md) |
+| Sub-agents | TBD-FACTCHECK | [Subagents](https://pydantic.dev/docs/ai/harness/subagents/), [delegation](../multi-agent-applications.md), or [`pydantic-graph`](../graph.md) |
+| Planning | TBD-FACTCHECK | [Planning](https://pydantic.dev/docs/ai/harness/planning/) |
+| Skills | TBD-FACTCHECK | [Skills](https://pydantic.dev/docs/ai/harness/skills/) |
 | Memory | Yes | [Memory](https://pydantic.dev/docs/ai/harness/memory/) |
 | Compaction | Yes | [Compaction](../capabilities/compaction.md) |
 | Guardrails | Yes | [Guardrails](https://pydantic.dev/docs/ai/harness/guardrails/) |
-| Code sandboxes | Yes (`crewai-tools`) | [Execution environments](https://pydantic.dev/docs/ai/harness/#execution-environments) |
-| Browser use | Yes (`crewai-tools`) | [Web & research](https://pydantic.dev/docs/ai/harness/#web--research) |
+| Code sandboxes | Yes | [Execution environments](https://pydantic.dev/docs/ai/harness/#execution-environments) |
+| Browser use | Yes | [Web & research](https://pydantic.dev/docs/ai/harness/#web--research) |

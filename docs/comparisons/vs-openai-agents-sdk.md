@@ -1,31 +1,30 @@
 # Pydantic AI vs OpenAI Agents SDK
 
-The OpenAI Agents SDK is a small Python library built close to the grain of OpenAI's own API: agents, `handoff` primitives, guardrails, and first-class access to the hosted tools. Pydantic AI vs OpenAI Agents SDK matters when you want the same agent on more than one provider.
+The OpenAI Agents SDK is a small Python library built close to OpenAI's own API: agents, `handoff` primitives, guardrails, and access to the hosted tools. Pydantic AI runs the same shape of agent on [any provider](../models/overview.md), with [structured output](../output.md#structured-output) validated by Pydantic and a [Harness SDK](https://pydantic.dev/docs/ai/harness/) of capabilities from sandboxes to sub-agents.
 
 ## Framework
 
-| | OpenAI Agents SDK | Pydantic AI and [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) |
+| | OpenAI Agents SDK | Pydantic AI and [Harness SDK](https://pydantic.dev/docs/ai/harness/) |
 |---|---|---|
 | Language | Python | Python |
 | License | MIT | MIT |
 | Model providers | OpenAI first; others via LiteLLM | [Many](../models/overview.md) |
-| Extensibility | Tools, guardrails, handoffs | [Capabilities and toolsets](../extensibility.md) |
-| Build a custom harness | Yes | [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) |
-| Coding harness | Yes | [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) |
+| Extensibility | Tools, guardrails, handoffs | [Capabilities and toolsets](../extensibility.md); [30+ in the Harness SDK](https://pydantic.dev/docs/ai/harness/) |
+| Harnesses | TBD-FACTCHECK | Built-in [`Coder`](https://pydantic.dev/docs/ai/harness/coder/) and [`Researcher`](https://pydantic.dev/docs/ai/harness/researcher/), or compose your own |
+| Observability | OpenAI tracing, OTel via adapters | [OpenTelemetry](../logfire.md#using-opentelemetry), including [Pydantic Logfire](https://pydantic.dev/logfire) |
 | Interfaces | None built in | [CLI](../cli.md), [web chat](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) (experimental) |
 | Realtime voice | Yes | [Realtime](../realtime/overview.md) |
-| Image generation | Via provider tools | [Image Generation](../image-generation.md) |
-| Durable execution | Yes | [5+ integrations](../durable_execution/overview.md) |
-| Observability | OpenAI tracing, OTel via adapters | [OpenTelemetry](../capabilities/instrumentation.md), including [Pydantic Logfire](../logfire.md) |
 | Evals | Yes | [Pydantic Evals](../evals.md) |
+| Durable execution | Yes | [5+ integrations](../durable_execution/overview.md) |
+| Image generation | Provider-hosted tools only | [Image Generation](../image-generation.md) |
 
 ## Features
 
-| | OpenAI Agents SDK | Pydantic AI and [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) |
+| | OpenAI Agents SDK | Pydantic AI and [Harness SDK](https://pydantic.dev/docs/ai/harness/) |
 |---|---|---|
-| Structured output | Yes | [Structured output](../output.md#structured-output) |
-| Multi-agent | Handoffs | [Delegation (tools or `SubAgents`), hand-off in your code, or graph](../multi-agent-applications.md) |
-| Graph library | No | [`pydantic-graph`](../graph.md) |
+| Sub-agents | TBD-FACTCHECK | [Subagents](https://pydantic.dev/docs/ai/harness/subagents/), [delegation](../multi-agent-applications.md), or [`pydantic-graph`](../graph.md) |
+| Planning | TBD-FACTCHECK | [Planning](https://pydantic.dev/docs/ai/harness/planning/) |
+| Skills | TBD-FACTCHECK | [Skills](https://pydantic.dev/docs/ai/harness/skills/) |
 | Memory | Yes | [Memory](https://pydantic.dev/docs/ai/harness/memory/) |
 | Compaction | Yes | [Compaction](../capabilities/compaction.md) |
 | Guardrails | Yes | [Guardrails](https://pydantic.dev/docs/ai/harness/guardrails/) |
@@ -41,4 +40,5 @@ same [`Agent`][pydantic_ai.Agent]; the harness repository has a
 built from the pieces `Coder` puts together.
 
 **Can I run my agents in CI?** Yes. [GitHub Agentic Workflows](https://pydantic.dev/docs/ai/harness/gh-aw/) runs Pydantic AI agents
-from a Markdown workflow file in GitHub Actions.
+from a Markdown workflow file in GitHub Actions, or run a Python script directly with `uv run`;
+nothing requires an Action.
