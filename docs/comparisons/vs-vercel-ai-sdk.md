@@ -4,7 +4,8 @@ The Vercel AI SDK is the wire to a React UI: streaming, tool cards, approval in 
 AI is a Python agent. [`VercelAIAdapter`][pydantic_ai.ui.vercel_ai.VercelAIAdapter] speaks their
 protocol, so the browser can stay theirs.
 
-`abortSignal` aborts the request. Ours raises `RunCancelled` holding the conversation.
+`abortSignal` aborts the request. Ours raises [`RunCancelled`][pydantic_ai.exceptions.RunCancelled]
+holding the conversation.
 
 ## Side by side
 
