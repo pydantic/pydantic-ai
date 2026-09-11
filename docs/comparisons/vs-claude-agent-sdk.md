@@ -19,7 +19,7 @@ model.
 | Agent graph | No | [`pydantic-graph`](../graph.md) |
 | Coding agent | The CLI | [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) |
 | Research agent | No | [`Researcher()`](https://pydantic.dev/docs/ai/harness/researcher/) |
-| Web search | Native | Native and third party ([WebSearch](../capabilities/web-search.md)) |
+| Web search | Native | Native ([WebSearch](../capabilities/web-search.md)) and third party ([DuckDuckGo](../common-tools.md#duckduckgo-search-tool), [Tavily](../common-tools.md#tavily-search-tool), [You.com](https://pydantic.dev/docs/ai/harness/youdotcom/), [Exa](https://pydantic.dev/docs/ai/harness/exa-search/)) |
 | Code sandboxes | CLI permissions | [Modal](https://pydantic.dev/docs/ai/harness/modal-sandbox/) |
 | Image generation | No | Yes (OpenAI, Google, xAI) |
 | Browser | Yes (Chrome) | Yes ([Browser Use](https://pydantic.dev/docs/ai/harness/browser-use/) and [Playwright](https://pydantic.dev/docs/ai/harness/playwright/)) |

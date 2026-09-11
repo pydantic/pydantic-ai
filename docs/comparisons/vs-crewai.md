@@ -17,10 +17,10 @@ call, branch, `asyncio.gather`, or [`pydantic-graph`](../graph.md).
 | Agent graph | `Process` (sequential / hierarchical) | [`pydantic-graph`](../graph.md) |
 | Coding agent | E2B tools | [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) |
 | Research agent | No | [`Researcher()`](https://pydantic.dev/docs/ai/harness/researcher/) |
-| Web search | Third party (Serper, Tavily, Exa) | Native and third party ([WebSearch](../capabilities/web-search.md)) |
-| Code sandboxes | E2B | [Modal](https://pydantic.dev/docs/ai/harness/modal-sandbox/) |
+| Web search | Third party | Native ([WebSearch](../capabilities/web-search.md)) and third party ([DuckDuckGo](../common-tools.md#duckduckgo-search-tool), [Tavily](../common-tools.md#tavily-search-tool), [You.com](https://pydantic.dev/docs/ai/harness/youdotcom/), [Exa](https://pydantic.dev/docs/ai/harness/exa-search/)) |
+| Code sandboxes | Third party | [Modal](https://pydantic.dev/docs/ai/harness/modal-sandbox/) |
 | Image generation | Yes (`DallETool`) | Yes (OpenAI, Google, xAI) |
-| Browser | Yes (Browserbase) | Yes ([Browser Use](https://pydantic.dev/docs/ai/harness/browser-use/) and [Playwright](https://pydantic.dev/docs/ai/harness/playwright/)) |
+| Browser | Yes | Yes ([Browser Use](https://pydantic.dev/docs/ai/harness/browser-use/) and [Playwright](https://pydantic.dev/docs/ai/harness/playwright/)) |
 | Structured output | Yes | Yes (type on the agent) |
 | Human in the loop | Yes (human tools) | Yes (tool approval) |
 | Guardrails | Yes (task guardrails) | Yes ([harness](https://pydantic.dev/docs/ai/harness/guardrails/)) |

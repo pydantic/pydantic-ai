@@ -17,10 +17,10 @@ typed [`Agent`][pydantic_ai.Agent], with [`pydantic-graph`](../graph.md) when yo
 | Agent graph | LangGraph | [`pydantic-graph`](../graph.md) |
 | Coding agent | Deep Agents | [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) |
 | Research agent | Open Deep Research | [`Researcher()`](https://pydantic.dev/docs/ai/harness/researcher/) |
-| Web search | Native tools plus Tavily, DuckDuckGo, ... | Native and third party ([WebSearch](../capabilities/web-search.md)) |
-| Code sandboxes | Community / E2B | [Modal](https://pydantic.dev/docs/ai/harness/modal-sandbox/) |
-| Image generation | Integrations | Yes (OpenAI, Google, xAI) |
-| Browser | Integrations | Yes ([Browser Use](https://pydantic.dev/docs/ai/harness/browser-use/) and [Playwright](https://pydantic.dev/docs/ai/harness/playwright/)) |
+| Web search | Native and third party | Native ([WebSearch](../capabilities/web-search.md)) and third party ([DuckDuckGo](../common-tools.md#duckduckgo-search-tool), [Tavily](../common-tools.md#tavily-search-tool), [You.com](https://pydantic.dev/docs/ai/harness/youdotcom/), [Exa](https://pydantic.dev/docs/ai/harness/exa-search/)) |
+| Code sandboxes | Third party | [Modal](https://pydantic.dev/docs/ai/harness/modal-sandbox/) |
+| Image generation | Third party | Yes (OpenAI, Google, xAI) |
+| Browser | Third party | Yes ([Browser Use](https://pydantic.dev/docs/ai/harness/browser-use/) and [Playwright](https://pydantic.dev/docs/ai/harness/playwright/)) |
 | Structured output | Yes (`with_structured_output`) | Yes (type on the agent) |
 | Human in the loop | Yes (`interrupt`) | Yes (tool approval) |
 | Guardrails | Middleware | Yes ([harness](https://pydantic.dev/docs/ai/harness/guardrails/)) |

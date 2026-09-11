@@ -18,10 +18,10 @@ and scorers as separate concepts.
 | Agent graph | Workflows in core | [`pydantic-graph`](../graph.md) |
 | Coding agent | `createCodingAgent()` | [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) |
 | Research agent | No | [`Researcher()`](https://pydantic.dev/docs/ai/harness/researcher/) |
-| Web search | Native (`webSearchTool`) | Native and third party ([WebSearch](../capabilities/web-search.md)) |
-| Code sandboxes | Workspace (E2B, Daytona, Modal, Code Mode) | [Modal](https://pydantic.dev/docs/ai/harness/modal-sandbox/) |
+| Web search | Native | Native ([WebSearch](../capabilities/web-search.md)) and third party ([DuckDuckGo](../common-tools.md#duckduckgo-search-tool), [Tavily](../common-tools.md#tavily-search-tool), [You.com](https://pydantic.dev/docs/ai/harness/youdotcom/), [Exa](https://pydantic.dev/docs/ai/harness/exa-search/)) |
+| Code sandboxes | Yes | [Modal](https://pydantic.dev/docs/ai/harness/modal-sandbox/) |
 | Image generation | No | Yes (OpenAI, Google, xAI) |
-| Browser | Yes (AgentBrowser, Stagehand) | Yes ([Browser Use](https://pydantic.dev/docs/ai/harness/browser-use/) and [Playwright](https://pydantic.dev/docs/ai/harness/playwright/)) |
+| Browser | Yes | Yes ([Browser Use](https://pydantic.dev/docs/ai/harness/browser-use/) and [Playwright](https://pydantic.dev/docs/ai/harness/playwright/)) |
 | Structured output | Yes | Yes (type on the agent) |
 | Human in the loop | Yes (processors / approval) | Yes (tool approval) |
 | Guardrails | Processors | Yes ([harness](https://pydantic.dev/docs/ai/harness/guardrails/)) |

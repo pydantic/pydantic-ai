@@ -21,7 +21,7 @@ speak.
 | Agent graph | Media pipeline, not a workflow graph | [`pydantic-graph`](../graph.md) |
 | Coding agent | No | [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) |
 | Research agent | No | [`Researcher()`](https://pydantic.dev/docs/ai/harness/researcher/) |
-| Web search | Native (provider tools) | Native and third party ([WebSearch](../capabilities/web-search.md)) |
+| Web search | Native | Native ([WebSearch](../capabilities/web-search.md)) and third party ([DuckDuckGo](../common-tools.md#duckduckgo-search-tool), [Tavily](../common-tools.md#tavily-search-tool), [You.com](https://pydantic.dev/docs/ai/harness/youdotcom/), [Exa](https://pydantic.dev/docs/ai/harness/exa-search/)) |
 | Code sandboxes | `CodeInterpreter` (provider) | [Modal](https://pydantic.dev/docs/ai/harness/modal-sandbox/) |
 | Image generation | No | Yes (OpenAI, Google, xAI) |
 | Browser | `ComputerUse` / `plugins.browser` | Yes ([Browser Use](https://pydantic.dev/docs/ai/harness/browser-use/) and [Playwright](https://pydantic.dev/docs/ai/harness/playwright/)) |
