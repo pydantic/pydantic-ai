@@ -202,6 +202,22 @@ class Graph(Generic[StateT, DepsT, InputT, OutputT]):
     Used to determine which joins are "final" (have no other joins as intermediates) and
     which joins should preserve fork stacks when proceeding downstream."""
 
+    def _set_graph_name(self, infer_name: bool, extra_depth: int = 0) -> None:
+        """Set graph name by inferring it from the calling frame if not already set.
+
+        Args:
+            infer_name: Whether to infer graph name from the calling frame.
+            extra_depth: Additional stack frames between `_set_graph_name` and original call site.
+
+        Returns:
+            None
+        """
+        if infer_name and self.name is None:
+            # Base depth = 1: `infer_obj_name` is called inside `_set_graph_name`.
+            graph_name = infer_obj_name(self, depth=1 + extra_depth)
+            if graph_name is not None:  # pragma: no branch
+                self.name = graph_name
+
     def get_parent_fork(self, join_id: JoinID) -> ParentFork[NodeID]:
         """Get the parent fork information for a join node.
 
@@ -261,10 +277,7 @@ class Graph(Generic[StateT, DepsT, InputT, OutputT]):
         Returns:
             The final output from the graph execution
         """
-        if infer_name and self.name is None:
-            inferred_name = infer_obj_name(self, depth=2)
-            if inferred_name is not None:  # pragma: no branch
-                self.name = inferred_name
+        self._set_graph_name(infer_name=infer_name, extra_depth=2)
 
         async with self.iter(state=state, deps=deps, inputs=inputs, span=span, infer_name=False) as graph_run:
             # Note: This would probably be better using `async for _ in graph_run`, but this tests the `next` method,
@@ -303,10 +316,8 @@ class Graph(Generic[StateT, DepsT, InputT, OutputT]):
         Returns:
             The final output from the graph execution
         """
-        if infer_name and self.name is None:
-            inferred_name = infer_obj_name(self, depth=2)
-            if inferred_name is not None:  # pragma: no branch
-                self.name = inferred_name
+        self._set_graph_name(infer_name=infer_name, extra_depth=2)
+
         return _utils.run_until_complete(self.run(state=state, deps=deps, inputs=inputs, span=span, infer_name=False))
 
     @asynccontextmanager
@@ -334,10 +345,8 @@ class Graph(Generic[StateT, DepsT, InputT, OutputT]):
         Yields:
             A GraphRun instance that can be iterated for step-by-step execution
         """
-        if infer_name and self.name is None:
-            inferred_name = infer_obj_name(self, depth=3)  # depth=3 because asynccontextmanager adds one
-            if inferred_name is not None:  # pragma: no branch
-                self.name = inferred_name
+        # Extra depth is 3 because asynccontextmanager adds one.
+        self._set_graph_name(infer_name=infer_name, extra_depth=3)
 
         with ExitStack() as stack:
             entered_span: AbstractSpan | None = None
