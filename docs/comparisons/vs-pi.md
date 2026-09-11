@@ -25,7 +25,7 @@ packages. Pydantic AI is a typed Python [`Agent`][pydantic_ai.Agent].
 | | Pi | Pydantic AI |
 |---|---|---|
 | Structured output | No | [Structured output](../output.md#structured-output) |
-| Memory | Yes | [Memory](https://pydantic.dev/docs/ai/harness/memory/) |
+| Memory | No | [Memory](https://pydantic.dev/docs/ai/harness/memory/) |
 | Compaction | Yes | [Compaction](../capabilities/compaction.md) |
 | Guardrails | No | [Guardrails](https://pydantic.dev/docs/ai/harness/guardrails/) |
 | Code sandboxes | No | [Execution environments](https://pydantic.dev/docs/ai/harness/#execution-environments) |
@@ -34,6 +34,8 @@ packages. Pydantic AI is a typed Python [`Agent`][pydantic_ai.Agent].
 
 ## FAQ
 
-**Can I build a coding agent like this in Python?** Yes. [Code Puppy](https://github.com/mpfaffenberger/code_puppy)
-and [Pydantic Deep Agents](https://github.com/vstorm-co/pydantic-deepagents) (Vstorm) did.
-[`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) if you want ours.
+**Can I build a coding agent like this in Python?** Yes. Give your agent the
+[`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) capability and it can read, edit and run
+code. If you want to see a complete coding agent built on Pydantic AI,
+[Code Puppy](https://github.com/mpfaffenberger/code_puppy) and
+[Pydantic Deep Agents](https://github.com/vstorm-co/pydantic-deepagents) (Vstorm) are both open source.

@@ -31,7 +31,7 @@ model.
 | Compaction | Yes | [Compaction](../capabilities/compaction.md) |
 | Guardrails | Yes | [Guardrails](https://pydantic.dev/docs/ai/harness/guardrails/) |
 | Code sandboxes | Yes | [Execution environments](https://pydantic.dev/docs/ai/harness/#execution-environments) |
-| Browser | Yes | [Web & research](https://pydantic.dev/docs/ai/harness/#web--research) |
+| Browser | No | [Web & research](https://pydantic.dev/docs/ai/harness/#web--research) |
 | Evals | No | [Pydantic Evals](../evals.md) |
 | Test without API keys | No | [Testing](../testing.md) |
 
@@ -39,6 +39,8 @@ model.
 
 **Is Pydantic AI a native Python SDK?** Yes. The Claude Agent SDK wraps a TypeScript CLI.
 
-**Can I build my own coding agent harness?** Yes. [Code Puppy](https://github.com/mpfaffenberger/code_puppy)
-and [Pydantic Deep Agents](https://github.com/vstorm-co/pydantic-deepagents) (Vstorm) did, on the same
-[`Agent`][pydantic_ai.Agent]. [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) if you want ours.
+**Can I build my own coding agent harness?** Yes. Give your agent the
+[`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) capability, or assemble your own from the
+same [`Agent`][pydantic_ai.Agent]. For a complete coding agent built that way,
+[Code Puppy](https://github.com/mpfaffenberger/code_puppy) and
+[Pydantic Deep Agents](https://github.com/vstorm-co/pydantic-deepagents) (Vstorm) are both open source.
