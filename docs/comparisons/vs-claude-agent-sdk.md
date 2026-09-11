@@ -10,7 +10,6 @@ model.
 | | Claude Agent SDK | Pydantic AI |
 |---|---|---|
 | Language | Python SDK wrapping the TypeScript `claude` CLI | Python |
-| License | MIT | MIT |
 | Model providers | Claude (Anthropic, Bedrock, Vertex, Foundry) | [Any](../models/overview.md), plus [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] |
 | Durable execution | Sessions | Yes — [5+ integrations](../durable_execution/overview.md) |
 | Observability | CLI telemetry | [OpenTelemetry](../capabilities/instrumentation.md), any backend including [Pydantic Logfire](../logfire.md) |
@@ -22,6 +21,7 @@ model.
 | Multi-agent | Sub-agents | [Sub-agents](../multi-agent-applications.md), [graph](../graph.md), or `async` |
 | Realtime voice | No | [Realtime](../realtime/overview.md) |
 | Image generation | No | [Image generation](../image-generation.md) |
+| License | MIT | MIT |
 
 | | Claude Agent SDK | Pydantic AI |
 |---|---|---|

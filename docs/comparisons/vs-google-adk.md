@@ -8,7 +8,6 @@ AI isn't tied to a cloud.
 | | Google ADK | Pydantic AI |
 |---|---|---|
 | Language | Python | Python |
-| License | Apache-2.0 | MIT |
 | Model providers | Gemini first (`LiteLlm`, `AnthropicLlm` exist) | [Any](../models/overview.md), plus [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] |
 | Durable execution | Vertex | Yes — [5+ integrations](../durable_execution/overview.md) |
 | Observability | OTel, their endpoint | [OpenTelemetry](../capabilities/instrumentation.md), any backend including [Pydantic Logfire](../logfire.md) |
@@ -20,6 +19,7 @@ AI isn't tied to a cloud.
 | Multi-agent | `LoopAgent`, `ParallelAgent` | [Sub-agents](../multi-agent-applications.md), [graph](../graph.md), or `async` |
 | Realtime voice | Yes (Gemini Live) | [Realtime](../realtime/overview.md) |
 | Image generation | No | [Image generation](../image-generation.md) |
+| License | Apache-2.0 | MIT |
 
 | | Google ADK | Pydantic AI |
 |---|---|---|

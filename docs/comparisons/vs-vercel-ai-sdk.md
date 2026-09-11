@@ -9,7 +9,6 @@ protocol, so the browser can stay theirs.
 | | Vercel AI SDK | Pydantic AI |
 |---|---|---|
 | Language | TypeScript | Python |
-| License | Apache-2.0 | MIT |
 | Model providers | Many | [Any](../models/overview.md), plus [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] |
 | Durable execution | `WorkflowAgent` (`@ai-sdk/workflow`) | Yes — [5+ integrations](../durable_execution/overview.md) |
 | Observability | OTel, their endpoint | [OpenTelemetry](../capabilities/instrumentation.md), any backend including [Pydantic Logfire](../logfire.md) |
@@ -21,6 +20,7 @@ protocol, so the browser can stay theirs.
 | Multi-agent | You compose it | [Sub-agents](../multi-agent-applications.md), [graph](../graph.md), or `async` |
 | Realtime voice | Yes (experimental) | [Realtime](../realtime/overview.md) |
 | Image generation | Yes (`generateImage`) | [Image generation](../image-generation.md) |
+| License | Apache-2.0 | MIT |
 
 | | Vercel AI SDK | Pydantic AI |
 |---|---|---|

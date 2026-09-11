@@ -8,7 +8,6 @@ call, branch, `asyncio.gather`, or [`pydantic-graph`](../graph.md).
 | | CrewAI | Pydantic AI |
 |---|---|---|
 | Language | Python | Python |
-| License | MIT | MIT |
 | Model providers | Many | [Any](../models/overview.md), plus [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] |
 | Durable execution | `Crew.from_checkpoint` | Yes — [5+ integrations](../durable_execution/overview.md) |
 | Observability | OTel, their endpoint | [OpenTelemetry](../capabilities/instrumentation.md), any backend including [Pydantic Logfire](../logfire.md) |
@@ -20,6 +19,7 @@ call, branch, `asyncio.gather`, or [`pydantic-graph`](../graph.md).
 | Multi-agent | Roles, tasks, `Process` | [Sub-agents](../multi-agent-applications.md), [graph](../graph.md), or `async` |
 | Realtime voice | No | [Realtime](../realtime/overview.md) |
 | Image generation | Yes (`DallETool`) | [Image generation](../image-generation.md) |
+| License | MIT | MIT |
 
 | | CrewAI | Pydantic AI |
 |---|---|---|

@@ -8,7 +8,6 @@ features first. Pydantic AI runs on any model, including OpenAI.
 | | OpenAI Agents SDK | Pydantic AI |
 |---|---|---|
 | Language | Python | Python |
-| License | MIT | MIT |
 | Model providers | OpenAI first; others via LiteLLM | [Any](../models/overview.md), plus [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] |
 | Durable execution | Temporal integration | Yes — [5+ integrations](../durable_execution/overview.md) |
 | Observability | Their dashboard | [OpenTelemetry](../capabilities/instrumentation.md), any backend including [Pydantic Logfire](../logfire.md) |
@@ -20,6 +19,7 @@ features first. Pydantic AI runs on any model, including OpenAI.
 | Multi-agent | Handoffs | [Sub-agents](../multi-agent-applications.md), [graph](../graph.md), or `async` |
 | Realtime voice | Yes (OpenAI Realtime) | [Realtime](../realtime/overview.md) |
 | Image generation | Yes (OpenAI) | [Image generation](../image-generation.md) |
+| License | MIT | MIT |
 
 | | OpenAI Agents SDK | Pydantic AI |
 |---|---|---|

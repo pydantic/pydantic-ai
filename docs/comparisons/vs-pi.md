@@ -9,7 +9,6 @@ packages. Pydantic AI is a typed Python [`Agent`][pydantic_ai.Agent].
 | | Pi | Pydantic AI |
 |---|---|---|
 | Language | TypeScript | Python |
-| License | MIT | MIT |
 | Model providers | Many | [Any](../models/overview.md), plus [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] |
 | Durable execution | Session tree on disk | Yes — [5+ integrations](../durable_execution/overview.md) |
 | Observability | Logs | [OpenTelemetry](../capabilities/instrumentation.md), any backend including [Pydantic Logfire](../logfire.md) |
@@ -21,6 +20,7 @@ packages. Pydantic AI is a typed Python [`Agent`][pydantic_ai.Agent].
 | Multi-agent | Packages, not core | [Sub-agents](../multi-agent-applications.md), [graph](../graph.md), or `async` |
 | Realtime voice | No | [Realtime](../realtime/overview.md) |
 | Image generation | No | [Image generation](../image-generation.md) |
+| License | MIT | MIT |
 
 | | Pi | Pydantic AI |
 |---|---|---|

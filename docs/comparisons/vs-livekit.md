@@ -12,7 +12,6 @@ speak.
 | | LiveKit Agents | Pydantic AI |
 |---|---|---|
 | Language | Python (also Node) | Python |
-| License | Apache-2.0 | MIT |
 | Model providers | Many (plugins) | [Any](../models/overview.md), plus [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] |
 | Durable execution | Agent server orchestration | Yes — [5+ integrations](../durable_execution/overview.md) |
 | Observability | OTel, their endpoint | [OpenTelemetry](../capabilities/instrumentation.md), any backend including [Pydantic Logfire](../logfire.md) |
@@ -24,6 +23,7 @@ speak.
 | Multi-agent | Handoffs in a room | [Sub-agents](../multi-agent-applications.md), [graph](../graph.md), or `async` |
 | Realtime voice | The product (WebRTC, telephony) | [Realtime](../realtime/overview.md) |
 | Image generation | No | [Image generation](../image-generation.md) |
+| License | Apache-2.0 | MIT |
 
 | | LiveKit Agents | Pydantic AI |
 |---|---|---|

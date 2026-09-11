@@ -8,7 +8,6 @@ only the library: an agent you put in the application you already run.
 | | Agno | Pydantic AI |
 |---|---|---|
 | Language | Python | Python |
-| License | Apache-2.0 | MIT |
 | Model providers | Many | [Any](../models/overview.md), plus [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] |
 | Durable execution | Agent `db` / `checkpoint` | Yes — [5+ integrations](../durable_execution/overview.md) |
 | Observability | OTel, their endpoint | [OpenTelemetry](../capabilities/instrumentation.md), any backend including [Pydantic Logfire](../logfire.md) |
@@ -20,6 +19,7 @@ only the library: an agent you put in the application you already run.
 | Multi-agent | Teams, workflows | [Sub-agents](../multi-agent-applications.md), [graph](../graph.md), or `async` |
 | Realtime voice | No | [Realtime](../realtime/overview.md) |
 | Image generation | Yes | [Image generation](../image-generation.md) |
+| License | Apache-2.0 | MIT |
 
 | | Agno | Pydantic AI |
 |---|---|---|

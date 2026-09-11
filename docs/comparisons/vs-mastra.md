@@ -9,7 +9,6 @@ and scorers as separate concepts.
 | | Mastra | Pydantic AI |
 |---|---|---|
 | Language | TypeScript | Python |
-| License | Apache-2.0 (core); EE for some features | MIT |
 | Model providers | Many | [Any](../models/overview.md), plus [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] |
 | Durable execution | `createDurableAgent()`, Inngest | Yes — [5+ integrations](../durable_execution/overview.md) |
 | Observability | OTel, their endpoint | [OpenTelemetry](../capabilities/instrumentation.md), any backend including [Pydantic Logfire](../logfire.md) |
@@ -21,6 +20,7 @@ and scorers as separate concepts.
 | Multi-agent | Workflows, sub-agents | [Sub-agents](../multi-agent-applications.md), [graph](../graph.md), or `async` |
 | Realtime voice | Voice extras | [Realtime](../realtime/overview.md) |
 | Image generation | No | [Image generation](../image-generation.md) |
+| License | Apache-2.0 (core); EE for some features | MIT |
 
 | | Mastra | Pydantic AI |
 |---|---|---|

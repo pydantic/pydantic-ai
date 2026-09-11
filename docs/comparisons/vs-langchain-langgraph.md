@@ -8,7 +8,6 @@ typed [`Agent`][pydantic_ai.Agent], with [`pydantic-graph`](../graph.md) when yo
 | | LangChain & LangGraph | Pydantic AI |
 |---|---|---|
 | Language | Python | Python |
-| License | MIT | MIT |
 | Model providers | Many | [Any](../models/overview.md), plus [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] |
 | Durable execution | Checkpointers | Yes — [5+ integrations](../durable_execution/overview.md) |
 | Observability | LangSmith | [OpenTelemetry](../capabilities/instrumentation.md), any backend including [Pydantic Logfire](../logfire.md) |
@@ -20,6 +19,7 @@ typed [`Agent`][pydantic_ai.Agent], with [`pydantic-graph`](../graph.md) when yo
 | Multi-agent | LangGraph (handoffs, supervisors, teams) | [Sub-agents](../multi-agent-applications.md), [graph](../graph.md), or `async` |
 | Realtime voice | No | [Realtime](../realtime/overview.md) |
 | Image generation | Third party | [Image generation](../image-generation.md) |
+| License | MIT | MIT |
 
 | | LangChain & LangGraph | Pydantic AI |
 |---|---|---|
