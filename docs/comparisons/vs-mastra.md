@@ -11,7 +11,7 @@ and scorers as separate concepts.
 | Language | TypeScript | Python |
 | Model providers | Multiple | [Multiple](../models/overview.md) |
 | Durable execution | Yes | [5+ integrations](../durable_execution/overview.md) |
-| Observability | OpenTelemetry | [OpenTelemetry](../capabilities/instrumentation.md) |
+| Observability | OpenTelemetry | [OpenTelemetry](../capabilities/instrumentation.md), including [Pydantic Logfire](../logfire.md) |
 | Extensibility | Tools, processors, scorers, workflows | [Capabilities and toolsets](../extensibility.md) |
 | Interfaces | Playground, Studio | [CLI](../cli.md), [web chat](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) (experimental), A2A |
 | Build your own harness | Yes | [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) |
