@@ -10,7 +10,7 @@ The OpenAI Agents SDK is a small Python library built close to OpenAI's own API:
 | License | MIT | MIT |
 | Model providers | OpenAI first; others via LiteLLM | [Many](../models/overview.md) |
 | Extensibility | Tools, guardrails, handoffs | [Capabilities and toolsets](../extensibility.md); [30+ in the Harness SDK](https://pydantic.dev/docs/ai/harness/) |
-| Harnesses | TBD-FACTCHECK | Built-in [`Coder`](https://pydantic.dev/docs/ai/harness/coder/) and [`Researcher`](https://pydantic.dev/docs/ai/harness/researcher/), or compose your own |
+| Harnesses | `SandboxAgent`, or build your own | Built-in [`Coder`](https://pydantic.dev/docs/ai/harness/coder/) and [`Researcher`](https://pydantic.dev/docs/ai/harness/researcher/), or compose your own |
 | Observability | OpenAI tracing, OTel via adapters | [OpenTelemetry](../logfire.md#using-opentelemetry), including [Pydantic Logfire](https://pydantic.dev/logfire) |
 | Interfaces | None built in | [CLI](../cli.md), [web chat](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) (experimental) |
 | Realtime voice | Yes | [Realtime](../realtime/overview.md) |
@@ -22,9 +22,9 @@ The OpenAI Agents SDK is a small Python library built close to OpenAI's own API:
 
 | | OpenAI Agents SDK | Pydantic AI and [Harness SDK](https://pydantic.dev/docs/ai/harness/) |
 |---|---|---|
-| Sub-agents | TBD-FACTCHECK | [Subagents](https://pydantic.dev/docs/ai/harness/subagents/), [delegation](../multi-agent-applications.md), or [`pydantic-graph`](../graph.md) |
-| Planning | TBD-FACTCHECK | [Planning](https://pydantic.dev/docs/ai/harness/planning/) |
-| Skills | TBD-FACTCHECK | [Skills](https://pydantic.dev/docs/ai/harness/skills/) |
+| Sub-agents | Yes | [Subagents](https://pydantic.dev/docs/ai/harness/subagents/), [delegation](../multi-agent-applications.md), or [`pydantic-graph`](../graph.md) |
+| Planning | No | [Planning](https://pydantic.dev/docs/ai/harness/planning/) |
+| Skills | Yes | [Skills](https://pydantic.dev/docs/ai/harness/skills/) |
 | Memory | Yes | [Memory](https://pydantic.dev/docs/ai/harness/memory/) |
 | Compaction | Yes | [Compaction](../capabilities/compaction.md) |
 | Guardrails | Yes | [Guardrails](https://pydantic.dev/docs/ai/harness/guardrails/) |
