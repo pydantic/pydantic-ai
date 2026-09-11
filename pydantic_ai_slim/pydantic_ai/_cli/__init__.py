@@ -3,11 +3,14 @@ from __future__ import annotations as _annotations
 import argparse
 import functools
 import json
+import re
 import sys
 from collections.abc import Sequence
 from contextlib import AsyncExitStack, ExitStack
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from reprlib import Repr
 from typing import Any
 
 import anyio
@@ -17,7 +20,14 @@ from .. import __version__, models, usage as _usage
 from .._run_context import AgentDepsT
 from ..agent import AbstractAgent, Agent
 from ..exceptions import UserError
-from ..messages import FunctionToolCallEvent, FunctionToolResultEvent, ModelMessage, ModelResponse, ToolReturnPart
+from ..messages import (
+    FunctionToolCallEvent,
+    FunctionToolResultEvent,
+    ModelMessage,
+    ModelResponse,
+    ToolCallPart,
+    ToolReturnPart,
+)
 from ..models import infer_model, known_model_names
 from ..native_tools import NATIVE_TOOLS_REQUIRING_CONFIG, SUPPORTED_NATIVE_TOOLS
 from ..output import OutputDataT
@@ -32,7 +42,7 @@ try:
     from prompt_toolkit.buffer import Buffer
     from prompt_toolkit.document import Document
     from prompt_toolkit.history import FileHistory
-    from rich.console import Console, ConsoleOptions, RenderResult
+    from rich.console import Console, ConsoleOptions, Group, RenderResult
     from rich.live import Live
     from rich.markdown import CodeBlock, Heading, Markdown
     from rich.status import Status
@@ -268,6 +278,7 @@ subcommands:
         default='dark',
     )
     parser.add_argument('--no-stream', action='store_true', help='Disable streaming from the model')
+    parser.add_argument('--no-tool-calls', action='store_true', help='Hide tool-call activity while streaming')
     parser.add_argument(
         '--mcp-config',
         help='Path to MCP servers configuration file (JSON, using the same mcpServers shape as Claude Desktop, Claude Code, and Cursor).',
@@ -357,13 +368,35 @@ def _run_chat_command(
 
     if args.prompt:
         try:
-            anyio.run(functools.partial(ask_agent, agent, args.prompt, stream, console, code_theme, toolsets=toolsets))
+            anyio.run(
+                functools.partial(
+                    ask_agent,
+                    agent,
+                    args.prompt,
+                    stream,
+                    console,
+                    code_theme,
+                    toolsets=toolsets,
+                    show_tool_calls=not args.no_tool_calls,
+                )
+            )
         except KeyboardInterrupt:
             pass
         return 0
 
     try:
-        return anyio.run(functools.partial(run_chat, stream, agent, console, code_theme, prog_name, toolsets=toolsets))
+        return anyio.run(
+            functools.partial(
+                run_chat,
+                stream,
+                agent,
+                console,
+                code_theme,
+                prog_name,
+                toolsets=toolsets,
+                show_tool_calls=not args.no_tool_calls,
+            )
+        )
     except KeyboardInterrupt:  # pragma: no cover
         return 0
 
@@ -381,6 +414,8 @@ async def run_chat(
     model_settings: ModelSettings | None = None,
     usage_limits: _usage.UsageLimits | None = None,
     toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+    *,
+    show_tool_calls: bool = True,
 ) -> int:
     prompt_history_path = (config_dir or PYDANTIC_AI_HOME) / PROMPT_HISTORY_FILENAME
     prompt_history_path.parent.mkdir(parents=True, exist_ok=True)
@@ -432,6 +467,7 @@ async def run_chat(
                         usage_limits=usage_limits,
                         toolsets=toolsets,
                         usage=session_usage,
+                        show_tool_calls=show_tool_calls,
                     )
                     session_turns += 1
                 except anyio.get_cancelled_exc_class():
@@ -457,6 +493,7 @@ async def ask_agent(
     toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
     *,
     usage: _usage.RunUsage | None = None,
+    show_tool_calls: bool = True,
 ) -> list[ModelMessage]:
     status = Status('[dim]Working on it…[/dim]', console=console)
 
@@ -492,10 +529,10 @@ async def ask_agent(
                 usage=turn_usage,
             ) as agent_run:
                 live = Live('', refresh_per_second=15, console=console, vertical_overflow='ellipsis')
-                content_pieces: list[str] = []
+                content_pieces: list[str | Text] = []
                 # Tool calls run concurrently and can return out of order, so in-flight calls are
                 # keyed by call id — rendering only the latest would erase the others' indicators.
-                pending_calls: dict[str, str] = {}
+                pending_calls: dict[str, _ToolCallPreview] = {}
                 updated_content = ''
                 live_started = False
 
@@ -514,35 +551,130 @@ async def ask_agent(
 
                             async for content in handle_stream.stream_output(debounce_by=None):
                                 updated_content = str(content)
-                                display = '\n\n'.join([*content_pieces, updated_content])
-                                live.update(Markdown(display, code_theme=code_theme))
+                                pieces = list(content_pieces)
+                                if updated_content.strip():
+                                    pieces.append(updated_content)
+                                live.update(_cli_output(pieces, console.width, code_theme))
 
                     elif Agent.is_call_tools_node(node):
                         # Freeze the text streamed so far so tool-call lines append below it rather
                         # than overwriting it on the next model request node.
-                        if updated_content:
+                        if updated_content.strip():
                             content_pieces.append(updated_content)
-                            updated_content = ''
+                        updated_content = ''
+
+                        if not show_tool_calls:
+                            output = _cli_output(content_pieces, console.width, code_theme)
+                            live.update(Group(status.renderable, output))
+                            try:
+                                # Exiting the stream context drains its events and executes the tools.
+                                async with node.stream(agent_run.ctx):
+                                    pass
+                            finally:
+                                live.update(output)
+                            continue
 
                         async with node.stream(agent_run.ctx) as handle_stream:
                             async for event in handle_stream:
                                 if isinstance(event, FunctionToolCallEvent):
-                                    pending_calls[event.tool_call_id] = event.part.tool_name
+                                    pending_calls[event.tool_call_id] = _tool_call_preview(event.part)
                                 elif isinstance(event, FunctionToolResultEvent):
-                                    # Pop on any result, not just a `ToolReturnPart`: a call that
-                                    # comes back as a `RetryPromptPart` would otherwise stay pending
-                                    # and pin its indicator for the rest of the run.
-                                    pending_calls.pop(event.tool_call_id, None)
+                                    # Retry results must also clear the running indicator.
+                                    preview = pending_calls.pop(event.tool_call_id, None)
                                     if isinstance(event.part, ToolReturnPart):
-                                        content_pieces.append(f'> Called tool `{event.part.tool_name}`.')
-                                calling = [f'> _Calling tool `{name}`…_' for name in pending_calls.values()]
-                                live.update(Markdown('\n\n'.join([*content_pieces, *calling]), code_theme=code_theme))
+                                        preview = preview or _ToolCallPreview(event.part.tool_name)
+                                        content_pieces.append(preview.render(completed=True))
+                                calling = [preview.render(completed=False) for preview in pending_calls.values()]
+                                live.update(_cli_output([*content_pieces, *calling], console.width, code_theme))
 
             assert agent_run.result is not None
             return agent_run.result.all_messages()
     finally:
         if usage is not None:
             usage.incr(turn_usage)
+
+
+_TOOL_ARG_REPR = Repr()
+_TOOL_ARG_REPR.maxstring = _TOOL_ARG_REPR.maxother = 80
+_TOOL_ARG_REPR.maxlevel = 2
+_TOOL_ARG_REPR.maxdict = _TOOL_ARG_REPR.maxlist = 3
+_TOOL_PREVIEW_WIDTH = 120
+_NEWLINE = re.compile(r'\r\n?|\n')
+_CONTROL_CHARACTERS = re.compile(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]')
+
+
+@dataclass
+class _ToolCallPreview:
+    signature: str
+    details: str = ''
+
+    def render(self, *, completed: bool) -> Text:
+        heading = f'Called tool {self.signature}.' if completed else f'Calling tool {self.signature}…'
+        return Text(f'{heading}\n{self.details}' if self.details else heading)
+
+
+def _tool_call_preview(part: ToolCallPart) -> _ToolCallPreview:
+    """Retain bounded argument previews, including the first five lines of multiline strings."""
+    signature = Text(f'{part.tool_name}(')
+    details: list[str] = []
+    for index, (key, value) in enumerate(part.args_as_dict().items()):
+        if index:
+            signature.append(', ')
+        name = key if key.isidentifier() and len(key) <= 80 else _TOOL_ARG_REPR.repr(key)
+        if isinstance(value, str) and ('\n' in value or '\r' in value):
+            lines = sum(1 for _ in _NEWLINE.finditer(value)) + (not value.endswith(('\n', '\r')))
+            summary = f'<{lines:,} line{"s" if lines != 1 else ""}>'
+            details.append(f'  {name}:')
+            start = 0
+            for _ in range(min(lines, 5)):
+                ending = _NEWLINE.search(value, start)
+                end = ending.start() if ending else len(value)
+                # Slice before constructing Text so long source lines are never retained in full.
+                source = value[start : min(end, start + _TOOL_PREVIEW_WIDTH)].expandtabs(4)
+                if end - start > _TOOL_PREVIEW_WIDTH:
+                    source += '…'
+                line = Text(_CONTROL_CHARACTERS.sub(lambda match: repr(match[0])[1:-1], source))
+                line.truncate(_TOOL_PREVIEW_WIDTH, overflow='ellipsis')
+                details.append(f'    {line.plain}')
+                start = ending.end() if ending else end
+            if lines > 5:
+                details.append(f'    … {lines - 5:,} more line{"s" if lines != 6 else ""}')
+        elif isinstance(value, str) and len(value) > 80:
+            summary = f'{value[:80]!r}…'
+        else:
+            summary = _TOOL_ARG_REPR.repr(value)
+        signature.append(f'{name}={summary}')
+        if signature.cell_len >= _TOOL_PREVIEW_WIDTH:
+            break
+    signature.append(')')
+    signature.truncate(_TOOL_PREVIEW_WIDTH, overflow='ellipsis')
+    return _ToolCallPreview(signature.plain, '\n'.join(details))
+
+
+_BACKTICK_RUN = re.compile(r'`+')
+
+
+def _cli_output(pieces: Sequence[str | Text], width: int, code_theme: str) -> Markdown:
+    """Keep one Markdown document, with literal tool rows separated by hard line breaks."""
+    markup: list[str] = []
+    previous_tool = False
+    for piece in pieces:
+        is_tool = isinstance(piece, Text)
+        if markup:
+            markup.append('  \n' if previous_tool and is_tool else '\n\n')
+        if isinstance(piece, Text):
+            lines: list[str] = []
+            for preview in piece.split('\n', allow_blank=True):
+                # Leave room for the blockquote border and padding.
+                preview.truncate(max(1, width - 4), overflow='ellipsis')
+                # A delimiter longer than any backtick run keeps source code and arguments literal.
+                delimiter = '`' * (max((len(run) for run in _BACKTICK_RUN.findall(preview.plain)), default=0) + 1)
+                lines.append(f'> {delimiter} {preview.plain} {delimiter}')
+            markup.append('  \n'.join(lines))
+        else:
+            markup.append(piece)
+        previous_tool = is_tool
+    return Markdown(''.join(markup), code_theme=code_theme)
 
 
 class CustomAutoSuggest(AutoSuggestFromHistory):

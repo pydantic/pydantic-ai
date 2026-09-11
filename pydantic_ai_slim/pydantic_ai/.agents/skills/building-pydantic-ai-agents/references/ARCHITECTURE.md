@@ -229,6 +229,12 @@ Need deterministic, fast tests?
 
 See [Run Methods and Streaming](./AGENTS-CORE.md#run-methods-and-streaming) for `event_stream_handler` details.
 
+For an interactive terminal chat, use `agent.to_cli_sync()` or `await agent.to_cli()`.
+Both display function-tool calls with bounded argument previews. Multiline inputs show their first
+five lines and the number of omitted lines; individual lines are truncated to fit the terminal. Pass
+`show_tool_calls=False` to hide this activity, for example when using Logfire console output.
+The standalone `clai` command provides the equivalent `--no-tool-calls` flag.
+
 ## Architecture Overview
 
 **Agent execution flow:**

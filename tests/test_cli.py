@@ -4,19 +4,22 @@ import json
 import sys
 import types
 from collections.abc import AsyncIterator, Callable, Iterator
+from contextlib import nullcontext
 from dataclasses import dataclass
 from io import StringIO
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import anyio
 import pytest
 import sniffio
+from pydantic import JsonValue
 from pytest import CaptureFixture
 from pytest_mock import MockerFixture
-from rich.console import Console
+from rich.cells import cell_len
+from rich.console import Console, RenderableType
 from rich.live import Live
-from rich.markdown import Markdown
+from rich.live_render import LiveRender
 
 from pydantic_ai import Agent, ModelMessage, ModelResponse, ModelRetry, TextPart, ToolCallPart
 from pydantic_ai.capabilities import NativeTool
@@ -348,7 +351,8 @@ def test_cli_prompt(capfd: CaptureFixture[str], env: TestEnv):
 
 
 @pytest.mark.anyio
-async def test_streaming_with_tool_calls():
+@pytest.mark.parametrize('show_tool_calls', [True, False])
+async def test_streaming_with_tool_calls(show_tool_calls: bool, live_frames: list[str]):
     """The streaming CLI render loop interleaves streamed model text with tool-call indicators.
 
     Uses a `FunctionModel` stream so the agent emits real text deltas and a tool call, exercising
@@ -372,17 +376,58 @@ async def test_streaming_with_tool_calls():
 
     output = StringIO()
     console = Console(file=output, force_terminal=False, width=80)
-    messages = await ask_agent(agent, 'weather?', stream=True, console=console, code_theme='monokai')
+    messages = await ask_agent(
+        agent, 'weather?', stream=True, console=console, code_theme='monokai', show_tool_calls=show_tool_calls
+    )
 
-    assert output.getvalue() == snapshot("""\
-Let me check the weather.                                                       \n\
-
-▌ Called tool get_weather.                                                    \n\
-
-It is sunny in Mexico City.                                                     \
-""")
+    expected_lines = ['Let me check the weather.', '']
+    if show_tool_calls:
+        expected_lines.extend(["▌ Called tool get_weather(city='Mexico City').", ''])
+    expected_lines.append('It is sunny in Mexico City.')
+    assert [line.rstrip() for line in output.getvalue().splitlines()] == expected_lines
+    assert any('Calling tool' in frame for frame in live_frames) is show_tool_calls
     assert isinstance(messages[-1], ModelResponse)
     assert messages[-1].parts[-1] == TextPart(content='It is sunny in Mexico City.')
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize('multiline', [False, True])
+async def test_tool_call_spacing_across_model_requests(multiline: bool):
+    async def run_code_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        count = sum(isinstance(part, ToolReturnPart) for message in messages for part in message.parts)
+        if count == 3:
+            yield 'Done.'
+        else:
+            if count == 0:
+                yield 'Checking.'
+            elif count == 1:
+                yield '   '
+            yield {
+                0: DeltaToolCall(
+                    name='run_code',
+                    json_args=json.dumps({'code': f'print({count})' + ('\n# end' if multiline else '')}),
+                    tool_call_id=f'call_{count}',
+                )
+            }
+
+    agent = Agent(FunctionModel(stream_function=run_code_stream))
+
+    @agent.tool_plain
+    def run_code(code: str) -> str:
+        return code
+
+    output = StringIO()
+    await ask_agent(agent, 'go', stream=True, console=Console(file=output, width=80), code_theme='monokai')
+    expected = ['Checking.', '']
+    for count in range(3):
+        if multiline:
+            expected.extend(
+                ['▌ Called tool run_code(code=<2 lines>).', '▌   code:', f'▌     print({count})', '▌     # end']
+            )
+        else:
+            expected.append(f"▌ Called tool run_code(code='print({count})').")
+    expected.extend(['', 'Done.'])
+    assert [line.rstrip() for line in output.getvalue().splitlines()] == expected
 
 
 def _distinct_frames(frames: list[str]) -> list[str]:
@@ -392,16 +437,16 @@ def _distinct_frames(frames: list[str]) -> list[str]:
 
 @pytest.fixture
 def live_frames(monkeypatch: pytest.MonkeyPatch) -> list[str]:
-    """Record the markdown of every `Live.update`, so intermediate render frames can be asserted.
-
-    `ask_agent` only ever updates the display with a `Markdown`, and the final console output shows
-    just the last frame — these tests are about what the display showed along the way.
-    """
+    """Capture rendered intermediate frames, including calls that finish before the final frame."""
     frames: list[str] = []
     original_update = Live.update
 
-    def capture_update(self: Live, renderable: Markdown, *, refresh: bool = False) -> None:
-        frames.append(renderable.markup)
+    def capture_update(self: Live, renderable: RenderableType, *, refresh: bool = False) -> None:
+        output = StringIO()
+        Console(file=output, width=self.console.width, height=self.console.height).print(
+            LiveRender(renderable, vertical_overflow='ellipsis')
+        )
+        frames.append('\n'.join(line.rstrip() for line in output.getvalue().splitlines()).rstrip())
         return original_update(self, renderable, refresh=refresh)
 
     monkeypatch.setattr(Live, 'update', capture_update)
@@ -451,17 +496,20 @@ async def test_streaming_with_concurrent_tool_calls(live_frames: list[str]):
     distinct = _distinct_frames(live_frames)
 
     # The regression: the second call's indicator replaced the first's, so this frame never existed.
-    assert any('_Calling tool `get_weather`…_' in frame and '_Calling tool `get_temp`…_' in frame for frame in distinct)
+    assert any(
+        "Calling tool get_weather(city='Lisbon')…" in frame and "Calling tool get_temp(city='Porto')…" in frame
+        for frame in distinct
+    )
     # And once one call finished, the other was left with no indicator at all.
-    assert any('Called tool `' in frame and '_Calling tool `' in frame for frame in distinct)
+    assert any('Called tool ' in frame and 'Calling tool ' in frame for frame in distinct)
 
     # The final frame holds both completions; their order follows task completion, so assert
     # membership rather than a sequence.
     final = distinct[-1]
     assert final.startswith('Checking two cities.')
-    assert '> Called tool `get_weather`.' in final
-    assert '> Called tool `get_temp`.' in final
-    assert '_Calling tool' not in final
+    assert "Called tool get_weather(city='Lisbon')." in final
+    assert "Called tool get_temp(city='Porto')." in final
+    assert 'Calling tool' not in final
     assert final.endswith('Both cities checked.')
 
 
@@ -523,7 +571,7 @@ async def test_streaming_clears_indicator_for_retried_tool(live_frames: list[str
             """\
 Trying a tool.
 
-> _Calling tool `flaky`…_\
+▌ Calling tool flaky()…\
 """,
             'Trying a tool.',
             """\
@@ -876,7 +924,7 @@ def test_code_theme_unset(mocker: MockerFixture, env: TestEnv):
     mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
     cli([])
     mock_run_chat.assert_awaited_once_with(
-        True, IsInstance(Agent), IsInstance(Console), 'monokai', 'clai', toolsets=None
+        True, IsInstance(Agent), IsInstance(Console), 'monokai', 'clai', toolsets=None, show_tool_calls=True
     )
 
 
@@ -885,7 +933,7 @@ def test_code_theme_light(mocker: MockerFixture, env: TestEnv):
     mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
     cli(['--code-theme=light'])
     mock_run_chat.assert_awaited_once_with(
-        True, IsInstance(Agent), IsInstance(Console), 'default', 'clai', toolsets=None
+        True, IsInstance(Agent), IsInstance(Console), 'default', 'clai', toolsets=None, show_tool_calls=True
     )
 
 
@@ -894,14 +942,15 @@ def test_code_theme_dark(mocker: MockerFixture, env: TestEnv):
     mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
     cli(['--code-theme=dark'])
     mock_run_chat.assert_awaited_once_with(
-        True, IsInstance(Agent), IsInstance(Console), 'monokai', 'clai', toolsets=None
+        True, IsInstance(Agent), IsInstance(Console), 'monokai', 'clai', toolsets=None, show_tool_calls=True
     )
 
 
-def test_agent_to_cli_sync(mocker: MockerFixture, env: TestEnv):
+@pytest.mark.parametrize('show_tool_calls', [True, False])
+def test_agent_to_cli_sync(mocker: MockerFixture, env: TestEnv, show_tool_calls: bool):
     env.set('OPENAI_API_KEY', 'test')
     mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
-    cli_agent.to_cli_sync()
+    cli_agent.to_cli_sync(show_tool_calls=show_tool_calls)
     mock_run_chat.assert_awaited_once_with(
         stream=True,
         agent=IsInstance(Agent),
@@ -913,14 +962,16 @@ def test_agent_to_cli_sync(mocker: MockerFixture, env: TestEnv):
         model=None,
         model_settings=None,
         usage_limits=None,
+        show_tool_calls=show_tool_calls,
     )
 
 
 @pytest.mark.anyio
-async def test_agent_to_cli_async(mocker: MockerFixture, env: TestEnv):
+@pytest.mark.parametrize('show_tool_calls', [True, False])
+async def test_agent_to_cli_async(mocker: MockerFixture, env: TestEnv, show_tool_calls: bool):
     env.set('OPENAI_API_KEY', 'test')
     mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
-    await cli_agent.to_cli()
+    await cli_agent.to_cli(show_tool_calls=show_tool_calls)
     mock_run_chat.assert_awaited_once_with(
         stream=True,
         agent=IsInstance(Agent),
@@ -932,6 +983,7 @@ async def test_agent_to_cli_async(mocker: MockerFixture, env: TestEnv):
         model=None,
         model_settings=None,
         usage_limits=None,
+        show_tool_calls=show_tool_calls,
     )
 
 
@@ -955,6 +1007,7 @@ async def test_agent_to_cli_with_message_history(mocker: MockerFixture, env: Tes
         model=None,
         model_settings=None,
         usage_limits=None,
+        show_tool_calls=True,
     )
 
 
@@ -977,6 +1030,7 @@ def test_agent_to_cli_sync_with_message_history(mocker: MockerFixture, env: Test
         model=None,
         model_settings=None,
         usage_limits=None,
+        show_tool_calls=True,
     )
 
 
@@ -1338,6 +1392,7 @@ def test_agent_to_cli_sync_with_args(mocker: MockerFixture, env: TestEnv):
         model=None,
         model_settings=model_settings,
         usage_limits=usage_limits,
+        show_tool_calls=True,
     )
 
 
@@ -1358,6 +1413,7 @@ def test_agent_to_cli_sync_with_model(mocker: MockerFixture, env: TestEnv):
         model='test',
         model_settings=None,
         usage_limits=None,
+        show_tool_calls=True,
     )
 
 
@@ -1382,6 +1438,7 @@ async def test_agent_to_cli_async_with_args(mocker: MockerFixture, env: TestEnv)
         model=None,
         model_settings=model_settings,
         usage_limits=usage_limits,
+        show_tool_calls=True,
     )
 
 
@@ -1403,6 +1460,7 @@ async def test_agent_to_cli_async_with_model(mocker: MockerFixture, env: TestEnv
         model='test',
         model_settings=None,
         usage_limits=None,
+        show_tool_calls=True,
     )
 
 
@@ -1500,3 +1558,270 @@ def test_clai_web_answers_to_the_host_it_binds_to(mocker: MockerFixture, env: Te
 
     assert mock_create.call_args.kwargs['allowed_hosts'] == ['devbox.example']
     assert mock_uvicorn.call_args.kwargs['host'] == 'devbox.example'
+
+
+@pytest.mark.parametrize('mode', ['one-shot', 'interactive', 'non-streaming'])
+def test_cli_no_tool_calls(
+    mode: str,
+    capfd: CaptureFixture[str],
+    mocker: MockerFixture,
+    create_test_module: Callable[..., None],
+):
+    agent = Agent(TestModel(custom_output_text='Finished.'))
+    calls: list[str] = []
+
+    @agent.tool_plain
+    def run_code(token: Literal['private-preview-marker\nline 2\nline 3\nline 4\nline 5\nline 6']) -> str:
+        calls.append(token)
+        print('Saved chart.')
+        return 'saved'
+
+    create_test_module(agent=agent)
+    args = ['--agent', 'test_module:agent', '--no-tool-calls']
+    with create_pipe_input() as inp:
+        inp.send_text('go\n/exit\n')
+        mocker.patch('pydantic_ai._cli.PromptSession', return_value=PromptSession[Any](input=inp, output=DummyOutput()))
+        if mode != 'interactive':
+            args.append('go')
+        if mode == 'non-streaming':
+            args.append('--no-stream')
+        assert cli(args) == 0
+
+    output = capfd.readouterr().out
+    assert calls == ['private-preview-marker\nline 2\nline 3\nline 4\nline 5\nline 6']
+    assert 'private-preview-marker' not in output
+    assert 'Saved chart.' in output
+    assert 'Finished.' in output
+    assert 'Calling tool' not in output
+    assert 'Called tool' not in output
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize('width', [40, 1000])
+@pytest.mark.parametrize(
+    ('arguments', 'expected'),
+    [
+        pytest.param(
+            {'code': "print(`[red]hello[/red]`)\nprint('  spaced  ')"},
+            snapshot("""\
+▌ Called tool run_code(code=<2 lines>).
+▌   code:
+▌     print(`[red]hello[/red]`)
+▌     print('  spaced  ')\
+"""),
+            id='literal-code',
+        ),
+        pytest.param(
+            {'code': 'x' * 1000},
+            snapshot(
+                "▌ Called tool run_code(code='xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'…)."
+            ),
+            id='long-code',
+        ),
+        pytest.param(
+            {'bad\nkey': 'hello'}, snapshot("▌ Called tool run_code('bad\\nkey'='hello')."), id='multiline-key'
+        ),
+        pytest.param(
+            {'first': 'x' * 1000, 'second': 'y' * 1000, 'third': 'useful'},
+            snapshot(
+                "▌ Called tool run_code(first='xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'…, second='yyyyyyyyyyy…."
+            ),
+            id='many-arguments',
+        ),
+        pytest.param(
+            {'code': 'import json\n\nvalues = [1, 2, 3]\nfor value in values:\n    print(value)'},
+            snapshot("""\
+▌ Called tool run_code(code=<5 lines>).
+▌   code:
+▌     import json
+▌
+▌     values = [1, 2, 3]
+▌     for value in values:
+▌         print(value)\
+"""),
+            id='5-line-script',
+        ),
+        pytest.param(
+            {'code': 'import json\n\nvalues = [1, 2, 3]\nfor value in values:\n    print(value)\nprint("done")'},
+            snapshot("""\
+▌ Called tool run_code(code=<6 lines>).
+▌   code:
+▌     import json
+▌
+▌     values = [1, 2, 3]
+▌     for value in values:
+▌         print(value)
+▌     … 1 more line\
+"""),
+            id='6-line-script',
+        ),
+        pytest.param(
+            {'code': 'import json\n' + 'print("data")\n' * 21},
+            snapshot("""\
+▌ Called tool run_code(code=<22 lines>).
+▌   code:
+▌     import json
+▌     print("data")
+▌     print("data")
+▌     print("data")
+▌     print("data")
+▌     … 17 more lines\
+"""),
+            id='large-script',
+        ),
+        pytest.param(
+            {'first': 'one\ntwo', 'second': 'three\nfour'},
+            snapshot("""\
+▌ Called tool run_code(first=<2 lines>, second=<2 lines>).
+▌   first:
+▌     one
+▌     two
+▌   second:
+▌     three
+▌     four\
+"""),
+            id='multiple-multiline-arguments',
+        ),
+        pytest.param(
+            {'code': 'x' * 300 + '\nlast line'},
+            snapshot("""\
+▌ Called tool run_code(code=<2 lines>).
+▌   code:
+▌     xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…
+▌     last line\
+"""),
+            id='wide-source-line',
+        ),
+        pytest.param(
+            {'code': "if True:\n\tprint('\x1b[2J')"},
+            snapshot("""\
+▌ Called tool run_code(code=<2 lines>).
+▌   code:
+▌     if True:
+▌         print('\\x1b[2J')\
+"""),
+            id='tabs-and-terminal-escapes',
+        ),
+        pytest.param(
+            {'code': 'e\u0301' * 100 + '\nend'},
+            snapshot("""\
+▌ Called tool run_code(code=<2 lines>).
+▌   code:
+▌     éééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé…
+▌     end\
+"""),
+            id='combining-characters',
+        ),
+        pytest.param(
+            {'code': 'print(`[red]hello[/red]`)'},
+            snapshot("▌ Called tool run_code(code='print(`[red]hello[/red]`)')."),
+            id='literal-short-code',
+        ),
+        pytest.param(
+            {'code': 'print(1)\r\n'},
+            snapshot("""\
+▌ Called tool run_code(code=<1 line>).
+▌   code:
+▌     print(1)\
+"""),
+            id='one-line-with-ending',
+        ),
+        pytest.param(
+            {'data': [1, 2, 3], 'options': {'private': 'hidden'}, 'limit': 5},
+            snapshot("▌ Called tool run_code(data=[1, 2, 3], options={'private': 'hidden'}, limit=5)."),
+            id='collections',
+        ),
+        pytest.param(
+            {'first': 'a' * 60, 'second': 'b' * 60, 'third': 'c' * 60},
+            snapshot(
+                "▌ Called tool run_code(first='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', second='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb…."
+            ),
+            id='bounded-many-short-arguments',
+        ),
+    ],
+)
+async def test_tool_argument_preview(
+    arguments: dict[str, JsonValue], expected: str, width: int, live_frames: list[str]
+):
+    async def code_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+            yield 'Done.'
+        else:
+            yield {0: DeltaToolCall(name='run_code', json_args=json.dumps(arguments), tool_call_id='call_1')}
+
+    agent = Agent(FunctionModel(stream_function=code_stream))
+    executed: list[dict[str, JsonValue]] = []
+
+    @agent.tool_plain
+    def run_code(**kwargs: JsonValue) -> str:
+        executed.append(kwargs)
+        return 'ok'
+
+    output = StringIO()
+    await ask_agent(agent, 'go', True, Console(file=output, width=width), 'monokai')
+    lines = [line.rstrip() for line in output.getvalue().splitlines()]
+    assert executed == [arguments]
+    assert lines[0] == ''
+    assert lines[-2:] == ['', 'Done.']
+    notice = '\n'.join(lines[1:-2])
+    if width == 1000:
+        assert notice == expected
+        assert all(cell_len(line) <= 135 for line in lines[1:-2])
+    else:
+        assert lines[1].startswith('▌ Called tool run_code(')
+        assert all(cell_len(line) <= width for line in lines[1:-2])
+    assert any('Calling tool run_code(' in frame for frame in live_frames)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize('show_tool_calls', [True, False])
+async def test_streaming_preserves_markdown_references(show_tool_calls: bool):
+    async def reference_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+            yield 'Confirmed.\n\n[docs]: https://example.com'
+        else:
+            yield 'Checking [the docs][docs].'
+            yield {0: DeltaToolCall(name='lookup', json_args='{}', tool_call_id='call_1')}
+
+    agent = Agent(FunctionModel(stream_function=reference_stream))
+
+    @agent.tool_plain
+    def lookup() -> str:
+        return 'ok'
+
+    output = StringIO()
+    await ask_agent(agent, 'go', True, Console(file=output, width=80), 'monokai', show_tool_calls=show_tool_calls)
+    rendered = output.getvalue()
+    assert 'Checking the docs.' in rendered
+    assert '[the docs][docs]' not in rendered
+    assert 'Confirmed.' in rendered
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize('fail', [False, True])
+async def test_hidden_tool_calls_keep_working_indicator(live_frames: list[str], fail: bool):
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+            yield 'Done.'
+        else:
+            yield '\n\n'.join(f'Checking item {index}.' for index in range(10))
+            yield {0: DeltaToolCall(name='slow_tool', json_args='{}', tool_call_id='call_1')}
+
+    agent = Agent(FunctionModel(stream_function=stream))
+    during_tool: list[str] = []
+
+    @agent.tool_plain
+    async def slow_tool() -> str:
+        during_tool.append(live_frames[-1] if live_frames else '')
+        if fail:
+            raise RuntimeError('tool failed')
+        return 'ok'
+
+    output = StringIO()
+    with pytest.raises(RuntimeError, match='tool failed') if fail else nullcontext():
+        await ask_agent(agent, 'go', True, Console(file=output, width=80, height=5), 'monokai', show_tool_calls=False)
+    assert len(during_tool[0].splitlines()) == 5
+    assert 'Working on it' in during_tool[0]
+    assert 'slow_tool' not in during_tool[0]
+    assert 'Working on it' not in output.getvalue()
+    assert ('Done.' in output.getvalue()) is not fail

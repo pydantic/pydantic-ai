@@ -2005,6 +2005,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
+        *,
+        show_tool_calls: bool = True,
     ) -> None:
         """Run the agent in a CLI chat interface.
 
@@ -2015,6 +2017,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
             model: Optional model to use for the agent run.
+            show_tool_calls: Show tool-call activity with argument previews. Set to `False` to hide it,
+                for example when Logfire already displays tool activity.
 
         Example:
         ```python {title="agent_to_cli.py" test="skip"}
@@ -2041,6 +2045,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             model=model,
             model_settings=model_settings,
             usage_limits=usage_limits,
+            show_tool_calls=show_tool_calls,
         )
 
     def to_cli_sync(
@@ -2051,6 +2056,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
+        *,
+        show_tool_calls: bool = True,
     ) -> None:
         """Run the agent in a CLI chat interface with the non-async interface.
 
@@ -2061,6 +2068,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
             model: Optional model to use for the agent run.
+            show_tool_calls: Show tool-call activity with argument previews. Set to `False` to hide it,
+                for example when Logfire already displays tool activity.
 
         ```python {title="agent_to_cli_sync.py" test="skip"}
         from pydantic_ai import Agent
@@ -2078,6 +2087,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 model=model,
                 model_settings=model_settings,
                 usage_limits=usage_limits,
+                show_tool_calls=show_tool_calls,
             )
         )
 
