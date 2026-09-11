@@ -2886,18 +2886,15 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         chat_model = self._pick_raw_model(model)
         # `self.toolsets` is override-aware, so an `override(toolsets=...)` is reflected.
         session_toolsets = [*self.toolsets, *(toolsets or [])]
+        # Only a `FunctionToolset` holds its tools synchronously; every other toolset answers
+        # `get_tools()` given a `RunContext`, and an MCP server would have to be connected to first.
+        countable = [toolset for toolset in session_toolsets if isinstance(toolset, FunctionToolset)]
         return _StartupBannerDetails(
             model=chat_model.model_id if isinstance(chat_model, models.Model) else chat_model,
-            tools=(
-                sum(len(toolset.tools) for toolset in session_toolsets)
-                # Only a `FunctionToolset` holds its tools synchronously; every other toolset answers
-                # `get_tools()` given a `RunContext`, and an MCP server would have to be connected to
-                # first. Rather than report a number that's wrong — `clai --mcp-config` would have
-                # said `tools: 0` next to a session full of MCP tools — the banner leaves the count
-                # out and says nothing. A run's own banner counts what the model is really offered.
-                if all(isinstance(toolset, FunctionToolset) for toolset in session_toolsets)
-                else None
-            ),
+            # Rather than report a number that's wrong — `clai --mcp-config` would have said
+            # `tools: 0` next to a session full of MCP tools — the banner leaves the count out
+            # entirely. A run's own banner counts what the model is really offered.
+            tools=sum(len(toolset.tools) for toolset in countable) if len(countable) == len(session_toolsets) else None,
             capabilities=_registered_capability_count(self._effective_root_capability()),
             instrumented=(
                 isinstance(chat_model, InstrumentedModel) or self._resolve_instrumentation_settings() is not None
