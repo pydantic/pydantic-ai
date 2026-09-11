@@ -585,17 +585,6 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
         ToolCallPart(tool_name='slow_lookup', args={'name': 'b'}, tool_call_id='slow_b'),
         ToolCallPart(tool_name='slow_lookup', args={'name': 'c'}, tool_call_id='slow_c'),
     ],
-    'Check my refund on order X-19.': ToolCallPart(tool_name='refund_status', args={'order_id': 'X-19'}),
-    'Which process runs the support tools?': ToolCallPart(tool_name='where_does_support_run', args={}),
-    'What is the status of ticket 9?': ToolCallPart(tool_name='read_ticket', args={'ticket_id': '9'}),
-    'Confirm the warehouse is open.': 'same result',
-    'Greet the customer in plain text.': 'hello world',
-    'Summarize the refund for W-882 as a note.': ToolCallPart(
-        tool_name='final_result',
-        args={'order_id': 'W-882', 'amount': 38.0},
-        tool_call_id='pyd_ai_tool_call_id',
-    ),
-    'What version is this checker running?': 'v2',
     'I just lost my card!': ToolCallPart(
         tool_name='final_result',
         args={
@@ -816,10 +805,7 @@ tool_responses: dict[tuple[str, str], str | ToolCallPart | Sequence[ToolCallPart
     ('slow_lookup', 'a:done'): 'All three warehouses replied.',
     ('slow_lookup', 'b:done'): 'All three warehouses replied.',
     ('slow_lookup', 'c:done'): 'All three warehouses replied.',
-    ('refund_status', 'Order X-19: refunded.'): 'done',
     ('check_refund', 'Order A-4471: refunded.'): 'Order A-4471 was refunded.',
-    ('where_does_support_run', 'checked'): 'In the same process that called me.',
-    ('read_ticket', 'open: printer jam on floor 2'): 'Ticket 9 is open: printer jam on floor 2.',
 }
 
 

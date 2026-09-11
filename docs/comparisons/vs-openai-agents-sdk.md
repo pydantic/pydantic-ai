@@ -11,8 +11,8 @@ going both ways. Handoffs can filter and nest history. Streamed runs stop with
 `after_turn`. Structured output is clean: hand it an `output_type` and it validates the model's
 JSON into your type, no forced tool call.
 
-So what's actually left to argue about? Two things. Where your agent is allowed to run, and what
-you're holding after you stop it.
+Two things still decide it: where your agent is allowed to run, and what you're holding after you
+stop it.
 
 ## Stopping a run without losing it
 
@@ -97,21 +97,7 @@ a session tells you what was said, not what was half-done.
 | Crash recovery | Not first-party; a Temporal contrib exists | Six engines wrap the agent: Temporal, DBOS, Prefect, Restate, Kitaru, Airflow |
 | Testing offline | `agents.testing.ScriptedModel` scripts model turns; there is no `ALLOW_MODEL_REQUESTS = False` | `TestModel` and `FunctionModel` ship with it; `ALLOW_MODEL_REQUESTS = False` blocks real calls |
 | Evals | A separate product | `pydantic-evals` runs in your test suite using the agent's own types |
-| Tracing | Their dashboard, or OpenInference spans under its own attribute names; zero `gen_ai.*` | OpenTelemetry GenAI semantic conventions (36 `gen_ai.*` attributes) when instrumentation is enabled |
-
-## Choose the OpenAI SDK when
-
-- You are building on OpenAI and want their newest features the week they land.
-- Their hosted sessions and tracing dashboard are things you'd rather not build or run.
-- `after_turn` is the stop you want: let the current turn finish, then halt.
-- You want the smallest possible amount of code between you and the Responses API.
-
-## Choose Pydantic AI when
-
-- You want the same agent to run on Claude, Gemini, and GPT without a rewrite.
-- Credentials and customer identity must sit where the model can't reach them.
-- You need crash recovery from an engine your company already operates.
-- You want the agent's tests to run offline in CI like the rest of your test suite.
+| Tracing | Their dashboard, or OpenInference spans under its own attribute names; zero `gen_ai.*` | OpenTelemetry GenAI semantic conventions when instrumentation is enabled |
 
 ## FAQ
 
@@ -123,16 +109,12 @@ against OpenAI.
 No. Tools and prompts carry over almost unchanged. Guardrails become capabilities or plain validation,
 handoffs become an agent called as a tool, and sessions become message history you store yourself.
 
-**What does the OpenAI SDK do better?**
-New OpenAI features arrive there first, `after_turn` is a real stop mode we don't have, and their
-hosted tracing works the moment you install it.
-
 ---
 
 *Checked against openai-agents 0.22.2 and Pydantic AI 2.42 on 2026-09-10. The OpenAI SDK facts come from
-reading the installed package, method signatures, exported guardrail types, and `handoff()` parameters. The
-Pydantic AI example is run by this repository's test suite on every commit, so its output is what it printed.
-The `gen_ai.*` counts are distinct semantic-convention attribute names found in each installed package's
-source; ours were also captured from a live run through a plain OpenTelemetry exporter. We recheck this page's
-version pins and behaviour claims each time Pydantic AI ships a minor release; if something here has gone
-stale, [tell us](https://github.com/pydantic/pydantic-ai/issues/new) and we'll correct it.*
+reading the installed package, method signatures, exported guardrail types, and `handoff()` parameters.
+Cancel lives on the streamed result (`cancel(mode=immediate|after_turn)`), not on `Runner`. There is no
+`ALLOW_MODEL_REQUESTS` on `agents`. `ScriptedModel` exists under `agents.testing`. The Pydantic AI example is
+run by this repository's test suite on every commit. We recheck this page's version pins and behaviour claims
+each time Pydantic AI ships a minor release; if something here has gone stale, [tell
+us](https://github.com/pydantic/pydantic-ai/issues/new) and we'll correct it.*

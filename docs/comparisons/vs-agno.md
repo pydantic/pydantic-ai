@@ -9,8 +9,6 @@ Friday, that combination gets you there, and we don't ship anything that compete
 Pydantic AI is only the library half. There's no runtime to deploy, no control plane, and no UI. You
 put the agent inside whatever you already run.
 
-Two things come out of that, and both are worth spelling out.
-
 ## Do you have to take AgentOS?
 
 No, and we want to be straight about that, because plenty of comparisons get it wrong. `Agent(name='x')`
@@ -22,48 +20,18 @@ session and storage story, and a deployment target it was designed against. That
 you are deploying AgentOS it's exactly right.
 
 A Pydantic AI agent has no assumed home. The same object runs blocking, runs async, or gets driven a
-step at a time inside a loop you control:
-
-```python {title="runtime_agnostic.py"}
-"""No bundled runtime to adopt: the same agent runs sync, async, and driven
-node-by-node with iter(), whichever shape your application already uses."""
-import asyncio
-
-from pydantic_ai import Agent
-
-agent = Agent('openai:gpt-5.6-luna')
-
-
-async def via_iter():
-    async with agent.iter('Confirm the warehouse is open.') as run:
-        async for _ in run:
-            pass
-    return run.result.output
-
-
-sync_result = agent.run_sync('Confirm the warehouse is open.').output
-async_result = asyncio.run(agent.run('Confirm the warehouse is open.')).output
-iter_result = asyncio.run(via_iter())
-
-print(f'sync={sync_result!r} async={async_result!r} iter={iter_result!r}')
-#> sync='same result' async='same result' iter='same result'
-assert sync_result == async_result == iter_result
-```
-
-
-Same agent, same answer, three shapes, which matters when the agent has to live inside a Django view,
-a Celery task, a Lambda handler, or a websocket server you already have.
+step at a time inside a loop you control, which is what you want when the agent has to live inside a
+Django view, a Celery task, a Lambda handler, or a websocket server you already have.
 
 For crash recovery, same idea: instead of a durable API that belongs to the runtime, a durable engine
 is a capability you add. `capabilities=[TemporalDurability()]` is how you attach it; you still need
 that engine's worker and workflow (or the DBOS/Prefect equivalent). `agent.run()` is not durable just
-because the capability is present. DBOS, Prefect, Restate, Kitaru and Airflow have equivalents. You
-use whichever your company already runs.
+because the capability is present. You use whichever engine your company already runs.
 
 ## What the tools are allowed to do
 
 Agno positions itself for coding agents and ships shell, file, and Python tools to match. Their
-defaults are worth understanding before you turn them on, and Agno documents them, the shell
+defaults are worth understanding before you turn them on, and Agno documents them: the shell
 tool's own docstring says the command "is executed directly on the host OS" and tells you to gate it
 with `requires_confirmation_tools=["run_shell_command"]`.
 
@@ -92,45 +60,24 @@ in `output_type`, and the run pauses and hands you the pending call.
 | Structured output | `output_schema`, note that `output_model` means the parser model | `output_type`, with explicit control over how it goes over the wire |
 | Memory and knowledge | Built in and well developed | Bring your own; ours is thinner |
 | Evals | `AccuracyEval`, `ReliabilityEval`, `PerformanceEval`, agent-as-judge, importable without AgentOS | `pydantic-evals` in your test suite, using the agent's own types |
-| Tracing | OpenTelemetry spans via OpenInference, under `llm.*` and `openinference.*` names; zero `gen_ai.*` attributes | OpenTelemetry GenAI semantic conventions (36 `gen_ai.*` attributes) when instrumentation is enabled |
-
-## Choose Agno when
-
-- You want a deployable agent service with auth, roles, and a UI, and you don't want to build it.
-- Their memory and knowledge features match what you need, they're more complete than ours.
-- A team-of-agents abstraction fits your problem and you'd rather configure than code it.
-- Running one more service is fine, and having it be theirs is a plus.
-
-## Choose Pydantic AI when
-
-- The agent has to live inside an application you already have.
-- Credentials and identity must sit where the model can't reach them.
-- You want model-written code in a sandbox instead of on the host, and approval gates in the
-  framework instead of in a tool's configuration.
-- You want crash recovery from an engine you already operate.
+| Tracing | OpenTelemetry spans via OpenInference, under `llm.*` and `openinference.*` names; zero `gen_ai.*` attributes | OpenTelemetry GenAI semantic conventions when instrumentation is enabled |
 
 ## FAQ
 
 **Is Agno faster?**
 It constructs agents faster, and you'll see benchmarks about that. Construction happens once and takes
 microseconds either way; a single model call takes hundreds of milliseconds. It's not the number to
-choose on.
+choose on. [Under the hood](under-the-hood.md) takes those comparisons apart.
 
 **Can I get something like AgentOS with Pydantic AI?**
 Not out of the box. You'd put the agent behind your own FastAPI app, use one of the UI adapters, and
 send telemetry to Logfire or your own collector. That's more work, and it's your stack afterwards.
 
-**What does Agno do better?**
-Time to a running, authenticated, observable agent service. If that's the job, they've built the thing
-and we haven't.
-
 ---
 
 *Checked against agno 3.0.9 and Pydantic AI 2.42 on 2026-09-10. The tool behaviour comes from reading the
 installed package: `ShellTools.run_shell_command` and its docstring, `PythonTools`, and the
-`restrict_to_base_dir` default. AgentOS claims are from Agno's documentation, not run. The Pydantic AI example
-is executed by this repository's test suite. The `gen_ai.*` counts are distinct semantic-convention attribute
-names found in each installed package's source; ours were also captured from a live run through a plain
-OpenTelemetry exporter. We recheck this page's version pins and behaviour claims each time Pydantic AI ships a
-minor release; if something here has gone stale, [tell us](https://github.com/pydantic/pydantic-ai/issues/new)
-and we'll correct it.*
+`restrict_to_base_dir` default. `Agent(name='x')` constructs; `agno.agent.agent` does not import `agno.os`.
+AgentOS claims are from Agno's documentation, not run. We recheck this page's version pins and behaviour
+claims each time Pydantic AI ships a minor release; if something here has gone stale, [tell
+us](https://github.com/pydantic/pydantic-ai/issues/new) and we'll correct it.*

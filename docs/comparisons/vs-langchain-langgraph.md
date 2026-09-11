@@ -24,8 +24,7 @@ Where that stops being a matter of taste is the subject of the rest of this page
 ## Where you're allowed to stop
 
 Every agent that spends money eventually has to stop and ask a person. Both frameworks do this, and
-for the common case they now do it the same way, worth saying plainly before the part where they
-come apart.
+for the common case they now do it the same way.
 
 LangChain ships a `HumanInTheLoopMiddleware`, which Deep Agents exposes as `interrupt_on`. Point it at
 a tool and the run pauses before that tool executes. Resuming replays nothing: the middleware is its
@@ -165,42 +164,35 @@ than a different mechanism: a `CancellationToken` or a tool calling `ctx.cancel(
 it raises `UserError`.
 
 LangGraph can stop a run too, but only down one path: `stream_events(version='v3')` returns a
-`GraphRunStream` with an `abort()`, and that method warns it's experimental when you touch it. Ordinary
-`invoke()` and `stream()` have nothing, so stopping those means cancelling whatever task is executing
-them. What `abort()` gives you is also a different thing, it closes the graph iterator so in-flight
-nodes see `GeneratorExit`, and you keep whatever the checkpointer happened to write. Ours is a value
-you catch.
+`GraphRunStream` with an `abort()`. That stream is marked experimental (`@beta` on
+`Pregel.stream_events` and on `GraphRunStream`). Ordinary `invoke()` and `stream()` have nothing, so
+stopping those means cancelling whatever task is executing them. `abort()` closes the graph iterator
+so in-flight nodes see `GeneratorExit`, and you keep whatever the checkpointer happened to write.
+Ours is a value you catch.
 
 ## Why the two behave differently
 
 LangGraph's unit of execution is the node, so its unit of recovery is also the node. A checkpoint
 records which nodes finished; resuming means running the unfinished one, and a node that was
-interrupted halfway is unfinished from the top. That is a coherent design, it is what makes time
-travel and forking work, and the replay is the price of it.
+interrupted halfway is unfinished from the top. That is what makes time travel and forking work, and
+the replay is the price of it.
 
 Pydantic AI's unit of execution is the tool call, because the run is a plain loop over messages
-and not a graph. Everything downstream follows from that:
+and not a graph. Durability, trusted state, and cancellation follow from that instead of from a
+second API:
 
-- **Durability is added to the agent, not built into it.** `TemporalDurability()` is a capability you
-  add to the same agent object. You still need that engine's worker and workflow (or the DBOS/Prefect
-  equivalent); attaching the capability does not by itself make `agent.run()` durable. The DBOS and
-  Prefect wrappers in the repo work the same way, and Restate, Kitaru, and Airflow adapters live
-  outside it. In LangGraph, durability is the
-  checkpointer, and the checkpointer is a graph feature, you get crash recovery by expressing your
-  control flow as a graph.
-- **Trusted state is a separate typed argument.** `deps_type` holds your database handle, the
-  customer ID, the API client. Tools read it; the model never sees it and cannot name it. LangChain's
-  `context_schema` is invocation context via `runtime.context`. Graph state is `state_schema`. Ours is
-  a typed `deps_type` argument tools read through `RunContext`.
-- **History is typed, owned data.** `first.all_messages()` is a list of Pydantic models you can
-  serialize, inspect, edit, and hand to the next run. LangGraph's checkpoint is a copy of the whole
-  state dict per step, which is why checkpoint size tracks your payload size.
-- **Cancelling is a typed outcome, not a killed task.** A `CancellationToken` stops one or several
-  runs from another thread, a tool can call `ctx.cancel()`, and the run ends in `RunCancelled`
-  carrying the history, which resumes like any other on an in-process run. It cannot be passed
-  through Temporal, DBOS, or Prefect durable entry points. LangGraph's `abort()` is
-  experimental, exists only on the v3 stream, and closes the iterator instead of returning you a
-  result.
+- **Durability is added to the agent.** `TemporalDurability()` is a capability on the same object.
+  You still need that engine's worker and workflow; attaching the capability does not by itself make
+  `agent.run()` durable. DBOS and Prefect wrappers ship in the repo; Restate, Kitaru, and Airflow
+  adapters live outside it. In LangGraph, the checkpointer is a graph feature: crash recovery means
+  expressing the work as a graph.
+- **Trusted state is a typed argument.** `deps_type` holds the database handle, the customer ID, the
+  API client. Tools read it through `RunContext`; the model never sees it. LangChain's
+  `context_schema` is invocation context via `runtime.context`. Graph state is `state_schema`.
+- **Cancelling is a typed outcome.** A `CancellationToken` stops one or several in-process runs, a
+  tool can call `ctx.cancel()`, and the run ends in `RunCancelled` carrying the history. It cannot be
+  passed through Temporal, DBOS, or Prefect durable entry points. LangGraph's `abort()` exists only
+  on the experimental v3 stream and closes the iterator.
 
 ## One layer up: Deep Agents and the harness
 
@@ -230,14 +222,13 @@ agent, because there is no harness shape to adopt. Everything on this page, the 
 the deps boundary, resumable cancellation, the durable engine wrappers, applies to a harness agent
 unchanged, because it is the same agent.
 
-Two honest notes. Deep Agents pins `langchain-anthropic` and `langchain-google-genai` as hard
-dependencies, so its default surface leans on those two providers, while ours is provider-agnostic by
-construction. And several harness capabilities of ours are still marked experimental, planning,
-subagents, compaction, and runtime authoring among them, where Deep Agents' equivalents are shipped
-and in use.
+One honest note. Deep Agents pins `langchain-anthropic` and `langchain-google-genai` as hard
+dependencies, so its default surface leans on those two providers. Ours is provider-agnostic by
+construction. Planning, subagents, and compaction in the harness are shipped capabilities; ACP is
+the piece still marked experimental.
 
 
-## The comparison, row by row
+## Side by side
 
 | | LangChain & LangGraph (1.4.0 / 1.2.11) | Pydantic AI (2.42) |
 |---|---|---|
@@ -248,7 +239,7 @@ and in use.
 | Cancellation | `abort()` on the experimental `stream_events(version='v3')` stream; nothing on `invoke()` or `stream()` | `CancellationToken` on in-process `run`/`run_sync`/`run_stream`; `ctx.cancel()`; `RunCancelled` with resumable history |
 | Extending the agent | Middleware, wrapping in LIFO order around each pass | Capabilities, bundling tools, instructions, settings, and hooks as one unit that can also load on demand |
 | Testing offline | Every fake chat model in `langchain-core` raises `NotImplementedError` on `bind_tools`, so none can drive an agent; a dozen-line `BaseChatModel` subclass does work | `TestModel` calls your tools with no scripting; `FunctionModel` scripts them; `ALLOW_MODEL_REQUESTS = False` blocks real providers globally |
-| Tracing | LangSmith is the paved road; OpenInference spans are available but carry zero `gen_ai.*` attributes | The OpenTelemetry GenAI semantic conventions, 36 `gen_ai.*` attributes, when instrumentation is enabled |
+| Tracing | LangSmith is the paved road; OpenInference spans are available but carry zero `gen_ai.*` attributes | OpenTelemetry GenAI semantic conventions when instrumentation is enabled |
 | Budgets | `recursion_limit` caps graph depth; no token or money ceiling on the run | Requests, tool calls and tokens per run, plus `cost_limit` in USD when pricing data is available (checked after each response; pair with `request_limit`) |
 | Evals | Datasets and experiments in LangSmith | `pydantic-evals` in your test suite, sharing the agent's own types, no platform |
 | Deploying an agent as config | Graphs are code | `AgentSpec` round-trips to YAML and validates prompt templates against `deps_type` at load |
@@ -265,24 +256,6 @@ If what you're moving is a Deep Agents application rather than a plain LangChain
 [pydantic-ai-harness](https://github.com/pydantic/pydantic-ai-harness) rather than Pydantic AI on its
 own, and the file, shell, and sub-agent tools you're relying on have direct counterparts there.
 
-## When LangChain is the right answer
-
-- You need an integration that exists there and nowhere else. The catalogue is far larger than ours
-  and that is a real reason to choose it.
-- Your problem genuinely is a graph, long-running workflows with branches, joins, and human review
-  at known points, and you want time travel and forking over checkpoint history.
-- Your team is already fluent in it and shipping. Rewriting a working system to change the shape of
-  its pause is not a good trade.
-
-## When Pydantic AI is the right answer
-
-- You want to pause anywhere without redesigning the agent, and you don't want to pay for repeated
-  work when you do.
-- Credentials and identity must sit somewhere the model cannot reach.
-- You want crash recovery from a specific engine your company already runs, without expressing the
-  agent as a graph to get it.
-- You want the agent's tests to run in CI, offline, deterministically, alongside everything else.
-
 ## FAQ
 
 **Can I use both?**
@@ -298,22 +271,13 @@ Not as a feature with that name. History is a list you own, so forking a convers
 list and running from there, but there is no checkpoint browser, and no equivalent of replaying an
 arbitrary node.
 
-**What does Pydantic AI not have?**
-No hosted platform, no managed deployment, and a much smaller integration catalogue. If you want a
-tracing dashboard that works the day you install it, LangSmith is a product and we don't ship one.
-
 ---
 
 *Measured 2026-09-10 against langchain 1.4.0, langgraph 1.2.11, langchain-core 1.6.2, deepagents 0.7.13, and
-Pydantic AI 2.42. Both LangGraph traces come from scripts that log every model call and side effect across a
-pause and a resume (one through `HumanInTheLoopMiddleware`, one through a hand-written `interrupt()`) run
-against a stub chat model with no network. The dependency and `create_agent` return-type claims are read from
-the installed distributions. `GraphRunStream.abort()` was reached by calling `stream_events(version='v3')` on
-a compiled graph and confirmed to raise a `LangChainBetaWarning`; `invoke()` and `stream()` were checked for a
-stop method and have none. The probes are the ones shown above, and they need nothing beyond those two
-packages and no network. The Pydantic AI snippet on this page is executed by this repository's test suite on
-every commit, so its output is what it printed. The `gen_ai.*` counts are distinct semantic-convention
-attribute names found in each installed package's source; ours were also captured from a live run through a
-plain OpenTelemetry exporter. We recheck this page's version pins and behaviour claims each time Pydantic AI
-ships a minor release; if something here has gone stale, [tell
-us](https://github.com/pydantic/pydantic-ai/issues/new) and we'll correct it.*
+Pydantic AI 2.42. The interrupt traces (HITL, `interrupt()` inside a node, `interrupt_after`) were re-run
+offline on 2026-09-11 against those pins. `create_agent()` returns `CompiledStateGraph`. Every fake chat
+model in `langchain-core` raises `NotImplementedError` on `bind_tools`. `abort()` lives on `GraphRunStream`,
+returned by `stream_events(version='v3')`; both are decorated `@beta`. `invoke()` and `stream()` have no
+stop method. The Pydantic AI snippet is executed by this repository's test suite on every commit. We recheck
+this page's version pins and behaviour claims each time Pydantic AI ships a minor release; if something here
+has gone stale, [tell us](https://github.com/pydantic/pydantic-ai/issues/new) and we'll correct it.*

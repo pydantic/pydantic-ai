@@ -107,21 +107,6 @@ which cover a lot but aren't a ceiling on the whole crew.
 | Testing offline | Needs a live model for a real run | `TestModel` and `FunctionModel` drive the whole loop with no network |
 | Evals | `crewai.experimental.evaluation`: goal alignment, reasoning efficiency, an experiment runner | `pydantic-evals` in your test suite, using the agent's own types |
 
-## Choose CrewAI when
-
-- The work genuinely is a team of specialists doing steps in order, and the role framing helps you
-  think about it.
-- You want memory, knowledge sources, and RAG without assembling them.
-- You're moving fast and the tutorial library is worth real time to you.
-- You want their managed platform to run and watch it.
-
-## Choose Pydantic AI when
-
-- The orchestration has branches, joins, and retries you want to read in a diff.
-- Credentials and customer identity must sit where the model can't reach them.
-- You need a hard ceiling on spend for the whole run, not per agent.
-- You want the agent's tests to run offline in CI alongside everything else.
-
 ## FAQ
 
 **Is Pydantic AI a drop-in replacement?**
@@ -132,15 +117,12 @@ flow. People usually find the crew was three or four ordinary steps.
 No, deliberately. Multi-agent patterns (an agent as a tool, a router, a parallel fan-out) are
 documented as code you write instead of a class you configure.
 
-**What does CrewAI do better?**
-Getting to a working multi-agent demo, by some distance, and its memory and knowledge batteries are
-more complete out of the box than ours.
-
 ---
 
 *Checked against crewai 1.15.21 and Pydantic AI 2.42 on 2026-09-10. The CrewAI facts come from reading the
 installed package, `Crew` and `Agent` fields, `kickoff` parameters, checkpoint configuration, and the absence
-of any cancel method. Its runtime behaviour needs a live model and was not run. The Pydantic AI example is
-executed by this repository's test suite on every commit. We recheck this page's version pins and behaviour
-claims each time Pydantic AI ships a minor release; if something here has gone stale, [tell
-us](https://github.com/pydantic/pydantic-ai/issues/new) and we'll correct it.*
+of any cancel method on `Crew` (A2A task cancel exists elsewhere). Its runtime behaviour needs a live model
+and was not run. The Pydantic AI example is executed by this repository's test suite on every commit. We
+recheck this page's version pins and behaviour claims each time Pydantic AI ships a minor release; if
+something here has gone stale, [tell us](https://github.com/pydantic/pydantic-ai/issues/new) and we'll
+correct it.*

@@ -25,42 +25,13 @@ immediately. Configuration is how you influence it.
 
 The harness has made almost none. Every piece is a capability you add, replace, or leave out, and they
 sit on the same agent object as everything else, which means the coding pieces compose with ordinary
-agent features instead of living in a separate world:
+agent features instead of living in a separate world. The loop runs in your process, so a tool is a
+Python function with your types and your imports, and you can put a breakpoint in it.
 
-```python {title="capability_on_the_same_loop.py"}
-"""A coding-adjacent piece is a capability on the same agent as everything else."""
-from pydantic_ai import Agent
-from pydantic_ai.capabilities import Capability
-
-TICKETS = {'9': 'open: printer jam on floor 2'}
-
-tickets = Capability(
-    id='tickets',
-    description='Look up support tickets in this process.',
-)
-
-
-@tickets.tool_plain
-def read_ticket(ticket_id: str) -> str:
-    """Read a local ticket record."""
-    return TICKETS[ticket_id]
-
-
-agent = Agent('openai:gpt-5.6-luna', capabilities=[tickets])
-result = agent.run_sync('What is the status of ticket 9?')
-print(result.output)
-#> Ticket 9 is open: printer jam on floor 2.
-```
-
-
-
-The loop runs in your process, so a tool is a Python function with your types and your imports, and you
-can put a breakpoint in it.
-
-The trade is honest in both directions. If you want a coding agent, Pi is running today and the harness
-is an afternoon of assembly. If you want a coding agent that does something Pi didn't anticipate
-(different compaction, a different filesystem, an approval gate on one specific action, a spend ceiling
-per customer), that's a capability on our side and a fork on theirs.
+If you want a coding agent, Pi is running today and the harness is an afternoon of assembly. If you
+want a coding agent that does something Pi didn't anticipate (different compaction, a different
+filesystem, an approval gate on one specific action, a spend ceiling per customer), that's a
+capability on our side and a fork on theirs.
 
 ## Language, and where isolation lives
 
@@ -80,7 +51,7 @@ The difference is how much survives when you don't.
 
 ## Side by side
 
-| | Pi | Pydantic AI + harness 2.42 |
+| | Pi 0.85.1 | Pydantic AI + harness 2.42 |
 |---|---|---|
 | Language | TypeScript and Node | Python |
 | What you get | A working coding agent, plus an embeddable core | Parts you assemble onto any agent |
@@ -93,20 +64,6 @@ The difference is how much survives when you don't.
 | Crash recovery | Session resume | Six engines wrap the agent object |
 | Testing offline | Run the agent | `TestModel` and `FunctionModel`, no network |
 
-## Choose Pi when
-
-- You want a good coding agent now and don't intend to change how it works.
-- TypeScript is your language.
-- Its skills and compaction behaviour already match how you want to work.
-- You're happy to provide isolation at the container level, which you should be doing anyway.
-
-## Choose Pydantic AI and the harness when
-
-- The coding agent is part of a larger Python application, not a tool you run.
-- You need to replace or add behaviour that a configuration flag doesn't cover.
-- You want spend ceilings, approval gates, resumable cancellation, and evals from the same framework.
-- Credentials must sit where the model can't reach them.
-
 ## FAQ
 
 **Is the harness a Claude Code or Pi competitor?**
@@ -117,14 +74,9 @@ coding agent, use a finished coding agent.
 A useful agent with a filesystem, a shell, and subagents is a short file. Matching a mature CLI's
 behaviour (its compaction, its permission prompts, its polish) is considerably more.
 
-**What does Pi do better?**
-Being finished. And its security documentation is more direct about its own limits than most projects
-manage.
-
 ---
 
 *Pi behaviour described here comes from its CLI and its own documentation, checked at version 0.85.1; we did
-not run its embeddable core. The Pydantic AI example is executed by this repository's test suite on every
-commit. Pydantic AI 2.42, checked 2026-09-10. We recheck this page's version pins and behaviour claims each
-time Pydantic AI ships a minor release; if something here has gone stale, [tell
+not run its embeddable core. Pydantic AI 2.42, checked 2026-09-10. We recheck this page's version pins and
+behaviour claims each time Pydantic AI ships a minor release; if something here has gone stale, [tell
 us](https://github.com/pydantic/pydantic-ai/issues/new) and we'll correct it.*

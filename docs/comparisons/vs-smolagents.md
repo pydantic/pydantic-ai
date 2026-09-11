@@ -67,7 +67,7 @@ you get afterwards is an error, not a resumable conversation. In Pydantic AI a
 `CancellationToken` or a tool calling `ctx.cancel()` ends the run in `RunCancelled` carrying the
 history, and you resume by passing that history to the next run.
 
-## The other differences
+## Trusted state, tests, crash recovery
 
 **Trusted state.** smolagents builds tool schemas from docstrings and type hints, and there's nowhere
 to put something the model shouldn't see. Pydantic AI's `deps_type` is a separate typed argument that
@@ -95,23 +95,9 @@ Prefect, Restate, Kitaru, or Airflow without changing the agent.
 | Trusted state | Nothing separate from the prompt | `deps_type`, read by tools, invisible to the model |
 | Crash recovery | None in core | Six engines wrap the agent object |
 | Testing offline | Subclass `Model` yourself | `TestModel` calls your tools with no scripting; `FunctionModel` scripts them |
-| Tracing | OpenInference spans under its own attribute names; zero `gen_ai.*` | The GenAI semantic conventions, 36 `gen_ai.*` attributes, when instrumentation is enabled |
-| Budgets | Step caps; no money limit | `cost_limit` in USD across 41 providers when pricing data is available, checked after each response; pair with `request_limit` |
+| Tracing | OpenInference spans under its own attribute names; zero `gen_ai.*` | OpenTelemetry GenAI semantic conventions when instrumentation is enabled |
+| Budgets | Step caps; no money limit | `cost_limit` in USD when pricing data is available, checked after each response; pair with `request_limit` |
 | Evals | None in core | `pydantic-evals` in your test suite |
-
-## Choose smolagents when
-
-- The task is computational and writing Python is genuinely the best way for the model to express it.
-- You want very few dependencies and a codebase you can read in an afternoon.
-- You're in the Hugging Face ecosystem already.
-- A restricted interpreter is the right level of isolation for what you're doing.
-
-## Choose Pydantic AI when
-
-- Your tools do I/O and you want them to overlap.
-- You need a stop button that leaves you a conversation you can resume.
-- Credentials and identity must sit where the model can't reach them.
-- You want crash recovery, spend limits, and evals without assembling them.
 
 ## FAQ
 
@@ -125,17 +111,11 @@ For accidents, largely yes, and the defaults are sensible. For a model that migh
 prompted, their own documentation points you at Docker or a remote executor, which is the right
 answer.
 
-**What does smolagents do better?**
-Being small. If the write-code approach suits your problem, it's less machinery than anything else,
-and that's a real virtue.
-
 ---
 
 *Checked against smolagents 1.26.0 and Pydantic AI 2.42 on 2026-09-10. The sandbox messages are the actual
 errors from running `import os` and `open(...)` through its local executor; the absence of an async run and
 the behaviour of `interrupt()` come from reading the installed package. The Pydantic AI example is executed by
-this repository's test suite, and the timing shown is from that run. The `gen_ai.*` counts are distinct
-semantic-convention attribute names found in each installed package's source; ours were also captured from a
-live run through a plain OpenTelemetry exporter. We recheck this page's version pins and behaviour claims each
-time Pydantic AI ships a minor release; if something here has gone stale, [tell
+this repository's test suite. We recheck this page's version pins and behaviour claims each time Pydantic AI
+ships a minor release; if something here has gone stale, [tell
 us](https://github.com/pydantic/pydantic-ai/issues/new) and we'll correct it.*

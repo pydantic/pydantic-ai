@@ -207,8 +207,9 @@ DBOS, or Prefect durable entry points; cancel that engine's workflow instead.
 
 Most of the others can stop a run; what differs is what you're holding afterwards. The OpenAI SDK
 cancels a streamed run. The Claude SDK sends an `interrupt()` control request, in streaming mode only.
-LangGraph's `abort()` lives on its experimental v3 stream and closes the graph iterator. smolagents
-sets a flag that's checked between steps. AG2 cancels through its durable task envelope. CrewAI has no
+LangGraph's `abort()` lives on the experimental v3 stream (`GraphRunStream` from
+`stream_events(version='v3')`) and closes the graph iterator. smolagents sets a flag that's
+checked between steps. AG2 cancels through its durable task envelope. CrewAI has no
 stop method at all, and Google ADK exposes no cancellation API anywhere on `Runner` or `LlmAgent`.
 
 ## 4. Budgets that stop things before they happen
@@ -473,16 +474,10 @@ first-party view, or at Datadog, Honeycomb or Grafana, and the agent shows up in
 those vendors already ship, because the attribute names match. Uninstrumented agents emit nothing, so
 an existing dashboard does not start reading spans just because you imported Pydantic AI.
 
-We counted distinct `gen_ai.*` attributes in each framework's source. Google ADK emits them too. The
+We counted `gen_ai.*` string literals in each framework's source. Google ADK emits them too. The
 rest go through third-party instrumentation using its own namespace (`llm.model_name`,
-`openinference.span.kind`), so a standards-based GenAI dashboard stays empty:
-
-| | Distinct `gen_ai.*` attributes |
-|---|---|
-| Google ADK 2.8.0 | 49 |
-| Pydantic AI 2.42 | 36 |
-| CrewAI 1.15.21 | 1 |
-| LangChain 1.4.0, openai-agents 0.22.2, Agno 3.0.9, smolagents 1.26.0 | 0 |
+`openinference.span.kind`), so a standards-based GenAI dashboard stays empty. Don't treat the
+count as the pitch; the pitch is that the names match what your vendor already graphs.
 
 ## 8. Evals in your test suite
 
@@ -582,12 +577,12 @@ Everything above is a reason to pick us. Here's the other side, so you don't fin
   they're made of, which is more work and more yours afterwards.
 - **Memory.** Mastra and Agno ship more developed memory than we do. Ours is dependencies and history
   processors you wire up.
-- **Some harness pieces are experimental.** Planning, subagents, compaction, and runtime authoring are
-  moving.
+- **ACP in the harness is experimental.** Planning, subagents, and compaction are shipped
+  capabilities. The Agent Client Protocol adapter is the piece still marked experimental.
 
 ## The comparisons
 
-Framework by framework, with what each does better:
+Framework by framework:
 [LangChain and LangGraph](vs-langchain-langgraph.md) ·
 [OpenAI Agents SDK](vs-openai-agents-sdk.md) ·
 [Claude Agent SDK](vs-claude-agent-sdk.md) ·

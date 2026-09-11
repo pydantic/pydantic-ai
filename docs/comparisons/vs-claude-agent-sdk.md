@@ -11,10 +11,9 @@ picked up useful things since we last looked: `max_budget_usd` caps what a run m
 permission handling, session resumption and hook events are all configurable.
 
 Pydantic AI runs the loop in your own process, on any model, with your own Python functions as tools.
-These are different tools and we're not going to pretend otherwise. The way to choose is to
-work out which side of one line your project sits on.
+These are different tools. The way to choose is which side of one line your project sits on.
 
-## The line: whose process is it
+## Whose process is it
 
 Configuring the Claude SDK means describing an agent in data. Tools are strings
 (`allowed_tools=['Read', 'Glob']`). Subagents are dictionaries. Hooks are JSON events. That's a
@@ -22,43 +21,15 @@ reasonable interface to a program running elsewhere, and it's the only interface
 your Python isn't where the loop lives.
 
 In Pydantic AI the loop is in your process, so a tool is a function you wrote, with your types, your
-imports, and a debugger that stops inside it:
-
-```python {title="in_process_loop.py"}
-"""The loop runs in your process, so a tool is just your function."""
-import os
-
-from pydantic_ai import Agent
-
-ran_in: list[int] = []
-agent = Agent('openai:gpt-5.6-luna')
-
-
-@agent.tool_plain
-def where_does_support_run() -> str:
-    """Report which process this tool is executing in."""
-    ran_in.append(os.getpid())
-    return 'checked'
-
-
-result = agent.run_sync('Which process runs the support tools?')
-print('the tool ran in this process:', ran_in == [os.getpid()])
-#> the tool ran in this process: True
-print(result.output)
-#> In the same process that called me.
-assert ran_in == [os.getpid()]
-```
-
-
-
-Same process id, no subprocess, no protocol between you and your own tools. In practice that's what
-decides several things at once: your tools can hold a database connection, your tests can run without
-launching anything, and you can step through a tool call in a debugger.
-
-It also means you can test the whole loop offline. `TestModel` and `FunctionModel` script the model's
-behaviour deterministically, and `ALLOW_MODEL_REQUESTS = False` turns any accidental real API call into
-an error. Testing a Claude SDK agent means launching the CLI and letting it talk to Anthropic, which is
+imports, and a debugger that stops inside it. Your tools can hold a database connection. Your tests
+can run without launching a CLI. `TestModel` and `FunctionModel` script the model's behaviour
+deterministically, and `ALLOW_MODEL_REQUESTS = False` turns any accidental real API call into an
+error. Testing a Claude SDK agent means launching the CLI and letting it talk to Anthropic, which is
 an integration test whether you wanted one or not.
+
+Stopping splits the same way. `ClaudeSDKClient.interrupt()` sends a control request over the
+transport, in streaming mode only, from outside the run. Ours is a `CancellationToken` or
+`ctx.cancel()` from inside a tool, and the run ends in `RunCancelled` carrying the history.
 
 ## Sessions remember conversations; engines remember work
 
@@ -74,32 +45,17 @@ work rather than the transcript, and the wrapping doesn't change the agent.
 
 | | Claude Agent SDK 0.2.152 | Pydantic AI 2.42 |
 |---|---|---|
-| Where the loop runs | The `claude` CLI, as a child process | Your process |
+| Where the loop runs | The `claude` CLI, as a child process (`SubprocessCLITransport`) | Your process |
 | Models | Anthropic | Any provider, with `FallbackModel` for failover |
 | Tools | Named in strings; the CLI owns them | Your Python functions, with types and validation |
 | Subagents and hooks | Configuration dictionaries and JSON events | Capabilities and typed hooks in your code |
 | Trusted state | Nothing typed; configuration and environment | `deps_type`, read by tools, invisible to the model |
 | Coding-agent features | Everything Claude Code has, immediately | Composable pieces in the harness: filesystem, shell, `CodeMode`, subagents, skills, memory |
-| Spend limits | `max_budget_usd` for the run | `UsageLimits` on requests, tool calls and tokens, checked before the next call |
+| Spend limits | `max_budget_usd` for the run, enforced by the CLI | `UsageLimits` on requests, tool calls and tokens, checked before the next call; `cost_limit` when pricing data is available |
 | Stopping a run | `ClaudeSDKClient.interrupt()`, streaming mode only, from outside the run | `CancellationToken`, `ctx.cancel()` from inside a tool, `RunCancelled` carrying resumable history |
 | Continuity | Sessions: resume, fork, rewind | Message history you own and store |
 | Crash recovery | Not the same thing as a session | Six engines wrap the agent object |
 | Testing offline | Launch the CLI; it's an integration test | `TestModel` and `FunctionModel`, no network |
-| Budgets | `max_budget_usd`, enforced by the CLI, for Claude models through it | `cost_limit` in USD across 41 providers when pricing data is available; unpriced models emit `CostNotFoundWarning` |
-
-## Choose the Claude Agent SDK when
-
-- You want Claude Code's behaviour and you want it today.
-- Anthropic is your model and that isn't going to change.
-- Its permission prompts, checkpoints, and rewind are features you'd otherwise have to build.
-- A subprocess is fine, and configuring in data suits you better than writing the loop.
-
-## Choose Pydantic AI when
-
-- The agent has to run inside your service, holding your connections.
-- You need the same agent on more than one provider.
-- Your tools deserve real types, real validation, and a debugger.
-- You want offline deterministic tests, spend ceilings, crash recovery, and evals in CI.
 
 ## FAQ
 
@@ -121,8 +77,7 @@ interface. Pydantic AI keeps trusted state out of the model's reach entirely, pa
 
 *Checked against claude-agent-sdk 0.2.152 and Pydantic AI 2.42 on 2026-09-10. `interrupt()` was read in
 `client.py` and `_internal/query.py`, where it sends an `interrupt` control request over the transport rather
-than signalling the process. The subprocess behaviour and the `ClaudeAgentOptions` fields, including
-`max_budget_usd`, come from reading the installed package. The Pydantic AI example is executed by this
-repository's test suite. We recheck this page's version pins and behaviour claims each time Pydantic AI ships
-a minor release; if something here has gone stale, [tell
+than signalling the process. The subprocess behaviour, `SubprocessCLITransport`, and the `ClaudeAgentOptions`
+fields, including `max_budget_usd`, come from reading the installed package. We recheck this page's version
+pins and behaviour claims each time Pydantic AI ships a minor release; if something here has gone stale, [tell
 us](https://github.com/pydantic/pydantic-ai/issues/new) and we'll correct it.*

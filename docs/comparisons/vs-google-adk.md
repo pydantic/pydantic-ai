@@ -70,7 +70,7 @@ budget is gone. Cancellation that comes from outside, like `asyncio.timeout()` o
 shutting down, still propagates as a normal `CancelledError` so your own timeouts behave the way
 Python says they should.
 
-## The other differences
+## Trusted state, tests, where it runs
 
 **Trusted state.** ADK carries app state, user state, and an invocation context through the run.
 That state is programmatic unless you interpolate it into instructions. Pydantic AI's difference is
@@ -98,21 +98,8 @@ Airflow.
 | Crash recovery | Sessions plus resumability config and `rewind_async` | Six engines wrap the agent object, and the engine is your choice |
 | Testing offline | Subclass `BaseLlm` yourself | `TestModel` and `FunctionModel` included; real calls blockable globally |
 | Evals | An evaluation module tied to their tooling | `pydantic-evals` in your test suite using the agent's own types |
-| Tracing | The GenAI semantic conventions, 49 `gen_ai.*` attributes | The same conventions, 36 attributes |
+| Tracing | The GenAI semantic conventions | The same conventions, when instrumentation is enabled |
 | Deployment | Vertex AI is the paved road | Anywhere; it's a library |
-
-## Choose Google ADK when
-
-- You're on Google Cloud and want Vertex deployment, Gemini features, and Google's tools without glue.
-- Agent-to-agent messaging and their planners map onto what you're building.
-- The web dev UI and evaluation module save you building those.
-
-## Choose Pydantic AI when
-
-- A stop button needs to work properly and leave you something you can resume.
-- The same agent should run on Gemini today and something else next quarter.
-- Credentials must sit where the model can't reach them.
-- You'd rather not have your agent framework decide where you deploy.
 
 ## FAQ
 
@@ -123,17 +110,11 @@ Yes, directly, including through Vertex. This isn't a comparison about which mod
 No. Tools and instructions port easily; sessions become message history you own, and `LoopAgent` and
 `ParallelAgent` become a loop and an `asyncio.gather`.
 
-**What does ADK do better?**
-Everything downstream of being Google's. If your deployment target is Vertex and your model is Gemini,
-ADK removes work we can't remove for you.
-
 ---
 
 *Checked against google-adk 2.8.0 and Pydantic AI 2.42 on 2026-09-10. The ADK facts come from reading the
 installed package: the absence of any cancel, stop, or abort method on `Runner` and `LlmAgent`, the `Runner`
 method list, and the contents of `google.adk.models`. Its runtime behaviour needs a live model and was not
-run. The Pydantic AI example is executed by this repository's test suite. The `gen_ai.*` counts are distinct
-semantic-convention attribute names found in each installed package's source; ours were also captured from a
-live run through a plain OpenTelemetry exporter. We recheck this page's version pins and behaviour claims each
-time Pydantic AI ships a minor release; if something here has gone stale, [tell
+run. The Pydantic AI example is executed by this repository's test suite. We recheck this page's version pins
+and behaviour claims each time Pydantic AI ships a minor release; if something here has gone stale, [tell
 us](https://github.com/pydantic/pydantic-ai/issues/new) and we'll correct it.*
