@@ -552,26 +552,9 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
         'The first known use of "hello, world" was in a 1974 textbook about the C programming language.'
     ),
     'What is my balance?': ToolCallPart(tool_name='customer_balance', args={'include_pending': True}),
-    # docs/comparisons/ — unique prompts so the shared FunctionModel mock can drive them.
     'Was I refunded for the duplicate charge on my last statement?': ToolCallPart(
         tool_name='load_capability', args={'id': 'refunds'}
     ),
-    'Was order A-4471 refunded?': ToolCallPart(tool_name='load_capability', args={'id': 'refunds'}),
-    '<system>The following tool(s) are now available: `check_refund`</system>': ToolCallPart(
-        tool_name='check_refund', args={'order_id': 'A-4471'}
-    ),
-    'Is the warehouse database ready?': ToolCallPart(tool_name='check_warehouse', args={'probe': 'readiness'}),
-    'Look up shipment for order C-110.': ToolCallPart(tool_name='look_up_shipment', args={'order_id': 'C-110'}),
-    'Wait on the warehouse for order H-900.': ToolCallPart(tool_name='wait_on_warehouse', args={'order_id': 'H-900'}),
-    'Credit the wallet twice for order C-110.': [
-        ToolCallPart(tool_name='credit_wallet', args={'amount': 100}, tool_call_id='credit_1'),
-        ToolCallPart(tool_name='credit_wallet', args={'amount': 100}, tool_call_id='credit_2'),
-    ],
-    'Say hello to the customer.': 'Hello.',
-    'Tag ticket 9 as urgent.': 'Ticket 9 is open.',
-    'What is 21 times 2?': ToolCallPart(tool_name='twice', args={'n': 21}),
-    'Issue store credit for order W-882.': ToolCallPart(tool_name='issue_store_credit', args={'order_id': 'W-882'}),
-    'Shout hello for the ticket.': ToolCallPart(tool_name='shout', args={'text': 'hello'}),
     'I just lost my card!': ToolCallPart(
         tool_name='final_result',
         args={
@@ -780,11 +763,6 @@ tool_responses: dict[tuple[str, str], str | ToolCallPart | Sequence[ToolCallPart
         'delete_file',
         'Deleting files is not allowed',
     ): 'I successfully updated `README.md` and cleared `.env`, but was not able to delete `__init__.py`.',
-    ('check_warehouse', 'warehouse:readiness:ok'): 'Warehouse is up.',
-    ('twice', '42'): '42',
-    ('issue_store_credit', 'credited W-882'): 'Store credit issued for W-882.',
-    ('shout', 'HELLO'): 'HELLO',
-    ('check_refund', 'Order A-4471: refunded.'): 'Order A-4471 was refunded.',
 }
 
 

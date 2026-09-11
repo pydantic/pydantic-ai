@@ -571,9 +571,6 @@ navigation:
         slug: "comparisons/overview"
         aliases:
           - "comparisons"
-      - page: "What a production agent needs"
-        path: "comparisons/production-agents.md"
-        slug: "comparisons/production-agents"
       - page: "The numbers people quote about us"
         path: "comparisons/under-the-hood.md"
         slug: "comparisons/under-the-hood"
@@ -1331,6 +1328,9 @@ redirects:
     status: 302
   - from: "capabilities/durable_execution"
     to: "capabilities/durable_execution/overview"
+    status: 302
+  - from: "comparisons/production-agents"
+    to: "comparisons/overview"
     status: 302
   - from: "mcp"
     to: "mcp/overview"
