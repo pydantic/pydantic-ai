@@ -1524,8 +1524,9 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             if not self.texts and not self.tool_calls:
                 return None
             message_param = chat.ChatCompletionAssistantMessageParam(role='assistant')
-            # Note: model responses from this model should only have one text item, so the following
-            # shouldn't merge multiple texts into one unless you switch models between runs:
+            # Chat Completions stores one `content` string per assistant message, so multiple
+            # TextParts in a single response (text after a tool call in the same stream, or
+            # history produced by a different model) are joined here:
             if self.thinkings:
                 for field_name, contents in self.thinkings.items():
                     message_param[field_name] = '\n\n'.join(contents)
