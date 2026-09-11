@@ -23,14 +23,14 @@ AI isn't tied to a cloud.
 
 | | Google ADK | Pydantic AI |
 |---|---|---|
-| Structured output | Yes | Yes ([type on the agent](../output.md)) |
+| Structured output | Yes | [Yes](../output.md) |
 | Guardrails | Callbacks | [Yes](https://pydantic.dev/docs/ai/harness/guardrails/) |
 | Code sandboxes | Gemini code execution | [Yes](https://pydantic.dev/docs/ai/harness/#execution-environments) |
 | Browser | Yes (Computer Use) | [Yes](https://pydantic.dev/docs/ai/harness/#web-research) |
 | Memory | App / user / invocation state | [Yes](https://pydantic.dev/docs/ai/harness/memory/) |
 | Compaction | `EventsCompactionConfig` | [Yes](../capabilities/compaction.md) |
-| Evals | Yes (Vertex) | Yes ([Pydantic Evals](../evals.md)) |
-| Test without API keys | Yes (subclass `BaseLlm`) | Yes ([`TestModel`, `FunctionModel`](../testing.md)) |
+| Evals | Yes (Vertex) | [Yes](../evals.md) |
+| Test without API keys | Yes (subclass `BaseLlm`) | [Yes](../testing.md) |
 
 Cells linked to pydantic.dev/docs/ai/harness ship in [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/),
 a separate package.

@@ -23,14 +23,14 @@ features first. Pydantic AI runs on any model, including OpenAI.
 
 | | OpenAI Agents SDK | Pydantic AI |
 |---|---|---|
-| Structured output | Yes | Yes ([type on the agent](../output.md)) |
+| Structured output | Yes | [Yes](../output.md) |
 | Guardrails | Input, output, tool tripwires | [Yes](https://pydantic.dev/docs/ai/harness/guardrails/) |
 | Code sandboxes | Hosted tools plus sandbox clients | [Yes](https://pydantic.dev/docs/ai/harness/#execution-environments) |
 | Browser | `ComputerTool` (you host) | [Yes](https://pydantic.dev/docs/ai/harness/#web-research) |
 | Memory | Sessions | [Yes](https://pydantic.dev/docs/ai/harness/memory/) |
 | Compaction | Yes | [Yes](../capabilities/compaction.md) |
-| Evals | Yes (platform) | Yes ([Pydantic Evals](../evals.md)) |
-| Test without API keys | Yes (`ScriptedModel`) | Yes ([`TestModel`, `FunctionModel`](../testing.md)) |
+| Evals | Yes (platform) | [Yes](../evals.md) |
+| Test without API keys | Yes (`ScriptedModel`) | [Yes](../testing.md) |
 
 Cells linked to pydantic.dev/docs/ai/harness ship in [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/),
 a separate package.

@@ -23,14 +23,14 @@ typed [`Agent`][pydantic_ai.Agent], with [`pydantic-graph`](../graph.md) when yo
 
 | | LangChain & LangGraph | Pydantic AI |
 |---|---|---|
-| Structured output | Yes (`with_structured_output`) | Yes ([type on the agent](../output.md)) |
+| Structured output | Yes (`with_structured_output`) | [Yes](../output.md) |
 | Guardrails | Middleware | [Yes](https://pydantic.dev/docs/ai/harness/guardrails/) |
 | Code sandboxes | Yes (integrations) | [Yes](https://pydantic.dev/docs/ai/harness/#execution-environments) |
 | Browser | Yes (integrations) | [Yes](https://pydantic.dev/docs/ai/harness/#web-research) |
 | Memory | Checkpointers, store | [Yes](https://pydantic.dev/docs/ai/harness/memory/) |
 | Compaction | Yes (`SummarizationMiddleware`) | [Yes](../capabilities/compaction.md) |
-| Evals | Yes (LangSmith) | Yes ([Pydantic Evals](../evals.md)) |
-| Test without API keys | Yes (fake chat models) | Yes ([`TestModel`, `FunctionModel`](../testing.md)) |
+| Evals | Yes (LangSmith) | [Yes](../evals.md) |
+| Test without API keys | Yes (fake chat models) | [Yes](../testing.md) |
 
 Cells linked to pydantic.dev/docs/ai/harness ship in [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/),
 a separate package.

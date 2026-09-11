@@ -24,14 +24,14 @@ packages. Pydantic AI is a typed Python [`Agent`][pydantic_ai.Agent].
 
 | | Pi | Pydantic AI |
 |---|---|---|
-| Structured output | Terminating tool you write | Yes ([type on the agent](../output.md)) |
+| Structured output | Terminating tool you write | [Yes](../output.md) |
 | Guardrails | No | [Yes](https://pydantic.dev/docs/ai/harness/guardrails/) |
 | Code sandboxes | Packages, not core | [Yes](https://pydantic.dev/docs/ai/harness/#execution-environments) |
 | Browser | No | [Yes](https://pydantic.dev/docs/ai/harness/#web-research) |
 | Memory | Sessions | [Yes](https://pydantic.dev/docs/ai/harness/memory/) |
 | Compaction | Yes | [Yes](../capabilities/compaction.md) |
-| Evals | No | Yes ([Pydantic Evals](../evals.md)) |
-| Test without API keys | Yes (`registerProvider()`) | Yes ([`TestModel`, `FunctionModel`](../testing.md)) |
+| Evals | No | [Yes](../evals.md) |
+| Test without API keys | Yes (`registerProvider()`) | [Yes](../testing.md) |
 
 Cells linked to pydantic.dev/docs/ai/harness ship in [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/),
 a separate package.

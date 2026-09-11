@@ -24,14 +24,14 @@ and scorers as separate concepts.
 
 | | Mastra | Pydantic AI |
 |---|---|---|
-| Structured output | Yes | Yes ([type on the agent](../output.md)) |
+| Structured output | Yes | [Yes](../output.md) |
 | Guardrails | Processors | [Yes](https://pydantic.dev/docs/ai/harness/guardrails/) |
 | Code sandboxes | Yes | [Yes](https://pydantic.dev/docs/ai/harness/#execution-environments) |
 | Browser | Yes | [Yes](https://pydantic.dev/docs/ai/harness/#web-research) |
 | Memory | Yes (working, observational, semantic) | [Yes](https://pydantic.dev/docs/ai/harness/memory/) |
 | Compaction | No | [Yes](../capabilities/compaction.md) |
-| Evals | Yes | Yes ([Pydantic Evals](../evals.md)) |
-| Test without API keys | Yes | Yes ([`TestModel`, `FunctionModel`](../testing.md)) |
+| Evals | Yes | [Yes](../evals.md) |
+| Test without API keys | Yes | [Yes](../testing.md) |
 
 Cells linked to pydantic.dev/docs/ai/harness ship in [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/),
 a separate package.

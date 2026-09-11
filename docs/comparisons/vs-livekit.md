@@ -27,14 +27,14 @@ speak.
 
 | | LiveKit Agents | Pydantic AI |
 |---|---|---|
-| Structured output | You wire `response_format` | Yes ([type on the agent](../output.md)) |
+| Structured output | You wire `response_format` | [Yes](../output.md) |
 | Guardrails | No | [Yes](https://pydantic.dev/docs/ai/harness/guardrails/) |
 | Code sandboxes | `CodeInterpreter` (provider) | [Yes](https://pydantic.dev/docs/ai/harness/#execution-environments) |
 | Browser | `ComputerUse` / `plugins.browser` | [Yes](https://pydantic.dev/docs/ai/harness/#web-research) |
 | Memory | No | [Yes](https://pydantic.dev/docs/ai/harness/memory/) |
 | Compaction | Yes (`truncate`) | [Yes](../capabilities/compaction.md) |
-| Evals | Yes (`livekit.agents.evals`) | Yes ([Pydantic Evals](../evals.md)) |
-| Test without API keys | Yes | Yes ([`TestModel`, `FunctionModel`](../testing.md)) |
+| Evals | Yes (`livekit.agents.evals`) | [Yes](../evals.md) |
+| Test without API keys | Yes | [Yes](../testing.md) |
 
 Cells linked to pydantic.dev/docs/ai/harness ship in [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/),
 a separate package.

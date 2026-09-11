@@ -24,14 +24,14 @@ protocol, so the browser can stay theirs.
 
 | | Vercel AI SDK | Pydantic AI |
 |---|---|---|
-| Structured output | Yes (`generateObject`) | Yes ([type on the agent](../output.md)) |
+| Structured output | Yes (`generateObject`) | [Yes](../output.md) |
 | Guardrails | Middleware | [Yes](https://pydantic.dev/docs/ai/harness/guardrails/) |
 | Code sandboxes | `experimental_sandbox` (you host) | [Yes](https://pydantic.dev/docs/ai/harness/#execution-environments) |
 | Browser | No | [Yes](https://pydantic.dev/docs/ai/harness/#web-research) |
 | Memory | No | [Yes](https://pydantic.dev/docs/ai/harness/memory/) |
 | Compaction | `pruneMessages` | [Yes](../capabilities/compaction.md) |
-| Evals | No | Yes ([Pydantic Evals](../evals.md)) |
-| Test without API keys | Yes (`MockLanguageModelV4`) | Yes ([`TestModel`, `FunctionModel`](../testing.md)) |
+| Evals | No | [Yes](../evals.md) |
+| Test without API keys | Yes (`MockLanguageModelV4`) | [Yes](../testing.md) |
 
 Cells linked to pydantic.dev/docs/ai/harness ship in [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/),
 a separate package.

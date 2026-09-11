@@ -25,14 +25,14 @@ model.
 
 | | Claude Agent SDK | Pydantic AI |
 |---|---|---|
-| Structured output | Yes (`json_schema`) | Yes ([type on the agent](../output.md)) |
+| Structured output | Yes (`json_schema`) | [Yes](../output.md) |
 | Guardrails | CLI permissions | [Yes](https://pydantic.dev/docs/ai/harness/guardrails/) |
 | Code sandboxes | CLI permissions | [Yes](https://pydantic.dev/docs/ai/harness/#execution-environments) |
 | Browser | Yes (Chrome) | [Yes](https://pydantic.dev/docs/ai/harness/#web-research) |
 | Memory | Sessions | [Yes](https://pydantic.dev/docs/ai/harness/memory/) |
 | Compaction | Yes | [Yes](../capabilities/compaction.md) |
-| Evals | No | Yes ([Pydantic Evals](../evals.md)) |
-| Test without API keys | No (launch the CLI) | Yes ([`TestModel`, `FunctionModel`](../testing.md)) |
+| Evals | No | [Yes](../evals.md) |
+| Test without API keys | No (launch the CLI) | [Yes](../testing.md) |
 
 Cells linked to pydantic.dev/docs/ai/harness ship in [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/),
 a separate package.

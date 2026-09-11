@@ -23,14 +23,14 @@ only the library: an agent you put in the application you already run.
 
 | | Agno | Pydantic AI |
 |---|---|---|
-| Structured output | Yes | Yes ([type on the agent](../output.md)) |
+| Structured output | Yes | [Yes](../output.md) |
 | Guardrails | Yes | [Yes](https://pydantic.dev/docs/ai/harness/guardrails/) |
 | Code sandboxes | Yes (integrations) | [Yes](https://pydantic.dev/docs/ai/harness/#execution-environments) |
 | Browser | Yes | [Yes](https://pydantic.dev/docs/ai/harness/#web-research) |
 | Memory | Yes (`MemoryManager`) | [Yes](https://pydantic.dev/docs/ai/harness/memory/) |
 | Compaction | Tool-result compression | [Yes](../capabilities/compaction.md) |
-| Evals | Yes | Yes ([Pydantic Evals](../evals.md)) |
-| Test without API keys | You write a model | Yes ([`TestModel`, `FunctionModel`](../testing.md)) |
+| Evals | Yes | [Yes](../evals.md) |
+| Test without API keys | You write a model | [Yes](../testing.md) |
 
 Cells linked to pydantic.dev/docs/ai/harness ship in [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/),
 a separate package.
