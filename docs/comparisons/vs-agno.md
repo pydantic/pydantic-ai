@@ -7,34 +7,37 @@ only the library: an agent you put in the application you already run.
 
 | | Agno | Pydantic AI |
 |---|---|---|
+| Native Python SDK | Yes | Yes |
+| License | Apache-2.0 | MIT |
+| Model providers | Many | Any, plus [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] |
+| Extensibility | Toolkits | [Capabilities](../extensibility.md) |
+| Skills | Yes | Yes ([Skills](https://pydantic.dev/docs/ai/harness/skills/)) |
+| On-demand capabilities | No | Yes ([on-demand](../capabilities/on-demand.md)) |
+| Interfaces | AgentOS UI | [`to_cli_sync()`](../cli.md), [`to_web()`](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) |
+| Realtime voice | No | Yes ([realtime](../realtime/overview.md)) |
+| Agent graph | Workflows | [`pydantic-graph`](../graph.md) |
+| Coding agent | Shell / Python toolkits | [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) |
+| Research agent | No | [`Researcher()`](https://pydantic.dev/docs/ai/harness/researcher/) |
+| Code sandboxes | E2B, Daytona, Superserve | [Modal](https://pydantic.dev/docs/ai/harness/modal-sandbox/) and [Monty](https://github.com/pydantic/monty) |
+| Image generation | No | Yes |
+| Browser | Yes | Yes ([Browser Use](https://pydantic.dev/docs/ai/harness/browser-use/)) |
+| Structured output | Yes | Yes (type on the agent) |
+| Human in the loop | Yes (confirmation on tools) | Yes (tool approval) |
+| Guardrails | No | Yes ([harness](https://pydantic.dev/docs/ai/harness/guardrails/)) |
+| MCP | Client | Client and [server](../mcp/server.md) |
+| Memory | Yes (`MemoryManager`) | Yes ([harness Memory](https://pydantic.dev/docs/ai/harness/memory/); thinner) |
+| Multi-agent | Teams | [Delegation, graph, or `async`](../multi-agent-applications.md) |
+| Durable execution | Agent `db` / `checkpoint` | [Temporal, DBOS, Prefect, Restate, Lambda, Kitaru, Airflow](../durable_execution/overview.md) |
+| Tracing | OpenInference | OpenTelemetry |
+| Evals | No | Yes ([Pydantic Evals](../evals.md)) |
+| Test without API keys | Yes | Yes |
+| Embeddings | Knowledge | Yes |
 | What you run | Optional AgentOS (UI, auth, roles) | The agent, in your existing app |
-| Stop | `Agent.cancel_run(run_id)` | A stop signal; you get the messages back |
-| Shell / code | Host `subprocess` / `exec` by default; CodeMode is host too; E2B, Daytona, Superserve as tools | `Coder()` (host, allowlist) or `CodeMode` (Monty); Modal / a container for untrusted work |
-| Memory | Built in (`MemoryManager`) | You wire it |
-| Crash recovery | Agent `db` / `checkpoint` | The same agent, inside Temporal, DBOS, or Prefect |
-| Tracing | OpenInference, not `gen_ai.*` | OpenTelemetry GenAI names, when you turn them on |
-
-## Host by default
-
-`ShellTools` runs `subprocess.run` on the machine. `PythonTools` runs `exec`. Their `CodeMode` is an
-IPython kernel in the same process; their own module docstring says it is not a sandbox. You can
-require a human click with `ShellTools(requires_confirmation_tools=["run_shell_command"])`.
-
-They also ship sandbox toolkits: `E2BTools`, `DaytonaTools`, and `SuperserveTools` (Firecracker).
-Those are extra tools you attach, not the default for `ShellTools` / `PythonTools` / `CodeMode`.
-
-Ours: [`CodeMode`](https://pydantic.dev/docs/ai/harness/code-mode/) executes model-written Python
-inside [Monty](https://github.com/pydantic/monty). [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/)
-is host by default; the allowlist is a guardrail, not a VM. Untrusted work goes in Modal or a
-container. Any tool can take `requires_approval=True`.
-
-AgentOS is not a tax on the library: `Agent(name='x')` constructs, and `agno.agent.agent` never
-imports `agno.os`.
+| Deployment | AgentOS, or your app | Anywhere |
 
 ## FAQ
 
 **Does the agent need its own service?** No. It goes in the app you already run.
 
 **Can I still get a UI and a coding harness?** Yes. [`to_web()`][pydantic_ai.agent.Agent.to_web],
-[`to_cli_sync()`](../cli.md), and
-[`Coder()`](https://pydantic.dev/docs/ai/harness/coder/).
+[`to_cli_sync()`](../cli.md), and [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/).

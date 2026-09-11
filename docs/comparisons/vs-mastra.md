@@ -2,19 +2,38 @@
 
 Mastra is TypeScript all-in-one: agents, workflows, memory, evals, a playground, Studio, Cloud.
 Pydantic AI is Python. One extension point (a capability) instead of tools, processors, guardrails,
-and scorers as separate concepts. Tracing is OpenTelemetry you already run, off by default. Memory
-is thinner than theirs.
+and scorers as separate concepts.
 
 ## Side by side
 
 | | Mastra | Pydantic AI |
 |---|---|---|
-| Language | TypeScript | Python |
-| Extending | Tools, processors, scorers, workflows | One capability |
-| Memory | Working, observational, semantic | Deps and history processors |
-| Durability | `createDurableAgent()` in core; Inngest via `@mastra/inngest` | The same agent, inside Temporal, DBOS, or Prefect |
-| Tracing | `mastra dev`, Studio, Cloud | OpenTelemetry, when you turn it on |
-| Deploy | Mastra Cloud, or `mastra start` | Anywhere |
+| Native Python SDK | No, TypeScript | Yes |
+| License | Apache-2.0 (core); EE for some features | MIT |
+| Model providers | Many | Any, plus [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] |
+| Extensibility | Tools, processors, scorers, workflows | [Capabilities](../extensibility.md) |
+| Skills | Yes | Yes ([Skills](https://pydantic.dev/docs/ai/harness/skills/)) |
+| On-demand capabilities | No | Yes ([on-demand](../capabilities/on-demand.md)) |
+| Interfaces | Playground, Studio | [`to_cli_sync()`](../cli.md), [`to_web()`](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) |
+| Realtime voice | Voice extras | Yes ([realtime](../realtime/overview.md)) |
+| Agent graph | Workflows in core | [`pydantic-graph`](../graph.md) |
+| Coding agent | No | [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) |
+| Research agent | No | [`Researcher()`](https://pydantic.dev/docs/ai/harness/researcher/) |
+| Code sandboxes | No | [Modal](https://pydantic.dev/docs/ai/harness/modal-sandbox/) and [Monty](https://github.com/pydantic/monty) |
+| Image generation | No | Yes |
+| Browser | No | Yes ([Browser Use](https://pydantic.dev/docs/ai/harness/browser-use/)) |
+| Structured output | Yes | Yes (type on the agent) |
+| Human in the loop | Yes (processors / approval) | Yes (tool approval) |
+| Guardrails | Processors | Yes ([harness](https://pydantic.dev/docs/ai/harness/guardrails/)) |
+| MCP | Client | Client and [server](../mcp/server.md) |
+| Memory | Yes (working, observational, semantic) | Yes ([harness Memory](https://pydantic.dev/docs/ai/harness/memory/); thinner) |
+| Multi-agent | Workflows | [Delegation, graph, or `async`](../multi-agent-applications.md) |
+| Durable execution | `createDurableAgent()`, Inngest | [Temporal, DBOS, Prefect, Restate, Lambda, Kitaru, Airflow](../durable_execution/overview.md) |
+| Tracing | Studio, Cloud | OpenTelemetry |
+| Evals | Yes | Yes ([Pydantic Evals](../evals.md)) |
+| Test without API keys | Yes | Yes |
+| Embeddings | Yes (with memory) | Yes |
+| Deployment | Mastra Cloud, or `mastra start` | Anywhere |
 
 ## FAQ
 

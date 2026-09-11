@@ -571,9 +571,6 @@ navigation:
         slug: "comparisons/overview"
         aliases:
           - "comparisons"
-      - page: "The numbers people quote about us"
-        path: "comparisons/under-the-hood.md"
-        slug: "comparisons/under-the-hood"
       - page: "vs LangChain & LangGraph"
         path: "comparisons/vs-langchain-langgraph.md"
         slug: "comparisons/vs-langchain-langgraph"
@@ -595,12 +592,6 @@ navigation:
           - "comparisons/claude-agent-sdk"
           - "pydantic-ai-vs-claude-agent-sdk"
           - "claude-agent-sdk-vs-pydantic-ai"
-      - page: "vs smolagents"
-        path: "comparisons/vs-smolagents.md"
-        slug: "comparisons/vs-smolagents"
-        aliases:
-          - "pydantic-ai-vs-smolagents"
-          - "smolagents-vs-pydantic-ai"
       - page: "vs CrewAI"
         path: "comparisons/vs-crewai.md"
         slug: "comparisons/vs-crewai"
@@ -644,6 +635,13 @@ navigation:
           - "pydantic-ai-vs-pi"
           - "pi-vs-pydantic-ai"
           - "pydantic-ai-vs-pi-coding-agent"
+      - page: "vs LiveKit Agents"
+        path: "comparisons/vs-livekit.md"
+        slug: "comparisons/vs-livekit"
+        aliases:
+          - "pydantic-ai-vs-livekit"
+          - "livekit-vs-pydantic-ai"
+          - "comparisons/livekit"
   - section: "Interfaces"
     slug: ""
     contents:
@@ -1330,6 +1328,18 @@ redirects:
     to: "capabilities/durable_execution/overview"
     status: 302
   - from: "comparisons/production-agents"
+    to: "comparisons/overview"
+    status: 302
+  - from: "comparisons/under-the-hood"
+    to: "comparisons/overview"
+    status: 302
+  - from: "comparisons/vs-smolagents"
+    to: "comparisons/overview"
+    status: 302
+  - from: "pydantic-ai-vs-smolagents"
+    to: "comparisons/overview"
+    status: 302
+  - from: "smolagents-vs-pydantic-ai"
     to: "comparisons/overview"
     status: 302
   - from: "mcp"

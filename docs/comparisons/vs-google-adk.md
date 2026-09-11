@@ -1,23 +1,42 @@
 # Pydantic AI vs Google ADK
 
 Google ADK is the Gemini-native kit: `LlmAgent`, a `Runner`, Vertex, Search, A2A, a web UI. Pydantic
-AI isn't tied to a cloud. The production gap is stop: there is no `cancel`, `stop`, or `abort` on
-`Runner` or `LlmAgent`.
+AI isn't tied to a cloud.
 
 ## Side by side
 
 | | Google ADK | Pydantic AI |
 |---|---|---|
-| Models | Gemini first (`LiteLlm`, `AnthropicLlm` exist) | Any provider |
-| Stop | Cancel the asyncio task | A stop signal; you get the messages back |
-| Trusted state | App / user / invocation state | A typed object your tools read; the model never sees it |
-| Compose | `LoopAgent`, `ParallelAgent` | `async` / `gather` |
-| Deploy | Vertex | Anywhere |
-| Test offline | Subclass `BaseLlm` | A fake model you script; no API key |
+| Native Python SDK | Yes | Yes |
+| License | Apache-2.0 | MIT |
+| Model providers | Gemini first (`LiteLlm`, `AnthropicLlm` exist) | Any, plus [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] |
+| Extensibility | Tools, plugins | [Capabilities](../extensibility.md) |
+| Skills | Yes | Yes ([Skills](https://pydantic.dev/docs/ai/harness/skills/)) |
+| On-demand capabilities | No | Yes ([on-demand](../capabilities/on-demand.md)) |
+| Interfaces | ADK web UI | [`to_cli_sync()`](../cli.md), [`to_web()`](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) |
+| Realtime voice | Yes (Gemini Live) | Yes ([realtime](../realtime/overview.md)) |
+| Agent graph | `SequentialAgent`, `LoopAgent`, `ParallelAgent` | [`pydantic-graph`](../graph.md) |
+| Coding agent | No | [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) |
+| Research agent | No | [`Researcher()`](https://pydantic.dev/docs/ai/harness/researcher/) |
+| Code sandboxes | Gemini code execution | [Modal](https://pydantic.dev/docs/ai/harness/modal-sandbox/) and [Monty](https://github.com/pydantic/monty) |
+| Image generation | Yes (Gemini) | Yes (any provider) |
+| Browser | No | Yes ([Browser Use](https://pydantic.dev/docs/ai/harness/browser-use/)) |
+| Structured output | Yes | Yes (type on the agent) |
+| Human in the loop | Yes (confirmation / long-running tools) | Yes (tool approval) |
+| Guardrails | Callbacks | Yes ([harness](https://pydantic.dev/docs/ai/harness/guardrails/)) |
+| MCP | Client | Client and [server](../mcp/server.md) |
+| Memory | App / user / invocation state | [Harness Memory](https://pydantic.dev/docs/ai/harness/memory/) |
+| Multi-agent | `LoopAgent`, `ParallelAgent` | [Delegation, graph, or `async`](../multi-agent-applications.md) |
+| Durable execution | Vertex | [Temporal, DBOS, Prefect, Restate, Lambda, Kitaru, Airflow](../durable_execution/overview.md) |
+| Tracing | Google Cloud | OpenTelemetry |
+| Evals | Yes (Vertex) | Yes ([Pydantic Evals](../evals.md)) |
+| Test without API keys | Yes (subclass `BaseLlm`) | Yes |
+| Embeddings | Yes (Vertex) | Yes |
+| Deployment | Vertex | Anywhere |
 
 ## FAQ
 
 **Can I use Gemini?** Yes, including Vertex, and any other provider.
 
-**Can I attach a coding harness to Gemini?** Yes. [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/)
-on the same [`Agent`][pydantic_ai.Agent].
+**Can I attach a coding harness to Gemini?** Yes.
+[`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) on the same [`Agent`][pydantic_ai.Agent].

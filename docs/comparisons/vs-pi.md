@@ -2,37 +2,43 @@
 
 Pi is a TypeScript coding agent you can embed without forking: extensions, skills, and `pi install`
 packages. Pydantic AI is a typed Python [`Agent`][pydantic_ai.Agent].
-[`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) is a capability on that same object, so
-types, tests, and Temporal attach without becoming a different product.
+[`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) is a capability on that same object.
 
 ## Side by side
 
 | | Pi | Pydantic AI |
 |---|---|---|
-| Language | TypeScript | Python |
-| What you get | CLI + embeddable `Agent` / `createAgentSession` | A typed `Agent`; `Coder()` is a capability |
-| Change it | Extensions, skills, `pi install` | Swap a capability |
-| In core | `read`, `bash`, `edit`, `write` | `Coder()` includes planning and sub-agents |
-| Sub-agents, plan, MCP | Examples and packages, not core | Planning and SubAgents in `Coder()`; MCP is a capability |
-| Isolation | None built in; container/VM you add | `FileSystem` rooted at a workspace; `Shell` allowlist is a guardrail; Modal / a container for untrusted work |
-| Trusted state | Closures on tools | A typed object your tools read; the model never sees it |
-| Crash recovery | Session tree on disk | The same agent, inside Temporal, DBOS, or Prefect |
-| Structured output | A terminating tool you write | A type on the agent |
-| Test offline | Stub `streamFn` | A fake model you script; no API key |
+| Native Python SDK | No, TypeScript | Yes |
+| License | MIT | MIT |
+| Model providers | Many | Any, plus [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] |
+| Extensibility | Extensions, skills, `pi install` | [Capabilities](../extensibility.md) |
+| Skills | Yes (`pi install`) | Yes ([Skills](https://pydantic.dev/docs/ai/harness/skills/)) |
+| On-demand capabilities | No | Yes ([on-demand](../capabilities/on-demand.md)) |
+| Interfaces | CLI | [`to_cli_sync()`](../cli.md), [`to_web()`](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) |
+| Realtime voice | No | Yes ([realtime](../realtime/overview.md)) |
+| Agent graph | No | [`pydantic-graph`](../graph.md) |
+| Coding agent | The product | [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) |
+| Research agent | No | [`Researcher()`](https://pydantic.dev/docs/ai/harness/researcher/) |
+| Code sandboxes | No | [Modal](https://pydantic.dev/docs/ai/harness/modal-sandbox/) and [Monty](https://github.com/pydantic/monty) |
+| Image generation | No | Yes |
+| Browser | No | Yes ([Browser Use](https://pydantic.dev/docs/ai/harness/browser-use/)) |
+| Structured output | Terminating tool you write | Yes (type on the agent) |
+| Human in the loop | No | Yes (tool approval) |
+| Guardrails | No | Yes ([harness](https://pydantic.dev/docs/ai/harness/guardrails/)) |
+| MCP | Packages, not core | Client and [server](../mcp/server.md) |
+| Memory | Sessions | [Harness Memory](https://pydantic.dev/docs/ai/harness/memory/) |
+| Multi-agent | Packages | [Delegation, graph, or `async`](../multi-agent-applications.md) |
+| Durable execution | Session tree on disk | [Temporal, DBOS, Prefect, Restate, Lambda, Kitaru, Airflow](../durable_execution/overview.md) |
+| Tracing | Logs | OpenTelemetry |
+| Evals | No | Yes ([Pydantic Evals](../evals.md)) |
+| Test without API keys | Yes (stub `streamFn`) | Yes |
+| Embeddings | No | Yes |
+| Deployment | Wherever Node runs | Anywhere |
 
 ## FAQ
 
 **Can I code like Pi?** Yes. [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) on a typed
-[`Agent`][pydantic_ai.Agent]:
-
-```python {title="coder_like_pi.py" test="skip" lint="skip"}
-from pydantic_ai import Agent
-from pydantic_ai_harness import Coder
-
-agent = Agent('anthropic:claude-fable-5', capabilities=[Coder()])
-```
-
-Files, shell, planning, and sub-agents. Take it apart if you want the blocks.
+[`Agent`][pydantic_ai.Agent]. Files, shell, planning, and sub-agents.
 
 **Can that coding agent live in the Python app I already have?** Yes. Types, tests, and Temporal stay
 attached.

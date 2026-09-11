@@ -4,19 +4,36 @@ The Vercel AI SDK is the wire to a React UI: streaming, tool cards, approval in 
 AI is a Python agent. [`VercelAIAdapter`][pydantic_ai.ui.vercel_ai.VercelAIAdapter] speaks their
 protocol, so the browser can stay theirs.
 
-`abortSignal` aborts the request. Ours raises [`RunCancelled`][pydantic_ai.exceptions.RunCancelled]
-holding the conversation.
-
 ## Side by side
 
 | | Vercel AI SDK | Pydantic AI |
 |---|---|---|
-| Language | TypeScript | Python |
-| UI stream | What it was built for | [`VercelAIAdapter`][pydantic_ai.ui.vercel_ai.VercelAIAdapter] |
-| Stop | `abortSignal` | A stop signal; you get the messages back |
-| Structured output | `generateObject` / `Output` | You pick the transport |
-| Crash recovery | Not in `ai`; `@ai-sdk/workflow` is a sibling | The same agent, inside Temporal, DBOS, or Prefect |
-| Test offline | `MockLanguageModelV4` from `ai/test` | A fake model you script; no API key |
+| Native Python SDK | No, TypeScript | Yes |
+| License | Apache-2.0 | MIT |
+| Model providers | Many | Any, plus [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] |
+| Extensibility | Middleware, tools | [Capabilities](../extensibility.md) |
+| Skills | No | Yes ([Skills](https://pydantic.dev/docs/ai/harness/skills/)) |
+| On-demand capabilities | No | Yes ([on-demand](../capabilities/on-demand.md)) |
+| Interfaces | React `useChat` / Vercel AI stream | [`to_cli_sync()`](../cli.md), [`to_web()`](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) |
+| Realtime voice | No | Yes ([realtime](../realtime/overview.md)) |
+| Agent graph | `@ai-sdk/workflow` (sibling) | [`pydantic-graph`](../graph.md) |
+| Coding agent | No | [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) |
+| Research agent | No | [`Researcher()`](https://pydantic.dev/docs/ai/harness/researcher/) |
+| Code sandboxes | No | [Modal](https://pydantic.dev/docs/ai/harness/modal-sandbox/) and [Monty](https://github.com/pydantic/monty) |
+| Image generation | Yes (`generateImage`) | Yes |
+| Browser | No | Yes ([Browser Use](https://pydantic.dev/docs/ai/harness/browser-use/)) |
+| Structured output | Yes (`generateObject`) | Yes (type on the agent) |
+| Human in the loop | Yes (approval in the browser) | Yes (tool approval) |
+| Guardrails | No | Yes ([harness](https://pydantic.dev/docs/ai/harness/guardrails/)) |
+| MCP | Client | Client and [server](../mcp/server.md) |
+| Memory | No | [Harness Memory](https://pydantic.dev/docs/ai/harness/memory/) |
+| Multi-agent | You compose it | [Delegation, graph, or `async`](../multi-agent-applications.md) |
+| Durable execution | No | [Temporal, DBOS, Prefect, Restate, Lambda, Kitaru, Airflow](../durable_execution/overview.md) |
+| Tracing | Their telemetry | OpenTelemetry |
+| Evals | No | Yes ([Pydantic Evals](../evals.md)) |
+| Test without API keys | Yes (`MockLanguageModelV4`) | Yes |
+| Embeddings | Yes (`embed`) | Yes |
+| Deployment | Vercel, or anywhere Node runs | Anywhere |
 
 ## FAQ
 

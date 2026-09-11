@@ -1,7 +1,8 @@
 # Pydantic AI vs LangChain & LangGraph
 
 A LangChain **agent** is a graph: `create_agent()` returns a `CompiledStateGraph`. Pydantic AI is a
-typed value. Pause, durability, and tests attach to it; they don't redraw it as nodes.
+typed [`Agent`][pydantic_ai.Agent]. We also ship a graph library,
+[`pydantic-graph`](../graph.md), for the cases that actually need one.
 
 LangSmith is hosted tracing. We emit OpenTelemetry, off by default, into the collector you already run.
 
@@ -9,33 +10,38 @@ LangSmith is hosted tracing. We emit OpenTelemetry, off by default, into the col
 
 | | LangChain & LangGraph | Pydantic AI |
 |---|---|---|
-| An agent is | A `CompiledStateGraph` | A typed `Agent` |
-| Pause | `interrupt()` replays the node, unless you split first or use HITL | `requires_approval=True` at the tool |
-| Crash recovery | Checkpointers | The same agent, inside Temporal, DBOS, or Prefect |
-| Trusted state | `context_schema` / `state_schema` | A typed object your tools read; the model never sees it |
-| Cancel | `abort()` on the experimental v3 stream only | In-process stop; not through Temporal / DBOS / Prefect |
-| Test offline | Fake chat models raise on `bind_tools` | A fake model you script; no API key |
-| Tracing | LangSmith | OpenTelemetry GenAI names, when you turn them on |
+| Native Python SDK | Yes | Yes |
+| License | MIT | MIT |
+| Model providers | Many | Any, plus [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] |
+| Extensibility | Middleware, callbacks | [Capabilities](../extensibility.md) |
+| Skills | Yes | Yes ([Skills](https://pydantic.dev/docs/ai/harness/skills/)) |
+| On-demand capabilities | No | Yes ([on-demand](../capabilities/on-demand.md)) |
+| Interfaces | LangServe, Studio | [`to_cli_sync()`](../cli.md), [`to_web()`](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) |
+| Realtime voice | No | Yes ([realtime](../realtime/overview.md)) |
+| Agent graph | LangGraph | [`pydantic-graph`](../graph.md) |
+| Coding agent | Deep Agents | [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) |
+| Research agent | No | [`Researcher()`](https://pydantic.dev/docs/ai/harness/researcher/) |
+| Code sandboxes | Community / E2B | [Modal](https://pydantic.dev/docs/ai/harness/modal-sandbox/) and [Monty](https://github.com/pydantic/monty) |
+| Image generation | Integrations | Yes |
+| Browser | Integrations | Yes ([Browser Use](https://pydantic.dev/docs/ai/harness/browser-use/)) |
+| Structured output | Yes (`with_structured_output`) | Yes (type on the agent) |
+| Human in the loop | Yes (`interrupt`) | Yes (tool approval) |
+| Guardrails | Middleware | Yes ([harness](https://pydantic.dev/docs/ai/harness/guardrails/)) |
+| MCP | Client (adapters) | Client and [server](../mcp/server.md) |
+| Memory | Checkpointers, store | [Harness Memory](https://pydantic.dev/docs/ai/harness/memory/) |
+| Multi-agent | LangGraph | [Delegation, graph, or `async`](../multi-agent-applications.md) |
+| Durable execution | Checkpointers | [Temporal, DBOS, Prefect, Restate, Lambda, Kitaru, Airflow](../durable_execution/overview.md) |
+| Tracing | LangSmith | OpenTelemetry |
+| Evals | Yes (LangSmith) | Yes ([Pydantic Evals](../evals.md)) |
+| Test without API keys | Yes (fake chat models) | Yes |
+| Embeddings | Yes (large catalogue) | Yes |
 | Integrations | Far larger catalogue | Smaller; call theirs from a tool |
-
-## Pause at the tool
-
-`interrupt()` inside a LangGraph node restarts that node from line one: the model call and anything
-above the pause run again. `HumanInTheLoopMiddleware` (Deep Agents: `interrupt_on`) pauses before a
-named tool and does not replay. `interrupt_after` on a node you split out first also doesn't. The
-documented fix is to split the graph before you know where you'll want to stop.
-
-Ours pauses at the tool. `requires_approval=True` plus
-[`DeferredToolRequests`][pydantic_ai.DeferredToolRequests] in `output_type` ends the run holding the
-pending call. Resume is a second `run`. Lookup once, payout once.
-
-Deep Agents is the same graph: `create_deep_agent()` returns a `CompiledStateGraph`.
+| Deployment | Anywhere | Anywhere |
 
 ## FAQ
 
-**Do I have to redraw the agent as a graph to pause?** No. `requires_approval=True` on the tool. The
-run ends holding the pending call. Resume is a second `run`.
+**Do you have a graph library?** Yes. [`pydantic-graph`](../graph.md). Most multi-agent work is still
+ordinary [async Python](../multi-agent-applications.md).
 
 **Can I get a coding agent without Deep Agents?** Yes.
 [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) on the same typed [`Agent`][pydantic_ai.Agent].
-A LangChain connector you already have can be a tool on that agent.

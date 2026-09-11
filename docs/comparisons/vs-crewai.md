@@ -1,27 +1,43 @@
 # Pydantic AI vs CrewAI
 
 CrewAI is a team: roles, tasks, a process mode. Pydantic AI has no crew. Multi-agent work is Python:
-call, branch, `asyncio.gather`.
-
-A sequence of specialists is a good fit for theirs. A branch, a join, a retry on one arm only is
-ordinary `async` on ours, and there is no cancel method on `Crew`.
+call, branch, `asyncio.gather`, or [`pydantic-graph`](../graph.md).
 
 ## Side by side
 
 | | CrewAI | Pydantic AI |
 |---|---|---|
-| Shape of work | Roles, tasks, `Process` | Async Python |
-| Stop | No method on `Crew`; streaming `aclose()` | A stop signal; you get the messages back |
-| Budgets | `max_rpm` / `max_iter` per agent | Per run, `cost_limit` after each response |
-| Crash recovery | `Crew.from_checkpoint` | The same agent, inside Temporal, DBOS, or Prefect |
-| Memory / knowledge | On `Agent` and `Crew` | You wire it |
-| Trusted state | Closures / config | A typed object your tools read; the model never sees it |
-| Test offline | `crewai test` runs a live model | A fake model you script; no API key |
+| Native Python SDK | Yes | Yes |
+| License | MIT | MIT |
+| Model providers | Many | Any, plus [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] |
+| Extensibility | Tools on agents and crews | [Capabilities](../extensibility.md) |
+| Skills | Yes | Yes ([Skills](https://pydantic.dev/docs/ai/harness/skills/)) |
+| On-demand capabilities | No | Yes ([on-demand](../capabilities/on-demand.md)) |
+| Interfaces | Enterprise UI | [`to_cli_sync()`](../cli.md), [`to_web()`](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) |
+| Realtime voice | No | Yes ([realtime](../realtime/overview.md)) |
+| Agent graph | `Process` (sequential / hierarchical) | [`pydantic-graph`](../graph.md) |
+| Coding agent | Code-interpreter tools | [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) |
+| Research agent | No | [`Researcher()`](https://pydantic.dev/docs/ai/harness/researcher/) |
+| Code sandboxes | No | [Modal](https://pydantic.dev/docs/ai/harness/modal-sandbox/) and [Monty](https://github.com/pydantic/monty) |
+| Image generation | No | Yes |
+| Browser | No | Yes ([Browser Use](https://pydantic.dev/docs/ai/harness/browser-use/)) |
+| Structured output | Yes | Yes (type on the agent) |
+| Human in the loop | Yes (human tools) | Yes (tool approval) |
+| Guardrails | No | Yes ([harness](https://pydantic.dev/docs/ai/harness/guardrails/)) |
+| MCP | Client | Client and [server](../mcp/server.md) |
+| Memory | On `Agent` and `Crew` | [Harness Memory](https://pydantic.dev/docs/ai/harness/memory/) |
+| Multi-agent | Roles, tasks, `Process` | [Delegation, graph, or `async`](../multi-agent-applications.md) |
+| Durable execution | `Crew.from_checkpoint` | [Temporal, DBOS, Prefect, Restate, Lambda, Kitaru, Airflow](../durable_execution/overview.md) |
+| Tracing | Their platform | OpenTelemetry |
+| Evals | No | Yes ([Pydantic Evals](../evals.md)) |
+| Test without API keys | No (`crewai test` hits a live model) | Yes |
+| Embeddings | Knowledge | Yes |
+| Deployment | CrewAI enterprise, or your app | Anywhere |
 
 ## FAQ
 
-**How do I do multi-agent without a crew?** An agent as a tool, a router, or `asyncio.gather`. A
-retry on one arm is ordinary `async`.
+**How do I do multi-agent without a crew?** An agent as a tool, a router, `asyncio.gather`, or
+[`pydantic-graph`](../graph.md).
 
-**Can one of those agents be a coding agent?** Yes. [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/)
-on that [`Agent`][pydantic_ai.Agent]. The others stay ordinary Python.
+**Can one of those agents be a coding agent?** Yes.
+[`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) on that [`Agent`][pydantic_ai.Agent].

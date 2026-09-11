@@ -1,25 +1,46 @@
 # Pydantic AI vs AG2
 
 AG2 1.0 is a rewrite. The AutoGen module is gone (`import autogen` fails). What replaced it is close
-to us: typed `Agent`, `AgentSpec`, `Inject`/`Depends`, `Task.cancel()`, `TestConfig`.
+to us: typed `Agent`, `AgentSpec`, `Inject`/`Depends`.
 
 The fork is durability. Theirs is a `Task` with a checkpoint store and no extra infrastructure. Ours
-is the same agent, inside Temporal, DBOS, or Prefect.
+is the same agent, inside [Temporal, DBOS, Prefect, Restate, Lambda, Kitaru, or Airflow](../durable_execution/overview.md).
 
 ## Side by side
 
 | | AG2 | Pydantic AI |
 |---|---|---|
-| Durability | `Task(checkpoint_store=..., resume_from=...)` | The same agent, inside Temporal, DBOS, or Prefect |
-| Stop | `Task.cancel()` | A stop signal; you get the messages back |
-| Agent as data | `AgentSpec` | YAML you load; templates checked when you construct |
-| Dependencies | `Inject` / `Depends` | A typed object your tools read; the model never sees it |
-| Test offline | `TestConfig` | A fake model you script; no API key |
-| Protocols | A2A in-tree (extra for the SDK); ACP extra | ACP in the harness (experimental) |
+| Native Python SDK | Yes | Yes |
+| License | Apache-2.0 | MIT |
+| Model providers | Many | Any, plus [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] |
+| Extensibility | Tools, `Inject` / `Depends` | [Capabilities](../extensibility.md) |
+| Skills | Yes | Yes ([Skills](https://pydantic.dev/docs/ai/harness/skills/)) |
+| On-demand capabilities | No | Yes ([on-demand](../capabilities/on-demand.md)) |
+| Interfaces | A2A, ACP extra | [`to_cli_sync()`](../cli.md), [`to_web()`](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) |
+| Realtime voice | No | Yes ([realtime](../realtime/overview.md)) |
+| Agent graph | Group chat / swarm | [`pydantic-graph`](../graph.md) |
+| Coding agent | No | [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) |
+| Research agent | No | [`Researcher()`](https://pydantic.dev/docs/ai/harness/researcher/) |
+| Code sandboxes | No | [Modal](https://pydantic.dev/docs/ai/harness/modal-sandbox/) and [Monty](https://github.com/pydantic/monty) |
+| Image generation | No | Yes |
+| Browser | No | Yes ([Browser Use](https://pydantic.dev/docs/ai/harness/browser-use/)) |
+| Structured output | Yes | Yes (type on the agent) |
+| Human in the loop | Yes (human input) | Yes (tool approval) |
+| Guardrails | No | Yes ([harness](https://pydantic.dev/docs/ai/harness/guardrails/)) |
+| MCP | Client (extra) | Client and [server](../mcp/server.md) |
+| Memory | No | [Harness Memory](https://pydantic.dev/docs/ai/harness/memory/) |
+| Multi-agent | Group chat, swarm | [Delegation, graph, or `async`](../multi-agent-applications.md) |
+| Durable execution | `Task` checkpoint store | [Temporal, DBOS, Prefect, Restate, Lambda, Kitaru, Airflow](../durable_execution/overview.md) |
+| Tracing | Logs | OpenTelemetry |
+| Evals | No | Yes ([Pydantic Evals](../evals.md)) |
+| Test without API keys | Yes | Yes |
+| Embeddings | No | Yes |
+| Agent as data | `AgentSpec` | YAML, templates checked when you construct |
+| Deployment | Anywhere | Anywhere |
 
 ## FAQ
 
 **Can I ship an agent as YAML?** Yes. Templates are checked when you construct, so a typo fails before
 a customer hits it.
 
-**If the process dies?** The same [`Agent`][pydantic_ai.Agent], inside Temporal, DBOS, or Prefect.
+**If the process dies?** The same [`Agent`][pydantic_ai.Agent], inside [Temporal, DBOS, Prefect, Restate, Lambda, Kitaru, or Airflow](../durable_execution/overview.md).
