@@ -2901,7 +2901,7 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                     'type': 'object',
                 }
             ),
-            snapshot(None),
+            snapshot(False),
         ),
         (
             tool_with_default,
@@ -2913,7 +2913,7 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                     'type': 'object',
                 }
             ),
-            snapshot(None),
+            snapshot(False),
         ),
         (
             tool_with_datetime,
@@ -2949,7 +2949,7 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                     'type': 'object',
                 }
             ),
-            snapshot(None),
+            snapshot(False),
         ),
         (
             tool_with_decimal,
@@ -2985,7 +2985,7 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                     'type': 'object',
                 }
             ),
-            snapshot(None),
+            snapshot(False),
         ),
         (
             tool_with_url,
@@ -3036,7 +3036,7 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                     'type': 'object',
                 }
             ),
-            snapshot(None),
+            snapshot(False),
         ),
         (
             tool_with_recursion,
@@ -3124,7 +3124,7 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                     'type': 'object',
                 }
             ),
-            snapshot(None),
+            snapshot(False),
         ),
         (
             tool_with_typed_dict,
@@ -3150,7 +3150,7 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                     'type': 'object',
                 }
             ),
-            snapshot(None),
+            snapshot(False),
         ),
         (
             tool_with_partial_typed_dict,
@@ -3162,7 +3162,7 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                     'type': 'object',
                 }
             ),
-            snapshot(None),
+            snapshot(False),
         ),
         (
             tool_with_model_with_extras,
@@ -3174,7 +3174,7 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                     'type': 'object',
                 }
             ),
-            snapshot(None),
+            snapshot(False),
         ),
         (
             tool_with_model_with_extras,
@@ -3200,7 +3200,7 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                     'type': 'object',
                 }
             ),
-            snapshot(None),
+            snapshot(False),
         ),
         (
             tool_with_kwargs,
@@ -3226,7 +3226,7 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                     'type': 'object',
                 }
             ),
-            snapshot(None),
+            snapshot(False),
         ),
         (
             tool_with_union,
@@ -3246,7 +3246,7 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                     'type': 'object',
                 }
             ),
-            snapshot(None),
+            snapshot(False),
         ),
         (
             tool_with_union,
@@ -3287,7 +3287,7 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                     'type': 'object',
                 }
             ),
-            snapshot(None),
+            snapshot(False),
         ),
         (
             tool_with_discriminated_union,
@@ -3331,7 +3331,7 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                     'type': 'object',
                 }
             ),
-            snapshot(None),
+            snapshot(False),
         ),
         (
             tool_with_lists,
@@ -3377,7 +3377,7 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                     'type': 'object',
                 }
             ),
-            snapshot(None),
+            snapshot(False),
         ),
         (
             tool_with_tuples,
@@ -4024,17 +4024,22 @@ def test_openai_model_profile_from_provider():
     assert m.profile.get('json_schema_transformer', None) is None
 
 
-def test_model_profile_strict_not_supported():
+@pytest.mark.parametrize('strict', [True, False, None])
+def test_model_profile_strict_not_supported(strict: bool | None):
+    # Pin serialization directly: cassette matching does not compare tool definitions.
     model_settings = ModelSettings()
     my_tool = ToolDefinition(
         name='my_tool',
         description='This is my tool',
         parameters_json_schema={'type': 'object', 'title': 'Result', 'properties': {'spam': {'type': 'number'}}},
-        strict=True,
+        strict=strict,
     )
 
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='foobar'))
     tool_param = m._map_tool_definition(my_tool, model_settings)  # type: ignore[reportPrivateUsage]
+
+    if strict is not None:
+        assert tool_param['function'].pop('strict') is strict
 
     assert tool_param == snapshot(
         {
@@ -4043,7 +4048,6 @@ def test_model_profile_strict_not_supported():
                 'name': 'my_tool',
                 'description': 'This is my tool',
                 'parameters': {'type': 'object', 'title': 'Result', 'properties': {'spam': {'type': 'number'}}},
-                'strict': True,
             },
         }
     )

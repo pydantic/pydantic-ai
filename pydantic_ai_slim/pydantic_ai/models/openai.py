@@ -1724,7 +1724,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                 'parameters': f.parameters_json_schema,
             },
         }
-        if f.strict and self.profile.get('openai_supports_strict_tool_definition', True):
+        if f.strict is not None and self.profile.get('openai_supports_strict_tool_definition', True):
             tool_param['function']['strict'] = f.strict
         return tool_param
 

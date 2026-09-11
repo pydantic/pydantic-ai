@@ -1135,6 +1135,7 @@ async def test_openrouter_web_search_tool_is_after_tool_cache_and_advisor(allow_
                     'name': 'get_weather',
                     'description': '',
                     'parameters': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
+                    'strict': False,
                 },
                 'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
             },
