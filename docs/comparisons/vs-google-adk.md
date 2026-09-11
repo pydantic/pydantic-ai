@@ -10,7 +10,7 @@ Google's Agent Development Kit is an agent platform built around Gemini and Vert
 | License | Apache-2.0 | MIT |
 | Model providers | Gemini first (`LiteLlm`, `AnthropicLlm` exist) | [Many](../models/overview.md) |
 | Extensibility | Tools, plugins | [Capabilities and toolsets](../extensibility.md); [50+ with the Harness SDK](https://pydantic.dev/docs/ai/harness/) |
-| Harnesses | Build your own | Built-in [`Coder`](https://pydantic.dev/docs/ai/harness/coder/) and [`Researcher`](https://pydantic.dev/docs/ai/harness/researcher/), or compose your own |
+| Harnesses | Build your own; shell, file tools, sandboxes and compaction ship | Built-in [`Coder`](https://pydantic.dev/docs/ai/harness/coder/) and [`Researcher`](https://pydantic.dev/docs/ai/harness/researcher/), or compose your own |
 | Observability | OpenTelemetry | [OpenTelemetry](../logfire.md#using-opentelemetry), including [Pydantic Logfire](https://pydantic.dev/logfire) |
 | Interfaces | CLI, web, A2A | [CLI](../cli.md), [web chat](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) (experimental) |
 | Realtime voice | Yes | [Realtime](../realtime/overview.md) |
@@ -23,7 +23,7 @@ Google's Agent Development Kit is an agent platform built around Gemini and Vert
 | | Google ADK | Pydantic AI and [Harness SDK](https://pydantic.dev/docs/ai/harness/) |
 |---|---|---|
 | Sub-agents | Yes | [Subagents](https://pydantic.dev/docs/ai/harness/subagents/), [delegation](../multi-agent-applications.md), or [`pydantic-graph`](../graph.md) |
-| Planning | No | [Planning](https://pydantic.dev/docs/ai/harness/planning/) |
+| Planning | Prompt-level only | [Planning](https://pydantic.dev/docs/ai/harness/planning/) |
 | Skills | Yes (experimental) | [Skills](https://pydantic.dev/docs/ai/harness/skills/) |
 | Memory | Yes | [Memory](https://pydantic.dev/docs/ai/harness/memory/) |
 | Compaction | Yes | [Compaction](../capabilities/compaction.md) |
