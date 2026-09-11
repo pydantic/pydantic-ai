@@ -35,7 +35,6 @@ packages. Pydantic AI is a typed Python [`Agent`][pydantic_ai.Agent].
 | Evals | No | Yes ([Pydantic Evals](../evals.md)) |
 | Test without API keys | Yes (stub `streamFn`) | Yes |
 | Embeddings | No | Yes |
-| Deployment | Wherever Node runs | Anywhere |
 
 ## FAQ
 

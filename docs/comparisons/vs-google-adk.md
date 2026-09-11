@@ -34,7 +34,6 @@ AI isn't tied to a cloud.
 | Evals | Yes (Vertex) | Yes ([Pydantic Evals](../evals.md)) |
 | Test without API keys | Yes (subclass `BaseLlm`) | Yes |
 | Embeddings | Yes (Vertex) | Yes |
-| Deployment | Vertex | Anywhere |
 
 ## FAQ
 

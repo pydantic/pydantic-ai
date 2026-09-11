@@ -7,7 +7,7 @@ native Python SDK, license, model providers, [extensibility](../extensibility.md
 [realtime voice](../realtime/overview.md), agent graph, coding agent, research agent, web search,
 code sandboxes, image generation, browser (Browser Use and Playwright), structured output,
 human in the loop, guardrails, spend limits, MCP, memory, compaction, multi-agent,
-durable execution, tracing, evals, test without API keys, embeddings, and deployment.
+durable execution, tracing, evals, test without API keys, and embeddings.
 
 - [vs LangChain & LangGraph](vs-langchain-langgraph.md)
 - [vs OpenAI Agents SDK](vs-openai-agents-sdk.md)

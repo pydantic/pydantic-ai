@@ -36,7 +36,6 @@ store, or the same agent inside [Temporal, DBOS, Prefect, Restate, Lambda, Kitar
 | Test without API keys | Yes | Yes |
 | Embeddings | No | Yes |
 | Agent as data | `AgentSpec` | YAML, templates checked when you construct |
-| Deployment | Anywhere | Anywhere |
 
 ## FAQ
 

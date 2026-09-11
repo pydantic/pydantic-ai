@@ -35,7 +35,6 @@ and scorers as separate concepts.
 | Evals | Yes | Yes ([Pydantic Evals](../evals.md)) |
 | Test without API keys | Yes | Yes |
 | Embeddings | Yes (with memory) | Yes |
-| Deployment | Mastra Cloud, or `mastra start` | Anywhere |
 
 ## FAQ
 

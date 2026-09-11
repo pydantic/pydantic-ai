@@ -35,7 +35,6 @@ only the library: an agent you put in the application you already run.
 | Test without API keys | Yes | Yes |
 | Embeddings | Knowledge | Yes |
 | What you run | Optional AgentOS (UI, auth, roles) | The agent, in your existing app |
-| Deployment | AgentOS, or your app | Anywhere |
 
 ## FAQ
 

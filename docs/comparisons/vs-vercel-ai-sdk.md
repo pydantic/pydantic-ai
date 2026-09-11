@@ -35,7 +35,6 @@ protocol, so the browser can stay theirs.
 | Evals | No | Yes ([Pydantic Evals](../evals.md)) |
 | Test without API keys | Yes (`MockLanguageModelV4`) | Yes |
 | Embeddings | Yes (`embed`) | Yes |
-| Deployment | Vercel, or anywhere Node runs | Anywhere |
 
 ## FAQ
 

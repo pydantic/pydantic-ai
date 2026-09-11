@@ -36,7 +36,6 @@ model.
 | Evals | No | Yes ([Pydantic Evals](../evals.md)) |
 | Test without API keys | No (launch the CLI) | Yes |
 | Embeddings | No | Yes |
-| Deployment | Wherever `claude` runs | Anywhere |
 
 ## FAQ
 

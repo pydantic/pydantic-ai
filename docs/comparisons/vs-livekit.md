@@ -38,7 +38,6 @@ speak.
 | Evals | No | Yes ([Pydantic Evals](../evals.md)) |
 | Test without API keys | Yes | Yes |
 | Embeddings | No | Yes |
-| Deployment | LiveKit Cloud / Kubernetes | Anywhere |
 
 ## FAQ
 

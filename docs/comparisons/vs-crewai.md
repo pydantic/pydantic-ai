@@ -34,7 +34,6 @@ call, branch, `asyncio.gather`, or [`pydantic-graph`](../graph.md).
 | Evals | Yes (experimental) | Yes ([Pydantic Evals](../evals.md)) |
 | Test without API keys | No (`crewai test` hits a live model) | Yes |
 | Embeddings | Knowledge | Yes |
-| Deployment | CrewAI enterprise, or your app | Anywhere |
 
 ## FAQ
 
