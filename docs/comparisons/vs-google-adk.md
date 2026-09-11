@@ -13,7 +13,7 @@ AI isn't tied to a cloud.
 | Observability | OpenTelemetry | [OpenTelemetry](../capabilities/instrumentation.md) |
 | Extensibility | Tools, plugins | [Capabilities and toolsets](../extensibility.md) |
 | Interfaces | CLI, web, A2A | [CLI](../cli.md), [web chat](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) (experimental), A2A |
-| Build your own harness | Yes | [Yes](https://pydantic.dev/docs/ai/harness/#build-your-own) |
+| Build your own harness | Yes | [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) |
 | Coding harness | Yes | [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) |
 | Graph library | Yes | [`pydantic-graph`](../graph.md) |
 | Multi-agent | Sub-agents, transfer | [Sub-agents](../multi-agent-applications.md), [hand-offs](../multi-agent-applications.md#programmatic-agent-hand-off), or [graph](../graph.md) |

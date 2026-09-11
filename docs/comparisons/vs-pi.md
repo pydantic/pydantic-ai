@@ -14,7 +14,7 @@ packages. Pydantic AI is a typed Python [`Agent`][pydantic_ai.Agent].
 | Observability | Telemetry contract, no exporter | [OpenTelemetry](../capabilities/instrumentation.md) |
 | Extensibility | Extensions, skills, `pi install` | [Capabilities and toolsets](../extensibility.md) |
 | Interfaces | CLI | [CLI](../cli.md), [web chat](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) (experimental), A2A |
-| Build your own harness | No | [Yes](https://pydantic.dev/docs/ai/harness/#build-your-own) |
+| Build your own harness | No | [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) |
 | Coding harness | Yes | [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) |
 | Graph library | No | [`pydantic-graph`](../graph.md) |
 | Multi-agent | Packages, not core | [Sub-agents](../multi-agent-applications.md), [hand-offs](../multi-agent-applications.md#programmatic-agent-hand-off), or [graph](../graph.md) |

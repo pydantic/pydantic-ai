@@ -17,7 +17,7 @@ speak.
 | Observability | OpenTelemetry | [OpenTelemetry](../capabilities/instrumentation.md) |
 | Extensibility | Pipeline nodes (`stt_node`, `llm_node`, …) | [Capabilities and toolsets](../extensibility.md) |
 | Interfaces | WebRTC rooms, telephony | [CLI](../cli.md), [web chat](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) (experimental), A2A |
-| Build your own harness | Yes | [Yes](https://pydantic.dev/docs/ai/harness/#build-your-own) |
+| Build your own harness | Yes | [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) |
 | Coding harness | No | [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) |
 | Graph library | No | [`pydantic-graph`](../graph.md) |
 | Multi-agent | Handoffs in a room | [Sub-agents](../multi-agent-applications.md), [hand-offs](../multi-agent-applications.md#programmatic-agent-hand-off), or [graph](../graph.md) |
