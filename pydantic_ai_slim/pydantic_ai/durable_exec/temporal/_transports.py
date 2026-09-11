@@ -241,7 +241,7 @@ class _CompactMessagesParams:
 @dataclass(kw_only=True)
 @with_config(ConfigDict(arbitrary_types_allowed=True))
 class _EventStreamHandlerParams:
-    event: AgentStreamEvent
+    event: AgentStreamEvent | list[AgentStreamEvent]
     serialized_run_context: Any
 
 
@@ -369,7 +369,7 @@ class _EventStreamHandlerTransport(
         ctx = params.run_context
         return (
             _EventStreamHandlerParams(
-                event=params.event,
+                event=params.events,
                 serialized_run_context=self._durability.run_context_type.serialize_run_context(ctx),
             ),
             ctx.deps,
@@ -380,4 +380,5 @@ class _EventStreamHandlerTransport(
     ) -> _SemanticEventStreamHandlerParams:
         params, deps = payload
         ctx = self._durability.deserialize_operation_run_context(params.serialized_run_context, deps)
-        return _SemanticEventStreamHandlerParams(params.event, run_context=ctx)
+        events = params.event if isinstance(params.event, list) else [params.event]
+        return _SemanticEventStreamHandlerParams(events, run_context=ctx)
