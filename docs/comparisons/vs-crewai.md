@@ -9,30 +9,25 @@ call, branch, `asyncio.gather`, or [`pydantic-graph`](../graph.md).
 |---|---|---|
 | Language | Python | Python |
 | Model providers | Multiple | [Multiple](../models/overview.md) |
-| Durable execution | Yes (`Crew.from_checkpoint`) | Yes — [5+ integrations](../durable_execution/overview.md) |
+| Durable execution | Yes | [5+ integrations](../durable_execution/overview.md) |
 | Observability | OpenTelemetry | [OpenTelemetry](../capabilities/instrumentation.md) |
 | Extensibility | Tools on agents and crews | [Capabilities and toolsets](../extensibility.md) |
 | Interfaces | Enterprise UI, A2A | [CLI](../cli.md), [web chat](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) (experimental), A2A |
 | Build your own harness | Yes | [Yes](https://pydantic.dev/docs/ai/harness/#build-your-own) |
-| Coding harness | No | Yes ([`Coder()`](https://pydantic.dev/docs/ai/harness/coder/)) |
-| Graph library | No | Yes ([`pydantic-graph`](../graph.md)) |
+| Coding harness | No | [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) |
+| Graph library | No | [`pydantic-graph`](../graph.md) |
 | Multi-agent | Roles, tasks, `Process` | [Sub-agents](../multi-agent-applications.md), [hand-offs](../multi-agent-applications.md#programmatic-agent-hand-off), or [graph](../graph.md) |
 | Realtime voice | No | [Yes](../realtime/overview.md) |
-| Image generation | Yes (`DallETool`) | [Yes](../image-generation.md) |
+| Image generation | Yes | [Yes](../image-generation.md) |
 | License | MIT | MIT |
 
 | | CrewAI | Pydantic AI |
 |---|---|---|
 | Structured output | Yes | [Yes](../output.md) |
-| Guardrails | Yes (task guardrails) | [Yes](https://pydantic.dev/docs/ai/harness/guardrails/) |
-| Code sandboxes | Yes (E2B and others) | [Yes](https://pydantic.dev/docs/ai/harness/#execution-environments) |
+| Guardrails | Yes | [Yes](https://pydantic.dev/docs/ai/harness/guardrails/) |
+| Code sandboxes | Yes | [Yes](https://pydantic.dev/docs/ai/harness/#execution-environments) |
 | Browser | Yes | [Yes](https://pydantic.dev/docs/ai/harness/#web-research) |
-| Memory | Yes (on `Agent` and `Crew`) | [Yes](https://pydantic.dev/docs/ai/harness/memory/) |
-| Compaction | Yes (`respect_context_window`) | [Yes](../capabilities/compaction.md) |
-| Evals | Yes (experimental) | [Yes](../evals.md) |
+| Memory | Yes | [Yes](https://pydantic.dev/docs/ai/harness/memory/) |
+| Compaction | Yes | [Yes](../capabilities/compaction.md) |
+| Evals | Yes | [Yes](../evals.md) |
 | Test without API keys | No | [Yes](../testing.md) |
-
-Cells linked to pydantic.dev/docs/ai/harness ship in [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/),
-a separate package.
-
-[Install Pydantic AI](../install.md).

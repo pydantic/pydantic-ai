@@ -9,35 +9,30 @@ typed [`Agent`][pydantic_ai.Agent], with [`pydantic-graph`](../graph.md) when yo
 |---|---|---|
 | Language | Python | Python |
 | Model providers | Multiple | [Multiple](../models/overview.md) |
-| Durable execution | Yes (checkpointers) | Yes — [5+ integrations](../durable_execution/overview.md) |
+| Durable execution | Yes | [5+ integrations](../durable_execution/overview.md) |
 | Observability | LangSmith | [OpenTelemetry](../capabilities/instrumentation.md) |
 | Extensibility | Middleware, callbacks | [Capabilities and toolsets](../extensibility.md) |
 | Interfaces | LangSmith Agent Server, Fleet | [CLI](../cli.md), [web chat](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) (experimental), A2A |
 | Build your own harness | Yes | [Yes](https://pydantic.dev/docs/ai/harness/#build-your-own) |
-| Coding harness | Yes (Deep Agents) | Yes ([`Coder()`](https://pydantic.dev/docs/ai/harness/coder/)) |
-| Graph library | Yes (LangGraph) | Yes ([`pydantic-graph`](../graph.md)) |
+| Coding harness | Yes | [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) |
+| Graph library | Yes | [`pydantic-graph`](../graph.md) |
 | Multi-agent | LangGraph (handoffs, supervisors, teams) | [Sub-agents](../multi-agent-applications.md), [hand-offs](../multi-agent-applications.md#programmatic-agent-hand-off), or [graph](../graph.md) |
 | Realtime voice | No | [Yes](../realtime/overview.md) |
-| Image generation | Yes (community tools) | [Yes](../image-generation.md) |
+| Image generation | Yes | [Yes](../image-generation.md) |
 | License | MIT | MIT |
 
 | | LangChain & LangGraph | Pydantic AI |
 |---|---|---|
-| Structured output | Yes (`with_structured_output`) | [Yes](../output.md) |
-| Guardrails | Yes (middleware) | [Yes](https://pydantic.dev/docs/ai/harness/guardrails/) |
-| Code sandboxes | Yes (integrations) | [Yes](https://pydantic.dev/docs/ai/harness/#execution-environments) |
-| Browser | Yes (integrations) | [Yes](https://pydantic.dev/docs/ai/harness/#web-research) |
-| Memory | Yes (checkpointers, store) | [Yes](https://pydantic.dev/docs/ai/harness/memory/) |
-| Compaction | Yes (`SummarizationMiddleware`) | [Yes](../capabilities/compaction.md) |
-| Evals | Yes (LangSmith) | [Yes](../evals.md) |
-| Test without API keys | Yes (fake chat models) | [Yes](../testing.md) |
-
-Cells linked to pydantic.dev/docs/ai/harness ship in [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/),
-a separate package.
+| Structured output | Yes | [Yes](../output.md) |
+| Guardrails | Yes | [Yes](https://pydantic.dev/docs/ai/harness/guardrails/) |
+| Code sandboxes | Yes | [Yes](https://pydantic.dev/docs/ai/harness/#execution-environments) |
+| Browser | Yes | [Yes](https://pydantic.dev/docs/ai/harness/#web-research) |
+| Memory | Yes | [Yes](https://pydantic.dev/docs/ai/harness/memory/) |
+| Compaction | Yes | [Yes](../capabilities/compaction.md) |
+| Evals | Yes | [Yes](../evals.md) |
+| Test without API keys | Yes | [Yes](../testing.md) |
 
 ## FAQ
 
 **Do you have a graph library?** Yes. [`pydantic-graph`](../graph.md). Most multi-agent work is still
 ordinary [async Python](../multi-agent-applications.md).
-
-[Install Pydantic AI](../install.md).

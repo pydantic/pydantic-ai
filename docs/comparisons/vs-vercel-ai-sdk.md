@@ -10,30 +10,25 @@ protocol, so the browser can stay theirs.
 |---|---|---|
 | Language | TypeScript | Python |
 | Model providers | Multiple | [Multiple](../models/overview.md) |
-| Durable execution | Yes (`WorkflowAgent`) | Yes — [5+ integrations](../durable_execution/overview.md) |
+| Durable execution | Yes | [5+ integrations](../durable_execution/overview.md) |
 | Observability | OpenTelemetry | [OpenTelemetry](../capabilities/instrumentation.md) |
 | Extensibility | Middleware, tools | [Capabilities and toolsets](../extensibility.md) |
 | Interfaces | React chat UI, stream protocol | [CLI](../cli.md), [web chat](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) (experimental), A2A |
 | Build your own harness | Yes | [Yes](https://pydantic.dev/docs/ai/harness/#build-your-own) |
-| Coding harness | Yes (`HarnessAgent`) | Yes ([`Coder()`](https://pydantic.dev/docs/ai/harness/coder/)) |
-| Graph library | Yes (`@ai-sdk/workflow`, sibling package) | Yes ([`pydantic-graph`](../graph.md)) |
+| Coding harness | Yes | [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) |
+| Graph library | Yes | [`pydantic-graph`](../graph.md) |
 | Multi-agent | You compose it | [Sub-agents](../multi-agent-applications.md), [hand-offs](../multi-agent-applications.md#programmatic-agent-hand-off), or [graph](../graph.md) |
-| Realtime voice | Yes (experimental) | [Yes](../realtime/overview.md) |
-| Image generation | Yes (`generateImage`) | [Yes](../image-generation.md) |
+| Realtime voice | Yes | [Yes](../realtime/overview.md) |
+| Image generation | Yes | [Yes](../image-generation.md) |
 | License | Apache-2.0 | MIT |
 
 | | Vercel AI SDK | Pydantic AI |
 |---|---|---|
-| Structured output | Yes (`generateObject`) | [Yes](../output.md) |
-| Guardrails | Yes (middleware) | [Yes](https://pydantic.dev/docs/ai/harness/guardrails/) |
-| Code sandboxes | Yes (`experimental_sandbox`, you host) | [Yes](https://pydantic.dev/docs/ai/harness/#execution-environments) |
+| Structured output | Yes | [Yes](../output.md) |
+| Guardrails | Yes | [Yes](https://pydantic.dev/docs/ai/harness/guardrails/) |
+| Code sandboxes | Yes | [Yes](https://pydantic.dev/docs/ai/harness/#execution-environments) |
 | Browser | No | [Yes](https://pydantic.dev/docs/ai/harness/#web-research) |
 | Memory | No | [Yes](https://pydantic.dev/docs/ai/harness/memory/) |
-| Compaction | Yes (`pruneMessages`) | [Yes](../capabilities/compaction.md) |
+| Compaction | Yes | [Yes](../capabilities/compaction.md) |
 | Evals | No | [Yes](../evals.md) |
-| Test without API keys | Yes (`MockLanguageModelV4`) | [Yes](../testing.md) |
-
-Cells linked to pydantic.dev/docs/ai/harness ship in [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/),
-a separate package.
-
-[Install Pydantic AI](../install.md).
+| Test without API keys | Yes | [Yes](../testing.md) |
