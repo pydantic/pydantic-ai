@@ -60,6 +60,7 @@ is the source of truth.
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import WebSearch
 from pydantic_ai.messages import NativeToolReturnPart, PartEndEvent
+from pydantic_ai.realtime import RealtimeTurnCompleteEvent
 
 agent = Agent(instructions='Answer questions, searching the web when useful.')
 
@@ -73,6 +74,8 @@ async def main():
         async for event in session:
             if isinstance(event, PartEndEvent) and isinstance(event.part, NativeToolReturnPart):
                 print(event.part.content)
+            if isinstance(event, RealtimeTurnCompleteEvent):
+                break  # keep listening in a real call; we stop after one reply
 ```
 
 An unsupported native tool with a configured local fallback is replaced before connection. Without
