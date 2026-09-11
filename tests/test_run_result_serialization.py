@@ -7,7 +7,7 @@ from uuid import UUID
 
 import pytest
 from inline_snapshot import snapshot
-from pydantic import BaseModel, TypeAdapter
+from pydantic import BaseModel, TypeAdapter, ValidationError
 
 from pydantic_ai import (
     Agent,
@@ -24,6 +24,7 @@ from pydantic_ai import (
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.result import StreamedRunResult
 
 
 class StringResultEnvelope(BaseModel):
@@ -242,8 +243,8 @@ async def test_streamed_structured_output_keeps_the_output_tool_name() -> None:
     assert adapter.validate_json(adapter.dump_json(result)).output == Profile(name='a', score=0)
 
 
-async def test_streamed_deferred_pause_returns_the_run_result_it_already_holds() -> None:
-    """A `run_stream` that pauses on a deferred call already carries an `AgentRunResult`; hand that one back."""
+async def test_streamed_deferred_pause_settles_into_its_requests() -> None:
+    """A `run_stream` that pauses on an approval settles into a result carrying the pending requests."""
     agent = Agent(
         TestModel(call_tools=['delete_file']),
         instructions='Be helpful.',
@@ -273,3 +274,35 @@ async def test_streamed_result_can_be_stored_and_replayed_as_history() -> None:
     loaded = StringResultEnvelope.model_validate_json(stored).result
     continued = await agent.run('Continue', message_history=loaded.all_messages())
     assert continued.all_messages()[: len(loaded.all_messages())] == loaded.all_messages()
+
+
+def test_streamed_result_hands_back_a_run_result_it_already_holds() -> None:
+    """`run_stream` yields a pre-built result when a `wrap_run` capability short-circuits the run."""
+    held = Agent(TestModel(custom_output_text='short-circuited')).run_sync('Go')
+    streamed: StreamedRunResult[None, str] = StreamedRunResult(held.all_messages(), 0, run_result=held)
+
+    assert streamed.result is held
+
+
+def test_validator_leaves_non_mapping_input_to_the_dataclass_schema() -> None:
+    with pytest.raises(ValidationError):
+        TypeAdapter(AgentRunResult[str]).validate_python(['not', 'a', 'mapping'])
+
+
+def test_only_output_is_required() -> None:
+    only_output = TypeAdapter(AgentRunResult[str]).validate_python({'output': 'alone'})
+    assert only_output.output == 'alone'
+    assert only_output.all_messages() == []
+
+    with pytest.raises(ValidationError, match='output'):
+        TypeAdapter(AgentRunResult[str]).validate_python({'messages': []})
+
+
+def test_legacy_shape_tolerates_a_sparse_state() -> None:
+    """An old payload whose `_state` carries none of the keys worth keeping still loads."""
+    sparse = TypeAdapter(AgentRunResult[str]).validate_python({'output': 'sparse', '_state': {}})
+
+    assert sparse.output == 'sparse'
+    assert sparse.all_messages() == []
+    assert sparse.usage == RunUsage()
+    assert UUID(sparse.run_id).version == 7
