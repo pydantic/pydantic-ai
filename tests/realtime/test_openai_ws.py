@@ -25,6 +25,7 @@ from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     BinaryContent,
+    EnqueuedMessagesEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     ModelRequest,
@@ -74,6 +75,56 @@ pytestmark = [
     pytest.mark.anyio,
     pytest.mark.skipif(not imports_successful(), reason='openai / websockets not installed'),
 ]
+
+
+async def test_enqueued_message_delivery_event(
+    openai_ws_cassette: tuple[Provider[Any], RealtimeCassette],
+) -> None:
+    """OpenAI delivery emits the enqueued request object recorded in session history."""
+    provider, _ = openai_ws_cassette
+    model = OpenAIRealtimeModel(
+        'gpt-realtime', provider=provider, settings=OpenAIRealtimeModelSettings(output_modality='text')
+    )
+    agent = Agent(instructions='Reply exactly "DELIVERED".')
+
+    events: list[Any] = []
+    async with agent.realtime(model).session() as session:
+        enqueue_id = session.enqueue('Reply now.')
+        assert enqueue_id is not None
+        with anyio.fail_after(30):
+            async for event in session:  # pragma: no branch
+                events.append(event)
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+
+    enqueued_events = [event for event in events if isinstance(event, EnqueuedMessagesEvent)]
+    assert len(enqueued_events) == 1
+    assert enqueued_events[0].enqueue_id == enqueue_id
+    assert enqueued_events[0].messages[0] is session.new_messages()[0]
+    assert session.new_messages()[1] == snapshot(
+        ModelResponse(
+            parts=[TextPart(content='DELIVERED')],
+            usage=RequestUsage(
+                details={
+                    'input_text_tokens': 14,
+                    'input_image_tokens': 0,
+                    'output_text_tokens': 5,
+                    'audio_tokens': 0,
+                },
+                output_tokens=5,
+                input_tokens=14,
+            ),
+            model_name='gpt-realtime',
+            timestamp=IsDatetime(),
+            provider_name='openai',
+            provider_url='https://api.openai.com/v1/',
+            provider_details={'status': 'completed'},
+            provider_response_id=IsStr(),
+            finish_reason='stop',
+            run_id=IsStr(),
+            conversation_id=IsStr(),
+        )
+    )
 
 
 async def test_session_when_idle_enqueue_waits_for_response_boundary(

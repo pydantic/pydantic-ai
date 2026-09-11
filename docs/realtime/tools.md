@@ -168,6 +168,9 @@ a standard run — lets a realtime tool queue text or a
 [`RealtimeSession.enqueue()`][pydantic_ai.realtime.RealtimeSession.enqueue] directly, for example to
 deliver an out-of-band watchdog instruction:
 
+Delivery is reported as an [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] on
+the session's event stream, matching [standard runs](../message-history.md#injecting-messages-mid-run).
+
 ```python
 import asyncio
 
