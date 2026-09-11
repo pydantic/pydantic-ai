@@ -604,12 +604,6 @@ navigation:
         aliases:
           - "pydantic-ai-vs-google-adk"
           - "google-adk-vs-pydantic-ai"
-      - page: "vs AG2"
-        path: "comparisons/vs-ag2.md"
-        slug: "comparisons/vs-ag2"
-        aliases:
-          - "pydantic-ai-vs-ag2"
-          - "ag2-vs-pydantic-ai"
       - page: "vs Vercel AI SDK"
         path: "comparisons/vs-vercel-ai-sdk.md"
         slug: "comparisons/vs-vercel-ai-sdk"
@@ -1340,6 +1334,15 @@ redirects:
     to: "comparisons/overview"
     status: 302
   - from: "smolagents-vs-pydantic-ai"
+    to: "comparisons/overview"
+    status: 302
+  - from: "comparisons/vs-ag2"
+    to: "comparisons/overview"
+    status: 302
+  - from: "pydantic-ai-vs-ag2"
+    to: "comparisons/overview"
+    status: 302
+  - from: "ag2-vs-pydantic-ai"
     to: "comparisons/overview"
     status: 302
   - from: "mcp"

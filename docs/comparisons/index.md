@@ -14,7 +14,6 @@ durable execution, tracing, evals, test without API keys, and embeddings.
 - [vs Claude Agent SDK](vs-claude-agent-sdk.md)
 - [vs CrewAI](vs-crewai.md)
 - [vs Google ADK](vs-google-adk.md)
-- [vs AG2](vs-ag2.md)
 - [vs Agno](vs-agno.md)
 - [vs Mastra](vs-mastra.md)
 - [vs Vercel AI SDK](vs-vercel-ai-sdk.md)
