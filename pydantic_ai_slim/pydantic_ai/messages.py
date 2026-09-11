@@ -2700,6 +2700,7 @@ ModelRequestPart = Annotated[
     | Annotated[UserPromptPart, pydantic.Tag('user-prompt')]
     | Annotated[SpeechPart, pydantic.Tag('speech')]
     | Annotated[ToolSearchReturnPart, pydantic.Tag('tool-search-return')]
+    | Annotated[NativeToolSearchReturnPart, pydantic.Tag('builtin-tool-search-return')]
     | Annotated[LoadCapabilityReturnPart, pydantic.Tag('capability-load-return')]
     | Annotated[ToolReturnPart, pydantic.Tag('tool-return')]
     | Annotated[RetryPromptPart, pydantic.Tag('retry-prompt')]

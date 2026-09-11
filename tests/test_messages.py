@@ -63,6 +63,7 @@ from pydantic_ai import (
 )
 from pydantic_ai._parts_manager import ModelResponsePartsManager
 from pydantic_ai.messages import (
+    NativeToolSearchReturnPart,
     _FILE_URL_KINDS,  # pyright: ignore[reportPrivateUsage]
     INVALID_JSON_KEY,
     MULTI_MODAL_CONTENT_TYPES,
@@ -879,6 +880,25 @@ def test_model_messages_type_adapter_preserves_run_id():
     deserialized = ModelMessagesTypeAdapter.validate_python(serialized)
 
     assert [message.run_id for message in deserialized] == snapshot(['run-123', 'run-123'])
+
+
+def test_model_messages_type_adapter_round_trips_native_tool_search_return_part():
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                NativeToolSearchReturnPart(
+                    tool_call_id='call-1',
+                    content={'discovered_tools': [{'name': 'weather'}]},
+                )
+            ]
+        )
+    ]
+
+    serialized = ModelMessagesTypeAdapter.dump_json(messages)
+    deserialized = ModelMessagesTypeAdapter.validate_json(serialized)
+
+    assert isinstance(deserialized[0].parts[0], NativeToolSearchReturnPart)
+    assert deserialized == messages
 
 
 def test_model_messages_type_adapter_preserves_conversation_id():
