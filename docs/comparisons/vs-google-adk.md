@@ -1,5 +1,7 @@
 # Pydantic AI vs Google ADK
 
+Google's Agent Development Kit is a full agent platform built around Gemini and Vertex AI: workflow graphs, evaluation, a dev UI, and deploy commands for Cloud Run, GKE, Docker and Agent Engine. If you are already on Google Cloud, that integration is the draw. Pydantic AI vs Google ADK is the trade between that platform and a provider-agnostic library you can run anywhere.
+
 | | Google ADK | Pydantic AI |
 |---|---|---|
 | Language | Python | Python |

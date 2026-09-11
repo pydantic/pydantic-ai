@@ -1,5 +1,7 @@
 # Pydantic AI vs CrewAI
 
+CrewAI models an agent system as a crew: roles, tasks and a process that runs them, with `Flow` for deterministic control flow around the crew and a large first-party tool package. It suits teams that think in job descriptions. Pydantic AI vs CrewAI comes down to abstraction level: we hand you a plain typed [`Agent`][pydantic_ai.Agent] and leave the orchestration pattern to you.
+
 | | CrewAI | Pydantic AI |
 |---|---|---|
 | Language | Python | Python |

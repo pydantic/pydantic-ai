@@ -1,5 +1,7 @@
 # Pydantic AI vs LangChain & LangGraph
 
+LangChain is the most widely used agent ecosystem in Python, with LangGraph underneath it for graph-based control flow and integrations for nearly everything. If you want the largest catalogue of ready-made components, it is hard to beat. Pydantic AI vs LangChain usually comes down to surface area: one typed [`Agent`][pydantic_ai.Agent], plain Python control flow, and validation from the library you already use.
+
 | | LangChain & LangGraph | Pydantic AI |
 |---|---|---|
 | Language | Python | Python |

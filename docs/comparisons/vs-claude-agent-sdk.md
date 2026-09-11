@@ -1,5 +1,7 @@
 # Pydantic AI vs Claude Agent SDK
 
+The Claude Agent SDK gives you the agent loop behind Claude Code: a Python package that drives the bundled `claude` CLI, with Anthropic's built-in tools, permissions and sub-agents already wired up. It is the fastest route to a Claude-shaped coding agent. Pydantic AI vs Claude Agent SDK is a choice between that loop and one you own, in Python, on any model.
+
 | | Claude Agent SDK | Pydantic AI |
 |---|---|---|
 | Language | Python SDK wrapping the TypeScript `claude` CLI | Python |

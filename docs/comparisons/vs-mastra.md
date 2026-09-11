@@ -1,5 +1,7 @@
 # Pydantic AI vs Mastra
 
+Mastra is a TypeScript agent framework that comes with batteries: step workflows, memory, processors, evals, a local playground and a hosted Studio. For a team that wants one opinionated stack end to end, it covers a lot of ground. Pydantic AI vs Mastra is a language choice first: we bring the same range to Python, composed from a plain [`Agent`][pydantic_ai.Agent].
+
 | | Mastra | Pydantic AI |
 |---|---|---|
 | Language | TypeScript | Python |

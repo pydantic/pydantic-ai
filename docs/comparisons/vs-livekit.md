@@ -1,5 +1,7 @@
 # Pydantic AI vs LiveKit Agents
 
+LiveKit Agents is the reference stack for realtime voice: WebRTC rooms, telephony, turn detection, and plugins for every STT, LLM and TTS vendor. If you are shipping a phone or voice product, that transport layer is the point. Pydantic AI vs LiveKit Agents is a question of scope: [voice](../realtime/overview.md) is one frontend on the same typed agent that also runs headless or behind your API.
+
 | | LiveKit Agents | Pydantic AI |
 |---|---|---|
 | Language | Python (also Node) | Python |

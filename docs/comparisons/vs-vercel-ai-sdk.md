@@ -1,5 +1,7 @@
 # Pydantic AI vs Vercel AI SDK
 
+The Vercel AI SDK is the default way to add model calls, tool loops and streaming chat to a TypeScript app, with `useChat` hooks and a broad provider registry. If your product is the frontend, start there. Pydantic AI vs Vercel AI SDK is mostly a language question: we speak the [Vercel AI stream protocol](../ui/vercel-ai.md), so their UI renders our Python agents.
+
 | | Vercel AI SDK | Pydantic AI |
 |---|---|---|
 | Language | TypeScript | Python |

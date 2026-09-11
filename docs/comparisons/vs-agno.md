@@ -1,5 +1,7 @@
 # Pydantic AI vs Agno
 
+Agno is a Python agent framework that optimizes for breadth and speed: a very large tool catalogue, teams, step workflows, and AgentOS to run and watch them. If you want batteries and a control plane from one install, it delivers. Pydantic AI vs Agno trades that breadth for a smaller typed core, strict Pydantic validation, and [capabilities](../extensibility.md) you add when you need them.
+
 | | Agno | Pydantic AI |
 |---|---|---|
 | Language | Python | Python |

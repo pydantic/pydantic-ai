@@ -1,5 +1,7 @@
 # Pydantic AI vs OpenAI Agents SDK
 
+The OpenAI Agents SDK is a small, focused Python library built close to the grain of OpenAI's own API: agents, `handoff` primitives, guardrails, and first-class access to the hosted tools. If you are building on OpenAI and staying there, it fits like a glove. Pydantic AI vs OpenAI Agents SDK matters when you want the same agent on other providers.
+
 | | OpenAI Agents SDK | Pydantic AI |
 |---|---|---|
 | Language | Python | Python |
