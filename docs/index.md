@@ -17,9 +17,7 @@ description: "How Python does AI: agents, realtime voice, image generation, embe
   <a href="https://github.com/pydantic/pydantic-ai/actions/workflows/ci.yml?query=branch%3Amain">
     <img src="https://github.com/pydantic/pydantic-ai/actions/workflows/ci.yml/badge.svg?event=push" alt="CI" />
   </a>
-  <a href="https://coverage-badge.samuelcolvin.workers.dev/redirect/pydantic/pydantic-ai">
-    <img src="https://img.shields.io/badge/coverage-100%25-brightgreen.svg" alt="Coverage" />
-  </a>
+  <img src="https://img.shields.io/badge/coverage-100%25-brightgreen.svg" alt="Coverage" />
   <a href="https://pypi.python.org/pypi/pydantic-ai">
     <img src="https://img.shields.io/pypi/v/pydantic-ai.svg" alt="PyPI" />
   </a>
