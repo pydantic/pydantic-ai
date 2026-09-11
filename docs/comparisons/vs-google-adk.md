@@ -31,57 +31,60 @@ several runs at once, it's safe to call from another thread, and each run ends b
 ```python {title="one_token_many_runs.py"}
 """One stop gesture, many runs: a CancellationToken governs every run it was
 given to, and cancelling the token cancels all of them.
-
-Google ADK's runner exposes no user cancellation API (grep-verified,
-2026-09-10); here the same token stops three concurrent runs at once.
 """
 import asyncio
 
-from pydantic_ai import Agent, CancellationToken, RunCancelled
-from pydantic_ai.models.function import FunctionModel
+from pydantic_ai import Agent, CancellationToken, RunCancelled, RunContext
 
 CONCURRENT = 3
+agent = Agent('openai:gpt-5.6-luna')
 
-async def hang(messages, info):
-    await asyncio.sleep(3600)  # in-flight until cancelled
+
+@agent.tool
+async def wait_on_stock(ctx: RunContext, sku: str) -> str:
+    await asyncio.sleep(3600)
+    return 'never'
+
 
 async def main():
     token = CancellationToken()
-    agent = Agent(FunctionModel(hang))
-    tasks = [asyncio.create_task(agent.run('r', cancellation_token=token)) for _ in range(CONCURRENT)]
+    tasks = [
+        asyncio.create_task(
+            agent.run('Look up warehouse stock for SKU-WAIT.', cancellation_token=token)
+        )
+        for _ in range(CONCURRENT)
+    ]
     await asyncio.sleep(0.1)
     token.cancel()  # one gesture
     results = await asyncio.gather(*tasks, return_exceptions=True)
     print(f'runs cancelled by one token: {sum(isinstance(r, RunCancelled) for r in results)}/{CONCURRENT}')
     #> runs cancelled by one token: 3/3
     assert all(isinstance(r, RunCancelled) for r in results)
-
-
 ```
 
 
-Three runs, one token, one gesture — and each ends in `RunCancelled`, which carries that run's
+Three runs, one token, one gesture, and each ends in `RunCancelled`, which carries that run's
 history, rather than in a bare task cancellation. A tool can
-also stop its own run by calling `ctx.cancel()` — useful when the tool is the thing that discovers the
+also stop its own run by calling `ctx.cancel()`, useful when the tool is the thing that discovers the
 budget is gone. Cancellation that comes from outside, like `asyncio.timeout()` or a task group
 shutting down, still propagates as a normal `CancelledError` so your own timeouts behave the way
 Python says they should.
 
 ## The other differences
 
-**Trusted state.** ADK carries app state, user state, and an invocation context through the run. It
-works, but it's the same material the model's conversation is built from. Pydantic AI keeps
-dependencies in a separate typed argument: tools read it, the model never sees it and can't name it,
-so a database handle or a customer ID is not something a prompt can talk its way into.
+**Trusted state.** ADK carries app state, user state, and an invocation context through the run.
+That state is programmatic unless you interpolate it into instructions. Pydantic AI's difference is
+a typed dependency API: `deps_type` plus `RunContext`, so a database handle is in the agent's type
+and a tool cannot forget to take it.
 
 **Testing without a network.** The installed `google.adk.models` has `BaseLlm` to subclass but no test
-model, so an offline test means writing your own stub — the same situation as most frameworks, and
+model, so an offline test means writing your own stub, the same situation as most frameworks, and
 perfectly workable. Pydantic AI ships `TestModel` and `FunctionModel`, plus a global
 `ALLOW_MODEL_REQUESTS = False` that turns any accidental real API call into an error.
 
 **Where it runs.** ADK's natural home is Vertex AI, and its session and telemetry story assumes
 Google's services. Pydantic AI runs wherever Python runs, and for crash recovery you wrap the same
-agent in whichever durable engine you already operate — Temporal, DBOS, Prefect, Restate, Kitaru, or
+agent in whichever durable engine you already operate, Temporal, DBOS, Prefect, Restate, Kitaru, or
 Airflow.
 
 ## Side by side
@@ -90,7 +93,7 @@ Airflow.
 |---|---|---|
 | Models | Gemini first; others through LiteLLM | Any provider directly, with `FallbackModel` for failover |
 | Stopping a run | No cancel API; cancel the task | `CancellationToken` across runs, `ctx.cancel()` inside a tool, `RunCancelled` with the history |
-| Trusted state | App state, user state, invocation context | `deps_type`, a separate argument the model never sees |
+| Trusted state | App state, user state, invocation context (programmatic unless interpolated) | `deps_type` plus `RunContext`: a typed dependency API |
 | Composing runs | `LoopAgent`, `ParallelAgent`, `ManagedAgent` | Ordinary async Python, and `pydantic_graph` when you want a state machine |
 | Crash recovery | Sessions plus resumability config and `rewind_async` | Six engines wrap the agent object, and the engine is your choice |
 | Testing offline | Subclass `BaseLlm` yourself | `TestModel` and `FunctionModel` included; real calls blockable globally |

@@ -1,10 +1,12 @@
 # Pydantic AI vs Pi
 
 Pi is a coding agent you run in a terminal, and it's also a library: the same package that ships the
-CLI exports an embeddable core, so you can drive the agent from your own TypeScript. It has skills
-discovered from `SKILL.md` files, automatic conversation compaction, a strict line-delimited JSON
-protocol for driving it programmatically, and a clear-eyed security position — its own documentation
-says Pi ships no sandbox and that real isolation has to come from a container or a VM.
+CLI exports an embeddable core, so you can drive the agent from your own TypeScript. It lives at
+[`@earendil-works/pi-coding-agent`](https://www.npmjs.com/package/@earendil-works/pi-coding-agent)
+([source](https://github.com/earendil-works/pi)). It has skills discovered from `SKILL.md` files,
+automatic conversation compaction, a strict line-delimited JSON protocol for driving it
+programmatically, and a clear-eyed security position: its own documentation says Pi ships no sandbox
+and that real isolation has to come from a container or a VM.
 
 The closest thing on our side isn't Pydantic AI by itself. It's Pydantic AI plus
 [pydantic-ai-harness](https://github.com/pydantic/pydantic-ai-harness), which is where the
@@ -18,47 +20,36 @@ assemble. Both are legitimate. Which one you want depends on how much of the age
 ## A product you configure, or parts you assemble
 
 Pi has made the decisions. What the loop does, how compaction works, when skills load, how the
-conversation is stored — all settled, all good defaults, and you get a working coding agent
+conversation is stored, all settled, all good defaults, and you get a working coding agent
 immediately. Configuration is how you influence it.
 
 The harness has made almost none. Every piece is a capability you add, replace, or leave out, and they
 sit on the same agent object as everything else, which means the coding pieces compose with ordinary
 agent features instead of living in a separate world:
 
-```python {title="in_process_loop.py"}
-"""The loop runs in your process, so a tool is just your function."""
-
-import os
-
+```python {title="capability_on_the_same_loop.py"}
+"""A coding-adjacent piece is a capability on the same agent as everything else."""
 from pydantic_ai import Agent
-from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
-from pydantic_ai.models.function import FunctionModel
+from pydantic_ai.capabilities import Capability
 
-ran_in: list[int] = []
+TICKETS = {'9': 'open: printer jam on floor 2'}
 
-
-async def model(messages, info):
-    if len(messages) == 1:
-        return ModelResponse(parts=[ToolCallPart('where_am_i', {})])
-    return ModelResponse(parts=[TextPart('In the same process that called me.')])
+tickets = Capability(
+    id='tickets',
+    description='Look up support tickets in this process.',
+)
 
 
-agent = Agent(FunctionModel(model))
+@tickets.tool_plain
+def read_ticket(ticket_id: str) -> str:
+    """Read a local ticket record."""
+    return TICKETS[ticket_id]
 
 
-@agent.tool_plain
-def where_am_i() -> str:
-    """Report which process this tool is executing in."""
-    ran_in.append(os.getpid())
-    return 'checked'
-
-
-result = agent.run_sync('which process runs the tools?')
-print('the tool ran in this process:', ran_in == [os.getpid()])
-#> the tool ran in this process: True
+agent = Agent('openai:gpt-5.6-luna', capabilities=[tickets])
+result = agent.run_sync('What is the status of ticket 9?')
 print(result.output)
-#> In the same process that called me.
-assert ran_in == [os.getpid()]
+#> Ticket 9 is open: printer jam on floor 2.
 ```
 
 
@@ -67,16 +58,16 @@ The loop runs in your process, so a tool is a Python function with your types an
 can put a breakpoint in it.
 
 The trade is honest in both directions. If you want a coding agent, Pi is running today and the harness
-is an afternoon of assembly. If you want a coding agent that does something Pi didn't anticipate —
+is an afternoon of assembly. If you want a coding agent that does something Pi didn't anticipate , 
 different compaction, a different filesystem, an approval gate on one specific action, a spend ceiling
-per customer — that's a capability on our side and a fork on theirs.
+per customer, that's a capability on our side and a fork on theirs.
 
 ## Language, and where isolation lives
 
 Pi's core is TypeScript and Node. Ours is Python. For most teams that settles it before any feature
 comparison starts.
 
-On isolation, Pi's position is that it isn't the sandbox — you run it in a container, mount things
+On isolation, Pi's position is that it isn't the sandbox, you run it in a container, mount things
 read-only, and give it minimal credentials. That's a defensible design and they say it plainly.
 
 Ours puts more of the boundary in the library: `CodeMode` runs model-written code in Monty instead of
@@ -122,7 +113,7 @@ coding agent, use a finished coding agent.
 
 **How much assembly is it really?**
 A useful agent with a filesystem, a shell, and subagents is a short file. Matching a mature CLI's
-behaviour — its compaction, its permission prompts, its polish — is considerably more.
+behaviour (its compaction, its permission prompts, its polish) is considerably more.
 
 **What does Pi do better?**
 Being finished. And its security documentation is more direct about its own limits than most projects

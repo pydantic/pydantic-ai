@@ -8,9 +8,9 @@ ourselves.
 Anything we say about someone else's software, we installed it and read it. The bottom of each page
 tells you which version, and how we checked.
 
-Anything we say about ours comes with a script you can run in a few seconds. No API key. CI runs every
-one of them on every commit, so what's printed on the page is what the code printed today, not what it
-printed when somebody wrote the page.
+Anything we say about ours comes with a script you can copy. CI runs every one of them on every
+commit, so what's printed on the page is what the code printed today, not what it printed when
+somebody wrote the page.
 
 Where we're the wrong answer, we say so. Want the bad news first? It's
 [all in one place](production-agents.md#where-were-not-the-answer).
@@ -55,23 +55,24 @@ giving you eyes on what the agent is doing. Your agent goes inside the applicati
 
 Six things come out of that, and every one has a proof you can run in a few seconds:
 
-- **Traces your existing tools already understand.** We emit the OpenTelemetry
-  [GenAI semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/) — 36 distinct
-  `gen_ai.*` attributes — so the agent appears in the dashboards your vendor already ships. Google ADK
-  does this too. LangChain, the OpenAI Agents SDK, Agno and smolagents emit zero.
+- **Traces your existing tools already understand.** When instrumentation is enabled, we emit the
+  OpenTelemetry [GenAI semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/),
+  36 distinct `gen_ai.*` attributes, so the agent can appear in the dashboards your vendor already
+  ships. Google ADK does this too. LangChain, the OpenAI Agents SDK, Agno and smolagents emit zero.
 - **A ceiling in money, not tokens.** `cost_limit` is priced by
-  [genai-prices](https://github.com/pydantic/genai-prices) across 41 providers and 1,646 models, and
-  checked before the next request goes out. No other framework can stop a run on spend across
-  providers.
-- **The whole loop runs offline.** `TestModel` calls your tools with no scripting. LangChain ships
-  three fake chat models and all three refuse to bind tools, so none of them can test an agent.
+  [genai-prices](https://github.com/pydantic/genai-prices) across 41 providers and 1,646 models. It is
+  checked after each response (the first request can exceed it); pair it with `request_limit`. No
+  other framework can stop a run on spend across providers.
+- **The whole loop runs offline.** `TestModel` calls your tools with no scripting. Every fake chat
+  model in `langchain-core` raises `NotImplementedError` on `bind_tools`, so none of them can test an
+  agent.
 - **Stopping gives you the conversation back.** Cancellation raises, the exception carries the
   history, and resuming is a normal run.
-- **Crash recovery from an engine you already operate** — Temporal, DBOS and Prefect in-tree, and
-  Restate and Apache Airflow through integrations those projects maintain themselves.
-- **The model can't reach your credentials.** Trusted state is a separate typed argument that tools
-  read and the model never sees. Several frameworks pass context the model doesn't see; ours is the
-  one your type checker knows the shape of.
+- **Crash recovery from an engine you already operate:** Temporal, DBOS and Prefect in-tree, and
+  Restate, Kitaru, and Apache Airflow through integrations those projects maintain themselves.
+- **Trusted state is a typed dependency API.** `deps_type` plus `RunContext` is in the agent's type,
+  so tools read credentials and the model never sees them. Other frameworks also keep local context
+  off the wire; ours is the one your type checker knows the shape of.
 
 ## Where each one is strong
 
@@ -99,7 +100,7 @@ comparison](https://nextbuild.co/blog/ai-agent-frameworks-benchmarked-pydanticai
 NextBuild, which scored Pydantic AI 8/10 for developer experience against 5/10 for LangChain. We're
 not going to lean on it. It's one team's account of one project rather than a benchmark anyone can
 re-run; Mastra scored above us on that same measure at 9/10; and its headline cost figure is mostly a
-subscription line item — the $1,088 it attributes to CrewAI is $898 of Pro-tier licensing plus $190 of
+subscription line item, the $1,088 it attributes to CrewAI is $898 of Pro-tier licensing plus $190 of
 infrastructure, which says something about pricing pages and nothing about the frameworks.
 
 If you find that quoted somewhere as proof that Pydantic AI is cheaper, it isn't proof, and it isn't

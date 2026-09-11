@@ -21,8 +21,8 @@ chat. You want to stop, keep what happened, and pick it up when they come back.
 
 In the OpenAI SDK you stop a streamed run and the iteration ends. What you keep afterwards depends on
 where the conversation lives: if you use a session, that's your record; if not, it's whatever you
-collected as it streamed. Sessions are a small protocol — `get_items`, `add_items`, `pop_item`,
-`clear_session` — and the storage behind them ships as separate packages.
+collected as it streamed. Sessions are a small protocol, `get_items`, `add_items`, `pop_item`,
+`clear_session`, and the storage behind them ships as separate packages.
 
 In Pydantic AI, stopping produces a value. The run raises `RunCancelled`, that exception carries the
 whole conversation, and passing it to the next run continues from there. Nothing is stored anywhere
@@ -31,26 +31,10 @@ unless you store it.
 ```python {title="cancel_then_resume.py"}
 """Stopping keeps the work: the exception carries the conversation, and the
 next run continues from it."""
-
 from pydantic_ai import Agent, CancellationToken, RunCancelled, RunContext
-from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
-from pydantic_ai.models.function import FunctionModel
-
-calls = 0
-
-
-async def model(messages, info):
-    global calls
-    calls += 1
-    if calls == 1:
-        return ModelResponse(parts=[ToolCallPart('file_refund', {'item': 'invoice'})])
-    if calls == 2:
-        return ModelResponse(parts=[ToolCallPart('notify_customer', {'item': 'invoice'})])
-    return ModelResponse(parts=[TextPart('Refund filed and the customer was told.')])
-
 
 token = CancellationToken()
-agent = Agent(FunctionModel(model))
+agent = Agent('openai:gpt-5.6-luna')
 
 
 @agent.tool_plain
@@ -95,7 +79,7 @@ crash recovery; DBOS and Prefect
 wrappers ship in the same repository, and Restate, Kitaru, and Airflow adapters live in those
 projects. If your company already runs one of those, that's the one you use.
 
-The OpenAI SDK has no first-party equivalent, though a Temporal contrib package exists — which is
+The OpenAI SDK has no first-party equivalent, though a Temporal contrib package exists, which is
 worth saying, because it proves the idea isn't impossible there. Their durability story is sessions,
 and sessions remember conversations, not executions. If the process dies halfway through a run,
 a session tells you what was said, not what was half-done.
@@ -105,15 +89,15 @@ a session tells you what was said, not what was half-done.
 | | OpenAI Agents SDK 0.22.2 | Pydantic AI 2.42 |
 |---|---|---|
 | Models | OpenAI first; others through LiteLLM or a custom `Model` | Any provider directly, with `FallbackModel` for failover |
-| Trusted state | `TContext` travels with the run | `deps_type`, a separate argument tools read and the model never sees |
+| Trusted state | `TContext` is local and is not sent to the LLM | `deps_type` plus `RunContext`: a typed dependency API tools read |
 | Stopping a run | `cancel('immediate')` or `cancel('after_turn')` on a streamed run | `CancellationToken` from any thread, or `ctx.cancel()` inside a tool; ends in `RunCancelled` holding the history |
 | Picking it back up | A session, or `previous_response_id` | Pass the history to the next run; storage is yours |
 | Safety checks | Guardrails on input, output, and tool calls, with tripwires | Capabilities, which bundle tools, instructions, settings and hooks together and can load on demand |
 | Handing work over | `handoff()` registers a tool named `transfer_to_<agent>` | An agent used as a tool, or a capability |
 | Crash recovery | Not first-party; a Temporal contrib exists | Six engines wrap the agent: Temporal, DBOS, Prefect, Restate, Kitaru, Airflow |
-| Testing offline | Write your own `Model`; there's no test model included | `TestModel` and `FunctionModel` ship with it; `ALLOW_MODEL_REQUESTS = False` blocks real calls |
+| Testing offline | `agents.testing.ScriptedModel` scripts model turns; there is no `ALLOW_MODEL_REQUESTS = False` | `TestModel` and `FunctionModel` ship with it; `ALLOW_MODEL_REQUESTS = False` blocks real calls |
 | Evals | A separate product | `pydantic-evals` runs in your test suite using the agent's own types |
-| Tracing | Their dashboard, or OpenInference spans under its own attribute names; zero `gen_ai.*` | OpenTelemetry GenAI semantic conventions (36 `gen_ai.*` attributes) — your existing dashboards read them |
+| Tracing | Their dashboard, or OpenInference spans under its own attribute names; zero `gen_ai.*` | OpenTelemetry GenAI semantic conventions (36 `gen_ai.*` attributes) when instrumentation is enabled |
 
 ## Choose the OpenAI SDK when
 
@@ -146,7 +130,7 @@ hosted tracing works the moment you install it.
 ---
 
 *Checked against openai-agents 0.22.2 and Pydantic AI 2.42 on 2026-09-10. The OpenAI SDK facts come from
-reading the installed package — method signatures, exported guardrail types, and `handoff()` parameters. The
+reading the installed package, method signatures, exported guardrail types, and `handoff()` parameters. The
 Pydantic AI example is run by this repository's test suite on every commit, so its output is what it printed.
 The `gen_ai.*` counts are distinct semantic-convention attribute names found in each installed package's
 source; ours were also captured from a live run through a plain OpenTelemetry exporter. We recheck this page's

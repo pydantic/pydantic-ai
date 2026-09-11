@@ -1,15 +1,15 @@
 # Pydantic AI vs smolagents
 
 smolagents takes an unusual position and takes it seriously: instead of asking the model for
-structured tool calls, it asks the model to write Python, then runs that Python. A `CodeAgent` loops —
-model writes code, sandbox runs it, output goes back — until the code calls `final_answer`. It's a
+structured tool calls, it asks the model to write Python, then runs that Python. A `CodeAgent` loops , 
+model writes code, sandbox runs it, output goes back, until the code calls `final_answer`. It's a
 small library with few dependencies, it's clear about its limits, and it fits when the task is
 computational.
 
 Its default sandbox is a restricted interpreter, not a container, and it says so. Running
 `import os` gets you *"Import of os is not allowed. Authorized imports are: collections, datetime,
 itertools, math, queue, random, re, stat, statistics, time, unicodedata"*, and `open(...)` is refused
-outright. For real isolation you escalate to one of the remote executors — Docker, E2B, Modal, Blaxel,
+outright. For real isolation you escalate to one of the remote executors, Docker, E2B, Modal, Blaxel,
 or your own.
 
 Pydantic AI does structured tool calls by default, and can do the write-code approach too through
@@ -22,8 +22,8 @@ matters more day to day is that one library is synchronous and the other isn't.
 smolagents' loop is blocking. `CodeAgent.run()` has no async counterpart, so a run owns the thread it's
 on. Two consequences follow.
 
-The first is concurrency. If the model wants three independent things done — three lookups, three API
-calls — they happen one after another, because the generated code runs in a single interpreter on one
+The first is concurrency. If the model wants three independent things done, three lookups, three API
+calls, they happen one after another, because the generated code runs in a single interpreter on one
 thread. In Pydantic AI the tools are `async def` and the model can ask for several at once:
 
 ```python {title="parallel_tool_calls.py"}
@@ -34,30 +34,14 @@ three before any of them finishes, so they overlap instead of queueing up.
 """
 import asyncio
 
-from pydantic_ai import Agent
-from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
-from pydantic_ai.models.function import FunctionModel
+from pydantic_ai import Agent, RunContext
 
 events: list[str] = []
-
-
-async def model(messages, info):
-    if len(messages) == 1:
-        return ModelResponse(
-            parts=[
-                ToolCallPart('slow', {'name': 'a'}),
-                ToolCallPart('slow', {'name': 'b'}),
-                ToolCallPart('slow', {'name': 'c'}),
-            ]
-        )
-    return ModelResponse(parts=[TextPart('done')])
-
-
-agent = Agent(FunctionModel(model))
+agent = Agent('openai:gpt-5.6-luna')
 
 
 @agent.tool
-async def slow(ctx, name: str) -> str:
+async def slow_lookup(ctx: RunContext, name: str) -> str:
     events.append(f'start:{name}')
     await asyncio.sleep(0.01)
     events.append(f'end:{name}')
@@ -65,7 +49,7 @@ async def slow(ctx, name: str) -> str:
 
 
 async def main():
-    await agent.run('run the three jobs')
+    await agent.run('Run the warehouse lookups for A, B, and C.')
     print('first three events:', events[:3])
     #> first three events: ['start:a', 'start:b', 'start:c']
     print('all started before any finished:', events[:3] == ['start:a', 'start:b', 'start:c'])
@@ -87,7 +71,7 @@ history, and you resume by passing that history to the next run.
 
 **Trusted state.** smolagents builds tool schemas from docstrings and type hints, and there's nowhere
 to put something the model shouldn't see. Pydantic AI's `deps_type` is a separate typed argument that
-tools read and the model never does — so a database handle or a customer ID stays out of the
+tools read and the model never does, so a database handle or a customer ID stays out of the
 conversation entirely.
 
 **Testing.** Both are testable offline, and smolagents deserves credit here: its `Model` base class is
@@ -112,7 +96,7 @@ Prefect, Restate, Kitaru, or Airflow without changing the agent.
 | Crash recovery | None in core | Six engines wrap the agent object |
 | Testing offline | Subclass `Model` yourself | `TestModel` calls your tools with no scripting; `FunctionModel` scripts them |
 | Tracing | OpenInference spans under its own attribute names; zero `gen_ai.*` | The GenAI semantic conventions, 36 `gen_ai.*` attributes |
-| Budgets | Step caps; no money limit | `cost_limit` in USD across 41 providers, checked before the next request |
+| Budgets | Step caps; no money limit | `cost_limit` in USD across 41 providers, checked after each response; pair with `request_limit` |
 | Evals | None in core | `pydantic-evals` in your test suite |
 
 ## Choose smolagents when
@@ -133,7 +117,7 @@ Prefect, Restate, Kitaru, or Airflow without changing the agent.
 
 **Can Pydantic AI do the write-code-instead-of-tool-calls thing?**
 Yes, through `CodeMode` in the harness. The model writes one Python program that calls your tools as
-functions — with loops and `asyncio.gather` — inside the Monty sandbox, instead of one round trip per
+functions (with loops and `asyncio.gather`) inside the Monty sandbox, instead of one round trip per
 call.
 
 **Is smolagents' sandbox safe?**

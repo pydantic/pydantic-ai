@@ -18,7 +18,7 @@ Mastra separates concerns by giving each its own concept: tools, processors, gua
 workflow steps, scorers. Each is well shaped, and there are a lot of them.
 
 Pydantic AI has one extension: a capability. A capability can add tools, add instructions, change model
-settings, hook into the run's lifecycle, and watch or rewrite the stream of events — all as one unit,
+settings, hook into the run's lifecycle, and watch or rewrite the stream of events, all as one unit,
 and it can wait to load until the model asks for it. It exposes 63 hooks, with a matching `before_`,
 `after_`, `wrap_` and error handler at each stage of the run: the model request, each node, tool
 validation, tool execution, output validation, output processing, and the run itself. One thing to
@@ -35,7 +35,6 @@ from collections.abc import AsyncIterable
 
 from pydantic_ai import Agent, AgentStreamEvent, RunContext
 from pydantic_ai.capabilities import Capability
-from pydantic_ai.models.function import DeltaToolCall, FunctionModel
 
 
 def refund_status(order_id: str) -> str:
@@ -56,29 +55,22 @@ class Refunds(Capability):
             yield event
 
 
-async def stream(messages, info):
-    if len(messages) == 1:
-        yield {0: DeltaToolCall(name='refund_status', json_args='{"order_id": "X"}', tool_call_id='c1')}
-    else:
-        yield 'done'
-
-
 async def main():
     refunds = Refunds()
-    agent = Agent(FunctionModel(stream_function=stream), capabilities=[refunds])
-    async with agent.run_stream_events('check my refund') as run:
+    agent = Agent('openai:gpt-5.6-luna', capabilities=[refunds])
+    async with agent.run_stream_events('Check my refund on order X-19.') as run:
         async for _ in run:
             pass
     print('the capability ran its own tool:', 'FunctionToolCallEvent' in refunds.seen)
     #> the capability ran its own tool: True
     print('and saw the whole run:', len(refunds.seen), 'events')
-    #> and saw the whole run: 7 events
+    #> and saw the whole run: 9 events
 ```
 
 
 
 The practical effect is that "add refunds to this agent" is one object to write, one object to test,
-and one object to hand to another team — rather than a tool registered here, an instruction appended
+and one object to hand to another team, rather than a tool registered here, an instruction appended
 there, and a listener wired up somewhere else.
 
 ## Observability you own
@@ -92,7 +84,7 @@ your database and HTTP spans instead of in a separate tool. That's less polished
 of a commitment on day two hundred.
 
 The same pattern shows up in durability. Mastra's story is its workflow engine, with a variant built on
-Inngest. Ours is a wrapper around whichever engine you already operate — Temporal, DBOS, Prefect,
+Inngest. Ours is a wrapper around whichever engine you already operate, Temporal, DBOS, Prefect,
 Restate, Kitaru, or Airflow. Neither is better in the abstract; one has fewer moving parts, the other
 has fewer opinions.
 
@@ -102,7 +94,7 @@ Its memory is more developed than ours. Working memory, observational memory, an
 real features with real depth, and the equivalent in Pydantic AI is dependencies and history processors
 you wire up yourself. If memory is the centre of your product, that gap is on our side.
 
-Mastra also has a reconnectable streaming story under durability — a client can drop and rejoin a
+Mastra also has a reconnectable streaming story under durability, a client can drop and rejoin a
 running agent. Ours doesn't do that; under a durable engine you stream through an external sink you
 provide.
 
@@ -117,7 +109,7 @@ provide.
 | Durability | Their workflow engine, or the Inngest variant | Six engines wrap the agent; you pick |
 | Memory | Working, observational, and semantic recall | Dependencies and history processors you wire up |
 | Evals | Scorers, with their tooling and Vitest | `pydantic-evals` in your test suite, using the agent's own types |
-| Tracing | Dev server, Studio, Cloud | OpenTelemetry GenAI semantic conventions (36 `gen_ai.*` attributes) — your existing dashboards read them |
+| Tracing | Dev server, Studio, Cloud | OpenTelemetry GenAI semantic conventions (36 `gen_ai.*` attributes) when instrumentation is enabled |
 | Deployment | Their Cloud is the paved road | Anywhere; it's a library |
 
 ## Choose Mastra when
@@ -137,7 +129,7 @@ provide.
 ## FAQ
 
 **Can I use both?**
-Yes — Mastra in front, a Python agent behind an HTTP endpoint. Pydantic AI's UI adapters mean the
+Yes, Mastra in front, a Python agent behind an HTTP endpoint. Pydantic AI's UI adapters mean the
 front end doesn't need to know.
 
 **Is Pydantic AI a drop-in replacement?**
@@ -152,7 +144,7 @@ first two are why people like it.
 
 *Mastra versions checked on the npm registry on 2026-09-10 (`mastra` 1.28.0, `@mastra/core` 1.65.0). Unlike
 the other pages in this series, the Mastra behaviour described here comes from their published documentation
-rather than from code we ran — it's TypeScript and we didn't install it. Treat those claims as their
+rather than from code we ran, it's TypeScript and we didn't install it. Treat those claims as their
 documentation's, and tell us if any have gone stale. The Pydantic AI example is executed by this repository's
 test suite on every commit. We recheck this page's version pins and behaviour claims each time Pydantic AI
 ships a minor release; if something here has gone stale, [tell

@@ -13,19 +13,11 @@ measurement is made of.
 **The claim.** An article comparing us with Agno said Agno creates agents about 10,000 times faster,
 using about 50 times less memory.
 
-**What we measured**, on 2026-09-10, in clean environments:
-
-| | Agno 3.0.x | Pydantic AI 2.42 |
-|---|---|---|
-| Time to construct one agent | 14.5 µs | 764 µs |
-| Memory traced during construction | 7 KiB | 417 KiB |
-
-So it's about 50 times, not 10,000, and only for construction. But the ratio isn't the interesting
-part.
-
-**Why ours is slower.** Creating an agent here does real work: it resolves the model provider, checks
-your configuration and credentials, builds the tool schemas, and validates any prompt templates. That
-happens once, at startup, where a mistake costs you a second.
+**What construction actually does.** Creating an agent here does real work: it resolves the model
+provider, checks your configuration and credentials, builds the tool schemas, and validates any
+prompt templates. That happens once, at startup, where a mistake costs you a second. We are not
+publishing a microbenchmark for it; the interesting proof is that a bad name fails here, not on the
+first customer request.
 
 ```python {title="config_fails_here.py"}
 """A bad model name fails when you build the agent, not on the first request."""
@@ -42,14 +34,14 @@ except Exception as exc:
 
 
 **The trade.** Deferring that work makes construction faster and moves the failure to the first real
-request — in front of a customer, where the same typo costs money instead of a second. And the number
+request, in front of a customer, where the same typo costs money instead of a second. And the number
 is the wrong one to choose on either way: construction happens once per process and takes under a
 millisecond, while a single model call takes hundreds of milliseconds. If agent construction is your
 bottleneck, something else has gone very right.
 
 ## "It's four lines to a working agent"
 
-**The claim.** Minimal frameworks quote a four-line agent, and it's true — ours is about that long too.
+**The claim.** Minimal frameworks quote a four-line agent, and it's true, ours is about that long too.
 
 **What the four lines don't include.** Somewhere to put credentials the model can't see. A ceiling on
 what the run may spend. A stop button that leaves you something to resume. Evals. Crash recovery. In
@@ -63,7 +55,7 @@ run.
 
 **The claim.** LangGraph persists state at every step, so durability is handled.
 
-**What happens.** It does, and that's what makes time travel and forking work — those are real
+**What happens.** It does, and that's what makes time travel and forking work, those are real
 features we don't have. The cost is that a checkpoint holds a copy of the graph state, so checkpoint
 size tracks the size of what you're carrying, and the durability comes with a shape: to get crash
 recovery you express your control flow as a graph.
@@ -90,7 +82,7 @@ of it than we have, and we say so on [their](vs-mastra.md) [pages](vs-agno.md).
 - **Construction does real work.** Slower to build an agent, mistakes found at startup.
 - **No hosted platform.** Your infrastructure stays yours, and there's no dashboard on day one.
 - **No TypeScript.** If your whole product is TypeScript, read the [Vercel](vs-vercel-ai-sdk.md) and
-  [Mastra](vs-mastra.md) pages instead — they're the honest answer.
+  [Mastra](vs-mastra.md) pages instead, they're the honest answer.
 - **A curated integration list, not a directory of a thousand.** You'll occasionally wire one
   yourself.
 - **`run_sync` can't be nested inside async code**, and a tool running in a worker thread can't be
@@ -103,7 +95,7 @@ page, measured where we could measure them. Read them and decide whether they're
 
 ---
 
-*Measured on 2026-09-10 against Pydantic AI 2.42 and Agno 3.0.x in clean environments. The example on this
+*Checked 2026-09-10 against Pydantic AI 2.42. The example on this
 page is executed by this repository's test suite on every commit. We recheck this page's version pins and
 behaviour claims each time Pydantic AI ships a minor release; if something here has gone stale, [tell
 us](https://github.com/pydantic/pydantic-ai/issues/new) and we'll correct it.*

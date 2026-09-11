@@ -2,8 +2,8 @@
 
 The Claude Agent SDK gives you Claude Code from Python. That's not a figure of speech: the library
 finds the `claude` binary on your machine and runs it as a child process, then talks to it over its
-own protocol. Everything the CLI can do — editing files, running commands, skills, subagents, hooks,
-checkpoints, session forking, MCP servers, the permission prompts — you get, because it is the same
+own protocol. Everything the CLI can do, editing files, running commands, skills, subagents, hooks,
+checkpoints, session forking, MCP servers, the permission prompts, you get, because it is the same
 program.
 
 If you want something Claude-Code-shaped, that is the shortest path there is. Version 0.2.152 has
@@ -16,7 +16,7 @@ work out which side of one line your project sits on.
 
 ## The line: whose process is it
 
-Configuring the Claude SDK means describing an agent in data. Tools are strings —
+Configuring the Claude SDK means describing an agent in data. Tools are strings , 
 `allowed_tools=['Read', 'Glob']`. Subagents are dictionaries. Hooks are JSON events. That's a
 reasonable interface to a program running elsewhere, and it's the only interface available, because
 your Python isn't where the loop lives.
@@ -26,33 +26,22 @@ imports, and a debugger that stops inside it:
 
 ```python {title="in_process_loop.py"}
 """The loop runs in your process, so a tool is just your function."""
-
 import os
 
 from pydantic_ai import Agent
-from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
-from pydantic_ai.models.function import FunctionModel
 
 ran_in: list[int] = []
-
-
-async def model(messages, info):
-    if len(messages) == 1:
-        return ModelResponse(parts=[ToolCallPart('where_am_i', {})])
-    return ModelResponse(parts=[TextPart('In the same process that called me.')])
-
-
-agent = Agent(FunctionModel(model))
+agent = Agent('openai:gpt-5.6-luna')
 
 
 @agent.tool_plain
-def where_am_i() -> str:
+def where_does_support_run() -> str:
     """Report which process this tool is executing in."""
     ran_in.append(os.getpid())
     return 'checked'
 
 
-result = agent.run_sync('which process runs the tools?')
+result = agent.run_sync('Which process runs the support tools?')
 print('the tool ran in this process:', ran_in == [os.getpid()])
 #> the tool ran in this process: True
 print(result.output)
@@ -62,7 +51,7 @@ assert ran_in == [os.getpid()]
 
 
 
-Same process id — no subprocess, no protocol between you and your own tools. In practice that's what
+Same process id, no subprocess, no protocol between you and your own tools. In practice that's what
 decides several things at once: your tools can hold a database connection, your tests can run without
 launching anything, and you can step through a tool call in a debugger.
 
@@ -78,7 +67,7 @@ good for a conversation you want to pick back up.
 
 It's not crash recovery. If the process dies halfway through a long run, the session tells you what
 was said, not which of the six things the agent was doing had finished. Pydantic AI runs can be
-wrapped by a durable engine — Temporal, DBOS, Prefect, Restate, Kitaru, or Airflow — which restarts the
+wrapped by a durable engine (Temporal, DBOS, Prefect, Restate, Kitaru, or Airflow) which restarts the
 work rather than the transcript, and the wrapping doesn't change the agent.
 
 ## Side by side
@@ -121,7 +110,7 @@ Yes, directly, including the Anthropic-hosted tools. This isn't about which mode
 Yes, through [pydantic-ai-harness](https://github.com/pydantic/pydantic-ai-harness), which supplies a
 filesystem, a shell, subagents, skills, memory, compaction, and `CodeMode` as pieces you assemble.
 It's a library of parts, not a finished product, so it's more work than pointing the Claude SDK
-at a directory — and more yours afterwards.
+at a directory, and more yours afterwards.
 
 **Is one more secure?**
 They protect different things. The Claude SDK isolates by process and has a mature permission

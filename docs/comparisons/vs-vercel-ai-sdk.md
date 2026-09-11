@@ -1,7 +1,7 @@
 # Pydantic AI vs Vercel AI SDK
 
 The Vercel AI SDK is the default way to talk to models from TypeScript, and its real strength isn't
-the agent loop — it's the wire between your server and your React app. Streaming text into a UI,
+the agent loop, it's the wire between your server and your React app. Streaming text into a UI,
 rendering tool calls as they happen, asking the user to approve one, resuming after they answer: it
 does all of that well, and no Python library matches it, ours included.
 
@@ -37,41 +37,34 @@ transform:
 
 ```python {title="output_transports.py"}
 """Wire semantics are explicit: the output transport decides how a response
-becomes your result — a transform, or a dict validated against a schema."""
+becomes your result, a transform or a typed model.
+"""
+from pydantic import BaseModel
+
 from pydantic_ai import Agent
-from pydantic_ai.messages import ModelResponse, TextPart
-from pydantic_ai.models.function import FunctionModel
-from pydantic_ai.output import StructuredDict, TextOutput
+from pydantic_ai.output import TextOutput
 
 
-async def model(messages, info):
-    return ModelResponse(parts=[TextPart('hello world')])
-
-async def model_json(messages, info):
-    return ModelResponse(parts=[TextPart('{"n": 7}')])
-
-# A transform applied to the model's text:
 def upper(t: str) -> str:
     return t.upper()
 
-agent = Agent(FunctionModel(model), output_type=TextOutput(upper))
-print('TextOutput(fn):', agent.run_sync('q').output)
+
+agent = Agent('openai:gpt-5.6-luna', output_type=TextOutput(upper))
+print('TextOutput(fn):', agent.run_sync('Greet the customer in plain text.').output)
 #> TextOutput(fn): HELLO WORLD
 
-# A JSON schema the response must satisfy:
-schema = {
-    'type': 'object',
-    'properties': {'n': {'type': 'integer'}},
-    'required': ['n'],
-}
-agent2 = Agent(FunctionModel(model_json), output_type=StructuredDict(schema))
-out = agent2.run_sync('q').output
-print(f'StructuredDict: {out!r} is a {type(out).__name__}')
-#> StructuredDict: {'n': 7} is a dict
-assert agent.run_sync('q').output == 'HELLO WORLD'
-assert out == {'n': 7}
+
+class RefundNote(BaseModel):
+    order_id: str
+    amount: float
 
 
+agent2 = Agent('openai:gpt-5.6-luna', output_type=RefundNote)
+out = agent2.run_sync('Summarize the refund for W-882 as a note.').output
+print(f'RefundNote: {out!r}')
+#> RefundNote: RefundNote(order_id='W-882', amount=38.0)
+assert agent.run_sync('Greet the customer in plain text.').output == 'HELLO WORLD'
+assert out == RefundNote(order_id='W-882', amount=38.0)
 ```
 
 
@@ -97,7 +90,7 @@ without changing the agent.
 | Trusted state | A loosely typed runtime context | `deps_type`, read by tools, invisible to the model |
 | Structured output | Chosen for you | You choose: tool call, native, or transformed text |
 | Skills | `uploadSkill` to a provider | Capabilities that load on demand and round-trip to YAML |
-| Budgets | `stopWhen` on steps; no money limit | Requests, tool calls, tokens, and `cost_limit` in USD, priced across 41 providers by `genai-prices`, checked before the next request |
+| Budgets | `stopWhen` on steps; no money limit | Requests, tool calls, tokens, and `cost_limit` in USD, priced across 41 providers by `genai-prices`, checked after each response |
 | Crash recovery | Not first-party | Six engines wrap the agent object |
 | Testing offline | Subclass their provider spec yourself; it works well | `TestModel` and `FunctionModel` included |
 | Evals | Not first-party | `pydantic-evals` in your test suite using the agent's own types |
@@ -114,7 +107,7 @@ without changing the agent.
 - Your agent is in Python, near your data, your models, or your existing services.
 - You need crash recovery, spend ceilings, and evals as part of the framework.
 - Credentials and identity must sit where the model can't reach them.
-- You want to keep the AI SDK in the browser and put Python behind it — that's a supported shape, not a
+- You want to keep the AI SDK in the browser and put Python behind it, that's a supported shape, not a
   workaround.
 
 ## FAQ
@@ -133,7 +126,7 @@ We don't ship that and don't intend to.
 ---
 
 *Checked against `ai` 7.0.97 and Pydantic AI 2.42 on 2026-09-10. The AI SDK facts come from installing the
-package and reading its exports and type definitions — `ToolLoopAgent`, `uploadSkill`, the approval error
+package and reading its exports and type definitions, `ToolLoopAgent`, `uploadSkill`, the approval error
 types, `abortSignal`, `stopWhen`, and the absence of any durable-agent export. The Pydantic AI example is
 executed by this repository's test suite. We recheck this page's version pins and behaviour claims each time
 Pydantic AI ships a minor release; if something here has gone stale, [tell

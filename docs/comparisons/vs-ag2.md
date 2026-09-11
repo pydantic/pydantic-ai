@@ -1,7 +1,7 @@
 # Pydantic AI vs AG2
 
-If you remember AG2 as the community continuation of AutoGen — `ConversableAgent`, `UserProxyAgent`,
-`GroupChat` — that library is gone. Version 1.0 is a rewrite, and the old names aren't importable from
+If you remember AG2 as the community continuation of AutoGen, `ConversableAgent`, `UserProxyAgent`,
+`GroupChat`, that library is gone. Version 1.0 is a rewrite, and the old names aren't importable from
 the top level any more. Anything you read in an AutoGen-era tutorial no longer applies, which is worth
 knowing before you either adopt it or inherit a codebase that uses it.
 
@@ -25,9 +25,9 @@ and generates a JSON schema file so an editor can check it:
 ```python {title="spec_data_roundtrip.py"}
 """The agent is data: spec -> YAML + JSON schema -> a running agent.
 
-The same declarative spec validates its templates against typed deps on
-the dict path (Agent.from_spec), writes itself to a file with a
-companion schema, loads back (Agent.from_file), and runs offline.
+`Agent.from_spec(dict)` validates templates against typed deps. Writing the
+spec to a file and loading it with `Agent.from_file` round-trips the YAML;
+it does not re-run that template check.
 """
 import os
 import tempfile
@@ -40,44 +40,45 @@ from pydantic_ai import Agent, AgentSpec
 class Ctx(BaseModel):
     version: str
 
+
 spec_data = {
     'name': 'checker',
-    'model': 'test',  # offline stub backend
+    'model': 'openai:gpt-5.6-luna',
     'instructions': 'Reply with {{version}}.',
     'capabilities': [],
 }
-agent = Agent.from_spec(spec_data, deps_type=Ctx)  # templates meet typed deps here (dict path)
-spec = AgentSpec.from_dict(spec_data)  # the same data, as a file-exportable spec
+agent = Agent.from_spec(spec_data, deps_type=Ctx)
+spec = AgentSpec.from_dict(spec_data)
 
 with tempfile.TemporaryDirectory() as d:
     yaml_path = os.path.join(d, 'agent.yaml')
     schema_path = os.path.join(d, 'agent.schema.json')
     spec.to_file(yaml_path, schema_path=schema_path)
-    agent2 = Agent.from_file(yaml_path, deps_type=Ctx)  # validated again on load
+    agent2 = Agent.from_file(yaml_path, deps_type=Ctx)
     exists = os.path.exists(schema_path)
 
-result = agent2.run_sync('go', deps=Ctx(version='v2'))
-print(f'spec -> YAML + schema file (exists={exists}) -> running agent, offline')
-#> spec -> YAML + schema file (exists=True) -> running agent, offline
+result = agent2.run_sync('What version is this checker running?', deps=Ctx(version='v2'))
+print(f'spec -> YAML + schema file (exists={exists}) -> running agent')
+#> spec -> YAML + schema file (exists=True) -> running agent
 print(f'loaded-from-file output: {result.output!r}')
-#> loaded-from-file output: 'success (no tool calls)'
+#> loaded-from-file output: 'v2'
 assert exists
-assert result.output == 'success (no tool calls)'
-
-
+assert result.output == 'v2'
 ```
 
 
 The part we'd point at is what happens to the prompt. A Pydantic AI spec's template is checked against
 your dependencies type when the spec loads, so `{{customer_nme}}` fails immediately with
 `TemplateSchemaError: Field 'customer_nme' not found in schema` rather than rendering as empty text at
-two in the morning. Worth being precise about our own limit: that check runs when a spec is loaded from
-a dictionary or a file, not when you build an `AgentSpec` object directly in Python.
+two in the morning. Worth being precise about our own limit: that check runs when a spec is loaded
+from a dictionary via [`Agent.from_spec`][pydantic_ai.Agent.from_spec], not when you load an
+already-built [`AgentSpec`][pydantic_ai.AgentSpec] (including [`Agent.from_file`][pydantic_ai.Agent.from_file])
+or construct one directly in Python.
 
 ## Where durability comes from
 
 AG2 puts it in the framework. A `Task` takes a `checkpoint_store` and a `resume_from`, and cancelling
-is a state change on the task envelope — `Task.cancel()` moves it to cancelled and peers see the event.
+is a state change on the task envelope, `Task.cancel()` moves it to cancelled and peers see the event.
 For a checkpointed task graph, that's a coherent design and arguably a nicer fit than ours.
 
 Pydantic AI puts it outside. A run is an ordinary coroutine, so a durable engine wraps the agent:
@@ -102,9 +103,9 @@ picks up where it stopped.
 | Durability | `Task` with a checkpoint store and `resume_from` | Six engines wrap the agent; you pick which |
 | Stopping a run | `Task.cancel()` on the task envelope | `CancellationToken` across runs, `ctx.cancel()` in a tool, resumable history |
 | Testing offline | `TestConfig` scripts model events, including tool calls and errors | `TestModel` and `FunctionModel`, plus a global block on real calls |
-| Budgets | No money limit | `cost_limit` in USD across 41 providers, checked before the next request |
+| Budgets | No money limit | `cost_limit` in USD across 41 providers, checked after each response; pair with `request_limit` |
 | Protocols | ACP and A2A first-party | ACP through the harness |
-| Migration | The AutoGen-era API is gone at 1.0 | — |
+| Migration | The AutoGen-era API is gone at 1.0 | |
 
 ## Choose AG2 when
 
@@ -123,7 +124,7 @@ picks up where it stopped.
 ## FAQ
 
 **I have AutoGen-era code. What now?**
-It won't run on AG2 1.x unchanged either — the classic API is gone. If a rewrite is happening
+It won't run on AG2 1.x unchanged either, the classic API is gone. If a rewrite is happening
 regardless, that's the moment to compare rather than assume.
 
 **What does AG2 do better?**
