@@ -5728,6 +5728,18 @@ async def test_session_exit_is_idempotent_and_flushes_unfinalized_user() -> None
     ]
 
 
+async def test_realtime_run_context_enqueue_after_session_close_raises() -> None:
+    session = RealtimeSession(FakeRealtimeConnection([]))
+    manager = session._tool_manager  # pyright: ignore[reportPrivateUsage]
+    assert manager.ctx is not None
+
+    async with session:
+        pass
+
+    with pytest.raises(UserError, match='run has ended'):
+        manager.ctx.enqueue('too late')
+
+
 def test_session_accepts_unprepared_tool_manager_without_pending_context() -> None:
     manager = ToolManager(FunctionToolset())
     session = _RealtimeSession(FakeRealtimeConnection([]), tool_manager=manager)

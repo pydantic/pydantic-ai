@@ -9,7 +9,6 @@ import wave
 import weakref
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Sequence
 from dataclasses import dataclass, replace
-from threading import Lock as ThreadLock
 from time import time_ns
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypeVar, cast, overload
@@ -20,7 +19,7 @@ from opentelemetry.context import Context
 from typing_extensions import TypeAliasType, assert_never
 
 from .. import _agent_graph
-from .._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority
+from .._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority, PendingMessageQueue
 from .._tool_execution import (
     _reject_unloaded_capability_reveals,  # pyright: ignore[reportPrivateUsage]
     build_tool_return_part,
@@ -488,34 +487,25 @@ def _pending_message_text(pending: PendingMessage) -> str:
     return '\n\n'.join(texts)
 
 
-class _RealtimePendingMessages(list[PendingMessage]):
+class _RealtimePendingMessages(PendingMessageQueue):
     """A `RunContext.enqueue` queue that validates content and wakes the live session for delivery."""
 
     def __init__(self) -> None:
         super().__init__()
         self._on_append: Callable[[PendingMessagePriority], None] | None = None
-        self._lock = ThreadLock()
 
     def bind(self, on_append: Callable[[PendingMessagePriority], None]) -> None:
         self._on_append = on_append
 
     def append(self, pending: PendingMessage) -> None:
         _pending_message_text(pending)
-        with self._lock:
-            super().append(pending)
+        super().append(pending)
         if self._on_append is not None:
             self._on_append(pending.priority)
 
     def has_priority(self, priority: PendingMessagePriority) -> bool:
         with self._lock:
             return any(pending.priority == priority for pending in self)
-
-    def pop_priority(self, priority: PendingMessagePriority) -> list[PendingMessage]:
-        """Atomically remove and return all messages with `priority`."""
-        with self._lock:
-            selected = [pending for pending in self if pending.priority == priority]
-            self[:] = [pending for pending in self if pending.priority != priority]
-        return selected
 
 
 class RealtimeSession:
@@ -874,6 +864,7 @@ class RealtimeSession:
         """
         if not self._entered or self._closed:
             return
+        self._pending_messages.close()
         self._closed = True
         self._finish_taps(discard_pending=True)
         if self._pump_task is not None:

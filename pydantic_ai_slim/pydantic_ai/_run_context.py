@@ -723,12 +723,8 @@ class RunContext(Generic[RunContextAgentDepsT]):
     ) -> str | None:
         """Enqueue content to be injected into the conversation.
 
-        Safe to call from anywhere a `RunContext` is available — async tools,
-        sync tools (auto-wrapped in a thread executor by Pydantic AI), and
-        capability hooks. The drain only iterates the queue between graph nodes
-        (in `before_model_request` and `after_node_run`), never concurrently
-        with the tool body, so `list.append` from a worker thread doesn't race
-        the drain.
+        Safe to call directly from async tools, sync tools running in another
+        thread, and capability hooks.
 
         Args:
             *content: One or more [`EnqueueContent`][pydantic_ai.run.EnqueueContent] items.
@@ -757,9 +753,9 @@ class RunContext(Generic[RunContextAgentDepsT]):
             delivered, or `None` when there was nothing to enqueue (an empty call).
 
         Raises:
-            UserError: If this `RunContext` isn't backed by a running agent's queue (e.g. the
-                synthetic context from `Agent.system_prompt_parts`), since there'd be nowhere
-                to deliver the message.
+            UserError: If the run or realtime session has ended, or this `RunContext` isn't backed
+                by a running agent's queue (e.g. the synthetic context from
+                `Agent.system_prompt_parts`), since there'd be nowhere to deliver the message.
         """
         if self.pending_messages is None:
             raise UserError(
