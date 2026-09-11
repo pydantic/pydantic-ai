@@ -647,6 +647,24 @@ def _stamp_instructions_relocated(response: ModelResponse, relocated: bool) -> M
     return response
 
 
+def _instructions_in_force_before(
+    messages: Sequence[ModelMessage], previous_response_id: str
+) -> tuple[bool, str | None]:
+    """Relocation stamp and joined instructions that produced the chained response.
+
+    `get_instructions` on the prefix (no `model_request_parameters`) reads
+    `ModelRequest.instructions` from history, including the tool-return fallback. That joined
+    string is what went on the wire for the chained response.
+    """
+    prefix: list[ModelMessage] = []
+    for message in messages:
+        if isinstance(message, ModelResponse) and message.provider_response_id == previous_response_id:
+            relocated = bool(message.provider_details and message.provider_details.get('instructions_relocated'))
+            return relocated, get_instructions(prefix)
+        prefix.append(message)
+    return False, None
+
+
 def _has_dynamic_system_prompt(messages: Sequence[ModelMessage]) -> bool:
     """Whether any system prompt is dynamic, i.e. its content can change between requests.
 
@@ -763,12 +781,13 @@ class OpenAIChatModelSettings(ModelSettings, total=False):
     instruction breakpoint is the first one dropped.
 
     On the Responses API the instructions are sent as leading input messages, because the top-level
-    `instructions` field cannot carry a breakpoint. With `openai_previous_response_id='auto'` and
-    static instructions the breakpoint is placed on the first request and reused by the chained
-    responses that follow; with dynamic instructions the full history is sent each request instead,
-    since a chained response would replay stale instructions. An explicit `openai_previous_response_id`
-    cannot be combined with this setting and raises. When `openai_conversation_id` is set or the
-    history has been compacted, the instructions stay in the top-level field and no breakpoint is added.
+    `instructions` field cannot carry a breakpoint. With `openai_previous_response_id='auto'`, a
+    chained response reuses that relocated prefix only when the current instructions equal the ones
+    stored on the chained request; otherwise the chain is dropped and the current instructions are
+    relocated onto a full-history request. An explicit `openai_previous_response_id` whose response
+    is not in `message_history` cannot be checked that way and raises. When `openai_conversation_id`
+    is set or the history has been compacted, the instructions stay in the top-level field and no
+    breakpoint is added.
 
     No breakpoint is added when a dynamic system prompt precedes the instructions either, since its
     per-request content would sit inside the cached prefix and miss the cache on every run.
@@ -2756,11 +2775,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             and not _has_dynamic_system_prompt(messages)
         )
 
-        # Save a reference to the full history before server-side state resolution trims it;
-        # the chained response lookup needs the original list to find provider_details stamps.
-        all_messages = messages
+        reuse_chained_instructions = False
         if cache_instructions:
-            instruction_parts, previous_response_id, conversation_id, messages = (
+            instruction_parts, previous_response_id, conversation_id, messages, reuse_chained_instructions = (
                 self._resolve_state_for_instruction_caching(messages, model_settings, wire_request_parameters)
             )
         else:
@@ -2777,14 +2794,6 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
         instructions_relocated = False
         if cache_instructions:
-            chained_instructions_relocated = False
-            if previous_response_id:
-                for m in reversed(all_messages):
-                    if isinstance(m, ModelResponse) and m.provider_response_id == previous_response_id:
-                        chained_instructions_relocated = bool(
-                            m.provider_details and m.provider_details.get('instructions_relocated')
-                        )
-                        break
             instructions, openai_messages, instructions_relocated = self._apply_instruction_caching(
                 instructions,
                 openai_messages,
@@ -2792,7 +2801,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 system_prompt_role,
                 previous_response_id=previous_response_id,
                 conversation_id=conversation_id,
-                chained_instructions_relocated=chained_instructions_relocated,
+                chained_instructions_relocated=reuse_chained_instructions,
             )
 
         text: responses.ResponseTextConfigParam | Omit = OMIT
@@ -2865,11 +2874,13 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         messages: list[ModelRequest | ModelResponse],
         model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
-    ) -> tuple[list[InstructionPart], str | None, str | None, list[ModelMessage]]:
+    ) -> tuple[list[InstructionPart], str | None, str | None, list[ModelMessage], bool]:
         """Resolve server-side state for a request that caches its instructions.
 
         Returns:
-            A 4-tuple of (instruction_parts, previous_response_id, conversation_id, messages).
+            A 5-tuple of (instruction_parts, previous_response_id, conversation_id, messages,
+            reuse_chained_instructions). `reuse_chained_instructions` is true only when the
+            chained response relocated instructions that still match this request.
         """
         # Read instruction parts from the untrimmed history before resolving server-side state,
         # since instructions live on the current request and survive the state trim.
@@ -2877,23 +2888,33 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         prev_id_setting = model_settings.get('openai_previous_response_id')
         conv_id_setting = model_settings.get('openai_conversation_id')
 
-        if instruction_parts and prev_id_setting is not None and prev_id_setting != 'auto' and conv_id_setting is None:
+        if (
+            instruction_parts
+            and prev_id_setting is not None
+            and prev_id_setting != 'auto'
+            and conv_id_setting is None
+            and not any(
+                isinstance(message, ModelResponse) and message.provider_response_id == prev_id_setting
+                for message in messages
+            )
+        ):
             raise UserError(
                 '`openai_cache_instructions` moves the instructions into the request input so a '
                 'cache breakpoint can sit on them, but an explicit `openai_previous_response_id` '
-                'points at a stored response that may not contain them. Use '
-                '`openai_previous_response_id="auto"` or leave it unset so the breakpoint is '
-                'placed on the first request and reused across the chain.'
+                'is not in `message_history`, so it cannot be checked for a matching prefix. Use '
+                '`openai_previous_response_id="auto"` with the prior messages, or leave it unset.'
             )
 
-        all_static = all(not part.dynamic for part in instruction_parts)
-        if not all_static and prev_id_setting == 'auto' and conv_id_setting is None:
-            # Dynamic instructions change per request, so a chained response would replay stale
-            # ones. Send the full history instead of chaining.
-            return instruction_parts, None, None, messages
-
+        untrimmed = messages
         previous_response_id, conversation_id, messages = self._resolve_server_side_state(model_settings, messages)
-        return instruction_parts, previous_response_id, conversation_id, messages
+        reuse_chained_instructions = False
+        if previous_response_id:
+            relocated, chained_text = _instructions_in_force_before(untrimmed, previous_response_id)
+            if relocated and chained_text != InstructionPart.join(instruction_parts):
+                # Replaying the stored input would apply the previous request's instructions.
+                return instruction_parts, None, conversation_id, untrimmed, False
+            reuse_chained_instructions = relocated
+        return instruction_parts, previous_response_id, conversation_id, messages, reuse_chained_instructions
 
     @staticmethod
     def _apply_instruction_caching(
@@ -2909,9 +2930,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         """Relocate instructions into input messages and mark a cache breakpoint.
 
         The top-level `instructions` field cannot carry a breakpoint, so instructions are sent as
-        leading input messages instead. When the request chains to a previous response whose
-        `provider_details` confirms the instructions were relocated, they are already replayed
-        from the chained response's input and can be omitted here.
+        leading input messages instead. When the request chains to a previous response that
+        relocated the same instructions, they are already replayed from that response's input and
+        can be omitted here.
 
         Returns:
             A 3-tuple of (instructions, openai_messages, instructions_relocated).
