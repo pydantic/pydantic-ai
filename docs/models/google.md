@@ -337,6 +337,8 @@ result = agent.run_sync(
 print(result.output)
 ```
 
+Only `youtu.be`, `youtube.com`, `www.youtube.com`, and `m.youtube.com` are recognized as YouTube hosts and handed to the model as a video URL. Any other YouTube domain falls back to the ordinary file URL path, which on the Gemini API downloads the URL, so the model receives the watch page rather than the video. `music.youtube.com` is excluded deliberately: Google rejects it as a `file_uri` with a 400, on the Gemini API and on Vertex alike.
+
 Files can be uploaded via the [Files API](https://ai.google.dev/gemini-api/docs/files) and passed as URLs:
 
 ```py {title="file_upload.py" test="skip"}
