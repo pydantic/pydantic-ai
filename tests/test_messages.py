@@ -72,6 +72,7 @@ from pydantic_ai.messages import (
     LoadCapabilityReturnPart,
     RealtimeSessionErrorEvent,
     ToolReturnContent,
+    _post_compaction_window_for_response,  # pyright: ignore[reportPrivateUsage]
     is_multi_modal_content,
     narrow_message_parts,
     post_compaction_window,
@@ -3281,3 +3282,21 @@ def test_post_compaction_window_accepts_a_minimal_sequence():
     assert len(window) == 2
     assert isinstance(window[0], ModelResponse)
     assert isinstance(window[1], ModelRequest)
+
+
+def test_empty_compaction_part_does_not_reset_provider_evidence_window():
+    """An empty summary cannot replace the history before it."""
+    empty_compaction = ModelResponse(
+        parts=[CompactionPart(content='', provider_name='anthropic')], provider_name='anthropic'
+    )
+    serving_response = ModelResponse(parts=[TextPart(content='answer')], provider_name='anthropic')
+    messages: list[ModelMessage] = [
+        ModelRequest.user_text_prompt('tool context'),
+        empty_compaction,
+        ModelRequest.user_text_prompt('continue'),
+        serving_response,
+    ]
+
+    window = _post_compaction_window_for_response(messages, serving_response)
+
+    assert window == messages
