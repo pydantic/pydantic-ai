@@ -24,10 +24,10 @@ call, branch, `asyncio.gather`, or [`pydantic-graph`](../graph.md).
 | Structured output | Yes | Yes (type on the agent) |
 | Human in the loop | Yes (human tools) | Yes (tool approval) |
 | Guardrails | Yes (task guardrails) | Yes ([harness](https://pydantic.dev/docs/ai/harness/guardrails/)) |
-| Spend limits | No | Yes ([cost_limit](../agent.md#usage-limits), [spend](https://pydantic.dev/docs/ai/harness/spend/)) |
+| Spend limits | `max_iter` / `max_rpm` | Yes ([cost_limit](../agent.md#usage-limits), [spend](https://pydantic.dev/docs/ai/harness/spend/)) |
 | MCP | Client | Client and [server](../mcp/server.md) |
 | Memory | On `Agent` and `Crew` | [Harness Memory](https://pydantic.dev/docs/ai/harness/memory/) |
-| Compaction | No | Yes ([compaction](https://pydantic.dev/docs/ai/harness/compaction/)) |
+| Compaction | `respect_context_window` | Yes ([compaction](https://pydantic.dev/docs/ai/harness/compaction/)) |
 | Multi-agent | Roles, tasks, `Process` | [Delegation, graph, or `async`](../multi-agent-applications.md) |
 | Durable execution | `Crew.from_checkpoint` | [Temporal, DBOS, Prefect, Restate, Lambda, Kitaru, Airflow](../durable_execution/overview.md) |
 | Tracing | Their platform | OpenTelemetry |

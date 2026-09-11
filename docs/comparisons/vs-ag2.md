@@ -16,7 +16,7 @@ store, or the same agent inside [Temporal, DBOS, Prefect, Restate, Lambda, Kitar
 | Interfaces | A2A, ACP extra | [`to_cli_sync()`](../cli.md), [`to_web()`](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/), [A2A extra](https://github.com/datalayer/fasta2a) |
 | Realtime voice | No | Yes ([realtime](../realtime/overview.md)) |
 | Agent graph | Group chat / swarm | [`pydantic-graph`](../graph.md) |
-| Coding agent | No | [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) |
+| Coding agent | `apply_patch` / shell | [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) |
 | Research agent | No | [`Researcher()`](https://pydantic.dev/docs/ai/harness/researcher/) |
 | Web search | Yes | Yes ([WebSearch](../capabilities/web-search.md)) |
 | Code sandboxes | Daytona, Docker | [Modal](https://pydantic.dev/docs/ai/harness/modal-sandbox/), [Monty](https://github.com/pydantic/monty), [Code Mode](https://pydantic.dev/docs/ai/harness/code-mode/) |
@@ -24,15 +24,15 @@ store, or the same agent inside [Temporal, DBOS, Prefect, Restate, Lambda, Kitar
 | Browser | No | Yes ([Browser Use](https://pydantic.dev/docs/ai/harness/browser-use/) and [Playwright](https://pydantic.dev/docs/ai/harness/playwright/)) |
 | Structured output | Yes | Yes (type on the agent) |
 | Human in the loop | Yes (human input) | Yes (tool approval) |
-| Guardrails | No | Yes ([harness](https://pydantic.dev/docs/ai/harness/guardrails/)) |
+| Guardrails | Observers | Yes ([harness](https://pydantic.dev/docs/ai/harness/guardrails/)) |
 | Spend limits | No | Yes ([cost_limit](../agent.md#usage-limits), [spend](https://pydantic.dev/docs/ai/harness/spend/)) |
 | MCP | Client (extra) | Client and [server](../mcp/server.md) |
-| Memory | No | [Harness Memory](https://pydantic.dev/docs/ai/harness/memory/) |
-| Compaction | No | Yes ([compaction](https://pydantic.dev/docs/ai/harness/compaction/)) |
+| Memory | KnowledgeStore | [Harness Memory](https://pydantic.dev/docs/ai/harness/memory/) |
+| Compaction | History window / `CompactionSummary` | Yes ([compaction](https://pydantic.dev/docs/ai/harness/compaction/)) |
 | Multi-agent | Group chat, swarm | [Delegation, graph, or `async`](../multi-agent-applications.md) |
 | Durable execution | `Task` checkpoint store | [Temporal, DBOS, Prefect, Restate, Lambda, Kitaru, Airflow](../durable_execution/overview.md) |
 | Tracing | Logs | OpenTelemetry |
-| Evals | No | Yes ([Pydantic Evals](../evals.md)) |
+| Evals | Yes | Yes ([Pydantic Evals](../evals.md)) |
 | Test without API keys | Yes | Yes |
 | Embeddings | No | Yes |
 | Agent as data | `AgentSpec` | YAML, templates checked when you construct |

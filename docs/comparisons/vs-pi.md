@@ -18,12 +18,12 @@ packages. Pydantic AI is a typed Python [`Agent`][pydantic_ai.Agent].
 | Agent graph | No | [`pydantic-graph`](../graph.md) |
 | Coding agent | The product | [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) |
 | Research agent | No | [`Researcher()`](https://pydantic.dev/docs/ai/harness/researcher/) |
-| Web search | No | Yes ([WebSearch](../capabilities/web-search.md)) |
-| Code sandboxes | No | [Modal](https://pydantic.dev/docs/ai/harness/modal-sandbox/), [Monty](https://github.com/pydantic/monty), [Code Mode](https://pydantic.dev/docs/ai/harness/code-mode/) |
+| Web search | Packages, not core | Yes ([WebSearch](../capabilities/web-search.md)) |
+| Code sandboxes | Packages, not core | [Modal](https://pydantic.dev/docs/ai/harness/modal-sandbox/), [Monty](https://github.com/pydantic/monty), [Code Mode](https://pydantic.dev/docs/ai/harness/code-mode/) |
 | Image generation | No | Yes (OpenAI, Google, xAI) |
 | Browser | No | Yes ([Browser Use](https://pydantic.dev/docs/ai/harness/browser-use/) and [Playwright](https://pydantic.dev/docs/ai/harness/playwright/)) |
 | Structured output | Terminating tool you write | Yes (type on the agent) |
-| Human in the loop | No | Yes (tool approval) |
+| Human in the loop | Packages, not core | Yes (tool approval) |
 | Guardrails | No | Yes ([harness](https://pydantic.dev/docs/ai/harness/guardrails/)) |
 | Spend limits | No | Yes ([cost_limit](../agent.md#usage-limits), [spend](https://pydantic.dev/docs/ai/harness/spend/)) |
 | MCP | Packages, not core | Client and [server](../mcp/server.md) |

@@ -21,10 +21,10 @@ speak.
 | Agent graph | Media pipeline, not a workflow graph | [`pydantic-graph`](../graph.md) |
 | Coding agent | No | [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) |
 | Research agent | No | [`Researcher()`](https://pydantic.dev/docs/ai/harness/researcher/) |
-| Web search | No | Yes ([WebSearch](../capabilities/web-search.md)) |
-| Code sandboxes | No | [Modal](https://pydantic.dev/docs/ai/harness/modal-sandbox/), [Monty](https://github.com/pydantic/monty), [Code Mode](https://pydantic.dev/docs/ai/harness/code-mode/) |
+| Web search | Yes (provider tools) | Yes ([WebSearch](../capabilities/web-search.md)) |
+| Code sandboxes | `CodeInterpreter` (provider) | [Modal](https://pydantic.dev/docs/ai/harness/modal-sandbox/), [Monty](https://github.com/pydantic/monty), [Code Mode](https://pydantic.dev/docs/ai/harness/code-mode/) |
 | Image generation | No | Yes (OpenAI, Google, xAI) |
-| Browser | No | Yes ([Browser Use](https://pydantic.dev/docs/ai/harness/browser-use/) and [Playwright](https://pydantic.dev/docs/ai/harness/playwright/)) |
+| Browser | `ComputerUse` / `plugins.browser` | Yes ([Browser Use](https://pydantic.dev/docs/ai/harness/browser-use/) and [Playwright](https://pydantic.dev/docs/ai/harness/playwright/)) |
 | Structured output | You wire `response_format` | Yes (type on the agent) |
 | Human in the loop | Frontend tools | Yes (tool approval) |
 | Guardrails | No | Yes ([harness](https://pydantic.dev/docs/ai/harness/guardrails/)) |
@@ -35,7 +35,7 @@ speak.
 | Multi-agent | Handoffs in a room | [Delegation, graph, or `async`](../multi-agent-applications.md) |
 | Durable execution | Agent server orchestration | [Temporal, DBOS, Prefect, Restate, Lambda, Kitaru, Airflow](../durable_execution/overview.md) |
 | Tracing | Their telemetry | OpenTelemetry |
-| Evals | No | Yes ([Pydantic Evals](../evals.md)) |
+| Evals | Yes (`livekit.agents.evals`) | Yes ([Pydantic Evals](../evals.md)) |
 | Test without API keys | Yes | Yes |
 | Embeddings | No | Yes |
 

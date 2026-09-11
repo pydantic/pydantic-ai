@@ -15,10 +15,10 @@ features first. Pydantic AI runs on any model, including OpenAI.
 | Interfaces | None of these | [`to_cli_sync()`](../cli.md), [`to_web()`](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/), [A2A extra](https://github.com/datalayer/fasta2a) |
 | Realtime voice | Yes (OpenAI Realtime) | Yes ([realtime](../realtime/overview.md)) |
 | Agent graph | No (handoffs only) | [`pydantic-graph`](../graph.md) |
-| Coding agent | No | [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) |
+| Coding agent | `SandboxAgent` | [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) |
 | Research agent | No | [`Researcher()`](https://pydantic.dev/docs/ai/harness/researcher/) |
 | Web search | Yes (hosted) | Yes ([WebSearch](../capabilities/web-search.md)) |
-| Code sandboxes | Hosted OpenAI tools | [Modal](https://pydantic.dev/docs/ai/harness/modal-sandbox/), [Monty](https://github.com/pydantic/monty), [Code Mode](https://pydantic.dev/docs/ai/harness/code-mode/) |
+| Code sandboxes | Hosted tools plus sandbox clients | [Modal](https://pydantic.dev/docs/ai/harness/modal-sandbox/), [Monty](https://github.com/pydantic/monty), [Code Mode](https://pydantic.dev/docs/ai/harness/code-mode/) |
 | Image generation | Yes (OpenAI) | Yes (OpenAI, Google, xAI) |
 | Browser | `ComputerTool` (you host) | Yes ([Browser Use](https://pydantic.dev/docs/ai/harness/browser-use/) and [Playwright](https://pydantic.dev/docs/ai/harness/playwright/)) |
 | Structured output | Yes | Yes (type on the agent) |

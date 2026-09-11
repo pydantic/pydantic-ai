@@ -28,7 +28,7 @@ protocol, so the browser can stay theirs.
 | Spend limits | No | Yes ([cost_limit](../agent.md#usage-limits), [spend](https://pydantic.dev/docs/ai/harness/spend/)) |
 | MCP | Client | Client and [server](../mcp/server.md) |
 | Memory | No | [Harness Memory](https://pydantic.dev/docs/ai/harness/memory/) |
-| Compaction | No | Yes ([compaction](https://pydantic.dev/docs/ai/harness/compaction/)) |
+| Compaction | `pruneMessages` | Yes ([compaction](https://pydantic.dev/docs/ai/harness/compaction/)) |
 | Multi-agent | You compose it | [Delegation, graph, or `async`](../multi-agent-applications.md) |
 | Durable execution | `WorkflowAgent` (`@ai-sdk/workflow`) | [Temporal, DBOS, Prefect, Restate, Lambda, Kitaru, Airflow](../durable_execution/overview.md) |
 | Tracing | Their telemetry | OpenTelemetry |
