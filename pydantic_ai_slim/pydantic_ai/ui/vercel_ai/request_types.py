@@ -230,7 +230,7 @@ class ToolApprovalRespondedPart(BaseUIPart):
     input: Any | None = None
     provider_executed: bool | None = None
     call_provider_metadata: ProviderMetadata | None = None
-    approval: ToolApproval | None = None
+    approval: ToolApprovalResponded
 
 
 class ToolOutputDeniedPart(BaseUIPart):
@@ -343,7 +343,7 @@ class DynamicToolApprovalRespondedPart(BaseUIPart):
     input: Any
     provider_executed: bool | None = None
     call_provider_metadata: ProviderMetadata | None = None
-    approval: ToolApproval | None = None
+    approval: ToolApprovalResponded
 
 
 class DynamicToolOutputDeniedPart(BaseUIPart):
