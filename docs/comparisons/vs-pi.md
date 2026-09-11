@@ -1,9 +1,5 @@
 # Pydantic AI vs Pi
 
-Pi is a TypeScript coding agent you can embed without forking: extensions, skills, and `pi install`
-packages. Pydantic AI is a typed Python [`Agent`][pydantic_ai.Agent].
-[`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) is a capability on that same object.
-
 ## Side by side
 
 | | Pi | Pydantic AI |

@@ -1,8 +1,5 @@
 # Pydantic AI vs Agno
 
-Agno is a library plus **AgentOS**, a FastAPI runtime with auth, a UI, and storage. Pydantic AI is
-only the library: an agent you put in the application you already run.
-
 ## Side by side
 
 | | Agno | Pydantic AI |

@@ -1,8 +1,5 @@
 # Pydantic AI vs Google ADK
 
-Google ADK is the Gemini-native kit: `LlmAgent`, a `Runner`, Vertex, Search, A2A, a web UI. Pydantic
-AI isn't tied to a cloud.
-
 ## Side by side
 
 | | Google ADK | Pydantic AI |

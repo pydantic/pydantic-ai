@@ -1,12 +1,5 @@
 # Pydantic AI vs LiveKit Agents
 
-LiveKit Agents is the realtime runtime: WebRTC rooms, telephony, turn detection, STT/LLM/TTS
-pipelines. Pydantic AI is a typed [`Agent`][pydantic_ai.Agent] that also holds a
-[spoken conversation](../realtime/overview.md). Same tools, dependencies, and observability as text.
-
-Use LiveKit when the product is a room. Use Pydantic AI when the product is an agent that can also
-speak.
-
 ## Side by side
 
 | | LiveKit Agents | Pydantic AI |

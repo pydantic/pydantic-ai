@@ -1,8 +1,5 @@
 # Pydantic AI vs CrewAI
 
-CrewAI is a team: roles, tasks, a process mode. Pydantic AI has no crew. Multi-agent work is ordinary Python:
-sub-agents, hand-offs, or [`pydantic-graph`](../graph.md).
-
 ## Side by side
 
 | | CrewAI | Pydantic AI |

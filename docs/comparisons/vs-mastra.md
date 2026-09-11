@@ -1,9 +1,5 @@
 # Pydantic AI vs Mastra
 
-Mastra is TypeScript all-in-one: agents, workflows, memory, evals, a playground, Studio, Cloud.
-Pydantic AI is Python. One extension point (a capability) instead of tools, processors, guardrails,
-and scorers as separate concepts.
-
 ## Side by side
 
 | | Mastra | Pydantic AI |

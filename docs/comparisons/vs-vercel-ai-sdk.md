@@ -1,9 +1,5 @@
 # Pydantic AI vs Vercel AI SDK
 
-The Vercel AI SDK is the wire to a React UI: streaming, tool cards, approval in the browser. Pydantic
-AI is a Python agent. [`VercelAIAdapter`][pydantic_ai.ui.vercel_ai.VercelAIAdapter] speaks their
-protocol, so the browser can stay theirs.
-
 ## Side by side
 
 | | Vercel AI SDK | Pydantic AI |

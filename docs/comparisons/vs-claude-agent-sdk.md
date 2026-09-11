@@ -1,11 +1,5 @@
 # Pydantic AI vs Claude Agent SDK
 
-The Claude Agent SDK is Claude Code as a library: it wraps the `claude` CLI (TypeScript), which you
-drive with `query()` for one run or a `ClaudeSDKClient` session for a conversation, configuring that
-program in data. Pydantic AI is a native Python [`Agent`][pydantic_ai.Agent].
-[`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) is the coding stack in your process, on any
-model.
-
 ## Side by side
 
 | | Claude Agent SDK | Pydantic AI |

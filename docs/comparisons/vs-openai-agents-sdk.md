@@ -1,8 +1,5 @@
 # Pydantic AI vs OpenAI Agents SDK
 
-The OpenAI Agents SDK is OpenAI's agent library: sessions, guardrails, handoffs, and new OpenAI
-features first. Pydantic AI runs on any model, including OpenAI.
-
 ## Side by side
 
 | | OpenAI Agents SDK | Pydantic AI |

@@ -1,8 +1,5 @@
 # Pydantic AI vs LangChain & LangGraph
 
-A LangChain **agent** is a graph: `create_agent()` returns a `CompiledStateGraph`. Pydantic AI is a
-typed [`Agent`][pydantic_ai.Agent], with [`pydantic-graph`](../graph.md) when you actually need a graph.
-
 ## Side by side
 
 | | LangChain & LangGraph | Pydantic AI |
