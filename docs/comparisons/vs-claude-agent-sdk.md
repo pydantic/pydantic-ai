@@ -10,16 +10,16 @@ model, as a capability you can take apart.
 
 ## Side by side
 
-| | Claude Agent SDK 0.2.152 | Pydantic AI 2.42 + harness |
+| | Claude Agent SDK | Pydantic AI |
 |---|---|---|
 | Where the loop runs | `claude` subprocess | Your process |
 | Models | Claude (Anthropic, Bedrock, Vertex, Foundry) | Any provider |
 | Coding agent | The CLI, immediately | [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/), or the blocks it bundles |
 | Tools | `allowed_tools: list[str]` the CLI owns | Your functions, plus harness tools |
-| Stop | `interrupt()`, streaming only | `CancellationToken`, `RunCancelled` |
-| Continuity | Sessions, `rewind_files` | History you own |
-| Crash recovery | Not a session | Six engines wrap the agent |
-| Test offline | Launch the CLI | `TestModel` / `FunctionModel` |
+| Stop | `interrupt()`, streaming only | A stop signal; you get the messages back |
+| Continuity | Sessions, `rewind_files` | A message list you store |
+| Crash recovery | The chat, not the half-finished tool | The same agent, inside Temporal, DBOS, or Prefect |
+| Test offline | Launch the CLI | A fake model you script; no API key |
 
 ## Your process, not theirs
 
@@ -56,21 +56,18 @@ def lookup_order(ctx: RunContext[Support], order_id: str) -> str:
 ```
 
 `ClaudeSDKClient.interrupt()` is a control request over the transport, streaming mode only. Ours is a
-`CancellationToken` or `ctx.cancel()` from inside a tool.
+stop signal you pass into the run, or `ctx.cancel()` from inside a tool. Either way you get the
+messages back as [`RunCancelled`][pydantic_ai.exceptions.RunCancelled], not an empty abort.
 
-Sessions resume a conversation. They don't recover a half-finished run. Wrap the same agent in
-Temporal, DBOS, or Prefect if you need the work to restart.
+A Claude session is the chat. If the process dies while a tool is still running, you can reopen the
+conversation; that tool does not run again as a durable step. In Pydantic AI you keep a normal
+[`Agent`][pydantic_ai.Agent]. Attach Temporal, DBOS, or Prefect and that same object is what the
+worker runs: after a crash the engine replays completed model and tool calls and continues from the
+first incomplete one. You don't rewrite the agent as a workflow. (Restate, Kitaru, and Airflow
+adapters exist beside those three.)
 
 ## FAQ
 
 **Can I use Claude models?** Yes, directly. This page is about whose process the loop lives in.
 
 **Is `Coder()` Claude Code?** No. It's the parts, on your agent. More assembly, more yours.
-
----
-
-*claude-agent-sdk 0.2.152, installed. Transport is `SubprocessCLITransport`.
-`ClaudeSDKClient.interrupt()` docstring: streaming mode only. `allowed_tools` is `list[str]`.
-`rewind_files` exists on the client. `Coder()` matches the [Harness Coder docs](https://pydantic.dev/docs/ai/harness/coder/);
-this repo does not install the harness, so that snippet is not executed in CI. Pydantic AI 2.42.
-[Tell us](https://github.com/pydantic/pydantic-ai/issues/new) if a pin goes stale.*

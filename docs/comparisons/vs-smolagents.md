@@ -1,52 +1,22 @@
 # Pydantic AI vs smolagents
 
-smolagents asks the model to write Python and runs it. The default sandbox is a restricted
-interpreter (no `os`, no `open`); Docker and friends are the real isolation. The loop is
-synchronous: `CodeAgent.run()` owns the thread.
+smolagents asks the model to write Python and runs it. Pydantic AI does that too:
+[`CodeMode`](https://pydantic.dev/docs/ai/harness/code-mode/) in the harness, inside
+[Monty](https://github.com/pydantic/monty). The default is async tool calls.
 
-Pydantic AI is async tool calls. `CodeMode` in the harness is the write-Python path, inside
-[Monty](https://github.com/pydantic/monty).
+Their loop is synchronous: `CodeAgent.run()` owns the thread. Their default sandbox is a restricted
+interpreter (no `os`, no `open`); Docker and friends are the real isolation.
 
 ## Side by side
 
-| | smolagents 1.26.0 | Pydantic AI 2.42 |
+| | smolagents | Pydantic AI |
 |---|---|---|
-| How the model acts | Writes Python | Tool calls; `CodeMode` if you want code |
+| How the model acts | Writes Python | Tool calls, or `CodeMode` (write Python in Monty) |
 | Async | No | Yes |
-| Stop | `interrupt()` raises `AgentError` between steps | `RunCancelled` with history |
+| Stop | `interrupt()` raises `AgentError` between steps | A stop signal; you get the messages back |
 | Sandbox | Restricted interpreter; escalate to Docker/E2B/Modal | Monty / Modal in the harness |
-| Crash recovery | None in core | Six engines wrap the agent |
-| Test offline | Subclass `Model` | `TestModel` / `FunctionModel` |
-
-## Tool calls that overlap
-
-Three independent lookups start together:
-
-```python {title="parallel_tool_calls.py"}
-import asyncio
-
-from pydantic_ai import Agent, RunContext
-
-events: list[str] = []
-agent = Agent('openai:gpt-5.6-luna')
-
-
-@agent.tool
-async def slow_lookup(ctx: RunContext, name: str) -> str:
-    events.append(f'start:{name}')
-    await asyncio.sleep(0.01)
-    events.append(f'end:{name}')
-    return f'{name}:done'
-
-
-async def main():
-    await agent.run('Run the warehouse lookups for A, B, and C.')
-    print('first three events:', events[:3])
-    #> first three events: ['start:a', 'start:b', 'start:c']
-```
-
-smolagents' `interrupt()` sets a flag checked between steps. The run then raises `AgentError`, not a
-resumable history.
+| Crash recovery | None in core | The same agent, inside Temporal, DBOS, or Prefect |
+| Test offline | Subclass `Model` | A fake model you script; no API key |
 
 ## FAQ
 
@@ -54,10 +24,3 @@ resumable history.
 
 **Is their sandbox safe?** For accidents, the defaults are honest. For an adversarial prompt, they
 tell you to use Docker.
-
----
-
-*smolagents 1.26.0, installed. `CodeAgent.run` is not a coroutine. `LocalPythonExecutor([])` rejects
-`import os` and `open(...)`. `interrupt()` sets `interrupt_switch`; the loop raises `AgentError("Agent interrupted.")`.
-Pydantic AI 2.42.
-[Tell us](https://github.com/pydantic/pydantic-ai/issues/new) if a pin goes stale.*

@@ -572,13 +572,6 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     'What is 21 times 2?': ToolCallPart(tool_name='twice', args={'n': 21}),
     'Issue store credit for order W-882.': ToolCallPart(tool_name='issue_store_credit', args={'order_id': 'W-882'}),
     'Shout hello for the ticket.': ToolCallPart(tool_name='shout', args={'text': 'hello'}),
-    'Refund the duplicate invoice charge.': ToolCallPart(tool_name='file_refund', args={'item': 'invoice'}),
-    'Look up warehouse stock for SKU-WAIT.': ToolCallPart(tool_name='wait_on_stock', args={'sku': 'SKU-WAIT'}),
-    'Run the warehouse lookups for A, B, and C.': [
-        ToolCallPart(tool_name='slow_lookup', args={'name': 'a'}, tool_call_id='slow_a'),
-        ToolCallPart(tool_name='slow_lookup', args={'name': 'b'}, tool_call_id='slow_b'),
-        ToolCallPart(tool_name='slow_lookup', args={'name': 'c'}, tool_call_id='slow_c'),
-    ],
     'I just lost my card!': ToolCallPart(
         tool_name='final_result',
         args={
@@ -791,11 +784,6 @@ tool_responses: dict[tuple[str, str], str | ToolCallPart | Sequence[ToolCallPart
     ('twice', '42'): '42',
     ('issue_store_credit', 'credited W-882'): 'Store credit issued for W-882.',
     ('shout', 'HELLO'): 'HELLO',
-    ('file_refund', 'invoice: refund filed'): ToolCallPart(tool_name='notify_customer', args={'item': 'invoice'}),
-    ('notify_customer', 'invoice: customer emailed'): 'Refund filed and the customer was told.',
-    ('slow_lookup', 'a:done'): 'All three warehouses replied.',
-    ('slow_lookup', 'b:done'): 'All three warehouses replied.',
-    ('slow_lookup', 'c:done'): 'All three warehouses replied.',
     ('check_refund', 'Order A-4471: refunded.'): 'Order A-4471 was refunded.',
 }
 
