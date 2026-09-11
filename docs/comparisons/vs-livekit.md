@@ -21,8 +21,8 @@ speak.
 | Agent graph | Media pipeline, not a workflow graph | [`pydantic-graph`](../graph.md) |
 | Coding agent | No | [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) |
 | Research agent | No | [`Researcher()`](https://pydantic.dev/docs/ai/harness/researcher/) |
-| Web search | Yes (provider tools) | Yes ([WebSearch](../capabilities/web-search.md)) |
-| Code sandboxes | `CodeInterpreter` (provider) | [Modal](https://pydantic.dev/docs/ai/harness/modal-sandbox/), [Monty](https://github.com/pydantic/monty), [Code Mode](https://pydantic.dev/docs/ai/harness/code-mode/) |
+| Web search | Native (provider tools) | Native and third party ([WebSearch](../capabilities/web-search.md)) |
+| Code sandboxes | `CodeInterpreter` (provider) | [Modal](https://pydantic.dev/docs/ai/harness/modal-sandbox/) |
 | Image generation | No | Yes (OpenAI, Google, xAI) |
 | Browser | `ComputerUse` / `plugins.browser` | Yes ([Browser Use](https://pydantic.dev/docs/ai/harness/browser-use/) and [Playwright](https://pydantic.dev/docs/ai/harness/playwright/)) |
 | Structured output | You wire `response_format` | Yes (type on the agent) |

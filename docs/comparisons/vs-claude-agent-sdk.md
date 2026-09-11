@@ -19,8 +19,8 @@ model.
 | Agent graph | No | [`pydantic-graph`](../graph.md) |
 | Coding agent | The CLI | [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) |
 | Research agent | No | [`Researcher()`](https://pydantic.dev/docs/ai/harness/researcher/) |
-| Web search | Yes | Yes ([WebSearch](../capabilities/web-search.md)) |
-| Code sandboxes | CLI permissions | [Modal](https://pydantic.dev/docs/ai/harness/modal-sandbox/), [Monty](https://github.com/pydantic/monty), [Code Mode](https://pydantic.dev/docs/ai/harness/code-mode/) |
+| Web search | Native | Native and third party ([WebSearch](../capabilities/web-search.md)) |
+| Code sandboxes | CLI permissions | [Modal](https://pydantic.dev/docs/ai/harness/modal-sandbox/) |
 | Image generation | No | Yes (OpenAI, Google, xAI) |
 | Browser | Yes (Chrome) | Yes ([Browser Use](https://pydantic.dev/docs/ai/harness/browser-use/) and [Playwright](https://pydantic.dev/docs/ai/harness/playwright/)) |
 | Structured output | You configure the CLI | Yes (type on the agent) |

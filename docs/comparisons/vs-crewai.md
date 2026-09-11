@@ -17,8 +17,8 @@ call, branch, `asyncio.gather`, or [`pydantic-graph`](../graph.md).
 | Agent graph | `Process` (sequential / hierarchical) | [`pydantic-graph`](../graph.md) |
 | Coding agent | E2B tools | [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) |
 | Research agent | No | [`Researcher()`](https://pydantic.dev/docs/ai/harness/researcher/) |
-| Web search | Yes | Yes ([WebSearch](../capabilities/web-search.md)) |
-| Code sandboxes | E2B | [Modal](https://pydantic.dev/docs/ai/harness/modal-sandbox/), [Monty](https://github.com/pydantic/monty), [Code Mode](https://pydantic.dev/docs/ai/harness/code-mode/) |
+| Web search | Third party (Serper, Tavily, Exa) | Native and third party ([WebSearch](../capabilities/web-search.md)) |
+| Code sandboxes | E2B | [Modal](https://pydantic.dev/docs/ai/harness/modal-sandbox/) |
 | Image generation | Yes (`DallETool`) | Yes (OpenAI, Google, xAI) |
 | Browser | Yes (Browserbase) | Yes ([Browser Use](https://pydantic.dev/docs/ai/harness/browser-use/) and [Playwright](https://pydantic.dev/docs/ai/harness/playwright/)) |
 | Structured output | Yes | Yes (type on the agent) |

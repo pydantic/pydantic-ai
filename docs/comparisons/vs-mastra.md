@@ -18,8 +18,8 @@ and scorers as separate concepts.
 | Agent graph | Workflows in core | [`pydantic-graph`](../graph.md) |
 | Coding agent | `createCodingAgent()` | [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) |
 | Research agent | No | [`Researcher()`](https://pydantic.dev/docs/ai/harness/researcher/) |
-| Web search | Yes | Yes ([WebSearch](../capabilities/web-search.md)) |
-| Code sandboxes | Workspace (E2B, Daytona, Modal, Code Mode) | [Modal](https://pydantic.dev/docs/ai/harness/modal-sandbox/), [Monty](https://github.com/pydantic/monty), [Code Mode](https://pydantic.dev/docs/ai/harness/code-mode/) |
+| Web search | Native (`webSearchTool`) | Native and third party ([WebSearch](../capabilities/web-search.md)) |
+| Code sandboxes | Workspace (E2B, Daytona, Modal, Code Mode) | [Modal](https://pydantic.dev/docs/ai/harness/modal-sandbox/) |
 | Image generation | No | Yes (OpenAI, Google, xAI) |
 | Browser | Yes (AgentBrowser, Stagehand) | Yes ([Browser Use](https://pydantic.dev/docs/ai/harness/browser-use/) and [Playwright](https://pydantic.dev/docs/ai/harness/playwright/)) |
 | Structured output | Yes | Yes (type on the agent) |

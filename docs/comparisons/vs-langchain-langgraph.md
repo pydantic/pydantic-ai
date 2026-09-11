@@ -17,8 +17,8 @@ typed [`Agent`][pydantic_ai.Agent], with [`pydantic-graph`](../graph.md) when yo
 | Agent graph | LangGraph | [`pydantic-graph`](../graph.md) |
 | Coding agent | Deep Agents | [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) |
 | Research agent | Open Deep Research | [`Researcher()`](https://pydantic.dev/docs/ai/harness/researcher/) |
-| Web search | Yes | Yes ([WebSearch](../capabilities/web-search.md)) |
-| Code sandboxes | Community / E2B | [Modal](https://pydantic.dev/docs/ai/harness/modal-sandbox/), [Monty](https://github.com/pydantic/monty), [Code Mode](https://pydantic.dev/docs/ai/harness/code-mode/) |
+| Web search | Native tools plus Tavily, DuckDuckGo, ... | Native and third party ([WebSearch](../capabilities/web-search.md)) |
+| Code sandboxes | Community / E2B | [Modal](https://pydantic.dev/docs/ai/harness/modal-sandbox/) |
 | Image generation | Integrations | Yes (OpenAI, Google, xAI) |
 | Browser | Integrations | Yes ([Browser Use](https://pydantic.dev/docs/ai/harness/browser-use/) and [Playwright](https://pydantic.dev/docs/ai/harness/playwright/)) |
 | Structured output | Yes (`with_structured_output`) | Yes (type on the agent) |

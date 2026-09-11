@@ -18,8 +18,8 @@ packages. Pydantic AI is a typed Python [`Agent`][pydantic_ai.Agent].
 | Agent graph | No | [`pydantic-graph`](../graph.md) |
 | Coding agent | The product | [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) |
 | Research agent | No | [`Researcher()`](https://pydantic.dev/docs/ai/harness/researcher/) |
-| Web search | Yes (`pi install`) | Yes ([WebSearch](../capabilities/web-search.md)) |
-| Code sandboxes | Packages, not core | [Modal](https://pydantic.dev/docs/ai/harness/modal-sandbox/), [Monty](https://github.com/pydantic/monty), [Code Mode](https://pydantic.dev/docs/ai/harness/code-mode/) |
+| Web search | Native and third party (`pi install`) | Native and third party ([WebSearch](../capabilities/web-search.md)) |
+| Code sandboxes | Packages, not core | [Modal](https://pydantic.dev/docs/ai/harness/modal-sandbox/) |
 | Image generation | No | Yes (OpenAI, Google, xAI) |
 | Browser | No | Yes ([Browser Use](https://pydantic.dev/docs/ai/harness/browser-use/) and [Playwright](https://pydantic.dev/docs/ai/harness/playwright/)) |
 | Structured output | Terminating tool you write | Yes (type on the agent) |
