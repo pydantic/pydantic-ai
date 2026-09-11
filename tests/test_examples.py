@@ -754,7 +754,7 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     'What have AI companies been posting about?': 'OpenAI announced their latest model updates, while Anthropic shared research on AI safety...',
 }
 
-tool_responses: dict[tuple[str, str], str | ToolCallPart | Sequence[ToolCallPart]] = {
+tool_responses: dict[tuple[str, str], str] = {
     (
         'weather_forecast',
         'The forecast in Paris on 2030-01-01 is 24°C and sunny.',
