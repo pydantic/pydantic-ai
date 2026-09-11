@@ -36,8 +36,8 @@ transform. That matters when a provider's structured output mode is unreliable f
 want to switch how the answer comes back without touching the schema or the tools.
 
 **Trusted state.** The AI SDK's runtime context is a loosely typed bag that travels with the call.
-Pydantic AI's `deps_type` is a separate typed argument that tools read and the model never sees, so a
-database handle or a customer ID isn't something a prompt can reach.
+Pydantic AI's `deps_type` is a typed argument on the agent: tools read it through `RunContext`, and
+the type checker knows the shape.
 
 **Crash recovery.** There isn't a first-party story in the AI SDK; there's no durable agent export in
 version 7. Pydantic AI runs can be wrapped by Temporal, DBOS, Prefect, Restate, Kitaru, or Airflow
@@ -51,7 +51,7 @@ without changing the agent.
 | Streaming to a UI | Its whole reason for existing | Adapters, including for the AI SDK's protocol |
 | The agent loop | `ToolLoopAgent`, with `stopWhen` for control | The loop is a value; `agent.iter()` drives it step by step |
 | Stopping a run | `abortSignal` aborts the request | `RunCancelled` carries the conversation; resume is a normal run |
-| Trusted state | A loosely typed runtime context | `deps_type`, read by tools, invisible to the model |
+| Trusted state | A loosely typed runtime context | `deps_type` plus `RunContext`: a typed dependency API |
 | Structured output | Chosen for you | You choose: tool call, native, or transformed text |
 | Skills | `uploadSkill` to a provider | Capabilities that load on demand and round-trip to YAML |
 | Budgets | `stopWhen` on steps; no money limit | Requests, tool calls, tokens, and `cost_limit` in USD when pricing data is available, checked after each response |

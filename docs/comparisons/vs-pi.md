@@ -45,9 +45,8 @@ Ours puts more of the boundary in the library: `CodeMode` runs model-written cod
 your interpreter, `ModalSandbox` gives the agent an isolated cloud container, any tool can be marked
 `requires_approval=True` (and [`DeferredToolRequests`][pydantic_ai.DeferredToolRequests] included in
 `output_type`, or [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] used)
-so the run pauses and hands you the pending call, and `deps_type` keeps
-credentials somewhere the model can't see them at all. You should still run the thing in a container.
-The difference is how much survives when you don't.
+so the run pauses and hands you the pending call, and credentials live in `deps_type`. You should
+still run the thing in a container. The library-side gates are extra, not a substitute.
 
 ## Side by side
 
@@ -57,7 +56,7 @@ The difference is how much survives when you don't.
 | What you get | A working coding agent, plus an embeddable core | Parts you assemble onto any agent |
 | Changing behaviour | Configuration, extensions, skills | Any piece is a capability you swap |
 | Isolation | Deliberately none; run it in a container | `CodeMode` in Monty, `ModalSandbox`, per-tool approval, plus your container |
-| Trusted state | Environment and configuration | `deps_type`, read by tools, invisible to the model |
+| Trusted state | Environment and configuration | `deps_type` plus `RunContext`: a typed dependency API |
 | Skills | `SKILL.md` files with progressive disclosure | Skills as a capability, alongside the rest |
 | Driving it programmatically | Line-delimited JSON over stdin and stdout | Ordinary Python function calls |
 | Models | Configurable provider and model | Any provider, with `FallbackModel` for failover |

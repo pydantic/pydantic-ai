@@ -50,7 +50,7 @@ doesn't, under a durable engine you stream through an external sink you provide.
 |---|---|---|
 | Language | TypeScript | Python |
 | Extending an agent | Tools, processors, guardrails, subagents, scorers | One capability that can do all of those, and load on demand |
-| Trusted state | Zod validates tool inputs | `deps_type`, read by tools, invisible to the model |
+| Trusted state | Zod validates tool inputs | `deps_type` plus `RunContext`: a typed dependency API |
 | Workflows | A workflow engine with snapshots and time travel | Ordinary async code, and `pydantic_graph` when you want a state machine |
 | Durability | Their workflow engine, or the Inngest variant | Six engines wrap the agent; you pick |
 | Memory | Working, observational, and semantic recall | Dependencies and history processors you wire up |

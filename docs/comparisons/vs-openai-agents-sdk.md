@@ -79,8 +79,8 @@ need the worker and workflow. DBOS and Prefect wrappers ship in the same reposit
 Kitaru, and Airflow adapters live in those
 projects. If your company already runs one of those, that's the one you use.
 
-The OpenAI SDK has no first-party equivalent, though a Temporal contrib package exists, which is
-worth saying, because it proves the idea isn't impossible there. Their durability story is sessions,
+The OpenAI SDK has no first-party equivalent, though a Temporal contrib package exists. Their
+durability story is sessions,
 and sessions remember conversations, not executions. If the process dies halfway through a run,
 a session tells you what was said, not what was half-done.
 

@@ -49,7 +49,7 @@ work rather than the transcript, and the wrapping doesn't change the agent.
 | Models | Anthropic | Any provider, with `FallbackModel` for failover |
 | Tools | Named in strings; the CLI owns them | Your Python functions, with types and validation |
 | Subagents and hooks | Configuration dictionaries and JSON events | Capabilities and typed hooks in your code |
-| Trusted state | Nothing typed; configuration and environment | `deps_type`, read by tools, invisible to the model |
+| Trusted state | Nothing typed; configuration and environment | `deps_type` plus `RunContext`: a typed dependency API |
 | Coding-agent features | Everything Claude Code has, immediately | Composable pieces in the harness: filesystem, shell, `CodeMode`, subagents, skills, memory |
 | Spend limits | `max_budget_usd` for the run, enforced by the CLI | `UsageLimits` on requests, tool calls and tokens, checked before the next call; `cost_limit` when pricing data is available |
 | Stopping a run | `ClaudeSDKClient.interrupt()`, streaming mode only, from outside the run | `CancellationToken`, `ctx.cancel()` from inside a tool, `RunCancelled` carrying resumable history |
@@ -70,7 +70,7 @@ at a directory, and more yours afterwards.
 
 **Is one more secure?**
 They protect different things. The Claude SDK isolates by process and has a mature permission
-interface. Pydantic AI keeps trusted state out of the model's reach entirely, pauses on any tool marked
+interface. Pydantic AI puts credentials in a typed `deps_type`, pauses on any tool marked
 `requires_approval=True`, and runs model-written code in a sandbox through the harness.
 
 ---

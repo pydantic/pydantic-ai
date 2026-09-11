@@ -45,7 +45,7 @@ translating one is mechanical but manual.
 |---|---|---|
 | Agent as data | `AgentSpec` with name, prompt, tools, response schema | `AgentSpec` round-tripping to YAML, with a generated JSON schema |
 | Prompt templates | Spec fields | Checked against `deps_type` at `Agent.from_spec` load |
-| Typed dependencies | `Inject` and `Depends` type what tools receive | `deps_type` types it and keeps it out of the model's reach |
+| Typed dependencies | `Inject` and `Depends` type what tools receive | `deps_type` plus `RunContext`: a typed dependency API |
 | Structured output | `ResponseSchema` | `output_type`, with explicit control over how it goes over the wire |
 | Durability | `Task` with a checkpoint store and `resume_from` | Six engines wrap the agent; you pick which |
 | Stopping a run | `Task.cancel()` on the task envelope | `CancellationToken` across runs, `ctx.cancel()` in a tool, resumable history |

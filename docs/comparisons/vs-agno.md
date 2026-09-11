@@ -53,7 +53,7 @@ in `output_type`, and the run pauses and hands you the pending call.
 |---|---|---|
 | What you can deploy | AgentOS if you want it: endpoints, UI, auth, roles, storage. Optional, not required | Nothing to deploy; the agent goes inside the app you already have |
 | Agent shape | One large constructor, designed against AgentOS | A typed value that runs sync, async, or step by step |
-| Trusted state | Session state and values captured in tools | `deps_type`, read by tools, invisible to the model |
+| Trusted state | Session state and values captured in tools | `deps_type` plus `RunContext`: a typed dependency API |
 | Stopping a run | `cancel_run(run_id)` | `CancellationToken` across runs, `ctx.cancel()` in a tool, `RunCancelled` with resumable history |
 | Shell and code tools | Host `subprocess` and in-process `exec` by default, with warnings and opt-in confirmation | `CodeMode` in Monty, `ModalSandbox` for containers, `requires_approval=True` on any tool |
 | Crash recovery | AgentOS durable API | Temporal, DBOS and Prefect in-tree; Restate, Kitaru, and Airflow through integrations those projects maintain |

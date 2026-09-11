@@ -69,10 +69,9 @@ history, and you resume by passing that history to the next run.
 
 ## Trusted state, tests, crash recovery
 
-**Trusted state.** smolagents builds tool schemas from docstrings and type hints, and there's nowhere
-to put something the model shouldn't see. Pydantic AI's `deps_type` is a separate typed argument that
-tools read and the model never does, so a database handle or a customer ID stays out of the
-conversation entirely.
+**Trusted state.** smolagents builds tool schemas from docstrings and type hints. Pydantic AI's
+`deps_type` is a typed argument on the agent: tools read it through `RunContext`, and it is in the
+agent's type so a tool cannot forget to take it.
 
 **Testing.** Both are testable offline, and smolagents deserves credit here: its `Model` base class is
 a real place to plug a scripted stub, and we used one to drive a full `CodeAgent` run with no network.
@@ -92,7 +91,7 @@ Prefect, Restate, Kitaru, or Airflow without changing the agent.
 | Sandbox by default | Restricted interpreter, 11 stdlib modules, no `open` | Tools are your functions; `CodeMode` runs model code in Monty |
 | Stronger isolation | Docker, E2B, Modal, Blaxel, or remote executors | Sandbox providers in the harness |
 | Stopping a run | `interrupt()` sets a flag checked between steps; needs another thread | `CancellationToken`, `ctx.cancel()`, `RunCancelled` with resumable history |
-| Trusted state | Nothing separate from the prompt | `deps_type`, read by tools, invisible to the model |
+| Trusted state | Nothing separate from the prompt | `deps_type` plus `RunContext`: a typed dependency API |
 | Crash recovery | None in core | Six engines wrap the agent object |
 | Testing offline | Subclass `Model` yourself | `TestModel` calls your tools with no scripting; `FunctionModel` scripts them |
 | Tracing | OpenInference spans under its own attribute names; zero `gen_ai.*` | OpenTelemetry GenAI semantic conventions when instrumentation is enabled |

@@ -187,8 +187,9 @@ second API:
   adapters live outside it. In LangGraph, the checkpointer is a graph feature: crash recovery means
   expressing the work as a graph.
 - **Trusted state is a typed argument.** `deps_type` holds the database handle, the customer ID, the
-  API client. Tools read it through `RunContext`; the model never sees it. LangChain's
-  `context_schema` is invocation context via `runtime.context`. Graph state is `state_schema`.
+  API client. Tools read it through `RunContext`. LangChain's `context_schema` is invocation context
+  via `runtime.context`. Graph state is `state_schema`. The difference is that `deps_type` is in the
+  agent's type.
 - **Cancelling is a typed outcome.** A `CancellationToken` stops one or several in-process runs, a
   tool can call `ctx.cancel()`, and the run ends in `RunCancelled` carrying the history. It cannot be
   passed through Temporal, DBOS, or Prefect durable entry points. LangGraph's `abort()` exists only

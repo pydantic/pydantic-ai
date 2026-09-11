@@ -98,7 +98,7 @@ which cover a lot but aren't a ceiling on the whole crew.
 | | CrewAI 1.15.21 | Pydantic AI 2.42 |
 |---|---|---|
 | How you describe work | Roles, goals, backstories, tasks, and a process mode | Ordinary async Python: call, branch, gather |
-| Trusted state | Crew inputs and values captured in tools | `deps_type`, a separate argument tools read and the model never sees |
+| Trusted state | Crew inputs and values captured in tools | `deps_type` plus `RunContext`: a typed dependency API |
 | Budgets | Per agent: iterations, time, tokens, requests per minute, no money limit | Per run: requests, tool calls, tokens, and `cost_limit` in USD (checked after each response; pair with `request_limit`) |
 | Crash recovery | Built-in checkpoints on crews, flows, and agents | Six engines wrap the agent: Temporal, DBOS, Prefect, Restate, Kitaru, Airflow |
 | Stopping a run | No stop or cancel method on `Crew` | `CancellationToken` from another thread, or `ctx.cancel()` in a tool; the history survives and resumes |
