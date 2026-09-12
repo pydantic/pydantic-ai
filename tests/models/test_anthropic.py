@@ -1695,6 +1695,104 @@ async def test_anthropic_opus_5_rejects_top_effort_when_thinking_disabled(
     assert (await Agent(allowed).run('Hello')).output == 'Hello!'
 
 
+async def test_anthropic_opus_5_rejects_top_effort_when_thinking_disabled_via_extra_body(
+    allow_model_requests: None,
+):
+    """`extra_body={'thinking': {'type': 'disabled'}}` hits the same Opus 5 effort cap as the typed setting.
+
+    The guard resolves the effective thinking from typed settings and `extra_body['thinking']` with
+    `extra_body` winning, matching how the request is built, so the extra_body channel cannot bypass
+    the rejection recorded against the live 400 in
+    `test_anthropic_opus_5_rejects_top_effort_when_thinking_disabled`.
+    """
+    c = completion_message(
+        [BetaTextBlock(text='Hello!', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=10),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+
+    settings = AnthropicModelSettings(
+        extra_body={'thinking': {'type': 'disabled'}},
+        anthropic_effort='xhigh',
+    )
+    model = AnthropicModel('claude-opus-5', provider=AnthropicProvider(anthropic_client=mock_client), settings=settings)
+
+    with pytest.raises(UserError, match='does not support `anthropic_effort='):
+        await Agent(model).run('Hello')
+
+    assert len(cast(MockAnthropic, mock_client).chat_completion_kwargs) == 0
+
+
+async def test_anthropic_opus_5_rejects_top_effort_when_budget_thinking_via_extra_body(
+    allow_model_requests: None,
+):
+    """Top effort is also rejected when budget-based thinking arrives through `extra_body`.
+
+    Typed budget thinking already hits the budget-thinking guard on every request; resolving the
+    effective thinking in the effort guard closes the extra_body route to the same always-invalid
+    combination.
+    """
+    c = completion_message(
+        [BetaTextBlock(text='Hello!', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=10),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+
+    settings = AnthropicModelSettings(
+        extra_body={'thinking': {'type': 'enabled', 'budget_tokens': 1024}},
+        anthropic_effort='xhigh',
+    )
+    model = AnthropicModel('claude-opus-5', provider=AnthropicProvider(anthropic_client=mock_client), settings=settings)
+
+    with pytest.raises(UserError, match='does not support `anthropic_effort='):
+        await Agent(model).run('Hello')
+
+    assert len(cast(MockAnthropic, mock_client).chat_completion_kwargs) == 0
+
+
+async def test_anthropic_opus_5_allows_extra_body_thinking_without_top_effort(
+    allow_model_requests: None,
+):
+    """`extra_body['thinking']` still passes through when no top effort is requested.
+
+    The escape hatch keeps working: budget-based thinking without `anthropic_effort` is sent
+    untouched, `adaptive` thinking passes the guard even with top effort, and top effort without any
+    thinking setting is unaffected.
+    """
+    c = completion_message(
+        [BetaTextBlock(text='Hello!', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=10),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+
+    budget_settings = AnthropicModelSettings(extra_body={'thinking': {'type': 'enabled', 'budget_tokens': 1024}})
+    budget_model = AnthropicModel(
+        'claude-opus-5', provider=AnthropicProvider(anthropic_client=mock_client), settings=budget_settings
+    )
+    assert (await Agent(budget_model).run('Hello')).output == 'Hello!'
+
+    all_kwargs = cast(MockAnthropic, mock_client).chat_completion_kwargs
+    assert len(all_kwargs) == 1
+    assert all_kwargs[0]['extra_body']['thinking'] == {'type': 'enabled', 'budget_tokens': 1024}
+
+    # `adaptive` thinking from extra_body is compatible with top effort.
+    adaptive_settings = AnthropicModelSettings(extra_body={'thinking': {'type': 'adaptive'}}, anthropic_effort='xhigh')
+    adaptive_model = AnthropicModel(
+        'claude-opus-5', provider=AnthropicProvider(anthropic_client=mock_client), settings=adaptive_settings
+    )
+    assert (await Agent(adaptive_model).run('Hello')).output == 'Hello!'
+
+    # No thinking setting at all also passes the guard.
+    effort_only_model = AnthropicModel(
+        'claude-opus-5',
+        provider=AnthropicProvider(anthropic_client=mock_client),
+        settings=AnthropicModelSettings(anthropic_effort='xhigh'),
+    )
+    assert (await Agent(effort_only_model).run('Hello')).output == 'Hello!'
+
+    assert len(cast(MockAnthropic, mock_client).chat_completion_kwargs) == 3
+
+
 async def test_anthropic_task_budget_remaining_rejects_server_side_compaction(allow_model_requests: None):
     """`task_budget.remaining` and `AnthropicCompaction` are mutually exclusive.
 
