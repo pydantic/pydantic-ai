@@ -185,13 +185,24 @@ The configuration file should be a JSON file with an `mcpServers` object contain
 
 Each entry supports `command`, `args`, `env` and `cwd` for a stdio server, or `url` and `headers`
 for an HTTP server. The configuration is validated as it's loaded, so a wrongly-typed field is reported
-straight away instead of failing later at connection time. Unknown keys are ignored, so a file shared with
-another MCP client still loads — but they are only ignored, never honoured. In particular
-`disabled` does not skip a server, and `type` does not choose the transport: that is inferred from
-the URL, as described below.
+straight away instead of failing later at connection time.
+
+Set `disabled` to `true` to skip a server before expanding its environment variables or validating its
+transport fields. `disabled` must be a JSON boolean for enabled entries; omission is equivalent to `false`.
+
+Use `type` to select a transport explicitly:
+
+- `stdio` requires `command` and rejects `url`.
+- `sse` requires `url` and rejects `command`, even when the URL does not end in `/sse`.
+- `http` or `streamableHttp` requires `url` and rejects `command`, even when the URL ends in `/sse`.
+
+Unknown `type` values and conflicting transport fields raise a `ValueError` during loading.
+Without `type`, `command` takes precedence when present; otherwise the transport is inferred from the URL.
+Unknown keys are ignored, so a file shared with another MCP client still loads. Other clients' settings
+such as `envFile`, `headersHelper`, and `oauth` are not applied.
 
 !!! note
-    The MCP server is only inferred to be an SSE server because of the `/sse` suffix. Any other server with the `url` field is treated as a Streamable HTTP server. We made this decision given that the SSE transport is deprecated.
+    When `type` is omitted, the `/sse` suffix selects SSE. Other URLs select Streamable HTTP, since the SSE transport is deprecated.
 
 ### Environment variables
 
