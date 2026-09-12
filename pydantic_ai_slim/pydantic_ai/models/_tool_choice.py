@@ -146,12 +146,17 @@ def resolve_tool_choice(  # noqa: C901
     # list[str]: required, restricted to these tools
     elif isinstance(function_tool_choice, list):
         chosen_set = set(function_tool_choice)
-        _check_invalid_tools(chosen_set, known_tool_names, known_label='Known tools')
+        # A list choice excludes output tools, so it is validated against the function tools alone
+        # -- same basis as `ToolOrOutput.function_tools` below. Validating against every known name
+        # would accept an output tool name here and force the model toward a tool this choice does
+        # not actually make available.
+        known_function_tool_names = {t.name for t in model_request_parameters.function_tools}
+        _check_invalid_tools(chosen_set, known_function_tool_names, known_label='Known tools')
         # A deferred declaration or a tool-addition definition is already on the wire and remains
         # callable; only tools absent from the wire cannot be forced by name.
         chosen_set = _filter_withheld_tools(chosen_set)
 
-        if chosen_set == known_tool_names:
+        if chosen_set == known_function_tool_names:
             return 'required'
 
         return ('required', chosen_set)

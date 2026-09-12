@@ -261,6 +261,18 @@ RAISES_CASES = [
         match=r'Invalid tool names in `tool_choice`:.*Known tools:',
     ),
     dict(
+        id='list_names_only_an_output_tool',
+        # A list choice excludes output tools, so an output tool name in one is a typo, not a
+        # selection -- and must be rejected the same way `ToolOrOutput(function_tools=...)` does.
+        tool_choice=['final_result'],
+        params_kwargs={
+            'function_tools': [make_tool('a')],
+            'output_tools': [make_tool('final_result')],
+            'allow_text_output': True,
+        },
+        match=r"Invalid tool names in `tool_choice`: \{'final_result'\}",
+    ),
+    dict(
         id='list_invalid_no_function_tools',
         tool_choice=['x'],
         params_kwargs={'function_tools': [], 'allow_text_output': True},
@@ -397,6 +409,21 @@ WARNS_CASES = [
         match=r"Some tools.*'typo'.*Known tools: \['a', 'b'\]",
         expected_mode='required',
         expected_tools={'a', 'typo'},
+    ),
+    dict(
+        id='list_function_tool_plus_output_tool_name',
+        # Before the output tool name was counted as known, `chosen_set == known_tool_names` held
+        # and the choice collapsed to a bare `'required'` -- silently dropping the restriction the
+        # caller asked for, with no warning. It must warn and keep the restriction instead.
+        tool_choice=['a', 'final_result'],
+        params_kwargs={
+            'function_tools': [make_tool('a'), make_tool('b')],
+            'output_tools': [make_tool('final_result')],
+            'allow_text_output': True,
+        },
+        match=r"Some tools.*'final_result'",
+        expected_mode='required',
+        expected_tools={'a', 'final_result'},
     ),
     dict(
         id='tool_or_output_partial_invalid',
