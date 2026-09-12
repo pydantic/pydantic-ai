@@ -15,9 +15,6 @@ from urllib.parse import urlparse
 import anyio
 import httpx
 import pytest
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import SimpleSpanProcessor
-from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from pytest_mock import MockerFixture
 
 import pydantic_ai.models
@@ -51,6 +48,11 @@ pytestmark = [
 
 with try_import() as logfire_imports_successful:
     from logfire.testing import CaptureLogfire
+
+with try_import() as opentelemetry_imports_successful:
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 with try_import() as openai_imports_successful:
     from pydantic_ai.embeddings.openai import LatestOpenAIEmbeddingModelNames, OpenAIEmbeddingModel
@@ -3498,6 +3500,7 @@ async def test_limited_instrumentation(capfire: CaptureLogfire):
     )
 
 
+@pytest.mark.skipif(not opentelemetry_imports_successful(), reason='opentelemetry not installed')
 def test_instrumented_span_exports_embeddings_when_content_included():
     """With include_content=True the exported span carries the embeddings its declared json_schema promises."""
     span_exporter = InMemorySpanExporter()
