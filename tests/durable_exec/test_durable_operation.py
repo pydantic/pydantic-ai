@@ -518,7 +518,9 @@ def test_temporal_backend_preserves_sdk_visible_activity_definitions() -> None:
     for wrapped in durability._toolsets_by_id.values():  # pyright: ignore[reportPrivateUsage]
         legacy_registrations.extend(toolset_temporal_activities(wrapped))
 
-    registrations = list(backend.registrations())
+    # Child workflow definitions now share the backend registration stream, while this
+    # compatibility assertion remains specifically about SDK-visible activities.
+    registrations = durability.temporal_activities
     assert registrations == legacy_registrations
 
     def sdk_definition(item: Callable[..., object]) -> tuple[str | None, inspect.Signature]:
