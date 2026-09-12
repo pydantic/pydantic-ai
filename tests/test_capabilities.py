@@ -9,7 +9,7 @@ import time
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field, replace
 from traceback import extract_tb
-from typing import Any, cast
+from typing import Any, ClassVar, cast
 
 import anyio
 import pytest
@@ -4743,3 +4743,333 @@ def test_a_synthetic_key_retries_until_it_is_unused(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr('pydantic_ai.agent.uuid4', lambda: next(minted))
 
     assert _synthetic_capability_id(_Unnamed, taken={'<_unnamed:aaaaaa>'}) == '<_unnamed:bbbbbb>'
+
+
+# --- exclusive_execution ---
+
+
+@dataclass
+class _Guard(AbstractCapability[Any]):
+    """Authorizes a call and records its outcome, so it must reach the tool body itself."""
+
+    label: str = 'guard'
+    seen: list[str] = field(default_factory=list[str])
+
+    def get_ordering(self) -> CapabilityOrdering:
+        return CapabilityOrdering(position='innermost', exclusive_execution=True)
+
+    async def wrap_tool_execute(
+        self, ctx: RunContext[Any], *, call: Any, tool_def: Any, args: Any, handler: Any
+    ) -> Any:
+        result = await handler(args)
+        self.seen.append(f'{self.label}:{tool_def.name}')
+        return result
+
+
+@dataclass
+class _Nester(AbstractCapability[Any]):
+    """Takes part in execution without claiming to own it."""
+
+    async def wrap_tool_execute(
+        self, ctx: RunContext[Any], *, call: Any, tool_def: Any, args: Any, handler: Any
+    ) -> Any:
+        return await handler(args)
+
+
+@dataclass
+class _Bystander(AbstractCapability[Any]):
+    """Contributes nothing to executing a tool, so nesting it inside a guard means nothing."""
+
+    async def before_run(self, ctx: RunContext[Any]) -> None:
+        pass
+
+
+def test_two_capabilities_cannot_both_own_execution() -> None:
+    """Only one capability can be innermost, so two claims are a configuration with no answer."""
+    with pytest.raises(
+        UserError,
+        match=r'2 `_Guard` capabilities each require that nothing nests inside them when a tool executes',
+    ):
+        Agent(TestModel(), capabilities=[_Guard(label='a'), _Guard(label='b')])
+
+
+def test_a_capability_owning_execution_is_placed_last() -> None:
+    """Declaring it is not just a veto: it also settles the order within the innermost tier.
+
+    `position='innermost'` is a tier, and listed order is its only tiebreaker, so a guard listed
+    first would otherwise wrap the other innermost member rather than the tool.
+    """
+    guard = _Guard()
+    nester = _Nester()
+    combined = CombinedCapability([guard, nester])
+
+    assert list(combined.capabilities) == [nester, guard], 'the guard sorts after what it must not wrap'
+
+
+def test_a_capability_owning_execution_still_admits_bystanders() -> None:
+    """The rule is about taking part in execution, not about being inside at all."""
+    guard = _Guard()
+    combined = CombinedCapability([guard, _Bystander()])
+
+    assert isinstance(combined.capabilities[-1], _Guard), 'the guard is still last'
+    assert len(combined.capabilities) == 2, 'and the bystander is not refused'
+
+
+async def test_a_per_run_capability_cannot_nest_inside_one_owning_execution() -> None:
+    """A capability added for a run composes inside the agent's, which is what makes this wrong."""
+    agent = Agent(TestModel(), capabilities=[_Guard()])
+
+    with pytest.raises(
+        UserError,
+        match=(
+            r'`_Guard` requires that nothing nests inside it when a tool executes, but `_Nester` '
+            r'would, having been added for this run'
+        ),
+    ):
+        await agent.run('hello', capabilities=[_Nester()])
+
+
+async def test_a_per_run_bystander_is_admitted_beside_one_owning_execution() -> None:
+    """Only capabilities that take part in executing a tool are refused per-run."""
+    agent = Agent(TestModel(), capabilities=[_Guard()])
+
+    result = await agent.run('hello', capabilities=[_Bystander()])
+
+    assert result.output == 'success (no tool calls)'
+
+
+def test_a_wrapped_capability_still_owns_execution() -> None:
+    """Wrapping a capability to prefix its tools does not stop it claiming to be innermost."""
+    with pytest.raises(
+        UserError,
+        match=r'2 `_Guard` capabilities each require that nothing nests inside them when a tool executes',
+    ):
+        Agent(TestModel(), capabilities=[_Guard(label='a'), _Guard(label='b').prefix_tools('b')])
+
+
+async def test_a_capability_owning_execution_reaches_the_tool_itself() -> None:
+    """The point of the rule, rather than what it refuses: the guard wraps the tool body.
+
+    A capability that records what a call did is only telling the truth if the handler it awaited
+    was the tool. `_Nester` is listed after the guard and takes part in execution, so without the
+    placement the guard would be recording the outcome of `_Nester`'s wrapper instead.
+    """
+    guard = _Guard()
+    nester = _Nester()
+    agent = Agent(TestModel(call_tools=['echo']), capabilities=[guard, nester])
+
+    @agent.tool_plain
+    def echo(text: str) -> str:
+        return text
+
+    await agent.run('call it')
+
+    assert guard.seen == ['guard:echo']
+
+
+async def test_a_transparent_wrapper_is_not_itself_an_execution_participant() -> None:
+    """`WrapperCapability` overrides the execution hooks to delegate, which is not participation.
+
+    Measured against `AbstractCapability`, every wrapper looked like a participant, so
+    `Thinking().prefix_tools('p')` was refused per-run beside a guard where the bare `Thinking()`
+    was not — though neither goes near executing a tool.
+    """
+    agent = Agent(TestModel(), capabilities=[_Guard()])
+
+    result = await agent.run('hello', capabilities=[Thinking().prefix_tools('p')])
+
+    assert result.output == 'success (no tool calls)'
+
+
+async def test_a_wrapper_around_an_execution_participant_is_still_refused() -> None:
+    """Wrapping does not launder what is inside: the wrapped leaf is judged on its own account."""
+    agent = Agent(TestModel(), capabilities=[_Guard()])
+
+    with pytest.raises(UserError, match=r'`_Guard` requires that nothing nests inside it when a tool executes'):
+        await agent.run('hello', capabilities=[_Nester().prefix_tools('p')])
+
+
+@dataclass
+class _TracingToolset(WrapperToolset[Any]):
+    """Records that it sat between whoever called it and the tool."""
+
+    trace: list[str] = field(default_factory=list[str])
+
+    async def call_tool(self, name: str, tool_args: dict[str, Any], ctx: Any, tool: Any) -> Any:
+        self.trace.append('toolset-wrapper')
+        return await super().call_tool(name, tool_args, ctx, tool)
+
+
+@dataclass
+class _SafeCallWrapper(AbstractCapability[Any]):
+    """Runtime-safe and wraps the *call*, the shape `Instrumentation` has."""
+
+    _safe_at_runtime: ClassVar[bool] = True
+
+    async def wrap_tool_execute(
+        self, ctx: RunContext[Any], *, call: Any, tool_def: Any, args: Any, handler: Any
+    ) -> Any:
+        return await handler(args)
+
+
+@dataclass
+class _SafeToolsetWrapper(AbstractCapability[Any]):
+    """Runtime-safe but wraps the *toolset*, which lands on the other side of the boundary."""
+
+    _safe_at_runtime: ClassVar[bool] = True
+
+    trace: list[str] = field(default_factory=list[str])
+
+    def get_wrapper_toolset(self, toolset: AbstractToolset[Any]) -> AbstractToolset[Any] | None:
+        return _TracingToolset(toolset, trace=self.trace)
+
+
+async def test_a_runtime_safe_call_wrapper_may_be_added_beside_one_owning_execution() -> None:
+    """It sorts *outside* the exclusive capability, so what that one wraps is still the tool.
+
+    Which is why the exemption is safe here and nowhere else: the guard's handler reaches the tool
+    body with the runtime-safe capability already on the outside of it.
+    """
+    guard = _Guard()
+    agent = Agent(TestModel(call_tools=['echo']), capabilities=[guard])
+
+    @agent.tool_plain
+    def echo(text: str) -> str:
+        return text
+
+    await agent.run('go', capabilities=[_SafeCallWrapper()])
+
+    assert guard.seen == ['guard:echo'], 'the guard still wrapped the tool, not the other capability'
+
+
+async def test_a_toolset_wrapper_is_outside_what_the_flag_promises() -> None:
+    """A contributed wrapper toolset runs beneath every hook, so it is always inside the claimant.
+
+    Shown by letting it happen rather than by the absence of an error: the guard's handler reaches
+    the toolset wrapper, not the tool. Refusing that would refuse `ToolSearch` beside every
+    durability capability, which is a composition agents are built with — so the flag says what it
+    can enforce, and a capability needing more belongs in the toolset layer itself.
+    """
+    guard = _Guard()
+    nester = _SafeToolsetWrapper()
+    agent = Agent(TestModel(call_tools=['echo']), capabilities=[guard])
+
+    @agent.tool_plain
+    def echo(text: str) -> str:
+        return text
+
+    await agent.run('go', capabilities=[nester])
+
+    assert guard.seen == ['guard:echo'], 'the guard ran'
+    assert nester.trace == ['toolset-wrapper'], 'and the toolset wrapper ran inside it, not refused'
+
+
+async def test_tool_search_may_be_added_per_run_beside_a_durability_capability() -> None:
+    """The composition the narrower promise exists to keep working.
+
+    `ToolSearch` contributes a wrapper toolset that does override `call_tool`, so it genuinely sits
+    in the execution path — at agent level beside a durability capability, and per-run too. One
+    answer per shape, rather than one that depends on when the capability was attached.
+    """
+    agent = Agent(TestModel(), capabilities=[_Guard()])
+
+    result = await agent.run('go', capabilities=[ToolSearch()])
+
+    assert result.output == 'success (no tool calls)'
+
+
+async def test_the_hook_chain_runs_above_every_wrapper_toolset() -> None:
+    """The gap `exclusive_execution` cannot close, because the two are layers and not positions.
+
+    A capability that is both `innermost` and exclusive still wraps every contributed toolset
+    rather than the tool, so no ordering within the hook chain brings a `wrap_tool_execute` closer
+    to the body. A capability that must reach the body with nothing in between belongs in the lower
+    layer, which is where the durability capabilities put themselves -- and where the flag places
+    it deterministically, as the test below pins.
+    """
+    trace: list[str] = []
+
+    @dataclass
+    class _Recording(WrapperToolset[Any]):
+        async def call_tool(self, name: str, tool_args: dict[str, Any], ctx: Any, tool: Any) -> Any:
+            trace.append('toolset')
+            return await super().call_tool(name, tool_args, ctx, tool)
+
+    @dataclass
+    class _Wrapping(AbstractCapability[Any]):
+        def get_wrapper_toolset(self, toolset: AbstractToolset[Any]) -> AbstractToolset[Any] | None:
+            return _Recording(toolset)
+
+    @dataclass
+    class _Hook(AbstractCapability[Any]):
+        def get_ordering(self) -> CapabilityOrdering:
+            return CapabilityOrdering(position='innermost', exclusive_execution=True)
+
+        async def wrap_tool_execute(
+            self, ctx: RunContext[Any], *, call: Any, tool_def: Any, args: Any, handler: Any
+        ) -> Any:
+            trace.append('hook')
+            return await handler(args)
+
+    agent = Agent(TestModel(call_tools=['echo']), capabilities=[_Wrapping(), _Hook()])
+
+    @agent.tool_plain
+    def echo(text: str) -> str:
+        trace.append('tool body')
+        return text
+
+    await agent.run('go')
+
+    assert trace == ['hook', 'toolset', 'tool body'], 'the exclusive hook is still outside the toolset'
+
+
+async def test_exclusive_execution_puts_a_contributed_toolset_innermost_in_any_order() -> None:
+    """What the flag does do in the lower layer: `'innermost'` alone leaves it to listed order.
+
+    `get_wrapper_toolset` is applied over the reversed chain, so chain-last is the wrapper closest
+    to the tool. Two `'innermost'` toolset capabilities are only tie-broken by the order they were
+    listed in, which is not enough for one whose correctness depends on reaching the body. The flag
+    forces it chain-last, so it lands inside the other either way round.
+    """
+    trace: list[str] = []
+
+    @dataclass
+    class _Traced(WrapperToolset[Any]):
+        marker: str = ''
+
+        async def call_tool(self, name: str, tool_args: dict[str, Any], ctx: Any, tool: Any) -> Any:
+            trace.append(self.marker)
+            return await super().call_tool(name, tool_args, ctx, tool)
+
+    @dataclass
+    class _Contributor(AbstractCapability[Any]):
+        marker: str = ''
+        exclusive: bool = False
+
+        def get_ordering(self) -> CapabilityOrdering:
+            return CapabilityOrdering(position='innermost', exclusive_execution=self.exclusive)
+
+        def get_wrapper_toolset(self, toolset: AbstractToolset[Any]) -> AbstractToolset[Any] | None:
+            return _Traced(toolset, marker=self.marker)
+
+    async def order(*capabilities: AbstractCapability[Any]) -> list[str]:
+        trace.clear()
+        agent = Agent(TestModel(call_tools=['echo']), capabilities=list(capabilities))
+
+        @agent.tool_plain
+        def echo(text: str) -> str:
+            trace.append('tool body')
+            return text
+
+        await agent.run('go')
+        return list(trace)
+
+    other = _Contributor(marker='other')
+
+    tiered = _Contributor(marker='tiered')
+    assert await order(other, tiered) == ['other', 'tiered', 'tool body']
+    assert await order(tiered, other) == ['tiered', 'other', 'tool body'], 'listed order is the only tiebreaker'
+
+    exclusive = _Contributor(marker='exclusive', exclusive=True)
+    assert await order(other, exclusive) == ['other', 'exclusive', 'tool body']
+    assert await order(exclusive, other) == ['other', 'exclusive', 'tool body'], 'innermost either way round'

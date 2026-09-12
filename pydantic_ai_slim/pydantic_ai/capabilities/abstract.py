@@ -178,6 +178,43 @@ class CapabilityOrdering:
     requires: Sequence[type[AbstractCapability[Any]]] = ()
     """These types must be present in the chain (no ordering implied)."""
 
+    exclusive_execution: bool = False
+    """This capability owns the innermost execution of a tool: nothing may nest inside it.
+
+    `position='innermost'` is a *tier*, not a position, so listed order is the only tiebreaker
+    among its members. That is not enough for a capability whose correctness depends on reaching
+    the tool body itself -- one that authorizes a call and records its outcome as a single
+    operation, say, reports the wrong outcome the moment another capability's wrapper is what it
+    actually called.
+
+    Declaring this places the capability last in the chain, and refuses the two configurations that
+    would defeat it: a second capability claiming the same thing, and a capability added for a run
+    whose [`wrap_tool_execute`][pydantic_ai.capabilities.AbstractCapability.wrap_tool_execute]
+    would end up inside it.
+
+    Chain-last is the innermost slot in *both* layers a capability can take part in a tool call at,
+    since [`get_wrapper_toolset`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_toolset]
+    is applied over the reversed chain:
+
+    - No other capability's `wrap_tool_execute` runs inside this one.
+    - Any toolset this capability contributes is the innermost contributed wrapper, whatever order
+      the capabilities were listed in. `position='innermost'` alone does not give that: it is a
+      tier, so listed first beside another `innermost` toolset capability, a contributed wrapper
+      wraps *that capability's toolset* rather than the tool.
+
+    What no ordering can do is close the gap between the two layers. The hook chain runs *above*
+    the whole toolset chain, so a `wrap_tool_execute` is outside every contributed wrapper toolset
+    however it sorts -- even one that is both `innermost` and exclusive. A capability that must
+    reach the tool body with nothing in between therefore belongs in the lower layer: override
+    `get_wrapper_toolset` rather than `wrap_tool_execute`, and declare this so the toolset lands
+    innermost in every listed order. That is how the durability capabilities journal a tool's real
+    outcome. Only one capability can hold the slot, which is why a durable engine claims it.
+
+    Durability capabilities declare it: an agent runs under one durable engine, and each wraps
+    every tool call as its own durable unit. That is what makes two of them, of any engines,
+    refused rather than silently dispatched through both.
+    """
+
 
 class _DurableOperationBindings:
     """Agent-identity bindings that do not retain unhashable agent instances."""

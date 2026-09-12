@@ -58,6 +58,7 @@ from pydantic_ai.durable_exec._toolset import (
     validate_tool_args,
     wrap_tool_call_result,
 )
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import CapabilityEvent, CustomEvent
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.test import TestModel
@@ -252,6 +253,92 @@ class JournalDurability(BaseDurabilityCapability[Any]):
 
     def get_durable_operation_backend(self) -> durable_exec.DurableOperationBackend[ToolConfig]:
         return _JournalBackend(self)
+
+
+class SecondJournalDurability(JournalDurability):
+    """A second engine, to stand for `DBOSDurability` beside a `TemporalDurability`.
+
+    Written here rather than with the real pair because the two live behind different optional
+    dependency groups, and no lane is guaranteed to install both.
+    """
+
+
+_TWO_ENGINES = (
+    r'`JournalDurability` and `SecondJournalDurability` each require that nothing nests inside them '
+    r'when a tool executes'
+)
+
+
+def test_a_second_durability_engine_is_refused() -> None:
+    """An agent runs under one durable engine, whatever engines the two are.
+
+    Two engines carry two `id`s, and there is no id under which they could meet, since neither
+    restates the other -- so an id is not what settles this. What they do share is the claim to be
+    innermost: each wraps every tool call as its own durable unit, so the second would be nesting a
+    durable unit inside a durable unit.
+    """
+    with pytest.raises(UserError, match=_TWO_ENGINES):
+        Agent(TestModel(), name='two_engines', capabilities=[JournalDurability(), SecondJournalDurability()])
+
+    # Order does not decide it: the claim is refused before anything is placed.
+    with pytest.raises(UserError, match=_TWO_ENGINES):
+        Agent(TestModel(), name='reversed', capabilities=[SecondJournalDurability(), JournalDurability()])
+
+
+def test_a_second_durability_engine_is_refused_behind_a_wrapper() -> None:
+    """A wrapped engine is still the engine, and still claims to be innermost."""
+    with pytest.raises(UserError, match=_TWO_ENGINES):
+        Agent(
+            TestModel(),
+            name='wrapped',
+            capabilities=[JournalDurability(), SecondJournalDurability().prefix_tools('second')],
+        )
+
+
+def test_a_per_run_engine_beside_an_agent_level_one_is_refused() -> None:
+    """A capability added for a run composes *inside* the agent's, which is what makes this wrong.
+
+    Refused before the per-run capability binds rather than when the resolved tree is sorted. The
+    sort would catch the pair too, but only after `for_agent` has run -- and `for_agent` is where
+    an engine registers its durable units, so a configuration that is going to be refused would
+    have registered first.
+    """
+    agent = Agent(TestModel(), name='per_run', capabilities=[JournalDurability()])
+
+    with pytest.raises(UserError, match=_TWO_ENGINES):
+        agent.run_sync('hello', capabilities=[SecondJournalDurability()])
+
+
+def test_two_engines_in_one_per_run_list_are_refused() -> None:
+    """Neither is on the agent's tree when the other binds, so only the pair itself shows this."""
+    agent = Agent(TestModel(), name='per_run_pair')
+
+    with pytest.raises(UserError, match=_TWO_ENGINES):
+        agent.run_sync('hello', capabilities=[JournalDurability(), SecondJournalDurability()])
+
+
+def test_one_engine_written_twice_is_refused() -> None:
+    """The same object listed twice is two registrations, not one capability seen twice."""
+    durability = JournalDurability()
+
+    with pytest.raises(
+        UserError,
+        match=r'2 `JournalDurability` capabilities each require that nothing nests inside them',
+    ):
+        Agent(TestModel(), name='written_twice', capabilities=[durability, durability])
+
+
+def test_a_repeated_engine_without_a_default_id_is_refused() -> None:
+    """`JournalDurability` stands for a third-party engine, declaring no default `id` at all.
+
+    Nothing keyed on an `id` can see this pair, which is why the rule is about what the two claim
+    rather than what they are called.
+    """
+    with pytest.raises(
+        UserError,
+        match=r'2 `JournalDurability` capabilities each require that nothing nests inside them',
+    ):
+        Agent(TestModel(), name='repeated', capabilities=[JournalDurability(), JournalDurability()])
 
 
 async def test_journal_operation_name_assembly_sequence() -> None:

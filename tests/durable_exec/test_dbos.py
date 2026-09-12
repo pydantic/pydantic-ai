@@ -3530,12 +3530,12 @@ async def test_dbos_durability_allows_instrumented_default_model(dbos: DBOS) -> 
 
 
 def test_dbos_durability_get_ordering() -> None:
-    """DBOSDurability declares innermost ordering."""
+    """DBOSDurability is innermost and owns execution: an agent runs under one durable engine."""
     from pydantic_ai.capabilities.abstract import CapabilityOrdering
 
     durability = DBOSDurability()
     ordering = durability.get_ordering()
-    assert ordering == CapabilityOrdering(position='innermost')
+    assert ordering == CapabilityOrdering(position='innermost', exclusive_execution=True)
 
 
 def test_dbos_durability_get_serialization_name() -> None:
